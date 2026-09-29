@@ -239,8 +239,8 @@ export function createLocalAssistantResponder(): ZelavisAssistantResponder {
         string,
         string,
       ])[] = [
-        [["security", "checklist"], "Security", "/security", "Security checks are available in the global Security area."],
-        [["resource", "usage", "metrics"], "Resources", "/resources", "Host usage and resource charts are available in Resources."],
+        [["security", "checklist"], "Security", "/server/security", "Security checks are available in the Server area."],
+        [["resource", "usage", "metrics"], "Resources", "/server/resources", "Host usage and resource charts are available in the Server area."],
         [["log"], "Logs", "/server/logs", "Server logs are available from the global Server area."],
         [["domain"], "Domains", "/server/domains", "Domain management is a global server-level area."],
         [["marketplace", "plugin"], "Marketplace", "/marketplace", "Project recipes, templates, and provider plugins are in Marketplace."],

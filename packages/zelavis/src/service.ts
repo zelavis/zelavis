@@ -19,8 +19,10 @@ import {
 } from "./core/service/context.js";
 import type {
   ZelavisAnyRuntimeServiceInput,
+  ZelavisEndpointGroupInput,
   ZelavisRuntimeService,
 } from "./core/runtime/contracts.js";
+import { endpointGroupFromService } from "./core/runtime/contracts.js";
 import type { BundleStore } from "./bundle-store.js";
 import type { DomainBindingStore } from "./domain-binding.js";
 import { synthesizeServiceAppService } from "./service-app.js";
@@ -110,13 +112,12 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
     marketplace?: ZelavisServiceMarketplaceMetadata;
     project?: ZelavisProjectRecipeDefinition;
     capabilities?: readonly ZelavisServiceCapability[];
-    runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
     setup?: (
       context: TContext,
     ) =>
       | void
-      | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }
-      | Promise<void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }>;
+      | { endpointGroups?: readonly ZelavisEndpointGroupInput<any>[] }
+      | Promise<void | { endpointGroups?: readonly ZelavisEndpointGroupInput<any>[] }>;
   };
   specifier?: string;
   status: "installed" | "available";
@@ -212,9 +213,9 @@ export interface ZelavisServiceSetupContext {
   api: ZelavisServiceSetupApiContext;
   platform: ZelavisServiceSetupPlatformContext;
   core: ZelavisServiceSetupCoreContext;
-  runtimeServices: readonly ZelavisAnyRuntimeServiceInput[];
-  addService: (service: ZelavisAnyRuntimeServiceInput) => void;
-  addServices: (services: readonly ZelavisAnyRuntimeServiceInput[]) => void;
+  endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
+  addEndpointGroup: (endpointGroup: ZelavisEndpointGroupInput<any>) => void;
+  addEndpointGroups: (endpointGroups: readonly ZelavisEndpointGroupInput<any>[]) => void;
 }
 
 export function createServiceRegistry<TContext = unknown>(
@@ -365,7 +366,6 @@ export function resolveServiceModule<TContext = unknown>(
       service: raw.service ?? raw,
       menu: raw.menu as any,
       menus: raw.menus as any,
-      services: raw.services as any,
       authenticators: raw.authenticators as any,
       kind: (raw.kind as string) ?? manifest?.zelavis?.kind ?? "plugin",
       version: (raw.version as string) ?? manifest?.version,
@@ -374,7 +374,6 @@ export function resolveServiceModule<TContext = unknown>(
       capabilities: ((raw.capabilities ?? manifest?.zelavis?.capabilities) as any) ?? [],
       app: raw.app as any,
       setup: setupFn,
-      runtimeServices: raw.runtimeServices as any,
       ...(manifest ? frontendServiceFields(manifest) : {}),
     }) as any;
   }
@@ -542,6 +541,14 @@ export async function loadPluginPackage(options: {
   if (exportObj?.api !== undefined) {
     throw new TypeError(`Package "${manifest.name}" must register APIs through zelavis.createAPI or zelavis.operations.create, not an api export.`);
   }
+  if (
+    exportObj?.services !== undefined ||
+    exportObj?.runtimeServices !== undefined
+  ) {
+    throw new TypeError(
+      `Package "${manifest.name}" cannot export nested or runtime services. Register its own APIs, operations, menus and frontend behavior through the SDK.`,
+    );
+  }
   const packageDir = initialPackageDir;
 
   const project = manifestProjectRecipe(manifest);
@@ -564,19 +571,12 @@ export async function loadPluginPackage(options: {
     api: { v1: [...context.routes] },
     menu: context.menus[0],
     menus: context.menus.length > 0 ? context.menus : undefined,
-    services: [
-      ...(exportObj?.services ?? []),
-      ...context.services,
-    ],
     authenticators: [
       ...(exportObj?.authenticators ?? []),
       ...context.authenticators,
     ],
     service: exportObj?.service ?? (typeof rawExport === "object" ? rawExport : moduleResult),
     ...(context.setup || setupFunction ? { setup: context.setup ?? setupFunction } : {}),
-    ...(exportObj?.runtimeServices
-      ? { runtimeServices: exportObj.runtimeServices }
-      : {}),
     ...(frontendApp ? { app: frontendApp } : exportObj?.app ? { app: exportObj.app } : {}),
     ...(project ? { project } : {}),
     ...(options.scope ? { scope: options.scope } : {}),
@@ -783,9 +783,14 @@ export interface ActivateServiceRegistryOptions {
   bundleStore?: BundleStore;
   projectId?: string;
   domainBindings?: DomainBindingStore;
-  reservedRuntimeServiceNames?: readonly string[];
   /** Builds the durable store a named service is given. */
   serviceStore?: (serviceName: string) => ZelavisServiceStore;
+  /**
+   * The frontend serving this runtime's root path. It is mounted where the
+   * runtime's face belongs rather than corralled under `/apps/<name>` like an
+   * extension's app.
+   */
+  siteFrontendName?: string;
 }
 
 export async function activateServiceRegistry<
@@ -796,17 +801,18 @@ export async function activateServiceRegistry<
     TContext,
     | "service"
     | "registry"
-    | "children"
-    | "runtimeServices"
-    | "addService"
-    | "addServices"
+    | "endpointGroups"
+    | "addEndpointGroup"
+    | "addEndpointGroups"
   >,
   options: ActivateServiceRegistryOptions = {},
 ): Promise<{
   registry: readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[];
   services: readonly ZelavisAnyRuntimeServiceInput[];
+  endpointGroups: readonly ZelavisEndpointGroupInput<any>[];
 }> {
   const activatedServices: ZelavisAnyRuntimeServiceInput[] = [];
+  const activatedEndpointGroups: ZelavisEndpointGroupInput<any>[] = [];
   const installedServices = [...registry]
     .filter((entry) => entry.status === "installed")
     .sort((left, right) => {
@@ -815,46 +821,10 @@ export async function activateServiceRegistry<
       return leftOrder - rightOrder || left.service.name.localeCompare(right.service.name);
     });
 
-  const addService = (service: ZelavisAnyRuntimeServiceInput) => {
-    activatedServices.push(service);
-  };
-  const assertCanAddRuntimeService = (
-    owner: Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>,
-    service: ZelavisAnyRuntimeServiceInput,
-  ) => {
-    if (owner.scope === "system" || !options.reservedRuntimeServiceNames) {
-      return;
-    }
-
-    if (!("name" in service)) {
-      return;
-    }
-
-    if (options.reservedRuntimeServiceNames.includes(service.name)) {
-      throw new TypeError(
-        `Extension service "${owner.name}" cannot register reserved runtime service "${service.name}".`,
-      );
-    }
-  };
-  const shouldMountService = (service: ZelavisServiceRegistryEntry<TContext>["service"]) =>
-    service.basePath !== undefined ||
-    service.service !== undefined ||
-    Boolean(service.authenticators?.length) ||
-    // A menu is a contribution too. A plugin whose routes are added during
-    // setup has none of the fields above on itself, so its menu was dropped
-    // and its pages were unreachable while everything looked installed.
-    service.menu !== undefined ||
-    Boolean(service.menus?.length) ||
-    Object.values(service.api ?? {}).some((routes) => routes.length > 0);
-
   for (const entry of installedServices) {
-    if (shouldMountService(entry.service)) {
-      assertCanAddRuntimeService(
-        entry.service,
-        entry.service as unknown as ZelavisAnyRuntimeServiceInput,
-      );
-      addService(entry.service as unknown as ZelavisAnyRuntimeServiceInput);
-    }
+    activatedServices.push(
+      entry.service as unknown as ZelavisAnyRuntimeServiceInput,
+    );
 
     if (entry.service.app && options.bundleStore) {
       const appService = await synthesizeServiceAppService({
@@ -862,31 +832,35 @@ export async function activateServiceRegistry<
         bundleStore: options.bundleStore,
         projectId: options.projectId,
         domainBindings: options.domainBindings,
+        ...(options.siteFrontendName === entry.service.name
+          ? { effectiveMount: entry.service.app.mount ?? "/" }
+          : {}),
       });
       if (appService) {
-        addService(appService as unknown as ZelavisAnyRuntimeServiceInput);
+        activatedEndpointGroups.push({
+          ...endpointGroupFromService(appService),
+          origin: {
+            type: "frontend",
+            serviceName: entry.service.name,
+          },
+        });
       }
     }
 
     let setupAbandoned = false;
-    const addEntryService = (service: ZelavisAnyRuntimeServiceInput) => {
+    const addEndpointGroup = (endpointGroup: ZelavisEndpointGroupInput<any>) => {
       if (setupAbandoned) {
         throw new ZelavisPluginAdmissionError(
-          `Service "${entry.service.name}" can no longer add services: its setup exceeded its deadline.`,
+          `Service "${entry.service.name}" can no longer add endpoint groups: its setup exceeded its deadline.`,
         );
       }
-      assertCanAddRuntimeService(entry.service, service);
-      addService(service);
+      activatedEndpointGroups.push(endpointGroup);
     };
-    const addEntryServices = (services: readonly ZelavisAnyRuntimeServiceInput[]) => {
-      for (const service of services) {
-        addEntryService(service);
+    const addEndpointGroups = (endpointGroups: readonly ZelavisEndpointGroupInput<any>[]) => {
+      for (const endpointGroup of endpointGroups) {
+        addEndpointGroup(endpointGroup);
       }
     };
-
-    if (entry.service.runtimeServices?.length) {
-      addEntryServices(entry.service.runtimeServices);
-    }
 
     if (!entry.service.setup) {
       continue;
@@ -908,9 +882,9 @@ export async function activateServiceRegistry<
       },
       service: entry.service as any,
       registry: registry as any,
-      runtimeServices: activatedServices,
-      addService: addEntryService,
-      addServices: addEntryServices,
+      endpointGroups: activatedEndpointGroups,
+      addEndpointGroup,
+      addEndpointGroups,
     } as TContext));
     setup.catch(() => undefined);
     let setupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -926,13 +900,14 @@ export async function activateServiceRegistry<
       }),
     ]).finally(() => clearTimeout(setupTimer));
 
-    if (result?.runtimeServices?.length) {
-      addEntryServices(result.runtimeServices);
+    if (result?.endpointGroups?.length) {
+      addEndpointGroups(result.endpointGroups);
     }
   }
 
   return {
     registry,
     services: Object.freeze([...activatedServices]),
+    endpointGroups: Object.freeze([...activatedEndpointGroups]),
   };
 }

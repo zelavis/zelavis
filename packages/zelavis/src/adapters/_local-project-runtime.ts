@@ -95,15 +95,12 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   const forProjectId = async (projectId: string) => {
     const record = JSON.parse(await readFile(join(directory, projectId, "project.json"), "utf8")) as {
       recipe?: { name?: unknown };
-      app?: { name?: unknown };
       kind?: unknown;
       runtimeKind?: unknown;
     };
     assertNative(record.runtimeKind);
     if (record.kind === SERVER_FRONTEND_KIND) return selectFrontend();
-    // `app` is accepted only to route a persisted pre-recipe descriptor long
-    // enough for the Project manager to migrate and rewrite it.
-    return (record.recipe ?? record.app)?.name === WORDPRESS_APP_NAME ? wordpress : node;
+    return record.recipe?.name === WORDPRESS_APP_NAME ? wordpress : node;
   };
 
   return {

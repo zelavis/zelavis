@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { bundledServiceRegistry } from "./_bundled-services.mjs";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const OWNER = {
@@ -9,7 +10,10 @@ const OWNER = {
 };
 
 async function boot() {
-  const runtime = await zelavis({ frontend: zelavisUiFrontend });
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    serviceRegistry: await bundledServiceRegistry(),
+  });
   // Takes the context explicitly rather than defaulting it: a default would
   // turn "call this anonymously" into "call this as the owner", and the test
   // asserting anonymous access is refused would pass while proving nothing.

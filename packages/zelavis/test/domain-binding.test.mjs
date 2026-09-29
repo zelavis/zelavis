@@ -447,7 +447,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { services, endpointGroups } = await activateServiceRegistry(
     [{ service, status: "installed" }],
     {
       rootPath: "/",
@@ -466,7 +466,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
     },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ services, endpointGroups });
 
   // Verified host: serves the SPA shell
   const allowed = await runtime.fetch(
@@ -502,7 +502,7 @@ test("system services bypass domain bindings entirely", async () => {
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { services, endpointGroups } = await activateServiceRegistry(
     [{ service, status: "installed" }],
     {
       rootPath: "/",
@@ -517,7 +517,7 @@ test("system services bypass domain bindings entirely", async () => {
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ services, endpointGroups });
 
   const response = await runtime.fetch(
     new Request("http://tool.example.com/"),
@@ -537,7 +537,7 @@ test("workspace apps with required domain policy do not synthesize without verif
     },
   };
 
-  const { services } = await activateServiceRegistry(
+  const { services, endpointGroups } = await activateServiceRegistry(
     [{ service, status: "installed" }],
     {
       rootPath: "/",

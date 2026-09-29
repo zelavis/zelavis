@@ -1,4 +1,6 @@
 import type {
+  ZelavisEndpointGroup,
+  ZelavisEndpointGroupInput,
   ZelavisAnyRuntimeServiceInput,
   ZelavisRuntimeServiceInput,
   ZelavisServerDispatchHandler,
@@ -8,6 +10,7 @@ import type {
   ZelavisServerRuntime,
   ZelavisRuntimeService,
 } from "./contracts.js";
+import { endpointGroupFromService } from "./contracts.js";
 import { createErrorCorrelationId } from "./error-policy.js";
 import {
   toDefaultErrorResponse,
@@ -30,20 +33,7 @@ async function resolveServiceInput(
 async function resolveServiceInput(
   input: ZelavisAnyRuntimeServiceInput,
 ): Promise<ZelavisRuntimeService<any>> {
-  const service = await input;
-
-  if (!service.services?.length) {
-    return service;
-  }
-
-  const services = await Promise.all(
-    service.services.map((child) => resolveServiceInput(child)),
-  );
-
-  return {
-    ...service,
-    services,
-  };
+  return input;
 }
 
 function toServiceMap<TService = unknown>(
@@ -58,13 +48,33 @@ function toServiceMap<TService = unknown>(
   return result;
 }
 
+function toEndpointGroupMap(
+  endpointGroups: readonly ZelavisEndpointGroup<any>[],
+): Record<string, ZelavisEndpointGroup<any>> {
+  const result: Record<string, ZelavisEndpointGroup<any>> = {};
+
+  for (const endpointGroup of endpointGroups) {
+    if (result[endpointGroup.id]) {
+      throw new TypeError(`Duplicate endpoint group: ${endpointGroup.id}`);
+    }
+    result[endpointGroup.id] = endpointGroup;
+  }
+
+  return result;
+}
+
+async function resolveEndpointGroupInput(
+  input: ZelavisEndpointGroupInput<any>,
+): Promise<ZelavisEndpointGroup<any>> {
+  return input;
+}
+
 function collectAuthenticators(
-  services: readonly ZelavisRuntimeService<any>[],
+  endpointGroups: readonly ZelavisEndpointGroup<any>[],
 ): ZelavisRequestAuthenticator[] {
-  return services.flatMap((service) => [
-    ...(service.authenticators ?? []),
-    ...collectAuthenticators((service.services ?? []) as readonly ZelavisRuntimeService<any>[]),
-  ]);
+  return endpointGroups.flatMap(
+    (endpointGroup) => endpointGroup.authenticators ?? [],
+  );
 }
 
 async function runFinalizers(
@@ -112,16 +122,23 @@ export async function createServiceRuntime<TService = unknown>(
     }
 
     const services = await Promise.all(
-      options.services.map(resolveServiceInput),
+      (options.services ?? []).map(resolveServiceInput),
     );
-    const resolvedRoutes = resolveMountedEndpoints(services, {
+    const endpointGroups = [
+      ...services.map(endpointGroupFromService),
+      ...(await Promise.all(
+        (options.endpointGroups ?? []).map(resolveEndpointGroupInput),
+      )),
+    ];
+    const resolvedRoutes = resolveMountedEndpoints(endpointGroups, {
       prefix: options.prefix,
       version: options.version,
       servicePrefixes: options.servicePrefixes,
       pathOverrides: options.pathOverrides,
     });
     const serviceMap = toServiceMap(services);
-    const serviceAuthenticators = collectAuthenticators(services) as ZelavisRequestAuthenticator<TService>[];
+    const endpointGroupMap = toEndpointGroupMap(endpointGroups);
+    const serviceAuthenticators = collectAuthenticators(endpointGroups) as ZelavisRequestAuthenticator<TService>[];
     const resolvePrincipal = composeRequestAuthenticators<TService>([
       ...(options.resolvePrincipal
         ? [{ name: "host", authenticate: options.resolvePrincipal }]
@@ -177,12 +194,14 @@ export async function createServiceRuntime<TService = unknown>(
 
     await lifecycle.emit("start", {
       services: serviceMap,
+      endpointGroups: endpointGroupMap,
       routes: resolvedRoutes,
       compatibilityDate,
     });
 
     return {
       services: serviceMap,
+      endpointGroups: endpointGroupMap,
       routes: resolvedRoutes,
       compatibilityDate,
       hooks: lifecycle,

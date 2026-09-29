@@ -65,6 +65,11 @@ export interface ZelavisProjectRecipeLock {
   runtimeKinds: readonly ZelavisProjectRuntimeKind[];
   /** Isolation declared by this exact recipe version, locked with it. */
   isolation?: ZelavisProjectIsolationIntent;
+  /**
+   * Content digest of the recipe package materialized into the Project. A
+   * runtime that finds one runs that artifact, not the Platform's copy.
+   */
+  artifact?: { digest: string };
 }
 
 export interface ZelavisProjectDescriptor {
@@ -324,14 +329,11 @@ export class ZelavisProjectDeletionError extends Error {
 }
 
 const PROJECTS_NAMESPACE = "projects";
-const DEFAULT_PROJECT_RECIPE_NAME = "zelavis/app";
+const DEFAULT_PROJECT_RECIPE_NAME = "@zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_RUNTIME_KIND: ZelavisProjectRuntimeKind = "native";
 const OWNED_PROJECTS_CLEANUP_PARTICIPANT = "owned-projects";
 const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
-const RETIRED_OFFICIAL_RECIPE_LOCKS = new Map([
-  ["@zelavis/app", DEFAULT_PROJECT_RECIPE_NAME],
-]);
 
 function normalizeConcurrency(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) {
@@ -483,7 +485,7 @@ function applySnapshot(
 }
 
 function projectKindFromRecipe(recipeName: string): ZelavisProjectKind {
-  if (recipeName === "zelavis/app" || recipeName === "@zelavis/app") {
+  if (recipeName === "@zelavis/app") {
     return "zelavis";
   }
 
@@ -564,9 +566,7 @@ function normalizeRecipeRuntimeKinds(
 }
 
 function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProjectRecipeLock {
-  // `app` was the pre-recipe field name. Reading it here is a one-time stored
-  // data migration; repaired records are immediately rewritten with `recipe`.
-  const rawRecipe = rawProject.recipe ?? rawProject.app;
+  const rawRecipe = rawProject.recipe;
   if (!isObjectRecord(rawRecipe)) {
     throw new ZelavisProjectValidationError(
       "Stored project record is missing its Project recipe lock.",
@@ -825,12 +825,6 @@ export async function createProjectManager(options: {
       .flatMap((entry) => [
         [entry.service.name, entry] as const,
         ...(entry.specifier ? [[entry.specifier, entry] as const] : []),
-        ...(entry.service.name === "zelavis/app" || entry.specifier === "zelavis/app"
-          ? [["@zelavis/app", entry] as const]
-          : []),
-        ...(entry.service.name === "@zelavis/app" || entry.specifier === "@zelavis/app"
-          ? [["zelavis/app", entry] as const]
-          : []),
       ]),
   );
 
@@ -856,20 +850,7 @@ export async function createProjectManager(options: {
     const rawRecord = rawProject as unknown as Record<string, unknown>;
     const storedRecipe = readStoredRecipeLock(rawRecord);
     const deletion = readStoredDeletionState(rawRecord);
-    const replacementName =
-      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.name) ??
-      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.specifier);
-    const replacement = replacementName
-      ? projectRecipeMap.get(replacementName)
-      : undefined;
-    const recipe = replacement
-      ? {
-          ...storedRecipe,
-          name: replacement.service.name,
-          title: recipeTitleFromService(replacement.service),
-          specifier: replacement.specifier ?? replacement.service.name,
-        }
-      : storedRecipe;
+    const recipe = storedRecipe;
     const storedOwner =
       typeof (rawProject as { ownerProjectId?: unknown }).ownerProjectId === "string"
         ? ((rawProject as { ownerProjectId: string }).ownerProjectId)

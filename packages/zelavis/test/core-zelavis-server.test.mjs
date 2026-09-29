@@ -35,14 +35,16 @@ test("createServiceRuntime resolves promised services and returns service map pl
   assert.equal(runtime.services.orders.service, serviceApi);
   assert.equal(runtime.routes.length, 1);
   assert.equal(runtime.routes[0].fullPath, "/api/commerce/orders/all");
-  assert.equal(runtime.routes[0].service.name, "orders");
+  assert.equal(runtime.routes[0].endpointGroup.id, "orders");
   assert.equal(runtime.dispatch, runtime.dispatch);
 });
 
-test("createServiceRuntime resolves promised nested services without adding them to the top-level service map", async () => {
+test("createServiceRuntime keeps endpoint groups separate from the service inventory", async () => {
   const child = Promise.resolve({
-    name: "child",
-    service: { nested: true },
+    id: "child",
+    context: { nested: true },
+    origin: { type: "service", serviceName: "parent" },
+    basePath: "parent/child",
     api: {
       v1: [
         {
@@ -58,17 +60,17 @@ test("createServiceRuntime resolves promised nested services without adding them
     name: "parent",
     service: { root: true },
     api: {},
-    services: [child],
   };
   const runtime = await createServiceRuntime({
     services: [parent],
+    endpointGroups: [child],
   });
 
   assert.deepEqual(Object.keys(runtime.services), ["parent"]);
-  assert.equal(runtime.services.parent.services[0].name, "child");
+  assert.equal(runtime.endpointGroups.child.id, "child");
   assert.equal(runtime.routes.length, 1);
   assert.equal(runtime.routes[0].fullPath, "/parent/child");
-  assert.equal(runtime.routes[0].service.name, "child");
+  assert.equal(runtime.routes[0].endpointGroup.id, "child");
 });
 
 test("createServiceRuntime exposes fetch and plain handlers without requiring a mount adapter", async () => {

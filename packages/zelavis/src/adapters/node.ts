@@ -1,3 +1,4 @@
+import { createSharedBundleStore } from "../bundle-store.js";
 import { join, resolve } from "node:path";
 import {
   defineAdapter,
@@ -26,11 +27,12 @@ import {
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
   discoverProductServices,
+  createPackageDirectoryBundleStore,
+  loadOfficialServiceCatalog,
   SERVICES_DIRECTORY,
   createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
-import { officialProjectRecipes } from "../project-recipes.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
 import { createNodeBackendHostProbes } from "./_node-backend-host.js";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
@@ -203,12 +205,13 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const productServiceDirectory = productServiceOptions?.directory
         ? resolve(productServiceOptions.directory)
         : join(dataDirectory, SERVICES_DIRECTORY);
-      // Scanned before composition so the Platform sees dropped-in services the
-      // same way it sees installed ones. A Project runtime deliberately skips
-      // it: the folder belongs to the installation, not to each Project.
+      // Scanned before composition so the runtime sees dropped-in services the
+      // same way it sees installed ones. Every runtime has its own folder: the
+      // Platform's is `<data>/services`, and a Project's is the `services`
+      // folder of its own `.zelavis` data root, so what a Project installs
+      // belongs to that Project and to no other.
       const discoveredProductServices =
-        options.services === false ||
-        isProjectRuntime
+        options.services === false
           ? []
           : await discoverProductServices({
               directory: productServiceDirectory,
@@ -220,6 +223,21 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 );
               },
             });
+      // Static frontends dropped into this runtime's services folder are served
+      // from where they lie. Other bundles keep using the shared store.
+      const folderFrontends = new Map(
+        discoveredProductServices.flatMap((entry) =>
+          entry.manifest?.zelavis?.kind === "frontend" &&
+          entry.manifest.exports === undefined &&
+          entry.packageDir
+            ? [[entry.manifest.name, entry.packageDir] as const]
+            : [],
+        ),
+      );
+      const bundledProductServices =
+        options.services === false || isProjectRuntime
+          ? []
+          : await loadOfficialServiceCatalog();
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
@@ -384,6 +402,14 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
+        ...(folderFrontends.size > 0
+          ? {
+              bundleStore: createPackageDirectoryBundleStore(
+                folderFrontends,
+                fileStorage ? createSharedBundleStore({ storage: fileStorage }) : undefined,
+              ),
+            }
+          : {}),
         serviceRegistry:
           options.services === false
             ? undefined
@@ -391,7 +417,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 catalog: isProjectRuntime
                   ? []
                   : [
-                      ...officialProjectRecipes,
+                      ...bundledProductServices,
                       ...(serviceOptions?.catalog ?? []),
                     ],
                 discovered: discoveredProductServices,

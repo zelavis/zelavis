@@ -14,9 +14,9 @@ import {
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
   createLocalRuntimeServiceManifestResolver,
+  loadOfficialServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
-import { officialProjectRecipes } from "../project-recipes.js";
 
 export interface BunAdapterDatabaseOptions {
   /** Directory holding one SQLite file per shard. */
@@ -114,6 +114,10 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
+      const bundledProductServices =
+        options.services === false || isProjectRuntime
+          ? []
+          : await loadOfficialServiceCatalog();
 
       return {
         subsystems: nextSubsystems,
@@ -125,7 +129,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
                 catalog: isProjectRuntime
                   ? []
                   : [
-                      ...officialProjectRecipes,
+                      ...bundledProductServices,
                       ...(serviceOptions?.catalog ?? []),
                     ],
                 importer: createLocalRuntimeServiceImporter({

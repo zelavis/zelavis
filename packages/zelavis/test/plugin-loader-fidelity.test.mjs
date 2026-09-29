@@ -37,10 +37,15 @@ test("package menus must be registered through the SDK", async () => {
   }
 });
 
-test("a plugin that registers services during setup keeps its setup", async () => {
+test("a plugin that mounts endpoint groups during setup keeps its setup", async () => {
   const service = {
     setup(context) {
-      context.addService({ name: "acme-inner", basePath: "/inner", service: {} });
+      context.addEndpointGroup({
+        id: "acme-inner",
+        basePath: "/inner",
+        context: {},
+        origin: { type: "service", serviceName: "@acme/complete" },
+      });
     },
   };
 
@@ -51,11 +56,10 @@ test("a plugin that registers services during setup keeps its setup", async () =
   assert.equal(typeof loaded.setup, "function");
 });
 
-test("the loader carries the rest of what a plugin declares", async () => {
+test("the loader carries supported runtime declarations", async () => {
   const authenticator = { name: "acme", authenticate: async () => undefined };
   const loaded = await load({
     authenticators: [authenticator],
-    runtimeServices: [{ name: "acme-runtime", service: {} }],
     app: { mount: "/", bundle: "build" },
   }, {
     scope: "system",
@@ -64,9 +68,17 @@ test("the loader carries the rest of what a plugin declares", async () => {
 
   assert.equal(loaded.scope, "system");
   assert.equal(loaded.authenticators?.length, 1);
-  assert.equal(loaded.runtimeServices?.length, 1);
   assert.ok(loaded.app);
   assert.ok(loaded.project);
+});
+
+test("nested and runtime service exports are refused", async () => {
+  for (const field of ["services", "runtimeServices"]) {
+    await assert.rejects(
+      load({ [field]: [{ name: "acme-inner", service: {} }] }),
+      /cannot export nested or runtime services/,
+    );
+  }
 });
 
 test("a plugin declaring none of them is unchanged", async () => {

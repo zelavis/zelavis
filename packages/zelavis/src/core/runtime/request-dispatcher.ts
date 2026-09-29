@@ -852,7 +852,7 @@ async function executeResolvedRoute<TService = unknown>(
     }
 
     const result = await resolvedRoute.route.handler({
-      service: resolvedRoute.service.service,
+      service: resolvedRoute.endpointGroup.context,
       params,
       query: new URL(request.url).searchParams,
       body: await parseRequestBody(request),

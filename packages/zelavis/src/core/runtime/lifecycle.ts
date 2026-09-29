@@ -2,11 +2,13 @@ import type {
   ZelavisResolvedRoute,
   ZelavisServerDispatchResult,
   ZelavisServerExecutionContext,
+  ZelavisEndpointGroup,
   ZelavisRuntimeService,
 } from "./contracts.js";
 
 export interface ZelavisServerStartEvent {
   readonly services: Readonly<Record<string, ZelavisRuntimeService<any>>>;
+  readonly endpointGroups: Readonly<Record<string, ZelavisEndpointGroup<any>>>;
   readonly routes: readonly ZelavisResolvedRoute[];
   readonly compatibilityDate?: string;
 }

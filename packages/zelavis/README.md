@@ -14,10 +14,11 @@ Lower-level packages such as `zelavis/core`, `zelavis/app/db`, and
 `zelavis/app/identity` remain independently useful primitives.
 
 `zelavis/core` owns reusable Fabric, workload, Agent, service, routing, and
-access primitives. The bundled `zelavis/platform` service grants those primitives
-Platform authority and owns the Server dashboard surface. The bundled
-`zelavis/marketplace` and `@zelavis/ui` services add the product Marketplace
-and dashboard. This assembly, plus official Project recipes such as
+access primitives. The Platform composes them into native subsystems (the
+Server Control Plane, Identity, Database, Fabric) with Platform authority; those
+mount as endpoint groups, not services. The bundled `@zelavis/marketplace`,
+`@zelavis/auth` and `@zelavis/ui` packages add the product Marketplace, Auth
+settings and dashboard, which owns the Server navigation. This assembly, plus official Project recipes such as
 `zelavis/app`, is what makes the reusable server framework the Zelavis
 Platform OS.
 
@@ -185,7 +186,7 @@ a 30-second admission deadline (`admissionTimeoutMs`), and a package that
 misses it is refused and sealed so later registrations throw. Without async
 context propagation, loads stay serialized with no deadline. Service setup
 hooks each have a 60-second deadline (`setupTimeoutMs`); a timeout fails
-composition naming the service and refuses its later `addService` calls.
+composition naming the service and refuses its later `addEndpointGroup` calls.
 
 The current native driver is still intended for trusted applications on local
 or small self-hosted installations. Its capability report does not claim
@@ -365,6 +366,7 @@ Use `Zelavis` for application and runtime code:
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/runtimes/node";
+import { effectKeyValueStoreLayer } from "zelavis/db";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
@@ -450,13 +452,13 @@ Service setup receives standard JavaScript data only:
 - mounted `rootPath`
 - API path information
 - platform summary (`presets`, resource availability, metadata)
-- already collected runtime services plus `addService(...)`
+- already collected endpoint groups plus `addEndpointGroup(...)`
 
 That keeps service setup runtime-neutral while still giving services enough
-context to register extra runtime routes.
+context to mount extra runtime routes. A service never creates other services.
 
 The lower-level `zelavis(...)` function owns internal runtime controls such as
-direct `runtimeServices` or path/mount overrides. Public application examples
+path/mount overrides. Public application examples
 should use `new Zelavis(...)`.
 
 ## Usage
@@ -483,7 +485,7 @@ const response = await zv.fetch(
 );
 ```
 
-`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, root path, service registry state, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, root path, service registry state, and error handling. Internal runtime knobs like path overrides stay on the lower-level `zelavis(...)` function.
 
 That split is intentional:
 
@@ -508,7 +510,36 @@ await tenantDb.documents.update({
   data: { published: true },
   mode: "merge",
 });
+
+// Key/value is another lens over those same collection records: namespace is
+// the collection, key is the document id, and value is the document payload.
+const posts = tenantDb.kv.namespace("posts");
+await posts.set("welcome", { title: "Welcome", published: true });
+const welcome = await posts.get("welcome");
+
+// Effect applications can provide the standard persistence service over the
+// same tenant-scoped data without making Effect's unstable API Zelavis's API.
+const cacheLayer = effectKeyValueStoreLayer(tenantDb.kv.namespace("cache"));
 ```
+
+KV writes share document events, optimistic versions, atomic batches and every
+declared search, column, measure, graph, spatial and vector projection. They do
+not create a second KV database beside the multimodel store. Create the backing
+collection with `documents.createCollection` before using the namespace.
+Scans are lexicographic and support prefix, lower/upper bounds, direction and
+opaque continuation. Sets may carry `ttlMs` or `expiresAt`; observing an expired
+entry performs a version-checked document delete, so every projection and the
+change feed see the same removal. `namespace.changes()` reads that event-backed
+feed, and `namespace.schema(codec)` adds Effect Schema types without changing
+the stored JSON object contract. Effect byte values remain visible to document
+readers as an explicit base64 envelope.
+
+`documents.modalities({ collection })` makes the multimodal contract
+inspectable. Document, KV, events and scalar columns are always ready. Search,
+measures, graph, spatial and vector report `requires-declaration` until the
+collection defines the semantics needed to interpret its fields; Zelavis does
+not pretend an arbitrary string is searchable text or an arbitrary numeric
+array is an embedding.
 
 Database administration stays logical too. `zv.db.systemViews` exposes
 collections, events, schemas, projections, and time-series definitions without

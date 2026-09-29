@@ -284,7 +284,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
   );
   const message = await messageResponse.json();
   assert.equal(messageResponse.status, 201);
-  assert.equal(message.assistantMessage.actions[0].to, "/resources");
+  assert.equal(message.assistantMessage.actions[0].to, "/server/resources");
 
   const listResponse = await zv.fetch(
     new Request(
@@ -337,7 +337,7 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     const first = await firstAdapter.resolve({});
     const systemStore = first.resources?.systemStore;
     const appService = first.serviceRegistry?.catalog?.find(
-      (entry) => entry.service.name === "zelavis/app",
+      (entry) => entry.service.name === "@zelavis/app",
     );
     const wordpressService = first.serviceRegistry?.catalog?.find(
       (entry) => entry.service.name === "zelavis/wordpress",
@@ -373,12 +373,12 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.projectRecipes[0].name, "zelavis/app");
+    assert.equal(body.projectRecipes[0].name, "@zelavis/app");
     assert.equal(body.projectRecipes[0].source, "official");
     assert.deepEqual(body.projectRecipes[0].runtimeKinds, ["native"]);
     assert.deepEqual(
       body.projectRecipes.map((recipe) => recipe.name),
-      ["zelavis/app", "zelavis/wordpress"],
+      ["@zelavis/app", "zelavis/wordpress"],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -390,12 +390,12 @@ test("Project manager preserves an older Zelavis App release lock when the Platf
   const prepared = new Set();
   const appService = {
     service: {
-      name: "zelavis/app",
+      name: "@zelavis/app",
       kind: "app",
       version: "1.0.1-alpha.2",
       marketplace: { title: "Zelavis App" },
     },
-    specifier: "zelavis/app",
+    specifier: "@zelavis/app",
     status: "installed",
     source: "official",
   };
@@ -420,8 +420,8 @@ test("Project manager preserves an older Zelavis App release lock when the Platf
     }),
     async prepare(project, app) {
       assert.equal(project.id, "older-app");
-      assert.equal(app.name, "zelavis/app");
-      assert.equal(app.specifier, "zelavis/app");
+      assert.equal(app.name, "@zelavis/app");
+      assert.equal(app.specifier, "@zelavis/app");
       assert.equal(app.version, "0.9.0");
       prepared.add(project.id);
     },
@@ -450,11 +450,12 @@ test("Project manager preserves an older Zelavis App release lock when the Platf
     id: "older-app",
     name: "Older App",
     kind: "zelavis",
-    app: {
-      name: "zelavis/app",
+    recipe: {
+      name: "@zelavis/app",
       title: "Zelavis App",
+      runtimeKinds: ["native"],
       version: "0.9.0",
-      specifier: "zelavis/app",
+      specifier: "@zelavis/app",
     },
     desiredState: "stopped",
     runtime: {
@@ -475,144 +476,12 @@ test("Project manager preserves an older Zelavis App release lock when the Platf
   const stored = (await store.get("projects", "older-app")).value;
 
   assert.equal(project.runtime.status, "running");
-  assert.equal(stored.recipe.name, "zelavis/app");
-  assert.equal(stored.recipe.specifier, "zelavis/app");
+  assert.equal(stored.recipe.name, "@zelavis/app");
+  assert.equal(stored.recipe.specifier, "@zelavis/app");
   assert.equal(stored.recipe.version, "0.9.0");
   assert.deepEqual(stored.recipe.runtimeKinds, ["native"]);
   assert.equal(stored.app, undefined);
   assert.equal(stored.runtimeKind, "native");
-});
-
-test("Project manager repairs the retired official App package lock without changing its version", async () => {
-  const store = createMemorySystemStore();
-  let preparedRecipe;
-  const appService = {
-    service: {
-      name: "zelavis/app",
-      kind: "app",
-      version: "1.0.1-alpha.2",
-      marketplace: { title: "Zelavis App" },
-    },
-    specifier: "zelavis/app",
-    status: "installed",
-    source: "official",
-  };
-  const runtime = {
-    name: "repair-runtime",
-    capabilities: () => ({
-      independentRuntimeVersion: false,
-      movable: false,
-      liveMigration: false,
-      secureIsolation: false,
-      resourceLimits: false,
-      persistentFilesystem: true,
-      statelessRuntimeReplicas: false,
-      managedStorage: true,
-      managedDatabase: true,
-      databaseReplication: false,
-      tenantPlacement: false,
-      databaseSharding: false,
-      runtimeOwnership: "platform-process",
-      survivesControlPlaneRestart: false,
-      description: "Repair test runtime",
-    }),
-    async prepare(_project, recipe) {
-      preparedRecipe = recipe;
-    },
-    async start() {
-      return { status: "running", url: "http://127.0.0.1:49152" };
-    },
-    async stop() {
-      return { status: "stopped" };
-    },
-    async status() {
-      return { status: "stopped" };
-    },
-    async logs() {
-      return [];
-    },
-    async destroy() {},
-    async close() {},
-  };
-
-  await store.set("projects", "legacy-app", {
-    id: "legacy-app",
-    name: "Legacy App",
-    kind: "zelavis",
-    app: {
-      name: "@zelavis/app",
-      title: "Zelavis App",
-      version: "0.9.0",
-      specifier: "@zelavis/app",
-    },
-    desiredState: "stopped",
-    runtime: { driver: "repair-runtime", status: "failed" },
-    createdAt: "2026-08-23T08:15:14.633Z",
-    updatedAt: "2026-08-23T08:15:14.633Z",
-  });
-
-  const manager = await createProjectManager({
-    store,
-    projectRecipes: [appService],
-    runtime,
-  });
-  const project = await manager.start("legacy-app");
-
-  assert.deepEqual(project.recipe, {
-    name: "zelavis/app",
-    title: "Zelavis App",
-    version: "0.9.0",
-    specifier: "zelavis/app",
-    runtimeKinds: ["native"],
-  });
-  assert.deepEqual(preparedRecipe, project.recipe);
-  assert.deepEqual((await store.get("projects", "legacy-app")).value.recipe, project.recipe);
-  assert.equal((await store.get("projects", "legacy-app")).value.app, undefined);
-});
-
-test("Project manager accepts both zelavis/app and @zelavis/app as recipe specifiers", async () => {
-  const store = createMemorySystemStore();
-  const appService = {
-    service: {
-      name: "zelavis/app",
-      kind: "app",
-      version: "1.0.1-alpha.2",
-      marketplace: { title: "Zelavis App" },
-    },
-    specifier: "@zelavis/app",
-    status: "installed",
-    source: "official",
-  };
-  const runtime = {
-    name: "recipe-spec-runtime",
-    capabilities: () => ({
-      persistentFilesystem: true,
-      managedStorage: true,
-      managedDatabase: true,
-      runtimeOwnership: "platform-process",
-    }),
-    async prepare() {},
-    async start() { return { status: "running", url: "http://127.0.0.1:49152" }; },
-    async stop() { return { status: "stopped" }; },
-    async status() { return { status: "stopped" }; },
-    async logs() { return []; },
-    async destroy() {},
-    async close() {},
-  };
-
-  const manager = await createProjectManager({
-    store,
-    projectRecipes: [appService],
-    runtime,
-  });
-
-  const proj1 = await manager.create({ name: "App One", recipeName: "zelavis/app" });
-  assert.equal(proj1.recipe.name, "zelavis/app");
-  assert.equal(proj1.kind, "zelavis");
-
-  const proj2 = await manager.create({ name: "App Two", recipeName: "@zelavis/app" });
-  assert.equal(proj2.recipe.name, "zelavis/app");
-  assert.equal(proj2.kind, "zelavis");
 });
 
 test("Project startup reconciliation is bounded and closes through the runtime driver", async () => {
@@ -624,12 +493,12 @@ test("Project startup reconciliation is bounded and closes through the runtime d
   let closeCalls = 0;
   const appService = {
     service: {
-      name: "zelavis/app",
+      name: "@zelavis/app",
       kind: "app",
       version: "1.0.1-alpha.2",
       marketplace: { title: "Zelavis App" },
     },
-    specifier: "zelavis/app",
+    specifier: "@zelavis/app",
     status: "installed",
     source: "official",
   };
@@ -689,10 +558,10 @@ test("Project startup reconciliation is bounded and closes through the runtime d
       name: id,
       kind: "zelavis",
       recipe: {
-        name: "zelavis/app",
+        name: "@zelavis/app",
         title: "Zelavis App",
         version: "1.0.1-alpha.2",
-        specifier: "zelavis/app",
+        specifier: "@zelavis/app",
       },
       desiredState: "running",
       runtime: { driver: runtime.name, status: "stopped" },
@@ -722,12 +591,12 @@ test("Project deletion persists progress and resumes unfinished cleanup after re
   let destroyCalls = 0;
   const appService = {
     service: {
-      name: "zelavis/app",
+      name: "@zelavis/app",
       kind: "app",
       version: "1.0.1-alpha.2",
       marketplace: { title: "Zelavis App" },
     },
-    specifier: "zelavis/app",
+    specifier: "@zelavis/app",
     status: "installed",
     source: "official",
   };
@@ -858,7 +727,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       body: JSON.stringify({
         id: "docker-is-not-enabled",
         name: "Docker Is Not Enabled",
-        recipeName: "zelavis/app",
+        recipeName: "@zelavis/app",
         runtimeKind: "docker",
       }),
     });
@@ -887,12 +756,12 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       const response = await runtimeRequest("/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, name, recipeName: "zelavis/app" }),
+        body: JSON.stringify({ id, name, recipeName: "@zelavis/app" }),
       });
       const body = await response.json();
 
       assert.equal(response.status, 201, JSON.stringify(body));
-      assert.equal(body.project.recipe.name, "zelavis/app");
+      assert.equal(body.project.recipe.name, "@zelavis/app");
       assert.equal(body.project.runtime.status, "running");
       assert.match(body.project.runtime.url, /^http:\/\/127\.0\.0\.1:\d+$/);
       projectRuntimeUrls.set(id, body.project.runtime.url);
@@ -906,16 +775,16 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     assert.ok(
       !projectConfig.services.some((service) => service.name === "@zelavis/ui"),
     );
-    assert.equal(
-      projectConfig.services.find((service) => service.name === "@zelavis/db")
-        ?.menu?.title,
-      "Database",
-    );
-    assert.equal(
-      projectConfig.services.find(
-        (service) => service.name === "@zelavis/workloads",
-      )?.menu?.title,
-      "Workloads",
+    // Database, Identity and Workloads are native subsystems of the Project
+    // runtime: advertised as capabilities, never listed as services. The
+    // Platform dashboard owns the menus that render them.
+    assert.equal(projectConfig.capabilities.database.available, true);
+    assert.equal(projectConfig.capabilities.identity.available, true);
+    assert.equal(projectConfig.capabilities.workloads.available, true);
+    assert.ok(
+      !projectConfig.services.some((service) =>
+        ["@zelavis/db", "@zelavis/workloads", "zelavis/identity"].includes(service.name)
+      ),
     );
 
     const proxiedAccounts = await runtimeRequest(

@@ -1,7 +1,7 @@
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|create-collection|drop-collection|get|insert|update|delete|query|page|write> --project ID [collection] [id] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|modalities|create-collection|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear> --project ID [collection-or-namespace] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -25,6 +25,12 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
   let idempotencyKey: string | undefined;
   let limit: number | undefined;
   let expectedVersion: number | undefined;
+  let prefix: string | undefined;
+  let lower: string | undefined;
+  let upper: string | undefined;
+  let direction: "asc" | "desc" | undefined;
+  let expiresAt: string | undefined;
+  let ttlMs: number | undefined;
   let json = false;
 
   const parseJson = (flag: string, value: string): unknown => {
@@ -45,7 +51,8 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     const known = [
       "--url", "--token", "--project", "--data", "--where", "--order",
       "--operations", "--limit", "--after", "--mode", "--expected-version",
-      "--idempotency-key",
+      "--idempotency-key", "--prefix", "--lower", "--upper", "--direction",
+      "--expires-at", "--ttl-ms",
     ];
     if (!known.includes(flag)) throw new Error(`Unknown data option "${arg}".`);
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -55,6 +62,14 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     if (flag === "--project") projectId = value;
     if (flag === "--after") after = value;
     if (flag === "--idempotency-key") idempotencyKey = value;
+    if (flag === "--prefix") prefix = value;
+    if (flag === "--lower") lower = value;
+    if (flag === "--upper") upper = value;
+    if (flag === "--expires-at") expiresAt = value;
+    if (flag === "--direction") {
+      if (value !== "asc" && value !== "desc") throw new Error("--direction must be asc or desc.");
+      direction = value;
+    }
     if (flag === "--mode") {
       if (value !== "merge" && value !== "replace") throw new Error("--mode must be merge or replace.");
       mode = value;
@@ -70,6 +85,10 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     if (flag === "--expected-version") {
       expectedVersion = Number(value);
       if (!Number.isSafeInteger(expectedVersion)) throw new Error("--expected-version requires an integer.");
+    }
+    if (flag === "--ttl-ms") {
+      ttlMs = Number(value);
+      if (!Number.isSafeInteger(ttlMs) || ttlMs < 0) throw new Error("--ttl-ms requires a non-negative integer.");
     }
   }
 
@@ -115,6 +134,14 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     print({ collections }, () =>
       collections.map((entry) => `${entry.name}\t${entry.surface ?? "database"}`).join("\n")
       || "No collections.");
+    return;
+  }
+  if (action === "modalities") {
+    const modalities = await api.collections.modalities(requireCollection());
+    print({ modalities }, () => Object.entries(modalities)
+      .filter(([name]) => name !== "collection")
+      .map(([name, state]) => `${name}\t${(state as { status: string }).status}`)
+      .join("\n"));
     return;
   }
   if (action === "create-collection") {
@@ -193,6 +220,85 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
           ? `Deleted\t${entry.collection}\t${entry.id}`
           : `${entry._tag}\t${entry.document.collection}\t${describe(entry.document)}`,
       ).join("\n") || "Nothing written.");
+    return;
+  }
+  if (action === "kv-get") {
+    const entry = await api.kv.get(requireCollection(), requireDocumentId());
+    if (!entry) {
+      print({ entry: null }, () => "Key not found.");
+      process.exitCode = 1;
+      return;
+    }
+    print({ entry }, () => `${entry.key}\tv${entry.version}\t${JSON.stringify(entry.value)}`);
+    return;
+  }
+  if (action === "kv-set") {
+    const entry = await api.kv.set(requireCollection(), requireDocumentId(), requireData(), {
+      ...keyed,
+      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      ...(ttlMs !== undefined ? { ttlMs } : {}),
+    });
+    print({ entry }, () => `Stored ${entry.key}\tv${entry.version}.`);
+    return;
+  }
+  if (action === "kv-delete") {
+    const deleted = await api.kv.remove(requireCollection(), requireDocumentId(), {
+      ...keyed,
+      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+    });
+    print({ deleted }, () => deleted ? "Deleted." : "No such key.");
+    if (!deleted) process.exitCode = 1;
+    return;
+  }
+  if (action === "kv-scan") {
+    const page = await api.kv.scan(requireCollection(), {
+      ...(prefix !== undefined ? { prefix } : {}),
+      ...(lower !== undefined ? { lower } : {}),
+      ...(upper !== undefined ? { upper } : {}),
+      ...(direction !== undefined ? { direction } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+      ...(after !== undefined ? { after } : {}),
+    });
+    print(page, () => [
+      ...page.entries.map((entry) => `${entry.key}\tv${entry.version}\t${JSON.stringify(entry.value)}`),
+      ...(page.next ? [`next\t${page.next}`] : []),
+    ].join("\n") || "No keys.");
+    return;
+  }
+  if (action === "kv-changes") {
+    const changes = await api.kv.changes(requireCollection(), {
+      ...(limit !== undefined ? { limit } : {}),
+      ...(after !== undefined ? { after } : {}),
+    });
+    print({ changes }, () => changes.map((change) =>
+      `${change.type}\t${change.key}\tv${change.revision}\t${change.cursor}`,
+    ).join("\n") || "No changes.");
+    return;
+  }
+  if (action === "kv-write") {
+    if (!Array.isArray(operations)) {
+      throw new Error("data kv-write requires --operations with a JSON list of changes.");
+    }
+    const written = await api.kv.write(requireCollection(), {
+      ...keyed,
+      operations: operations as Parameters<typeof api.kv.write>[1]["operations"],
+    });
+    print({ written }, () => written.map((entry) =>
+      "deleted" in entry
+        ? `${entry.deleted ? "Deleted" : "Missing"}\t${entry.key}`
+        : `Stored\t${entry.key}\tv${entry.version}`,
+    ).join("\n"));
+    return;
+  }
+  if (action === "kv-size") {
+    const size = await api.kv.size(requireCollection());
+    print({ size }, () => String(size));
+    return;
+  }
+  if (action === "kv-clear") {
+    const removed = await api.kv.clear(requireCollection());
+    print({ removed }, () => `Removed ${removed} keys.`);
     return;
   }
   throw new Error(`Unknown data command "${action}". ${usage}`);

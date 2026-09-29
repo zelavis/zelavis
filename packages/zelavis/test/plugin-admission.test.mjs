@@ -97,7 +97,7 @@ test("admission deadline must be a positive integer", async () => {
   );
 });
 
-test("a setup hook that never finishes fails composition by name and cannot add services later", async () => {
+test("a setup hook that never finishes fails composition by name and cannot add endpoint groups later", async () => {
   const { activateServiceRegistry } = await import("../dist/service.js");
   let lateAdd;
   let resume;
@@ -105,9 +105,9 @@ test("a setup hook that never finishes fails composition by name and cannot add 
   const entry = (name, setup) => ({ service: { name, kind: "plugin", setup }, status: "installed" });
   await assert.rejects(
     activateServiceRegistry(
-      [entry("@setup/stuck", async ({ addService }) => {
+      [entry("@setup/stuck", async ({ addEndpointGroup }) => {
         await resumed;
-        try { addService({ name: "@setup/late", routes: [] }); lateAdd = "added"; }
+        try { addEndpointGroup({ id: "late", context: {}, origin: { type: "service", serviceName: "@setup/stuck" } }); lateAdd = "added"; }
         catch (error) { lateAdd = error.message; }
       })],
       {},
@@ -117,12 +117,13 @@ test("a setup hook that never finishes fails composition by name and cannot add 
   );
   resume();
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.match(lateAdd, /can no longer add services/);
+  assert.match(lateAdd, /can no longer add endpoint groups/);
 
   const fast = await activateServiceRegistry(
-    [entry("@setup/fast", async ({ addService }) => { addService({ name: "@setup/child", routes: [] }); })],
+    [entry("@setup/fast", async ({ addEndpointGroup }) => { addEndpointGroup({ id: "child", context: {}, origin: { type: "service", serviceName: "@setup/fast" } }); })],
     {},
     { setupTimeoutMs: 1_000 },
   );
-  assert.deepEqual(fast.services.map((service) => service.name), ["@setup/child"]);
+  assert.deepEqual(fast.services.map((service) => service.name), ["@setup/fast"]);
+  assert.deepEqual(fast.endpointGroups.map((group) => group.id), ["child"]);
 });

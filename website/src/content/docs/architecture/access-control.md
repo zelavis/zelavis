@@ -127,10 +127,10 @@ The module should not create a separate customer permission system. It should
 create customers, subscriptions, packages, and grants that feed the same core
 principal model.
 
-Access itself is contributed through the normal service menu API by the
-product-specific `zelavis/platform` service. It is implemented with the reusable
-access contracts from `zelavis/core`. Its menu uses the `platform` surface, which is
-reserved for bundled or statically trusted system services that belong in the
+Access itself is a native Platform capability, implemented with the reusable
+access contracts from `zelavis/core`. Its dashboard navigation is contributed by
+`@zelavis/ui` through the normal service menu API on the `platform` surface,
+which is reserved for bundled or statically trusted system services that belong in the
 global `/zelavis` management shell. Runtime-installed marketplace plugins still
 mount under Extensions.
 

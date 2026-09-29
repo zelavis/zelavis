@@ -16,7 +16,6 @@ import { openTemporaryDatabase } from "./_database.mjs";
 const routeOf = (service, id) => {
   const routes = [
     ...service.api.v1,
-    ...service.services.flatMap((nested) => nested.api.v1),
   ];
   const found = routes.find((route) => route.id === id);
   assert.ok(found, `route ${id} should exist`);
@@ -130,7 +129,6 @@ test("every database route states the authority it requires", () => {
   const service = defineDatabaseService({ forTenant: () => ({}) });
   const routes = [
     ...service.api.v1,
-    ...service.services.flatMap((nested) => nested.api.v1),
   ];
   const unguarded = routes.filter((route) => !route.access);
   assert.deepEqual(

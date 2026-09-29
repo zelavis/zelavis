@@ -82,20 +82,15 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   const payload = await response.json();
   assert.equal(payload.rootPath, "/zelavis");
   assert.equal(payload.api.basePath, "/zelavis/api/v1");
+  // Only package-backed services are listed. The Platform's native subsystems
+  // are advertised as capabilities instead.
   assert.deepEqual(
     payload.services.map((service) => service.name),
-    [
-      "@zelavis/ui",
-      "zelavis/platform",
-      "@zelavis/marketplace",
-      "@zelavis/auth",
-      "zelavis/fabric",
-      "@zelavis/db",
-      "zelavis/identity",
-      "@zelavis/frontend",
-      "@zelavis/workloads",
-    ],
+    ["@zelavis/ui"],
   );
+  assert.equal(payload.capabilities.server.available, true);
+  assert.equal(payload.capabilities.database.available, true);
+  assert.equal(payload.capabilities.identity.available, true);
   assert.deepEqual(payload.serviceRegistry, []);
 });
 
@@ -108,18 +103,19 @@ test("zelavis includes core services by default", async (t) => {
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
-  assert.equal(runtime.services["zelavis/platform"].name, "zelavis/platform");
-  assert.equal(
-    runtime.services["@zelavis/marketplace"].name,
-    "@zelavis/marketplace",
-  );
-  assert.equal(
-    runtime.services["zelavis/fabric"].name,
+  // Native subsystems mount as endpoint groups, never as services.
+  for (const pseudoService of [
+    "zelavis/platform",
     "zelavis/fabric",
-  );
-  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
-  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
+    "zelavis/identity",
+    "@zelavis/db",
+    "@zelavis/frontend",
+  ]) {
+    assert.equal(runtime.services[pseudoService], undefined, pseudoService);
+  }
+  for (const group of ["platform.control-plane", "fabric", "identity", "database"]) {
+    assert.ok(runtime.endpointGroups[group], `${group} endpoint group`);
+  }
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis"));
   // The dashboard's view+asset+fallback used to register one route per
@@ -226,7 +222,7 @@ test("zelavis includes core services by default", async (t) => {
     (route) => route.fullPath === "/zelavis/api/v1/runtime/config",
   );
   const configResponse = await configRoute.route.handler({
-    service: configRoute.service.service,
+    service: configRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: undefined,
@@ -239,17 +235,7 @@ test("zelavis includes core services by default", async (t) => {
   assert.equal(configResponse.body.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     configResponse.body.services.map((service) => service.name),
-    [
-      "@zelavis/ui",
-      "zelavis/platform",
-      "@zelavis/marketplace",
-      "@zelavis/auth",
-      "zelavis/fabric",
-      "@zelavis/db",
-      "zelavis/identity",
-      "@zelavis/frontend",
-      "@zelavis/workloads",
-    ],
+    ["@zelavis/ui"],
   );
   assert.deepEqual(configResponse.body.serviceRegistry, []);
   assert.deepEqual(configResponse.body.runtime, {
@@ -263,7 +249,7 @@ test("zelavis includes core services by default", async (t) => {
       route.route.method === "GET",
   );
   const pluginsResponse = await pluginsRoute.route.handler({
-    service: pluginsRoute.service.service,
+    service: pluginsRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: undefined,
@@ -280,7 +266,7 @@ test("zelavis includes core services by default", async (t) => {
       route.route.method === "GET",
   );
   const dashboardSettingsResponse = await dashboardSettingsRoute.route.handler({
-    service: dashboardSettingsRoute.service.service,
+    service: dashboardSettingsRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: undefined,
@@ -313,7 +299,7 @@ test("zelavis includes core services by default", async (t) => {
       route.route.method === "PATCH",
   );
   const updateResponse = await updateRoute.route.handler({
-    service: updateRoute.service.service,
+    service: updateRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: {
@@ -360,7 +346,7 @@ test("zelavis includes core services by default", async (t) => {
   });
 
   const invalidUpdateResponse = await updateRoute.route.handler({
-    service: updateRoute.service.service,
+    service: updateRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: {
@@ -374,7 +360,7 @@ test("zelavis includes core services by default", async (t) => {
   assert.match(invalidUpdateResponse.body.error, /Theme must be/);
 
   const invalidRuntimeEngineResponse = await updateRoute.route.handler({
-    service: updateRoute.service.service,
+    service: updateRoute.endpointGroup.context,
     params: {},
     query: new URLSearchParams(),
     body: {
@@ -594,7 +580,9 @@ test("service registry install state controls service activation on boot", async
     config.serviceRegistry[0].menu.page.src,
     "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dashboard/catalog.html",
   );
-  assert.ok(config.services.some((service) => service.name === "catalog"));
+  // One package, one identity: its endpoint group is not a second service.
+  assert.ok(config.services.some((service) => service.name === "@example/catalog"));
+  assert.ok(!config.services.some((service) => service.name === "catalog"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
@@ -821,11 +809,12 @@ test("Zelavis instance recomposes runtime after service activation", async () =>
         },
         setup() {
           return {
-            runtimeServices: [
+            endpointGroups: [
               {
-                name: "runtime-uploaded",
+                id: "runtime-uploaded",
                 basePath: "/runtime-uploaded",
-                service: {},
+                context: {},
+                origin: { type: "service", serviceName: "@example/runtime-uploaded-service" },
                 api: {
                   v1: [
                     {
@@ -916,11 +905,12 @@ test("node adapter resolves uploaded service paths through its service cache imp
           },
           setup() {
             return {
-              runtimeServices: [
+              endpointGroups: [
                 {
-                  name: "node-uploaded",
+                  id: "node-uploaded",
                   basePath: "/node-uploaded",
-                  service: {},
+                  context: {},
+                  origin: { type: "service", serviceName: "@example/node-uploaded-service" },
                   api: {
                     v1: [
                       {
@@ -1119,9 +1109,8 @@ test("zelavis can disable the database core service", async () => {
     },
   });
 
-  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
-  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
-  assert.equal(runtime.services["@zelavis/db"], undefined);
+  assert.ok(runtime.endpointGroups.identity);
+  assert.equal(runtime.endpointGroups.database, undefined);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("database.")),
   );
@@ -1137,9 +1126,8 @@ test("zelavis can disable the auth core service", async (t) => {
   });
   t.after(() => runtime.close());
 
-  assert.equal(runtime.services["zelavis/identity"], undefined);
-  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
+  assert.equal(runtime.endpointGroups.identity, undefined);
+  assert.ok(runtime.endpointGroups.database);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("auth.")),
   );
@@ -1160,7 +1148,7 @@ test("the frontend cannot be switched off in code", async () => {
       new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
     assert.equal(config.status, 200);
-    assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
+    assert.ok(runtime.endpointGroups.identity);
   }
 
   assert.match(await (await withFrontend.fetch(
@@ -1357,12 +1345,10 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
 
   // The front-door page is always present: having no frontend is a state the
   // installation explains, not one it can be configured out of.
-  assert.deepEqual(Object.keys(runtime.services), [
-    "@zelavis/no-frontend",
-    "zelavis/platform",
-    "@zelavis/marketplace",
-    "zelavis/fabric",
-  ]);
+  assert.deepEqual(Object.keys(runtime.services), []);
+  assert.ok(runtime.endpointGroups["platform.control-plane"]);
+  assert.ok(runtime.endpointGroups["@zelavis/no-frontend"]);
+  assert.ok(runtime.endpointGroups.fabric);
   assert.deepEqual(
     runtime.routes.map((route) => route.route.id).filter(
       (id) => id !== "platform.frontend.missing",

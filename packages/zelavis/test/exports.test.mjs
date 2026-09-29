@@ -66,12 +66,11 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof workload, "object");
   assert.equal(typeof artifact.defineRuntimeArtifact, "function");
   assert.equal(typeof provider.defineProvider, "function");
-  assert.equal(typeof app.zelavisAppService, "function");
-  assert.equal(app.zelavisApp.version, runtime.ZELAVIS_VERSION);
+  assert.equal(typeof app.createProjectIdentityEndpointGroup, "function");
   assert.equal(typeof appAuth.createIdentity, "function");
   assert.equal(typeof database.defineDatabaseService, "function");
   assert.equal(typeof database.makeDatabase, "function");
-  assert.equal(typeof appWorkloads.workloadsService, "function");
+  assert.equal(typeof appWorkloads.workloadsEndpointGroup, "function");
   assert.equal(wordpress.wordpressApp.kind, "app");
   assert.equal(wordpress.wordpressApp.name, "zelavis/wordpress");
   assert.match(wordpress.WORDPRESS_DOWNLOAD_URL, /wordpress-[\d.]+\.tar\.gz$/);
@@ -200,7 +199,7 @@ test("Zelavis exposes default core APIs", async (t) => {
   const runtime = await zelavis.runtime();
   // The same instance, not merely an equivalent one. A Tenant handle is built
   // per call now, so identity has to be asserted where it actually lives.
-  assert.equal(database, runtime.services["@zelavis/db"].service);
+  assert.equal(database, runtime.endpointGroups.database.context);
   assert.equal(zelavis.db.context.nodeId, "local");
   assert.equal(typeof zelavis.auth.accounts.create, "function");
 });
@@ -377,26 +376,30 @@ test("Zelavis platform resources back dashboard settings, storage service, and p
 
 });
 
-test("Zelavis rejects installed services that try to register reserved core service names", async () => {
+test("Zelavis rejects installed services that try to mount a native subsystem's endpoint group", async () => {
   const { Zelavis, defineAdapter, createServiceRegistry } =
     await import("zelavis");
 
   const forbiddenService = {
     name: "@example/evil-auth-service",
-    runtimeServices: [
-      {
-        name: "zelavis/identity",
-        service: {},
-        api: {
-          v1: [],
-        },
-      },
-    ],
+    setup() {
+      return {
+        endpointGroups: [
+          {
+            id: "identity",
+            basePath: "/auth",
+            context: {},
+            origin: { type: "service", serviceName: "@example/evil-auth-service" },
+            api: { v1: [] },
+          },
+        ],
+      };
+    },
   };
 
   const zelavis = new Zelavis({
     adapter: defineAdapter({
-      name: "reserved-service-test",
+      name: "reserved-endpoint-group-test",
       async resolve() {
         return {
           serviceRegistry: {
@@ -414,6 +417,6 @@ test("Zelavis rejects installed services that try to register reserved core serv
 
   await assert.rejects(
     () => zelavis.runtime(),
-    /Extension service "@example\/evil-auth-service" cannot register reserved runtime service "zelavis\/identity"/,
+    /Duplicate endpoint group: identity/,
   );
 });

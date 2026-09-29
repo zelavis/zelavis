@@ -51,7 +51,6 @@ import {
 } from "../core/service/context.js";
 import type {
   ZelavisServerRoute,
-  ZelavisAnyRuntimeServiceInput,
   ZelavisPrincipal,
   ZelavisPrincipalGrant,
 } from "../core/runtime/contracts.js";
@@ -67,7 +66,7 @@ export {
   IdentityDomainError,
   IdentityNotFoundError,
   IdentityValidationError,
-  identityService,
+  identityEndpointGroup,
 } from "../app/identity/index.js";
 // The database is reached through `zelavis/db`, not re-exported here: its
 // store is a host resource that opens files, and an SDK bundle a browser can
@@ -319,6 +318,7 @@ export interface ZelavisClient {
 export interface ZelavisDataClient {
   readonly collections: {
     list(): Promise<readonly ZelavisDataCollection[]>;
+    modalities(collection: string): Promise<ZelavisDataCollectionModalities>;
     create(input: ZelavisDataCollectionCreateInput): Promise<ZelavisDataCollection>;
     exists(collection: string): Promise<boolean>;
     /**
@@ -341,12 +341,102 @@ export interface ZelavisDataClient {
     /** Several changes applied atomically, in the order given. */
     write(input: ZelavisDataWriteInput): Promise<readonly ZelavisDataWritten[]>;
   };
+  /** A collection addressed by document id, over the same payloads and projections. */
+  readonly kv: {
+    get(namespace: string, key: string): Promise<ZelavisDataKeyValueEntry | undefined>;
+    has(namespace: string, key: string): Promise<boolean>;
+    set(
+      namespace: string,
+      key: string,
+      value: Readonly<Record<string, unknown>>,
+      options?: ZelavisDataKeyValueSetOptions,
+    ): Promise<ZelavisDataKeyValueEntry>;
+    remove(
+      namespace: string,
+      key: string,
+      options?: Pick<ZelavisDataKeyValueSetOptions, "expectedVersion" | "idempotencyKey">,
+    ): Promise<boolean>;
+    scan(namespace: string, options?: {
+      readonly prefix?: string;
+      readonly lower?: string;
+      readonly upper?: string;
+      readonly direction?: "asc" | "desc";
+      readonly limit?: number;
+      readonly after?: string;
+    }): Promise<ZelavisDataKeyValuePage>;
+    changes(namespace: string, options?: {
+      readonly after?: string;
+      readonly limit?: number;
+    }): Promise<ReadonlyArray<ZelavisDataKeyValueChange>>;
+    write(namespace: string, input: {
+      readonly operations: ReadonlyArray<ZelavisDataKeyValueWrite>;
+      readonly idempotencyKey?: string;
+    }): Promise<ReadonlyArray<ZelavisDataKeyValueEntry | { readonly key: string; readonly deleted: boolean }>>;
+    size(namespace: string): Promise<number>;
+    clear(namespace: string): Promise<number>;
+  };
+}
+
+export interface ZelavisDataKeyValueEntry {
+  readonly key: string;
+  readonly value: Readonly<Record<string, unknown>>;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly expiresAt?: string;
+}
+
+export interface ZelavisDataKeyValueSetOptions extends ZelavisDataIdempotent {
+  readonly expectedVersion?: number;
+  readonly ifAbsent?: boolean;
+  readonly expiresAt?: string;
+  readonly ttlMs?: number;
+}
+
+export type ZelavisDataKeyValueWrite =
+  | {
+    readonly _tag: "Set";
+    readonly key: string;
+    readonly value: Readonly<Record<string, unknown>>;
+    readonly expectedVersion?: number;
+    readonly ifAbsent?: boolean;
+    readonly expiresAt?: string;
+    readonly ttlMs?: number;
+  }
+  | { readonly _tag: "Remove"; readonly key: string; readonly expectedVersion?: number };
+
+export interface ZelavisDataKeyValuePage {
+  readonly entries: ReadonlyArray<ZelavisDataKeyValueEntry>;
+  readonly next?: string;
+}
+
+export interface ZelavisDataKeyValueChange {
+  readonly cursor: string;
+  readonly eventId: string;
+  readonly key: string;
+  readonly type: "set" | "remove";
+  readonly revision: number;
+  readonly timestamp: string;
+  readonly value?: Readonly<Record<string, unknown>>;
 }
 
 export interface ZelavisDataCollection {
   readonly name: string;
   readonly surface?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface ZelavisDataCollectionModalities {
+  readonly collection: string;
+  readonly document: { readonly status: "ready" };
+  readonly keyValue: { readonly status: "ready"; readonly key: "document.id" };
+  readonly events: { readonly status: "ready" };
+  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" };
+  readonly search: { readonly status: "ready" | "requires-declaration"; readonly fields: readonly string[] };
+  readonly measures: { readonly status: "ready" | "requires-declaration"; readonly fields: readonly string[] };
+  readonly graph: { readonly status: "ready" | "requires-declaration"; readonly edges: readonly string[] };
+  readonly spatial: { readonly status: "ready" | "requires-declaration"; readonly fields: readonly string[] };
+  readonly vector: { readonly status: "ready" | "requires-declaration"; readonly field?: string };
 }
 
 export interface ZelavisDataCollectionCreateInput {
@@ -1026,6 +1116,10 @@ function createDataClient(
         (await json<{ collections: readonly ZelavisDataCollection[] }>(
           dataPath(projectId, "documents/collections"),
         )).collections,
+      modalities: (collection) => json<ZelavisDataCollectionModalities>(dataPath(
+        projectId,
+        `documents/collections/${dataName(collection, "collection name")}/modalities`,
+      )),
       create: (input) => post<ZelavisDataCollection>("documents/collections", input),
       exists: async (collection) =>
         (await json<{ exists: boolean }>(
@@ -1081,6 +1175,55 @@ function createDataClient(
         )).deleted,
       write: async (input) =>
         (await post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)).written,
+    },
+    kv: {
+      get: async (namespace, key) => {
+        try {
+          return await json<ZelavisDataKeyValueEntry>(dataPath(
+            projectId,
+            `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
+          ));
+        } catch (error) {
+          if (error instanceof ZelavisClientHttpError && error.status === 404) return undefined;
+          throw error;
+        }
+      },
+      has: async (namespace, key) =>
+        (await json<{ exists: boolean }>(dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}/exists`,
+        ))).exists,
+      set: (namespace, key, value, options = {}) =>
+        json<ZelavisDataKeyValueEntry>(dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
+        ), { method: "PUT", body: { value, ...options } }),
+      remove: async (namespace, key, options = {}) =>
+        (await json<{ deleted: boolean }>(dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
+        ), { method: "DELETE", body: options })).deleted,
+      scan: (namespace, options = {}) =>
+        post<ZelavisDataKeyValuePage>(`kv/${dataName(namespace, "KV namespace")}/scan`, options),
+      changes: async (namespace, options = {}) =>
+        (await post<{ changes: ReadonlyArray<ZelavisDataKeyValueChange> }>(
+          `kv/${dataName(namespace, "KV namespace")}/changes`,
+          options,
+        )).changes,
+      write: async (namespace, input) =>
+        (await post<{
+          written: ReadonlyArray<ZelavisDataKeyValueEntry | { readonly key: string; readonly deleted: boolean }>;
+        }>(`kv/${dataName(namespace, "KV namespace")}/write`, input)).written,
+      size: async (namespace) =>
+        (await json<{ size: number }>(dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}`,
+        ))).size,
+      clear: async (namespace) =>
+        (await json<{ removed: number }>(dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}`,
+        ), { method: "DELETE", body: {} })).removed,
     },
   };
 }
@@ -1156,10 +1299,6 @@ export interface ZelavisEventsApi {
   ): () => void;
 }
 
-export interface ZelavisPluginServicesApi {
-  add(service: ZelavisAnyRuntimeServiceInput): void;
-}
-
 export type { PluginFrontendBehavior, PluginSetupHandler } from "../core/service/context.js";
 
 export interface ZelavisSdk {
@@ -1170,7 +1309,6 @@ export interface ZelavisSdk {
   readonly routes: ZelavisRoutesApi;
   readonly commands: ZelavisCommandsApi;
   readonly events: ZelavisEventsApi;
-  readonly services: ZelavisPluginServicesApi;
   readonly context: () => PluginExecutionContext | undefined;
   readonly createAPI: typeof createAPI;
   readonly frontend: { configure(behavior: PluginFrontendBehavior): void };
@@ -1219,12 +1357,6 @@ export const zelavis: ZelavisSdk = {
         const index = context.events.indexOf(entry);
         if (index >= 0) context.events.splice(index, 1);
       };
-    },
-  },
-  services: {
-    add(service) {
-      const context = requireActivePluginContext("zelavis.services.add");
-      context.services.push(service);
     },
   },
   context: () => getActivePluginContext(),

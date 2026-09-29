@@ -37,6 +37,11 @@ import type {
   ZelavisServicePackageScaffoldInput,
   ZelavisServiceRegistryModuleEntry,
 } from "../index.js";
+import { loadPluginPackage } from "../service.js";
+import type {
+  ZelavisServiceRegistryEntry,
+  ZelavisServiceSetupContext,
+} from "../service.js";
 import { Effect } from "effect";
 import { ZelavisValidationError } from "../platform/shared.js";
 import {
@@ -57,6 +62,8 @@ import type {
   ZelavisServiceManifestResolver,
   ZelavisServicePackageInstaller,
 } from "../index.js";
+import { wordpressApp } from "../wordpress/index.js";
+import type { BundleAsset, BundleScope, BundleStore } from "../bundle-store.js";
 
 // ---------------------------------------------------------------------------
 // Shared service directory helpers
@@ -937,8 +944,11 @@ export function createLocalRuntimeServiceImporter(
     serviceDirectory,
     ...(options.managedDirectories ?? []).map((directory) => resolve(directory)),
   ];
+  // Packages shipped in this distribution's `services/` folder are the host's
+  // own code: the same trust as a bare dependency, and immutable to operators.
   const isManaged = (path: string) =>
-    managedDirectories.some((directory) => isManagedServicePath(path, directory));
+    managedDirectories.some((directory) => isManagedServicePath(path, directory)) ||
+    isBundledServicePath(path);
   const sources = resolveSourcePolicy(options);
 
   const refuse = (kind: string, setting: string): never => {
@@ -1105,11 +1115,174 @@ function indexBundledServices(): Map<string, string> {
   return index;
 }
 
+/** Whether a path lies inside a package shipped in this distribution. */
+export function isBundledServicePath(path: string): boolean {
+  let physical: string;
+  try {
+    physical = realpathSync(path);
+  } catch {
+    return false;
+  }
+  return [...indexBundledServices().values()].some((directory) => {
+    try {
+      return isManagedServicePath(physical, realpathSync(directory));
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Absolute directory of a core service shipped inside this distribution. */
 export function resolveBundledServiceDirectory(
   packageName: string,
 ): string | undefined {
   return indexBundledServices().get(packageName);
+}
+
+/**
+ * Loads a package the host itself selected (bundled, or a recipe artifact it
+ * materialized and verified) through the ordinary package loader. Trust comes
+ * from that host-side selection, never from anything the package exports.
+ */
+export async function loadSystemPackage(
+  manifest: ZelavisPackageManifest & { packageDir: string },
+) {
+  return loadPluginPackage({
+    manifest,
+    packageDir: manifest.packageDir,
+    scope: "system",
+    importer: (entry) => import(pathToFileURL(entry).href),
+  });
+}
+
+export interface BundledServiceCatalogSelection {
+  readonly name: string;
+  readonly status: "installed" | "available";
+  readonly order?: number;
+}
+
+/**
+ * Loads official distribution packages through the ordinary package loader.
+ * Their trust comes from this host-selected immutable source, never an export.
+ */
+export async function loadBundledServiceCatalog(
+  selections: readonly BundledServiceCatalogSelection[],
+): Promise<readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]> {
+  return Promise.all(
+    selections.map(async (selection) => {
+      const manifest = resolveLocalPackageManifest(selection.name);
+      if (!manifest) {
+        throw new Error(
+          `Unable to resolve bundled service manifest for ${selection.name}.`,
+        );
+      }
+
+      const service = await loadSystemPackage(manifest);
+
+      return Object.freeze({
+        service,
+        specifier: selection.name,
+        status: selection.status,
+        source: "official" as const,
+        ...(selection.order === undefined ? {} : { order: selection.order }),
+        manifest,
+      });
+    }),
+  );
+}
+
+/**
+ * The official service catalog every host adapter starts from: the bundled
+ * packages, plus the in-tree WordPress recipe until it ships as a package of
+ * its own under `services/*`.
+ */
+export async function loadOfficialServiceCatalog(): Promise<
+  readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]
+> {
+  const bundled = await loadBundledServiceCatalog([
+    { name: "@zelavis/app", status: "available", order: 0 },
+    { name: "@zelavis/marketplace", status: "installed", order: 10 },
+    { name: "@zelavis/auth", status: "installed", order: 20 },
+  ]);
+
+  return [
+    ...bundled,
+    Object.freeze({
+      service: wordpressApp,
+      specifier: "zelavis/wordpress",
+      status: "available" as const,
+      source: "official" as const,
+      order: 30,
+    }),
+  ];
+}
+
+const BUNDLE_CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".txt": "text/plain; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".map": "application/json; charset=utf-8",
+});
+
+/**
+ * Serves the static bundle of packages that live in a services folder.
+ *
+ * A frontend dropped into a runtime's services folder is already on disk, so
+ * its bundle is read from the package directory instead of being uploaded into
+ * shared file storage. Only the packages this host discovered are served, each
+ * confined to its declared bundle directory; anything else falls through to
+ * `fallback`.
+ */
+export function createPackageDirectoryBundleStore(
+  packageDirectories: ReadonlyMap<string, string>,
+  fallback?: BundleStore,
+): BundleStore {
+  const read = async (scope: BundleScope, path: string): Promise<BundleAsset | undefined> => {
+    const packageDirectory = packageDirectories.get(scope.serviceName);
+    if (!packageDirectory) return fallback?.read(scope, path);
+
+    const bundleRoot = resolve(packageDirectory, scope.bundle);
+    const target = resolve(bundleRoot, path.replace(/^\/+/, ""));
+    if (!isPathWithin(target, bundleRoot)) return undefined;
+
+    try {
+      const physical = realpathSync(target);
+      // A symlink inside the bundle must not lead out of the package.
+      if (!isPathWithin(physical, realpathSync(bundleRoot))) return undefined;
+      if (!(await stat(physical)).isFile()) return undefined;
+      const body = new Uint8Array(await readFile(physical));
+      const extension = physical.slice(physical.lastIndexOf(".")).toLowerCase();
+      return {
+        path,
+        body,
+        size: body.byteLength,
+        contentType: BUNDLE_CONTENT_TYPES[extension] ?? "application/octet-stream",
+      };
+    } catch {
+      return undefined;
+    }
+  };
+
+  return {
+    read,
+    ...(fallback?.deleteProject
+      ? { deleteProject: (projectId: string) => fallback.deleteProject!(projectId) }
+      : {}),
+  };
 }
 
 /** Entry module of a bundled service, from its own `exports` or `main`. */
@@ -1291,6 +1464,11 @@ async function readDirectoryEntries(directory: string): Promise<string[]> {
 async function listProductServicePackages(directory: string): Promise<string[]> {
   const packages: string[] = [];
   for (const name of await readDirectoryEntries(directory)) {
+    // Managed install/upload artifacts are addressed by registry state below
+    // this directory; the directory itself is not a manually dropped package.
+    if (name === "packages") {
+      continue;
+    }
     if (name.startsWith("@")) {
       for (const scoped of await readDirectoryEntries(join(directory, name))) {
         packages.push(join(name, scoped));
@@ -1324,7 +1502,7 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * actually executing, so a folder package always compiles against the same
  * Platform that loaded it rather than some other copy on the machine.
  */
-async function linkPlatformPackage(folder: string): Promise<void> {
+export async function linkPlatformPackage(folder: string): Promise<void> {
   const { mkdir: makeDirectory, symlink, readlink } = await import("node:fs/promises");
   // Four levels up from `dist/adapters/_local-runtime.js` is the package root.
   const platformRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -1368,6 +1546,25 @@ export async function discoverProductServices(
       );
     } catch (error) {
       skip(packageName, error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    // A frontend may be files with no JavaScript entry. It is discovered by its
+    // directory: there is nothing to import, and the package loader serves it
+    // from the manifest alone.
+    if (manifest.zelavis?.kind === "frontend" && manifest.exports === undefined) {
+      if (!isManagedServicePath(packageDirectory, root) ||
+          !isManagedServicePath(join(packageDirectory, "package.json"), packageDirectory)) {
+        skip(packageName, 'its physical source resolves outside the package directory or discovery root.');
+        continue;
+      }
+      discovered.push({
+        specifier: pathToFileURL(realpathSync(packageDirectory)).href,
+        status: "installed",
+        source: "community",
+        packageDir: packageDirectory,
+        manifest: { ...manifest, packageDir: packageDirectory },
+      });
       continue;
     }
 

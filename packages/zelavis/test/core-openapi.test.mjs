@@ -68,7 +68,7 @@ test("generateOpenApiSpec converts routes with spec into OpenAPI paths and opera
         },
         handler: () => ({ status: 200, body: {} }),
       },
-      service: { name: "items", api: {} },
+      endpointGroup: { id: "items", context: {}, origin: { type: "service", serviceName: "items" } },
     },
     {
       fullPath: "/api/v1/internal/health",
@@ -79,7 +79,7 @@ test("generateOpenApiSpec converts routes with spec into OpenAPI paths and opera
         // No spec field — described anyway, and marked as undocumented
         handler: () => ({ status: 200, body: { ok: true } }),
       },
-      service: { name: "internal", api: {} },
+      endpointGroup: { id: "internal", context: {}, origin: { type: "subsystem", subsystem: "internal" } },
     },
   ];
 
