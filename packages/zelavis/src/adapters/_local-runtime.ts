@@ -63,6 +63,8 @@ import type {
   ZelavisServicePackageInstaller,
 } from "../index.js";
 import { wordpressApp } from "../wordpress/index.js";
+import type { ZelavisFileStorage, ZelavisServicePackageInstaller as LocalServicePackageInstaller, ZelavisServiceRegistryOptions } from "../index.js";
+import { createSharedBundleStore } from "../bundle-store.js";
 import type { BundleAsset, BundleScope, BundleStore } from "../bundle-store.js";
 
 // ---------------------------------------------------------------------------
@@ -1611,4 +1613,117 @@ export async function discoverProductServices(
   }
 
   return discovered;
+}
+
+// ---------------------------------------------------------------------------
+// Everything a local host needs to serve services, in one place
+// ---------------------------------------------------------------------------
+
+export type LocalServiceSourceOptions = LocalRuntimeServiceOptions & {
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+  /**
+   * Folder on this server that services are dropped into.
+   *
+   * Defaults to `<dataDirectory>/services`. It lives here rather than in an
+   * option of its own because two options both named for services is how the
+   * folder and the registry drifted apart in the first place.
+   */
+  directory?: string;
+};
+
+export interface LocalServiceSourcesInput {
+  dataDirectory: string;
+  /** The adapter's `services` option; `false` turns every service source off. */
+  services: false | LocalServiceSourceOptions | undefined;
+  isProjectRuntime: boolean;
+  fileStorage?: ZelavisFileStorage;
+}
+
+export interface LocalServiceSources {
+  serviceRegistry?: ZelavisServiceRegistryOptions;
+  servicePackages?: LocalServicePackageInstaller;
+  bundleStore?: BundleStore;
+}
+
+/**
+ * The service sources of one local runtime: the official catalog, packages
+ * dropped into its services folder, installed and uploaded packages, and the
+ * bundle store that serves folder frontends from where they lie.
+ *
+ * Node and Bun both call this, so the two hosts cannot drift apart: what a
+ * Project or the Platform loads from its own `services` folder is the same on
+ * either. Only filesystem and module-loading APIs both hosts provide are used.
+ */
+export async function createLocalServiceSources(
+  input: LocalServiceSourcesInput,
+): Promise<LocalServiceSources> {
+  if (input.services === false) return {};
+
+  const serviceOptions = input.services;
+  const serviceDirectory = join(input.dataDirectory, SERVICES_DIRECTORY);
+  const productServiceDirectory = serviceOptions?.directory
+    ? resolve(serviceOptions.directory)
+    : serviceDirectory;
+
+  // Scanned before composition so the runtime sees dropped-in services the same
+  // way it sees installed ones. Every runtime has its own folder: the
+  // Platform's is `<data>/services`, and a Project's is the `services` folder
+  // of its own `.zelavis` data root, so what a Project installs belongs to that
+  // Project and to no other.
+  const discovered = await discoverProductServices({
+    directory: productServiceDirectory,
+    onSkipped: (name, reason) => {
+      // Reported rather than swallowed: a package that silently fails to load
+      // looks identical to one nobody installed.
+      console.warn(`Zelavis skipped product service "${name}": ${reason}`);
+    },
+  });
+
+  // Static frontends dropped into this runtime's services folder are served
+  // from where they lie. Other bundles keep using the shared store.
+  const folderFrontends = new Map(
+    discovered.flatMap((entry) =>
+      entry.manifest?.zelavis?.kind === "frontend" &&
+      entry.manifest.exports === undefined &&
+      entry.packageDir
+        ? [[entry.manifest.name, entry.packageDir] as const]
+        : [],
+    ),
+  );
+
+  const official = input.isProjectRuntime ? [] : await loadOfficialServiceCatalog();
+
+  return {
+    ...(folderFrontends.size > 0
+      ? {
+          bundleStore: createPackageDirectoryBundleStore(
+            folderFrontends,
+            input.fileStorage
+              ? createSharedBundleStore({ storage: input.fileStorage })
+              : undefined,
+          ),
+        }
+      : {}),
+    serviceRegistry: {
+      catalog: input.isProjectRuntime
+        ? []
+        : [...official, ...(serviceOptions?.catalog ?? [])],
+      discovered,
+      importer: createLocalRuntimeServiceImporter({
+        directory: serviceDirectory,
+        ...(serviceOptions ?? {}),
+        managedDirectories: [
+          productServiceDirectory,
+          ...(serviceOptions?.managedDirectories ?? []),
+        ],
+      }),
+      // Supplied per runtime rather than installed process-globally, so two
+      // embedded runtimes cannot affect each other.
+      manifestResolver: createLocalRuntimeServiceManifestResolver(),
+    },
+    servicePackages: createLocalRuntimeServicePackageInstaller({
+      directory: serviceDirectory,
+      ...(serviceOptions ?? {}),
+    }),
+  };
 }
