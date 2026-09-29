@@ -97,7 +97,7 @@ test("ecommerce still discovers the gateways it lists", async () => {
   // The listing and the discovery must agree: a gateway shown as installed
   // that the plugin cannot see would be a catalogue describing nothing.
   const providers = await runtime.plain({
-    url: "/zelavis/api/v1/commerce/payments/providers",
+    url: "/zelavis/api/v1/plugins/ecommerce/payments/providers",
   });
   assert.equal(providers.status, 200);
   const names = providers.body.providers.map((provider) => provider.name ?? provider);

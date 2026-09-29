@@ -123,7 +123,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   });
 
   const createCustomerResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/customers", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/customers", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -142,7 +142,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(typeof createdCustomer.id, "string");
 
   const createProductResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/products", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -163,7 +163,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(createdProduct.slug, "starter-hoodie");
 
   const listProductsResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/products"),
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products"),
   );
   const listedProducts = await listProductsResponse.json();
 
@@ -172,7 +172,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(listedProducts[0].id, createdProduct.id);
 
   const createOrderResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/orders", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/orders", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -203,7 +203,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(createdOrder.items.length, 1);
 
   const listPaymentProvidersResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/payments/providers"),
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/payments/providers"),
   );
   const paymentProviders = await listPaymentProvidersResponse.json();
 
@@ -241,7 +241,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   });
 
   const persistedProductResponse = await firstRuntime.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/products", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -289,7 +289,7 @@ test("commerce persists customers, products and orders across runtimes", async (
   });
 
   const persistedProductListResponse = await secondRuntime.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/products"),
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/products"),
   );
   const persistedProducts = await persistedProductListResponse.json();
 
@@ -388,9 +388,9 @@ test("a database the plugin cannot recognise stops it starting", async () => {
     api: { version: "v1", basePath: "/zelavis/api/v1" },
     platform: {},
     core: { database },
-    runtimeServices: [],
-    addService() {},
-    addServices() {},
+    endpointGroups: [],
+    addEndpointGroup() {},
+    addEndpointGroups() {},
   });
 
   await assert.rejects(

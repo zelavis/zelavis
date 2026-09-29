@@ -75,7 +75,7 @@ Current collections:
 
 ## Runtime Routes
 
-`ecommercePlugin` registers OpenAPI-documented routes under `/commerce` (accessed via `/zelavis/api/v1/commerce/*`):
+`ecommercePlugin` registers OpenAPI-documented routes under `/commerce` (accessed via `/zelavis/api/v1/plugins/ecommerce/*`):
 
 ### Products
 - `GET /health` — Service health & platform presets

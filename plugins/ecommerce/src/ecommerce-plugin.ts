@@ -1173,23 +1173,12 @@ export const ecommercePlugin = Object.freeze({
           },
     ];
 
-    context.addService({
-      name: "@zelavis/ecommerce",
-      namespace: "ecommerce",
+    context.addEndpointGroup({
+      id: "@zelavis/ecommerce:api",
       basePath: "/plugins/ecommerce",
-      service: commerce,
-      api: {
-        v1: routes,
-      },
-    });
-
-    context.addService({
-      name: "commerce",
-      basePath: "/commerce",
-      service: commerce,
-      api: {
-        v1: routes,
-      },
+      context: commerce,
+      api: { v1: routes },
+      origin: { type: "service", serviceName: "@zelavis/ecommerce" },
     });
   },
 });
