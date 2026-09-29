@@ -946,13 +946,14 @@ those grants, while endpoints remain the authority layer.
   routing, access enforcement, runtime lifecycle, and generic
   Fabric/workload/Agent/runtime-driver machinery. It is exported through
   focused `zelavis/*` subpaths and does not own product menus or root authority.
-- `pnotes/` is the ignored, separate private repository for confidential design
-  notes, evaluations, security reviews, and the implementation roadmap. Never
-  stage or publish its contents in the main repository, and never make public
-  documentation checks or CI depend on those local files.
-- When available, `pnotes/TODO.md` is the maintained private implementation roadmap. Update
-  its Done, Prepared, Next, and Later sections when a core, App-versioning, or
-  Fabric capability changes state; never mark an exported contract as
+- `pnotes/` is the ignored, separate private repository holding one file,
+  `pnotes/TODO.md`: the maintained private roadmap, decisions and open work
+  (design notes, plans, handovers and evidence are condensed into it rather than
+  kept as separate files). Never stage or publish its contents in the main
+  repository, and never make public documentation checks or CI depend on it.
+- When available, update `pnotes/TODO.md` (its checkbox sections, such as
+  "Platform, Fabric and Agents" or "Cleanup list") when a core, App-versioning,
+  or Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.
 - Keep that roadmap current in the same change, never afterwards. A change
   that finishes an item marks it done in its own commit and says what it now

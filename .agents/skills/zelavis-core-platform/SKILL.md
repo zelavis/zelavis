@@ -244,10 +244,10 @@ before editing.
   See AGENTS.md's "JS, HTTP, and CLI parity" rule for the full contract.
 - Do not implement Platform behavior only in UI routes, framework server
   actions, local component state, or dashboard-only helpers.
-- Keep confidential architecture notes, evaluations, security reviews, and the
-  implementation roadmap in the ignored `pnotes/` private repository. Never
-  stage or publish them in the main repository; public checks must work without
-  access to those notes.
+- Keep confidential notes, decisions and the implementation roadmap in the single
+  file `pnotes/TODO.md` of the ignored `pnotes/` private repository. Never stage
+  or publish it in the main repository; public checks must work without access
+  to it.
 - When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
 - Keep `AGENTS.md` as the canonical durable instruction source; do not add
