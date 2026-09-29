@@ -282,7 +282,7 @@ test("the HTTP aggregate and range routes honour tag filters", async (t) => {
       request: undefined,
     });
   const routeOf = (id) =>
-    [...service.api.v1, ...service.services.flatMap((s) => s.api.v1)].find((r) => r.id === id);
+    [...service.api.v1].find((r) => r.id === id);
 
   // Range with tag over HTTP
   const rangeRes = await call(routeOf("database.timeseries.range"), {

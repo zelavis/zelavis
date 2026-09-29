@@ -92,6 +92,50 @@ export interface Collection {
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
 }
 
+export interface CollectionModalities {
+  readonly collection: string;
+  readonly document: { readonly status: "ready" };
+  readonly keyValue: { readonly status: "ready"; readonly key: "document.id" };
+  readonly events: { readonly status: "ready" };
+  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" };
+  readonly search: { readonly status: "ready" | "requires-declaration"; readonly fields: ReadonlyArray<string> };
+  readonly measures: { readonly status: "ready" | "requires-declaration"; readonly fields: ReadonlyArray<string> };
+  readonly graph: { readonly status: "ready" | "requires-declaration"; readonly edges: ReadonlyArray<string> };
+  readonly spatial: { readonly status: "ready" | "requires-declaration"; readonly fields: ReadonlyArray<string> };
+  readonly vector: { readonly status: "ready" | "requires-declaration"; readonly field?: string };
+}
+
+/** An honest capability map: semantic lenses are never reported ready until their interpretation is declared. */
+export const collectionModalities = (collection: Collection): CollectionModalities => ({
+  collection: collection.name,
+  document: { status: "ready" },
+  keyValue: { status: "ready", key: "document.id" },
+  events: { status: "ready" },
+  columns: { status: "ready", fields: "all-json-scalars" },
+  search: {
+    status: collection.analyzer === undefined ? "requires-declaration" : "ready",
+    fields: collection.analyzer?.fields ?? [],
+  },
+  measures: {
+    status: collection.measures === undefined || collection.measures.length === 0
+      ? "requires-declaration" : "ready",
+    fields: collection.measures?.map((measure) => measure.path) ?? [],
+  },
+  graph: {
+    status: collection.edges === undefined || collection.edges.length === 0
+      ? "requires-declaration" : "ready",
+    edges: collection.edges?.map((edge) => edge.name) ?? [],
+  },
+  spatial: {
+    status: collection.spatial === undefined ? "requires-declaration" : "ready",
+    fields: collection.spatial?.fields ?? [],
+  },
+  vector: {
+    status: collection.embedding === undefined ? "requires-declaration" : "ready",
+    ...(collection.embedding === undefined ? {} : { field: collection.embedding.field }),
+  },
+});
+
 /**
  * How a collection's geometry becomes cells, as data rather than as code.
  *
@@ -284,6 +328,8 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: number;
+  /** Optional logical expiry used by models such as KV; deletion is evented when expiry is observed. */
+  readonly expiresAt?: string;
   /** Present when a search query is scored, closest/most relevant first. */
   readonly score?: number;
   /** Present when a spatial near query is evaluated, distance in metres from query point. */
@@ -536,10 +582,24 @@ export interface RelatedFilter {
 /** One change in a batch; see `DocumentsApi.write`. */
 export type DocumentWrite =
   | {
+    /** Insert when absent, replace when present, atomically inside the batch. */
+    readonly _tag: "Upsert";
+    readonly collection: string;
+    readonly id: string;
+    readonly data: JsonObject;
+    readonly expectedVersion?: number;
+    /** `null` clears an earlier expiry; absent preserves it on update. */
+    readonly expiresAt?: string | null;
+    /** Relative expiry resolved only when the idempotent write is first applied. */
+    readonly ttlMs?: number;
+  }
+  | {
     readonly _tag: "Insert";
     readonly collection: string;
     readonly id?: string;
     readonly data: JsonObject;
+    readonly expiresAt?: string;
+    readonly ttlMs?: number;
   }
   | {
     readonly _tag: "Update";
@@ -1637,6 +1697,11 @@ interface PageShape {
 }
 
 export interface DocumentsApi {
+  /** Which logical lenses can interpret this collection right now. */
+  readonly modalities: (input: { readonly collection: string }) => Effect.Effect<
+    CollectionModalities,
+    CollectionNotFound
+  >;
   /**
    * Remove a collection, its documents, and everything derived from them.
    *
@@ -2591,7 +2656,13 @@ export const documentsFor = (
   const applyInsert = (
     txn: Txn,
     pending: Pending,
-    input: { readonly collection: string; readonly id: string; readonly data: JsonObject },
+    input: {
+      readonly collection: string;
+      readonly id: string;
+      readonly data: JsonObject;
+      readonly expiresAt?: string | null;
+      readonly ttlMs?: number;
+    },
     seq: Seq,
   ) =>
     Effect.gen(function* () {
@@ -2608,6 +2679,9 @@ export const documentsFor = (
       const doc: Document = {
         id: input.id, collection: input.collection, data: input.data,
         createdAt: now, updatedAt: now, version: 1,
+        ...(input.ttlMs !== undefined
+          ? { expiresAt: new Date(Date.now() + input.ttlMs).toISOString() }
+          : typeof input.expiresAt === "string" ? { expiresAt: input.expiresAt } : {}),
       };
       yield* documentPut(txn, doc, seq, pending, collection);
       return doc;
@@ -2623,6 +2697,8 @@ export const documentsFor = (
       readonly mode?: "merge" | "replace";
       readonly expectedVersion?: number;
       readonly precondition?: ReadonlyArray<DocumentFilter>;
+      readonly expiresAt?: string | null;
+      readonly ttlMs?: number;
     },
   ) =>
     Effect.gen(function* () {
@@ -2637,6 +2713,13 @@ export const documentsFor = (
       yield* enforceSchema(input.collection, data);
       const next: Document = {
         ...current, data, updatedAt: new Date().toISOString(), version: current.version + 1,
+        ...(input.ttlMs !== undefined
+          ? { expiresAt: new Date(Date.now() + input.ttlMs).toISOString() }
+          : "expiresAt" in input
+          ? input.expiresAt === null || input.expiresAt === undefined
+            ? { expiresAt: undefined }
+            : { expiresAt: input.expiresAt }
+          : {}),
       };
       yield* documentPut(txn, next, at.seq, pending);
       return next;
@@ -3921,6 +4004,7 @@ const generateHighlights = (
     });
 
   return {
+    modalities: (input) => Effect.map(requireCollection(input.collection), collectionModalities),
     createCollection: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
@@ -4784,7 +4868,14 @@ const generateHighlights = (
           operation._tag === "Insert" ? operation.id ?? crypto.randomUUID() : operation.id);
         const seqs: Array<Seq | undefined> = [];
         for (const operation of operations) {
-          seqs.push(operation._tag === "Insert" ? yield* nextSeq : undefined);
+          // An upsert only consumes this allocation when the key is absent.
+          // Gaps are harmless; allocating outside the transaction avoids taking
+          // the serialized writer recursively.
+          seqs.push(
+            operation._tag === "Insert" || operation._tag === "Upsert"
+              ? yield* nextSeq
+              : undefined,
+          );
         }
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
@@ -4797,12 +4888,35 @@ const generateHighlights = (
               if (operation._tag === "Insert") {
                 const document = yield* applyInsert(txn, pending, {
                   collection: operation.collection, id: ids[at]!, data: operation.data,
+                  ...(operation.expiresAt === undefined ? {} : { expiresAt: operation.expiresAt }),
+                  ...(operation.ttlMs === undefined ? {} : { ttlMs: operation.ttlMs }),
                 }, seqs[at]!);
                 written.push({ _tag: "Inserted", document });
                 continue;
               }
               if (operation._tag === "Update") {
                 written.push({ _tag: "Updated", document: yield* applyUpdate(txn, pending, operation) });
+                continue;
+              }
+              if (operation._tag === "Upsert") {
+                const current = yield* currentNamed(pending, operation.collection, operation.id);
+                if (current === undefined || current.document === null) {
+                  if (operation.expectedVersion !== undefined) {
+                    return yield* new DocumentConflict({
+                      collection: operation.collection,
+                      id: operation.id,
+                      reason: `expected version ${operation.expectedVersion}, but the document does not exist`,
+                    });
+                  }
+                  const document = yield* applyInsert(txn, pending, operation, seqs[at]!);
+                  written.push({ _tag: "Inserted", document });
+                } else {
+                  const document = yield* applyUpdate(txn, pending, {
+                    ...operation,
+                    mode: "replace",
+                  });
+                  written.push({ _tag: "Updated", document });
+                }
                 continue;
               }
               written.push({

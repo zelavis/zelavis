@@ -2,6 +2,7 @@ import {
   createMappedJsonErrorResponse,
   type ZelavisPrincipal,
   type ZelavisServerErrorStatusRule,
+  type ZelavisEndpointGroup,
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
@@ -37,6 +38,7 @@ import type {
   TagFilter,
   WindowsInput,
 } from "./time-series.js";
+import type { KeyValueWrite, KvCursor } from "./key-value.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -439,6 +441,9 @@ const BAD_REQUEST_TAGS = new Set([
   "RangeNotEmpty",
   "SchemaViolation",
   "TenantNotEmpty",
+  "InvalidKeyValueExpiration",
+  "KeyValueCursorMismatch",
+  "InvalidKeyValueEncoding",
 ]);
 
 /**
@@ -553,35 +558,13 @@ function databaseErrorResponse(error: unknown, fallback = 500) {
 
 export type DatabaseServiceDefinition = ZelavisRuntimeService<DatabaseRuntimeApi>;
 
-export function defineDatabaseService(
+function defineDatabaseRootService(
   database: DatabaseRuntimeApi,
 ): DatabaseServiceDefinition {
   return {
     name: "@zelavis/db",
     kind: "plugin" as const,
     basePath: "database",
-    menu: {
-      title: "Database",
-      path: "/database",
-      surface: "core",
-      panelLabel: "Database",
-      dynamicItems: {
-        // No Tenant named, so the menu lists every Tenant holding data. This
-        // is the definition a Project-scoped dashboard reads, so pinning one
-        // here made an App's own tables invisible in its own Project.
-        path: "/database/menu/tables",
-        emptyTitle: "No tables yet",
-      },
-      items: [
-        {
-          title: "Create Table",
-          path: "/database/new",
-          pageLabel: "Database",
-          fixed: true,
-          fixedOrder: 1,
-        },
-      ],
-    },
     service: database,
     api: {
       v1: [
@@ -681,12 +664,369 @@ export function defineDatabaseService(
         },
       ],
     },
-    services: [
-      defineDatabaseDocumentsService(database),
-      defineDatabaseSchemasService(database),
-      defineDatabaseTimeSeriesService(database),
-      defineDatabaseMaintenanceService(database),
-    ],
+  };
+}
+
+/**
+ * Embeddable one-service form of the database HTTP API.
+ *
+ * The Platform uses `defineDatabaseEndpointGroups`; this flattened form keeps
+ * the low-level runtime convenient without reintroducing a nested service
+ * graph.
+ */
+export function defineDatabaseService(
+  database: DatabaseRuntimeApi,
+): DatabaseServiceDefinition {
+  const root = defineDatabaseRootService(database);
+  const children = [
+    defineDatabaseDocumentsService(database),
+    defineDatabaseKeyValueService(database),
+    defineDatabaseSchemasService(database),
+    defineDatabaseTimeSeriesService(database),
+    defineDatabaseMaintenanceService(database),
+  ];
+  return {
+    ...root,
+    api: {
+      v1: [
+        ...(root.api?.v1 ?? []),
+        ...children.flatMap((child) =>
+          (child.api?.v1 ?? []).map((route) => ({
+            ...route,
+            path: `/${[child.basePath ?? child.name, route.path]
+              .map((part) => part.replace(/^\/+|\/+$/g, ""))
+              .filter(Boolean)
+              .join("/")}`,
+          })),
+        ),
+      ],
+    },
+  };
+}
+
+/** Native database HTTP surfaces, mounted without creating service identities. */
+export function defineDatabaseEndpointGroups(
+  database: DatabaseRuntimeApi,
+): readonly ZelavisEndpointGroup<DatabaseRuntimeApi>[] {
+  const [root, ...children] = [
+    defineDatabaseRootService(database),
+    defineDatabaseDocumentsService(database),
+    defineDatabaseKeyValueService(database),
+    defineDatabaseSchemasService(database),
+    defineDatabaseTimeSeriesService(database),
+    defineDatabaseMaintenanceService(database),
+  ];
+  const origin = { type: "subsystem", subsystem: "database" } as const;
+
+  return [
+    {
+      id: "database",
+      basePath: root.basePath,
+      api: root.api,
+      context: database,
+      authenticators: root.authenticators,
+      origin,
+    },
+    ...children.map((child) => ({
+      id: `database:${child.name}`,
+      basePath: [root.basePath, child.basePath ?? child.name]
+        .filter(Boolean)
+        .join("/"),
+      api: child.api,
+      context: database,
+      authenticators: child.authenticators,
+      origin,
+    })),
+  ];
+}
+
+/** The HTTP form of the tenant KV lens. */
+export function defineDatabaseKeyValueService(
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
+  return {
+    name: "kv",
+    basePath: "kv",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.kv.get",
+          method: "GET",
+          path: "/:namespace/:key",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "getKeyValue",
+            summary: "Read one key from a collection through its KV lens",
+            tags: ["key-value"],
+            pathParams: {
+              namespace: { type: "string", required: true },
+              key: { type: "string", required: true },
+            },
+            queryParams: { tenantId: { type: "string", required: true } },
+            responses: { 200: { description: "Entry" }, 404: { description: "Missing key" } },
+          },
+          handler: async ({ service, params, query, principal }) => {
+            try {
+              const entry = await service.forTenant(readTenantId(query.get("tenantId"), principal))
+                .kv.get(params.namespace, params.key);
+              return entry === undefined
+                ? { status: 404, body: { error: "Key not found." } }
+                : { body: entry };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.set",
+          method: "PUT",
+          path: "/:namespace/:key",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "setKeyValue",
+            summary: "Insert or replace one key through the shared document store",
+            tags: ["key-value"],
+            pathParams: {
+              namespace: { type: "string", required: true },
+              key: { type: "string", required: true },
+            },
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Stored entry" }, 409: { description: "Version conflict" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenant = tenantOf(service, input, principal);
+              return {
+                body: await tenant.kv.set(params.namespace, params.key, readJsonObject(input.value), {
+                  ...readIdempotencyKey(input),
+                  ...(input.ifAbsent === true ? { ifAbsent: true } : {}),
+                  ...(typeof input.expectedVersion === "number"
+                    ? { expectedVersion: input.expectedVersion }
+                    : {}),
+                  ...(typeof input.expiresAt === "string" ? { expiresAt: input.expiresAt } : {}),
+                  ...(typeof input.ttlMs === "number" ? { ttlMs: input.ttlMs } : {}),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.has",
+          method: "GET",
+          path: "/:namespace/:key/exists",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "hasKeyValue",
+            summary: "Check whether a key exists",
+            tags: ["key-value"],
+            pathParams: {
+              namespace: { type: "string", required: true },
+              key: { type: "string", required: true },
+            },
+            queryParams: { tenantId: { type: "string", required: true } },
+            responses: { 200: { description: "Existence" } },
+          },
+          handler: async ({ service, params, query, principal }) => {
+            try {
+              return {
+                body: {
+                  exists: await service.forTenant(readTenantId(query.get("tenantId"), principal))
+                    .kv.has(params.namespace, params.key),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.remove",
+          method: "DELETE",
+          path: "/:namespace/:key",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "removeKeyValue",
+            summary: "Remove one key",
+            tags: ["key-value"],
+            pathParams: {
+              namespace: { type: "string", required: true },
+              key: { type: "string", required: true },
+            },
+            requestBody: { required: false, schema: { type: "object" } },
+            responses: { 200: { description: "Whether a key was removed" }, 409: { description: "Version conflict" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              return {
+                body: {
+                  deleted: await tenantOf(service, input, principal).kv.remove(
+                    params.namespace,
+                    params.key,
+                    {
+                      ...readIdempotencyKey(input),
+                      ...(typeof input.expectedVersion === "number"
+                        ? { expectedVersion: input.expectedVersion }
+                        : {}),
+                    },
+                  ),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.scan",
+          method: "POST",
+          path: "/:namespace/scan",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "scanKeyValues",
+            summary: "Page through keys in one namespace",
+            tags: ["key-value"],
+            pathParams: { namespace: { type: "string", required: true } },
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Entries and an optional continuation" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              return {
+                body: await tenantOf(service, input, principal).kv.scan(params.namespace, {
+                  ...(typeof input.prefix === "string" ? { prefix: input.prefix } : {}),
+                  ...(typeof input.lower === "string" ? { lower: input.lower } : {}),
+                  ...(typeof input.upper === "string" ? { upper: input.upper } : {}),
+                  ...(input.direction === "asc" || input.direction === "desc"
+                    ? { direction: input.direction }
+                    : {}),
+                  ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+                  ...(typeof input.after === "string" ? { after: input.after as KvCursor } : {}),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.changes",
+          method: "POST",
+          path: "/:namespace/changes",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "readKeyValueChanges",
+            summary: "Read the event-backed change feed for one KV namespace",
+            tags: ["key-value"],
+            pathParams: { namespace: { type: "string", required: true } },
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Ordered key changes" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              return {
+                body: {
+                  changes: await tenantOf(service, input, principal).kv.changes(params.namespace, {
+                    ...(typeof input.after === "string" ? { after: input.after as never } : {}),
+                    ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.write",
+          method: "POST",
+          path: "/:namespace/write",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "writeKeyValues",
+            summary: "Apply several KV changes atomically",
+            tags: ["key-value"],
+            pathParams: { namespace: { type: "string", required: true } },
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Ordered write results" }, 409: { description: "Conflict" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              if (!Array.isArray(input.operations)) throw new TypeError("operations must be a list.");
+              return {
+                body: {
+                  written: await tenantOf(service, input, principal).kv.write(
+                    params.namespace,
+                    input.operations as ReadonlyArray<KeyValueWrite>,
+                    readIdempotencyKey(input),
+                  ),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.size",
+          method: "GET",
+          path: "/:namespace",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "sizeKeyValueNamespace",
+            summary: "Count keys in one namespace",
+            tags: ["key-value"],
+            pathParams: { namespace: { type: "string", required: true } },
+            queryParams: { tenantId: { type: "string", required: true } },
+            responses: { 200: { description: "Key count" } },
+          },
+          handler: async ({ service, params, query, principal }) => {
+            try {
+              return {
+                body: {
+                  size: await service.forTenant(readTenantId(query.get("tenantId"), principal))
+                    .kv.size(params.namespace),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.kv.clear",
+          method: "DELETE",
+          path: "/:namespace",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "clearKeyValueNamespace",
+            summary: "Remove every key in one namespace",
+            tags: ["key-value"],
+            pathParams: { namespace: { type: "string", required: true } },
+            requestBody: { required: false, schema: { type: "object" } },
+            responses: { 200: { description: "Number removed" } },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            try {
+              return {
+                body: {
+                  removed: await tenantOf(service, readBodyObject(body), principal).kv.clear(params.namespace),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+      ],
+    },
   };
 }
 
@@ -897,6 +1237,30 @@ export function defineDatabaseDocumentsService(
           },
         },
         {
+          id: "database.collections.modalities",
+          method: "GET",
+          access: { permissions: ["database.read"] },
+          path: "/collections/:collection/modalities",
+          spec: {
+            operationId: "inspectCollectionModalities",
+            summary: "Inspect which data modalities have a declared interpretation",
+            tags: ["database"],
+            pathParams: { collection: { type: "string", required: true } },
+            queryParams: { tenantId: { type: "string", required: true } },
+            responses: { 200: { description: "Modality readiness" }, 404: { description: "Collection not found" } },
+          },
+          handler: async ({ service, params, query, principal }) => {
+            try {
+              return {
+                body: await service.forTenant(readTenantId(query.get("tenantId"), principal))
+                  .documents.modalities(params.collection),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
           id: "database.collections.create",
           method: "POST",
           access: { permissions: ["database.write"] },
@@ -1042,7 +1406,7 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   operations: {
                     type: "array",
-                    description: "Changes, each { _tag: Insert | Update | Delete, collection, ... }",
+                    description: "Changes, each { _tag: Insert | Upsert | Update | Delete, collection, ... }",
                   },
                 },
               },

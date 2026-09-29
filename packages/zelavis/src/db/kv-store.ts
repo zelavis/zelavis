@@ -5,7 +5,8 @@ import {
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
   edgeKey, edgePrefix, reverseEdgeKey, reverseEdgePrefix, eventKey, eventPrefix,
-  identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
+  decodeIdentity, identityBySeqKey, identityKey, identityNamePrefix, identityPrefix,
+  manifestKey, measureKey, measurePrefix,
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
   seqOf, Tag, termKey, termPrefix, termPrefixKey, readTermKey, tombstoneKey, tombstonePrefix,
   decodeOrderedKey, dirtyKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
@@ -492,8 +493,13 @@ export const storeOverKv = (
             yield* assertCurrent;
             const version = yield* versionOf(view, seq);
             if (version === 0) return;
+            const identityBytes = yield* view.get(identityBySeqKey(seq));
+            const identity = identityBytes === undefined
+              ? undefined
+              : unjson<ObjectIdentity>(identityBytes);
             append({
               generation, seq, kind: "retract", version: version + 1, at: Date.now(),
+              ...(identity === undefined ? {} : { identity }),
             });
             yield* unproject(view, seq, sealed);
             view.del(payloadKey(seq));
@@ -887,7 +893,10 @@ export const storeOverKv = (
           manifest: stored.manifest ?? emptyManifest(),
           ...(stored.identity === undefined ? {} : { identity: stored.identity }),
         }
-      : { _tag: "ObjectRetracted", ...common };
+      : {
+          _tag: "ObjectRetracted", ...common,
+          ...(stored.identity === undefined ? {} : { identity: stored.identity }),
+        };
   };
 
   const readEvents = (
@@ -959,6 +968,7 @@ export const storeOverKv = (
                   kind: "retract",
                   version: event.version,
                   at: event.at,
+                  ...(event.identity === undefined ? {} : { identity: event.identity }),
                 },
           );
           const sealed = (yield* readMeta(META_SEALED)) > 0;
@@ -1383,6 +1393,48 @@ export const storeOverKv = (
     identityOf: (seq) =>
       Effect.map(engine.get(identityBySeqKey(seq)), (bytes) =>
         bytes === undefined ? undefined : unjson<ObjectIdentity>(bytes)),
+
+    scanIdentities: (input) =>
+      Effect.gen(function* () {
+        const limit = input.limit ?? 100;
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+          return yield* new StoreError({
+            op: "identity.scan",
+            cause: `limit must be an integer from 1 to 1000, not ${String(limit)}`,
+          });
+        }
+        const prefix = input.prefix === undefined
+          ? identityPrefix(input.namespace)
+          : identityNamePrefix(input.namespace, input.prefix);
+        const lower = input.lower === undefined ? undefined : identityKey(input.namespace, input.lower);
+        const upper = input.upper === undefined ? undefined : identityKey(input.namespace, input.upper);
+        const after = input.after === undefined ? undefined : identityKey(input.namespace, input.after);
+        // Ascending scans resume *at* the last identity and discard it below;
+        // descending scans can use the engine's exclusive upper bound directly.
+        // Binding the cursor into the physical range avoids rescanning the first
+        // page forever when a namespace contains more than `limit` identities.
+        const from = input.direction === "desc" || after === undefined
+          ? lower
+          : lower === undefined || compareKeys(after, lower) > 0 ? after : lower;
+        const to = input.direction !== "desc" || after === undefined
+          ? upper
+          : upper === undefined || compareKeys(after, upper) < 0 ? after : upper;
+        const entries = yield* Stream.runCollect(engine.scan(prefix, {
+          ...(from === undefined ? {} : { from }),
+          ...(to === undefined ? {} : { to }),
+          ...(input.direction === "desc" ? { reverse: true } : {}),
+          // One extra may be consumed while excluding `after`.
+          limit: Math.min(1001, limit + (input.after === undefined ? 0 : 1)),
+        }));
+        const out: Array<{ readonly key: string; readonly seq: Seq }> = [];
+        for (const entry of entries) {
+          const decoded = decodeIdentity(entry.key);
+          if (decoded.namespace !== input.namespace || decoded.key === input.after) continue;
+          out.push({ key: decoded.key, seq: asSeq(readU32(entry.value)) });
+          if (out.length === limit) break;
+        }
+        return out;
+      }),
 
     nextSeq: exclusive(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;

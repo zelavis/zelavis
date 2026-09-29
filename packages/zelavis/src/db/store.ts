@@ -232,6 +232,17 @@ export interface ObjectStoreApi {
    */
   readonly identityOf: (seq: Seq) => Effect.Effect<ObjectIdentity | undefined, DbError>;
 
+  /** Ordered caller identities, used by logical models such as lexicographic KV. */
+  readonly scanIdentities: (input: {
+    readonly namespace: string;
+    readonly prefix?: string;
+    readonly lower?: string;
+    readonly upper?: string;
+    readonly after?: string;
+    readonly direction?: "asc" | "desc";
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<{ readonly key: string; readonly seq: Seq }>, DbError>;
+
   /**
    * Resolve a query to identifiers in ascending order.
    *

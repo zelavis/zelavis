@@ -1,7 +1,9 @@
 import { Effect } from "effect";
 import type { DatabaseApi, TenantApi } from "./database.js";
+import type { KvCursor, KeyValueChange, KeyValueEntry, KeyValueWrite } from "./key-value.js";
 import type {
   Collection,
+  CollectionModalities,
   Document,
   DocumentPage,
   FindDocumentsInput,
@@ -58,7 +60,40 @@ import { shardsOf, type ShardId, type TenantId } from "./topology.js";
  * knowing anything about Effect.
  */
 export interface TenantRuntimeApi {
+  readonly kv: {
+    readonly get: (namespace: string, key: string) => Promise<KeyValueEntry | undefined>;
+    readonly has: (namespace: string, key: string) => Promise<boolean>;
+    readonly set: (namespace: string, key: string, value: JsonObject, options?: {
+      expectedVersion?: number;
+      ifAbsent?: boolean;
+      idempotencyKey?: string;
+      expiresAt?: string;
+      ttlMs?: number;
+    }) => Promise<KeyValueEntry>;
+    readonly remove: (namespace: string, key: string, options?: {
+      expectedVersion?: number;
+      idempotencyKey?: string;
+    }) => Promise<boolean>;
+    readonly scan: (namespace: string, options?: {
+      prefix?: string;
+      lower?: string;
+      upper?: string;
+      direction?: "asc" | "desc";
+      limit?: number;
+      after?: KvCursor;
+    }) => Promise<{ entries: ReadonlyArray<KeyValueEntry>; next?: KvCursor }>;
+    readonly changes: (namespace: string, options?: {
+      after?: DomainEvent["cursor"];
+      limit?: number;
+    }) => Promise<ReadonlyArray<KeyValueChange>>;
+    readonly write: (namespace: string, operations: ReadonlyArray<KeyValueWrite>, options?: {
+      idempotencyKey?: string;
+    }) => Promise<ReadonlyArray<KeyValueEntry | { readonly key: string; readonly deleted: boolean }>>;
+    readonly size: (namespace: string) => Promise<number>;
+    readonly clear: (namespace: string) => Promise<number>;
+  };
   readonly documents: {
+    readonly modalities: (collection: string) => Promise<CollectionModalities>;
     readonly createCollection: (input: {
       name: string;
       surface?: Collection["surface"];
@@ -246,7 +281,19 @@ export interface DatabaseRuntimeApi {
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
 
 const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
+  kv: {
+    get: (namespace, key) => run(tenant.kv.namespace(namespace).get(key)),
+    has: (namespace, key) => run(tenant.kv.namespace(namespace).has(key)),
+    set: (namespace, key, value, options) => run(tenant.kv.namespace(namespace).set(key, value, options)),
+    remove: (namespace, key, options) => run(tenant.kv.namespace(namespace).remove(key, options)),
+    scan: (namespace, options) => run(tenant.kv.namespace(namespace).scan(options)),
+    changes: (namespace, options) => run(tenant.kv.namespace(namespace).changes(options)),
+    write: (namespace, operations, options) => run(tenant.kv.namespace(namespace).write(operations, options)),
+    size: (namespace) => run(tenant.kv.namespace(namespace).size),
+    clear: (namespace) => run(tenant.kv.namespace(namespace).clear),
+  },
   documents: {
+    modalities: (collection) => run(tenant.documents.modalities({ collection })),
     createCollection: (input) => run(tenant.documents.createCollection(input)),
     createIndex: (input) => run(tenant.documents.createIndex(input)),
     dropIndex: (input) => run(tenant.documents.dropIndex(input)),

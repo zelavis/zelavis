@@ -492,6 +492,17 @@ export const identityKey = (namespace: string, key: string): Uint8Array =>
     writeString(out, key);
   });
 
+/** Every identity in one namespace, in caller-key byte order. */
+export const identityPrefix = (namespace: string): Uint8Array =>
+  build(Tag.Identity, (out) => writeString(out, namespace));
+
+/** Every identity whose caller key starts with `prefix`. */
+export const identityNamePrefix = (namespace: string, prefix: string): Uint8Array =>
+  build(Tag.Identity, (out) => {
+    writeString(out, namespace);
+    writeEscapedPrefix(out, encoder.encode(prefix));
+  });
+
 /** The reverse binding, so retraction can clear an identity it was not given. */
 export const identityBySeqKey = (seq: number): Uint8Array =>
   build(Tag.IdentityBySeq, (out) => writeU32(out, seq));

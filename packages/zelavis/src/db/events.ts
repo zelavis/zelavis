@@ -35,6 +35,8 @@ export interface ObjectRetracted {
   readonly generation: number;
   readonly seq: Seq;
   readonly version: number;
+  /** Identity at deletion time, so a continuation can attribute the change without replaying old puts. */
+  readonly identity?: ObjectIdentity;
 }
 
 /**
@@ -81,6 +83,9 @@ export const DbEventWire = Schema.Union([
     at: Schema.Finite,
     seq: Schema.Finite,
     version: Schema.Finite,
+    identity: Schema.optional(
+      Schema.Struct({ namespace: Schema.String, key: Schema.String }),
+    ),
   }),
 ]);
 

@@ -133,7 +133,9 @@ export const domainEventsFor = (
           if (origin !== undefined) origins.set(event.seq, origin);
         }
 
-        const origin = origins.get(event.seq);
+        const origin = event._tag === "ObjectRetracted" && event.identity !== undefined
+          ? originOf(event.identity.namespace, event.identity.key)
+          : origins.get(event.seq);
         if (origin === undefined || origin.tenantId !== tenant) continue;
         if (input?.collection !== undefined && origin.collection !== input.collection) continue;
         if (input?.documentId !== undefined && origin.documentId !== input.documentId) continue;

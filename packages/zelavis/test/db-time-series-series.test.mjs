@@ -283,7 +283,6 @@ const call = (route, { service, params = {}, query = "", body } = {}) =>
 const routeOf = (service, id) => {
   const routes = [
     ...service.api.v1,
-    ...service.services.flatMap((nested) => nested.api.v1),
   ];
   const found = routes.find((route) => route.id === id);
   assert.ok(found, `route ${id} should exist`);
