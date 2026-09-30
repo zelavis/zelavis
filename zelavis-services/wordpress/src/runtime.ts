@@ -1049,8 +1049,11 @@ export function createNativeWordPressProjectRuntime(
           await writeFile(configPath(project.id), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
         }
         const phpSocket = join(socketDirectory(config), "php-fpm.sock");
-        await rm(phpSocket, { force: true });
         if (!state.phpFpm?.running) {
+          // Only a stale socket from a dead PHP-FPM is cleared. Removing the
+          // live one of a PHP-FPM that keeps running leaves it listening on a
+          // path nothing can reach, and nginx answers every request with 502.
+          await rm(phpSocket, { force: true });
           state.phpFpm = await agent.start(
             {
               workloadId: project.id,
