@@ -83,7 +83,10 @@ const { allowlist: lib } = await (async () => ({ allowlist: await import("../ser
 const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
 const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64");
 
-function listing(services, sequence = 2) {
+// Far above any list the release ships, so a fake list is never a replay of an older one.
+const TEST_SEQUENCE = 100_000;
+
+function listing(services, sequence = TEST_SEQUENCE) {
   return {
     schemaVersion: 1, sequence,
     issuedAt: new Date(Date.now() - 60_000).toISOString(),
@@ -256,7 +259,7 @@ test("the Platform hands its verified list to its Projects, which verify it agai
   await mkdir(join(projects, "not-a-project"), { recursive: true });
 
   const good = thing("1.0.0");
-  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], 7);
+  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE + 5);
   const trust = { keys: [{ keyId: "test-key", publicKey }], fetch: fetcher };
   const platform = await createLocalServiceSources({
     dataDirectory: directory,
@@ -278,7 +281,7 @@ test("the Platform hands its verified list to its Projects, which verify it agai
   });
   const view = await (await open()).marketplace.client.current();
   assert.equal(view.origin, "cache");
-  assert.equal(view.allowlist.sequence, 7);
+  assert.equal(view.allowlist.sequence, TEST_SEQUENCE + 5);
   assert.equal((await open()).serviceRegistry.catalog.some((c) => c.service.name === "@example/thing"), true);
 
   // A Project prepared later is given the same list when it starts.
@@ -298,7 +301,7 @@ test("the Platform hands its verified list to its Projects, which verify it agai
 test("operators can see how current the list is, and refresh it, over HTTP", async (t) => {
   const directory = await scratch(t);
   const good = thing("1.0.0");
-  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], 7);
+  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE + 5);
   const zv = new Zelavis({ adapter: nodeAdapter({
     dataDirectory: directory,
     services: { marketplace: { sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher } },
@@ -315,7 +318,7 @@ test("operators can see how current the list is, and refresh it, over HTTP", asy
   const refreshed = await (await call("/refresh", OWNER.principal, "POST")).json();
   assert.equal(refreshed.updated, true);
   assert.deepEqual(refreshed.attempts.map((a) => a.outcome), ["ok"]);
-  assert.equal(refreshed.list.sequence, 7);
+  assert.equal(refreshed.list.sequence, TEST_SEQUENCE + 5);
 
   const status = await (await call("", viewer)).json();
   assert.equal(status.gated, true);
@@ -335,7 +338,7 @@ test("the list is the same over HTTP, the SDK and the CLI, and installs are desc
     name: "@zelavis/site", version: "1.0.0", zelavis: { kind: "plugin", namespace: "site", marketplace: { title: "Site" } },
   }));
   const good = thing("1.0.0");
-  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], 3);
+  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE);
   const zv = new Zelavis({ adapter: nodeAdapter({
     dataDirectory: directory,
     services: { marketplace: { sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher, officialServicesDirectory: checkout } },
@@ -349,7 +352,7 @@ test("the list is the same over HTTP, the SDK and the CLI, and installs are desc
   const sdk = await client.marketplace.allowlist();
   const http = await (await send("http://localhost/zelavis/api/v1/runtime/marketplace/allowlist")).json();
   assert.deepEqual(sdk, http);
-  assert.equal(sdk.list.sequence, 3);
+  assert.equal(sdk.list.sequence, TEST_SEQUENCE);
 
   const original = { fetch: globalThis.fetch, log: console.log };
   const out = [];
