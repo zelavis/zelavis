@@ -47,6 +47,25 @@ function getPublishablePackageVersions() {
     }
   }
 
+  // Officially maintained services are published on their own, so their
+  // versions belong in the same release check as the packages.
+  const servicesDir = join(process.cwd(), "zelavis-services");
+  if (existsSync(servicesDir)) {
+    for (const entry of readdirSync(servicesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const servicePackageJson = join(servicesDir, entry.name, "package.json");
+      if (existsSync(servicePackageJson)) packageJsonPaths.push(servicePackageJson);
+      const nestedRoot = join(servicesDir, entry.name, "plugins");
+      if (!existsSync(nestedRoot)) continue;
+      for (const nested of readdirSync(nestedRoot, { withFileTypes: true })) {
+        const nestedPackageJson = join(nestedRoot, nested.name, "package.json");
+        if (nested.isDirectory() && existsSync(nestedPackageJson)) {
+          packageJsonPaths.push(nestedPackageJson);
+        }
+      }
+    }
+  }
+
   return packageJsonPaths
     .map((packageJsonPath) => {
       const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));

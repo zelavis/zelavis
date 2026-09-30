@@ -1,8 +1,8 @@
 {
-  "name": "@zelavis/ecommerce-stripe",
+  "name": "@zelavis/ecommerce-paypal",
   "version": "1.0.0-alpha.2",
   "private": false,
-  "description": "Stripe payment provider service for @zelavis/ecommerce.",
+  "description": "PayPal payment provider service for @zelavis/ecommerce.",
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
@@ -11,7 +11,7 @@
     "capabilities": [
       "@zelavis/ecommerce:payments"
     ],
-    "namespace": "stripe"
+    "namespace": "paypal"
   },
   "types": "./dist/index.d.ts",
   "exports": {
@@ -34,15 +34,15 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "plugins/ecommerce/plugins/stripe"
+    "directory": "zelavis-services/ecommerce/plugins/paypal"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/ecommerce/plugins/stripe#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/ecommerce/plugins/paypal#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@zelavis/ecommerce": "workspace:*",
-    "stripe": "^22.6.2"
+    "@paypal/paypal-server-sdk": "^2.5.0",
+    "@zelavis/ecommerce": "workspace:*"
   },
   "peerDependencies": {
     "zelavis": ">=2.0.0-alpha.4"
@@ -52,7 +52,7 @@
     "zelavis": "workspace:*"
   },
   "keywords": [
-    "stripe",
+    "paypal",
     "commerce",
     "ecommerce",
     "payments",

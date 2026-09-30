@@ -22,8 +22,8 @@ For service packages, the service definition should also live in a named file ne
 
 Examples:
 
-- `plugins/ecommerce/src/ecommerce-service.ts`
-- `plugins/ecommerce/plugins/stripe/src/stripe-service.ts`
+- `zelavis-services/ecommerce/src/ecommerce-service.ts`
+- `zelavis-services/ecommerce/plugins/stripe/src/stripe-service.ts`
 - `packages/zelavis/src/app/identity/providers/password.ts`
 
 Avoid hiding the real definition under paths like:

@@ -217,7 +217,7 @@ current automatically.
   `runtime.database`, authenticators, and core routes), not pseudo-plugins
   disguised with `kind: "plugin"` in `runtime.services`. "Services" is a concept
   strictly reserved for loadable components: first-party services in
-  `packages/zelavis/services/*`, domain plugins in `plugins/*`, Project recipes,
+  `packages/zelavis/services/*`, officially maintained services in `zelavis-services/*`, Project recipes,
   and external extensions.
 - **Service Dashboard Pages**: `pageAssets` is obsolete and removed. All service
   dashboard pages and static assets stream directly from disk via `packageDir`
@@ -1008,7 +1008,9 @@ those grants, while endpoints remain the authority layer.
 ## Repo Structure
 
 - `packages/*` contains core platform workspace packages.
-- `plugins/*` contains official user-installable Zelavis plugins.
+- `zelavis-services/*` is a pnpm workspace of the officially maintained services
+  (apps, plugins, frontends) that are published separately and are not shipped
+  with the Platform.
 - `packages/zelavis` is the unified framework and Platform OS package. Do not
   recreate the retired pre-consolidation server, App, core-service, or
   Marketplace package boundaries.
@@ -1044,10 +1046,12 @@ those grants, while endpoints remain the authority layer.
 - `packages/zelavis/src/adapters` holds the host, runtime and storage adapters
   (Node, Bun, Agent, Project runtimes), exported through `zelavis/adapters/*`
   subpaths.
-- `plugins/*` contains official optional capability and provider plugins,
-  including Auth methods. Do not place plugin packages inside
-  `packages/zelavis`; the unified package exports contracts and built-in App
-  services, not installable plugin package source.
+- `zelavis-services/*` contains the officially maintained optional services:
+  capability and provider plugins (including Auth methods), and Project recipes
+  such as WordPress. They are published to npm on their own release cycle and are
+  not bundled with the Platform. Do not place installable service packages inside
+  `packages/zelavis`; the unified package exports contracts and the built-in App
+  services, not installable package source.
 - `examples/*` contains runnable example workspace packages.
 - `website/` contains the public Astro Starlight documentation site (`website/src/content/docs/`).
 - `distribution/` owns release staging, archives, Debian packages, signed APT

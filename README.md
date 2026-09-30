@@ -140,7 +140,7 @@ or customer view based on the current principal.
 
 ## Workspace
 
-Packages live in [packages/](packages) and official plugins live in [plugins/](plugins).
+Packages live in [packages/](packages) and official plugins live in [zelavis-services/](plugins).
 
 Core package and public surfaces:
 
@@ -173,16 +173,16 @@ Database adapters:
 
 Auth plugins:
 
-- [plugins/auth-oidc](plugins/auth-oidc)
+- [zelavis-services/auth-oidc](zelavis-services/auth-oidc)
   Accepts JWT bearer tokens issued by an external OpenID Connect provider.
 
 Official domain plugins:
 
-- [plugins/ecommerce](plugins/ecommerce)
+- [zelavis-services/ecommerce](zelavis-services/ecommerce)
   An optional ecommerce core for customers, products, coupons, orders, and payment workflows.
-- [plugins/ecommerce/plugins/stripe](plugins/ecommerce/plugins/stripe)
+- [zelavis-services/ecommerce/plugins/stripe](zelavis-services/ecommerce/plugins/stripe)
   A Stripe payment provider service for `@zelavis/ecommerce`.
-- [plugins/ecommerce/plugins/paypal](plugins/ecommerce/plugins/paypal)
+- [zelavis-services/ecommerce/plugins/paypal](zelavis-services/ecommerce/plugins/paypal)
   A PayPal payment provider service for `@zelavis/ecommerce`.
 
 ## Runtime Defaults

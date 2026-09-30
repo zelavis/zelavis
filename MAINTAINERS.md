@@ -25,7 +25,7 @@ Maintainers are responsible for:
 - `packages/zelavis/src/app/identity` — app auth core, methods, and auth-facing service surfaces
 - `packages/zelavis` — unified framework, App recipe, composed runtime, and embedded dashboard delivery
 - `packages/zelavis/services/zelavis-ui` — dashboard UX and frontend architecture
-- `plugins/*` — official installable Zelavis plugins
+- `zelavis-services/*` — officially maintained Zelavis services (plugins, apps), published separately
 - `.github/*` and release/config files — repo process, CI, dependency policy
 
 ## Triage Expectations

@@ -34,7 +34,7 @@ Security reports are especially useful for:
 - `packages/zelavis/src/app/db`
 - `packages/zelavis/src/app/identity`
 - `packages/zelavis/services/zelavis-ui`
-- official plugins under `plugins/*`
+- officially maintained services under `zelavis-services/*`
 - CI, release, and dependency-supply-chain concerns in this repository
 
 ## Local Security Checks

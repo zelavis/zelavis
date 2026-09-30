@@ -9,16 +9,16 @@
     "noEmit": true,
     "paths": {
       "@zelavis/app-auth-email-password": [
-        "../../plugins/auth-email-password/src/index.ts"
+        "../../zelavis-services/auth-email-password/src/index.ts"
       ],
       "@zelavis/ecommerce": [
-        "../../plugins/ecommerce/src/index.ts"
+        "../../zelavis-services/ecommerce/src/index.ts"
       ],
       "@zelavis/ecommerce-paypal": [
-        "../../plugins/ecommerce/plugins/paypal/src/index.ts"
+        "../../zelavis-services/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
-        "../../plugins/ecommerce/plugins/stripe/src/index.ts"
+        "../../zelavis-services/ecommerce/plugins/stripe/src/index.ts"
       ],
       "zelavis": [
         "../../packages/zelavis/src/index.ts"

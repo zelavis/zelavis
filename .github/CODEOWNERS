@@ -9,7 +9,7 @@
 /packages/ui/ @ivanjeremic
 
 # Official plugin surface
-/plugins/ @ivanjeremic
+/zelavis-services/ @ivanjeremic
 
 # Examples and website
 /examples/ @ivanjeremic
