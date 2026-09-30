@@ -12,7 +12,7 @@
  * does not advertise independent runtime versions.
  */
 import { createHash } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -56,22 +56,37 @@ export async function digestArtifactDirectory(directory: string): Promise<string
   return `sha256:${hash.digest("hex")}`;
 }
 
-/** Copies the bundled recipe package into the Project and returns its digest. */
+/**
+ * Copies the bundled recipe package into the Project and returns its digest.
+ *
+ * Built beside the current artifact and swapped in only when complete, so a
+ * failure part-way (or an upgrade that cannot finish) never leaves a Project
+ * without the artifact it was running.
+ */
 export async function materializeRecipeArtifact(
   sourceDirectory: string,
   dataDirectory: string,
 ): Promise<{ digest: string }> {
   const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
-  const target = join(destination, PACKAGE_DIRECTORY);
-  await rm(destination, { recursive: true, force: true });
-  await mkdir(target, { recursive: true });
-  for (const entry of ARTIFACT_ENTRIES) {
-    const from = join(sourceDirectory, entry);
-    if (existsSync(from)) {
-      await cp(from, join(target, entry), { recursive: true });
+  const incoming = `${destination}.incoming`;
+  const target = join(incoming, PACKAGE_DIRECTORY);
+  await rm(incoming, { recursive: true, force: true });
+  try {
+    await mkdir(target, { recursive: true });
+    for (const entry of ARTIFACT_ENTRIES) {
+      const from = join(sourceDirectory, entry);
+      if (existsSync(from)) {
+        await cp(from, join(target, entry), { recursive: true });
+      }
     }
+    const digest = await digestArtifactDirectory(target);
+    await rm(destination, { recursive: true, force: true });
+    await rename(incoming, destination);
+    return { digest };
+  } catch (error) {
+    await rm(incoming, { recursive: true, force: true });
+    throw error;
   }
-  return { digest: await digestArtifactDirectory(target) };
 }
 
 export class RecipeArtifactError extends Error {
@@ -123,8 +138,9 @@ export async function loadRecipeArtifact(
  * Project that verifies against the recorded digest is kept, even after the
  * Platform's own copy has moved on. A new artifact is only taken from the
  * Platform's bundled package when that is exactly the locked version. A lock
- * for a version that is neither frozen nor bundled gets no artifact, and the
- * runner then refuses it instead of running someone else's code.
+ * for a version that is neither frozen nor bundled cannot be prepared: it throws
+ * with the reason, so the Project fails there (and can be upgraded) instead of
+ * starting and crashing later.
  */
 export async function ensureRecipeArtifact(
   recipe: { name: string; version: string },
@@ -156,7 +172,7 @@ export async function ensureRecipeArtifact(
   const bundled = resolveBundledServiceDirectory(recipe.name);
   if (!bundled) {
     throw new Error(
-      `Project recipe ${recipe.name}@${recipe.version} is not shipped with this Platform and the Project has no frozen copy of it.`,
+      `Project recipe ${recipe.name}@${recipe.version} is not shipped with this Platform and the Project has no frozen copy of it. Upgrade the Project to a recipe this Platform ships, or delete and recreate it.`,
     );
   }
   const manifest = JSON.parse(await readFile(join(bundled, "package.json"), "utf8")) as {
@@ -164,7 +180,7 @@ export async function ensureRecipeArtifact(
   };
   if (manifest.version !== recipe.version) {
     throw new Error(
-      `Project recipe ${recipe.name}@${recipe.version} cannot be prepared: this Platform ships ${manifest.version ?? "another version"} and the Project has no frozen copy of the version it was created with. Delete and recreate the Project.`,
+      `Project recipe ${recipe.name}@${recipe.version} cannot be prepared: this Platform ships ${manifest.version ?? "another version"} and the Project has no frozen copy of the version it was created with. Upgrade the Project to it, or delete and recreate the Project.`,
     );
   }
   return materializeRecipeArtifact(bundled, dataDirectory);

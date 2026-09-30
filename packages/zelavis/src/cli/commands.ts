@@ -104,7 +104,7 @@ Usage:
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
-  zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
+  zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
@@ -137,7 +137,7 @@ Commands:
                             outlive the Platform that drives it.
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
-  projects                  List, create, start, stop, restart, remove and read
+  projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.

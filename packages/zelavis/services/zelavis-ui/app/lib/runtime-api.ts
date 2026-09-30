@@ -251,6 +251,11 @@ export interface RuntimeProject {
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
   };
   capabilities: RuntimeProjectDriverCapabilities;
+  /** How the locked recipe compares with what this Platform ships. */
+  recipeStatus?:
+    | { state: "current" }
+    | { state: "upgradeAvailable"; version: string }
+    | { state: "unavailable"; reason: string };
   desiredState: "running" | "stopped";
   runtime: {
     driver: string;
@@ -1705,6 +1710,19 @@ export async function setProjectRunning(
   const result = await readJson<{ project: RuntimeProject }>(
     `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/${running ? "start" : "stop"}`,
     { method: "POST", body: JSON.stringify({}) },
+  );
+  return normalizeRuntimeProject(result.project);
+}
+
+/** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */
+export async function upgradeProject(
+  config: RuntimeConfig,
+  projectId: string,
+  recipeName?: string,
+): Promise<RuntimeProject> {
+  const result = await readJson<{ project: RuntimeProject }>(
+    `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/upgrade`,
+    { method: "POST", body: JSON.stringify(recipeName ? { recipeName } : {}) },
   );
   return normalizeRuntimeProject(result.project);
 }

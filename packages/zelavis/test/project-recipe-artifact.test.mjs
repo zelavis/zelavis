@@ -167,6 +167,6 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   const project = (await (await call("/legacy")).json()).project;
   assert.equal(project.runtime.status, "failed");
   assert.match(project.runtime.error, /cannot be prepared: this Platform ships/);
-  assert.match(project.runtime.error, /Delete and recreate the Project/);
+  assert.match(project.runtime.error, /delete and recreate the Project/);
   assert.doesNotMatch(project.runtime.error, /prepare the Project again/);
 });

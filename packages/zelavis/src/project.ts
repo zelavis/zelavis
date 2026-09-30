@@ -114,8 +114,29 @@ export interface ZelavisProjectPlacementState {
   readonly error?: string;
 }
 
+/**
+ * How a Project's locked recipe compares with what this Platform ships.
+ * Derived on every read, never stored as authority.
+ */
+export type ZelavisProjectRecipeStatus =
+  | { readonly state: "current" }
+  /** This Platform ships another version of the same recipe. */
+  | { readonly state: "upgradeAvailable"; readonly version: string }
+  /** This Platform ships no recipe by the locked name, so an upgrade must name one. */
+  | { readonly state: "unavailable"; readonly reason: string };
+
+/** One completed recipe upgrade, kept so a Project's history is not a mystery. */
+export interface ZelavisProjectRecipeUpgrade {
+  readonly from: { readonly name: string; readonly version: string };
+  readonly upgradedAt: string;
+}
+
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   capabilities: ZelavisProjectDriverCapabilities;
+  /** Whether a newer recipe is available for this Project. Derived on every read. */
+  recipeStatus?: ZelavisProjectRecipeStatus;
+  /** Recipe upgrades this Project has been through, oldest first, most recent ten. */
+  recipeHistory?: readonly ZelavisProjectRecipeUpgrade[];
   /**
    * The locked isolation intent compared with the assigned backend, present
    * only when the recipe declares intent. Derived on every read, like
@@ -256,6 +277,12 @@ export interface ZelavisProjectManager {
   start(id: string): Promise<ZelavisProjectRecord>;
   stop(id: string): Promise<ZelavisProjectRecord>;
   restart(id: string): Promise<ZelavisProjectRecord>;
+  /**
+   * Re-locks a stopped (or failed) Project to a recipe this Platform ships and
+   * freezes it. The Project keeps its data: the recipe carries identity, menu and
+   * defaults, and the engine that reads the data is the Platform's own.
+   */
+  upgrade(id: string, input?: { recipeName?: string }): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
   /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
@@ -898,6 +925,31 @@ export async function createProjectManager(options: {
       : projectKindFromRecipe(recipeName);
   }
 
+  function recipeStatusOf(recipe: ZelavisProjectRecipeLock): ZelavisProjectRecipeStatus {
+    const shipped = projectRecipeMap.get(recipe.name);
+    if (!shipped) {
+      return {
+        state: "unavailable",
+        reason: `This Platform ships no recipe named "${recipe.name}".`,
+      };
+    }
+    const version = shipped.service.version;
+    return version && version !== recipe.version
+      ? { state: "upgradeAvailable", version }
+      : { state: "current" };
+  }
+
+  function readStoredRecipeHistory(raw: Record<string, unknown>): ZelavisProjectRecipeUpgrade[] {
+    if (!Array.isArray(raw.recipeHistory)) return [];
+    return raw.recipeHistory.flatMap((entry): ZelavisProjectRecipeUpgrade[] => {
+      const item = entry as { from?: { name?: unknown; version?: unknown }; upgradedAt?: unknown };
+      return typeof item?.from?.name === "string" && typeof item.from.version === "string" &&
+        typeof item.upgradedAt === "string"
+        ? [{ from: { name: item.from.name, version: item.from.version }, upgradedAt: item.upgradedAt }]
+        : [];
+    }).slice(-10);
+  }
+
   function normalizeStoredProject(value: ZelavisSystemStoreValue): {
     project: ZelavisProjectRecord;
     repaired: boolean;
@@ -925,8 +977,11 @@ export async function createProjectManager(options: {
     };
     const capabilities = runtime.capabilities(descriptor);
     const isolation = assessIsolation(descriptor);
+    const history = readStoredRecipeHistory(rawRecord);
     const project: ZelavisProjectRecord = {
       ...descriptor,
+      recipeStatus: recipeStatusOf(recipe),
+      ...(history.length ? { recipeHistory: history } : {}),
       capabilities,
       ...(isolation ? { isolation } : {}),
       desiredState: rawProject.desiredState,
@@ -1801,6 +1856,80 @@ export async function createProjectManager(options: {
         await write(failed);
         throw error;
       }
+      });
+    },
+    async upgrade(id, input) {
+      return withProjectLifecycle(normalizeProjectId(id), async () => {
+        const project = await requireProject(id);
+        assertProjectIsOperable(project, "upgraded");
+        if (!["stopped", "failed"].includes(project.runtime.status)) {
+          throw new ZelavisProjectConflictError(
+            `Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`,
+          );
+        }
+        const targetName = input?.recipeName?.trim() || project.recipe.name;
+        const entry = projectRecipeMap.get(targetName);
+        if (!entry) {
+          throw new ZelavisProjectValidationError(
+            `Project recipe "${targetName}" is not shipped with this Platform.` +
+              (input?.recipeName ? "" : " Name the recipe to move this Project to."),
+          );
+        }
+        // A frontend stays a frontend and an app stays an app; a Project's kind
+        // label follows its recipe's name, so it is re-derived below.
+        if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
+          throw new ZelavisProjectValidationError(
+            `Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`,
+          );
+        }
+        const next = recipeLockFromRegistryEntry(entry);
+        if (!next.runtimeKinds.includes(project.runtimeKind)) {
+          throw new ZelavisProjectValidationError(
+            `Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`,
+          );
+        }
+        if (
+          next.name === project.recipe.name &&
+          next.version === project.recipe.version &&
+          project.recipe.artifact
+        ) {
+          throw new ZelavisProjectConflictError(
+            `Project "${project.id}" already runs ${next.name}@${next.version}.`,
+          );
+        }
+        const candidate: ZelavisProjectRecord = {
+          ...project,
+          kind: projectKindForRecipe(next.name),
+          recipe: next,
+        };
+        // Refused before anything changes: an upgrade that would leave the
+        // Project unable to start under its isolation intent is not an upgrade.
+        const refusal = isolationRefusal(candidate);
+        if (refusal) throw refusal;
+
+        // Freeze the new recipe first. The driver replaces the old artifact only
+        // once the new one is complete, so a failure here leaves the Project
+        // exactly as it was.
+        await runtime.prepare(candidate, next);
+
+        const now = new Date().toISOString();
+        const isolation = assessIsolation(candidate);
+        return write({
+          ...candidate,
+          capabilities: runtime.capabilities(candidate),
+          ...(isolation ? { isolation } : {}),
+          recipeStatus: recipeStatusOf(next),
+          recipeHistory: [
+            ...(project.recipeHistory ?? []),
+            {
+              from: { name: project.recipe.name, version: project.recipe.version },
+              upgradedAt: now,
+            },
+          ].slice(-10),
+          // The reason it could not start belonged to the old lock.
+          runtime: { driver: runtime.name, status: "stopped" },
+          updatedAt: now,
+        });
       });
     },
     async logs(id) {

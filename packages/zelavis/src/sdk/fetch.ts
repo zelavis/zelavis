@@ -550,6 +550,8 @@ export interface ZelavisProjectsClient {
   start(projectId: string): Promise<ZelavisProjectRecord>;
   stop(projectId: string): Promise<ZelavisProjectRecord>;
   restart(projectId: string): Promise<ZelavisProjectRecord>;
+  /** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */
+  upgrade(projectId: string, input?: { readonly recipeName?: string }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;
@@ -1254,6 +1256,11 @@ function createProjectsClient(
     start: lifecycle("start"),
     stop: lifecycle("stop"),
     restart: lifecycle("restart"),
+    upgrade: async (projectId, input) =>
+      (await json<ProjectBody>(projectPath(projectId, "upgrade"), {
+        method: "POST",
+        body: input ?? {},
+      })).project,
     logs: async (projectId) =>
       (await json<{ logs: readonly ZelavisProjectLogEntry[] }>(projectPath(projectId, "logs"))).logs,
     remove: (projectId) =>

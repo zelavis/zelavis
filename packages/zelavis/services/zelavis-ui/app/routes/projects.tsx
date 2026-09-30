@@ -33,6 +33,7 @@ import {
   createProject,
   deleteProject,
   restartProject,
+  upgradeProject,
   setProjectRunning,
   type RuntimeProject,
 } from "#/lib/runtime-api";
@@ -57,6 +58,63 @@ const projectSearchSchema = {
 function formatUpdatedAt(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+/**
+ * A Project whose recipe this Platform has moved past (or no longer ships). It
+ * lives on the card, not on the Project's own pages: those need a running
+ * Project, and a Project that cannot start is the one that needs upgrading.
+ */
+function RecipeUpgradeNotice({
+  project,
+  recipes,
+  disabled,
+  onUpgrade,
+}: {
+  project: RuntimeProject;
+  recipes: readonly { name: string; title: string }[];
+  disabled: boolean;
+  onUpgrade: (recipeName?: string) => void;
+}) {
+  const [target, setTarget] = useState(recipes[0]?.name ?? "");
+  const status = project.recipeStatus;
+  const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
+  if (!status || status.state === "current") return null;
+  return (
+    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Recipe upgrade">
+      <p>
+        {status.state === "upgradeAvailable"
+          ? `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
+          : `${status.reason} Choose a recipe to move this Project to; its data is kept.`}
+      </p>
+      {status.state === "unavailable" ? (
+        <select
+          aria-label="Recipe to move to"
+          value={target}
+          onChange={(event) => setTarget(event.target.value)}
+          disabled={disabled || !idle}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {recipes.map((recipe) => (
+            <option key={recipe.name} value={recipe.name}>
+              {recipe.title}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || !idle || (status.state === "unavailable" && !target)}
+          onClick={() => onUpgrade(status.state === "unavailable" ? target : undefined)}
+        >
+          Upgrade recipe
+        </Button>
+        {!idle ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
+      </div>
+    </div>
+  );
 }
 
 function ProjectsRoute() {
@@ -171,6 +229,26 @@ function ProjectsRoute() {
     try {
       await restartProject(rootData.runtime, project.id);
       setMessage(`${project.name} restarted.`);
+      revalidator.revalidate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setPendingProjectId(undefined);
+    }
+  }
+
+  async function handleUpgradeProject(project: RuntimeProject, targetRecipe?: string) {
+    if (!rootData) {
+      return;
+    }
+    setMessage(undefined);
+    setError(undefined);
+    setPendingProjectId(project.id);
+    try {
+      const upgraded = await upgradeProject(rootData.runtime, project.id, targetRecipe);
+      setMessage(
+        `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged; start it when you are ready.`,
+      );
       revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -369,6 +447,14 @@ function ProjectsRoute() {
                   </dl>
                   {project.runtime.error ? (
                     <p className="text-sm text-destructive">{project.runtime.error}</p>
+                  ) : null}
+                  {project.recipeStatus && project.recipeStatus.state !== "current" ? (
+                    <RecipeUpgradeNotice
+                      project={project}
+                      recipes={projectRecipes}
+                      disabled={isPending}
+                      onUpgrade={(target) => handleUpgradeProject(project, target)}
+                    />
                   ) : null}
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     <Button
