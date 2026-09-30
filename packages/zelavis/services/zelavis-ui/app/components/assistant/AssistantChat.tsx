@@ -16,7 +16,7 @@ import {
 import { Button } from "#/components/ui/button"
 import {
   createAssistantThread,
-  sendAssistantMessage,
+  streamAssistantMessage,
   type RuntimeAssistantAction,
   type RuntimeAssistantThread,
   type RuntimeConfig,
@@ -105,7 +105,7 @@ export function AssistantChat({
   const threadIdRef = React.useRef(thread?.id)
   const adapter = React.useMemo<ChatModelAdapter>(
     () => ({
-      async run({ messages }) {
+      async *run({ messages, abortSignal }) {
         const prompt = readLatestUserPrompt(messages)
         let threadId = threadIdRef.current
         if (!threadId) {
@@ -114,16 +114,27 @@ export function AssistantChat({
           threadIdRef.current = created.id
           onThreadCreated?.(created)
         }
-        const result = await sendAssistantMessage(config, threadId, prompt)
-        return {
-          content: [{ type: "text", text: result.assistantMessage.content }],
-          metadata: {
-            custom: {
-              ...(result.assistantMessage.actions
-                ? { actions: result.assistantMessage.actions }
-                : {}),
-            },
-          },
+        let text = ""
+        let working: string | undefined
+        const view = (actions?: readonly RuntimeAssistantAction[]) => ({
+          content: [{ type: "text" as const, text: text || (working ? `${working}…` : "") }],
+          ...(actions ? { metadata: { custom: { actions } } } : {}),
+        })
+        for await (const event of streamAssistantMessage(config, threadId, prompt, abortSignal)) {
+          if (event.type === "text") {
+            working = undefined
+            text += event.delta
+            yield view()
+          } else if (event.type === "tool") {
+            working = event.status === "running" ? "Looking that up" : undefined
+            if (!text) yield view()
+          } else if (event.type === "error") {
+            throw new Error(event.message)
+          } else {
+            // The saved message is authoritative over what was streamed.
+            text = event.assistantMessage.content
+            yield view(event.assistantMessage.actions)
+          }
         }
       },
     }),

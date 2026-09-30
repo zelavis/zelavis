@@ -76,6 +76,7 @@ import {
 } from "./platform/project-placement-authority.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
 import {
+  AssistantModelError,
   createModelAssistantResponder,
   isAssistantModelOption,
   type AssistantModelOption,
@@ -4775,6 +4776,119 @@ async function resolvePlatformEndpointGroup(
             } catch (error) {
               return assistantErrorResponse(error);
             }
+          },
+        },
+        {
+          id: "runtime.assistant.messages.stream",
+          spec: {
+            operationId: "streamAssistantMessage",
+            summary: "Post a message and stream the reply as server-sent events",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "text/event-stream of text, tool, done and error events" },
+              400: { description: "Empty message" },
+              404: { description: "No such thread" },
+            },
+          },
+          method: "POST",
+          path: "/assistant/threads/:threadId/messages/stream",
+          access: { permissions: ["assistant.use"] },
+          handler: async ({
+            body,
+            params,
+            principal,
+            request,
+          }: {
+            body: unknown;
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+            request: Request;
+          }) => {
+            if (!assistant) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
+            // Everything that can be refused is refused with a real status
+            // before the stream opens; once it is open, failures are events.
+            let content: string;
+            let threadId: string;
+            try {
+              const input = readBodyObject(body);
+              content = typeof input.content === "string" ? input.content.trim() : "";
+              threadId = params.threadId ?? "";
+              const thread = await assistant.get(threadId, principal.id);
+              if (!thread) {
+                throw new ZelavisAssistantNotFoundError(
+                  `Assistant thread "${threadId}" was not found.`,
+                );
+              }
+              const denied = assistantProjectDenied(principal, thread.projectId);
+              if (denied) return denied;
+              if (!content) {
+                throw new ZelavisAssistantValidationError("Assistant prompt is required.");
+              }
+            } catch (error) {
+              return assistantErrorResponse(error);
+            }
+
+            const encoder = new TextEncoder();
+            const cancelled = new AbortController();
+            const signal = AbortSignal.any([
+              request.signal,
+              cancelled.signal,
+              AbortSignal.timeout(120_000),
+            ]);
+            const stream = new ReadableStream<Uint8Array>({
+              async start(controller) {
+                const send = (event: string, data: unknown) => {
+                  try {
+                    controller.enqueue(
+                      encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+                    );
+                  } catch {
+                    // The client is gone; the run is being aborted.
+                  }
+                };
+                try {
+                  const result = await assistant.appendMessage(threadId, content, principal, {
+                    signal,
+                    onEvent: (event) => send(event.type, event),
+                  });
+                  send("done", result);
+                } catch (error) {
+                  send("error", {
+                    message:
+                      signal.aborted
+                        ? "The reply was cancelled."
+                        : error instanceof AssistantModelError ||
+                            error instanceof ZelavisAssistantValidationError ||
+                            error instanceof ZelavisAssistantNotFoundError
+                          ? error.message
+                          : "The assistant could not answer.",
+                  });
+                } finally {
+                  try {
+                    controller.close();
+                  } catch {
+                    // Already closed by a cancel.
+                  }
+                }
+              },
+              cancel() {
+                cancelled.abort();
+              },
+            });
+            return {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream; charset=utf-8",
+                "cache-control": "no-store",
+                "x-accel-buffering": "no",
+              },
+              body: stream,
+            };
           },
         },
         {

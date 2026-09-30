@@ -25,7 +25,18 @@ GET  /zelavis/api/v1/runtime/assistant/threads
 POST /zelavis/api/v1/runtime/assistant/threads
 GET  /zelavis/api/v1/runtime/assistant/threads/:threadId
 POST /zelavis/api/v1/runtime/assistant/threads/:threadId/messages
+POST /zelavis/api/v1/runtime/assistant/threads/:threadId/messages/stream
 ```
+
+The `stream` variant answers with `text/event-stream`. Everything that can be
+refused (no such thread, no Project access, empty message) is refused with a
+real status before the stream opens. After that the events are `text`
+(`{delta}`), `tool` (`{name, status: running|done|refused}`), then either
+`done` (the saved thread and both messages) or `error` (a safe message). The
+saved message is authoritative over what was streamed. A failed or cancelled
+turn saves nothing, closing the connection cancels the provider call, and a
+turn is capped at two minutes. Responders that cannot stream still reach a
+streaming client as one `text` event.
 
 Threads belong to the principal that started them. Another principal cannot
 list, read or extend a thread and gets `404`, so it cannot learn the thread
@@ -85,7 +96,6 @@ carrying the same requirement as its HTTP route.
 Real provider adapters should preserve the existing capability boundary while
 adding:
 
-- streamed message events
 - multi-provider selection and per-Project provider keys
 - mutating tools with human approval requests
 - run progress, logs, generated files, and error state

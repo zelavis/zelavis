@@ -1,3 +1,5 @@
+import { readServerSentEvents } from "./sse";
+
 export interface RuntimeServiceMenuDefinition {
   title: string;
   path?: string;
@@ -1505,6 +1507,56 @@ export async function sendAssistantMessage(
     `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/messages`,
     { method: "POST", body: JSON.stringify({ content }) },
   );
+}
+
+export type AssistantStreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "tool"; name: string; status: "running" | "done" | "refused" }
+  | {
+      type: "done";
+      thread: RuntimeAssistantThread;
+      userMessage: RuntimeAssistantMessage;
+      assistantMessage: RuntimeAssistantMessage;
+    }
+  | { type: "error"; message: string };
+
+/**
+ * Posts a message and yields the reply as it is written. Refusals that happen
+ * before the stream opens (no such thread, no access, empty message) throw with
+ * their real status; anything after that arrives as an `error` event.
+ */
+export async function* streamAssistantMessage(
+  config: RuntimeConfig,
+  threadId: string,
+  content: string,
+  signal?: AbortSignal,
+): AsyncGenerator<AssistantStreamEvent> {
+  const path = `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/messages/stream`;
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify({ content }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(`Request failed for ${path}`);
+  }
+  if (!response.ok || !response.body) {
+    let message = `Request failed: ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) message = body.error;
+    } catch {
+      // Keep the status-only message.
+    }
+    throw new RuntimeApiError(`${message} (${path})`, response.status, path);
+  }
+  for await (const frame of readServerSentEvents(response.body)) {
+    yield { ...(frame.data as object), type: frame.event } as AssistantStreamEvent;
+  }
 }
 
 /**

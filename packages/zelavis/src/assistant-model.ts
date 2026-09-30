@@ -33,6 +33,11 @@ export interface AssistantModel {
     readonly messages: readonly AssistantModelMessage[];
     readonly tools: readonly AssistantToolDefinition[];
     readonly signal?: AbortSignal;
+    /**
+     * Called with each piece of the answer as it arrives. Providers that cannot
+     * stream ignore it; the result still carries the complete text either way.
+     */
+    readonly onText?: (delta: string) => void;
   }): Promise<{
     readonly content: string;
     readonly toolCalls: readonly AssistantModelToolCall[];
@@ -70,9 +75,10 @@ export function createOpenRouterModel(options: {
 
   return {
     name: `openrouter:${options.model}`,
-    async generate({ messages, tools, signal }) {
+    async generate({ messages, tools, signal, onText }) {
       const body = {
         model: options.model,
+        ...(onText ? { stream: true } : {}),
         messages: messages.map((message) => {
           if (message.role === "tool") {
             return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
@@ -123,6 +129,7 @@ export function createOpenRouterModel(options: {
       if (!response.ok) {
         throw new AssistantModelError(`The model provider refused the request (${response.status}).`);
       }
+      if (onText) return readStream(response, onText);
       const text = await readBounded(response);
       let payload: {
         choices?: {
@@ -139,20 +146,102 @@ export function createOpenRouterModel(options: {
       }
       const message = payload.choices?.[0]?.message;
       if (!message) throw new AssistantModelError("The model provider returned no answer.");
-      const toolCalls: AssistantModelToolCall[] = [];
-      for (const call of message.tool_calls ?? []) {
-        if (typeof call.id !== "string" || typeof call.function?.name !== "string") continue;
-        let args: unknown = {};
-        try {
-          args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        } catch {
-          // Passed on unparsed so the toolbox refuses it as invalid and audits it.
-          args = call.function.arguments;
-        }
-        toolCalls.push({ id: call.id, name: call.function.name, arguments: args });
-      }
-      return { content: message.content ?? "", toolCalls };
+      return {
+        content: message.content ?? "",
+        toolCalls: toToolCalls(message.tool_calls ?? []),
+      };
     },
+  };
+}
+
+function toToolCalls(
+  calls: readonly { id?: string; function?: { name?: string; arguments?: string } }[],
+): AssistantModelToolCall[] {
+  const toolCalls: AssistantModelToolCall[] = [];
+  for (const call of calls) {
+    if (typeof call.id !== "string" || typeof call.function?.name !== "string") continue;
+    let args: unknown = {};
+    try {
+      args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+    } catch {
+      // Passed on unparsed so the toolbox refuses it as invalid and audits it.
+      args = call.function.arguments;
+    }
+    toolCalls.push({ id: call.id, name: call.function.name, arguments: args });
+  }
+  return toolCalls;
+}
+
+/** Reads an OpenAI-style server-sent-event completion, bounded like the buffered path. */
+async function readStream(
+  response: Response,
+  onText: (delta: string) => void,
+): Promise<{ content: string; toolCalls: AssistantModelToolCall[] }> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new AssistantModelError("The model provider returned no answer.");
+  const decoder = new TextDecoder();
+  let pending = "";
+  let size = 0;
+  let content = "";
+  const calls = new Map<number, { id?: string; function: { name?: string; arguments: string } }>();
+  let sawChoice = false;
+
+  const handle = (line: string) => {
+    if (!line.startsWith("data:")) return; // comments and keep-alives
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    let chunk: {
+      choices?: {
+        delta?: {
+          content?: string | null;
+          tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+        };
+      }[];
+      error?: unknown;
+    };
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      throw new AssistantModelError("The model provider returned an unreadable response.");
+    }
+    if (chunk.error) throw new AssistantModelError("The model provider reported an error.");
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) return;
+    sawChoice = true;
+    if (typeof delta.content === "string" && delta.content) {
+      content += delta.content;
+      onText(delta.content);
+    }
+    for (const call of delta.tool_calls ?? []) {
+      const index = call.index ?? 0;
+      const entry = calls.get(index) ?? { function: { arguments: "" } };
+      if (call.id) entry.id = call.id;
+      if (call.function?.name) entry.function.name = call.function.name;
+      if (call.function?.arguments) entry.function.arguments += call.function.arguments;
+      calls.set(index, entry);
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_MODEL_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new AssistantModelError("The model provider response was too large.");
+    }
+    pending += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = pending.indexOf("\n")) >= 0) {
+      handle(pending.slice(0, newline).replace(/\r$/, ""));
+      pending = pending.slice(newline + 1);
+    }
+  }
+  if (pending.trim()) handle(pending.trim());
+  if (!sawChoice) throw new AssistantModelError("The model provider returned no answer.");
+  return {
+    content,
+    toolCalls: toToolCalls([...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)),
   };
 }
 
@@ -201,20 +290,41 @@ export function createModelAssistantResponder(options: {
   const maxSteps = Math.max(1, Math.min(options.maxSteps ?? 5, 10));
   return {
     name: options.model.name,
-    async respond({ thread, principal }) {
+    async respond({ thread, principal, onEvent, signal }) {
       const messages: AssistantModelMessage[] = [
         { role: "system", content: options.system ?? DEFAULT_SYSTEM_PROMPT },
         ...historyOf(thread),
       ];
       const tools = options.toolbox?.advertise(principal) ?? [];
+      // Everything the model says is kept, so what is streamed is what is saved.
+      const said: string[] = [];
+      const emit = (delta: string) => onEvent?.({ type: "text", delta });
+      const answer = () => said.join("\n\n").trim();
       for (let step = 0; step < maxSteps; step += 1) {
+        signal?.throwIfAborted();
+        let started = false;
         // The final step offers no tools, forcing a written answer.
         const result = await options.model.generate({
           messages,
           tools: step === maxSteps - 1 ? [] : tools,
+          ...(signal ? { signal } : {}),
+          ...(onEvent
+            ? {
+                onText: (delta: string) => {
+                  if (!delta) return;
+                  // Steps are separated so streamed text reads like the saved text.
+                  if (!started) {
+                    started = true;
+                    if (said.length > 0) emit("\n\n");
+                  }
+                  emit(delta);
+                },
+              }
+            : {}),
         });
+        if (result.content.trim()) said.push(result.content.trim());
         if (result.toolCalls.length === 0 || !options.toolbox) {
-          return { content: result.content || "I have nothing to add." };
+          return { content: answer() || "I have nothing to add." };
         }
         messages.push({
           role: "assistant",
@@ -222,7 +332,9 @@ export function createModelAssistantResponder(options: {
           toolCalls: result.toolCalls,
         });
         for (const call of result.toolCalls) {
+          onEvent?.({ type: "tool", name: call.name, status: "running" });
           const outcome = await options.toolbox.run(principal, call);
+          onEvent?.({ type: "tool", name: call.name, status: outcome.ok ? "done" : "refused" });
           messages.push({
             role: "tool",
             toolCallId: call.id,
@@ -230,7 +342,7 @@ export function createModelAssistantResponder(options: {
           });
         }
       }
-      return { content: "I could not finish that within the allowed number of steps." };
+      return { content: answer() || "I could not finish that within the allowed number of steps." };
     },
   };
 }

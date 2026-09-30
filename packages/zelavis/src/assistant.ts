@@ -33,6 +33,15 @@ export interface ZelavisAssistantReply {
   actions?: readonly ZelavisAssistantAction[];
 }
 
+/** Progress a responder can report while it works. */
+export type ZelavisAssistantStreamEvent =
+  | { readonly type: "text"; readonly delta: string }
+  | {
+      readonly type: "tool";
+      readonly name: string;
+      readonly status: "running" | "done" | "refused";
+    };
+
 export interface ZelavisAssistantResponder {
   readonly name: string;
   respond(input: {
@@ -43,6 +52,10 @@ export interface ZelavisAssistantResponder {
      * authority of its own; it is not persisted with the thread.
      */
     principal: ZelavisPrincipal;
+    /** Report progress as it happens. Optional; the final reply is authoritative. */
+    onEvent?: (event: ZelavisAssistantStreamEvent) => void;
+    /** Aborted when the caller goes away; a responder should stop working. */
+    signal?: AbortSignal;
   }): Promise<ZelavisAssistantReply> | ZelavisAssistantReply;
 }
 
@@ -64,6 +77,10 @@ export interface ZelavisAssistantManager {
     id: string,
     prompt: string,
     principal: ZelavisPrincipal,
+    options?: {
+      onEvent?: (event: ZelavisAssistantStreamEvent) => void;
+      signal?: AbortSignal;
+    },
   ): Promise<{
     thread: ZelavisAssistantThread;
     userMessage: ZelavisAssistantMessage;
@@ -188,7 +205,7 @@ export function createAssistantManager(options: {
         updatedAt: timestamp,
       });
     },
-    async appendMessage(id, prompt, principal) {
+    async appendMessage(id, prompt, principal, callOptions) {
       const normalizedPrompt = prompt.trim();
       if (!normalizedPrompt) {
         throw new ZelavisAssistantValidationError("Assistant prompt is required.");
@@ -215,11 +232,25 @@ export function createAssistantManager(options: {
         messages: [...current.messages, userMessage],
         updatedAt: userMessage.createdAt,
       };
+      let streamedText = false;
       const reply = await responder.respond({
         thread: withUser,
         prompt: normalizedPrompt,
         principal,
+        ...(callOptions?.onEvent
+          ? {
+              onEvent: (event: ZelavisAssistantStreamEvent) => {
+                if (event.type === "text") streamedText = true;
+                callOptions.onEvent!(event);
+              },
+            }
+          : {}),
+        ...(callOptions?.signal ? { signal: callOptions.signal } : {}),
       });
+      // A responder that cannot stream still reaches a streaming caller.
+      if (callOptions?.onEvent && !streamedText && reply.content) {
+        callOptions.onEvent({ type: "text", delta: reply.content });
+      }
       const assistantMessage: ZelavisAssistantMessage = {
         id: createId("message"),
         role: "assistant",
