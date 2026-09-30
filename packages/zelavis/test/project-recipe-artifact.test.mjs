@@ -133,3 +133,40 @@ test("a new Project freezes its recipe and keeps running it when the Platform's 
   const after = JSON.parse(await readFile(projectFile, "utf8"));
   assert.equal(after.engine.createdWith, "0.0.9-engine");
 });
+
+test("a Project locked to a version this Platform no longer ships, with no frozen copy, fails to prepare and says why", async () => {
+  const data = await scratch();
+  const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: data }) });
+  test.after(() => zv.close());
+  const call = (path, init) => zv.fetch(
+    new Request(`http://localhost/zelavis/api/v1/runtime/projects${path}`, init), OWNER);
+  const created = await call("", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "legacy", name: "Legacy", recipeName: "@zelavis/app", start: true }),
+  });
+  assert.equal(created.status, 201);
+
+  // What a Project created before recipes were frozen looks like.
+  const directory = join(data, "projects", "legacy");
+  const projectFile = join(directory, "project.json");
+  const record = JSON.parse(await readFile(projectFile, "utf8"));
+  delete record.recipe.artifact;
+  record.recipe.version = "0.0.1-old";
+  await writeFile(projectFile, JSON.stringify(record, null, 2));
+  await rm(join(directory, ".zelavis", "recipe"), { recursive: true, force: true });
+  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const stored = await systemStore.get("projects", "legacy");
+  const lock = { ...stored.value.recipe, version: "0.0.1-old" };
+  delete lock.artifact;
+  await systemStore.set("projects", "legacy", { ...stored.value, recipe: lock });
+
+  const restarted = await call("/legacy/restart", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  });
+  assert.notEqual(restarted.status, 200);
+  const project = (await (await call("/legacy")).json()).project;
+  assert.equal(project.runtime.status, "failed");
+  assert.match(project.runtime.error, /cannot be prepared: this Platform ships/);
+  assert.match(project.runtime.error, /Delete and recreate the Project/);
+  assert.doesNotMatch(project.runtime.error, /prepare the Project again/);
+});

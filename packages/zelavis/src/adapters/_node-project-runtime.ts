@@ -294,7 +294,7 @@ export function createNodeProcessProjectRuntime(
       await restrictDirectoryPermissions(directory);
       await restrictDirectoryPermissions(dataDirectory);
       // Freeze the recipe into the Project so a Platform upgrade cannot change
-      // what it runs. Only recipes shipped as packages have one to freeze.
+      // what it runs. Preparing fails, with the reason, when it cannot be frozen.
       const artifact = await ensureRecipeArtifact(
         recipe,
         directory,
@@ -312,7 +312,7 @@ export function createNodeProcessProjectRuntime(
             ...project,
             recipe: {
               ...(recipe satisfies ZelavisProjectRecipeLock),
-              ...(artifact ? { artifact } : {}),
+              artifact,
             },
             engine,
             runtime: {

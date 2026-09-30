@@ -130,7 +130,7 @@ export async function ensureRecipeArtifact(
   recipe: { name: string; version: string },
   projectDirectory: string,
   dataDirectory: string,
-): Promise<{ digest: string } | undefined> {
+): Promise<{ digest: string }> {
   try {
     const existing = JSON.parse(
       await readFile(join(projectDirectory, "project.json"), "utf8"),
@@ -149,11 +149,23 @@ export async function ensureRecipeArtifact(
     // No descriptor yet, or an unreadable one: fall through to a fresh freeze.
   }
 
+  // A Project only runs the exact recipe it was locked to. When there is no
+  // frozen copy and this Platform cannot supply that exact version, say so
+  // now: preparing would otherwise succeed and the runner would then exit
+  // with a message that tells the operator to do what just failed.
   const bundled = resolveBundledServiceDirectory(recipe.name);
-  if (!bundled) return undefined;
+  if (!bundled) {
+    throw new Error(
+      `Project recipe ${recipe.name}@${recipe.version} is not shipped with this Platform and the Project has no frozen copy of it.`,
+    );
+  }
   const manifest = JSON.parse(await readFile(join(bundled, "package.json"), "utf8")) as {
     version?: string;
   };
-  if (manifest.version !== recipe.version) return undefined;
+  if (manifest.version !== recipe.version) {
+    throw new Error(
+      `Project recipe ${recipe.name}@${recipe.version} cannot be prepared: this Platform ships ${manifest.version ?? "another version"} and the Project has no frozen copy of the version it was created with. Delete and recreate the Project.`,
+    );
+  }
   return materializeRecipeArtifact(bundled, dataDirectory);
 }

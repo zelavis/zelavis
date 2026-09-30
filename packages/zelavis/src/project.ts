@@ -1037,6 +1037,18 @@ export async function createProjectManager(options: {
     }
 
     const snapshot = await runtime.status(project.id);
+    // A start that failed before any process existed (a recipe that cannot be
+    // prepared, a refused placement) leaves the driver with nothing to report.
+    // "Nothing running" must not erase the reason: the failure stays until the
+    // next lifecycle action replaces it.
+    if (
+      project.runtime.status === "failed" &&
+      project.runtime.error &&
+      snapshot.status === "stopped" &&
+      !snapshot.error
+    ) {
+      return project;
+    }
     const unchanged =
       snapshot.status === project.runtime.status &&
       snapshot.url === project.runtime.url &&
