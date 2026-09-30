@@ -24,7 +24,15 @@ export interface AllowlistCatalogEntry {
   /** The exact source to install; never a range or a tag. */
   readonly specifier: string;
   readonly status: "available";
-  readonly source: "official" | "community";
+  /**
+   * Always `community`: the registry reserves `official` for what the host
+   * bundled itself and protects those names from being registered from another
+   * source. An allow-listed package is installed by acquiring it, which the
+   * allow-list gate has already vouched for; who maintains it is the entry's
+   * `maintainer`, shown by the marketplace.
+   */
+  readonly source: "community";
+  readonly maintainer: string;
   readonly order: number;
 }
 
@@ -51,7 +59,8 @@ export function allowlistCatalogEntries(
     },
     specifier: `npm:${entry.name}@${entry.latest}`,
     status: "available" as const,
-    source: entry.maintainer === "zelavis" ? ("official" as const) : ("community" as const),
+    source: "community" as const,
+    maintainer: entry.maintainer,
     order: firstOrder + index,
   }));
 }

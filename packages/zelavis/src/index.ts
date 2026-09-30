@@ -504,6 +504,7 @@ export interface ZelavisServerOptions {
   projectDispatcher?: ZelavisProjectDispatcher;
   api?: ZelavisApiOptions;
   servicePackageInstaller?: ZelavisServicePackageInstaller;
+  marketplace?: ZelavisMarketplaceControl;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
   subsystems?: ZelavisSubsystemOptions;
@@ -670,6 +671,39 @@ export interface ZelavisServicePackageInstaller {
   >;
 }
 
+/** How an operator sees and refreshes the marketplace allow-list. */
+export interface ZelavisMarketplaceControl {
+  /** Whether installs are limited to what the allow-list vouches for. */
+  readonly gated: boolean;
+  /** Number of sources the list is fetched from. */
+  readonly sources: number;
+  status(): Promise<ZelavisMarketplaceAllowlistStatus>;
+  refresh(): Promise<ZelavisMarketplaceRefreshReport>;
+}
+
+export interface ZelavisMarketplaceAllowlistStatus {
+  /** Absent when no list is held at all. */
+  readonly list?: {
+    readonly sequence: number;
+    readonly issuedAt: string;
+    readonly expiresAt: string;
+    readonly origin: "remote" | "cache" | "bundled";
+    readonly fetchedAt?: string;
+    /** `fresh`, `stale` (installs paused until it refreshes), or `expired`. */
+    readonly status: "fresh" | "stale" | "expired";
+    readonly services: number;
+  };
+}
+
+export interface ZelavisMarketplaceRefreshReport extends ZelavisMarketplaceAllowlistStatus {
+  readonly updated: boolean;
+  readonly attempts: readonly {
+    readonly source: string;
+    readonly outcome: string;
+    readonly detail?: string;
+  }[];
+}
+
 export interface ZelavisPlatformResources {
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
@@ -688,6 +722,8 @@ export interface ZelavisPlatformResources {
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
   servicePackages?: ZelavisServicePackageInstaller;
+  /** The marketplace allow-list: what may be installed, and how current it is. */
+  marketplace?: ZelavisMarketplaceControl;
   /**
    * TLS certificate provider. Adapters that terminate TLS in-process
    * (Node/Bun self-host) wire a real provider here; adapters behind a reverse
@@ -1603,6 +1639,7 @@ async function resolveRuntimeManagementCore(
     serviceImporter?: ZelavisServiceLoadOptions["importer"];
     serviceManifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     servicePackageInstaller?: ZelavisServicePackageInstaller;
+    marketplace?: ZelavisMarketplaceControl;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
     getServices: () => readonly ZelavisRuntimeService<any>[];
@@ -2024,6 +2061,11 @@ async function resolveRuntimeManagementCore(
           entry.service.basePath ?? entry.service.name,
         ),
         marketplace: entry.service.marketplace,
+        // How an available entry is installed: acquired from the marketplace's
+        // allow-list, or activated in place. A yes/no, never the reference.
+        ...(entry.status === "available"
+          ? { installVia: entry.specifier?.startsWith("npm:") ? "acquire" : "activate" }
+          : {}),
         // Present only on a service that extends another. A client listing a
         // general catalogue leaves these out and shows them beside the plugin
         // they extend instead.
@@ -2293,6 +2335,50 @@ async function resolveRuntimeManagementCore(
                   .map((entry) => ({ ...publicServiceRegistryIdentity(entry), specifier: entry.specifier })),
               ] },
             };
+          },
+        },
+        {
+          id: "runtime.marketplace.allowlist.read",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/marketplace/allowlist"),
+          access: { permissions: ["marketplace.view"], scope: { type: "system" } },
+          spec: {
+            operationId: "getMarketplaceAllowlist",
+            summary: "How current the marketplace allow-list is",
+            tags: ["marketplace"],
+            responses: { 200: { description: "Allow-list status" }, 404: { description: "This installation has no marketplace" } },
+          },
+          handler: async () => {
+            if (!context.marketplace) {
+              return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
+            }
+            return {
+              status: 200,
+              headers: { "cache-control": "no-store" },
+              body: {
+                gated: context.marketplace.gated,
+                sources: context.marketplace.sources,
+                ...(await context.marketplace.status()),
+              },
+            };
+          },
+        },
+        {
+          id: "runtime.marketplace.allowlist.refresh",
+          method: "POST",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/marketplace/allowlist/refresh"),
+          access: { permissions: ["system.services.manage"] },
+          spec: {
+            operationId: "refreshMarketplaceAllowlist",
+            summary: "Fetch the allow-list again from its sources",
+            tags: ["marketplace"],
+            responses: { 200: { description: "What each source answered" }, 404: { description: "This installation has no marketplace" } },
+          },
+          handler: async () => {
+            if (!context.marketplace) {
+              return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
+            }
+            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.marketplace.refresh() };
           },
         },
         {
@@ -6207,6 +6293,7 @@ export async function zelavis(
       serviceManifestResolver:
         compositionOptions.serviceRegistry?.manifestResolver,
       servicePackageInstaller: options.servicePackageInstaller,
+      marketplace: options.marketplace,
       serviceActivation: options.serviceActivation,
       rootPath,
       getServices: () => runtimeConfigServices,
@@ -6623,6 +6710,7 @@ function mergeZelavisServerOptions(
     },
     servicePackageInstaller:
       override.servicePackageInstaller ?? base.servicePackageInstaller,
+    marketplace: override.marketplace ?? base.marketplace,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
@@ -6893,6 +6981,7 @@ export class Zelavis {
           ...serverOptions,
           serviceRegistry,
           servicePackageInstaller: platformResources.servicePackages,
+          marketplace: platformResources.marketplace,
           serviceActivation: platformResources.services,
           bundleStore,
           domainBindings,

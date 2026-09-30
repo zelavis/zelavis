@@ -111,6 +111,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         services: options.services,
         isProjectRuntime,
         fileStorage,
+        systemStore,
       });
 
       return {
@@ -123,6 +124,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages: serviceSources.servicePackages,
+          ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
         },
         metadata: {
           runtime: "bun",

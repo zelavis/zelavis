@@ -31,8 +31,9 @@
     }
   },
   "files": [
-    "dist",
-    "dashboard"
+    "allowlist.snapshot.json",
+    "dashboard",
+    "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

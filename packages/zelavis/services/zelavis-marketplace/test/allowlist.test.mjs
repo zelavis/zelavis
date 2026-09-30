@@ -209,7 +209,8 @@ test("the catalogue offers each service at its latest exact version", () => {
   const [entry] = allowlistCatalogEntries(parseAllowlist(list()).services);
   assert.equal(entry.specifier, "npm:@zelavis/wordpress@7.1.0");
   assert.equal(entry.status, "available");
-  assert.equal(entry.source, "official");
+  assert.equal(entry.source, "community", "the registry reserves official for what the host bundled");
+  assert.equal(entry.maintainer, "zelavis");
   assert.equal(entry.service.marketplace.title, "WordPress");
   assert.deepEqual(entry.service.project, { runtimeKinds: ["native"] });
 });
