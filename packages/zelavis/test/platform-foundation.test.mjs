@@ -403,7 +403,10 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     assert.equal(first.metadata.role, "platform");
     assert.equal(appService?.service.kind, "app");
     assert.equal(appService?.source, "official");
-    assert.equal(wordpressService, undefined);
+    // Offered from the marketplace's list, never bundled: the Platform does not
+    // ship it, so it cannot be an official (host-bundled) entry.
+    assert.notEqual(wordpressService?.source, "official");
+    if (wordpressService) assert.equal(wordpressService.status, "available");
     await systemStore.set("platform", "marker", { ready: true });
 
     const second = await nodeAdapter({ dataDirectory: directory }).resolve({});
@@ -424,10 +427,13 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     assert.equal(body.projectRecipes[0].name, "@zelavis/app");
     assert.equal(body.projectRecipes[0].source, "official");
     assert.deepEqual(body.projectRecipes[0].runtimeKinds, ["native"]);
-    assert.deepEqual(
-      body.projectRecipes.map((recipe) => recipe.name),
-      ["@zelavis/app"],
-    );
+    // The bundled recipe, then whatever the marketplace's list offers to
+    // install; nothing else is a recipe this Platform can create from.
+    for (const recipe of body.projectRecipes.slice(1)) {
+      assert.equal(recipe.status, "available", recipe.name);
+      assert.equal(recipe.source, "community", recipe.name);
+    }
+
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

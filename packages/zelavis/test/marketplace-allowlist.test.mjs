@@ -231,8 +231,12 @@ test("a Project's marketplace offers plugins and frontends, from the shipped lis
     systemStore: createMemorySystemStore(),
   });
 
-  const names = project.serviceRegistry.catalog.map((entry) => entry.service.name).sort();
-  assert.deepEqual(names, ["@zelavis/shop", "@zelavis/theme"], "an app is a Project, not something installed into one");
+  // The shipped list may offer more (the release's own plugins); what matters is
+  // what a Project is offered from the checkout, and that no app is among it.
+  const catalog = project.serviceRegistry.catalog;
+  const names = catalog.map((entry) => entry.service.name);
+  assert.ok(names.includes("@zelavis/shop") && names.includes("@zelavis/theme"));
+  assert.equal(catalog.some((entry) => entry.service.kind === "app"), false, "an app is a Project, not something installed into one");
   assert.equal(project.recipePackageDirectory, undefined, "recipes are frozen by the Platform");
 
   // The same gate: nothing outside the list installs into a Project either.
