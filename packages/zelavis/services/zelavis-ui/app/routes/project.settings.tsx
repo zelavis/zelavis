@@ -1,4 +1,4 @@
-import { useParams } from "react-router";
+import { useParams, useRouteLoaderData } from "react-router";
 import { Database, Globe2, Settings2 } from "lucide-react";
 
 import {
@@ -6,7 +6,9 @@ import {
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
+import { AssistantProviderCard } from "#/components/assistant-provider-card";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
+import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
   pageLabel: "Settings",
@@ -15,9 +17,12 @@ export const handle = {
 
 export default function ProjectSettingsRoute() {
   const { projectId = "default" } = useParams();
+  const { controlRuntime } = useRouteLoaderData<typeof rootClientLoader>("root")!;
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
+      <AssistantProviderCard runtime={controlRuntime} projectId={projectId} />
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

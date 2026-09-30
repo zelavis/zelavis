@@ -100,6 +100,7 @@ import {
   AssistantProviderConfigError,
   createAssistantProviderConfig,
   createConfiguredAssistantResponder,
+  removeProjectAssistantProvider,
 } from "./assistant-provider.js";
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
@@ -4599,7 +4600,7 @@ async function resolvePlatformEndpointGroup(
           access: { permissions: ["system.settings.manage"] },
           handler: async () =>
             assistantProvider
-              ? { status: 200, body: await assistantProvider.status() }
+              ? { status: 200, body: await assistantProvider.status({}) }
               : {
                   status: 200,
                   body: { mode: assistant ? "model" : "local-router", hasApiKey: false, source: "none",
@@ -4633,7 +4634,7 @@ async function resolvePlatformEndpointGroup(
             }
             try {
               const input = readBodyObject(body);
-              const result = await assistantProvider.set(input, principal?.id ?? "unknown");
+              const result = await assistantProvider.set({}, input, principal?.id ?? "unknown");
               // Recorded without the key; the model name is enough to review it.
               await createAssistantToolAudit(systemStore)({
                 id: crypto.randomUUID(), at: new Date().toISOString(),
@@ -4667,7 +4668,7 @@ async function resolvePlatformEndpointGroup(
               return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
             }
             try {
-              const result = await assistantProvider.clear();
+              const result = await assistantProvider.clear({});
               await createAssistantToolAudit(systemStore)({
                 id: crypto.randomUUID(), at: new Date().toISOString(),
                 principalId: principal?.id ?? "unknown",
@@ -4680,6 +4681,114 @@ async function resolvePlatformEndpointGroup(
               }
               throw error;
             }
+          },
+        },
+        {
+          id: "runtime.assistant.project-provider.get",
+          spec: {
+            operationId: "getProjectAssistantProvider",
+            summary: "Read which model provider answers a Project's chats",
+            tags: ["assistant"],
+            responses: { 200: { description: "Provider status; the key is never returned" } },
+          },
+          method: "GET",
+          path: "/assistant/projects/:projectId/provider",
+          access: {
+            permissions: ["project.settings.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({ params }: { params: Record<string, string> }) =>
+            assistantProvider
+              ? { status: 200, body: await assistantProvider.status({ projectId: params.projectId ?? "" }) }
+              : { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } },
+        },
+        {
+          id: "runtime.assistant.project-provider.set",
+          spec: {
+            operationId: "setProjectAssistantProvider",
+            summary: "Give a Project its own model provider and key",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Provider saved" },
+              400: { description: "Invalid provider settings" },
+              404: { description: "No such Project" },
+            },
+          },
+          method: "PUT",
+          path: "/assistant/projects/:projectId/provider",
+          access: {
+            permissions: ["project.settings.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({
+            body,
+            params,
+            principal,
+          }: {
+            body: unknown;
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistantProvider || !systemStore) {
+              return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
+            }
+            try {
+              const projectId = params.projectId ?? "";
+              // A key for a Project that does not exist would be stored with
+              // nothing to delete it later.
+              if (!projects || !(await projects.get(projectId))) {
+                return { status: 404, body: { error: `Project "${projectId}" was not found.` } };
+              }
+              const result = await assistantProvider.set({ projectId }, readBodyObject(body), principal?.id ?? "unknown");
+              await createAssistantToolAudit(systemStore)({
+                id: crypto.randomUUID(), at: new Date().toISOString(),
+                principalId: principal?.id ?? "unknown",
+                tool: "assistant.provider.set",
+                arguments: JSON.stringify({ projectId, provider: result.provider, model: result.model }),
+                decision: "allowed",
+              });
+              return { status: 200, body: result };
+            } catch (error) {
+              if (error instanceof AssistantProviderConfigError) {
+                return { status: error.status, body: { error: error.message } };
+              }
+              throw error;
+            }
+          },
+        },
+        {
+          id: "runtime.assistant.project-provider.clear",
+          spec: {
+            operationId: "clearProjectAssistantProvider",
+            summary: "Remove a Project's own model provider",
+            tags: ["assistant"],
+            responses: { 200: { description: "Cleared; the installation's provider applies again" } },
+          },
+          method: "DELETE",
+          path: "/assistant/projects/:projectId/provider",
+          access: {
+            permissions: ["project.settings.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({
+            params,
+            principal,
+          }: {
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistantProvider || !systemStore) {
+              return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
+            }
+            const projectId = params.projectId ?? "";
+            const result = await assistantProvider.clear({ projectId });
+            await createAssistantToolAudit(systemStore)({
+              id: crypto.randomUUID(), at: new Date().toISOString(),
+              principalId: principal?.id ?? "unknown",
+              tool: "assistant.provider.clear",
+              arguments: JSON.stringify({ projectId }), decision: "allowed",
+            });
+            return { status: 200, body: result };
           },
         },
         {
@@ -5942,13 +6051,22 @@ export async function zelavis(
               cleanup: (project: Readonly<ZelavisProjectRecord>) =>
                 deleteAppShardPlacementReservations(systemStore, project.id),
             },
+            ...(systemStore
+              ? [{
+                  id: "assistant-provider",
+                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                    removeProjectAssistantProvider(systemStore, project.id),
+                }]
+              : []),
             ...(deletionAssistant
               ? [{
                   id: "assistant-threads",
                   cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                    deletionAssistant.deleteProjectThreads(project.id).then(
-                      () => undefined,
-                    ),
+                    deletionAssistant
+                      .deleteProjectThreads(project.id, (threadId) =>
+                        createAssistantApprovalStore(systemStore!).deleteForThread(threadId),
+                      )
+                      .then(() => undefined),
                 }]
               : []),
             ...(options.domainBindings

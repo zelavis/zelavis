@@ -52,20 +52,53 @@ export class AssistantModelError extends Error {
 }
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const MAX_MODEL_RESPONSE_BYTES = 1024 * 1024;
 
-/** OpenRouter's OpenAI-compatible chat completions API, over plain `fetch`. */
-export function createOpenRouterModel(options: {
+interface ModelEndpointOptions {
   readonly apiKey: string;
   readonly model: string;
   readonly url?: string;
   readonly timeoutMs?: number;
   readonly fetch?: typeof fetch;
-}): AssistantModel {
-  if (!options.apiKey.trim() || !options.model.trim()) {
-    throw new TypeError("An OpenRouter API key and model are required.");
+}
+
+/** The providers a model can come from. Adding one is one adapter and one entry here. */
+export const ASSISTANT_PROVIDERS = ["openrouter", "openai", "anthropic"] as const;
+export type AssistantProviderName = (typeof ASSISTANT_PROVIDERS)[number];
+
+/** OpenRouter's OpenAI-compatible chat completions API, over plain `fetch`. */
+export function createOpenRouterModel(options: ModelEndpointOptions): AssistantModel {
+  return createOpenAICompatibleModel("openrouter", OPENROUTER_URL, options);
+}
+
+/** OpenAI's chat completions API. */
+export function createOpenAIModel(options: ModelEndpointOptions): AssistantModel {
+  return createOpenAICompatibleModel("openai", OPENAI_URL, options);
+}
+
+/** Builds the adapter for a configured provider. */
+export function createProviderModel(
+  provider: AssistantProviderName,
+  options: ModelEndpointOptions,
+): AssistantModel {
+  switch (provider) {
+    case "openrouter": return createOpenRouterModel(options);
+    case "openai": return createOpenAIModel(options);
+    case "anthropic": return createAnthropicModel(options);
   }
-  const url = new URL(options.url ?? OPENROUTER_URL);
+}
+
+function createOpenAICompatibleModel(
+  provider: "openrouter" | "openai",
+  defaultUrl: string,
+  options: ModelEndpointOptions,
+): AssistantModel {
+  if (!options.apiKey.trim() || !options.model.trim()) {
+    throw new TypeError(`A ${provider} API key and model are required.`);
+  }
+  const url = new URL(options.url ?? defaultUrl);
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
     throw new TypeError("The model endpoint must use HTTPS.");
@@ -74,7 +107,7 @@ export function createOpenRouterModel(options: {
   const timeoutMs = options.timeoutMs ?? 60_000;
 
   return {
-    name: `openrouter:${options.model}`,
+    name: `${provider}:${options.model}`,
     async generate({ messages, tools, signal, onText }) {
       const body = {
         model: options.model,
@@ -245,6 +278,211 @@ async function readStream(
   };
 }
 
+
+/** Anthropic's Messages API, which frames system text, tool use and streaming differently. */
+export function createAnthropicModel(options: ModelEndpointOptions): AssistantModel {
+  if (!options.apiKey.trim() || !options.model.trim()) {
+    throw new TypeError("An anthropic API key and model are required.");
+  }
+  const url = new URL(options.url ?? ANTHROPIC_URL);
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
+    throw new TypeError("The model endpoint must use HTTPS.");
+  }
+  const send = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+
+  type Block =
+    | { type: "text"; text: string }
+    | { type: "tool_use"; id: string; name: string; input: unknown }
+    | { type: "tool_result"; tool_use_id: string; content: string };
+  type Turn = { role: "user" | "assistant"; content: string | Block[] };
+
+  function toTurns(messages: readonly AssistantModelMessage[]): { system: string; turns: Turn[] } {
+    const system: string[] = [];
+    const turns: Turn[] = [];
+    for (const message of messages) {
+      if (message.role === "system") {
+        system.push(message.content);
+      } else if (message.role === "tool") {
+        // All results of one step travel together in a single user turn.
+        const block: Block = { type: "tool_result", tool_use_id: message.toolCallId, content: message.content };
+        const last = turns.at(-1);
+        if (last?.role === "user" && Array.isArray(last.content) &&
+            last.content.every((entry) => entry.type === "tool_result")) {
+          last.content.push(block);
+        } else {
+          turns.push({ role: "user", content: [block] });
+        }
+      } else if (message.role === "assistant" && message.toolCalls?.length) {
+        turns.push({
+          role: "assistant",
+          content: [
+            ...(message.content ? [{ type: "text" as const, text: message.content }] : []),
+            ...message.toolCalls.map((call) => ({
+              type: "tool_use" as const, id: call.id, name: call.name, input: call.arguments ?? {},
+            })),
+          ],
+        });
+      } else if (message.content) {
+        turns.push({ role: message.role, content: message.content });
+      }
+    }
+    return { system: system.join("\n\n"), turns };
+  }
+
+  return {
+    name: `anthropic:${options.model}`,
+    async generate({ messages, tools, signal, onText }) {
+      const { system, turns } = toTurns(messages);
+      const body = {
+        model: options.model,
+        max_tokens: 4096,
+        ...(system ? { system } : {}),
+        messages: turns,
+        ...(onText ? { stream: true } : {}),
+        ...(tools.length
+          ? {
+              tools: tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.parameters,
+              })),
+            }
+          : {}),
+      };
+      const timeout = AbortSignal.timeout(timeoutMs);
+      let response: Response;
+      try {
+        response = await send(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": options.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(body),
+          redirect: "error",
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+      } catch {
+        // Never surface the underlying error: it can echo request headers.
+        throw new AssistantModelError("The model provider could not be reached.");
+      }
+      if (!response.ok) {
+        throw new AssistantModelError(`The model provider refused the request (${response.status}).`);
+      }
+      if (onText) return readAnthropicStream(response, onText);
+
+      let payload: { content?: { type?: string; text?: string; id?: string; name?: string; input?: unknown }[] };
+      try {
+        payload = JSON.parse(await readBounded(response));
+      } catch {
+        throw new AssistantModelError("The model provider returned an unreadable response.");
+      }
+      if (!Array.isArray(payload.content)) {
+        throw new AssistantModelError("The model provider returned no answer.");
+      }
+      let content = "";
+      const toolCalls: AssistantModelToolCall[] = [];
+      for (const block of payload.content) {
+        if (block.type === "text" && typeof block.text === "string") content += block.text;
+        else if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+          toolCalls.push({ id: block.id, name: block.name, arguments: block.input ?? {} });
+        }
+      }
+      return { content, toolCalls };
+    },
+  };
+}
+
+/** Reads Anthropic's typed server-sent events, bounded like every other response. */
+async function readAnthropicStream(
+  response: Response,
+  onText: (delta: string) => void,
+): Promise<{ content: string; toolCalls: AssistantModelToolCall[] }> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new AssistantModelError("The model provider returned no answer.");
+  const decoder = new TextDecoder();
+  let pending = "";
+  let size = 0;
+  let content = "";
+  let sawMessage = false;
+  const tools = new Map<number, { id: string; name: string; json: string }>();
+
+  const handle = (line: string) => {
+    if (!line.startsWith("data:")) return; // `event:` names repeat the type in the data
+    const data = line.slice(5).trim();
+    if (!data) return;
+    let event: {
+      type?: string;
+      index?: number;
+      content_block?: { type?: string; id?: string; name?: string };
+      delta?: { type?: string; text?: string; partial_json?: string };
+    };
+    try {
+      event = JSON.parse(data);
+    } catch {
+      throw new AssistantModelError("The model provider returned an unreadable response.");
+    }
+    switch (event.type) {
+      case "error":
+        throw new AssistantModelError("The model provider reported an error.");
+      case "message_start":
+        sawMessage = true;
+        break;
+      case "content_block_start":
+        if (event.content_block?.type === "tool_use" &&
+            typeof event.content_block.id === "string" && typeof event.content_block.name === "string") {
+          tools.set(event.index ?? 0, { id: event.content_block.id, name: event.content_block.name, json: "" });
+        }
+        break;
+      case "content_block_delta":
+        if (event.delta?.type === "text_delta" && event.delta.text) {
+          content += event.delta.text;
+          onText(event.delta.text);
+        } else if (event.delta?.type === "input_json_delta" && event.delta.partial_json) {
+          const tool = tools.get(event.index ?? 0);
+          if (tool) tool.json += event.delta.partial_json;
+        }
+        break;
+      default:
+        break;
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_MODEL_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new AssistantModelError("The model provider response was too large.");
+    }
+    pending += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = pending.indexOf("\n")) >= 0) {
+      handle(pending.slice(0, newline).replace(/\r$/, ""));
+      pending = pending.slice(newline + 1);
+    }
+  }
+  if (pending.trim()) handle(pending.trim());
+  if (!sawMessage) throw new AssistantModelError("The model provider returned no answer.");
+  const toolCalls: AssistantModelToolCall[] = [...tools.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, tool]) => {
+      let args: unknown = {};
+      try {
+        args = tool.json ? JSON.parse(tool.json) : {};
+      } catch {
+        // Passed on unparsed so the toolbox refuses it as invalid and audits it.
+        args = tool.json;
+      }
+      return { id: tool.id, name: tool.name, arguments: args };
+    });
+  return { content, toolCalls };
+}
+
 async function readBounded(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return "";
@@ -306,7 +544,7 @@ export function createModelAssistantResponder(options: {
         { role: "system", content: options.system ?? DEFAULT_SYSTEM_PROMPT },
         ...historyOf(thread),
       ];
-      const tools = options.toolbox?.advertise(principal) ?? [];
+      const tools = options.toolbox?.advertise(principal, { projectId: thread.projectId }) ?? [];
       // Everything the model says is kept, so what is streamed is what is saved.
       const said: string[] = [];
       const activity: { label: string; status: "done" | "refused" | "awaiting" }[] = [];
@@ -337,7 +575,7 @@ export function createModelAssistantResponder(options: {
         });
         if (result.content.trim()) said.push(result.content.trim());
         if (result.toolCalls.length === 0 || !options.toolbox) {
-          return { content: answer() || "I have nothing to add.", ...(activity.length ? { activity } : {}), ...(approvalIds.length ? { approvalIds } : {}) };
+          return { content: answer() || "I have nothing to add.", provider: options.model.name, ...(activity.length ? { activity } : {}), ...(approvalIds.length ? { approvalIds } : {}) };
         }
         messages.push({
           role: "assistant",
@@ -348,7 +586,7 @@ export function createModelAssistantResponder(options: {
           const label = options.toolbox.describe(call);
           const base = { type: "tool" as const, id: call.id, name: call.name, label };
           onEvent?.({ ...base, status: "running" });
-          const outcome = await options.toolbox.run(principal, call, { threadId: thread.id });
+          const outcome = await options.toolbox.run(principal, call, { threadId: thread.id, projectId: thread.projectId });
           const approval = !outcome.ok ? outcome.refusal.approval : undefined;
           const status = approval
             ? ("awaiting" as const)
@@ -370,6 +608,7 @@ export function createModelAssistantResponder(options: {
       }
       return {
         content: answer() || "I could not finish that within the allowed number of steps.",
+        provider: options.model.name,
         ...(activity.length ? { activity } : {}),
         ...(approvalIds.length ? { approvalIds } : {}),
       };

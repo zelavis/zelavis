@@ -14,6 +14,8 @@ test("@smoke the Assistant answers through the streaming endpoint and keeps the 
 
   await expect(page.getByText("Host usage and resource charts")).toBeVisible()
   await expect(page.getByRole("button", { name: "Open Resources" })).toBeVisible()
+  // Each reply says who wrote it; with no model configured that is the built-in helper.
+  await expect(page.getByText("Built-in helper")).toBeVisible()
   expect(streamed).toBe(1)
 
   // The saved thread, not just the live view, holds the reply.

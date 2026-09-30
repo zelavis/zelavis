@@ -49,6 +49,8 @@ export interface AssistantTool<TArgs = Record<string, unknown>> {
   readonly description: string;
   /** JSON Schema for the arguments, as advertised to the model. */
   readonly parameters: Readonly<Record<string, unknown>>;
+  /** Reaches beyond one Project (the whole installation), so a Project chat never offers it. */
+  readonly systemWide?: true;
   /** Permissions the caller must hold, at any scope, for the tool to be shown. */
   readonly advertisedPermissions: readonly string[];
   /**
@@ -127,11 +129,19 @@ export interface AssistantToolDefinition {
 
 export interface AssistantToolbox {
   /** Tools worth showing this caller. Not an authorization decision. */
-  advertise(principal: ZelavisPrincipal): readonly AssistantToolDefinition[];
+  advertise(
+    principal: ZelavisPrincipal,
+    context?: { readonly projectId?: string },
+  ): readonly AssistantToolDefinition[];
   run(
     principal: ZelavisPrincipal,
     call: { readonly name: string; readonly arguments: unknown },
-    context?: { readonly threadId?: string },
+    /**
+     * `projectId` confines a chat to its Project: a chat about one Project may
+     * not read or change another, whatever its caller could do elsewhere,
+     * because what it reads goes to the provider that Project chose.
+     */
+    context?: { readonly threadId?: string; readonly projectId?: string },
   ): Promise<AssistantToolResult>;
   /** A short operator-language label for a call. Never throws and never authorizes. */
   describe(call: { readonly name: string; readonly arguments: unknown }): string;
@@ -257,8 +267,9 @@ export function createAssistantToolbox(options: {
         return fallback[0]!.toUpperCase() + fallback.slice(1);
       }
     },
-    advertise(principal) {
+    advertise(principal, context) {
       return options.tools
+        .filter((tool) => !(context?.projectId !== undefined && tool.systemWide))
         .filter((tool) =>
           // Offered when the caller holds every permission the tool can ask
           // for, at some scope. The exact scope is decided per call.
@@ -293,6 +304,20 @@ export function createAssistantToolbox(options: {
       }
 
       const { permissions, scope, parsed } = requirement;
+      if (context?.projectId !== undefined &&
+          !(scope?.type === "project" && scope.projectId === context.projectId)) {
+        if (!(await record(principal, tool.name, call.arguments, "denied", "outside the chat's Project"))) {
+          return auditUnavailable(tool.name);
+        }
+        return {
+          ok: false,
+          refusal: {
+            code: "forbidden",
+            tool: tool.name,
+            message: `This chat is about Project ${context.projectId}, so it can only work on that Project.`,
+          },
+        };
+      }
       const allowed = permissions.every((permission) =>
         principalHasPermission(principal, permission, scope),
       );
@@ -581,6 +606,7 @@ export function createProjectReadTools(
   const listProjects: AssistantTool<Record<string, never>> = {
     name: "list_projects",
     description: "List the Projects on this installation.",
+    systemWide: true,
     parameters: { type: "object", properties: {}, additionalProperties: false },
     advertisedPermissions: ["projects.list"],
     access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),
@@ -671,6 +697,7 @@ export function createPlatformStatusTool(
   return {
     name: "platform_status",
     description: "Summarize this installation: how many Projects there are and their runtime states.",
+    systemWide: true,
     parameters: { type: "object", properties: {}, additionalProperties: false },
     advertisedPermissions: ["projects.list"],
     access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),

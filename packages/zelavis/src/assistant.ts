@@ -18,6 +18,8 @@ export interface ZelavisAssistantMessage {
   activity?: readonly ZelavisAssistantActivity[];
   /** Changes this reply asked to make; their state lives with each approval. */
   approvalIds?: readonly string[];
+  /** Which provider and model wrote this reply, since a thread can outlive a setting. */
+  provider?: string;
   createdAt: string;
 }
 
@@ -37,6 +39,8 @@ export interface ZelavisAssistantReply {
   activity?: readonly ZelavisAssistantActivity[];
   approvalIds?: readonly string[];
   actions?: readonly ZelavisAssistantAction[];
+  /** Which provider and model wrote it; recorded with the message. */
+  provider?: string;
 }
 
 /** Progress a responder can report while it works. */
@@ -89,7 +93,10 @@ export interface ZelavisAssistantManager {
   list(ownerId: string, projectId?: string): Promise<readonly ZelavisAssistantThread[]>;
   /** `undefined` for a missing thread and for one another principal owns. */
   get(id: string, ownerId: string): Promise<ZelavisAssistantThread | undefined>;
-  deleteProjectThreads(projectId: string): Promise<number>;
+  deleteProjectThreads(
+    projectId: string,
+    onDeleted?: (threadId: string) => Promise<unknown>,
+  ): Promise<number>;
   /** Deletes one of the owner's threads. `false` when there is none (or it is not theirs). */
   delete(id: string, ownerId: string): Promise<boolean>;
   /**
@@ -214,7 +221,7 @@ export function createAssistantManager(options: {
       const thread = await readOwned(id, ownerId);
       return thread ? store.delete(ASSISTANT_THREADS_NAMESPACE, thread.id) : false;
     },
-    async deleteProjectThreads(projectId) {
+    async deleteProjectThreads(projectId, onDeleted) {
       const normalizedProjectId = normalizeOptionalText(projectId);
       if (!normalizedProjectId) {
         throw new ZelavisAssistantValidationError("Project id is required.");
@@ -228,6 +235,7 @@ export function createAssistantManager(options: {
           await store.delete(ASSISTANT_THREADS_NAMESPACE, record.key)
         ) {
           deleted += 1;
+          await onDeleted?.(thread.id);
         }
       }
       return deleted;
@@ -339,6 +347,7 @@ export function createAssistantManager(options: {
         ...(reply.actions?.length ? { actions: reply.actions } : {}),
         ...(reply.activity?.length ? { activity: reply.activity } : {}),
         ...(reply.approvalIds?.length ? { approvalIds: reply.approvalIds } : {}),
+        provider: reply.provider ?? responder.name,
         createdAt: new Date().toISOString(),
       };
       const thread = await write({

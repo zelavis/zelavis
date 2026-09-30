@@ -400,6 +400,8 @@ export interface RuntimeAssistantMessage {
   activity?: readonly RuntimeAssistantActivity[];
   /** Changes this reply asked to make; see `RuntimeAssistantThread.approvals`. */
   approvalIds?: readonly string[];
+  /** Which provider and model wrote the reply. */
+  provider?: string;
   createdAt: string;
 }
 
@@ -1736,13 +1738,17 @@ export async function getDashboardSettings(
   );
 }
 
+export const ASSISTANT_PROVIDERS = ["openrouter", "openai", "anthropic"] as const;
+export type AssistantProviderName = (typeof ASSISTANT_PROVIDERS)[number];
+
 export interface AssistantProviderStatus {
   mode: "model" | "local-router";
-  provider?: "openrouter";
+  provider?: AssistantProviderName;
   model?: string;
-  /** Whether a key exists; the key itself is never returned. */
+  /** Whether a key is stored here; the key itself is never returned. */
   hasApiKey: boolean;
-  source: "environment" | "stored" | "none";
+  /** For a Project, `platform` means it inherits the installation's provider. */
+  source: "environment" | "stored" | "project" | "platform" | "none";
   updatedAt?: string;
 }
 
@@ -1765,31 +1771,38 @@ export async function listAssistantAudit(
   return readJson(`${config.api.basePath}/runtime/assistant/audit?${query}`);
 }
 
+function assistantProviderPath(config: RuntimeConfig, projectId?: string) {
+  return projectId
+    ? `${config.api.basePath}/runtime/assistant/projects/${encodeURIComponent(projectId)}/provider`
+    : `${config.api.basePath}/runtime/assistant/provider`;
+}
+
+/** The installation's provider, or one Project's when `projectId` is given. */
 export async function getAssistantProvider(
   config: RuntimeConfig,
+  projectId?: string,
 ): Promise<AssistantProviderStatus> {
-  return readJson<AssistantProviderStatus>(
-    `${config.api.basePath}/runtime/assistant/provider`,
-  );
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId));
 }
 
 export async function setAssistantProvider(
   config: RuntimeConfig,
-  input: { model: string; apiKey: string },
+  input: { provider: AssistantProviderName; model: string; apiKey: string },
+  projectId?: string,
 ): Promise<AssistantProviderStatus> {
-  return readJson<AssistantProviderStatus>(
-    `${config.api.basePath}/runtime/assistant/provider`,
-    { method: "PUT", body: JSON.stringify({ provider: "openrouter", ...input }) },
-  );
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId), {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function clearAssistantProvider(
   config: RuntimeConfig,
+  projectId?: string,
 ): Promise<AssistantProviderStatus> {
-  return readJson<AssistantProviderStatus>(
-    `${config.api.basePath}/runtime/assistant/provider`,
-    { method: "DELETE" },
-  );
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId), {
+    method: "DELETE",
+  });
 }
 
 export async function updateDashboardSettings(

@@ -377,3 +377,35 @@ test("credential-shaped values are removed from what a tool returns", async () =
   }
   assert.equal(result.value.nested.note, "fine");
 });
+
+test("a chat about one Project cannot reach another, or the whole installation", async () => {
+  const seen = [];
+  const box = createAssistantToolbox({
+    audit: async (record) => { seen.push(record); },
+    tools: [
+      ...createProjectReadTools(() => projectsManager),
+      createPlatformStatusTool(() => ({ runtime: "node", list: async () => [] })),
+    ],
+  });
+  const everywhere = { id: "u", type: "user", permissions: ["*"] };
+  const chat = { threadId: "t", projectId: "p1" };
+
+  assert.deepEqual(box.advertise(everywhere, chat).map((t) => t.name).sort(), ["get_project", "project_logs"],
+    "system-wide tools are not offered in a Project chat");
+  assert.ok(box.advertise(everywhere).some((t) => t.name === "list_projects"), "but they are outside one");
+
+  const own = await box.run(everywhere, { name: "get_project", arguments: { projectId: "p1" } }, chat);
+  assert.equal(own.ok, true);
+  const other = await box.run(everywhere, { name: "get_project", arguments: { projectId: "p2" } }, chat);
+  assert.equal(other.refusal.code, "forbidden");
+  assert.match(other.refusal.message, /only work on that Project/);
+  const wide = await box.run(everywhere, { name: "list_projects", arguments: {} }, chat);
+  assert.equal(wide.refusal.code, "forbidden");
+  const status = await box.run(everywhere, { name: "platform_status", arguments: {} }, chat);
+  assert.equal(status.refusal.code, "forbidden");
+  assert.deepEqual(seen.filter((r) => r.decision === "denied").map((r) => r.reason),
+    Array(3).fill("outside the chat's Project"));
+
+  // Outside a Project chat the caller's own authority is all that limits it.
+  assert.equal((await box.run(everywhere, { name: "get_project", arguments: { projectId: "p2" } }, { threadId: "t" })).ok, true);
+});

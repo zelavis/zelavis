@@ -41,6 +41,7 @@ function toInitialMessages(
         ...(message.actions ? { actions: message.actions } : {}),
         ...(message.activity ? { activity: message.activity } : {}),
         ...(message.approvalIds ? { approvalIds: message.approvalIds } : {}),
+        ...(message.provider ? { provider: message.provider } : {}),
       },
     },
   }))
@@ -147,11 +148,25 @@ function AssistantApprovals() {
   )
 }
 
+/** Which provider and model wrote the reply, since a chat can outlive a setting. */
+function AssistantProvenance() {
+  const provider = useAuiState((state) => state.message.metadata.custom.provider) as
+    | string
+    | undefined
+  if (!provider) return null
+  return (
+    <div className="px-2 text-[11px] text-muted-foreground">
+      {provider === "local-router" ? "Built-in helper" : provider}
+    </div>
+  )
+}
+
 function ZelavisAssistantMessage() {
   return (
     <>
       <AssistantActivity />
       <AssistantUiMessage />
+      <AssistantProvenance />
       <AssistantApprovals />
       <AssistantActions />
     </>
@@ -268,6 +283,9 @@ export function AssistantChat({
                     : {}),
                   ...(event.assistantMessage.approvalIds
                     ? { approvalIds: event.assistantMessage.approvalIds }
+                    : {}),
+                  ...(event.assistantMessage.provider
+                    ? { provider: event.assistantMessage.provider }
                     : {}),
                   ...(event.assistantMessage.actions
                     ? { actions: event.assistantMessage.actions }

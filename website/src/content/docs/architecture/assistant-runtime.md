@@ -75,18 +75,40 @@ The Admin Agent is not a principal. It borrows the caller's authority:
   Store, and a call that cannot be audited does not run
 - the system prompt enforces nothing
 
-### Provider configuration
+### Providers
 
-Without a model in code, the provider is resolved on every message: the
-environment (`ZELAVIS_ASSISTANT_OPENROUTER_API_KEY` and `ZELAVIS_ASSISTANT_MODEL`,
-which win and cannot be changed through the API), then a setting stored through
-`GET|PUT|DELETE /zelavis/api/v1/runtime/assistant/provider`, then none, in which
-case the deterministic local router answers. Those routes need
-`system.settings.manage`. The key is encrypted with the Platform master secret,
-never returned (callers only learn `hasApiKey`), and never written to threads,
-audit records or errors; changes are audited without it. The master secret lives
-in the same System Store, so this protects a leaked field or export, not a
-compromised store.
+Three providers are supported behind the `AssistantModel` seam, each speaking
+its own protocol over plain `fetch` (HTTPS only, bounded responses, streaming,
+errors that never echo the key): `openrouter`, `openai` and `anthropic`.
+
+Which one answers is resolved on every message, for the thread's Project:
+
+1. **The Project's own provider**, if it has one, for that Project's chats only.
+2. Otherwise the installation's: the environment (`ZELAVIS_ASSISTANT_PROVIDER`,
+   default `openrouter`, plus `ZELAVIS_ASSISTANT_API_KEY` and
+   `ZELAVIS_ASSISTANT_MODEL`, which win over stored settings and cannot be
+   changed through the API), then a stored setting.
+3. Otherwise none, and the deterministic local router answers.
+
+The installation's provider is managed with
+`GET|PUT|DELETE /zelavis/api/v1/runtime/assistant/provider`
+(`system.settings.manage`); a Project's with
+`GET|PUT|DELETE /zelavis/api/v1/runtime/assistant/projects/:projectId/provider`
+(`project.settings.manage` on that Project). Keys are encrypted with the
+Platform master secret bound to their scope, so a record copied to another
+Project or to the installation does not decrypt. They are never returned,
+logged, or put in threads, audit records or errors, and a deleted Project's key
+is deleted with it. A Project is only ever told whether it has its own provider
+or inherits one, never whose. The master secret lives in the same System Store,
+so this protects a leaked field or export, not a compromised store.
+
+Each reply records the provider and model that wrote it, and the chat shows it.
+
+**A Project's chat is confined to its Project.** Because what a tool reads is
+sent to the provider that Project chose, a chat about Project A is offered no
+installation-wide tools and any call naming another Project is refused,
+whatever its caller could do elsewhere. Chats outside any Project use the
+installation's provider and the caller's own authority.
 
 Built-in read-only tools, each carrying the same requirement as its HTTP route:
 `list_projects`, `get_project`, `project_logs`, `platform_status`,
