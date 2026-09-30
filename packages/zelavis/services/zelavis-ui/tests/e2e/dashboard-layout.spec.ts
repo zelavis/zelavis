@@ -65,6 +65,12 @@ async function gotoDashboard(page: Page, path: string) {
   await waitForDashboardHydration(page)
 }
 
+/** A Platform-level page, never rewritten to a Project's (`/auth` is both). */
+async function gotoPlatformDashboard(page: Page, path: string) {
+  await page.goto(toDashboardPath(path))
+  await waitForDashboardHydration(page)
+}
+
 async function waitForDashboardHydration(page: Page) {
   await page.locator('html[data-zelavis-hydrated="true"]').waitFor()
 }
@@ -738,64 +744,31 @@ test('marketplace is a top-level item on the first sidebar slide', async ({
   await expect(rootSlide.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
 })
 
-test('@smoke marketplace renders the page its own service ships', async ({
+test('@smoke a service ships its own page, framed and styled by the dashboard', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await gotoDashboard(page, '/marketplace')
+  await gotoPlatformDashboard(page, '/auth')
 
-  // The dashboard has no marketplace route. The page comes from the service,
+  // The dashboard has no Auth settings route. The page comes from the service,
   // through the service page frame, fetched from the service page asset route.
   //
   // Deliberately not asserting the host element is visible: `:host { display:
   // block }` lives in its shadow root, so until `customElements.define` runs
   // the element is inline and zero-size. `toHaveAttribute` waits for it to be
   // attached, and the heading below only resolves once the frame has actually
-  // loaded the page — which is the thing worth asserting anyway.
+  // loaded the page, which is the thing worth asserting anyway.
   await expect(page.locator('zelavis-service-frame')).toHaveAttribute(
     'src',
-    /runtime\/service-page-assets\/%40zelavis%2Fmarketplace\/.*marketplace\.html$/,
+    /runtime\/service-page-assets\/%40zelavis%2Fauth\/.*auth\.html$/,
   )
 
   const frame = page.frameLocator('zelavis-service-frame iframe')
-  await expect(frame.getByRole('heading', { name: 'Services' })).toBeVisible()
-
-  // Populated by a live call to the registry API from inside the frame. The
-  // frame is same-origin with the Platform, so it uses the same session the
-  // dashboard does — no privileged channel, and nothing a third-party
-  // service's page could not also do.
-  await expect(frame.locator('#services zv-card').first()).toBeVisible()
+  await expect(frame.locator('body')).toBeVisible()
 
   // The design tokens reached the framed document.
   await expect(frame.locator('body')).toHaveCSS('color', /oklch/)
-})
-
-test('@smoke the marketplace page renders real components, not a placeholder', async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop')
-
-  await gotoDashboard(page, '/marketplace')
-
-  const frame = page.frameLocator('zelavis-service-frame iframe')
-  // Visible only if the element upgraded: `:host { display: block }` and the
-  // padding live in its shadow root, so an unupgraded `zv-card` is an inline
-  // element with no box at all.
-  const card = frame.locator('#services zv-card').first()
-  await expect(card).toBeVisible()
-
-  const rendered = await card.evaluate((element) => ({
-    upgraded: Boolean(element.shadowRoot),
-    // The token reached through the shadow boundary, which is what lets a
-    // frontend restyle every service page without touching one.
-    border: getComputedStyle(element).borderTopColor,
-    padding: getComputedStyle(element).paddingLeft,
-  }))
-
-  expect(rendered.upgraded).toBe(true)
-  expect(rendered.padding).not.toBe('0px')
-  expect(rendered.border).not.toBe('rgba(0, 0, 0, 0)')
 })
 
 test('@smoke a service the operator did not compose is sandboxed', async ({
@@ -803,12 +776,12 @@ test('@smoke a service the operator did not compose is sandboxed', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await gotoDashboard(page, '/marketplace')
+  await gotoPlatformDashboard(page, '/auth')
 
   const host = page.locator('zelavis-service-frame')
   const src = await host.getAttribute('src')
 
-  // The marketplace is composed by the operator, so its page runs same-origin.
+  // Auth is composed by the operator, so its page runs same-origin.
   expect(await host.getAttribute('sandboxed')).toBe('false')
 
   // The same element, told the service was installed at runtime. Mounted here
@@ -837,6 +810,66 @@ test('@smoke a service the operator did not compose is sandboxed', async ({
   expect(result.sandbox).not.toContain('allow-same-origin')
   expect(result.sandbox).not.toContain('allow-popups')
   expect(result.reachable).toBe(false)
+})
+
+test('@smoke the marketplace lists WordPress and Zelavis as apps', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  const tabs = page.getByRole('tablist', { name: 'Marketplace sections' })
+  await expect(tabs.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
+
+  const apps = page.getByRole('list', { name: 'Apps' })
+  await expect(apps.getByRole('heading', { name: 'Zelavis App' })).toBeVisible()
+  await expect(apps.getByRole('heading', { name: 'WordPress' })).toBeVisible()
+})
+
+test('the Frontends tab is closed on the Platform marketplace', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  const frontends = page.getByRole('tab', { name: /Frontends/ })
+  await expect(frontends).toHaveAttribute('aria-disabled', 'true')
+
+  // A tab that is only greyed out would still be reachable by URL.
+  await gotoDashboard(page, '/marketplace?tab=frontends')
+  await expect(page.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('marketplace tabs and search live in the URL', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+  await page.getByRole('tab', { name: /Plugins/ }).click()
+  await expect(page).toHaveURL(/tab=plugins/)
+
+  await page.getByRole('tab', { name: /Apps/ }).click()
+  await page.getByRole('searchbox', { name: 'Search the marketplace' }).fill('wordpress')
+  await expect(page).toHaveURL(/q=wordpress/)
+  const apps = page.getByRole('list', { name: 'Apps' })
+  await expect(apps.getByRole('heading', { name: 'WordPress' })).toBeVisible()
+  await expect(apps.getByRole('heading', { name: 'Zelavis App' })).toHaveCount(0)
+})
+
+test('marketplace details open in a panel and survive a reload', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+  await page.getByRole('button', { name: 'More details' }).first().click()
+  const sheet = page.getByRole('dialog')
+  await expect(sheet).toBeVisible()
+  await expect(page).toHaveURL(/details=/)
+
+  await page.reload()
+  await expect(page.getByRole('dialog')).toBeVisible()
 })
 
 test('marketplace does not expose ecommerce in extensions before install', async ({

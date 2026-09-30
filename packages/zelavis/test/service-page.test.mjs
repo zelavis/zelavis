@@ -33,14 +33,16 @@ async function boot() {
   };
 
   const config = await get("/zelavis/api/v1/runtime/config", OWNER);
-  const marketplace = config.body.services.find(
-    (service) => service.name === "@zelavis/marketplace",
+  // Any bundled service that ships a page will do; Auth's is the one that
+  // stays a framed page now that the marketplace lives in the dashboard.
+  const auth = config.body.services.find(
+    (service) => service.name === "@zelavis/auth",
   );
 
-  return { get, pageSrc: marketplace.menu.page.src };
+  return { get, pageSrc: auth.menu.page.src };
 }
 
-test("every URL the marketplace page builds actually resolves", async () => {
+test("every URL a service page builds actually resolves", async () => {
   const { get, pageSrc } = await boot();
   const page = await get(pageSrc, OWNER);
 
@@ -61,25 +63,12 @@ test("every URL the marketplace page builds actually resolves", async () => {
   assert.match(stylesheet.contentType, /text\/css/);
   assert.match(stylesheet.body, /--background:/);
 
-  // Same arithmetic, same failure mode: the element library is loaded by a
-  // relative path from a page mounted several segments deep.
-  const elementsSrc = page.body.match(
-    /<script type="module" src="([^"]+)"><\/script>/,
-  )?.[1];
-  assert.ok(elementsSrc, "the page loads no element library");
-
-  const elements = await get(new URL(elementsSrc, base).pathname, OWNER);
-  assert.equal(elements.status, 200);
-  assert.match(elements.contentType, /javascript/);
-  assert.match(elements.body, /customElements\.define/);
-
   const apiRootExpr = page.body.match(/new URL\("((?:\.\.\/)+)", location\.href\)/)?.[1];
   assert.ok(apiRootExpr, "the page derives no API root");
 
   const apiRoot = new URL(apiRootExpr, base).pathname.replace(/\/$/, "");
-  const services = await get(`${apiRoot}/runtime/services`, OWNER);
-  assert.equal(services.status, 200);
-  assert.ok(Array.isArray(services.body.services));
+  const bootstrap = await get(`${apiRoot}/auth/bootstrap`, OWNER);
+  assert.equal(bootstrap.status, 200);
 
   const config = await get(`${apiRoot}/runtime/config`, OWNER);
   assert.equal(config.status, 200);
@@ -103,9 +92,8 @@ test("the stylesheet keeps the hidden attribute working", async () => {
   const stylesheet = await get("/zelavis/api/v1/runtime/service-page.css", OWNER);
 
   // Any explicit `display` beats the user-agent rule for `hidden`, so a page
-  // that styles a form as flex silently un-hides it. The marketplace hit this
-  // exactly: its install form stayed visible on an installation that cannot
-  // install anything.
+  // that styles a form as flex silently un-hides it. A form styled as
+  // flex stayed visible on an installation that could not use it.
   assert.match(stylesheet.body, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
 });
 
@@ -116,15 +104,12 @@ test("service page styles are not readable by an anonymous caller", async () => 
   assert.equal(stylesheet.status, 401);
 });
 
-test("the marketplace page drives the real registry API, not a mock", async () => {
+test("a service page drives the real API, not a mock", async () => {
   const { get, pageSrc } = await boot();
   const page = await get(pageSrc, OWNER);
 
-  assert.match(page.body, /\/runtime\/services/);
-  // Installing goes through the same endpoint and the same acquisition path
-  // an operator would use directly.
-  assert.match(page.body, /packageSource/);
-  assert.match(page.body, /supportsPackageAcquisition/);
+  assert.match(page.body, /\/auth\/bootstrap/);
+  assert.match(page.body, /\/runtime\/extensions/);
 });
 
 test("the element library defines the tags a service page composes", async () => {

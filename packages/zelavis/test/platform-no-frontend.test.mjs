@@ -75,13 +75,12 @@ test("service pages still get design tokens with no frontend", async () => {
 test("a service page still renders with no frontend installed", async () => {
   const get = await boot({ serviceRegistry: await bundledServiceRegistry() });
   const config = await get("/zelavis/api/v1/runtime/config");
-  const marketplace = config.body.services.find(
-    (service) => service.name === "@zelavis/marketplace",
+  const auth = config.body.services.find(
+    (service) => service.name === "@zelavis/auth",
   );
 
-  // The marketplace is how a frontend gets installed, so it has to work in the
-  // state where none is.
-  const page = await get(marketplace.menu.page.src, OWNER);
+  // A service's own page must not depend on a frontend being installed.
+  const page = await get(auth.menu.page.src, OWNER);
   assert.equal(page.status, 200);
 });
 

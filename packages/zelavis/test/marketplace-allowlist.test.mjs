@@ -204,6 +204,7 @@ test("in development, an official service in the local checkout stands in for it
   const { serviceRegistry, marketplace } = await sourcesFor(directory, { officialServicesDirectory: checkout });
   const local = serviceRegistry.catalog.find((c) => c.service.name === "@zelavis/wordpress");
   assert.equal(local.status, "available");
+  assert.equal(local.maintainer, "zelavis", "what is in the operator's zelavis-services checkout is ours");
   assert.equal(local.specifier, join(checkout, "wordpress"));
   assert.equal(local.service.version, "7.1.0");
   assert.deepEqual(local.service.project, { runtimeKinds: ["native"] });

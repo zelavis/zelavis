@@ -1320,6 +1320,7 @@ async function loadConfiguredServiceRegistryModules(
             specifier: entry.specifier,
             status: entry.status,
             source: entry.source,
+            ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
             ...(entry.order !== undefined ? { order: entry.order } : {}),
           },
         ],

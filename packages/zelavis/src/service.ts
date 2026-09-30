@@ -125,6 +125,8 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
+  /** Who maintains the package (`zelavis` for the officially maintained services). */
+  maintainer?: string;
   order?: number;
   manifest?: ZelavisPackageManifest;
 }
@@ -133,6 +135,7 @@ export interface ZelavisServiceRegistryModuleEntry {
   specifier: string;
   status?: "installed" | "available";
   source?: "official" | "community";
+  maintainer?: string;
   order?: number;
   manifest?: ZelavisPackageManifest;
   packageDir?: string;
@@ -719,6 +722,7 @@ export async function loadServiceRegistry<TContext = unknown>(
         specifier: entry.specifier,
         status: entry.status ?? "installed",
         source: entry.source,
+        ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
         manifest: entry.manifest,
         packageDir: entry.packageDir ?? service.packageDir,
         ...(entry.order !== undefined ? { order: entry.order } : {}),

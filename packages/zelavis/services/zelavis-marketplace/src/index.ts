@@ -11,10 +11,9 @@
  * private path into the dashboard, the extension mechanism is not finished; if
  * it does not, the mechanism is proven by the product itself.
  *
- * The page is currently a placeholder rendered through the service page API,
- * which the dashboard mounts in a frame. A component library that lets a
- * service render natively is future work; until it exists, the frame is the
- * supported way for a service to own its own page.
+ * Its pages ship in `@zelavis/ui` (a core service with content already in the
+ * dashboard uses `menu.path` with no `menu.page`): one workspace serves both the
+ * Platform's marketplace and a Project's, so the two cannot drift apart.
  */
 import { zelavis } from "zelavis/sdk";
 
@@ -31,12 +30,6 @@ export function register() {
     sectionLabel: "Explore",
     order: 30,
     surface: "platform",
-    page: {
-      id: "marketplace",
-      title: "Marketplace",
-      bundle: "dashboard",
-      file: "marketplace.html",
-    },
     access: {
       permissions: ["marketplace.view"],
       scope: { type: "system" },
@@ -55,12 +48,6 @@ export function register() {
     pageLabel: "Marketplace",
     sectionLabel: "Extend",
     surface: "root",
-    page: {
-      id: "project-marketplace",
-      title: "Marketplace",
-      bundle: "dashboard",
-      file: "marketplace.html",
-    },
     access: {
       permissions: ["project.marketplace.manage"],
       scope: { type: "project", projectIdParam: "projectId" },

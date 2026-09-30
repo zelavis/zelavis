@@ -24,6 +24,9 @@ start_e2e_runtime() {
   export ZELAVIS_BOOTSTRAP_TOKEN="$(openssl rand -hex 24)"
   export ZELAVIS_E2E_OWNER_PASSWORD="$(openssl rand -hex 12)"
   export ZELAVIS_DATA_DIR="$scratch/data"
+  # The officially maintained services in this checkout, so the marketplace
+  # lists them (WordPress is not bundled and is not on the npm allow-list yet).
+  export ZELAVIS_OFFICIAL_SERVICES_DIR="$(pwd)/zelavis-services"
 
   # Job control gives the runtime its own process group, so stopping it also
   # stops the pnpm and node children it spawned, and nothing else.

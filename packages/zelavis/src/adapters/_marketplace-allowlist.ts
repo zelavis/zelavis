@@ -325,6 +325,8 @@ export async function createLocalMarketplace(input: {
       specifier: entry.directory,
       status: "available" as const,
       source: "community" as const,
+      // Packages in the operator's checkout of `zelavis-services` are ours.
+      maintainer: "zelavis",
       order: 50 + index,
     })) as unknown as readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
 

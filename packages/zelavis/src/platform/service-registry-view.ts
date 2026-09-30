@@ -8,6 +8,8 @@ export interface PublicServiceRegistryIdentity {
   kind?: string;
   status: "installed" | "available";
   source?: "official" | "community";
+  /** Who maintains it; `zelavis` for what the Zelavis project publishes. Separate from `source`, which is about trust in the registry. */
+  maintainer?: string;
   order?: number;
 }
 
@@ -27,6 +29,9 @@ export function publicServiceRegistryIdentity<TContext>(
     kind: service?.kind,
     status: entry.status ?? "available",
     source: entry.source,
+    ...(entry.source === "official" || ("maintainer" in entry && entry.maintainer)
+      ? { maintainer: ("maintainer" in entry && entry.maintainer) || "zelavis" }
+      : {}),
     order: entry.order,
   };
 }

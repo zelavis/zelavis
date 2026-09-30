@@ -80,7 +80,11 @@ export interface RuntimeServiceRegistryEntry {
   /** API namespace this service owns; the only surface its page may reach. */
   apiPath?: string;
   status: "installed" | "available";
+  /** How an available entry is installed: fetched from the allow-list, or switched on where it is. */
+  installVia?: "acquire" | "activate";
   source?: "official" | "community";
+  /** Who maintains it; `zelavis` for what the Zelavis project publishes. */
+  maintainer?: string;
   order?: number;
   marketplace?: {
     title?: string;
