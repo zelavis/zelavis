@@ -116,6 +116,10 @@ Rules that hold for every change:
 - The development shortcut (`ZELAVIS_OFFICIAL_SERVICES_DIR`) only ever names
   packages in the operator's own checkout and must never become a way to install
   from anywhere else.
+- Releases run `pnpm allowlist update` (rebuild the list from `zelavis-services/*`
+  and npm's digests, bump `sequence`) and `pnpm allowlist sign` (the envelope every
+  source hosts). The signing private key stays outside the repository; only its
+  public half is in `OFFICIAL_ALLOWLIST_KEYS`.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
 

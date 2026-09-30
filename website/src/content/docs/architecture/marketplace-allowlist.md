@@ -69,3 +69,12 @@ Sources come from `services.marketplace.sources` or `ZELAVIS_ALLOWLIST_SOURCES`
 `services.marketplace.keys`. A newer list applies to the catalogue at the next
 start. Until the official list and its signing key are published there are no
 default sources and the trusted-key list is empty, so only the shipped list counts.
+
+## Publishing the list
+
+Releases run `pnpm allowlist update`, which rebuilds the list from the packages in
+`zelavis-services/*` and the digests npm serves for them, raises `sequence` and
+rewrites the list shipped with the release. `pnpm allowlist sign` then signs it
+with the release key (kept outside the repository) into the file every source
+hosts. By default installations fetch `https://zelavis.com/allowlist.json` and a
+mirror on GitHub; both hold the same signed file, so either one is enough.

@@ -33,8 +33,8 @@ export interface MarketplaceOptions {
    * Where the signed allow-list is fetched from, tried in order. Any one being
    * reachable is enough, because a signed list is as trustworthy from a mirror
    * as from the primary. Also read from `ZELAVIS_ALLOWLIST_SOURCES` (comma
-   * separated). None by default until the official list is published: without a
-   * source only the list shipped with the release is used.
+   * separated). Defaults to the official sources; with none, only the list shipped
+   * with the release is used.
    */
   readonly sources?: readonly string[];
   /** Keys trusted to sign the allow-list, in addition to the official ones. */
@@ -58,11 +58,23 @@ export interface MarketplaceOptions {
 }
 
 /**
- * Keys the Zelavis project signs the official allow-list with. Empty until the
- * release signing key exists; until then a fetched list cannot verify and only
- * the list shipped with the release (and operator-supplied keys) count.
+ * Keys the Zelavis project signs the official allow-list with. A list
+ * signed by anything else is refused. The private half lives with the release
+ * manager, never in the repository (`pnpm allowlist keygen`).
  */
-export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.freeze([]);
+export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.freeze([
+  { keyId: "zelavis-2026-ob9tdmcx", publicKey: "MCowBQYDK2VwAyEAa+A2zNe05gATIhJiDu3hLTttsockNl4v2YNUob9tdmc=" },
+]);
+
+/**
+ * Where the official signed list is published, tried in order. Each holds the
+ * same signed file, so any one being up is enough. More can be added per
+ * installation through `sources` or `ZELAVIS_ALLOWLIST_SOURCES`.
+ */
+export const OFFICIAL_ALLOWLIST_SOURCES: readonly string[] = Object.freeze([
+  "https://zelavis.com/allowlist.json",
+  "https://raw.githubusercontent.com/zelavis/allowlist/main/allowlist.json",
+]);
 
 interface MarketplaceModule {
   parseAllowlist(value: unknown): unknown;
@@ -253,7 +265,8 @@ export async function createLocalMarketplace(input: {
   if (!module) return undefined;
 
   const sources = options.sources ??
-    (process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ?? []);
+    (process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ??
+      OFFICIAL_ALLOWLIST_SOURCES);
   const keys = await importKeys([...OFFICIAL_ALLOWLIST_KEYS, ...(options.keys ?? [])]);
   const store = input.systemStore;
   const client = module.createAllowlistClient({

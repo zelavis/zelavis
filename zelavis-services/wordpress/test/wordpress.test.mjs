@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { WORDPRESS_ARCHIVE_SHA256, WORDPRESS_RELEASE } from "../dist/release.js";
 import { WORDPRESS_APP_NAME, createProjectRuntime, wordpressRelease } from "../dist/runtime.js";
 
 const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -31,4 +32,9 @@ test("its runtime is the native WordPress driver, configured by the host's optio
   assert.equal(driver.name, "native-wordpress");
   assert.deepEqual([...driver.runtimeKinds], ["native"]);
   assert.match(driver.capabilities({}).description, /WordPress/);
+});
+
+test("the pinned release is the one the package version names, with a SHA-256 to check it against", () => {
+  assert.equal(WORDPRESS_RELEASE, wordpressRelease(manifest.version));
+  assert.match(WORDPRESS_ARCHIVE_SHA256, /^[0-9a-f]{64}$/);
 });

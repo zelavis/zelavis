@@ -19,6 +19,7 @@ import {
  * Keep host executables shared while every Project owns its service processes,
  * configuration, sockets, ports, logs, credentials, site files, and data.
  */
+import { WORDPRESS_ARCHIVE_SHA256, WORDPRESS_RELEASE } from "./release.js";
 
 export interface NativeWordPressProjectRuntimeOptions {
   directory: string;
@@ -953,6 +954,15 @@ export function createNativeWordPressProjectRuntime(
         const archiveBody = new Uint8Array(await response.arrayBuffer());
         if (archiveBody.byteLength > MAX_WORDPRESS_ARCHIVE_BYTES) {
           throw new Error("WordPress release archive exceeds the provisioning size limit.");
+        }
+        // Nothing is written or unpacked until the bytes are the ones this
+        // package was released with.
+        if (release !== WORDPRESS_RELEASE) {
+          throw new Error(`This recipe pins WordPress ${WORDPRESS_RELEASE}, not ${release}.`);
+        }
+        const digest = Buffer.from(await crypto.subtle.digest("SHA-256", archiveBody)).toString("hex");
+        if (digest !== WORDPRESS_ARCHIVE_SHA256) {
+          throw new Error(`The WordPress ${release} archive does not match the digest this recipe pins.`);
         }
         await writeFile(archive, archiveBody, { mode: 0o600 });
         const archiveEntries = (await run("tar", ["-tzf", archive])).stdout
