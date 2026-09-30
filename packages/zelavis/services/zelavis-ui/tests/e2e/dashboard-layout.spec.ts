@@ -812,6 +812,16 @@ test('@smoke a service the operator did not compose is sandboxed', async ({
   expect(result.reachable).toBe(false)
 })
 
+test('@smoke a Project sidebar lists Overview once', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  await gotoDashboard(page, '/')
+
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+  await expect(rootSlide.getByRole('link', { name: 'Overview', exact: true })).toHaveCount(1)
+})
+
 test('@smoke the marketplace lists WordPress and Zelavis as apps', async ({
   page,
 }, testInfo) => {

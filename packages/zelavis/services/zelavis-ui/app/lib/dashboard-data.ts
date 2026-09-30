@@ -993,8 +993,12 @@ export function buildPlatformNavItems(
       }));
     }),
   ];
+  // The Project Overview is the dashboard's own first item. A recipe or service
+  // that also declares a menu for the Project's root page would list the same
+  // destination twice, so that one is not repeated.
+  const projectHome = toProjectPath("/", projectId);
   const rootServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "root")
+    .filter((entry) => entry.surface === "root" && entry.item.url !== projectHome)
     .map((entry) => entry.item);
   const coreServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "core")

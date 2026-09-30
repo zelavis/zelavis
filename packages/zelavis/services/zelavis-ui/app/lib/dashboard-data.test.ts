@@ -110,6 +110,25 @@ describe("dashboard navigation ownership", () => {
     expect(findNavItem(nav, "Overview")?.url).toBe("/projects/project-a");
   });
 
+  it("lists the Project Overview once, even when a recipe declares its own", () => {
+    // What a running Project reports about itself: its recipe's menu for the
+    // Project's root page, which is the page the dashboard's own Overview opens.
+    const services = [
+      {
+        name: "@zelavis/app",
+        scope: "system",
+        apiPath: "/zelavis/api/v1/plugins/app",
+        menu: { title: "Overview", path: "/", surface: "root" },
+        menus: [{ title: "Overview", path: "/", surface: "root" }],
+      },
+    ] as unknown as readonly RuntimeService[];
+
+    const nav = buildPlatformNavItems(services, [], undefined, undefined, "project-a");
+
+    expect(nav.filter((item) => item.title === "Overview")).toHaveLength(1);
+    expect(findNavItem(nav, "Overview")?.url).toBe("/projects/project-a");
+  });
+
   it("keeps arbitrary service dashboard paths clickable and page-resolvable", () => {
     const services = [
       {
