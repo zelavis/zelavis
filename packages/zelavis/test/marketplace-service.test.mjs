@@ -23,7 +23,9 @@ async function bootWithMarketplace() {
   const service = config.services.find((entry) => entry.name === MARKETPLACE);
 
   assert.ok(service, "the marketplace is not composed into the runtime");
-  return { runtime, service };
+  const auth = config.services.find((entry) => entry.name === "@zelavis/auth");
+  assert.ok(auth, "Auth is not composed into the runtime");
+  return { runtime, service, auth };
 }
 
 test("the marketplace reaches the dashboard as an ordinary service", async () => {
@@ -43,14 +45,21 @@ test("the marketplace reaches the dashboard as an ordinary service", async () =>
   assert.equal(platform.sectionLabel, "Explore");
   assert.equal(project.surface, "root");
   assert.equal(project.sectionLabel, "Extend");
+
+  // Its pages ship in the dashboard, one workspace for both, so neither menu
+  // points at a framed page of its own.
+  assert.equal(platform.path, "/marketplace");
+  assert.equal(project.path, "/marketplace");
+  assert.equal(platform.page, undefined);
+  assert.equal(project.page, undefined);
 });
 
 test("a bundled package's page resolves to a fetchable src", async () => {
-  const { runtime, service } = await bootWithMarketplace();
+  const { runtime, auth } = await bootWithMarketplace();
 
   // Each menu page has to be serialized with a src, or the dashboard mounts a
-  // frame pointed at nothing.
-  for (const menu of service.menus) {
+  // frame pointed at nothing. Auth is the bundled service that ships one.
+  for (const menu of auth.menus) {
     assert.ok(menu.page.src, `${menu.page.id} has no src`);
 
     const response = await runtime.fetch(
@@ -60,32 +69,26 @@ test("a bundled package's page resolves to a fetchable src", async () => {
 
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /text\/html/);
-
-    // The page drives the real registry API from inside its frame rather than
-    // rendering a fixed document.
-    const html = await response.text();
-    assert.match(html, /<zv-section id="services-section" heading="Services">/);
-    assert.match(html, /\/runtime\/services/);
   }
 });
 
 test("service page assets are unauthenticated to nobody", async () => {
-  const { runtime, service } = await bootWithMarketplace();
+  const { runtime, auth } = await bootWithMarketplace();
 
   const response = await runtime.fetch(
-    new Request(`http://localhost${service.menu.page.src}`),
+    new Request(`http://localhost${auth.menu.page.src}`),
   );
 
   assert.equal(response.status, 401);
 });
 
 test("one service's page assets cannot be read under another's name", async () => {
-  const { runtime, service } = await bootWithMarketplace();
+  const { runtime, auth } = await bootWithMarketplace();
 
   const response = await runtime.fetch(
     new Request(
-      `http://localhost${service.menu.page.src.replace(
-        encodeURIComponent(MARKETPLACE),
+      `http://localhost${auth.menu.page.src.replace(
+        encodeURIComponent("@zelavis/auth"),
         encodeURIComponent("@zelavis/ui"),
       )}`,
     ),

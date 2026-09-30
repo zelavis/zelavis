@@ -108,9 +108,13 @@ export interface NodeAdapterProjectOptions {
   startupConcurrency?: number;
   shutdownConcurrency?: number;
   logLimit?: number;
-  wordpress?: {
-    startupTimeoutMs?: number;
-  };
+  /**
+   * Recipes that provide their own runtime (for example `@zelavis/wordpress`),
+   * enabled by this host, with the options each runtime is given. Marketplace
+   * allow-listed recipes and, in development, packages in an official-services
+   * checkout are trusted without being listed here.
+   */
+  recipeRuntimes?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /**
    * Run Project processes through a separately supervised Agent.
    *
@@ -221,6 +225,28 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.projects !== false &&
         (!isProjectRuntime || normalizedProjectOptions !== undefined);
       const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
+      const fileStorage =
+        options.files === false
+          ? undefined
+          : createLocalFileStorage(
+              options.files?.rootDirectory
+                ? resolve(options.files.rootDirectory)
+                : join(dataDirectory, "files"),
+            );
+      const serviceSources = await createLocalServiceSources({
+        dataDirectory,
+        services: options.services,
+        isProjectRuntime,
+        fileStorage,
+        systemStore,
+        ...(projectsEnabled && !isProjectRuntime
+          ? {
+              projectsDirectory: projectOptions?.directory
+                ? resolve(projectOptions.directory)
+                : join(dataDirectory, "projects"),
+            }
+          : {}),
+      });
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
@@ -242,9 +268,26 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectOptions?.logLimit === undefined
             ? {}
             : { logLimit: projectOptions.logLimit }),
-          ...(projectOptions?.wordpress === undefined
-            ? {}
-            : { wordpress: projectOptions.wordpress }),
+          // Recipes whose package ships their own runtime. The marketplace's
+          // allow-list (or a development checkout) says which may, and the host
+          // may also enable some by name.
+          recipeRuntimes: {
+            ...(serviceSources.recipePackageDirectory
+              ? { packageDirectory: serviceSources.recipePackageDirectory }
+              : {}),
+            trusted: async (name: string) =>
+              projectOptions?.recipeRuntimes?.[name] !== undefined ||
+              ((await serviceSources.recipeRuntimeTrusted?.(name)) ?? false),
+          },
+          ...(projectOptions?.recipeRuntimes
+            ? { recipeRuntimeOptions: projectOptions.recipeRuntimes }
+            : {}),
+          ...(serviceSources.recipePackageDirectory
+            ? { recipePackageDirectory: serviceSources.recipePackageDirectory }
+            : {}),
+          ...(serviceSources.marketplace
+            ? { handDownAllowlist: (directory: string) => serviceSources.marketplace!.handDown(directory) }
+            : {}),
           // Without this a frontend Project cannot start at all: the driver
           // refuses rather than falling through to the Zelavis runner and
           // failing in a way that looks like a broken frontend.
@@ -404,21 +447,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         }
       }
 
-      const fileStorage =
-        options.files === false
-          ? undefined
-          : createLocalFileStorage(
-              options.files?.rootDirectory
-                ? resolve(options.files.rootDirectory)
-                : join(dataDirectory, "files"),
-            );
-      const serviceSources = await createLocalServiceSources({
-        dataDirectory,
-        services: options.services,
-        isProjectRuntime,
-        fileStorage,
-        systemStore,
-      });
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
         : undefined;

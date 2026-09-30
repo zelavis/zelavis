@@ -16,8 +16,11 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createNativeWordPressProjectRuntime } from "../dist/adapters/_native-wordpress-project-runtime.js";
-import { WORDPRESS_VERSION } from "../dist/wordpress/index.js";
+import { createNativeWordPressProjectRuntime, WORDPRESS_APP_NAME } from "../dist/runtime.js";
+
+const { version: RECIPE_VERSION } = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 
 /**
  * What has to exist afterwards, and every name it may go by.
@@ -161,10 +164,10 @@ const driver = createNativeWordPressProjectRuntime({
 });
 
 const recipe = {
-  name: "zelavis/wordpress",
+  name: WORDPRESS_APP_NAME,
   title: "WordPress",
-  version: WORDPRESS_VERSION,
-  specifier: "zelavis/wordpress",
+  version: RECIPE_VERSION,
+  specifier: WORDPRESS_APP_NAME,
 };
 const project = {
   id: "provisioned",

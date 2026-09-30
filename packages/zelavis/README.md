@@ -115,8 +115,9 @@ owns its setup behavior, menu metadata, and app-facing runtime services through
 the shared service contract. A `kind: "plugin"` service extends the Platform
 without being something a Project can be created from.
 
-The built-in `zelavis/wordpress` recipe provisions a native, Dockerless
-WordPress Project. It downloads the exact WordPress release locked in the
+The `@zelavis/wordpress` recipe (an officially maintained service in
+`zelavis-services/wordpress`, installed from the marketplace, not bundled)
+provisions a native, Dockerless WordPress Project. It downloads the exact WordPress release locked in the
 Project, generates private database credentials and `wp-config.php` salts, and
 runs dedicated Nginx, PHP-FPM, and MariaDB instances with Project-owned
 configuration, sockets, ports, logs, site files, and database data. The Zelavis
@@ -130,7 +131,7 @@ Zelavis App database/auth/content services. Maintainers can refresh the recipe
 pin from the official WordPress version API with:
 
 ```bash
-pnpm --filter zelavis update:wordpress
+pnpm --filter @zelavis/wordpress update:wordpress
 ```
 
 The recipe is intentionally independent of its native execution strategy so a

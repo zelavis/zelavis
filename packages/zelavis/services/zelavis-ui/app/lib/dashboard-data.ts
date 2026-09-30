@@ -378,9 +378,9 @@ export function buildProjectManagementNavItems(
 
 export function buildManagedProjectNavItems(
   projectId: string,
-  kind: "wordpress" | "static" | "generic",
+  managed: { adminTitle?: string },
 ): readonly DashboardNavItem[] {
-  const appAdminTitle = kind === "wordpress" ? "WordPress Admin" : "App Admin";
+  const appAdminTitle = managed.adminTitle ?? "App Admin";
 
   return [
     {

@@ -90,6 +90,10 @@ jobs:
           echo "ZELAVIS_E2E_OWNER_PASSWORD=$(openssl rand -hex 12)" >> "$GITHUB_ENV"
 
       - name: Start example runtime server
+        env:
+          # The officially maintained services in this checkout, so the
+          # marketplace lists them (WordPress is not on the npm allow-list yet).
+          ZELAVIS_OFFICIAL_SERVICES_DIR: ${{ github.workspace }}/zelavis-services
         run: |
           pnpm --filter @zelavis/example-nodejs dev > /tmp/zelavis-runtime.log 2>&1 &
           for i in $(seq 1 30); do
@@ -152,7 +156,7 @@ jobs:
       - name: Install WordPress from nothing
         env:
           ZELAVIS_PROVISIONING_IDENTITY: ${{ matrix.identity }}
-        run: packages/zelavis/scripts/wordpress-provisioning-container.sh
+        run: zelavis-services/wordpress/scripts/wordpress-provisioning-container.sh
 
   security:
     name: Dependency audit

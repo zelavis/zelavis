@@ -12,7 +12,21 @@
     "capabilities": [
       "zelavis/identity:credentials"
     ],
-    "namespace": "oidc"
+    "namespace": "oidc",
+    "marketplace": {
+      "title": "OpenID Connect Sign-in",
+      "summary": "Let people sign in with any OpenID Connect provider, or verify bearer tokens from one.",
+      "categories": [
+        "auth",
+        "identity",
+        "official"
+      ],
+      "tags": [
+        "oidc",
+        "jwks",
+        "sso"
+      ]
+    }
   },
   "exports": {
     ".": {

@@ -80,7 +80,11 @@ export interface RuntimeServiceRegistryEntry {
   /** API namespace this service owns; the only surface its page may reach. */
   apiPath?: string;
   status: "installed" | "available";
+  /** How an available entry is installed: fetched from the allow-list, or switched on where it is. */
+  installVia?: "acquire" | "activate";
   source?: "official" | "community";
+  /** Who maintains it; `zelavis` for what the Zelavis project publishes. */
+  maintainer?: string;
   order?: number;
   marketplace?: {
     title?: string;
@@ -249,6 +253,8 @@ export interface RuntimeProject {
     version?: string;
     specifier: string;
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
+    /** Set for a managed app: hosting-style controls and the app's own admin entry. */
+    managed?: { adminTitle?: string; adminPath?: string };
   };
   capabilities: RuntimeProjectDriverCapabilities;
   /** How the locked recipe compares with what this Platform ships. */
@@ -1844,6 +1850,48 @@ export async function listDashboardServices(
   );
 
   return result.services;
+}
+
+export interface MarketplaceAllowlistStatus {
+  gated: boolean;
+  /** How many places the list is fetched from; none means only the list shipped with the release. */
+  sources: number;
+  list?: {
+    sequence: number;
+    issuedAt: string;
+    expiresAt: string;
+    origin: "remote" | "cache" | "bundled";
+    fetchedAt?: string;
+    status: "fresh" | "stale" | "expired";
+    services: number;
+  };
+}
+
+export interface MarketplaceRefreshReport extends MarketplaceAllowlistStatus {
+  updated: boolean;
+  attempts: readonly { source: string; outcome: string; detail?: string }[];
+}
+
+/** How current this installation's allow-list is; `undefined` when it may not see it or has none. */
+export async function getMarketplaceAllowlist(
+  config: RuntimeConfig,
+): Promise<MarketplaceAllowlistStatus | undefined> {
+  try {
+    return await readJson<MarketplaceAllowlistStatus>(
+      `${config.api.basePath}/runtime/marketplace/allowlist`,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export async function refreshMarketplaceAllowlist(
+  config: RuntimeConfig,
+): Promise<MarketplaceRefreshReport> {
+  return readJson<MarketplaceRefreshReport>(
+    `${config.api.basePath}/runtime/marketplace/allowlist/refresh`,
+    { method: "POST" },
+  );
 }
 
 export async function updateDashboardService(

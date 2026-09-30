@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -204,6 +204,7 @@ test("in development, an official service in the local checkout stands in for it
   const { serviceRegistry, marketplace } = await sourcesFor(directory, { officialServicesDirectory: checkout });
   const local = serviceRegistry.catalog.find((c) => c.service.name === "@zelavis/wordpress");
   assert.equal(local.status, "available");
+  assert.equal(local.maintainer, "zelavis", "what is in the operator's zelavis-services checkout is ours");
   assert.equal(local.specifier, join(checkout, "wordpress"));
   assert.equal(local.service.version, "7.1.0");
   assert.deepEqual(local.service.project, { runtimeKinds: ["native"] });
@@ -211,12 +212,83 @@ test("in development, an official service in the local checkout stands in for it
   assert.deepEqual(marketplace.managedDirectories, [checkout]);
 });
 
-test("a Project runtime has no marketplace", async (t) => {
+test("a Project's marketplace offers plugins and frontends, from the shipped list, behind the same gate", async (t) => {
   const directory = await scratch(t);
+  const checkout = join(directory, "zelavis-services");
+  const write = async (folder, manifest) => {
+    await mkdir(join(checkout, folder), { recursive: true });
+    await writeFile(join(checkout, folder, "package.json"), JSON.stringify(manifest));
+  };
+  await write("wordpress", { name: "@zelavis/wordpress", version: "7.1.0", zelavis: { kind: "app", project: { runtimeKinds: ["native"] } } });
+  await write("shop", { name: "@zelavis/shop", version: "1.0.0", zelavis: { kind: "plugin", marketplace: { title: "Shop" } } });
+  await write("theme", { name: "@zelavis/theme", version: "1.0.0", zelavis: { kind: "frontend", marketplace: { title: "Theme" } } });
+
+  let fetched = 0;
   const project = await createLocalServiceSources({
-    dataDirectory: directory, services: { marketplace: { sources: [] } }, isProjectRuntime: true, systemStore: createMemorySystemStore(),
+    dataDirectory: directory,
+    services: { marketplace: { officialServicesDirectory: checkout, fetch: async () => { fetched += 1; return new Response("{}"); } } },
+    isProjectRuntime: true,
+    systemStore: createMemorySystemStore(),
   });
-  assert.equal(project.marketplace, undefined);
+
+  const names = project.serviceRegistry.catalog.map((entry) => entry.service.name).sort();
+  assert.deepEqual(names, ["@zelavis/shop", "@zelavis/theme"], "an app is a Project, not something installed into one");
+  assert.equal(project.recipePackageDirectory, undefined, "recipes are frozen by the Platform");
+
+  // The same gate: nothing outside the list installs into a Project either.
+  const refusal = await Effect.runPromise(Effect.flip(Effect.scoped(
+    project.servicePackages.acquire({ reference: "npm:@example/unlisted@1.0.0" }))));
+  assert.notEqual(refusal, undefined);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(fetched, 0, "a Project does not poll the sources; the Platform refreshes");
+});
+
+test("the Platform hands its verified list to its Projects, which verify it again themselves", async (t) => {
+  const directory = await scratch(t);
+  const projects = join(directory, "projects");
+  const running = join(projects, "running", ".zelavis");
+  await mkdir(running, { recursive: true });
+  await mkdir(join(projects, "not-a-project"), { recursive: true });
+
+  const good = thing("1.0.0");
+  const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], 7);
+  const trust = { keys: [{ keyId: "test-key", publicKey }], fetch: fetcher };
+  const platform = await createLocalServiceSources({
+    dataDirectory: directory,
+    services: { marketplace: { sources: ["https://list.example/a.json"], ...trust } },
+    isProjectRuntime: false,
+    systemStore: createMemorySystemStore(),
+    projectsDirectory: projects,
+  });
+  await platform.marketplace.control.refresh();
+
+  // A refresh reaches a Project that is already running, and nothing else.
+  const file = join(running, "allowlist.json");
+  assert.equal(JSON.parse(await readFile(file, "utf8")).envelope.keyId, "test-key");
+  await assert.rejects(readFile(join(projects, "not-a-project", ".zelavis", "allowlist.json")));
+
+  // A Project reads it from its own data folder, with no sources of its own.
+  const open = () => createLocalServiceSources({
+    dataDirectory: running, services: { marketplace: trust }, isProjectRuntime: true,
+  });
+  const view = await (await open()).marketplace.client.current();
+  assert.equal(view.origin, "cache");
+  assert.equal(view.allowlist.sequence, 7);
+  assert.equal((await open()).serviceRegistry.catalog.some((c) => c.service.name === "@example/thing"), true);
+
+  // A Project prepared later is given the same list when it starts.
+  const later = join(projects, "later", ".zelavis");
+  await mkdir(later, { recursive: true });
+  await platform.marketplace.handDown(later);
+  assert.equal(JSON.parse(await readFile(join(later, "allowlist.json"), "utf8")).envelope.keyId, "test-key");
+
+  // The file is only a cache: edited, it stops verifying and is not believed.
+  const held = JSON.parse(await readFile(file, "utf8"));
+  held.envelope.payload = held.envelope.payload.slice(0, -4) + "AAAA";
+  await writeFile(file, JSON.stringify(held));
+  const tampered = await (await open()).marketplace.client.current();
+  assert.notEqual(tampered?.origin, "cache");
 });
 
 test("operators can see how current the list is, and refresh it, over HTTP", async (t) => {

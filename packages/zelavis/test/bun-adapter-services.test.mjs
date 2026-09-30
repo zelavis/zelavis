@@ -27,7 +27,6 @@ test("the Bun adapter serves the services model like the Node adapter", { skip: 
     "@zelavis/app:available:official",
     "@zelavis/auth:installed:official",
     "@zelavis/marketplace:installed:official",
-    "zelavis/wordpress:available:official",
   ]);
   assert.deepEqual(seen.platform.folderApi, { status: 200, body: { hello: "from the folder" } });
   assert.deepEqual(seen.platform.folderFrontend, { status: 200, body: "<h1>blog</h1>" });

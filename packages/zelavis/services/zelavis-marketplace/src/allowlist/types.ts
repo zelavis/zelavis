@@ -33,6 +33,12 @@ export interface AllowlistService {
   readonly tags?: readonly string[];
   /** Runtime families a Project recipe supports. */
   readonly runtimeKinds?: readonly string[];
+  /**
+   * The list vouches that this recipe may provide the runtime its Projects run
+   * under (its package ships host code that starts and stops processes). An
+   * installation only lets a recipe do that when its allow-list entry says so.
+   */
+  readonly projectRuntime?: boolean;
   readonly versions: readonly AllowlistVersion[];
   /** The version the marketplace offers by default; always one of `versions`. */
   readonly latest: string;

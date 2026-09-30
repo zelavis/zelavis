@@ -9,7 +9,7 @@
  * package lies, the same way the Platform loads its other bundled services.
  */
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -33,8 +33,8 @@ export interface MarketplaceOptions {
    * Where the signed allow-list is fetched from, tried in order. Any one being
    * reachable is enough, because a signed list is as trustworthy from a mirror
    * as from the primary. Also read from `ZELAVIS_ALLOWLIST_SOURCES` (comma
-   * separated). None by default until the official list is published: without a
-   * source only the list shipped with the release is used.
+   * separated). Defaults to the official sources; with none, only the list shipped
+   * with the release is used.
    */
   readonly sources?: readonly string[];
   /** Keys trusted to sign the allow-list, in addition to the official ones. */
@@ -58,11 +58,23 @@ export interface MarketplaceOptions {
 }
 
 /**
- * Keys the Zelavis project signs the official allow-list with. Empty until the
- * release signing key exists; until then a fetched list cannot verify and only
- * the list shipped with the release (and operator-supplied keys) count.
+ * Keys the Zelavis project signs the official allow-list with. A list
+ * signed by anything else is refused. The private half lives with the release
+ * manager, never in the repository (`pnpm allowlist keygen`).
  */
-export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.freeze([]);
+export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.freeze([
+  { keyId: "zelavis-2026-ob9tdmcx", publicKey: "MCowBQYDK2VwAyEAa+A2zNe05gATIhJiDu3hLTttsockNl4v2YNUob9tdmc=" },
+]);
+
+/**
+ * Where the official signed list is published, tried in order. Each holds the
+ * same signed file, so any one being up is enough. More can be added per
+ * installation through `sources` or `ZELAVIS_ALLOWLIST_SOURCES`.
+ */
+export const OFFICIAL_ALLOWLIST_SOURCES: readonly string[] = Object.freeze([
+  "https://zelavis.com/allowlist.json",
+  "https://raw.githubusercontent.com/zelavis/allowlist/main/allowlist.json",
+]);
 
 interface MarketplaceModule {
   parseAllowlist(value: unknown): unknown;
@@ -114,6 +126,37 @@ export interface LocalMarketplace {
   readonly managedDirectories: readonly string[];
   /** What an operator sees and can refresh, through the Platform's own routes. */
   readonly control: ZelavisMarketplaceControl;
+  /** Where the checkout copy of each official service lies, by package name. */
+  readonly localPackages: ReadonlyMap<string, string>;
+  /**
+   * Whether a recipe may provide the runtime its Projects run under: the held
+   * allow-list says so, or it is a package in the operator's own checkout.
+   * Independent of how fresh the list is, so an outage never stops a Project.
+   */
+  runtimeTrusted(name: string): Promise<boolean>;
+  /**
+   * Writes the list this Platform holds into a Project's data folder, where that
+   * Project's own marketplace reads it. The signed envelope is handed over, not a
+   * verdict: the Project verifies it with the keys it was built with, so nothing
+   * about it has to be trusted on the way.
+   */
+  handDown(projectDataDirectory: string): Promise<void>;
+}
+
+/** The file a Platform hands its verified allow-list to a Project in. */
+export const HANDED_DOWN_ALLOWLIST_FILE = "allowlist.json";
+
+async function writeHandedDown(directory: string, value: unknown): Promise<void> {
+  const file = join(directory, HANDED_DOWN_ALLOWLIST_FILE);
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
+    await rename(temporary, file);
+  } catch {
+    // A Project that is gone, or a folder that cannot be written, must not stop
+    // the Platform from refreshing its own list. It keeps the one it has.
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 const CACHE_NAMESPACE = "marketplace-allowlist";
@@ -139,6 +182,8 @@ async function importKeys(keys: readonly MarketplaceTrustedKey[]): Promise<Map<s
 }
 
 interface LocalOfficialService {
+  /** The package declares the runtime its Projects run under. */
+  providesRuntime?: boolean;
   name: string;
   kind: "app" | "plugin" | "frontend";
   version: string;
@@ -159,7 +204,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     zelavis?: {
       kind?: unknown;
       marketplace?: { title?: unknown; summary?: unknown; categories?: unknown; tags?: unknown };
-      project?: { runtimeKinds?: unknown };
+      project?: { runtimeKinds?: unknown; runtime?: unknown };
     };
   };
   try {
@@ -187,6 +232,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     ...(categories ? { categories } : {}),
     ...(tags ? { tags } : {}),
     ...(runtimeKinds ? { runtimeKinds } : {}),
+    ...(typeof manifest.zelavis?.project?.runtime === "string" ? { providesRuntime: true } : {}),
     directory: resolve(directory),
   };
 }
@@ -236,30 +282,68 @@ export async function createLocalMarketplace(input: {
   readonly systemStore: ZelavisSystemStore | undefined;
   /** Packages the registry already offers, which the marketplace does not repeat. */
   readonly bundledNames: ReadonlySet<string>;
+  /**
+   * A Project's marketplace offers what may be installed into that Project, from
+   * the list shipped with the release. It does not fetch: every Project polling
+   * the sources would be a fleet-sized load on them, and the Platform is the one
+   * that refreshes.
+   */
+  readonly role?: "platform" | "project";
+  /** This runtime's data root. A Project reads the list its Platform handed it from here. */
+  readonly dataDirectory: string;
+  /** The Platform's Projects folder, where a refreshed list is handed down to every Project. */
+  readonly projectsDirectory?: string;
 }): Promise<LocalMarketplace | undefined> {
   const options = input.options ?? {};
   const module = await loadMarketplaceModule();
   if (!module) return undefined;
 
   const sources = options.sources ??
-    (process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ?? []);
+    (input.role === "project" ? [] : process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ??
+      OFFICIAL_ALLOWLIST_SOURCES);
   const keys = await importKeys([...OFFICIAL_ALLOWLIST_KEYS, ...(options.keys ?? [])]);
   const store = input.systemStore;
+  const projectsDirectory = input.projectsDirectory;
+
+  async function handDownToEveryProject(value: unknown) {
+    if (!projectsDirectory || !existsSync(projectsDirectory)) return;
+    for (const entry of await readdir(projectsDirectory, { withFileTypes: true }).catch(() => [])) {
+      const data = join(projectsDirectory, entry.name, ".zelavis");
+      if (entry.isDirectory() && existsSync(data)) await writeHandedDown(data, value);
+    }
+  }
+
+  // A Platform keeps the list in its System Store. A Project keeps none of its
+  // own: it reads what its Platform handed it, and verifies it again every time,
+  // so a file someone edited is refused rather than believed.
+  const handedDown = join(input.dataDirectory, HANDED_DOWN_ALLOWLIST_FILE);
+  const cache = input.role === "project"
+    ? {
+        async read() {
+          try {
+            return JSON.parse(await readFile(handedDown, "utf8"));
+          } catch {
+            return undefined;
+          }
+        },
+        async write() {},
+      }
+    : store
+      ? {
+          async read() {
+            return (await store.get(CACHE_NAMESPACE, CACHE_KEY))?.value;
+          },
+          async write(value: unknown) {
+            await store.set(CACHE_NAMESPACE, CACHE_KEY, value as never);
+            await handDownToEveryProject(value);
+          },
+        }
+      : undefined;
+
   const client = module.createAllowlistClient({
     sources,
     resolveKey: (keyId) => keys.get(keyId),
-    ...(store
-      ? {
-          cache: {
-            async read() {
-              return (await store.get(CACHE_NAMESPACE, CACHE_KEY))?.value;
-            },
-            async write(value) {
-              await store.set(CACHE_NAMESPACE, CACHE_KEY, value as never);
-            },
-          },
-        }
-      : {}),
+    ...(cache ? { cache } : {}),
     bundled: await readSnapshot(module),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
@@ -301,6 +385,8 @@ export async function createLocalMarketplace(input: {
       specifier: entry.directory,
       status: "available" as const,
       source: "community" as const,
+      // Packages in the operator's checkout of `zelavis-services` are ours.
+      maintainer: "zelavis",
       order: 50 + index,
     })) as unknown as readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
 
@@ -320,9 +406,21 @@ export async function createLocalMarketplace(input: {
       : {};
   const gate = options.allowlist === false ? undefined : module.createAllowlistGate(client);
 
+  const localRuntimes = new Set(local.filter((entry) => entry.providesRuntime).map((entry) => entry.name));
   return {
     client,
     gate,
+    localPackages: new Map(local.map((entry) => [entry.name, entry.directory])),
+    async handDown(projectDataDirectory) {
+      const held = await cache?.read();
+      if (held) await writeHandedDown(projectDataDirectory, held);
+    },
+    async runtimeTrusted(name) {
+      if (localRuntimes.has(name)) return true;
+      const held = await client.current();
+      const services = (held?.allowlist.services ?? []) as readonly { name: string; projectRuntime?: boolean }[];
+      return services.some((entry) => entry.name === name && entry.projectRuntime === true);
+    },
     control: {
       gated: gate !== undefined,
       sources: sources.length,

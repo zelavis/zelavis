@@ -10,12 +10,19 @@ const projectId = process.env.ZELAVIS_E2E_PROJECT_ID
 async function pretendStale(page: Page, patch: Record<string, unknown>) {
   await page.route(/\/runtime\/projects$/, async (route) => {
     if (route.request().method() !== "GET") return route.continue()
-    const response = await route.fetch()
-    const body = await response.json()
-    body.projects = body.projects.map((project: { id: string }) =>
-      project.id === projectId ? { ...project, ...patch } : project,
-    )
-    await route.fulfill({ response, json: body })
+    // A navigation can cancel this request while it is being fetched, which
+    // disposes the response. That is not a failure of what is under test, so the
+    // request is simply let through (or already gone).
+    try {
+      const response = await route.fetch()
+      const body = await response.json()
+      body.projects = body.projects.map((project: { id: string }) =>
+        project.id === projectId ? { ...project, ...patch } : project,
+      )
+      await route.fulfill({ response, json: body })
+    } catch {
+      await route.continue().catch(() => undefined)
+    }
   })
 }
 

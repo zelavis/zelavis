@@ -1320,6 +1320,7 @@ async function loadConfiguredServiceRegistryModules(
             specifier: entry.specifier,
             status: entry.status,
             source: entry.source,
+            ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
             ...(entry.order !== undefined ? { order: entry.order } : {}),
           },
         ],
@@ -4630,6 +4631,9 @@ async function resolvePlatformEndpointGroup(
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
                   ...(entry.service.project?.isolation
                     ? { isolation: entry.service.project.isolation }
+                    : {}),
+                  ...(entry.service.project?.managed
+                    ? { managed: entry.service.project.managed }
                     : {}),
                 })),
             },

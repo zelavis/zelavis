@@ -156,10 +156,10 @@ test("deployment backend runtime registry dispatches from the stored Project ass
     kind: "wordpress",
     runtimeKind: "docker",
     recipe: {
-      name: "zelavis/wordpress",
-      title: "WordPress",
+      name: "acme/site",
+      title: "Site",
       version: "1.0.0",
-      specifier: "zelavis/wordpress",
+      specifier: "acme/site",
       runtimeKinds: ["native", "docker"],
     },
   };
@@ -387,8 +387,10 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     const appService = first.serviceRegistry?.catalog?.find(
       (entry) => entry.service.name === "@zelavis/app",
     );
+    // WordPress is an officially maintained service, not a bundled one: the
+    // marketplace offers it, the Platform ships without it.
     const wordpressService = first.serviceRegistry?.catalog?.find(
-      (entry) => entry.service.name === "zelavis/wordpress",
+      (entry) => entry.service.name.includes("wordpress"),
     );
 
     assert.ok(systemStore);
@@ -401,9 +403,7 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     assert.equal(first.metadata.role, "platform");
     assert.equal(appService?.service.kind, "app");
     assert.equal(appService?.source, "official");
-    assert.equal(wordpressService?.service.kind, "app");
-    assert.equal(wordpressService?.service.marketplace?.title, "WordPress");
-    assert.equal(wordpressService?.source, "official");
+    assert.equal(wordpressService, undefined);
     await systemStore.set("platform", "marker", { ready: true });
 
     const second = await nodeAdapter({ dataDirectory: directory }).resolve({});
@@ -426,7 +426,7 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     assert.deepEqual(body.projectRecipes[0].runtimeKinds, ["native"]);
     assert.deepEqual(
       body.projectRecipes.map((recipe) => recipe.name),
-      ["@zelavis/app", "zelavis/wordpress"],
+      ["@zelavis/app"],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

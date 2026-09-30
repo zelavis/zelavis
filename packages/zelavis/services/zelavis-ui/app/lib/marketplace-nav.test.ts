@@ -69,28 +69,15 @@ describe("the marketplace reaches the dashboard through the service registry", (
     expect(marketplace?.url).toBe("/projects/project-a/marketplace");
   });
 
-  it("resolves to a frame on a project path", async () => {
+  it("is a dashboard route on both surfaces, never a framed page", async () => {
     const config = await runtimeConfig();
-    const content = findServiceMenuContentByPath(
-      "/projects/dashboard-e2e/marketplace",
-      config.services,
-      config.serviceRegistry,
-    );
 
-    expect(content?.kind).toBe("frame");
-  });
-
-  it("resolves to a frame, not a placeholder", async () => {
-    const config = await runtimeConfig();
-    const content = findServiceMenuContentByPath(
-      "/marketplace",
-      config.services,
-      config.serviceRegistry,
-    );
-
-    expect(content?.kind).toBe("frame");
-    expect(content?.kind === "frame" && content.page.src).toMatch(
-      /service-page-assets\/%40zelavis%2Fmarketplace\//,
-    );
+    // The workspace ships in the dashboard (routes/marketplace.tsx and
+    // routes/project.marketplace.tsx), so the service contributes the menu and
+    // no page of its own to mount in a frame.
+    for (const path of ["/marketplace", "/projects/dashboard-e2e/marketplace"]) {
+      const content = findServiceMenuContentByPath(path, config.services, config.serviceRegistry);
+      expect(content?.kind, path).not.toBe("frame");
+    }
   });
 });

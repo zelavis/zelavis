@@ -26,7 +26,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   const appAuth = await import("zelavis/app/identity");
   const database = await import("zelavis/db");
   const appWorkloads = await import("zelavis/app/workloads");
-  const wordpress = await import("zelavis/wordpress");
+  const recipeRuntime = await import("zelavis/adapters/project-runtime");
   const backends = await import("zelavis/backends");
   const agent = await import("zelavis/agent");
   const nodeDatabase = await import("zelavis/db/node");
@@ -71,9 +71,9 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof database.defineDatabaseService, "function");
   assert.equal(typeof database.makeDatabase, "function");
   assert.equal(typeof appWorkloads.workloadsEndpointGroup, "function");
-  assert.equal(wordpress.wordpressApp.kind, "app");
-  assert.equal(wordpress.wordpressApp.name, "zelavis/wordpress");
-  assert.match(wordpress.WORDPRESS_DOWNLOAD_URL, /wordpress-[\d.]+\.tar\.gz$/);
+  assert.equal(typeof recipeRuntime.createLocalAgentProcessRunner, "function");
+  assert.equal(typeof recipeRuntime.ZelavisProjectRuntimeError, "function");
+  await assert.rejects(import("zelavis/wordpress"), "WordPress is a package of its own, not a Platform subpath");
   assert.equal(typeof backends.createBuiltinDeploymentBackends, "function");
   assert.equal(typeof backends.createDeploymentBackendManager, "function");
   assert.equal(typeof agent.createAgentOperationManager, "function");

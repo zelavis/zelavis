@@ -8,6 +8,7 @@ export default [
   route("assistant", "routes/assistant.tsx"),
   route("projects", "routes/projects.tsx"),
   route("services", "routes/services.tsx"),
+  route("marketplace", "routes/marketplace.tsx"),
   route("server", "routes/server.tsx", [
     route("resources", "routes/resources.tsx"),
     route("security", "routes/security.tsx"),
@@ -33,6 +34,7 @@ export default [
   route("projects/:projectId", "routes/index.tsx"),
   route("projects/:projectId/backend", "routes/backend.tsx"),
   route("projects/:projectId/extensions", "routes/extensions.tsx"),
+  route("projects/:projectId/marketplace", "routes/project.marketplace.tsx"),
   route("projects/:projectId/agents", "routes/agents.tsx"),
   route("projects/:projectId/auth", "routes/auth.tsx"),
   route("projects/:projectId/content", "routes/content.tsx", [

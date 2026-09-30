@@ -3,6 +3,7 @@ import {
   normalizeProjectIsolationIntent,
   type ZelavisProjectIsolationIntent,
 } from "./project-isolation.js";
+import { normalizeProjectManaged, type ZelavisProjectManagedDefinition } from "./project-managed.js";
 import {
   readFrontendManifest,
   toServiceAppDefinition,
@@ -102,6 +103,8 @@ export interface ZelavisProjectRecipeDefinition {
   readonly runtimeKinds: readonly ZelavisProjectRuntimeKind[];
   /** Isolation the recipe requires or advises; see `ZelavisProjectIsolationIntent`. */
   readonly isolation?: ZelavisProjectIsolationIntent;
+  /** Present for a managed app (WordPress and the like); see `ZelavisProjectManagedDefinition`. */
+  readonly managed?: ZelavisProjectManagedDefinition;
 }
 
 export interface ZelavisServiceRegistryEntry<TContext = unknown> {
@@ -122,6 +125,8 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
+  /** Who maintains the package (`zelavis` for the officially maintained services). */
+  maintainer?: string;
   order?: number;
   manifest?: ZelavisPackageManifest;
 }
@@ -130,6 +135,7 @@ export interface ZelavisServiceRegistryModuleEntry {
   specifier: string;
   status?: "installed" | "available";
   source?: "official" | "community";
+  maintainer?: string;
   order?: number;
   manifest?: ZelavisPackageManifest;
   packageDir?: string;
@@ -594,9 +600,21 @@ function manifestProjectRecipe(
   manifest: ZelavisPackageManifest,
 ): ZelavisProjectRecipeDefinition | undefined {
   const project = (manifest.zelavis as { project?: unknown } | undefined)?.project as
-    | (ZelavisProjectRecipeDefinition & { isolation?: unknown })
+    | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed"> & { isolation?: unknown; managed?: unknown })
     | undefined;
-  if (!project || project.isolation === undefined) return project;
+  if (!project) return undefined;
+  let managed: ZelavisProjectManagedDefinition | undefined;
+  try {
+    managed = normalizeProjectManaged(project.managed);
+  } catch (error) {
+    throw new TypeError(
+      `Package "${manifest.name}" declares invalid zelavis.project.managed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (project.isolation === undefined) {
+    const { managed: _managed, isolation: _isolation, ...rest } = project;
+    return managed ? { ...rest, managed } : rest;
+  }
   let isolation: ZelavisProjectIsolationIntent | undefined;
   try {
     isolation = normalizeProjectIsolationIntent(project.isolation);
@@ -605,8 +623,8 @@ function manifestProjectRecipe(
       `Package "${manifest.name}" declares invalid zelavis.project.isolation: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const { isolation: _declared, ...rest } = project;
-  return isolation ? { ...rest, isolation } : rest;
+  const { isolation: _declared, managed: _managed, ...rest } = project;
+  return { ...rest, ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}) };
 }
 
 /**
@@ -704,6 +722,7 @@ export async function loadServiceRegistry<TContext = unknown>(
         specifier: entry.specifier,
         status: entry.status ?? "installed",
         source: entry.source,
+        ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
         manifest: entry.manifest,
         packageDir: entry.packageDir ?? service.packageDir,
         ...(entry.order !== undefined ? { order: entry.order } : {}),
