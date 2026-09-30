@@ -1641,6 +1641,43 @@ export async function getDashboardSettings(
   );
 }
 
+export interface AssistantProviderStatus {
+  mode: "model" | "local-router";
+  provider?: "openrouter";
+  model?: string;
+  /** Whether a key exists; the key itself is never returned. */
+  hasApiKey: boolean;
+  source: "environment" | "stored" | "none";
+  updatedAt?: string;
+}
+
+export async function getAssistantProvider(
+  config: RuntimeConfig,
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(
+    `${config.api.basePath}/runtime/assistant/provider`,
+  );
+}
+
+export async function setAssistantProvider(
+  config: RuntimeConfig,
+  input: { model: string; apiKey: string },
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(
+    `${config.api.basePath}/runtime/assistant/provider`,
+    { method: "PUT", body: JSON.stringify({ provider: "openrouter", ...input }) },
+  );
+}
+
+export async function clearAssistantProvider(
+  config: RuntimeConfig,
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(
+    `${config.api.basePath}/runtime/assistant/provider`,
+    { method: "DELETE" },
+  );
+}
+
 export async function updateDashboardSettings(
   config: RuntimeConfig,
   input: DashboardSettingsUpdate,

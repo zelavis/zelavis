@@ -6,6 +6,7 @@ import { Boxes, Cpu, Paintbrush, Save } from 'lucide-react'
 import { DataRow, ResourceNotice } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
+import { AssistantProviderCard } from '#/components/assistant-provider-card'
 import { Input } from '#/components/ui/input'
 import {
   Select,
@@ -244,6 +245,8 @@ function Settings() {
           {error ? <ResourceNotice title="Action failed" description={error} /> : null}
         </CardContent>
       </Card>
+
+      <AssistantProviderCard runtime={runtime} />
 
       <Card>
         <CardHeader>
