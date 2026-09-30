@@ -282,6 +282,18 @@ before editing.
   sequence as the normal App data API. Bind ordinary data access to an explicit
   logical Tenant, keep cross-shard semantics explicit, and require current
   writer generations even for colocated local placements.
+- For remote App shard placement, follow the request/grant authority contract
+  in `../../references/two-fabrics-placement-contract.md`. Internal admission
+  persists a conditional reservation only. A future committed grant and Agent
+  validation are required for activation and writes. Do not extend the
+  Project-local `PartitionMap` into physical Node authority.
+- Project runtime ownership uses the Platform System Store CAS record in
+  `src/platform/project-placement-authority.ts`. The Project manager must
+  acquire it before start; the Agent process lease supervisor fences local
+  workloads on a foreign/missing/expired record. The fenced dispatch callback
+  is an internal seam with a short-lived signed authority token, not a shipped
+  remote worker transport. Remote execution still needs Agent-side durable
+  replay protection, destination fencing, and verified runtime artifacts.
 - The public logical database boundary is `db.forTenant(tenantId)`. Documents,
   events, and time-series reads live on that Tenant handle; schema, projection,
   and time-series definitions remain logical database concerns. Do not restore

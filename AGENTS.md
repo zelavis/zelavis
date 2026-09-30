@@ -445,6 +445,20 @@ SQLite autoincrement sequence as a logical global order. Only the current
 writer generation may accept a write, including when stale and current
 placements are colocated on one Node.
 
+The remote shard-placement request/grant contract is specified in
+`.agents/references/two-fabrics-placement-contract.md`. Internal request
+admission persists reservations, not writer grants or routable targets. Do not
+start remote shard movement until durable `{owner, epoch}` authority,
+destination fencing, publication ordering, and failure-path proof are implemented.
+
+Project runtime placement now has a Platform System Store `{owner, epoch}` CAS
+record and a local Agent lease supervisor. The Project manager requires a
+committed placement for start, and the Gateway reads its epoch and active state.
+This is local Project ownership, not a remote App shard grant or an operational
+remote worker transport. A remote Project start must reach a worker Agent that
+verifies signed, destination-bound authority and has the locked runtime/artifact;
+the injected fenced dispatcher alone is not that proof.
+
 Zelavis is pre-release with no users, so nothing carries compatibility for old
 data or old shapes: no aliases, no legacy fields, no migrations from retired
 layouts, and no fallbacks for stored records written by earlier code. When a

@@ -1,5 +1,5 @@
-import { createSharedBundleStore } from "../bundle-store.js";
 import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -8,10 +8,19 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
+import { createHttpsProjectDispatcher, probeProjectAgent } from "./_project-dispatch-https.js";
+import type { ZelavisProjectDispatcher } from "../project.js";
+import type { FabricNode } from "../core/fabric/index.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import { createAgentRemoteEnvironment, REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "./_agent-remote-environment.js";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 export { createAgentRemoteEnvironment } from "./_agent-remote-environment.js";
+export {
+  createHttpsProjectDispatcher,
+  createProjectDispatchHttpsServer,
+  type ProjectDispatchHttpsServer,
+} from "./_project-dispatch-https.js";
+export { createRemoteProjectAgent } from "./_remote-project-agent.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
   createLocalProjectRuntime,
@@ -24,13 +33,9 @@ import {
 import {
   normalizeDataDirectory,
   createLocalFrontendDirectoryResolver,
-  createLocalRuntimeServicePackageInstaller,
+  createLocalServiceSources,
   createLocalRuntimeServiceImporter,
-  discoverProductServices,
-  createPackageDirectoryBundleStore,
-  loadOfficialServiceCatalog,
-  SERVICES_DIRECTORY,
-  createLocalRuntimeServiceManifestResolver,
+  createLocalRuntimeServicePackageInstaller,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
@@ -117,6 +122,15 @@ export interface NodeAdapterProjectOptions {
    * has no handles to them, so it reclaims them and starts fresh.
    */
   agentEndpoint?: string;
+  /** Remote Node Agents reached over pinned TLS with signed Project grants. */
+  remoteDispatch?: {
+    readonly localNodeId: string;
+    readonly nodes: Readonly<Record<string, {
+      readonly url: string;
+      readonly agentId: string;
+      readonly caFile: string;
+    }>>;
+  };
 }
 
 export interface NodeAdapterOptions {
@@ -200,44 +214,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
-      const productServiceOptions =
-        options.services === false ? undefined : options.services;
-      const productServiceDirectory = productServiceOptions?.directory
-        ? resolve(productServiceOptions.directory)
-        : join(dataDirectory, SERVICES_DIRECTORY);
-      // Scanned before composition so the runtime sees dropped-in services the
-      // same way it sees installed ones. Every runtime has its own folder: the
-      // Platform's is `<data>/services`, and a Project's is the `services`
-      // folder of its own `.zelavis` data root, so what a Project installs
-      // belongs to that Project and to no other.
-      const discoveredProductServices =
-        options.services === false
-          ? []
-          : await discoverProductServices({
-              directory: productServiceDirectory,
-              onSkipped: (name, reason) => {
-                // Reported rather than swallowed: a package that silently fails
-                // to load looks identical to one nobody installed.
-                console.warn(
-                  `Zelavis skipped product service "${name}": ${reason}`,
-                );
-              },
-            });
-      // Static frontends dropped into this runtime's services folder are served
-      // from where they lie. Other bundles keep using the shared store.
-      const folderFrontends = new Map(
-        discoveredProductServices.flatMap((entry) =>
-          entry.manifest?.zelavis?.kind === "frontend" &&
-          entry.manifest.exports === undefined &&
-          entry.packageDir
-            ? [[entry.manifest.name, entry.packageDir] as const]
-            : [],
-        ),
-      );
-      const bundledProductServices =
-        options.services === false || isProjectRuntime
-          ? []
-          : await loadOfficialServiceCatalog();
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
@@ -247,6 +223,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
+      let projectDispatcher: ZelavisProjectDispatcher | undefined;
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
           directory: projectOptions?.directory
@@ -285,7 +262,8 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // constructor is not.
         // The authority key exists before the Agent is contacted, so an Agent
         // started first finds the trust file as soon as the Platform starts.
-        if (projectOptions?.agentEndpoint && systemStore && !isProjectRuntime) {
+        if ((projectOptions?.agentEndpoint || projectOptions?.remoteDispatch) &&
+            systemStore && !isProjectRuntime) {
           platformAuthority = await readOrCreatePlatformAuthorityKey(
             join(dataDirectory, "system", "agent-authority"),
           );
@@ -307,6 +285,52 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         agentRunner = runtimeOptions.agent;
 
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
+        if (projectOptions?.remoteDispatch && platformAuthority) {
+          const destinations = Object.fromEntries(await Promise.all(
+            Object.entries(projectOptions.remoteDispatch.nodes).map(async ([nodeId, node]) => [
+              nodeId,
+              { url: node.url, agentId: node.agentId,
+                caPem: await readFile(resolve(node.caFile), "utf8") },
+            ] as const),
+          ));
+          projectDispatcher = createHttpsProjectDispatcher({
+            localNodeId: projectOptions.remoteDispatch.localNodeId,
+            projectsDirectory: runtimeOptions.directory,
+            destinations,
+            keyId: platformAuthority.signer.keyId,
+            privateKey: platformAuthority.signer.privateKey,
+          });
+          const localNodeId = projectOptions.remoteDispatch.localNodeId;
+          if (!localNodeId || destinations[localNodeId]) {
+            throw new Error("Remote dispatch needs a distinct local Fabric Node id.");
+          }
+          const localNode = {
+            id: localNodeId, status: "ready" as const,
+            roles: ["gateway", "control", "worker"] as const,
+            runtimeEngine: "node", runtimeDriver: "local-project",
+          };
+          nextSubsystems.fabric = {
+            localNode,
+            inventory: {
+              nodes: async () => {
+                const entries = Object.entries(destinations);
+                const nodes: FabricNode[] = [localNode];
+                for (let offset = 0; offset < entries.length; offset += 8) {
+                  const batch = await Promise.all(entries.slice(offset, offset + 8)
+                    .map(async ([nodeId, target]) => ({
+                      id: nodeId,
+                      status: await probeProjectAgent(target, nodeId)
+                        ? "ready" as const : "unavailable" as const,
+                      roles: ["worker"] as const,
+                      runtimeEngine: "node", runtimeDriver: "local-project",
+                    })));
+                  nodes.push(...batch);
+                }
+                return nodes;
+              },
+            },
+          };
+        }
 
         // Order matters. Adopt first, so a Project the Agent is still running
         // is taken over rather than killed; reclaim second, so what is left
@@ -395,6 +419,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
+      const serviceSources = await createLocalServiceSources({
+        dataDirectory,
+        services: options.services,
+        isProjectRuntime,
+        fileStorage,
+      });
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
         : undefined;
@@ -402,37 +432,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
-        ...(folderFrontends.size > 0
-          ? {
-              bundleStore: createPackageDirectoryBundleStore(
-                folderFrontends,
-                fileStorage ? createSharedBundleStore({ storage: fileStorage }) : undefined,
-              ),
-            }
-          : {}),
-        serviceRegistry:
-          options.services === false
-            ? undefined
-            : {
-                catalog: isProjectRuntime
-                  ? []
-                  : [
-                      ...bundledProductServices,
-                      ...(serviceOptions?.catalog ?? []),
-                    ],
-                discovered: discoveredProductServices,
-                importer: createLocalRuntimeServiceImporter({
-                  directory: serviceDirectory,
-                  ...(serviceOptions ?? {}),
-                  managedDirectories: [
-                    productServiceDirectory,
-                    ...(serviceOptions?.managedDirectories ?? []),
-                  ],
-                }),
-                // Supplied per runtime rather than installed process-globally,
-                // so two embedded runtimes cannot affect each other.
-                manifestResolver: createLocalRuntimeServiceManifestResolver(),
-              },
+        ...(serviceSources.bundleStore ? { bundleStore: serviceSources.bundleStore } : {}),
+        serviceRegistry: serviceSources.serviceRegistry,
+        ...(projectDispatcher ? { projectDispatcher } : {}),
         resources: {
           systemStore,
           projectRuntime: projectsEnabled ? projectRuntime : undefined,
@@ -449,13 +451,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(edgeCertificates ? { edgeCertificates } : {}),
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
-          servicePackages:
-            options.services === false
-              ? undefined
-              : createLocalRuntimeServicePackageInstaller({
-                  directory: serviceDirectory,
-                  ...(serviceOptions ?? {}),
-                }),
+          servicePackages: serviceSources.servicePackages,
         },
         metadata: {
           runtime: "node",

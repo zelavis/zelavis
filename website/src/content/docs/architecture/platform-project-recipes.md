@@ -120,6 +120,14 @@ GET    /zelavis/api/v1/runtime/projects/:projectId/logs
 DELETE /zelavis/api/v1/runtime/projects/:projectId
 ```
 
+The Platform keeps Project runtime ownership in a conditional System Store
+record with a Node owner, session, lease, and increasing epoch. A Fabric plan
+alone cannot start a Project. The separately supervised local Agent verifies
+the committed placement before starting a Project process and stops it when
+that placement expires or changes. Remote worker dispatch is not available
+yet; a plan naming another Node leaves the Project unstarted unless the host
+provides a fenced dispatcher.
+
 Implemented now:
 
 - `kind: "app"` Project recipes in the service contract
@@ -169,4 +177,3 @@ package is copied into the Project's data root and locked by content digest. The
 Project runs that copy, and refuses to start if it has been modified, so a
 Platform upgrade cannot change the recipe an existing Project runs. The runtime
 engine that hosts the recipe is still the Platform's own.
-

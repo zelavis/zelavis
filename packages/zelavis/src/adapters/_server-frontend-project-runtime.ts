@@ -259,7 +259,7 @@ export function createServerFrontendProjectRuntime(
       );
     },
 
-    async start(project) {
+    async start(project, placement) {
       const plan = await readPrepared(project.id);
       const port = await allocatePort();
       const state: FrontendProcess = {
@@ -275,6 +275,7 @@ export function createServerFrontendProjectRuntime(
       const child = await agent.start(
         {
           workloadId: project.id,
+          ...(placement ? { placement } : {}),
           executable: command!,
           args,
           cwd: plan.directory,

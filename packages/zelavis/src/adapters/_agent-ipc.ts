@@ -46,6 +46,12 @@ import type {
   ZelavisAgentProcessStartOptions,
 } from "../core/agent/process-command.js";
 import type { ZelavisAgentOperationSummary } from "../core/agent/index.js";
+import {
+  createAgentPlacementLeaseSupervisor,
+  type AgentPlacementLease,
+  type AgentPlacementIdentity,
+  type AgentPlacementLeaseSupervisor,
+} from "../core/agent/placement-lease.js";
 import type {
   ZelavisHostOperationManifest,
   ZelavisHostOperationRequest,
@@ -168,6 +174,13 @@ function send(socket: Socket, message: unknown): void {
   socket.write(`${JSON.stringify(message)}\n`);
 }
 
+function samePlacement(left: AgentPlacementIdentity | undefined, right: unknown): boolean {
+  if (!left || !right || typeof right !== "object" || Array.isArray(right)) return false;
+  const claim = right as Record<string, unknown>;
+  return left.projectId === claim.projectId && left.nodeId === claim.nodeId &&
+    left.ownerSession === claim.ownerSession && left.epoch === claim.epoch;
+}
+
 // ---------------------------------------------------------------------------
 // Server: the Agent process
 // ---------------------------------------------------------------------------
@@ -182,6 +195,12 @@ export interface AgentProcessServerOptions {
   readonly directory: string;
   /** What actually runs processes. The local runner, in the shipped Agent. */
   readonly runner: ZelavisAgentProcessRunner;
+  /** When present, Project processes require current Platform placement. */
+  readonly placement?: {
+    readonly isProjectWorkload: (workloadId: string) => boolean;
+    readonly read: (projectId: string) => Promise<AgentPlacementLease | undefined>;
+    readonly checkIntervalMs?: number;
+  };
   /**
    * Signed host operations, when this Agent was started with an installed
    * operation tree. Each request still carries its own signed authority; the
@@ -232,6 +251,7 @@ export async function createAgentProcessServer(
       workloadId: string;
       command: ZelavisAgentProcessCommand;
       output: ZelavisAgentProcessOutput[];
+      lease?: AgentPlacementLeaseSupervisor;
     }
   >();
   const connections = new Set<Socket>();
@@ -269,7 +289,31 @@ export async function createAgentProcessServer(
         if (message.type === "start") {
           const processId = `p${(nextProcessId += 1)}`;
           const command = message.command as ZelavisAgentProcessCommand;
-          const child = await options.runner.start(command, {
+          if (!command || typeof command !== "object" || typeof command.workloadId !== "string") {
+            send(socket, { id, type: "failed", error: "Process command is invalid." });
+            return;
+          }
+          let lease: AgentPlacementLeaseSupervisor | undefined;
+          let childForFence: ZelavisAgentProcess | undefined;
+          if (options.placement?.isProjectWorkload(command.workloadId)) {
+            if (!command.placement || command.placement.projectId !== command.workloadId) {
+              send(socket, { id, type: "failed", error: "Project placement authority is required." });
+              return;
+            }
+            lease = createAgentPlacementLeaseSupervisor({
+              identity: command.placement,
+              read: options.placement.read,
+              checkIntervalMs: options.placement.checkIntervalMs,
+              onFence: async () => { await childForFence?.stop(); },
+            });
+            if (!(await lease.start())) {
+              send(socket, { id, type: "failed", error: "Project placement authority is absent or stale." });
+              return;
+            }
+          }
+          let child: ZelavisAgentProcess;
+          try {
+            child = await options.runner.start(command, {
             onOutput: (output) => {
               const entry = processes.get(processId);
               if (entry) {
@@ -286,16 +330,28 @@ export async function createAgentProcessServer(
             },
             onExit: (exit) => {
               const entry = processes.get(processId);
+              entry?.lease?.close();
               processes.delete(processId);
               if (entry?.socket) send(entry.socket, { type: "exit", processId, exit });
             },
-          });
+            });
+          } catch (error) {
+            lease?.close();
+            throw error;
+          }
+          childForFence = child;
+          if (lease?.fenced) {
+            await child.stop();
+            send(socket, { id, type: "failed", error: "Project placement expired during start." });
+            return;
+          }
           processes.set(processId, {
             child,
             socket,
             workloadId: command.workloadId,
             command,
             output: [],
+            ...(lease ? { lease } : {}),
           });
           send(socket, { id, type: "started", processId });
           return;
@@ -325,7 +381,14 @@ export async function createAgentProcessServer(
         }
 
         if (message.type === "stop") {
-          const child = processes.get(String(message.processId))?.child;
+          const entry = processes.get(String(message.processId));
+          if (entry && options.placement?.isProjectWorkload(entry.workloadId) &&
+              !samePlacement(entry.command.placement, message.placement)) {
+            send(socket, { id, type: "failed", error: "Project stop authority does not match the process placement." });
+            return;
+          }
+          entry?.lease?.close();
+          const child = entry?.child;
           const exit = child
             ? await child.stop(
                 typeof message.graceMs === "number"
@@ -334,6 +397,27 @@ export async function createAgentProcessServer(
               )
             : undefined;
           send(socket, { id, type: "stopped", exit });
+          return;
+        }
+
+        if (message.type === "fence.placement") {
+          const claim = message.placement;
+          if (!claim || typeof claim !== "object" || Array.isArray(claim) ||
+              !options.placement || !options.runner.fencePlacement ||
+              typeof (claim as AgentPlacementIdentity).projectId !== "string") {
+            send(socket, { id, type: "failed", error: "Placement fencing is unavailable." });
+            return;
+          }
+          const placement = claim as AgentPlacementIdentity;
+          const current = await options.placement.read(placement.projectId);
+          if (!current || current.state !== "active" ||
+              current.leaseExpiresAt > current.authorityNow ||
+              !samePlacement(placement, current)) {
+            send(socket, { id, type: "failed", error: "The prior placement is not expired and current." });
+            return;
+          }
+          const fenced = await options.runner.fencePlacement(placement);
+          send(socket, { id, type: "fenced", fenced });
           return;
         }
 
@@ -612,6 +696,7 @@ export async function createAgentProcessClient(
     processId: string,
     workloadId: string,
     startOptions: ZelavisAgentProcessStartOptions,
+    placement?: AgentPlacementIdentity,
   ): ZelavisAgentProcess {
     let settled: ZelavisAgentProcessExit | undefined;
     let settleExit: (exit: ZelavisAgentProcessExit) => void;
@@ -641,6 +726,7 @@ export async function createAgentProcessClient(
         await request({
           type: "stop",
           processId,
+          ...(placement ? { placement } : {}),
           ...(stopOptions?.graceMs === undefined
             ? {}
             : { graceMs: stopOptions.graceMs }),
@@ -672,7 +758,8 @@ export async function createAgentProcessClient(
 
     async start(command, startOptions = {}) {
       const started = await request({ type: "start", command });
-      return track(String(started.processId), command.workloadId, startOptions);
+      return track(String(started.processId), command.workloadId, startOptions,
+        command.placement);
     },
 
     async attach(workloadId) {
@@ -682,13 +769,14 @@ export async function createAgentProcessClient(
       return entries.map((entry) => {
         const value = entry as {
           processId: string;
+          command?: ZelavisAgentProcessCommand;
           replay?: readonly ZelavisAgentProcessOutput[];
         };
         return {
           // No listeners yet: the caller supplies them by re-registering
           // through `onOutput` on the handle it gets back, and the replay it
           // is handed here is what it missed.
-          process: track(String(value.processId), workloadId, {}),
+          process: track(String(value.processId), workloadId, {}, value.command?.placement),
           replay: value.replay ?? [],
         } satisfies ZelavisAgentAttachedProcess;
       });
@@ -718,6 +806,11 @@ export async function createAgentProcessClient(
           : {}),
       });
       return Number(result.count ?? 0);
+    },
+
+    async fencePlacement(placement) {
+      const result = await request({ type: "fence.placement", placement });
+      return result.fenced === true;
     },
 
     async close() {

@@ -117,7 +117,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     startupConcurrency: 1,
     capabilities: (project) => forDescriptor(project).capabilities(project),
     prepare: (project, recipe) => forDescriptor(project).prepare(project, recipe),
-    start: (project) => forDescriptor(project).start(project),
+    start: (project, placement) => forDescriptor(project).start(project, placement),
+    ...(agent.fencePlacement ? {
+      fencePrevious: (placement) => agent.fencePlacement!(placement),
+    } : {}),
     stop: async (id) => (await forProjectId(id)).stop(id),
     status: async (id) => {
       try { return await (await forProjectId(id)).status(id); }

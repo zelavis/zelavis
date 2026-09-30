@@ -78,6 +78,8 @@ interface ParsedArgs {
   forService?: string;
   operationsRoot?: string;
   operationTrust?: string;
+  placementStore?: string;
+  remoteProjectConfig?: string;
   platformAuthority?: string;
   operationCgroup?: string;
   operationMemoryMaxBytes?: number;
@@ -117,6 +119,8 @@ Usage:
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
   zelavis agent [--data-dir <path>] [--operations-root <dir> --operation-trust <file> --platform-authority <file>]
+                [--placement-store <system-sqlite-file>]
+                [--remote-project-config <file>]
                 [--operation-cgroup delegated|<path>] [--operation-memory-max <bytes>]
                 [--operation-pids-max <n>] [--require-root-owned-operations]
 
@@ -279,7 +283,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     } else if (arg === "--require-root-owned-operations") {
       parsed.requireRootOwnedOperations = true;
     } else if (
-      ["--operations-root", "--operation-trust", "--platform-authority", "--operation-cgroup", "--operation-memory-max", "--operation-pids-max"]
+      ["--operations-root", "--operation-trust", "--platform-authority", "--placement-store", "--remote-project-config", "--operation-cgroup", "--operation-memory-max", "--operation-pids-max"]
         .some((flag) => arg === flag || arg.startsWith(`${flag}=`))
     ) {
       const separator = arg.indexOf("=");
@@ -288,6 +292,8 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       if (separator === -1) index += 1;
       if (flag === "--operations-root") parsed.operationsRoot = value;
       if (flag === "--operation-trust") parsed.operationTrust = value;
+      if (flag === "--placement-store") parsed.placementStore = value;
+      if (flag === "--remote-project-config") parsed.remoteProjectConfig = value;
       if (flag === "--platform-authority") parsed.platformAuthority = value;
       if (flag === "--operation-cgroup") parsed.operationCgroup = value;
       if (flag === "--operation-memory-max" || flag === "--operation-pids-max") {
@@ -624,6 +630,8 @@ export async function runCli(
       const operationTrust = parsed.operationTrust ?? env.ZELAVIS_AGENT_OPERATION_TRUST;
       const operationCgroup = parsed.operationCgroup ?? env.ZELAVIS_AGENT_OPERATION_CGROUP;
       const platformAuthority = parsed.platformAuthority ?? env.ZELAVIS_AGENT_PLATFORM_AUTHORITY;
+      const placementStore = parsed.placementStore ?? env.ZELAVIS_AGENT_PLACEMENT_STORE;
+      const remoteProjectConfig = parsed.remoteProjectConfig ?? env.ZELAVIS_AGENT_REMOTE_PROJECT_CONFIG;
       await runAgentCommand({
         ...(parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR
           ? {
@@ -634,6 +642,8 @@ export async function runCli(
         ...(operationsRoot ? { operationsRoot } : {}),
         ...(operationTrust ? { operationTrust } : {}),
         ...(platformAuthority ? { platformAuthority } : {}),
+        ...(placementStore ? { placementStore } : {}),
+        ...(remoteProjectConfig ? { remoteProjectConfig } : {}),
         ...(operationCgroup ? { operationCgroup } : {}),
         ...(parsed.operationMemoryMaxBytes !== undefined
           ? { operationMemoryMaxBytes: parsed.operationMemoryMaxBytes }

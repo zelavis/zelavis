@@ -67,6 +67,13 @@ import {
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createPlatformEndpointGroup } from "./platform/endpoints.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
+import { deleteAppShardPlacementReservations } from "./platform/app-data-placement.js";
+import {
+  createProjectPlacementAuthority,
+  deleteProjectPlacementAuthority,
+  type ProjectPlacementAuthority,
+  type ProjectPlacementRecord,
+} from "./platform/project-placement-authority.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 export {
@@ -2903,6 +2910,7 @@ function resolveFabricCoreService(
   option: ZelavisFabricOptions | undefined,
   context: {
     projects?: ZelavisProjectManager;
+    placementAuthority?: ProjectPlacementAuthority;
     runtimeEngine: ZelavisRuntimeEngine;
   },
 ): ZelavisEndpointGroup<FabricApi> | undefined {
@@ -2922,11 +2930,15 @@ function resolveFabricCoreService(
     }
     const projects = context.projects;
 
-    return (await projects.list()).map((project) => toPlacement(project));
+    return Promise.all((await projects.list()).map((project) => toPlacement(project)));
   };
-  const toPlacement = (
+  const toPlacement = async (
     project: ZelavisProjectRecord,
-  ): FabricProjectPlacement => ({
+  ): Promise<FabricProjectPlacement> => {
+    const committed = await context.placementAuthority?.current(project.id);
+    const active = committed?.state === "active" && committed.leaseExpiresAt > Date.now();
+    const nodeId = committed?.nodeId ?? project.placement?.nodeId ?? localNodeId;
+    return {
     identity: {
       scopeId: platformScopeId,
       workloadId: project.id,
@@ -2936,19 +2948,20 @@ function resolveFabricCoreService(
     // The node it is actually on. A Project the planner placed elsewhere is
     // recorded as such by the Project manager, and reporting it as local here
     // would have the Fabric's own inventory contradict its placement decision.
-    runtimeNodeId: project.placement?.nodeId ?? localNodeId,
+    runtimeNodeId: nodeId,
     ...(project.capabilities.managedDatabase
-      ? { databaseNodeId: project.placement?.nodeId ?? localNodeId }
+      ? { databaseNodeId: nodeId }
       : {}),
-    generation: 1,
-    state: placementStateFromRuntimeStatus(project.runtime.status),
+    generation: committed?.epoch ?? 0,
+    state: active ? placementStateFromRuntimeStatus(project.runtime.status) : "unavailable",
     runtimeStatus: project.runtime.status,
-  });
+    };
+  };
   const projectPlacement = async (
     projectId: string,
   ): Promise<FabricProjectPlacement | undefined> => {
     const project = await context.projects?.get(projectId);
-    return project ? toPlacement(project) : undefined;
+    return project ? await toPlacement(project) : undefined;
   };
 
   return createFabricEndpointGroup({
@@ -5287,6 +5300,26 @@ export async function zelavis(
         backends: options.deploymentBackends,
       }) ?? options.projectRuntime
     : options.projectRuntime;
+  const projectPlacementAuthority = options.subsystems?.fabric === false
+    ? undefined
+    : createProjectPlacementAuthority({
+        store: systemStore,
+        mayPlace: async (projectId, nodeId) => {
+          const project = await systemStore.get("projects", projectId);
+          if (!project || !fabricCoreService) return false;
+          const node = await fabricCoreService.context.getNode(nodeId);
+          return node?.status === "ready" || node?.status === "degraded";
+        },
+        ...(projectRuntime?.fencePrevious
+          ? { fencePrevious: (previous: ProjectPlacementRecord) =>
+              projectRuntime.fencePrevious!({
+                projectId: previous.projectId,
+                nodeId: previous.nodeId,
+                ownerSession: previous.ownerSession,
+                epoch: previous.epoch,
+              }) }
+          : {}),
+      });
   const projects =
     systemStore && projectRuntime
       ? await createProjectManager({
@@ -5298,10 +5331,25 @@ export async function zelavis(
           // because it runs once and a pass before Fabric exists would enforce
           // nothing.
           placement: () => fabricCoreService?.context,
+          ...(projectPlacementAuthority
+            ? { authoritativePlacement: projectPlacementAuthority }
+            : {}),
           dispatch: () => ({
             localNodeId: resolveLocalNodeId(options.subsystems?.fabric),
             ...(options.projectDispatcher?.dispatchStart
               ? { dispatchStart: options.projectDispatcher.dispatchStart }
+              : {}),
+            ...(options.projectDispatcher?.authorizeDispatch
+              ? { authorizeDispatch: options.projectDispatcher.authorizeDispatch }
+              : {}),
+            ...(options.projectDispatcher?.dispatchLeaseFenced
+              ? { dispatchLeaseFenced: options.projectDispatcher.dispatchLeaseFenced }
+              : {}),
+            ...(options.projectDispatcher?.dispatchStartFenced
+              ? { dispatchStartFenced: options.projectDispatcher.dispatchStartFenced }
+              : {}),
+            ...(options.projectDispatcher?.dispatchStopFenced
+              ? { dispatchStopFenced: options.projectDispatcher.dispatchStopFenced }
               : {}),
           }),
           autoReconcile: false,
@@ -5336,6 +5384,16 @@ export async function zelavis(
               }
             : {}),
           cleanupParticipants: [
+            {
+              id: "project-placement-authority",
+              cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                deleteProjectPlacementAuthority(systemStore, project.id),
+            },
+            {
+              id: "app-data-placement",
+              cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                deleteAppShardPlacementReservations(systemStore, project.id),
+            },
             ...(deletionAssistant
               ? [{
                   id: "assistant-threads",
@@ -5384,6 +5442,7 @@ export async function zelavis(
     options.subsystems?.fabric,
     {
       projects,
+      placementAuthority: projectPlacementAuthority,
       runtimeEngine: detectCurrentRuntimeEngine(
         options.serviceContext?.platform?.metadata,
       ),

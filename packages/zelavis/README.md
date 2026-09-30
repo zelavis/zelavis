@@ -252,6 +252,15 @@ needs no restart). The Platform keeps the private key in
 `platform-authority.json` beside it; keys are valid 365 days and rotate 30 days
 before expiry with overlap.
 
+The packaged Agent also reads committed Project placement from
+`<data>/system/zelavis.sqlite` (or `--placement-store <file>` when the shared
+local System Store is elsewhere). Project process starts must carry the current
+`{projectId, nodeId, ownerSession, epoch}` claim. The Agent checks the record
+before launch and stops the process when the claim is missing, foreign, or
+expired. It derives its process deadline from a monotonic clock. This local
+store path does not reach another Node; remote workers still need an authenticated
+authority read and a way to materialize the locked Project runtime.
+
 A manifest's signed `authorization: { permission, scope: "project" | "system" }`
 decides who may request it; an operation without one cannot be requested.
 With an Agent configured, the Platform exposes that as
@@ -718,8 +727,11 @@ restoring an old authority snapshot is not a supported takeover procedure.
 
 Opening an engine does not acquire a store writer claim. Writable store activation
 is a trusted low-level operation that supersedes prior store sessions; it does not
-implement authenticated Fabric placement, renewable ownership leases, distributed
-failover, backup rollback protection, or stronger acknowledgement durability.
+implement App-shard Fabric placement, distributed failover, backup rollback
+protection, or stronger acknowledgement durability. Project runtime placement
+has a separate Platform-owned CAS lease and self-fencing in the separately
+supervised local Agent; it does not
+authorize a remote App-shard writer.
 Direct raw-engine access remains trusted and must not bypass the store in App code.
 
 ## Project runtime lifecycle

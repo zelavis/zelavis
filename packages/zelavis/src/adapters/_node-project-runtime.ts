@@ -411,7 +411,7 @@ export function createNodeProcessProjectRuntime(
         }
       }
     },
-    async start(project) {
+    async start(project, placement) {
       if (closed) {
         throw new Error("The Node project runtime is shutting down.");
       }
@@ -473,6 +473,7 @@ export function createNodeProcessProjectRuntime(
       const child = await agent.start(
         {
           workloadId: project.id,
+          ...(placement ? { placement } : {}),
           executable: process.execPath,
           args: [runnerPath],
           cwd: directory,

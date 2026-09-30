@@ -31,6 +31,7 @@ import type {
   ZelavisAgentProcessRunner,
   ZelavisAgentProcessStartOptions,
 } from "../core/agent/process-command.js";
+import type { AgentPlacementIdentity } from "../core/agent/placement-lease.js";
 
 /**
  * Longest line delivered to a caller.
@@ -146,7 +147,12 @@ interface ProcessRecord {
   readonly startedAt: string;
   /** The Platform process that started it. */
   readonly ownerPid: number;
+  readonly placement?: AgentPlacementIdentity;
 }
+
+const samePlacement = (left: AgentPlacementIdentity | undefined, right: AgentPlacementIdentity) =>
+  left?.projectId === right.projectId && left.nodeId === right.nodeId &&
+  left.ownerSession === right.ownerSession && left.epoch === right.epoch;
 
 export interface LocalAgentProcessRunnerOptions {
   /** Default grace period before a stop escalates to SIGKILL. */
@@ -223,6 +229,7 @@ export function createLocalAgentProcessRunner(
 ): ZelavisAgentProcessRunner {
   const defaultGraceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const started = new Set<ZelavisAgentProcess>();
+  const startedPlacements = new Map<ZelavisAgentProcess, AgentPlacementIdentity>();
   const stateDirectory = options.stateDirectory;
   /**
    * A full sweep, once, on the first process this runner starts.
@@ -265,8 +272,8 @@ export function createLocalAgentProcessRunner(
       try {
         record = JSON.parse(raw) as ProcessRecord;
       } catch {
-        // A record torn by a crash mid-write describes nothing actionable.
-        await rm(file, { force: true }).catch(() => undefined);
+        // Keep an unreadable record: takeover must fail closed rather than
+        // treating an unknown child as proof that no child exists.
         continue;
       }
 
@@ -326,7 +333,10 @@ export function createLocalAgentProcessRunner(
         !Number.isFinite(recordedAgeMs) ||
         Math.abs(ageMs - recordedAgeMs) > START_TIME_TOLERANCE_MS
       ) {
-        await rm(file, { force: true }).catch(() => undefined);
+        if (ageMs !== undefined && Number.isFinite(recordedAgeMs) &&
+            Math.abs(ageMs - recordedAgeMs) > START_TIME_TOLERANCE_MS) {
+          await rm(file, { force: true }).catch(() => undefined);
+        }
         continue;
       }
 
@@ -343,7 +353,7 @@ export function createLocalAgentProcessRunner(
         // being asked for anyway.
       }
 
-      await rm(file, { force: true }).catch(() => undefined);
+      if (!isAlive(record.pid)) await rm(file, { force: true }).catch(() => undefined);
     }
 
     return reclaimed;
@@ -356,6 +366,52 @@ export function createLocalAgentProcessRunner(
     // rather than returning an empty list and implying it looked.
     survivesControlPlaneRestart: false,
     reclaim,
+    async fencePlacement(placement) {
+      if (!stateDirectory) return false;
+      for (const [handle, owned] of [...startedPlacements]) {
+        if (owned.projectId !== placement.projectId) continue;
+        if (!samePlacement(owned, placement)) return false;
+        await handle.stop();
+      }
+      let names: string[];
+      try { names = await readdir(stateDirectory); }
+      catch { return false; }
+      for (const name of names) {
+        if (!name.endsWith(".json")) continue;
+        const file = join(stateDirectory, name);
+        let record: ProcessRecord;
+        try { record = JSON.parse(await readFile(file, "utf8")) as ProcessRecord; }
+        catch { return false; }
+        if (record.workloadId !== placement.projectId) continue;
+        if (!samePlacement(record.placement, placement) ||
+            !Number.isSafeInteger(record.pid) || record.pid < 1 ||
+            typeof record.startedAt !== "string") return false;
+        if (isAlive(record.pid)) {
+          const ageMs = await processAgeMs(record.pid);
+          const recordedAgeMs = Date.now() - Date.parse(record.startedAt);
+          if (ageMs === undefined || !Number.isFinite(recordedAgeMs)) return false;
+          if (Math.abs(ageMs - recordedAgeMs) <= START_TIME_TOLERANCE_MS) {
+            try { process.kill(record.pid, "SIGTERM"); }
+            catch { if (isAlive(record.pid)) return false; }
+            const deadline = Date.now() + defaultGraceMs;
+            while (isAlive(record.pid) && Date.now() < deadline) {
+              await new Promise((wait) => setTimeout(wait, 25));
+            }
+            if (isAlive(record.pid)) {
+              try { process.kill(record.pid, "SIGKILL"); }
+              catch { if (isAlive(record.pid)) return false; }
+              const killDeadline = Date.now() + 1_000;
+              while (isAlive(record.pid) && Date.now() < killDeadline) {
+                await new Promise((wait) => setTimeout(wait, 25));
+              }
+              if (isAlive(record.pid)) return false;
+            }
+          }
+        }
+        await rm(file, { force: true });
+      }
+      return true;
+    },
 
     async start(command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) {
       // Before anything is started for this workload, stop what a previous
@@ -386,8 +442,13 @@ export function createLocalAgentProcessRunner(
             executable: command.executable,
             startedAt: new Date().toISOString(),
             ownerPid: process.pid,
+            ...(command.placement ? { placement: command.placement } : {}),
           })
         : undefined;
+      if (command.placement && !recordFile) {
+        child.kill("SIGKILL");
+        throw new Error("Project process cannot start without a durable Agent record.");
+      }
 
       let requested = false;
       let settled: ZelavisAgentProcessExit | undefined;
@@ -465,7 +526,11 @@ export function createLocalAgentProcessRunner(
       };
 
       started.add(handle);
-      void exit.then(() => started.delete(handle));
+      if (command.placement) startedPlacements.set(handle, command.placement);
+      void exit.then(() => {
+        started.delete(handle);
+        startedPlacements.delete(handle);
+      });
       return handle;
     },
 
