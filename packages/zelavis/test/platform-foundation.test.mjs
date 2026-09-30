@@ -341,7 +341,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
     PLATFORM_OWNER_CONTEXT,
   );
   const listed = await listResponse.json();
-  assert.equal(listed.responder, "zelavis-local-router");
+  assert.equal(listed.responder, "zelavis-assistant");
   assert.equal(listed.threads[0].id, created.thread.id);
 });
 

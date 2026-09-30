@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { readFile } from "node:fs/promises";
 import {
   defineAdapter,
@@ -366,15 +367,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let edgeCertificates: ZelavisCertificateController | undefined;
       if (options.edge !== false && !isProjectRuntime && systemStore) {
         edgeRoutes = createZelavisEdgeRouteStore({ store: systemStore });
-        const masterSecretRecord = await systemStore.get("platform", "master-secret");
-        let masterSecret: string;
-        if (masterSecretRecord && typeof masterSecretRecord.value === "string") {
-          masterSecret = masterSecretRecord.value;
-        } else {
-          const { randomBytes } = await import("node:crypto");
-          masterSecret = randomBytes(32).toString("hex");
-          await systemStore.set("platform", "master-secret", masterSecret);
-        }
+        const masterSecret = await loadPlatformMasterSecret(systemStore);
         edgeCertificates = createZelavisCertificateController({
           store: systemStore,
           masterSecret,

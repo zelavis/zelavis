@@ -85,6 +85,12 @@ import {
   createAssistantToolbox,
   createProjectReadTools,
 } from "./assistant-tools.js";
+import {
+  AssistantProviderConfigError,
+  createAssistantProviderConfig,
+  createConfiguredAssistantResponder,
+} from "./assistant-provider.js";
+import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
 import type { ZelavisPrincipal } from "./core/runtime/contracts.js";
@@ -194,6 +200,7 @@ export * from "./platform/host-operations.js";
 export * from "./assistant.js";
 export * from "./assistant-model.js";
 export * from "./assistant-tools.js";
+export * from "./assistant-provider.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -3750,21 +3757,33 @@ async function resolvePlatformEndpointGroup(
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
 ): Promise<ZelavisEndpointGroup<any>> {
+  const assistantToolbox = systemStore
+    ? createAssistantToolbox({
+        tools: createProjectReadTools(() => projects),
+        audit: createAssistantToolAudit(systemStore),
+      })
+    : undefined;
+  // An explicit responder or model in code wins. Otherwise the model is
+  // whatever the environment or an owner configured, decided per message.
+  const assistantProvider = systemStore && assistantOption === undefined
+    ? createAssistantProviderConfig({
+        store: systemStore,
+        masterSecret: await loadPlatformMasterSecret(systemStore),
+      })
+    : undefined;
   const assistantResponder = !assistantOption
-    ? undefined
+    ? assistantProvider
+      ? createConfiguredAssistantResponder({
+          provider: assistantProvider,
+          ...(assistantToolbox ? { toolbox: assistantToolbox } : {}),
+        })
+      : undefined
     : isAssistantModelOption(assistantOption)
       ? createModelAssistantResponder({
           model: assistantOption.model,
           ...(assistantOption.system ? { system: assistantOption.system } : {}),
           ...(assistantOption.maxSteps ? { maxSteps: assistantOption.maxSteps } : {}),
-          ...(systemStore
-            ? {
-                toolbox: createAssistantToolbox({
-                  tools: createProjectReadTools(() => projects),
-                  audit: createAssistantToolAudit(systemStore),
-                }),
-              }
-            : {}),
+          ...(assistantToolbox ? { toolbox: assistantToolbox } : {}),
         })
       : assistantOption;
   const assistant =
@@ -4481,6 +4500,102 @@ async function resolvePlatformEndpointGroup(
                 })),
             },
           }),
+        },
+        {
+          id: "runtime.assistant.provider.get",
+          spec: {
+            operationId: "getAssistantProvider",
+            summary: "Read the Assistant's model provider setting",
+            tags: ["assistant"],
+            responses: { 200: { description: "Provider status; the key is never returned" } },
+          },
+          method: "GET",
+          path: "/assistant/provider",
+          access: { permissions: ["system.settings.manage"] },
+          handler: async () =>
+            assistantProvider
+              ? { status: 200, body: await assistantProvider.status() }
+              : {
+                  status: 200,
+                  body: { mode: assistant ? "model" : "local-router", hasApiKey: false, source: "none",
+                    managed: false },
+                },
+        },
+        {
+          id: "runtime.assistant.provider.set",
+          spec: {
+            operationId: "setAssistantProvider",
+            summary: "Set the Assistant's model provider and API key",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Provider saved" },
+              400: { description: "Invalid provider settings" },
+              409: { description: "Configured by the environment" },
+            },
+          },
+          method: "PUT",
+          path: "/assistant/provider",
+          access: { permissions: ["system.settings.manage"] },
+          handler: async ({
+            body,
+            principal,
+          }: {
+            body: unknown;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistantProvider || !systemStore) {
+              return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
+            }
+            try {
+              const input = readBodyObject(body);
+              const result = await assistantProvider.set(input, principal?.id ?? "unknown");
+              // Recorded without the key; the model name is enough to review it.
+              await createAssistantToolAudit(systemStore)({
+                id: crypto.randomUUID(), at: new Date().toISOString(),
+                principalId: principal?.id ?? "unknown",
+                tool: "assistant.provider.set",
+                arguments: JSON.stringify({ provider: result.provider, model: result.model }),
+                decision: "allowed",
+              });
+              return { status: 200, body: result };
+            } catch (error) {
+              if (error instanceof AssistantProviderConfigError) {
+                return { status: error.status, body: { error: error.message } };
+              }
+              throw error;
+            }
+          },
+        },
+        {
+          id: "runtime.assistant.provider.clear",
+          spec: {
+            operationId: "clearAssistantProvider",
+            summary: "Remove the stored Assistant model provider and key",
+            tags: ["assistant"],
+            responses: { 200: { description: "Provider cleared" }, 409: { description: "Configured by the environment" } },
+          },
+          method: "DELETE",
+          path: "/assistant/provider",
+          access: { permissions: ["system.settings.manage"] },
+          handler: async ({ principal }: { principal?: ZelavisPrincipal }) => {
+            if (!assistantProvider || !systemStore) {
+              return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
+            }
+            try {
+              const result = await assistantProvider.clear();
+              await createAssistantToolAudit(systemStore)({
+                id: crypto.randomUUID(), at: new Date().toISOString(),
+                principalId: principal?.id ?? "unknown",
+                tool: "assistant.provider.clear", arguments: "{}", decision: "allowed",
+              });
+              return { status: 200, body: result };
+            } catch (error) {
+              if (error instanceof AssistantProviderConfigError) {
+                return { status: error.status, body: { error: error.message } };
+              }
+              throw error;
+            }
+          },
         },
         {
           id: "runtime.assistant.threads.list",

@@ -64,6 +64,19 @@ The Admin Agent is not a principal. It borrows the caller's authority:
   Store, and a call that cannot be audited does not run
 - the system prompt enforces nothing
 
+### Provider configuration
+
+Without a model in code, the provider is resolved on every message: the
+environment (`ZELAVIS_ASSISTANT_OPENROUTER_API_KEY` and `ZELAVIS_ASSISTANT_MODEL`,
+which win and cannot be changed through the API), then a setting stored through
+`GET|PUT|DELETE /zelavis/api/v1/runtime/assistant/provider`, then none, in which
+case the deterministic local router answers. Those routes need
+`system.settings.manage`. The key is encrypted with the Platform master secret,
+never returned (callers only learn `hasApiKey`), and never written to threads,
+audit records or errors; changes are audited without it. The master secret lives
+in the same System Store, so this protects a leaked field or export, not a
+compromised store.
+
 Built-in read-only tools: `list_projects`, `get_project`, `project_logs`, each
 carrying the same requirement as its HTTP route.
 
