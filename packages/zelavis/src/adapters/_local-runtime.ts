@@ -38,6 +38,8 @@ import type {
   ZelavisServiceRegistryModuleEntry,
 } from "../index.js";
 import { loadPluginPackage } from "../service.js";
+import type { ZelavisSystemStore } from "../system-store.js";
+import { createLocalMarketplace, type LocalMarketplace, type MarketplaceOptions } from "./_marketplace-allowlist.js";
 import type {
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
@@ -50,11 +52,13 @@ import {
   SourceRefused,
   UnusablePackage,
 } from "../platform/service-lifecycle-errors.js";
-import type {
-  ZelavisGitSourcePolicy,
-  ZelavisHttpsSourcePolicy,
-  ZelavisNpmSourcePolicy,
-  ZelavisServiceSourcePolicy,
+import {
+  parsePackageSourceRef,
+  ZELAVIS_DEFAULT_NPM_REGISTRY,
+  type ZelavisGitSourcePolicy,
+  type ZelavisHttpsSourcePolicy,
+  type ZelavisNpmSourcePolicy,
+  type ZelavisServiceSourcePolicy,
 } from "../platform/package-sources.js";
 import type {
   ZelavisPackageManifest,
@@ -494,6 +498,12 @@ export interface LocalRuntimeServiceSourcePolicy {
   git?: ZelavisGitSourcePolicy;
 }
 
+/** What the installer asks of an allow-list before and after fetching a package. */
+export interface LocalAcquisitionGate {
+  authorize(input: { name: string; version: string }): Promise<unknown>;
+  verifyAcquired(input: { name: string; version: string; integrity: string }): Promise<void>;
+}
+
 export interface LocalRuntimeServiceOptions {
   directory?: string;
   /**
@@ -506,6 +516,14 @@ export interface LocalRuntimeServiceOptions {
    */
   managedDirectories?: readonly string[];
   sources?: LocalRuntimeServiceSourcePolicy;
+  /**
+   * Decides which packages may be installed from a registry. When set, an npm
+   * reference must name an exact version the gate vouches for, and what arrives
+   * must have the digest it vouches for, or the install is refused. The
+   * marketplace allow-list is the gate a host normally supplies; without one,
+   * the `sources` policy alone decides.
+   */
+  acquisitionGate?: LocalAcquisitionGate;
   /** Registry used when a reference does not name one. */
   defaultRegistry?: string;
   /**
@@ -544,10 +562,15 @@ function resolveAcquisitionPolicy(
   options: LocalRuntimeServiceOptions,
 ): ZelavisServiceSourcePolicy | undefined {
   const sources = options.sources ?? {};
-  if (!sources.npm && !sources.archives && !sources.git) {
+  // With a gate, the default registry is reachable without further
+  // configuration: the gate, not the registry list, decides what installs.
+  const npm = sources.npm ?? (options.acquisitionGate
+    ? { registries: [options.defaultRegistry ?? ZELAVIS_DEFAULT_NPM_REGISTRY] }
+    : undefined);
+  if (!npm && !sources.archives && !sources.git) {
     return undefined;
   }
-  return { npm: sources.npm, https: sources.archives, git: sources.git };
+  return { npm, https: sources.archives, git: sources.git };
 }
 
 // ---------------------------------------------------------------------------
@@ -632,15 +655,43 @@ export function createLocalRuntimeServicePackageInstaller(
     input: ZelavisServicePackageAcquireInput,
   ) {
     const acquired = yield* Effect.tryPromise({
-      try: () =>
-        acquirePackage(input.reference, {
+      try: async () => {
+        const gate = options.acquisitionGate;
+        const ref = gate
+          ? parsePackageSourceRef(input.reference, {
+              defaultRegistry: options.defaultRegistry ?? ZELAVIS_DEFAULT_NPM_REGISTRY,
+            })
+          : undefined;
+        // Before anything is fetched: the package and the exact version must
+        // be on the list. A tag or a range is never a listed version.
+        if (gate && ref?.kind === "npm") {
+          await gate.authorize({ name: ref.name, version: ref.version });
+        } else if (gate && ref && !options.sources?.archives && !options.sources?.git) {
+          throw new ZelavisValidationError(
+            "Only packages on the marketplace allow-list can be installed from a source reference.",
+          );
+        }
+        const result = await acquirePackage(input.reference, {
           policy: acquisitionPolicy,
           defaultRegistry: options.defaultRegistry,
-        }),
+        });
+        // After the bytes arrived: they must be the bytes that were vouched for.
+        if (gate && ref?.kind === "npm") {
+          const resolved = result.resolved.replace(/^npm:/, "");
+          const at = resolved.lastIndexOf("@");
+          await gate.verifyAcquired({
+            name: resolved.slice(0, at),
+            version: resolved.slice(at + 1),
+            integrity: result.integrity,
+          });
+        }
+        return result;
+      },
       // Validation is the policy talking: an unallowed registry, a range
       // where an exact version is required, a name that is not a name.
       catch: (cause) =>
-        cause instanceof ZelavisValidationError
+        cause instanceof ZelavisValidationError ||
+        (cause as { name?: string } | undefined)?.name === "AllowlistRefusal"
           ? new SourceRefused({ reference: input.reference, reason: (cause as Error).message })
           : new AcquisitionFailed({ reference: input.reference, cause }),
     });
@@ -1620,6 +1671,8 @@ export async function discoverProductServices(
 // ---------------------------------------------------------------------------
 
 export type LocalServiceSourceOptions = LocalRuntimeServiceOptions & {
+  /** The marketplace allow-list and, for development, a checkout of the official services. */
+  marketplace?: MarketplaceOptions;
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
   /**
    * Folder on this server that services are dropped into.
@@ -1637,9 +1690,13 @@ export interface LocalServiceSourcesInput {
   services: false | LocalServiceSourceOptions | undefined;
   isProjectRuntime: boolean;
   fileStorage?: ZelavisFileStorage;
+  /** Where the allow-list is cached. */
+  systemStore?: ZelavisSystemStore;
 }
 
 export interface LocalServiceSources {
+  /** The marketplace this host built, for its status and refresh operations. */
+  marketplace?: LocalMarketplace;
   serviceRegistry?: ZelavisServiceRegistryOptions;
   servicePackages?: LocalServicePackageInstaller;
   bundleStore?: BundleStore;
@@ -1692,6 +1749,21 @@ export async function createLocalServiceSources(
   );
 
   const official = input.isProjectRuntime ? [] : await loadOfficialServiceCatalog();
+  // The marketplace: what its allow-list offers, the gate that decides what may
+  // be installed, and (in a development checkout) the official services on disk.
+  // A Project runtime has no marketplace of its own.
+  const marketplace = input.isProjectRuntime
+    ? undefined
+    : await createLocalMarketplace({
+        options: serviceOptions?.marketplace,
+        systemStore: input.systemStore,
+        bundledNames: new Set(official.map((entry) => entry.service.name)),
+      });
+  const installerOptions = {
+    directory: serviceDirectory,
+    ...(serviceOptions ?? {}),
+    ...(marketplace?.gate ? { acquisitionGate: marketplace.gate } : {}),
+  };
 
   return {
     ...(folderFrontends.size > 0
@@ -1707,13 +1779,14 @@ export async function createLocalServiceSources(
     serviceRegistry: {
       catalog: input.isProjectRuntime
         ? []
-        : [...official, ...(serviceOptions?.catalog ?? [])],
+        : [...official, ...(marketplace?.catalog ?? []), ...(serviceOptions?.catalog ?? [])],
       discovered,
       importer: createLocalRuntimeServiceImporter({
         directory: serviceDirectory,
         ...(serviceOptions ?? {}),
         managedDirectories: [
           productServiceDirectory,
+          ...(marketplace?.managedDirectories ?? []),
           ...(serviceOptions?.managedDirectories ?? []),
         ],
       }),
@@ -1721,9 +1794,7 @@ export async function createLocalServiceSources(
       // embedded runtimes cannot affect each other.
       manifestResolver: createLocalRuntimeServiceManifestResolver(),
     },
-    servicePackages: createLocalRuntimeServicePackageInstaller({
-      directory: serviceDirectory,
-      ...(serviceOptions ?? {}),
-    }),
+    servicePackages: createLocalRuntimeServicePackageInstaller(installerOptions),
+    ...(marketplace ? { marketplace } : {}),
   };
 }

@@ -417,6 +417,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         services: options.services,
         isProjectRuntime,
         fileStorage,
+        systemStore,
       });
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
@@ -445,6 +446,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages: serviceSources.servicePackages,
+          ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
         },
         metadata: {
           runtime: "node",

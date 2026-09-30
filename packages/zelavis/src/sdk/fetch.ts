@@ -279,6 +279,8 @@ export interface ZelavisClient {
   ): Promise<T>;
   /** Platform Projects, over `/runtime/projects`. Same contract as `zelavis projects`. */
   readonly projects: ZelavisProjectsClient;
+  /** The marketplace allow-list, over `/runtime/marketplace`. Same contract as `zelavis marketplace`. */
+  readonly marketplace: ZelavisMarketplaceClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -542,6 +544,35 @@ export interface ZelavisProjectListResponse {
  * with the route's status and body, including `code` and `isolation` when a
  * recipe's required isolation is not met (409).
  */
+export interface ZelavisMarketplaceAllowlistStatus {
+  /** Whether installs are limited to what the allow-list vouches for. */
+  readonly gated: boolean;
+  /** How many sources the list is fetched from. */
+  readonly sources: number;
+  readonly list?: {
+    readonly sequence: number;
+    readonly issuedAt: string;
+    readonly expiresAt: string;
+    readonly origin: "remote" | "cache" | "bundled";
+    readonly fetchedAt?: string;
+    readonly status: "fresh" | "stale" | "expired";
+    readonly services: number;
+  };
+}
+
+export interface ZelavisMarketplaceRefreshResult
+  extends Omit<ZelavisMarketplaceAllowlistStatus, "gated" | "sources"> {
+  readonly updated: boolean;
+  readonly attempts: readonly { readonly source: string; readonly outcome: string; readonly detail?: string }[];
+}
+
+export interface ZelavisMarketplaceClient {
+  /** How current the list is; needs `marketplace.view`. */
+  allowlist(): Promise<ZelavisMarketplaceAllowlistStatus>;
+  /** Fetches the list again from its sources; needs `system.services.manage`. */
+  refresh(): Promise<ZelavisMarketplaceRefreshResult>;
+}
+
 export interface ZelavisProjectsClient {
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
@@ -805,6 +836,11 @@ export function createZelavisClient(
     ),
     pluginOperations: discoverPluginOperations,
     projects: createProjectsClient(json),
+    marketplace: {
+      allowlist: () => json<ZelavisMarketplaceAllowlistStatus>("/runtime/marketplace/allowlist"),
+      refresh: () =>
+        json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
+    },
     data: (projectId) => createDataClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),

@@ -95,6 +95,30 @@ or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
 `.agents/`. The tracked Claude session-start hook should keep those symlinks
 current automatically.
 
+## Marketplace Allow-List
+
+`@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
+services live on npm, and the allow-list (`services/zelavis-marketplace/src/allowlist`,
+documented in `website/.../architecture/marketplace-allowlist.md`) names which
+packages an installation may install, at which exact versions, with which digest.
+Rules that hold for every change:
+
+- The list is an Ed25519-signed envelope, so any source (primary, mirror, gist,
+  API) is as trustworthy as any other. Never add an unsigned or unverified path
+  that changes what may be installed.
+- A client never moves backwards: sequence is strictly increasing, an older
+  validly signed list is a replay and is ignored, and the cache is verified again
+  on every read. Keep expiry, https-only, no-redirect and size bounds.
+- The install gate authorizes an exact listed version before any fetch and
+  verifies the listed digest after; a tag or range is never a listed version.
+  Registry `official` is reserved for what the host bundled, so listed services
+  are `community` in the registry and their maintainer is separate metadata.
+- The development shortcut (`ZELAVIS_OFFICIAL_SERVICES_DIR`) only ever names
+  packages in the operator's own checkout and must never become a way to install
+  from anywhere else.
+- Operators see and refresh the list through `runtime/marketplace/allowlist`, the
+  SDK and `zelavis marketplace`; keep the three in step.
+
 ## Platform And App Service Boundary
 
 - **Zelavis Platform OS** is the `zelavis` package: the official framework and
@@ -1049,7 +1073,9 @@ those grants, while endpoints remain the authority layer.
 - `zelavis-services/*` contains the officially maintained optional services:
   capability and provider plugins (including Auth methods), and Project recipes
   such as WordPress. They are published to npm on their own release cycle and are
-  not bundled with the Platform. Do not place installable service packages inside
+  not bundled with the Platform. They reach an installation through the
+  marketplace allow-list (see "Marketplace Allow-List"); in a repository checkout
+  `pnpm dev` offers them from this folder instead of npm. Do not place installable service packages inside
   `packages/zelavis`; the unified package exports contracts and the built-in App
   services, not installable package source.
 - `examples/*` contains runnable example workspace packages.

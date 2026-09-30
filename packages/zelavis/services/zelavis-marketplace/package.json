@@ -24,11 +24,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./allowlist": {
+      "types": "./dist/allowlist/index.d.ts",
+      "import": "./dist/allowlist/index.js"
     }
   },
   "files": [
-    "dist",
-    "dashboard"
+    "allowlist.snapshot.json",
+    "dashboard",
+    "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

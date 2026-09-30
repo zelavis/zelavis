@@ -98,8 +98,48 @@
         }
 
         row.append(title, badge);
+
+        // The server says how an available service is installed; the page never
+        // sees the reference. A listed package is acquired at its listed version
+        // (the server checks it against the allow-list again), anything else is
+        // switched on where it already is.
+        if (service.status === "available" && service.installVia) {
+          const install = document.createElement("zv-button");
+          install.textContent = "Install";
+          install.addEventListener("click", () => installService(service, install));
+          row.append(install);
+        }
         card.append(row);
         return card;
+      }
+
+      async function installService(service, button) {
+        button.setAttribute("busy", "");
+        statusEl.removeAttribute("tone");
+        statusEl.textContent = `Installing ${service.name}…`;
+        try {
+          const json = { accept: "application/json", "content-type": "application/json" };
+          if (service.installVia === "acquire") {
+            await api("/runtime/services", {
+              method: "POST",
+              headers: json,
+              body: JSON.stringify({ packageSource: `npm:${service.name}@${service.version}` }),
+            });
+          } else {
+            await api(`/runtime/services/${encodeURIComponent(service.name)}`, {
+              method: "PATCH",
+              headers: json,
+              body: JSON.stringify({ status: "installed" }),
+            });
+          }
+          statusEl.textContent = `Installed ${service.name}.`;
+          await refresh();
+        } catch (error) {
+          statusEl.textContent = error.message;
+          statusEl.setAttribute("tone", "danger");
+        } finally {
+          button.removeAttribute("busy");
+        }
       }
 
       function message(text, tone) {

@@ -138,7 +138,7 @@ async function main() {
 
   console.log("Preparing Zelavis runtime packages for dashboard dev...");
   runSetup(
-    "pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime && pnpm --filter @zelavis/app-auth-email-password build",
+    "pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime && pnpm --filter @zelavis/app-auth-email-password build && pnpm --filter \"./zelavis-services/**\" build",
   );
 
   await recycleUnhealthyPreferredPort({
@@ -215,6 +215,9 @@ async function main() {
       PORT: String(backendPort),
       ZELAVIS_BOOTSTRAP_TOKEN: bootstrapToken,
       ZELAVIS_DATA_DIR: dataDirectory,
+      // The officially maintained services live in this checkout, so the
+      // marketplace offers them from here instead of from npm.
+      ZELAVIS_OFFICIAL_SERVICES_DIR: resolve("zelavis-services"),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),
   ];
