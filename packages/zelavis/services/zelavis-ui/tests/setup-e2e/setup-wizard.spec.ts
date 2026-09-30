@@ -21,7 +21,7 @@ test("an unclaimed Platform sends every route to the wizard", async ({ page }) =
   }
 });
 
-test("the wizard rejects a wrong token and a short password, then creates the owner", async ({ page }) => {
+test("the wizard rejects a wrong token without claiming, then creates the owner", async ({ page }) => {
   await page.goto("/setup");
   await page.getByRole("button", { name: /begin|get started|continue/i }).first().click();
   await page.getByLabel(/^Email/).fill(email);
