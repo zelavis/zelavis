@@ -212,12 +212,36 @@ test("in development, an official service in the local checkout stands in for it
   assert.deepEqual(marketplace.managedDirectories, [checkout]);
 });
 
-test("a Project runtime has no marketplace", async (t) => {
+test("a Project's marketplace offers plugins and frontends, from the shipped list, behind the same gate", async (t) => {
   const directory = await scratch(t);
+  const checkout = join(directory, "zelavis-services");
+  const write = async (folder, manifest) => {
+    await mkdir(join(checkout, folder), { recursive: true });
+    await writeFile(join(checkout, folder, "package.json"), JSON.stringify(manifest));
+  };
+  await write("wordpress", { name: "@zelavis/wordpress", version: "7.1.0", zelavis: { kind: "app", project: { runtimeKinds: ["native"] } } });
+  await write("shop", { name: "@zelavis/shop", version: "1.0.0", zelavis: { kind: "plugin", marketplace: { title: "Shop" } } });
+  await write("theme", { name: "@zelavis/theme", version: "1.0.0", zelavis: { kind: "frontend", marketplace: { title: "Theme" } } });
+
+  let fetched = 0;
   const project = await createLocalServiceSources({
-    dataDirectory: directory, services: { marketplace: { sources: [] } }, isProjectRuntime: true, systemStore: createMemorySystemStore(),
+    dataDirectory: directory,
+    services: { marketplace: { officialServicesDirectory: checkout, fetch: async () => { fetched += 1; return new Response("{}"); } } },
+    isProjectRuntime: true,
+    systemStore: createMemorySystemStore(),
   });
-  assert.equal(project.marketplace, undefined);
+
+  const names = project.serviceRegistry.catalog.map((entry) => entry.service.name).sort();
+  assert.deepEqual(names, ["@zelavis/shop", "@zelavis/theme"], "an app is a Project, not something installed into one");
+  assert.equal(project.recipePackageDirectory, undefined, "recipes are frozen by the Platform");
+
+  // The same gate: nothing outside the list installs into a Project either.
+  const refusal = await Effect.runPromise(Effect.flip(Effect.scoped(
+    project.servicePackages.acquire({ reference: "npm:@example/unlisted@1.0.0" }))));
+  assert.notEqual(refusal, undefined);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(fetched, 0, "a Project does not poll the sources; the Platform refreshes");
 });
 
 test("operators can see how current the list is, and refresh it, over HTTP", async (t) => {

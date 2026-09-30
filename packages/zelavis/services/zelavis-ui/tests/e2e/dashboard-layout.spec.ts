@@ -827,6 +827,23 @@ test('@smoke the marketplace lists WordPress and Zelavis as apps', async ({
   await expect(apps.getByRole('heading', { name: 'WordPress' })).toBeVisible()
 })
 
+test('@smoke a Project marketplace lists plugins and keeps Frontends open', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  await gotoDashboard(page, '/marketplace?tab=plugins')
+
+  // The same workspace as the Platform's, but the Frontends tab is open here.
+  await expect(page.getByRole('tab', { name: /Frontends/ })).not.toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('tab', { name: /Plugins/ })).toHaveAttribute('aria-selected', 'true')
+
+  // Offered by the Project's own runtime, from the officially maintained services.
+  await expect(
+    page.getByRole('list', { name: 'Plugins' }).getByRole('heading', { name: 'Ecommerce' }),
+  ).toBeVisible()
+})
+
 test('the Frontends tab is closed on the Platform marketplace', async ({
   page,
 }, testInfo) => {
@@ -892,8 +909,8 @@ test('marketplace info opens a plugin details panel', async ({
   await gotoDashboard(page, '/marketplace')
 
   await page.getByRole('button', { name: 'Info' }).first().click()
-  const sheet = page.getByRole('dialog', { name: 'Zelavis Ecommerce' })
-  await expect(sheet.getByRole('heading', { name: 'Zelavis Ecommerce' })).toBeVisible()
+  const sheet = page.getByRole('dialog', { name: 'Ecommerce' })
+  await expect(sheet.getByRole('heading', { name: 'Ecommerce' })).toBeVisible()
   await expect(sheet.getByText('Extensions area with nested slides')).toBeVisible()
 })
 

@@ -1773,14 +1773,15 @@ export async function createLocalServiceSources(
   const official = input.isProjectRuntime ? [] : await loadOfficialServiceCatalog();
   // The marketplace: what its allow-list offers, the gate that decides what may
   // be installed, and (in a development checkout) the official services on disk.
-  // A Project runtime has no marketplace of its own.
-  const marketplace = input.isProjectRuntime
-    ? undefined
-    : await createLocalMarketplace({
-        options: serviceOptions?.marketplace,
-        systemStore: input.systemStore,
-        bundledNames: new Set(official.map((entry) => entry.service.name)),
-      });
+  // A Project has one too, for what may be installed into it: the same list and
+  // the same gate, offering plugins and frontends (an app is a Project, not
+  // something installed into one).
+  const marketplace = await createLocalMarketplace({
+    options: serviceOptions?.marketplace,
+    systemStore: input.systemStore,
+    bundledNames: new Set(official.map((entry) => entry.service.name)),
+    role: input.isProjectRuntime ? "project" : "platform",
+  });
   const installerOptions = {
     directory: serviceDirectory,
     ...(serviceOptions ?? {}),
@@ -1800,7 +1801,7 @@ export async function createLocalServiceSources(
       : {}),
     serviceRegistry: {
       catalog: input.isProjectRuntime
-        ? []
+        ? (marketplace?.catalog ?? []).filter((entry) => entry.service.kind !== "app")
         : [...official, ...(marketplace?.catalog ?? []), ...(serviceOptions?.catalog ?? [])],
       discovered,
       importer: createLocalRuntimeServiceImporter({

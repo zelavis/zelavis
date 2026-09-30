@@ -13,7 +13,20 @@
       "api:routes",
       "dashboard:menu"
     ],
-    "namespace": "ecommerce"
+    "namespace": "ecommerce",
+    "marketplace": {
+      "title": "Ecommerce",
+      "summary": "Products, orders, customers, coupons and subscriptions, with payment providers you choose.",
+      "categories": [
+        "commerce",
+        "official"
+      ],
+      "tags": [
+        "shop",
+        "store",
+        "payments"
+      ]
+    }
   },
   "exports": {
     ".": {

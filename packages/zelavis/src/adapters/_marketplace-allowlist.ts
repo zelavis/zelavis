@@ -259,13 +259,20 @@ export async function createLocalMarketplace(input: {
   readonly systemStore: ZelavisSystemStore | undefined;
   /** Packages the registry already offers, which the marketplace does not repeat. */
   readonly bundledNames: ReadonlySet<string>;
+  /**
+   * A Project's marketplace offers what may be installed into that Project, from
+   * the list shipped with the release. It does not fetch: every Project polling
+   * the sources would be a fleet-sized load on them, and the Platform is the one
+   * that refreshes.
+   */
+  readonly role?: "platform" | "project";
 }): Promise<LocalMarketplace | undefined> {
   const options = input.options ?? {};
   const module = await loadMarketplaceModule();
   if (!module) return undefined;
 
   const sources = options.sources ??
-    (process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ??
+    (input.role === "project" ? [] : process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ??
       OFFICIAL_ALLOWLIST_SOURCES);
   const keys = await importKeys([...OFFICIAL_ALLOWLIST_KEYS, ...(options.keys ?? [])]);
   const store = input.systemStore;

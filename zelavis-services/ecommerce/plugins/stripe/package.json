@@ -11,7 +11,20 @@
     "capabilities": [
       "@zelavis/ecommerce:payments"
     ],
-    "namespace": "stripe"
+    "namespace": "stripe",
+    "marketplace": {
+      "title": "Stripe Payments",
+      "summary": "Take card payments in Ecommerce through Stripe.",
+      "categories": [
+        "commerce",
+        "payments",
+        "official"
+      ],
+      "tags": [
+        "stripe",
+        "cards"
+      ]
+    }
   },
   "types": "./dist/index.d.ts",
   "exports": {

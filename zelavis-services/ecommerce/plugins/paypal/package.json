@@ -11,7 +11,19 @@
     "capabilities": [
       "@zelavis/ecommerce:payments"
     ],
-    "namespace": "paypal"
+    "namespace": "paypal",
+    "marketplace": {
+      "title": "PayPal Payments",
+      "summary": "Take PayPal payments in Ecommerce.",
+      "categories": [
+        "commerce",
+        "payments",
+        "official"
+      ],
+      "tags": [
+        "paypal"
+      ]
+    }
   },
   "types": "./dist/index.d.ts",
   "exports": {

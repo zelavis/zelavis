@@ -157,6 +157,9 @@ const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
   "SystemRoot",
   "COMSPEC",
   "PATHEXT",
+  // Where the officially maintained services lie in a development checkout, so a
+  // Project's marketplace offers them too. A path, not a secret.
+  "ZELAVIS_OFFICIAL_SERVICES_DIR",
 ]);
 
 /**
