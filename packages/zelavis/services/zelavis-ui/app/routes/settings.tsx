@@ -6,6 +6,7 @@ import { Boxes, Cpu, Paintbrush, Save } from 'lucide-react'
 import { DataRow, ResourceNotice } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
+import { AssistantAuditCard } from '#/components/assistant-audit-card'
 import { AssistantProviderCard } from '#/components/assistant-provider-card'
 import { Input } from '#/components/ui/input'
 import {
@@ -247,6 +248,7 @@ function Settings() {
       </Card>
 
       <AssistantProviderCard runtime={runtime} />
+      <AssistantAuditCard runtime={runtime} />
 
       <Card>
         <CardHeader>

@@ -21,6 +21,12 @@ test("@smoke an owner saves and removes the Assistant model without the key comi
   await expect(page.getByText("Saved in this dashboard")).toBeVisible();
   expect(await page.content()).not.toContain(secret);
 
+  // Saving the provider is itself recorded, and the audit trail shows it
+  // without the key.
+  const activity = page.getByRole("table", { name: "Assistant activity" })
+  await expect(activity.getByText("assistant.provider.set")).toBeVisible()
+  expect(await page.content()).not.toContain(secret)
+
   await page.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText("Provider removed")).toBeVisible();
   await expect(page.getByText("Not configured")).toBeVisible();

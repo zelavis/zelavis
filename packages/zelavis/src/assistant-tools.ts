@@ -27,7 +27,7 @@ import {
   type AssistantApproval,
   type AssistantApprovalStore,
 } from "./assistant-approvals.js";
-import { redactSecrets } from "./assistant-redaction.js";
+import { redactSecrets, redactText } from "./assistant-redaction.js";
 import type { ZelavisProjectManager } from "./project.js";
 import type { ZelavisSystemStore } from "./system-store.js";
 
@@ -187,9 +187,12 @@ function serializeArguments(value: unknown): string {
   } catch {
     text = '"[unserializable]"';
   }
-  return text.length > MAX_ARGUMENT_AUDIT_CHARS
-    ? `${text.slice(0, MAX_ARGUMENT_AUDIT_CHARS)}…`
-    : text;
+  // Arguments come from a model or a caller and can hold anything, so what is
+  // kept is redacted like a tool result and bounded.
+  const safe = redactText(text);
+  return safe.length > MAX_ARGUMENT_AUDIT_CHARS
+    ? `${safe.slice(0, MAX_ARGUMENT_AUDIT_CHARS)}…`
+    : safe;
 }
 
 /** Persists audit records in the Platform System Store, one key per call. */
@@ -234,7 +237,7 @@ export function createAssistantToolbox(options: {
         tool,
         arguments: serializeArguments(args),
         decision,
-        ...(reason ? { reason } : {}),
+        ...(reason ? { reason: redactText(reason).slice(0, 500) } : {}),
       });
       return true;
     } catch {

@@ -95,6 +95,7 @@ import {
 } from "./assistant-tools.js";
 import { createAssistantApprovalStore } from "./assistant-approvals.js";
 import { createAssistantTurnLimiter } from "./assistant-limits.js";
+import { AssistantAuditQueryError, createAssistantAuditReader } from "./assistant-audit.js";
 import {
   AssistantProviderConfigError,
   createAssistantProviderConfig,
@@ -213,6 +214,7 @@ export * from "./assistant-tools.js";
 export * from "./assistant-provider.js";
 export * from "./assistant-approvals.js";
 export * from "./assistant-limits.js";
+export * from "./assistant-audit.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -3817,6 +3819,14 @@ async function resolvePlatformEndpointGroup(
           ...(assistantToolbox ? { toolbox: assistantToolbox } : {}),
         })
       : assistantOption;
+  const assistantAudit = systemStore ? createAssistantAuditReader(systemStore) : undefined;
+  if (assistantAudit && systemStore && !auditPrunedStores.has(systemStore)) {
+    auditPrunedStores.add(systemStore);
+    // Retention: expired records are removed at start and then every few hours,
+    // a bounded batch at a time so a large backlog never stalls the runtime.
+    void assistantAudit.prune().catch(() => undefined);
+    setInterval(() => void assistantAudit.prune().catch(() => undefined), 6 * 60 * 60_000).unref?.();
+  }
   const assistantTurns = createAssistantTurnLimiter();
   const tooManyAssistantTurns = (retryAfterSeconds: number): ZelavisRouteResponse => ({
     status: 429,
@@ -4537,6 +4547,44 @@ async function resolvePlatformEndpointGroup(
                 })),
             },
           }),
+        },
+        {
+          id: "runtime.assistant.audit.list",
+          spec: {
+            operationId: "listAssistantAudit",
+            summary: "Read the Assistant's audit trail, newest first",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Records and a cursor for the next page" },
+              400: { description: "Invalid filter" },
+            },
+          },
+          method: "GET",
+          path: "/assistant/audit",
+          access: { permissions: ["server.assistant.audit"] },
+          handler: async ({ query }: { query: URLSearchParams }) => {
+            if (!assistantAudit) {
+              return { status: 503, body: { error: "Assistant audit requires the Platform System Store." } };
+            }
+            try {
+              const limit = query.get("limit");
+              return {
+                status: 200,
+                body: await assistantAudit.list({
+                  ...(limit === null ? {} : { limit: Number(limit) }),
+                  ...(query.get("before") ? { before: query.get("before")! } : {}),
+                  ...(query.get("principalId") ? { principalId: query.get("principalId")! } : {}),
+                  ...(query.get("tool") ? { tool: query.get("tool")! } : {}),
+                  ...(query.get("decision") ? { decision: query.get("decision")! } : {}),
+                }),
+              };
+            } catch (error) {
+              if (error instanceof AssistantAuditQueryError) {
+                return { status: 400, body: { error: error.message } };
+              }
+              throw error;
+            }
+          },
         },
         {
           id: "runtime.assistant.provider.get",
@@ -6182,6 +6230,9 @@ export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
   auth?: IdentityApi;
   database?: DatabaseRuntimeApi;
 }
+
+/** One retention sweep per store, however many runtimes are composed over it. */
+const auditPrunedStores = new WeakSet<object>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

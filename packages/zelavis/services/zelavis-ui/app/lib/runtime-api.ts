@@ -1746,6 +1746,25 @@ export interface AssistantProviderStatus {
   updatedAt?: string;
 }
 
+export interface AssistantAuditRecord {
+  id: string;
+  at: string;
+  principalId: string;
+  tool: string;
+  arguments: string;
+  decision: "allowed" | "denied" | "invalid" | "failed" | "pending_approval" | "executed";
+  reason?: string;
+}
+
+export async function listAssistantAudit(
+  config: RuntimeConfig,
+  input: { before?: string; limit?: number } = {},
+): Promise<{ records: AssistantAuditRecord[]; next?: string }> {
+  const query = new URLSearchParams({ limit: String(input.limit ?? 25) });
+  if (input.before) query.set("before", input.before);
+  return readJson(`${config.api.basePath}/runtime/assistant/audit?${query}`);
+}
+
 export async function getAssistantProvider(
   config: RuntimeConfig,
 ): Promise<AssistantProviderStatus> {

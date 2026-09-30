@@ -148,9 +148,14 @@ what it does not:
   characters of history per turn, 200 chats and 400 messages per chat, and 30
   turns per ten minutes with two at once (`429` with `retry-after`). The limiter
   is in memory, so it bounds one caller, not the installation's total spend.
-- **Not covered:** a fleet-wide budget, retention of the audit records (they are
-  written but there is no reader for them yet), and anything a provider does
-  with what it is sent.
+- **Everything is auditable.** `GET /zelavis/api/v1/runtime/assistant/audit`
+  (`server.assistant.audit`, held by owners through `*`) returns the trail newest
+  first, 100 at most per page, with a cursor and filters for `principalId`,
+  `tool` and `decision`. Arguments and reasons are redacted before they are
+  written, records are kept for 90 days, and the dashboard shows them under
+  Settings. Nothing can edit or write a record through the API.
+- **Not covered:** a fleet-wide budget, and anything a provider does with what it
+  is sent.
 
 ## Next Protocol Work
 

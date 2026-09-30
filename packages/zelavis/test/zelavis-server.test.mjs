@@ -1404,6 +1404,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.deployment-backends.default",
       "runtime.access",
       "runtime.project-recipes.list",
+      "runtime.assistant.audit.list",
       "runtime.assistant.provider.get",
       "runtime.assistant.provider.set",
       "runtime.assistant.provider.clear",
