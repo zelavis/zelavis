@@ -124,8 +124,16 @@ current automatically.
   marketplaces. Runtime drivers execute the exact version locked in the
   Project's runtime database. Today only the version this Platform bundles can
   be prepared: a Project locked to a version the Platform no longer ships and
-  holding no frozen copy of it fails to prepare with that reason, and there is no
-  upgrade path yet, only delete and recreate.
+  holding no frozen copy of it fails to prepare with that reason. The way out is
+  an explicit **recipe upgrade** (`POST /projects/:id/upgrade`,
+  `client.projects.upgrade`, `zelavis projects upgrade`): a stopped or failed
+  Project is re-locked to a recipe this Platform ships (naming it when the locked
+  name is no longer shipped) and its new artifact is frozen first, swapped in
+  only when complete, so a failed upgrade leaves the Project as it was. Data is
+  untouched, because the recipe carries identity, menu and defaults while the
+  Platform's engine reads the data. Each read reports `recipeStatus` (`current`,
+  `upgradeAvailable`, `unavailable`); the Platform never upgrades a Project on its
+  own.
 - **Frontends (The WordPress Theme Analogy)**: Services with `kind: "frontend"`
   are the visual "face" of an installation or a Project, functioning exactly
   like themes and templates do in WordPress, but for headless, modern web apps.
