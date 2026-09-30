@@ -2,7 +2,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|get|create|rename|start|stop|restart|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--no-start] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|get|create|rename|start|stop|restart|upgrade|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--no-start] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -62,6 +62,11 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
     console.log(json ? JSON.stringify(value, null, 2) : text());
   const line = (project: ZelavisProjectRecord) =>
     `${project.id}\t${project.runtime.status}\t${project.recipe.name}@${project.recipe.version}\t${project.runtimeKind}` +
+    (project.recipeStatus?.state === "upgradeAvailable"
+      ? `\tupgrade available: ${project.recipeStatus.version}`
+      : project.recipeStatus?.state === "unavailable"
+        ? "\trecipe not shipped: upgrade with --recipe"
+        : "") +
     (project.isolation && project.isolation.shortfalls.length > 0
       ? `\tisolation: ${project.isolation.shortfalls.map((item) => `${item.requirement}(${item.enforcement})`).join(",")}`
       : "");
@@ -95,6 +100,13 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
         start,
       });
       print({ project }, () => `Created ${line(project)}`);
+      return;
+    }
+    case "upgrade": {
+      const project = await client.projects.upgrade(requireTarget("id"), {
+        ...(recipe ? { recipeName: recipe } : {}),
+      });
+      print({ project }, () => `Upgraded ${line(project)}`);
       return;
     }
     case "rename": {

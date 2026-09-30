@@ -174,7 +174,7 @@ Projects are reachable through all three surfaces with the same routes:
 `GET|POST /zelavis/api/v1/runtime/projects`, `GET|DELETE .../projects/:id`,
 `POST .../projects/:id/start|stop|restart`, `GET .../projects/:id/logs` and
 `GET .../runtime/project-recipes`; `createZelavisClient().projects.*` from
-`zelavis/sdk`; and `zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [--json]`.
+`zelavis/sdk`; and `zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [--json]`.
 
 Plugin operation discovery is `GET /zelavis/api/v1/runtime/plugin-operations`,
 revisioned by an ETag with `cache-control: no-cache`. The SDK revalidates on

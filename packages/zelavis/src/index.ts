@@ -5447,6 +5447,63 @@ async function resolvePlatformEndpointGroup(
           },
         },
         {
+          id: "runtime.projects.upgrade",
+          spec: {
+            operationId: "upgradeProject",
+            summary: "Re-lock a stopped Project to a recipe this Platform ships",
+            tags: ["projects"],
+            requestBody: {
+              required: false,
+              schema: {
+                type: "object",
+                properties: {
+                  recipeName: {
+                    type: "string",
+                    description: "The recipe to move to. Defaults to the Project's own recipe.",
+                  },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Project upgraded and stopped" },
+              400: { description: "Recipe not shipped, or not usable for this Project" },
+              404: { description: "No such Project" },
+              409: { description: "Project is running, or already on that recipe" },
+            },
+          },
+          method: "POST",
+          path: "/projects/:projectId/upgrade",
+          access: {
+            permissions: ["project.runtime.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({
+            body,
+            params,
+          }: {
+            body: unknown;
+            params: Record<string, string>;
+          }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const input = body === undefined || body === null || body === "" ? {} : readBodyObject(body);
+              const recipeName = typeof input.recipeName === "string" ? input.recipeName : undefined;
+              return {
+                status: 200,
+                body: {
+                  project: await projects.upgrade(params.projectId ?? "", {
+                    ...(recipeName ? { recipeName } : {}),
+                  }),
+                },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
           id: "runtime.projects.logs",
           spec: {
             operationId: "getProjectLogs",

@@ -1,5 +1,6 @@
 import type * as React from "react";
 import {
+  data,
   isRouteErrorResponse,
   Links,
   Meta,
@@ -11,6 +12,7 @@ import {
 } from "react-router";
 
 import { DashboardNotFound } from "#/components/DashboardNotFound";
+import { ProjectNotRunning } from "#/components/ProjectNotRunning";
 import { DashboardShell } from "#/components/DashboardShell";
 import { DirectionProvider } from "#/components/ui/direction";
 import {
@@ -132,12 +134,16 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     ? projectResult.projects.find((project) => project.id === projectId)
     : undefined;
   if (projectId && !selectedProject) {
-    const error = new Response(`Project "${projectId}" was not found.`, { status: 404 });
+    // `data()`, not `new Response`: this is handed to every loader waiting on the
+    // Project's runtime, and a thrown Response body can be read only once, so the
+    // second reader failed with "body stream already read" and the operator saw a
+    // "Dashboard error" instead of the reason.
+    const error = data(`Project "${projectId}" was not found.`, { status: 404 });
     rejectNavigationRuntime(error);
     throw error;
   }
   if (selectedProject && selectedProject.runtime.status !== "running") {
-    const error = new Response(`Project "${selectedProject.id}" is not running.`, {
+    const error = data(`Project "${selectedProject.id}" is not running.`, {
       status: 409,
     });
     rejectNavigationRuntime(error);
@@ -246,6 +252,14 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     return (
       <DashboardShell>
         <DashboardNotFound />
+      </DashboardShell>
+    );
+  }
+
+  if (isRouteErrorResponse(error) && error.status === 409) {
+    return (
+      <DashboardShell>
+        <ProjectNotRunning message={typeof error.data === "string" ? error.data : undefined} />
       </DashboardShell>
     );
   }
