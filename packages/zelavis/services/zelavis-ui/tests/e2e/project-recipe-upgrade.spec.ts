@@ -56,3 +56,18 @@ test("@smoke a Project on a retired recipe must be pointed at one, and a running
   await expect(notice.getByRole("button", { name: "Upgrade recipe" })).toBeDisabled()
   await expect(notice).toContainText("Stop the Project first.")
 })
+
+test("@smoke a Project that is not running cannot be opened from its card, and its pages explain themselves", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, { runtime: { driver: "node-process", status: "stopped" } })
+
+  await page.goto(`${basePath}/projects`)
+  await expect(page.getByRole("button", { name: "Open" }).first()).toBeDisabled()
+
+  // Reached anyway (a link, a reload): an explanation, not "Dashboard error".
+  await page.goto(`${basePath}/projects/${projectId}`)
+  await expect(page.getByText("This Project is not running")).toBeVisible()
+  await expect(page.getByText("Dashboard error")).toHaveCount(0)
+  await page.getByRole("button", { name: "Back to Projects" }).click()
+  await expect(page).toHaveURL(/\/projects$/)
+})

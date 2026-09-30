@@ -457,18 +457,27 @@ function ProjectsRoute() {
                     />
                   ) : null}
                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <Button
-                      nativeButton={false}
-                      render={
-                        <Link
-                          to={toDashboardPath(toProjectPath("/", project.id))}
-                          viewTransition
-                        />
-                      }
-                    >
-                      <LayoutDashboard className="size-4" />
-                      Open
-                    </Button>
+                    {isRunning ? (
+                      <Button
+                        nativeButton={false}
+                        render={
+                          <Link
+                            to={toDashboardPath(toProjectPath("/", project.id))}
+                            viewTransition
+                          />
+                        }
+                      >
+                        <LayoutDashboard className="size-4" />
+                        Open
+                      </Button>
+                    ) : (
+                      // Its pages are served by its own runtime; opening a Project
+                      // that is not running has nothing to show.
+                      <Button type="button" disabled title="Start the Project to open it">
+                        <LayoutDashboard className="size-4" />
+                        Open
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
