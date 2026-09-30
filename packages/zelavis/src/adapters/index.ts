@@ -2,6 +2,9 @@ export {
   createNodeServiceImporter,
   createNodeServicePackageInstaller,
   createNodeFileArtifactStore,
+  createHttpsProjectDispatcher,
+  createProjectDispatchHttpsServer,
+  createRemoteProjectAgent,
   createNodeInstallationUninstaller,
   nodeAdapter,
   nodeAdapter as zelavisNode,
@@ -12,6 +15,7 @@ export type {
   NodeAdapterProjectOptions,
   NodeAdapterServiceOptions,
   NodeFileArtifactStoreOptions,
+  ProjectDispatchHttpsServer,
   NodeInstallationUninstallerOptions,
 } from "./node.js";
 

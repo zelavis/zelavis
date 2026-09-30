@@ -1,7 +1,7 @@
 import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
 import type {
+  ZelavisEndpointGroup,
   ZelavisRouteContext,
-  ZelavisRuntimeService,
 } from "../../core/index.js";
 
 export type WorkloadType = "function" | "job" | "schedule" | "webhook";
@@ -563,76 +563,18 @@ function route<T>(
   };
 }
 
-export function workloadsService(
+
+export function workloadsEndpointGroup(
   options: WorkloadsServiceOptions = {},
-): ZelavisRuntimeService<WorkloadsApi> {
+): ZelavisEndpointGroup<WorkloadsApi> {
   const store = options.store ?? createMemoryWorkloadsStore();
   const service: WorkloadsApi = { store };
 
   return {
-    name: "@zelavis/workloads",
-    kind: "plugin" as const,
+    id: "workloads",
     basePath: "/workloads",
-    service,
-    menu: {
-      title: "Workloads",
-      path: "/workloads",
-      panelLabel: "Workloads",
-      surface: "core",
-      items: [
-        {
-          title: "Functions",
-          path: "/workloads/functions",
-          panelLabel: "Functions",
-          items: [
-            {
-              title: "Add Function",
-              path: "/workloads/new",
-              pageLabel: "Workloads",
-              fixed: true,
-              fixedOrder: 1,
-            },
-          ],
-          dynamicItems: {
-            path: "/workloads/menu/functions",
-            emptyTitle: "No functions yet",
-            emptyPath: "/workloads/functions",
-          },
-        },
-        {
-          title: "Jobs",
-          path: "/workloads/jobs",
-          panelLabel: "Jobs",
-          dynamicItems: {
-            path: "/workloads/menu/jobs",
-            emptyTitle: "No jobs yet",
-            emptyPath: "/workloads/jobs",
-          },
-        },
-        {
-          title: "Schedules",
-          path: "/workloads/schedules",
-          panelLabel: "Schedules",
-          dynamicItems: {
-            path: "/workloads/menu/schedules",
-            emptyTitle: "No schedules yet",
-            emptyPath: "/workloads/schedules",
-          },
-        },
-        {
-          title: "Webhooks",
-          path: "/workloads/webhooks",
-          panelLabel: "Webhooks",
-          dynamicItems: {
-            path: "/workloads/menu/webhooks",
-            emptyTitle: "No webhooks yet",
-            emptyPath: "/workloads/webhooks",
-          },
-        },
-        { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
-        { title: "Settings", path: "/workloads/settings", pageLabel: "Workloads" },
-      ],
-    },
+    context: service,
+    origin: { type: "subsystem", subsystem: "workloads" },
     api: {
       v1: [
         {

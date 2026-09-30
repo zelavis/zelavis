@@ -12,12 +12,9 @@ import type {
 /**
  * The password credential provider, built into Zelavis.
  *
- * This used to be two nearly identical plugins — one keyed on an email
- * address, one on a username — that the distribution copied into the
- * services folder on first boot. That seeding existed because a
- * Platform with no credential provider can never create its first owner, which
- * made the plugin mandatory in everything but name. Something an installation
- * cannot function without is not an extension.
+ * Built in rather than installed: a Platform with no credential provider can
+ * never create its first owner, and something an installation cannot function
+ * without is not an extension.
  *
  * One provider handles both identifiers. Which kind an operator typed is
  * decided by the identifier itself rather than by installing a different

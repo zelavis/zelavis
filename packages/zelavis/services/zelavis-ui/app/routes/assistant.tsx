@@ -50,6 +50,8 @@ function AssistantRoute() {
     [navigate, projectId, revalidator],
   )
 
+  const handleDecided = React.useCallback(() => revalidator.revalidate(), [revalidator])
+
   return (
     <section
       data-dashboard-slot-layout
@@ -57,11 +59,14 @@ function AssistantRoute() {
     >
       <div data-dashboard-slot="main" className="flex min-h-0 flex-1 flex-col">
         <AssistantChat
-          key={thread?.id ?? `new-${projectId ?? "platform"}`}
+          // The message count is part of the key: a decided change adds a
+          // message to the saved thread, and the chat reloads to show it.
+          key={`${thread?.id ?? `new-${projectId ?? "platform"}`}:${thread?.messages.length ?? 0}`}
           config={config}
           projectId={projectId}
           thread={thread}
           onThreadCreated={handleThreadCreated}
+          onDecided={handleDecided}
         />
       </div>
     </section>

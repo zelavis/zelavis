@@ -798,38 +798,37 @@ const unsubscribe = zelavis.events.on(
 unsubscribe function. The exact meaningful event names are defined by the
 owning subsystem or plugin contract; do not invent a global event vocabulary.
 
-## Nested services with `zelavis.services.add()`
+## Mounting endpoints with `zelavis.setup`
 
-```ts
-zelavis.services.add({
-  name: "@acme/example-worker",
-  kind: "plugin",
-  capabilities: ["@acme/example-plugin:worker"],
-  service: {},
-  api: {},
-});
-```
-
-This contributes an ordinary runtime service. Do not model adapters using
-parent-maintained child-name allow-lists, `childServices`, or service
-inheritance. A provider is discovered through a declared capability and the
-owning plugin's public registration contract.
-
-`zelavis.services.add()` runs during package registration. Runtime-dependent
-work is registered with `zelavis.setup` instead:
+A package has exactly one identity. It cannot create child or sibling services:
+`zelavis.services.add`, `context.addService`, and `{ runtimeServices }` no
+longer exist, and a package that exports `services` or `runtimeServices` is
+refused at load time. A package that owns an API contributes it through the SDK
+(`zelavis.createAPI`, `zelavis.operations.create`). Runtime-dependent work,
+such as an API that needs the registry, a database, or platform resources, is
+registered with `zelavis.setup`, which mounts **endpoint groups** owned by the
+package:
 
 ```ts
 export function register() {
   zelavis.setup(context => {
-    context.addService(buildService(context.core.database));
+    context.addEndpointGroup({
+      id: "@acme/example-worker:jobs",
+      basePath: "/plugins/example",
+      context: buildJobs(context.core.database),
+      api: { v1: buildRoutes() },
+      origin: { type: "service", serviceName: "@acme/example-worker" },
+    });
   });
 }
 ```
 
-The callback receives the runtime's scoped setup context once that runtime is
-available. Register it once per package load. Service objects created inside
-runtime setup are runtime components; they do not replace the owning package's
-manifest or its SDK API declarations.
+The callback may instead return `{ endpointGroups }`. Group ids must be unique
+across the runtime; a group cannot reuse the id of a native subsystem such as
+`identity` or `database`. The callback receives the runtime's scoped setup
+context once that runtime is available. Register it once per package load.
+Endpoint groups do not replace the owning package's manifest or its SDK API
+declarations, and they never appear in the service inventory.
 
 ## Reading the active context
 
@@ -1063,7 +1062,8 @@ validating, authorizing, and saving settings.
 - Define plugin-to-plugin integration with owned, namespaced capabilities and
   explicit public registration contracts.
 - Do not reintroduce sidecar manifests, `defineService`, `childServices`,
-  inheritance, or parent-maintained plugin name allow-lists.
+  service-created services (`addService`, `runtimeServices`), inheritance, or
+  parent-maintained plugin name allow-lists.
 
 ## Current source-of-truth locations
 

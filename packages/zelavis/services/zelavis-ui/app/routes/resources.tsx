@@ -48,7 +48,7 @@ import { parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-sear
 
 export const handle = {
   pageLabel: "Resources",
-  sidebarTrail: ["Resources"],
+  sidebarTrail: ["Server", "Resources"],
 } as const;
 
 const resourceSearchSchema = {

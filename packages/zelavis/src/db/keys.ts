@@ -23,8 +23,7 @@ export const Tag = {
   Payload: 0x01,
   Manifest: 0x02,
   Term: 0x03,
-  /** Retired: equality is answered by `Ordered`. A reindex drops what older stores hold here. */
-  Column: 0x04,
+  // 0x04 is unused: equality is answered by `Ordered`.
   Measure: 0x05,
   Edge: 0x06,
   Identity: 0x07,
@@ -490,6 +489,17 @@ export const identityKey = (namespace: string, key: string): Uint8Array =>
   build(Tag.Identity, (out) => {
     writeString(out, namespace);
     writeString(out, key);
+  });
+
+/** Every identity in one namespace, in caller-key byte order. */
+export const identityPrefix = (namespace: string): Uint8Array =>
+  build(Tag.Identity, (out) => writeString(out, namespace));
+
+/** Every identity whose caller key starts with `prefix`. */
+export const identityNamePrefix = (namespace: string, prefix: string): Uint8Array =>
+  build(Tag.Identity, (out) => {
+    writeString(out, namespace);
+    writeEscapedPrefix(out, encoder.encode(prefix));
   });
 
 /** The reverse binding, so retraction can clear an identity it was not given. */

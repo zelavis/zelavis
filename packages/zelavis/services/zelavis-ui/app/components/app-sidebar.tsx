@@ -165,6 +165,7 @@ export function AppSidebar({
               contentTypes,
               filterUserDatabaseCollections(effectiveDatabaseCollections),
               projectId,
+              runtime.capabilities,
             ),
             runtime.access,
           )
@@ -176,6 +177,7 @@ export function AppSidebar({
       managedProjectKind,
       projectId,
       runtime?.access,
+      runtime?.capabilities,
       runtime?.serviceRegistry,
       runtime?.services,
     ],

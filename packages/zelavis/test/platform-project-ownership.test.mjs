@@ -7,13 +7,13 @@ import { createMemorySystemStore } from "../dist/system-store.js";
 const PROJECT_RECIPES = [
   {
     service: {
-      name: "zelavis/app",
+      name: "@zelavis/app",
       kind: "app",
       version: "1.0.0-test",
       api: {},
       service: {},
     },
-    specifier: "zelavis/app",
+    specifier: "@zelavis/app",
     status: "available",
     source: "official",
     order: 0,

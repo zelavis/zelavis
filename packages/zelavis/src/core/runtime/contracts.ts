@@ -266,9 +266,47 @@ export interface ZelavisRuntimeService<TService = unknown> {
   service: TService;
   menu?: ZelavisRuntimeServiceMenuDefinition;
   menus?: readonly ZelavisRuntimeServiceMenuDefinition[];
-  services?: readonly ZelavisAnyRuntimeServiceInput[];
   /** Native-Web authentication mechanisms contributed by this service. */
   authenticators?: readonly ZelavisRequestAuthenticator[];
+}
+
+/**
+ * A route-owning runtime component.
+ *
+ * Endpoint groups are deliberately smaller than services. They carry only the
+ * information the HTTP runtime needs to dispatch a request and therefore
+ * cannot accidentally become package, Marketplace, trust, or dashboard
+ * identities. Native subsystems construct these directly; loaded packages are
+ * adapted to them by the runtime composition boundary.
+ */
+export interface ZelavisEndpointGroup<TContext = unknown> {
+  id: string;
+  basePath?: string;
+  api?: Record<string, readonly ZelavisServerRoute<TContext>[]>;
+  context: TContext;
+  authenticators?: readonly ZelavisRequestAuthenticator[];
+  origin:
+    | { type: "subsystem"; subsystem: string }
+    | { type: "service"; serviceName: string }
+    | { type: "frontend"; serviceName: string }
+    | { type: "infrastructure"; component: string };
+}
+
+export type ZelavisEndpointGroupInput<TContext = unknown> =
+  | ZelavisEndpointGroup<TContext>
+  | Promise<ZelavisEndpointGroup<TContext>>;
+
+export function endpointGroupFromService<TService>(
+  service: ZelavisRuntimeService<TService>,
+): ZelavisEndpointGroup<TService> {
+  return {
+    id: service.name,
+    basePath: service.basePath,
+    api: service.api,
+    context: service.service,
+    authenticators: service.authenticators,
+    origin: { type: "service", serviceName: service.name },
+  };
 }
 
 export type ZelavisRuntimeServiceInput<TService = unknown> =
@@ -280,7 +318,7 @@ export type ZelavisAnyRuntimeServiceInput =
   | Promise<ZelavisRuntimeService<any>>;
 
 export interface ZelavisResolvedRoute<TService = unknown> {
-  service: ZelavisRuntimeService<TService>;
+  endpointGroup: ZelavisEndpointGroup<TService>;
   route: ZelavisServerRoute<TService>;
   fullPath: string;
 }
@@ -363,7 +401,10 @@ export type ZelavisServerPlainHandler<TService = unknown> = (
 export interface ZelavisServerOptions<
   TService = unknown,
 > extends ZelavisServerMountOptions<TService> {
-  services: readonly ZelavisAnyRuntimeServiceInput[];
+  /** Loadable package services exposed by this runtime. */
+  services?: readonly ZelavisAnyRuntimeServiceInput[];
+  /** Native and package-backed HTTP/authentication mounts. */
+  endpointGroups?: readonly ZelavisEndpointGroupInput<any>[];
   /** Lock runtime and provider behavior to a YYYY-MM-DD compatibility date. */
   compatibilityDate?: string;
   /** Explicit startup plugins. Filesystem scanning belongs in optional tooling. */
@@ -372,6 +413,7 @@ export interface ZelavisServerOptions<
 
 export interface ZelavisServerRuntime<TService = unknown> {
   services: Record<string, ZelavisRuntimeService<any>>;
+  endpointGroups: Record<string, ZelavisEndpointGroup<any>>;
   routes: readonly ZelavisResolvedRoute<TService>[];
   compatibilityDate?: string;
   hooks: ZelavisServerLifecycle<TService>;

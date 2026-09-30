@@ -14,12 +14,17 @@ function normalizeBasePath(path: string) {
 const dashboardBasePath = normalizeBasePath(
   process.env.ZELAVIS_UI_BASE_PATH ?? "/",
 );
-const webServerOrigin = "http://127.0.0.1:3100";
+const uiPort = process.env.ZELAVIS_E2E_UI_PORT ?? "3100";
+const webServerOrigin = `http://127.0.0.1:${uiPort}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "./test-results",
   reporter: "list",
+  // One runtime is shared by every spec and some of them change it (the
+  // Assistant provider setting decides how the chat answers), so specs run one
+  // at a time rather than racing over that state.
+  workers: 1,
   globalSetup: "./tests/e2e/global-setup.ts",
   use: {
     baseURL: webServerOrigin,
@@ -29,7 +34,7 @@ export default defineConfig({
     storageState: storageStatePath,
   },
   webServer: {
-    command: "pnpm exec react-router dev --host 127.0.0.1 --port 3100",
+    command: `pnpm exec react-router dev --host 127.0.0.1 --port ${uiPort}`,
     reuseExistingServer: !process.env.CI,
     url: `${webServerOrigin}${dashboardBasePath === "/" ? "/" : dashboardBasePath}`,
   },

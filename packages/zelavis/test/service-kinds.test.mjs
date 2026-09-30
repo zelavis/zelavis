@@ -3,11 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { bundledServiceRegistry } from "./_bundled-services.mjs";
 import { validatePluginPackageManifest } from "../dist/core/service/manifest.js";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 async function runtimeServices() {
-  const runtime = await zelavis({ frontend: zelavisUiFrontend });
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    serviceRegistry: await bundledServiceRegistry(),
+  });
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );

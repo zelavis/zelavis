@@ -116,7 +116,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
 
   // Create customer
   const customerRes = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/customers", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/customers", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -130,7 +130,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
 
   // Create subscription via POST /subscriptions
   const createSubRes = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/subscriptions", {
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/subscriptions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -154,7 +154,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
 
   // Get subscription by ID via GET /subscriptions/:id
   const getSubRes = await zelavis.fetch(
-    new Request(`http://localhost/zelavis/api/v1/commerce/subscriptions/${createdSub.id}`),
+    new Request(`http://localhost/zelavis/api/v1/plugins/ecommerce/subscriptions/${createdSub.id}`),
   );
   assert.equal(getSubRes.status, 200);
   const retrievedSub = await getSubRes.json();
@@ -163,7 +163,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
 
   // List subscriptions via GET /subscriptions
   const listSubsRes = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/commerce/subscriptions"),
+    new Request("http://localhost/zelavis/api/v1/plugins/ecommerce/subscriptions"),
   );
   assert.equal(listSubsRes.status, 200);
   const listedSubs = await listSubsRes.json();
@@ -172,7 +172,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
 
   // Cancel subscription via POST /subscriptions/:id/cancel
   const cancelSubRes = await zelavis.fetch(
-    new Request(`http://localhost/zelavis/api/v1/commerce/subscriptions/${createdSub.id}/cancel`, {
+    new Request(`http://localhost/zelavis/api/v1/plugins/ecommerce/subscriptions/${createdSub.id}/cancel`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

@@ -32,7 +32,7 @@ export async function createIdentity(options: CreateIdentityOptions = {}): Promi
   const repositories = createInMemoryAuthRepositories(options.repositories);
   const accounts = new AccountService(repositories.accounts);
   const credentials = new CredentialService(repositories.credentials);
-  const sessions = new SessionService(repositories.sessions);
+  const sessions = new SessionService(repositories.sessions, repositories.accounts);
   const authentication = new AuthenticationService({
     accounts,
     credentials,

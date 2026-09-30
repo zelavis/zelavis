@@ -17,7 +17,7 @@ test("workload and Fabric contracts have narrow package subpaths", async () => {
   assert.equal(typeof fabric.createFabricService, "function");
 });
 
-test("Fabric mounts a single-node core service with project placement inventory", async () => {
+test("Fabric mounts a single-node endpoint group with project placement inventory", async () => {
   const service = createFabricService({
     localNode: {
       id: "node-a",

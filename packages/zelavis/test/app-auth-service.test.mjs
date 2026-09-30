@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   createIdentity,
   createDatabaseAuthRepositories,
-  defineAuthService,
+  defineAuthEndpointGroup,
   AuthInvalidCredentialsError,
   hashPassword,
   verifyPassword,
@@ -14,7 +14,7 @@ import {
   createJwtAuthenticator,
   createServiceRuntime,
 } from "../dist/core/index.js";
-import { mountAppServices } from "../dist/app/index.js";
+import { createProjectIdentityEndpointGroup } from "../dist/app/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 import { generateKeyPair, SignJWT } from "jose";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
@@ -66,7 +66,7 @@ function passwordMethodService() {
 
 test("identityService returns 400 for invalid account creation input", async () => {
   const auth = await createIdentity();
-  const service = defineAuthService(auth);
+  const service = defineAuthEndpointGroup(auth);
   const createAccount = service.api.v1.find(
     (route) => route.id === "auth.accounts.create",
   );
@@ -88,7 +88,7 @@ test("identityService returns 400 for invalid account creation input", async () 
 
 test("identityService returns 404 for unknown authentication providers", async () => {
   const auth = await createIdentity();
-  const service = defineAuthService(auth);
+  const service = defineAuthEndpointGroup(auth);
   const authenticate = service.api.v1.find(
     (route) => route.id === "auth.authenticate",
   );
@@ -124,7 +124,7 @@ test("authentication attempts are bounded and produce privacy-safe audit events"
     identifier: "ivan@example.com",
     secretHash: await hashPassword("correct password", { iterations: 100_000 }),
   });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
 
   for (let index = 0; index < 2; index += 1) {
     const failure = await runtime.plain({
@@ -203,7 +203,7 @@ test("credential recovery is provider-owned, endpoint-backed, and revokes sessio
     accountId: "account_1",
     expiresAt: new Date(Date.now() + 60_000),
   });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
 
   const started = await runtime.plain({
     url: "/auth/recovery/recovery-test",
@@ -255,7 +255,7 @@ test("Authorization Code login binds PKCE, state, nonce, and explicit account li
     },
   };
   const auth = await createIdentity({ methods: [method] });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
 
   const started = await runtime.plain({
     url: "/auth/oauth/oidc-test/start",
@@ -308,7 +308,7 @@ test("Authorization Code login binds PKCE, state, nonce, and explicit account li
 
 test("auth administration requires the Project users permission", async () => {
   const auth = await createIdentity();
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
   const anonymous = await runtime.plain({ url: "/auth/accounts" });
   const unprivileged = await runtime.plain({
     url: "/auth/accounts",
@@ -332,7 +332,7 @@ test("Project auth administration requires its explicit Project scope", async ()
   const auth = await createIdentity({ projectId: "alpha" });
   await auth.accounts.create({ id: "admin", username: "admin", permissions: ["project.users.manage"] });
   const issued = await auth.sessions.create({ accountId: "admin", expiresAt: new Date(Date.now() + 60_000) });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
   assert.equal((await runtime.plain({ url: "/auth/accounts", headers: { authorization: `Bearer ${issued.token}` } })).status, 200);
   for (const projectId of ["alpha", "beta"]) {
     const response = await runtime.plain({
@@ -354,7 +354,7 @@ test("opaque sessions authenticate Bearer and cookie requests without storing ra
     accountId: "account_1",
     expiresAt: new Date(Date.now() + 60_000),
   });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
 
   assert.match(issued.token, /^zvs_/);
   assert.notEqual(issued.session.tokenHash, issued.token);
@@ -406,7 +406,7 @@ test("accounts and administrators can inspect and revoke device sessions", async
     accountId: "account_2",
     expiresAt: new Date(Date.now() + 60_000),
   });
-  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  const runtime = await createServiceRuntime({ endpointGroups: [defineAuthEndpointGroup(auth)] });
 
   const listed = await runtime.plain({
     url: "/auth/sessions",
@@ -466,12 +466,13 @@ test("App Auth repositories persist accounts and sessions through the Tenant dat
 
 test("the App recipe ships signup and Project-scoped provider administration", async (t) => {
   const { api: database } = await openTemporaryDatabase(t);
-  const mounted = await mountAppServices({
-    core: { database },
-    platform: { metadata: { projectId: "fluxlist" } },
+  const identity = await createProjectIdentityEndpointGroup({
+    database,
     registry: [],
-  }, { workloads: false });
-  const runtime = await createServiceRuntime({ services: mounted.runtimeServices });
+    methods: [],
+    projectId: "fluxlist",
+  });
+  const runtime = await createServiceRuntime({ endpointGroups: [identity] });
 
   const providers = await runtime.plain({ url: "/auth/providers" });
   assert.equal(providers.status, 200);

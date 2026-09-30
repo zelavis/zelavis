@@ -135,7 +135,10 @@ test("event replay reports when its requested cursor fell out of the retained wi
   listeners.output({ stream: "stdout", line: "one" });
   listeners.output({ stream: "stdout", line: "two" });
   listeners.output({ stream: "stdout", line: "three" });
-  const page = await environment.readEvents(session.id, { after: "e1" });
+  // Well-formed, but from another provider incarnation: stale, not invalid.
+  const page = await environment.readEvents(session.id, {
+    after: `e${"0".repeat(32)}.1`,
+  });
   assert.equal(page.truncated, true);
   assert.deepEqual(page.events.map((event) => event.data), ["two", "three"]);
 });

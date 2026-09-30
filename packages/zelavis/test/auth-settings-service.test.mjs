@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { bundledServiceRegistry } from "./_bundled-services.mjs";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 
@@ -8,6 +9,7 @@ async function platform(options = {}) {
   return zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
+    serviceRegistry: await bundledServiceRegistry(),
     ...options,
   });
 }
@@ -21,10 +23,12 @@ test("the settings page is a product service, not part of auth", async () => {
   const runtime = await platform();
   const names = Object.keys(runtime.services);
 
-  // Two services, deliberately. `zelavis/identity` is the authority an
-  // installation cannot run without; `@zelavis/auth` is a page that configures
-  // it and can be removed without anyone losing the ability to sign in.
-  assert.ok(names.includes("zelavis/identity"));
+  // Identity is a Platform subsystem, not a service: it is the authority an
+  // installation cannot run without. `@zelavis/auth` is the one package, a page
+  // that configures it and can be removed without anyone losing the ability to
+  // sign in.
+  assert.ok(runtime.auth);
+  assert.ok(!names.includes("zelavis/identity"));
   assert.ok(names.includes("@zelavis/auth"));
 });
 
@@ -59,7 +63,7 @@ test("the page reads the endpoints anyone else could", async () => {
   assert.match(html, /runtime\/extensions\?owner=/u);
 });
 
-test("the catalogue points at the core service, not this package", async () => {
+test("the catalogue points at the Identity subsystem, not this package", async () => {
   const runtime = await platform();
   const [entry] = await authMenuEntries(runtime);
   const html = String((await runtime.plain({ url: entry.menu.page.src })).body);

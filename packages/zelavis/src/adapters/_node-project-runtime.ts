@@ -1,6 +1,8 @@
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureRecipeArtifact } from "./_recipe-artifact.js";
+import { ZELAVIS_VERSION } from "../version.js";
 import {
   createGatewayAuthorityNonce,
   createGatewayAuthoritySecret,
@@ -291,12 +293,28 @@ export function createNodeProcessProjectRuntime(
       await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
       await restrictDirectoryPermissions(directory);
       await restrictDirectoryPermissions(dataDirectory);
+      // Freeze the recipe into the Project so a Platform upgrade cannot change
+      // what it runs. Preparing fails, with the reason, when it cannot be frozen.
+      const artifact = await ensureRecipeArtifact(
+        recipe,
+        directory,
+        dataDirectory,
+      );
+      // Which engine created this Project. The engine that hosts it is still
+      // the Platform's own code, so this is recorded, not enforced: it makes
+      // drift between the Project's origin and what runs it visible, and is the
+      // field a locked-engine runner would key on.
+      const engine = await readCreationEngine(directory);
       await writeFile(
         join(directory, "project.json"),
         `${JSON.stringify(
           {
             ...project,
-            recipe: recipe satisfies ZelavisProjectRecipeLock,
+            recipe: {
+              ...(recipe satisfies ZelavisProjectRecipeLock),
+              artifact,
+            },
+            engine,
             runtime: {
               driver: driver.name,
               capabilities: driver.capabilities(project),
@@ -393,7 +411,7 @@ export function createNodeProcessProjectRuntime(
         }
       }
     },
-    async start(project) {
+    async start(project, placement) {
       if (closed) {
         throw new Error("The Node project runtime is shutting down.");
       }
@@ -455,6 +473,7 @@ export function createNodeProcessProjectRuntime(
       const child = await agent.start(
         {
           workloadId: project.id,
+          ...(placement ? { placement } : {}),
           executable: process.execPath,
           args: [runnerPath],
           cwd: directory,
@@ -590,4 +609,24 @@ export function createNodeProcessProjectRuntime(
   };
 
   return driver;
+}
+
+/**
+ * The engine version a Project was created with, kept from its first
+ * preparation and never rewritten by a later Platform.
+ */
+async function readCreationEngine(
+  projectDirectory: string,
+): Promise<{ createdWith: string }> {
+  try {
+    const existing = JSON.parse(
+      await readFile(join(projectDirectory, "project.json"), "utf8"),
+    ) as { engine?: { createdWith?: unknown } };
+    if (typeof existing.engine?.createdWith === "string") {
+      return { createdWith: existing.engine.createdWith };
+    }
+  } catch {
+    // First preparation.
+  }
+  return { createdWith: ZELAVIS_VERSION };
 }

@@ -6,6 +6,8 @@ import { Boxes, Cpu, Paintbrush, Save } from 'lucide-react'
 import { DataRow, ResourceNotice } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
+import { AssistantAuditCard } from '#/components/assistant-audit-card'
+import { AssistantProviderCard } from '#/components/assistant-provider-card'
 import { Input } from '#/components/ui/input'
 import {
   Select,
@@ -145,12 +147,12 @@ function Settings() {
             }
           />
           <DataRow
-            label="Core services"
+            label="Native capabilities"
             detail={
-              runtime.services
-                .filter((service) => service.core)
-                .map((service) => service.name)
-                .join(', ') || 'dashboard, auth, database'
+              Object.entries(runtime.capabilities ?? {})
+                .filter(([, capability]) => capability.available)
+                .map(([name]) => name)
+                .join(', ') || 'none'
             }
           />
         </CardContent>
@@ -244,6 +246,9 @@ function Settings() {
           {error ? <ResourceNotice title="Action failed" description={error} /> : null}
         </CardContent>
       </Card>
+
+      <AssistantProviderCard runtime={runtime} />
+      <AssistantAuditCard runtime={runtime} />
 
       <Card>
         <CardHeader>

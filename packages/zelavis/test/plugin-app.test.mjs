@@ -209,7 +209,7 @@ test("activateServiceRegistry synthesizes an app service for system services", a
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -224,8 +224,8 @@ test("activateServiceRegistry synthesizes an app service for system services", a
     { bundleStore },
   );
 
-  const resolvedServices = await Promise.all(services);
-  const appService = resolvedServices.find((s) => s.name === "@example/kanban:app");
+  const resolvedEndpointGroups = await Promise.all(endpointGroups);
+  const appService = resolvedEndpointGroups.find((group) => group.id === "@example/kanban:app");
 
   assert.ok(appService, "synthesized app service should be present");
   assert.equal(appService.basePath, "/kanban");
@@ -245,7 +245,7 @@ test("workspace-scoped services are remounted under /apps/<name> regardless of d
 
   const bundleStore = createInMemoryBundleStore(new Map());
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -260,8 +260,8 @@ test("workspace-scoped services are remounted under /apps/<name> regardless of d
     { bundleStore },
   );
 
-  const appService = (await Promise.all(services)).find(
-    (s) => s.name === "@example/tenant-app:app",
+  const appService = (await Promise.all(endpointGroups)).find(
+    (group) => group.id === "@example/tenant-app:app",
   );
 
   assert.ok(appService);
@@ -300,7 +300,7 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -315,7 +315,7 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const indexResponse = await runtime.fetch(
     new Request("http://localhost/kanban"),
@@ -374,7 +374,7 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -389,7 +389,7 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const aboutResponse = await runtime.fetch(
     new Request("http://localhost/marketing/about"),
@@ -434,7 +434,7 @@ test("app.devUrl short-circuits asset serving with a 307 redirect", async () => 
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -449,7 +449,7 @@ test("app.devUrl short-circuits asset serving with a 307 redirect", async () => 
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   // Root request → trailing-slash form to keep dev-server router happy.
   const rootResponse = await runtime.fetch(
@@ -499,7 +499,7 @@ test("app.devUrl can include its own base path that prefixes the relative path",
     },
   });
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -514,7 +514,7 @@ test("app.devUrl can include its own base path that prefixes the relative path",
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const rootResponse = await runtime.fetch(
     new Request("http://localhost/zelavis", { redirect: "manual" }),
@@ -555,7 +555,7 @@ test("app.devUrl can leave reserved paths on the runtime", async () => {
     },
   });
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -570,7 +570,7 @@ test("app.devUrl can leave reserved paths on the runtime", async () => {
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const appResponse = await runtime.fetch(
     new Request("http://localhost/zelavis/projects/a", {
@@ -622,7 +622,7 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     },
   });
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -637,7 +637,7 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   await runtime.fetch(
     new Request("http://localhost/dual", { redirect: "manual" }),
@@ -684,7 +684,7 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -699,7 +699,7 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   // Root request — shell.render fires with empty path.
   const rootResponse = await runtime.fetch(new Request("http://localhost/app"));
@@ -759,7 +759,7 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
     },
   });
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -774,7 +774,7 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const apiResponse = await runtime.fetch(
     new Request("http://localhost/gated/api/v1/whatever"),
@@ -811,7 +811,7 @@ test("system app routes are host-agnostic by default", async () => {
     ]),
   );
 
-  const { services } = await activateServiceRegistry(
+  const { endpointGroups } = await activateServiceRegistry(
     [{ service: service, status: "installed" }],
     {
       rootPath: "/",
@@ -826,7 +826,7 @@ test("system app routes are host-agnostic by default", async () => {
     { bundleStore },
   );
 
-  const runtime = await createServiceRuntime({ services });
+  const runtime = await createServiceRuntime({ endpointGroups });
 
   const matched = await runtime.fetch(
     new Request("http://acme.example.com/"),

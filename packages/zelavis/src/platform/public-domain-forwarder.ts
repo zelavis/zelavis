@@ -63,7 +63,9 @@ export async function resolveVerifiedBinding(
   bindings: DomainBindingStore,
   host: string,
 ): Promise<DomainBinding | undefined> {
-  const normalized = host.toLowerCase().split(":")[0] ?? "";
+  // A trailing dot is the same DNS name; the store normalizes it away, so a
+  // lookup that kept it would let `example.com.` reach the dashboard.
+  const normalized = (host.toLowerCase().split(":")[0] ?? "").replace(/\.+$/, "");
   if (!normalized) return undefined;
 
   const binding = await bindings.get(normalized).catch(() => undefined);

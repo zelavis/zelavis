@@ -12,12 +12,17 @@
  * a supervisor that exits leaving unsupervised children behind is the leak
  * this whole line of work exists to close.
  */
-import { access } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 import { resolveCliDataDirectory } from "./data-directory.js";
 import { createAgentProcessServer } from "../adapters/_agent-ipc.js";
 import { createLocalAgentProcessRunner } from "../adapters/_agent-process-runner.js";
+import { createLocalSqliteSystemStore } from "../adapters/_sqlite-system-store.js";
+import { REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "../adapters/_agent-remote-environment.js";
+import { readLocalProjectPlacementLease } from "../platform/project-placement-authority.js";
+import { createRemoteProjectAgent } from "../adapters/_remote-project-agent.js";
+import type { ZelavisHostOperationTrustStore } from "../core/deployment/index.js";
 import {
   createAgentHostOperationService,
   type AgentHostOperationService,
@@ -48,6 +53,10 @@ export interface RunAgentCommandOptions {
   readonly operationCgroup?: string;
   readonly operationMemoryMaxBytes?: number;
   readonly operationPidsMax?: number;
+  /** Local System Store file shared with the Platform for Project self-fencing. */
+  readonly placementStore?: string;
+  /** JSON config for this Agent's pinned-TLS remote Project listener. */
+  readonly remoteProjectConfig?: string;
 }
 
 /** Called with the Agent once it listens; tests use it to reach the service. */
@@ -60,6 +69,52 @@ export async function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
+  if (options.remoteProjectConfig) {
+    if (options.operationsRoot || options.operationTrust || options.platformAuthority ||
+        options.placementStore) {
+      throw new Error("Remote Project Agent config cannot be combined with local Agent options.");
+    }
+    const file = resolve(options.remoteProjectConfig);
+    const config = JSON.parse(await readFile(file, "utf8")) as {
+      host?: unknown; port?: unknown; keyFile?: unknown; certFile?: unknown;
+      trustFile?: unknown; agentId?: unknown; nodeId?: unknown;
+    };
+    if (typeof config.host !== "string" || typeof config.port !== "number" ||
+        typeof config.keyFile !== "string" || typeof config.certFile !== "string" ||
+        typeof config.trustFile !== "string" || typeof config.agentId !== "string" ||
+        typeof config.nodeId !== "string") {
+      throw new Error("Remote Project Agent config needs host, port, keyFile, certFile, trustFile, agentId and nodeId.");
+    }
+    const relativeFile = (path: string) => resolve(dirname(file), path);
+    const [keyPem, certPem, trustText] = await Promise.all([
+      readFile(relativeFile(config.keyFile), "utf8"),
+      readFile(relativeFile(config.certFile), "utf8"),
+      readFile(relativeFile(config.trustFile), "utf8"),
+    ]);
+    const trust = JSON.parse(trustText) as ZelavisHostOperationTrustStore;
+    if (!Array.isArray(trust.keys) || trust.keys.length === 0) {
+      throw new Error("Remote Project Agent trust file has no Platform keys.");
+    }
+    const remote = await createRemoteProjectAgent({
+      dataDirectory, host: config.host, port: config.port,
+      keyPem, certPem, trust, agentId: config.agentId, nodeId: config.nodeId,
+    });
+    console.log(`Zelavis Project Agent listening on ${remote.address}`);
+    if (options.signal) {
+      if (!options.signal.aborted) {
+        await new Promise<void>((resolveAborted) => options.signal!.addEventListener(
+          "abort", () => resolveAborted(), { once: true }));
+      }
+      await remote.close();
+      return;
+    }
+    await new Promise<void>((resolveStopped) => {
+      const stop = () => { void remote.close().finally(resolveStopped); };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
+  }
   const endpointDirectory = join(dataDirectory, "agent");
 
   const runner = createLocalAgentProcessRunner({
@@ -122,10 +177,17 @@ export async function runAgentCommand(
     throw new Error("Host operation options require --operations-root.");
   }
 
+  const placementStore = createLocalSqliteSystemStore({
+    filename: resolve(options.placementStore ?? join(dataDirectory, "system", "zelavis.sqlite")),
+  });
   const server = await createAgentProcessServer({
     directory: endpointDirectory,
     runner,
     ...(operations ? { operations } : {}),
+    placement: {
+      isProjectWorkload: (id: string) => !id.startsWith(REMOTE_ENVIRONMENT_WORKLOAD_PREFIX),
+      read: (projectId: string) => readLocalProjectPlacementLease(placementStore, projectId),
+    },
   });
 
   console.log(`Zelavis Agent listening on ${server.socketPath}`);
@@ -133,7 +195,9 @@ export async function runAgentCommand(
 
   let closing: Promise<void> | undefined;
   const shutdown = () => {
-    closing ??= server.close().then(
+    closing ??= server.close().finally(
+      async () => { await placementStore?.close?.(); },
+    ).then(
       () => undefined,
       (error) => {
         console.error(error instanceof Error ? error.message : String(error));

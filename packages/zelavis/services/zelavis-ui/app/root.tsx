@@ -55,6 +55,16 @@ function hasRuntimeService(
   return runtime.services?.some((service) => service.name === serviceName) ?? false;
 }
 
+export const SETUP_IN_PROGRESS_KEY = "zelavis.setup.in-progress";
+
+function setupInProgress(): boolean {
+  try {
+    return window.sessionStorage.getItem(SETUP_IN_PROGRESS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const projectId = inferProjectIdFromRequestUrl(request.url);
   const requestUrl = new URL(request.url);
@@ -70,7 +80,10 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   if (bootstrapStatus.required && !isSetupRoute) {
     throw redirect("/setup");
   }
-  if (!bootstrapStatus.required && isSetupRoute) {
+  // Creating the owner is what ends "required", and the wizard still has its
+  // Edge step to show. Only the tab that just claimed the Platform may stay on
+  // /setup; every other visit to it is closed.
+  if (!bootstrapStatus.required && isSetupRoute && !setupInProgress()) {
     throw redirect("/");
   }
   if (isLoginRoute || isSetupRoute) {

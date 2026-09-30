@@ -78,12 +78,16 @@ before editing.
   union previously drifted to list five dead kinds while omitting `frontend`.
   Trust comes from `scope` (`system` for what the operator composed,
   `extension` for what was installed at runtime), never from the kind.
-- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`, `zelavis.services.add`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
+- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
 - The SDK contributes during package registration, inside the loader's
   execution context. A service that needs the registry, a database, or
-  platform resources is added from a `zelavis.setup` callback with `context.addService`
-  instead. Both are official; which applies is decided by whether the service
-  can be described before the runtime exists.
+  platform resources mounts an endpoint group from a `zelavis.setup` callback
+  with `context.addEndpointGroup` instead. A package never creates other
+  services: one package, one identity.
+- Native Platform subsystems (Server Control Plane, Identity, Database, Fabric)
+  mount as endpoint groups and are advertised as runtime `capabilities`; the
+  service inventory lists loadable packages only. Bundled packages come from the
+  distribution `services/*` folder through the same loader as installed ones.
 - Package menus are registered only with `zelavis.plugins.ui.menus.create`; the loader
   rejects exported `menu`/`menus` fields. Runtime `menus` is the full SDK list;
   `menu` is its primary catalogue entry, not another registration.
@@ -240,10 +244,10 @@ before editing.
   See AGENTS.md's "JS, HTTP, and CLI parity" rule for the full contract.
 - Do not implement Platform behavior only in UI routes, framework server
   actions, local component state, or dashboard-only helpers.
-- Keep confidential architecture notes, evaluations, security reviews, and the
-  implementation roadmap in the ignored `pnotes/` private repository. Never
-  stage or publish them in the main repository; public checks must work without
-  access to those notes.
+- Keep confidential notes, decisions and the implementation roadmap in the single
+  file `pnotes/TODO.md` of the ignored `pnotes/` private repository. Never stage
+  or publish it in the main repository; public checks must work without access
+  to it.
 - When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
 - Keep `AGENTS.md` as the canonical durable instruction source; do not add
@@ -278,6 +282,18 @@ before editing.
   sequence as the normal App data API. Bind ordinary data access to an explicit
   logical Tenant, keep cross-shard semantics explicit, and require current
   writer generations even for colocated local placements.
+- For remote App shard placement, follow the request/grant authority contract
+  in `../../references/two-fabrics-placement-contract.md`. Internal admission
+  persists a conditional reservation only. A future committed grant and Agent
+  validation are required for activation and writes. Do not extend the
+  Project-local `PartitionMap` into physical Node authority.
+- Project runtime ownership uses the Platform System Store CAS record in
+  `src/platform/project-placement-authority.ts`. The Project manager must
+  acquire it before start; the Agent process lease supervisor fences local
+  workloads on a foreign/missing/expired record. The fenced dispatch callback
+  is an internal seam with a short-lived signed authority token, not a shipped
+  remote worker transport. Remote execution still needs Agent-side durable
+  replay protection, destination fencing, and verified runtime artifacts.
 - The public logical database boundary is `db.forTenant(tenantId)`. Documents,
   events, and time-series reads live on that Tenant handle; schema, projection,
   and time-series definitions remain logical database concerns. Do not restore

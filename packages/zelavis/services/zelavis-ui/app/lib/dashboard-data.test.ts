@@ -138,7 +138,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@example/insights",
-        core: true,
         apiPath: "/api/v1/insights",
         menu: {
           title: "Insights",
@@ -153,7 +152,6 @@ describe("dashboard navigation ownership", () => {
       },
       {
         name: "@example/jobs",
-        core: true,
         apiPath: "/api/v1/jobs",
         menu: {
           title: "Jobs",
@@ -190,7 +188,7 @@ describe("dashboard navigation ownership", () => {
     const nav = buildProjectManagementNavItems([
       {
         name: "zelavis/platform",
-        core: true,
+        scope: "system",
         apiPath: "/api/v1/runtime",
         menu: {
           title: "Server",
@@ -303,7 +301,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@zelavis/frontend",
-        core: true,
         apiPath: "/",
         menu: {
           title: "Frontend",
@@ -380,75 +377,18 @@ describe("dashboard navigation ownership", () => {
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
-      "Resources",
-      "Server",
-      "Security",
     ]);
     expect(projectManagementNavItems.map((item) => item.sectionLabel)).toEqual([
       "Projects",
-      "Manage",
-      "Manage",
-      "Manage",
     ]);
-    expect(findNavItem(projectManagementNavItems, "Users")).toMatchObject({
-      url: "/server/access/users",
-      pageLabel: "Users",
-    });
+    // Native Server navigation is contributed by the selected @zelavis/ui
+    // package at runtime; this static export intentionally contains no fake
+    // service fixture.
+    expect(findNavItem(projectManagementNavItems, "Server")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Frontend")).toBeUndefined();
-    expect(
-      findNavItem(projectManagementNavItems, "Marketplace"),
-    ).toBeUndefined();
-    const server = projectManagementNavItems.find((item) => item.title === "Server");
-    expect(server).toMatchObject({
-      landingUrl: "/server",
-      pageLabel: "Server",
-    });
-    expect(server?.items?.map((item) => item.title)).toEqual([
-      "Overview",
-      "Deployment backends",
-      "Domains",
-      "Access",
-      "Backups",
-      "Logs",
-    ]);
-    const domains = server?.items?.find((item) => item.title === "Domains");
-    expect(domains).toMatchObject({
-      landingUrl: "/server/domains",
-      pageLabel: "Domains",
-    });
-    expect(domains?.items?.map((item) => item.title)).toEqual([
-      "Overview",
-      "Add Domain",
-      "Buy",
-      "Transfer",
-    ]);
-    expect(findNavItem(projectManagementNavItems, "Add Domain")).toMatchObject({
-      url: "/server/domains",
-      search: { domainAction: "add" },
-      pageLabel: "Add Domain",
-    });
-    const resources = projectManagementNavItems.find((item) => item.title === "Resources");
-    expect(resources).toMatchObject({
-      landingUrl: "/resources",
-      pageLabel: "Resources",
-    });
-    expect(resources?.items?.map((item) => item.title)).toEqual([
-      "Overview",
-      "Processes",
-      "Storage",
-      "Limits",
-    ]);
-    expect(findNavItem(projectManagementNavItems, "Processes")).toMatchObject({
-      url: "/resources",
-      search: { resourceView: "processes" },
-      pageLabel: "Processes",
-    });
-    const security = projectManagementNavItems.find((item) => item.title === "Security");
-    expect(security).toMatchObject({
-      landingUrl: "/security",
-      pageLabel: "Security",
-    });
-    expect(security?.items?.map((item) => item.title)).toEqual(["Checklist"]);
+    expect(findNavItem(projectManagementNavItems, "Marketplace")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Settings")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "New Project")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Settings")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "New Project")).toBeUndefined();
   });
@@ -457,7 +397,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@zelavis/db",
-        core: true,
         apiPath: "/api/v1/database",
         menu: {
           title: "Database",
@@ -564,7 +503,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@zelavis/workloads",
-        core: true,
         apiPath: "/api/v1/workloads",
         menu: {
           title: "Workloads",
@@ -626,7 +564,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@zelavis/workloads",
-        core: true,
         apiPath: "/api/v1/workloads",
         menu: {
           title: "Workloads",
@@ -668,7 +605,6 @@ describe("dashboard navigation ownership", () => {
     const services = [
       {
         name: "@zelavis/workloads",
-        core: true,
         apiPath: "/api/v1/workloads",
         menu: {
           title: "Workloads",

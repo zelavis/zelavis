@@ -8,8 +8,8 @@ import { loadPluginPackage } from "../../dist/service.js";
  * which meant core could not run its own tests without building one, and a
  * change to a shopping cart could fail the Platform's suite. This has the same
  * shape and belongs to nobody: a menu with a page, page assets it ships
- * itself, capabilities, and a `setup` that registers a second service the way
- * a real plugin does.
+ * itself, capabilities, and a `setup` that mounts an endpoint group owned by
+ * the one package identity.
  */
 export const EXAMPLE_PLUGIN_MANIFEST = Object.freeze({
   name: "@example/catalog",
@@ -54,10 +54,11 @@ const service = Object.freeze({
   // a useful fixture: it proves a plugin is handed the platform presets and
   // resources rather than only that it mounted.
   setup(context) {
-    context.addService({
-      name: "catalog",
+    context.addEndpointGroup({
+      id: "catalog",
       basePath: "/catalog",
-      service: {},
+      context: {},
+      origin: { type: "service", serviceName: "@example/catalog" },
       api: {
         v1: [
           {

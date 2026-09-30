@@ -1,5 +1,6 @@
 import type {
   ZelavisAccessRequirement,
+  ZelavisEndpointGroup,
   ZelavisRuntimeService,
   ZelavisServerRoute,
 } from "../runtime/contracts.js";
@@ -1076,11 +1077,24 @@ function createFabricRoutes(
 export function createFabricService(
   options: FabricServiceOptions = {},
 ): ZelavisRuntimeService<FabricApi> {
+  const endpointGroup = createFabricEndpointGroup(options);
   return {
     name: "zelavis/fabric",
     kind: "plugin",
+    basePath: endpointGroup.basePath,
+    service: endpointGroup.context,
+    api: endpointGroup.api,
+  };
+}
+
+export function createFabricEndpointGroup(
+  options: FabricServiceOptions = {},
+): ZelavisEndpointGroup<FabricApi> {
+  return {
+    id: "fabric",
     basePath: "/fabric",
-    service: createFabricApi(options),
+    context: createFabricApi(options),
+    origin: { type: "subsystem", subsystem: "fabric" },
     api: {
       v1: createFabricRoutes(options),
     },

@@ -202,18 +202,20 @@ test("a range query is data: it round-trips through its schema", () => {
   assert.deepEqual(decoded, query);
 });
 
-test("a store written in an older layout is re-indexed when it opens", () =>
+test("a store written in an older layout is refused, not upgraded", () =>
   Effect.runPromise(Effect.gen(function* () {
     const engine = memoryKvEngine();
     yield* seed(yield* openStoreOverKv("acme", engine));
-    // An older layout: no format marker, and a posting under the retired equality tag.
-    yield* engine.write([
-      { op: "delete", key: metaKey("format") },
-      { op: "put", key: Uint8Array.of(Tag.Column, 1, 2, 3), value: new Uint8Array(0) },
-    ]);
-    const reopened = yield* openStoreOverKv("acme", engine);
-    const stray = [...(yield* Stream.runCollect(engine.scan(Uint8Array.of(Tag.Column))))];
-    assert.equal(stray.length, 0, "the retired lens was left behind");
-    assert.deepEqual(yield* resolved(reopened, between("price", 3, 6)), where((s) => priceOf(s) >= 3 && priceOf(s) <= 6));
-    assert.deepEqual(yield* resolved(reopened, equals("region", "eu")), where((s) => regionOf(s) === "eu"));
+
+    // No format marker on a store that holds data: written before markers existed.
+    yield* engine.write([{ op: "delete", key: metaKey("format") }]);
+    const unmarked = yield* Effect.exit(openStoreOverKv("acme", engine));
+    assert.equal(unmarked._tag, "Failure");
+    assert.match(String(unmarked), /older layout/);
+
+    // A marker below the current layout.
+    yield* engine.write([{ op: "put", key: metaKey("format"), value: Uint8Array.of(0, 0, 0, 1) }]);
+    const older = yield* Effect.exit(openStoreOverKv("acme", engine));
+    assert.equal(older._tag, "Failure");
+    assert.match(String(older), /older layout/);
   })));

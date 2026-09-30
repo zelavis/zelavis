@@ -27,10 +27,9 @@ const operator = {
   permissions: ["database.inspect", "database.read", "database.write"],
 };
 
-/** Every route the service mounts, its nested services included. */
+/** Every route the service mounts. */
 const routesOf = (service) => [
   ...service.api.v1,
-  ...service.services.flatMap((nested) => nested.api.v1),
 ];
 
 /**
@@ -111,6 +110,53 @@ test("every documents operation is reachable through a route", async (t) => {
   // Guard the guard: if the recorder stopped recording, the assertion above
   // would pass by touching nothing.
   assert.ok(touched.size >= surface.length, "the recorder saw the routes reach the API");
+});
+
+test("every key/value operation is reachable through a route", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const touched = new Set();
+  const recordingKv = (baseApi) => ({
+    ...baseApi,
+    forTenant: (tenantId) => {
+      const tenant = baseApi.forTenant(tenantId);
+      return {
+        ...tenant,
+        kv: new Proxy(tenant.kv, {
+          get(target, property) {
+            if (typeof property === "string") touched.add(property);
+            const held = Reflect.get(target, property);
+            if (typeof held !== "function") return held;
+            return () => Promise.reject(new TypeError("reached"));
+          },
+        }),
+      };
+    },
+  });
+  const recorded = recordingKv(api);
+  const service = defineDatabaseService(recorded);
+
+  for (const route of routesOf(service)) {
+    try {
+      await Promise.resolve(route.handler({
+        service: recorded,
+        params: { namespace: "items", key: "x" },
+        query: new URLSearchParams({ tenantId: "acme" }),
+        principal: operator,
+        body: { tenantId: "acme", value: {}, operations: [] },
+        headers: {},
+        request: undefined,
+      }));
+    } catch {
+      // The proxy's rejection proves the route reached the operation.
+    }
+  }
+
+  const surface = Object.keys(api.forTenant("acme").kv);
+  assert.deepEqual(
+    surface.filter((method) => !touched.has(method)),
+    [],
+    "every promise-facing KV operation needs an HTTP route",
+  );
 });
 
 test("every timeSeries operation is reachable through a route", async (t) => {

@@ -9,8 +9,8 @@ Current package and service-surface pages:
 - `zelavis`
 - `zelavis/app`
 - `zelavis/core`
-- `zelavis/platform`
-- `zelavis/marketplace`
+- Server Control Plane (subsystem)
+- `@zelavis/marketplace`
 - `@zelavis/ui`
 
 Guideline:
@@ -23,6 +23,6 @@ section for cross-surface orientation.
 - [zelavis](./zelavis.md)
 - [zelavis/app](./app.md)
 - [zelavis/core](./server.md)
-- [zelavis/platform](./core.md)
-- [zelavis/marketplace](./marketplace.md)
+- [Server Control Plane](./core.md)
+- [@zelavis/marketplace](./marketplace.md)
 - [@zelavis/ui](./ui.md)

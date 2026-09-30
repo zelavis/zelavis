@@ -60,10 +60,8 @@ function cursorSequence(cursor: string, session: SessionState): number | undefin
   const match = /^e([0-9a-f]{32})\.([0-9a-z]+)$/.exec(cursor);
   // The cursor is opaque. A well-formed cursor from an earlier provider
   // incarnation is stale rather than invalid, and must restart from the
-  // retained tail. Accept the original sequence-only shape for the same
-  // backwards-compatible reason.
+  // retained tail.
   if (!match) {
-    if (/^e[0-9a-z]+$/.test(cursor)) return undefined;
     throw new Error("Environment event cursor is invalid.");
   }
   if (match[1] !== session.cursorEpoch) return undefined;

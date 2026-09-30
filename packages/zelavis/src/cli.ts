@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile, realpath } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { describeInstallation } from "./cli/installation.js";
@@ -7,6 +8,7 @@ import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import {
   createNodeInstallationUninstaller,
   nodeAdapter,
+  type NodeAdapterProjectOptions,
 } from "./adapters/node.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
@@ -59,6 +61,29 @@ async function resolveBundledFrontend(): Promise<
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   const frontend = await resolveBundledFrontend();
+  let remoteDispatch: NodeAdapterProjectOptions["remoteDispatch"];
+  const dispatchFile = process.env.ZELAVIS_PROJECT_DISPATCH_CONFIG;
+  if (dispatchFile) {
+    const file = resolve(dispatchFile);
+    const input = JSON.parse(await readFile(file, "utf8")) as {
+      localNodeId?: unknown;
+      nodes?: Record<string, { url?: unknown; agentId?: unknown; caFile?: unknown }>;
+    };
+    if (typeof input.localNodeId !== "string" || !input.nodes ||
+        typeof input.nodes !== "object" || Array.isArray(input.nodes) ||
+        Object.values(input.nodes).some((node) => !node ||
+          typeof node.url !== "string" || typeof node.agentId !== "string" ||
+          typeof node.caFile !== "string")) {
+      throw new Error("Project dispatch config needs localNodeId and TLS-pinned Agent nodes.");
+    }
+    remoteDispatch = {
+      localNodeId: input.localNodeId,
+      nodes: Object.fromEntries(Object.entries(input.nodes).map(([nodeId, node]) => [
+        nodeId, { url: node.url as string, agentId: node.agentId as string,
+          caFile: resolve(dirname(file), node.caFile as string) },
+      ])),
+    };
+  }
   const zv = new Zelavis({
     ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
@@ -66,8 +91,12 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
       // Projects run through a separately supervised Agent when the host
       // names its endpoint (the packaged zelavis-agent unit); otherwise they
       // run in this process.
-      ...(process.env.ZELAVIS_AGENT_ENDPOINT
-        ? { projects: { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } }
+      ...(process.env.ZELAVIS_AGENT_ENDPOINT || remoteDispatch
+        ? { projects: {
+            ...(process.env.ZELAVIS_AGENT_ENDPOINT
+              ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
+            ...(remoteDispatch ? { remoteDispatch } : {}),
+          } }
         : {}),
     }),
     onError: ({ error }) => ({

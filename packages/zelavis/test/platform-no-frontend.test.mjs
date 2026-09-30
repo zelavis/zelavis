@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { bundledServiceRegistry } from "./_bundled-services.mjs";
 
 const OWNER = {
   principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] },
@@ -72,7 +73,7 @@ test("service pages still get design tokens with no frontend", async () => {
 });
 
 test("a service page still renders with no frontend installed", async () => {
-  const get = await boot();
+  const get = await boot({ serviceRegistry: await bundledServiceRegistry() });
   const config = await get("/zelavis/api/v1/runtime/config");
   const marketplace = config.body.services.find(
     (service) => service.name === "@zelavis/marketplace",

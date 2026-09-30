@@ -11,7 +11,7 @@ const operator = {
 };
 
 const routeOf = (service, id) => {
-  const routes = [...service.api.v1, ...service.services.flatMap((nested) => nested.api.v1)];
+  const routes = [...service.api.v1];
   const found = routes.find((route) => route.id === id);
   assert.ok(found, `route ${id} should exist`);
   return found;

@@ -974,7 +974,7 @@ export function createNativeWordPressProjectRuntime(
       // it — owned by the Platform and unreadable to the daemons.
       await handOver(projectDirectory(project.id));
     },
-    async start(project) {
+    async start(project, placement) {
       const config = await readConfig(project.id);
       const state = processes.get(project.id) ?? { logs: [] };
       processes.set(project.id, state);
@@ -992,6 +992,7 @@ export function createNativeWordPressProjectRuntime(
           state.database = await agent.start(
             {
               workloadId: project.id,
+              ...(placement ? { placement } : {}),
               executable: config.mariadbd,
               args: [
                 `--datadir=${databaseDirectory(project.id)}`,
@@ -1033,6 +1034,7 @@ export function createNativeWordPressProjectRuntime(
           state.phpFpm = await agent.start(
             {
               workloadId: project.id,
+              ...(placement ? { placement } : {}),
               executable: config.phpFpm,
               args: ["-F", "-y", join(runtimeDirectory(project.id), "php-fpm.conf")],
               cwd: siteDirectory(project.id),
@@ -1050,6 +1052,7 @@ export function createNativeWordPressProjectRuntime(
           state.nginx = await agent.start(
             {
               workloadId: project.id,
+              ...(placement ? { placement } : {}),
               executable: config.nginx,
               args: [
                 "-c",

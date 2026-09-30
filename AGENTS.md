@@ -167,6 +167,24 @@ current automatically.
   virtual shard ranges across several physical SQLite shard files even on one
   Node. Project-private topology and runtime metadata stays separate at
   `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
+- A Project runtime is the same `zelavis()` composition as the Platform with
+  `role: "project"`, not a different system. It composes Identity, Database and
+  Workloads itself as native subsystems; only where Identity keeps its accounts
+  differs (the Project's own database, not the System Store). The `@zelavis/app`
+  recipe carries identity, menu and defaults, and mounts no subsystem through a
+  package `setup`. Every runtime has its own services folder: the Platform's is
+  `<data>/services`, and a Project's is `services` inside its own `.zelavis`
+  data root, so what a Project installs belongs to that Project only. Do not
+  reintroduce a separate Project composition or a recipe-mounted backend stack.
+  A Project's face is the static `kind: "frontend"` package installed in that
+  folder, mounted at its root and read from where it lies (a frontend needs no
+  JavaScript entry); until one is installed the "no frontend yet" placeholder
+  answers. On the Platform a folder frontend is corralled under `/apps/<name>`
+  like any extension's app and can never take over `/`. A Project serves exactly one installed static frontend: selecting one is
+  installing it through the ordinary service registry (HTTP, SDK and CLI already
+  cover it), which sets the previous one aside; there is no separate selection
+  API. With several installed by discovery, declared order then name decides. Folder-discovered and
+  registry-installed packages are always extension-scoped.
 - Project routes and grants always require a real project ID. Never introduce
   an implicit `default` project or fall back from a project API request to the
   Platform runtime.
@@ -236,9 +254,16 @@ The Platform OS can create multiple Zelavis App Projects from the official
 `zelavis/app` Project recipe. The default Node adapter prepares each Project
 under `.zelavis/projects/<id>`, locks the exact Zelavis App recipe/runtime
 version, and runs it in a separate Node process. A parent Platform update must
-never rewrite that lock. The current local Node driver still executes the
-parent-installed code and therefore does not yet advertise independent-version
-execution; artifact materialization must make the version lock operational.
+never rewrite that lock. Preparing a Project materializes its recipe package
+into `<project>/.zelavis/recipe/package` and records a content digest in the
+lock (`recipe.artifact.digest`); the runner loads that artifact, verifies the
+digest, name and version, and refuses modified or mismatched code. A Platform
+upgrade therefore cannot change or break the recipe an existing Project runs.
+Preparation runs on every start and keeps a verified artifact rather than
+re-taking it from the Platform's copy. This locks the recipe only: the runtime
+engine hosting it is still the Platform's own code, so the local Node driver
+does not yet advertise independent runtime versions. A lock that is neither
+frozen nor the bundled version is refused, never run with the parent's code.
 This is operational isolation for trusted Project code, not a hostile-code
 security sandbox. Project lifecycle code must stay behind the runtime-driver
 contract so rootless OCI containers and stronger isolation can replace it later.
@@ -420,13 +445,28 @@ SQLite autoincrement sequence as a logical global order. Only the current
 writer generation may accept a write, including when stale and current
 placements are colocated on one Node.
 
-Breaking pre-release API changes do not require compatibility aliases, but
-persisted Project data must remain recoverable. The local App adapter performs
-a one-time, durably marked migration from the retired single-file App database
-into the shard topology, leaves the source file untouched as a recovery
-artifact, and refuses ambiguous merges when both layouts contain unrelated
-data. Retired official package locks may be canonicalized as a data migration;
-do not reintroduce the retired package or public import alias.
+The remote shard-placement request/grant contract is specified in
+`.agents/references/two-fabrics-placement-contract.md`. Internal request
+admission persists reservations, not writer grants or routable targets. Do not
+start remote shard movement until durable `{owner, epoch}` authority,
+destination fencing, publication ordering, and failure-path proof are implemented.
+
+Project runtime placement now has a Platform System Store `{owner, epoch}` CAS
+record and a local Agent lease supervisor. The Project manager requires a
+committed placement for start, and the Gateway reads its epoch and active state.
+This is local Project ownership, not a remote App shard grant or an operational
+remote worker transport. A remote Project start must reach a worker Agent that
+verifies signed, destination-bound authority and has the locked runtime/artifact;
+the injected fenced dispatcher alone is not that proof.
+
+Zelavis is pre-release with no users, so nothing carries compatibility for old
+data or old shapes: no aliases, no legacy fields, no migrations from retired
+layouts, and no fallbacks for stored records written by earlier code. When a
+stored shape changes, existing development Projects are deleted and recreated
+rather than migrated. (The one exception is durability of a *current* store: a
+migration that upgrades data an earlier build of the *same* design wrote is not
+needed either until there is a released design to protect.) Do not reintroduce
+the retired `zelavis/app` package name or its import alias.
 
 The public logical database boundary is `db.forTenant(tenantId)`. Documents,
 events, and time-series reads live on that Tenant handle; schema, projection,
@@ -855,6 +895,15 @@ Extensions slide, and `settings` is the project Settings slide. Runtime-installe
 marketplace services are still constrained to Extensions; privileged surfaces
 are for bundled or statically trusted system services. The Access area is a core
 `zelavis/core` menu contribution, not a hardcoded sidebar exception.
+A menu's `surface` is also the contract for what crosses into a Project. Project
+runtimes are headless and carry none of the Platform's packages, so the
+dashboard offers each Project the Project-surface menus (`root`, `core`,
+`extensions`, `settings`) of the `system`-scope packages the operator composed,
+never their `platform` menus, and never anything from an extension package
+(whose surface is stripped). Those packages keep their Platform API path; a
+Project's own package of the same name wins. Do not add a second manifest field
+for this: `selectPlatformProjectServices` in `@zelavis/ui` is the one place the
+rule lives.
 
 Dashboard menu items may include `fixed: true` and `fixedOrder` for pinned
 actions such as "Add Function". A nested slide may control inherited fixed
@@ -888,6 +937,18 @@ verification and its timing, and the state, nonce and PKCE custody an OAuth
 redirect flow depends on — so they are written and audited once. It resolves
 identities into principals; the server contract enforces route access.
 
+Identity guarantees hold under concurrency, so they live in the repository, not
+in a check made first. Email, username and `(provider, identifier)` are unique
+because a repository claims each value with an atomic create-if-absent before it
+writes the entity, and a loser gets `IdentityConflictError` (a claim with no
+entity behind it is recovered only after a grace period, never while its creator
+may be between its two writes). A session token is usable for rotation exactly
+once: rotation consumes the old session with an atomic transition before issuing
+the next. Revoke-all bumps the account's `sessionEpoch` atomically and a session
+is valid only while its epoch matches, so nothing issued or rotated at the same
+moment survives it. Any new identity repository must implement `mutate` and the
+claim primitives and pass `test/identity-atomicity.test.mjs`.
+
 What is vendor-specific stays a plugin. A credential provider declares
 `zelavis/identity:credentials` and owns its whole exchange; an OAuth provider
 declares `zelavis/identity:oauth` and supplies only endpoints and claim mapping.
@@ -911,13 +972,14 @@ those grants, while endpoints remain the authority layer.
   routing, access enforcement, runtime lifecycle, and generic
   Fabric/workload/Agent/runtime-driver machinery. It is exported through
   focused `zelavis/*` subpaths and does not own product menus or root authority.
-- `pnotes/` is the ignored, separate private repository for confidential design
-  notes, evaluations, security reviews, and the implementation roadmap. Never
-  stage or publish its contents in the main repository, and never make public
-  documentation checks or CI depend on those local files.
-- When available, `pnotes/TODO.md` is the maintained private implementation roadmap. Update
-  its Done, Prepared, Next, and Later sections when a core, App-versioning, or
-  Fabric capability changes state; never mark an exported contract as
+- `pnotes/` is the ignored, separate private repository holding one file,
+  `pnotes/TODO.md`: the maintained private roadmap, decisions and open work
+  (design notes, plans, handovers and evidence are condensed into it rather than
+  kept as separate files). Never stage or publish its contents in the main
+  repository, and never make public documentation checks or CI depend on it.
+- When available, update `pnotes/TODO.md` (its checkbox sections, such as
+  "Platform, Fabric and Agents" or "Cleanup list") when a core, App-versioning,
+  or Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.
 - Keep that roadmap current in the same change, never afterwards. A change
   that finishes an item marks it done in its own commit and says what it now

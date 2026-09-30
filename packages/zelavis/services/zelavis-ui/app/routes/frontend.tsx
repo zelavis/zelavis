@@ -8,10 +8,8 @@ export const handle = {
 /**
  * Placeholder for choosing what this Project serves at `/`.
  *
- * The retired website service owned a fixed page shape and a single built-in
- * template. A Frontend is the replacement: a static site, or an application
- * that brings its own server. Until the Frontend contract and its marketplace
- * category exist, this page states the position rather than offering a picker
+ * A Frontend is a static site or an application that brings its own server.
+ * Until a picker exists, this page states the position rather than offering one
  * that would do nothing.
  */
 function Frontend() {

@@ -1,9 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
 
 import {
+  getProjectRuntimeConfig,
   getResolvedDashboardPreferences,
   normalizeRuntimeProject,
   resolveRuntimeDynamicMenus,
+  selectPlatformProjectServices,
   setProjectRunning,
   type RuntimeConfig,
   type RuntimeProject,
@@ -103,7 +105,6 @@ test("project dynamic menus stay scoped by the proxy without a project query", a
     services: [
       {
         name: "@zelavis/db",
-        core: true,
         apiPath: "/zelavis/api/v1/database",
         menu: {
           title: "Database",
@@ -142,7 +143,6 @@ test("empty dynamic menus can still route to their empty-state content", async (
     services: [
       {
         name: "@zelavis/workloads",
-        core: true,
         apiPath: "/zelavis/api/v1/workloads",
         menu: {
           title: "Workloads",
@@ -178,4 +178,56 @@ test("empty dynamic menus can still route to their empty-state content", async (
       },
     ],
   });
+});
+
+test("a project's navigation receives the Platform packages' project menus, not its Server menu", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({
+      rootPath: "/zelavis",
+      api: { basePath: "/zelavis/api/v1", prefix: "/api", version: "v1" },
+      services: [{ name: "@zelavis/app", kind: "app", scope: "system", apiPath: "/zelavis/api/v1/@zelavis/app" }],
+      serviceRegistry: [],
+    }), { headers: { "content-type": "application/json" } }),
+  ));
+  const control = {
+    rootPath: "/zelavis",
+    api: { basePath: "/zelavis/api/v1" },
+    dashboard: {},
+    services: [
+      { name: "@zelavis/ui", scope: "system", apiPath: "/", menu: { title: "Server", path: "/server", surface: "platform" } },
+      {
+        name: "@zelavis/marketplace",
+        scope: "system",
+        apiPath: "/zelavis/api/v1/plugins/marketplace",
+        menus: [
+          { title: "Marketplace", path: "/marketplace", surface: "platform" },
+          { title: "Marketplace", path: "/marketplace", surface: "root" },
+        ],
+      },
+    ],
+  } as unknown as RuntimeConfig;
+
+  const project = await getProjectRuntimeConfig(control, "alpha");
+  const marketplace = project.services.find((service) => service.name === "@zelavis/marketplace");
+
+  expect(marketplace?.menus?.map((menu) => menu.surface)).toEqual(["root"]);
+  expect(marketplace?.apiPath).toBe("/zelavis/api/v1/plugins/marketplace");
+  expect(project.services.some((service) => service.name === "@zelavis/ui")).toBe(false);
+});
+
+test("only system packages' Project-surface menus reach a Project, and never platform menus", () => {
+  const menu = (surface: "platform" | "root" | "settings" | undefined) => ({ title: "M", path: "/m", surface });
+  const services = [
+    { name: "@zelavis/marketplace", scope: "system", apiPath: "/a", menus: [menu("platform"), menu("root")] },
+    { name: "@zelavis/auth", scope: "system", apiPath: "/b", menu: menu("settings") },
+    { name: "@zelavis/only-platform", scope: "system", apiPath: "/c", menu: menu("platform") },
+    { name: "@acme/extension", scope: "extension", apiPath: "/d", menu: menu("root") },
+    { name: "@zelavis/ui", scope: "system", apiPath: "/", menu: menu("root") },
+    { name: "@zelavis/app", scope: "system", apiPath: "/e", menu: menu("root") },
+  ] as unknown as RuntimeConfig["services"];
+
+  const selected = selectPlatformProjectServices(services, new Set(["@zelavis/app"]));
+
+  expect(selected.map((service) => service.name)).toEqual(["@zelavis/marketplace", "@zelavis/auth"]);
+  expect(selected[0]?.menus?.map((entry) => entry.surface)).toEqual(["root"]);
 });

@@ -6,9 +6,7 @@
  * Until one is installed, `/` would otherwise 404, which reads as a broken
  * Project rather than an unfinished one.
  *
- * This is deliberately not a content model. The retired website service owned a
- * fixed page shape and a single hardcoded template, which is a worse version of
- * what a real Frontend provides. This service only says "nothing is installed
+ * This is deliberately not a content model. It only says "nothing is installed
  * yet, here is where to get one".
  */
 import type {

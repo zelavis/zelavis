@@ -26,14 +26,14 @@ describe("dashboard route handles", () => {
         "routes/security",
         {
           pageLabel: "Security",
-          sidebarTrail: ["Security"],
+          sidebarTrail: ["Server", "Security"],
           slots: [{ id: "main", label: "Linux security checklist" }],
         },
       ),
     ];
 
     expect(getDashboardPageLabelFromMatches(matches)).toBe("Security");
-    expect(getDashboardSidebarTrailFromMatches(matches)).toEqual(["Security"]);
+    expect(getDashboardSidebarTrailFromMatches(matches)).toEqual(["Server", "Security"]);
     expect(getDashboardSlotsFromMatches(matches)).toEqual([
       { id: "main", label: "Linux security checklist" },
     ]);

@@ -45,6 +45,17 @@ const steps = [
   { id: "edge", label: "Edge" },
 ] as const
 
+// Marks this tab as mid-wizard after the owner exists, so the root loader does
+// not close /setup before the Edge step. Cleared when setup finishes.
+function markSetupInProgress(active: boolean) {
+  try {
+    if (active) window.sessionStorage.setItem("zelavis.setup.in-progress", "1")
+    else window.sessionStorage.removeItem("zelavis.setup.in-progress")
+  } catch {
+    // Storage can be blocked; the wizard then falls back to the dashboard.
+  }
+}
+
 export function SetupWizard({
   runtime,
   status,
@@ -95,6 +106,7 @@ export function SetupWizard({
 
   async function handleEdgeSubmit() {
     if (edgeMode === "later") {
+      markSetupInProgress(false)
       setCompleted(true)
       return
     }
@@ -112,6 +124,7 @@ export function SetupWizard({
       if (res.status === "failed") {
         setEdgeError(res.error ?? "Hostname onboarding failed.")
       } else {
+        markSetupInProgress(false)
         setCompleted(true)
       }
     } catch (cause) {
@@ -173,6 +186,7 @@ export function SetupWizard({
         },
         credential: { identifier: identity, password },
       })
+      markSetupInProgress(true)
       setStep("edge", { replace: false })
       await loadEdgeStatus()
     } catch (cause) {
@@ -251,7 +265,7 @@ export function SetupWizard({
                     <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-muted-foreground">
                       The owner account is active and this bootstrap route is now permanently closed.
                     </p>
-                    <Button className="mt-8" onClick={() => navigate("/", { replace: true, viewTransition: true })}>
+                    <Button className="mt-8" onClick={() => navigate("/projects", { replace: true, viewTransition: true })}>
                       Open dashboard
                       <ArrowRight data-icon="inline-end" />
                     </Button>

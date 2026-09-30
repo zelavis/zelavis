@@ -7,10 +7,10 @@ export default [
   route("logout", "routes/logout.tsx"),
   route("assistant", "routes/assistant.tsx"),
   route("projects", "routes/projects.tsx"),
-  route("resources", "routes/resources.tsx"),
-  route("security", "routes/security.tsx"),
   route("services", "routes/services.tsx"),
   route("server", "routes/server.tsx", [
+    route("resources", "routes/resources.tsx"),
+    route("security", "routes/security.tsx"),
     route("runtimes", "routes/server.runtimes.tsx"),
     route("domains", "routes/server.domains.tsx"),
     route("access", "routes/server.access.tsx"),

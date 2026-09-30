@@ -1,3 +1,4 @@
+import { IdentityConflictError } from "../core/errors.js";
 import type {
   DatabaseRuntimeApi,
   JsonObject,
@@ -53,6 +54,12 @@ function deserialize<T extends IdentityEntity>(data: JsonObject): T {
   return entity as unknown as T;
 }
 
+import {
+  withUniqueAccounts,
+  withUniqueCredentials,
+  type ClaimBackend,
+} from "./unique-claims.js";
+
 function isDocumentConflict(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { _tag?: unknown; cause?: unknown };
@@ -94,6 +101,20 @@ class IdentityDocumentStore {
       await this.database.documents.update({ collection, id: entity.id, data: serialize(entity), mode: "replace" });
     } else {
       await this.database.documents.insert({ collection, id: entity.id, data: serialize(entity) });
+    }
+    return entity;
+  }
+
+  /** Insert only: an existing id is a conflict, decided by the store. */
+  async create<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
+    await this.ensure(collection);
+    try {
+      await this.database.documents.insert({ collection, id: entity.id, data: serialize(entity) });
+    } catch (error) {
+      if (isDocumentConflict(error)) {
+        throw new IdentityConflictError("id", "An identity record with that id already exists.");
+      }
+      throw error;
     }
     return entity;
   }
@@ -162,13 +183,86 @@ class IdentityDocumentStore {
   }
 }
 
+/**
+ * Uniqueness claims as documents whose id *is* the unique value's digest.
+ * Inserting an id that exists is a conflict the store reports atomically, which
+ * is the whole guarantee; nothing here reads first and then decides.
+ */
+function createDocumentClaims(database: TenantRuntimeApi): ClaimBackend {
+  const collection = "auth_unique";
+  let ensured: Promise<void> | undefined;
+  const ensure = () => ensured ??= (async () => {
+    if (!(await database.documents.collectionExists(collection))) {
+      await database.documents.createCollection({
+        name: collection,
+        surface: "database",
+        metadata: { owner: "zelavis/app/identity" },
+      });
+    }
+  })();
+  const idOf = async (key: string) => {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+  const read = (data: JsonObject) => data as unknown as { owner: string; at: number };
+  return {
+    async claim(key, owner) {
+      await ensure();
+      const id = await idOf(key);
+      try {
+        await database.documents.insert({ collection, id, data: { owner, at: Date.now() } });
+        return { claimed: true as const };
+      } catch (error) {
+        if (!isDocumentConflict(error)) throw error;
+        const existing = await database.documents.findById({ collection, id });
+        if (!existing) return this.claim(key, owner);
+        const { owner: current, at } = read(existing.data);
+        return { claimed: false as const, owner: current, at };
+      }
+    },
+    async takeover(key, staleOwner, owner) {
+      await ensure();
+      const id = await idOf(key);
+      const existing = await database.documents.findById({ collection, id });
+      if (!existing || read(existing.data).owner !== staleOwner) return false;
+      try {
+        await database.documents.update({
+          collection,
+          id,
+          data: { owner, at: Date.now() },
+          mode: "replace",
+          expectedVersion: existing.version,
+        });
+        return true;
+      } catch (error) {
+        if (isDocumentConflict(error)) return false;
+        throw error;
+      }
+    },
+    async release(key, owner) {
+      await ensure();
+      const id = await idOf(key);
+      const existing = await database.documents.findById({ collection, id });
+      if (!existing || read(existing.data).owner !== owner) return;
+      try {
+        await database.documents.delete({ collection, id, expectedVersion: existing.version });
+      } catch (error) {
+        if (!isDocumentConflict(error)) throw error;
+      }
+    },
+  };
+}
+
 export function createDatabaseAuthRepositories(
   database: DatabaseRuntimeApi,
   options: { tenantId?: string } = {},
 ): IdentityRepositories {
-  const store = new IdentityDocumentStore(database.forTenant(options.tenantId ?? "service:zelavis-auth"));
-  const accounts: AccountRepository = {
-    create: (entity) => store.set("auth_accounts", entity),
+  const tenant = database.forTenant(options.tenantId ?? "service:zelavis-auth");
+  const store = new IdentityDocumentStore(tenant);
+  const claims = createDocumentClaims(tenant);
+  const baseAccounts: AccountRepository = {
+    create: (entity) => store.create("auth_accounts", entity),
+    mutate: (id, mutation) => store.mutate<Account>("auth_accounts", id, mutation),
     delete: (id) => store.delete("auth_accounts", id),
     update: (entity) => store.set("auth_accounts", entity),
     findById: (id) => store.get("auth_accounts", id),
@@ -176,8 +270,8 @@ export function createDatabaseAuthRepositories(
     async findByUsername(username) { return (await store.list<Account>("auth_accounts")).find((item) => item.username === username) ?? null; },
     list: () => store.list("auth_accounts"),
   };
-  const credentials: CredentialRepository = {
-    create: (entity) => store.set("auth_credentials", entity),
+  const baseCredentials: CredentialRepository = {
+    create: (entity) => store.create("auth_credentials", entity),
     delete: (id) => store.delete("auth_credentials", id),
     update: (entity) => store.set("auth_credentials", entity),
     findById: (id) => store.get("auth_credentials", id),
@@ -189,13 +283,16 @@ export function createDatabaseAuthRepositories(
     async listByAccountId(accountId) { return (await store.list<Credential>("auth_credentials")).filter((item) => item.accountId === accountId); },
   };
   const sessions: SessionRepository = {
-    create: (entity) => store.set("auth_sessions", entity),
+    create: (entity) => store.create("auth_sessions", entity),
+    mutate: (id, mutation) => store.mutate<Session>("auth_sessions", id, mutation),
     delete: (id) => store.delete("auth_sessions", id),
     update: (entity) => store.set("auth_sessions", entity),
     findById: (id) => store.get("auth_sessions", id),
     async findByTokenHash(tokenHash) { return (await store.list<Session>("auth_sessions")).find((item) => item.tokenHash === tokenHash) ?? null; },
     async listByAccountId(accountId) { return (await store.list<Session>("auth_sessions")).filter((item) => item.accountId === accountId); },
   };
+  const accounts = withUniqueAccounts(baseAccounts, claims);
+  const credentials = withUniqueCredentials(baseCredentials, claims);
   const attempts: AuthAttemptRepository = {
     findByKeyHash: (keyHash) =>
       store.get<AuthAttemptState & { id: string }>("auth_attempts", keyHash),

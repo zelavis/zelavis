@@ -86,7 +86,6 @@ function createMockRuntimeConfig(): RuntimeConfig {
     services: [
       {
         name: '@zelavis/ui',
-        core: true,
         apiPath: '/zelavis',
         menu: {
           title: 'Dashboard',
@@ -96,7 +95,6 @@ function createMockRuntimeConfig(): RuntimeConfig {
       },
       {
         name: '@zelavis/auth',
-        core: true,
         apiPath: '/zelavis/api/v1/auth',
         menu: {
           title: 'Auth',
@@ -106,7 +104,6 @@ function createMockRuntimeConfig(): RuntimeConfig {
       },
       {
         name: '@zelavis/db',
-        core: true,
         apiPath: '/zelavis/api/v1/database',
         menu: {
           title: 'Database',

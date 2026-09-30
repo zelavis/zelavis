@@ -60,7 +60,7 @@
     "dev": "react-router dev --port 3000",
     "dev:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ react-router dev --port 3000",
     "start": "react-router-serve ./build/server/index.js",
-    "test": "vitest run --passWithNoTests --exclude 'tests/e2e/**'",
+    "test": "vitest run --passWithNoTests --exclude 'tests/e2e/**' --exclude 'tests/setup-e2e/**'",
     "test:e2e": "playwright test",
     "test:e2e:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ playwright test",
     "typecheck": "react-router typegen && tsc && tsc -p tsconfig.plugin.json --noEmit",

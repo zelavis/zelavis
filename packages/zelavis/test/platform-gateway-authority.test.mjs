@@ -148,7 +148,7 @@ test("Project runtimes reject forged authority and honour real caller authority"
         body: JSON.stringify({
           id: "alpha",
           name: "Alpha",
-          recipeName: "zelavis/app",
+          recipeName: "@zelavis/app",
         }),
       })
     ).json();

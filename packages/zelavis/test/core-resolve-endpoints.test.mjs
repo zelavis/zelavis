@@ -6,9 +6,10 @@ const noopHandler = () => ({ status: 204 });
 
 function createService(overrides = {}) {
   return {
-    name: "catalog",
+    id: "catalog",
     basePath: "/catalog/",
-    service: { id: "catalog-api" },
+    context: { id: "catalog-api" },
+    origin: { type: "service", serviceName: "catalog" },
     api: {
       v1: [
         {
@@ -90,11 +91,12 @@ test("resolveMountedEndpoints skips services without routes for the selected ver
   assert.deepEqual(resolveMountedEndpoints([service]), []);
 });
 
-test("resolveMountedEndpoints recursively mounts nested services", () => {
-  const service = {
-    name: "@zelavis/db",
+test("resolveMountedEndpoints mounts explicit flat endpoint groups", () => {
+  const groups = [{
+    id: "database",
     basePath: "database",
-    service: {},
+    context: {},
+    origin: { type: "subsystem", subsystem: "database" },
     api: {
       v1: [
         {
@@ -105,11 +107,11 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
         },
       ],
     },
-    services: [
-      {
-        name: "@zelavis/db-documents",
-        basePath: "documents",
-        service: {},
+  }, {
+        id: "database:documents",
+        basePath: "database/documents",
+        context: {},
+        origin: { type: "subsystem", subsystem: "database" },
         api: {
           v1: [
             {
@@ -120,11 +122,9 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
             },
           ],
         },
-      },
-    ],
-  };
+      }];
 
-  const routes = resolveMountedEndpoints([service], {
+  const routes = resolveMountedEndpoints(groups, {
     prefix: "/api",
     pathOverrides: {
       "database.documents.list": "/collections/:collection",

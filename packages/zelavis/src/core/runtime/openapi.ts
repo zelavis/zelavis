@@ -64,7 +64,7 @@ export function generateOpenApiSpec(
     if (!routeSpec) {
       // Marked rather than passed off as documented: a consumer can see which
       // endpoints exist but have not described their inputs and responses.
-      operation.tags = [resolvedRoute.service.name];
+      operation.tags = [resolvedRoute.endpointGroup.id];
       operation["x-zelavis-undocumented"] = true;
     }
 

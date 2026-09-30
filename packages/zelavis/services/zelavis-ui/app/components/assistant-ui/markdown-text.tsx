@@ -147,7 +147,20 @@ const defaultComponents = memoizeMarkdownComponents({
         className,
       )}
       {...props}
+      // Model output can carry text an attacker planted in data. A link is only
+      // followed by a click, and must not hand over the dashboard's window or
+      // its URL.
+      target="_blank"
+      rel="noopener noreferrer nofollow"
     />
+  ),
+  // Never load an image named by model output. Fetching it would send whatever
+  // the URL encodes (data the model just read) to whoever hosts it, with no
+  // click at all. The alt text is kept so the answer still reads.
+  img: ({ alt }) => (
+    <span className="aui-md-img text-muted-foreground italic">
+      [image not loaded{alt ? `: ${alt}` : ""}]
+    </span>
   ),
   blockquote: ({ className, ...props }) => (
     <blockquote

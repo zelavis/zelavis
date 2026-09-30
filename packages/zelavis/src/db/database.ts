@@ -22,6 +22,7 @@ import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
 import type { ObjectStoreApi } from "./store.js";
+import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isValidCollectionName } from "./naming.js";
 import {
   GLOBAL_SHARD,
@@ -38,6 +39,8 @@ import {
 /** Everything scoped to one tenant, on the shard the map places it. */
 export interface TenantApi {
   readonly documents: DocumentsApi;
+  /** The same records addressed as key/value data: collection = namespace, document id = key. */
+  readonly kv: KeyValueApi;
   readonly events: DomainEventsApi;
   readonly projections: ProjectionsApi;
   readonly schemas: SchemasApi;
@@ -399,6 +402,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     const shared = documentsFor(store, GLOBAL_TENANT, schemasFor(store, GLOBAL_TENANT));
     return {
       documents,
+      kv: keyValueFor(store, tenant, documents, events),
       events,
       projections,
       schemas,

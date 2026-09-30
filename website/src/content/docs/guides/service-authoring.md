@@ -234,7 +234,7 @@ Important details:
   `platform` renders in the global `/zelavis` management shell; `root`, `core`,
   `extensions`, and `settings` render in project dashboards. Runtime-installed
   services are forced under Extensions.
-- `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
+- `setup(context)` may mount endpoint groups owned by the package through `context.addEndpointGroup(...)`, `context.addEndpointGroups(...)`, or by returning `{ endpointGroups }`. A package cannot create other services.
 - Provider plugins are ordinary installed services. They declare a namespaced
   provider capability and expose that domain's explicit registration contract;
   the owning auth, payments, or future domain discovers and registers them.

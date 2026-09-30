@@ -9,9 +9,6 @@
 // concurrent commits without an error, and RocksDB through `rocksdb-js` refused
 // them as write conflicts instead. The store serializes its writers so neither
 // can happen.
-//
-// The discontinued `rocksdb` binding is absent for the reason given in
-// db-kv-engines.test.mjs: opening it before `rocksdb-js` in one process aborts.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

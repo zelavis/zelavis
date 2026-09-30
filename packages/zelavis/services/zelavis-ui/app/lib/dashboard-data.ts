@@ -31,6 +31,7 @@ import type {
   RuntimeServiceRegistryEntry,
   RuntimeAccessRequirement,
   RuntimeDashboardAccess,
+  RuntimeCapabilities,
   RuntimePrincipal,
   RuntimeProject,
 } from "#/lib/runtime-api";
@@ -335,7 +336,7 @@ export function buildProjectManagementNavItems(
   services?: readonly RuntimeService[],
 ): readonly DashboardNavItem[] {
   const platformServiceNavItems = (services ?? [])
-    .filter((service) => service.core)
+    .filter((service) => service.scope === "system")
     .flatMap((service) =>
       getRuntimeServiceMenus(service)
         .filter(
@@ -372,68 +373,6 @@ export function buildProjectManagementNavItems(
       },
     },
     ...platformServiceNavItems,
-    {
-      title: "Resources",
-      icon: Activity,
-      landingUrl: "/resources",
-      pageLabel: "Resources",
-      sectionLabel: "Manage",
-      order: 50,
-      access: {
-        permissions: ["server.resources.view"],
-        scope: { type: "system" },
-      },
-      items: [
-        {
-          title: "Overview",
-          url: "/resources",
-          icon: Activity,
-          pageLabel: "Resources",
-        },
-        {
-          title: "Processes",
-          url: "/resources",
-          search: { resourceView: "processes" },
-          icon: Cpu,
-          pageLabel: "Processes",
-        },
-        {
-          title: "Storage",
-          url: "/resources",
-          search: { resourceView: "storage" },
-          icon: Database,
-          pageLabel: "Storage",
-        },
-        {
-          title: "Limits",
-          url: "/resources",
-          search: { resourceView: "limits" },
-          icon: MonitorCog,
-          pageLabel: "Limits",
-        },
-      ],
-    },
-    {
-      title: "Security",
-      icon: ShieldCheck,
-      landingUrl: "/security",
-      order: 70,
-      access: {
-        permissions: ["server.security.view"],
-        scope: { type: "system" },
-      },
-      pageLabel: "Security",
-      sectionLabel: "Manage",
-      items: [
-        {
-          title: "Checklist",
-          url: "/security",
-          icon: ShieldCheck,
-          pageLabel: "Security",
-          slot: "main",
-        },
-      ],
-    },
   ] as const);
 }
 
@@ -717,6 +656,17 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
       return Server;
     case "deployment backends":
       return Boxes;
+    case "resources":
+      return Activity;
+    case "processes":
+      return Cpu;
+    case "storage":
+      return Database;
+    case "limits":
+      return MonitorCog;
+    case "security":
+    case "checklist":
+      return ShieldCheck;
     case "domains":
       return Globe2;
     case "access":
@@ -894,133 +844,24 @@ export function buildExtensionServiceNavItems(
 export const extensionServiceNavItems =
   buildExtensionServiceNavItems(defaultRuntimeServiceRegistry);
 
-const defaultRuntimeServices: readonly RuntimeService[] = [
+type NativeProjectMenu = {
+  capability: keyof RuntimeCapabilities;
+  id: string;
+  apiPath: string;
+  menu: RuntimeServiceMenuDefinition;
+};
+
+/** Native navigation is dashboard product policy, not subsystem metadata. */
+const nativeProjectMenus: readonly NativeProjectMenu[] = [
   {
-    name: "zelavis/platform",
-    core: true,
-    apiPath: "/api/v1/runtime",
-    menu: {
-      title: "Server",
-      path: "/server",
-      pageLabel: "Server",
-      sectionLabel: "Manage",
-      order: 60,
-      surface: "platform",
-      access: {
-        permissions: ["server.manage"],
-        scope: { type: "system" },
-      },
-      items: [
-        {
-          title: "Overview",
-          path: "/server",
-          pageLabel: "Server",
-        },
-        {
-          title: "Deployment backends",
-          path: "/server/runtimes",
-          pageLabel: "Deployment backends",
-          access: {
-            permissions: ["server.backends.view"],
-            scope: { type: "system" },
-          },
-        },
-        {
-          title: "Domains",
-          path: "/server/domains",
-          pageLabel: "Domains",
-          panelLabel: "Domains",
-          access: {
-            permissions: ["server.domains.view"],
-            scope: { type: "system" },
-          },
-          items: [
-            {
-              title: "Overview",
-              path: "/server/domains",
-              pageLabel: "Domains",
-            },
-            {
-              title: "Add Domain",
-              path: "/server/domains",
-              search: { domainAction: "add" },
-              pageLabel: "Add Domain",
-            },
-            {
-              title: "Buy",
-              path: "/server/domains",
-              search: { domainAction: "buy" },
-              pageLabel: "Buy Domain",
-            },
-            {
-              title: "Transfer",
-              path: "/server/domains",
-              search: { domainAction: "transfer" },
-              pageLabel: "Transfer Domain",
-            },
-          ],
-        },
-        {
-          title: "Access",
-          path: "/server/access",
-          pageLabel: "Access",
-          panelLabel: "Access",
-          access: {
-            permissions: ["access.manage"],
-            scope: { type: "system" },
-          },
-          items: [
-            {
-              title: "Overview",
-              path: "/server/access",
-              pageLabel: "Access",
-            },
-            {
-              title: "Users",
-              path: "/server/access/users",
-              pageLabel: "Users",
-            },
-            {
-              title: "Permissions",
-              path: "/server/access/permissions",
-              pageLabel: "Permissions",
-            },
-          ],
-        },
-        {
-          title: "Backups",
-          path: "/server/backups",
-          pageLabel: "Backups",
-        },
-        {
-          title: "Logs",
-          path: "/server/logs",
-          pageLabel: "Logs",
-        },
-      ],
-    },
-  },
-  {
-    name: "@zelavis/ui",
-    core: true,
-    apiPath: "/",
-    menu: {
-      title: "Dashboard",
-      path: "/",
-    },
-  },
-  {
-    name: "@zelavis/auth",
-    core: true,
+    capability: "identity",
+    id: "identity",
     apiPath: "/api/v1/auth",
-    menu: {
-      title: "Auth",
-      path: "/auth",
-    },
+    menu: { title: "Auth", path: "/auth", surface: "core" },
   },
   {
-    name: "@zelavis/db",
-    core: true,
+    capability: "database",
+    id: "database",
     apiPath: "/api/v1/database",
     menu: {
       title: "Database",
@@ -1028,34 +869,46 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
-        // No Tenant named: the menu lists every Tenant holding data. Pinning
-        // one here is what made an App's own tables invisible.
         path: "/database/menu/tables",
         emptyTitle: "No tables yet",
       },
+      items: [{
+        title: "Create Table",
+        path: "/database/new",
+        pageLabel: "Database",
+        fixed: true,
+        fixedOrder: 1,
+      }],
+    },
+  },
+  {
+    capability: "storage",
+    id: "storage",
+    apiPath: "/api/v1/storage",
+    menu: { title: "Storage", path: "/storage", surface: "core" },
+  },
+  {
+    capability: "workloads",
+    id: "workloads",
+    apiPath: "/api/v1/workloads",
+    menu: {
+      title: "Workloads",
+      path: "/workloads",
+      surface: "core",
+      panelLabel: "Workloads",
       items: [
-        {
-          title: "Create Table",
-          path: "/database/new",
-          pageLabel: "Database",
-          fixed: true,
-          fixedOrder: 1,
-        },
+        { title: "Functions", path: "/workloads/functions", panelLabel: "Functions", items: [{ title: "Add Function", path: "/workloads/new", pageLabel: "Workloads", fixed: true, fixedOrder: 1 }], dynamicItems: { path: "/workloads/menu/functions", emptyTitle: "No functions yet", emptyPath: "/workloads/functions" } },
+        { title: "Jobs", path: "/workloads/jobs", panelLabel: "Jobs", dynamicItems: { path: "/workloads/menu/jobs", emptyTitle: "No jobs yet", emptyPath: "/workloads/jobs" } },
+        { title: "Schedules", path: "/workloads/schedules", panelLabel: "Schedules", dynamicItems: { path: "/workloads/menu/schedules", emptyTitle: "No schedules yet", emptyPath: "/workloads/schedules" } },
+        { title: "Webhooks", path: "/workloads/webhooks", panelLabel: "Webhooks", dynamicItems: { path: "/workloads/menu/webhooks", emptyTitle: "No webhooks yet", emptyPath: "/workloads/webhooks" } },
+        { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
+        { title: "Settings", path: "/workloads/settings", pageLabel: "Workloads" },
       ],
     },
   },
   {
-    name: "@zelavis/storage",
-    core: true,
-    apiPath: "/api/v1/storage",
-    menu: {
-      title: "Storage",
-      path: "/storage",
-    },
-  },
-  {
-    name: "@zelavis/frontend",
-    core: true,
+    capability: "site",
+    id: "frontend",
     apiPath: "/",
     menu: {
       title: "Frontend",
@@ -1072,7 +925,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
 ] as const;
 
 export const projectManagementNavItems: readonly DashboardNavItem[] =
-  buildProjectManagementNavItems(defaultRuntimeServices);
+  buildProjectManagementNavItems([]);
 
 export function buildPlatformNavItems(
   services: readonly RuntimeService[] | undefined,
@@ -1080,11 +933,35 @@ export function buildPlatformNavItems(
   contentTypes: readonly ContentTypeRow[] | undefined,
   databaseCollections: readonly DatabaseCollection[] | undefined,
   projectId: string,
+  capabilities?: RuntimeCapabilities,
 ): readonly DashboardNavItem[] {
   const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
   void databaseCollections;
-  const serviceNavItems = (services ?? [])
-    .filter((service) => service.core && service.name !== "@zelavis/ui")
+  const contributedMenuPaths = new Set(
+    (services ?? []).flatMap((service) =>
+      getRuntimeServiceMenus(service)
+        .map((menu) => menu.path)
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+  const nativeNavItems = nativeProjectMenus
+    .filter(({ capability, menu }) =>
+      capabilities?.[capability]?.available !== false &&
+      (!menu.path || !contributedMenuPaths.has(menu.path)),
+    )
+    .map(({ id, apiPath, menu }) => ({
+      item: createProjectAwareDashboardServiceMenuItem(menu, id, projectId, {
+        name: `native:${id}`,
+        scope: "system",
+        apiPath,
+      }),
+      surface: menu.surface ?? "core",
+      serviceName: `native:${id}`,
+    }));
+  const serviceNavItems = [
+    ...nativeNavItems,
+    ...(services ?? [])
+    .filter((service) => service.name !== "@zelavis/ui")
     .flatMap((service) => {
       const menus = getRuntimeServiceMenus(service);
       if (menus.length === 0) {
@@ -1114,7 +991,8 @@ export function buildPlatformNavItems(
         surface: menu.surface ?? getServiceMenuSurface(service),
         serviceName: service.name,
       }));
-    });
+    }),
+  ];
   const rootServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "root")
     .map((entry) => entry.item);
@@ -1175,14 +1053,14 @@ export function buildPlatformNavItems(
       sectionLabel: "Overview",
       access: projectAccess("project.view", projectId),
     },
-    {
+    ...(capabilities?.identity?.available === false ? [] : [{
       title: "Users",
       url: "/users",
       icon: Users,
       sectionLabel: "Build",
       access: projectAccess("project.users.manage", projectId),
-    },
-    {
+    } satisfies DashboardNavItem]),
+    ...(capabilities?.database?.available === false ? [] : [{
       title: "Content",
       icon: FileText,
       landingUrl: "/content",
@@ -1190,15 +1068,15 @@ export function buildPlatformNavItems(
       sectionLabel: "Build",
       access: projectAccess("project.content.read", projectId),
       items: contentItems,
-    },
-    {
+    } satisfies DashboardNavItem]),
+    ...(capabilities?.storage?.available === false ? [] : [{
       title: "Media",
       url: "/media",
       icon: Files,
       pageLabel: "Media",
       sectionLabel: "Build",
       access: projectAccess("project.media.manage", projectId),
-    },
+    } satisfies DashboardNavItem]),
     ...rootServiceNavItems,
     {
       title: "Extensions",

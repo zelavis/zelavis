@@ -2,7 +2,7 @@ import type { PasswordProviderOptions } from "./providers/password.js";
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
-  type ZelavisRuntimeService,
+  type ZelavisEndpointGroup,
   type ZelavisServerRoute,
   type ZelavisRequestAuthenticator,
   type ZelavisPrincipalGrant,
@@ -58,12 +58,7 @@ function publicCredential<T extends { secretHash?: string }>(credential: T) {
   return safe;
 }
 
-export type IdentityServiceDefinition = Readonly<
-  ZelavisRuntimeService<IdentityApi> & {
-    kind?: string;
-    capabilities?: readonly string[];
-  }
->;
+export type IdentityEndpointGroup = Readonly<ZelavisEndpointGroup<IdentityApi>>;
 
 export interface IdentitySessionCookieOptions {
   name?: string;
@@ -211,10 +206,10 @@ function serviceAccountPermissions(value: unknown): readonly string[] {
   return [...new Set(value.map((permission) => permission.trim()))];
 }
 
-export function defineAuthService(
+export function defineAuthEndpointGroup(
   auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
-): IdentityServiceDefinition {
+): IdentityEndpointGroup {
   const managePermission = options.authority === "platform"
     ? "system.users.manage"
     : "project.users.manage";
@@ -1258,16 +1253,18 @@ export function defineAuthService(
   ];
 
   return Object.freeze({
-    name: "zelavis/identity",
-    kind: "plugin",
-    capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
+    id: "identity",
     authenticators: [auth.requestAuthenticator],
     basePath: "/auth",
     // No menu. Core auth is the API and the authority; the settings page is
     // `@zelavis/auth`, a product service. Both contributing an "Auth" entry
     // would put two of them in the sidebar, and the one without a page would
     // lead nowhere.
-    service: auth,
+    context: auth,
+    origin: {
+      type: "subsystem" as const,
+      subsystem: "identity",
+    },
     api: {
       v1: routes,
     },
@@ -1285,20 +1282,19 @@ export interface IdentitySubsystem {
   readonly auth: IdentityApi;
   readonly authenticators: readonly ZelavisRequestAuthenticator[];
   readonly routes: readonly ZelavisServerRoute<IdentityApi>[];
-  /** Backwards-compatible runtime service definition. */
-  readonly definition: IdentityServiceDefinition;
+  readonly endpointGroup: IdentityEndpointGroup;
 }
 
 export function defineAuthSubsystem(
   auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
 ): IdentitySubsystem {
-  const definition = defineAuthService(auth, options);
+  const endpointGroup = defineAuthEndpointGroup(auth, options);
   return Object.freeze({
     auth,
-    authenticators: definition.authenticators ?? [auth.requestAuthenticator],
-    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<IdentityApi>[],
-    definition,
+    authenticators: endpointGroup.authenticators ?? [auth.requestAuthenticator],
+    routes: (endpointGroup.api?.v1 ?? []) as readonly ZelavisServerRoute<IdentityApi>[],
+    endpointGroup,
   });
 }
 
@@ -1337,9 +1333,9 @@ export async function createIdentitySubsystem(
   });
 }
 
-export async function identityService(
+export async function identityEndpointGroup(
   options: IdentityServiceOptions = {},
-): Promise<IdentityServiceDefinition> {
+): Promise<IdentityEndpointGroup> {
   const subsystem = await createIdentitySubsystem(options);
-  return subsystem.definition;
+  return subsystem.endpointGroup;
 }

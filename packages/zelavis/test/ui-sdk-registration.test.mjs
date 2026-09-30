@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import manifest from "@zelavis/ui/package.json" with { type: "json" };
+import authManifest from "../services/zelavis-auth/package.json" with { type: "json" };
+import marketplaceManifest from "../services/zelavis-marketplace/package.json" with { type: "json" };
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 import * as dashboard from "@zelavis/ui/service";
+import * as authService from "@zelavis/auth";
+import * as marketplaceService from "@zelavis/marketplace";
 import { zelavis as sdk, createZelavisClient } from "../dist/sdk/fetch.js";
 import { loadPluginPackage } from "../dist/service.js";
 import { zelavis as boot } from "../dist/index.js";
-import { createZelavisAuthSettingsService } from "../dist/platform/auth-settings.js";
-import { createZelavisMarketplaceService } from "../dist/platform/marketplace.js";
 
 const configuration = rootPath => ({ rootPath, createRuntimeConfig: async () => ({ rootPath }) });
 
@@ -25,7 +27,8 @@ test("UI identity is loaded from its manifest and behavior is registered through
     assert.equal(frontend.service.namespace, manifest.zelavis.namespace);
     assert.equal(frontend.service.app.bundle, manifest.zelavis.frontend.bundle);
     assert.equal(frontend.service.scope, "system");
-    assert.equal(frontend.service.menus.length, 1);
+    assert.equal(frontend.service.menus.length, 2);
+    assert.deepEqual(frontend.service.menus.map((menu) => menu.title), ["Dashboard", "Server"]);
     assert.equal(frontend.service.api.v1.length, 0);
   }
   const render = frontend => frontend.service.app.shell.render({ path: "projects", request: new Request("http://localhost/") });
@@ -37,7 +40,11 @@ test("UI identity is loaded from its manifest and behavior is registered through
 });
 
 test("cached first-party modules register menus for each independent load", async () => {
-  for (const load of [createZelavisAuthSettingsService, createZelavisMarketplaceService]) {
+  for (const [serviceManifest, module] of [
+    [authManifest, authService],
+    [marketplaceManifest, marketplaceService],
+  ]) {
+    const load = () => loadPluginPackage({ manifest: serviceManifest, scope: "system", importer: async () => module });
     const first = await load();
     const second = await load();
     assert.notEqual(first, second);
@@ -84,7 +91,7 @@ test("an executable frontend uses SDK registration through the generic service l
     manifest, configuration: configuration("/installed"), scope: "system",
     importer: async () => dashboard,
   });
-  assert.equal(service.menus.length, 1);
+  assert.equal(service.menus.length, 2);
   const page = await service.app.shell.render({ path: "", request: new Request("http://localhost/") });
   assert.match(page.body, /"rootPath":"\/installed"/);
 });

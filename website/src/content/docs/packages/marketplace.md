@@ -10,7 +10,9 @@ package.
 Keeping it separate from `zelavis/core` makes the boundary explicit: the
 reusable server engine does not assume Zelavis product menus, marketplace
 behavior, or dashboard ownership. The `zelavis` Platform chooses to
-bundle this service alongside `zelavis/platform` and `@zelavis/ui`.
+bundle this package alongside `@zelavis/ui`; it is discovered from the
+immutable distribution `services/` folder and loaded through the same manifest
+loader as any installed package.
 
 The global Marketplace is distinct from a Project-local marketplace. Global
 entries cover Project recipes presented as apps and starters, plus templates
@@ -20,5 +22,5 @@ Project-local entries install services and plugins into a selected Project.
 ## Related docs
 
 - [zelavis](./zelavis.md)
-- [zelavis/platform](./core.md)
+- [Server Control Plane](./core.md)
 - [Service Authoring](../guides/service-authoring.md)

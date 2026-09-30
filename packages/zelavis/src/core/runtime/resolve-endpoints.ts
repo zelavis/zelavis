@@ -1,8 +1,7 @@
 import type {
+  ZelavisEndpointGroup,
   ZelavisResolvedRoute,
-  ZelavisRuntimeServiceInput,
   ZelavisServerMountOptions,
-  ZelavisRuntimeService,
 } from "./contracts.js";
 
 function normalizePathPart(part: string | undefined): string {
@@ -48,7 +47,7 @@ function joinPathParts(
 }
 
 export function resolveMountedEndpoints<TContext = unknown>(
-  services: readonly ZelavisRuntimeService<TContext>[],
+  endpointGroups: readonly ZelavisEndpointGroup<TContext>[],
   options: Pick<
     ZelavisServerMountOptions<TContext>,
     "prefix" | "version" | "servicePrefixes" | "pathOverrides"
@@ -57,10 +56,12 @@ export function resolveMountedEndpoints<TContext = unknown>(
   const resolved: ZelavisResolvedRoute<TContext>[] = [];
   const version = options.version ?? "v1";
 
-  function visitService(service: ZelavisRuntimeService<TContext>, prefix: string | undefined): void {
-    const routes = service.api?.[version];
-    const servicePrefix = options.servicePrefixes?.[service.name] ?? service.basePath ?? service.name;
-    const nextPrefix = joinPathParts(prefix, servicePrefix, "/");
+  for (const endpointGroup of endpointGroups) {
+    const routes = endpointGroup.api?.[version];
+    const endpointPrefix =
+      options.servicePrefixes?.[endpointGroup.id] ??
+      endpointGroup.basePath ??
+      endpointGroup.id;
 
     if (routes) {
       for (const route of routes) {
@@ -68,33 +69,13 @@ export function resolveMountedEndpoints<TContext = unknown>(
         const routePath = normalizePath(overridePath ?? route.path);
 
         resolved.push({
-          service,
+          endpointGroup,
           route,
-          fullPath: joinPathParts(prefix, servicePrefix, routePath),
+          fullPath: joinPathParts(options.prefix, endpointPrefix, routePath),
         });
       }
     }
-
-    for (const child of service.services ?? []) {
-      if (isPromiseLike(child)) {
-        throw new TypeError(
-          `Nested service "${service.name}" contains an unresolved promise. Resolve nested services before mounting.`,
-        );
-      }
-
-      visitService(child as ZelavisRuntimeService<TContext>, nextPrefix);
-    }
-  }
-
-  for (const service of services) {
-    visitService(service, options.prefix);
   }
 
   return resolved;
-}
-
-function isPromiseLike<TContext>(
-  value: ZelavisRuntimeServiceInput<TContext>,
-): value is Promise<ZelavisRuntimeService<TContext>> {
-  return Boolean(value && typeof (value as Promise<ZelavisRuntimeService<TContext>>).then === "function");
 }

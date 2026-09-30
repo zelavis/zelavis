@@ -4,6 +4,9 @@ import {
   type ZelavisHostOperationRequest,
   type ZelavisHostOperationTrustStore,
 } from "../deployment/index.js";
+export * from "./placement-lease.js";
+export * from "./project-dispatch.js";
+export * from "./remote-placement.js";
 
 /**
  * Platform authority keys an Agent accepts envelopes from. Same structure and

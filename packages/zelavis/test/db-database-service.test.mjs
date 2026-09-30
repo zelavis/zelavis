@@ -29,10 +29,7 @@ const call = (route, { service, params = {}, query = "", body, principal = opera
   });
 
 const routeOf = (service, id) => {
-  const routes = [
-    ...service.api.v1,
-    ...service.services.flatMap((nested) => nested.api.v1),
-  ];
+  const routes = service.api.v1;
   const found = routes.find((route) => route.id === id);
   assert.ok(found, `route ${id} should exist`);
   return found;
@@ -46,10 +43,7 @@ test("the database service mounts the same routes on the db runtime API", async 
   });
 
   assert.equal(runtime.services["@zelavis/db"].service, api);
-  assert.deepEqual(
-    runtime.services["@zelavis/db"].services.map((nested) => nested.name),
-    ["documents", "schemas", "timeseries", "maintenance"],
-  );
+  assert.equal("services" in runtime.services["@zelavis/db"], false);
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),
     [
@@ -57,6 +51,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/menu/tables",
       "/api/database/health",
       "/api/database/documents/collections",
+      "/api/database/documents/collections/:collection/modalities",
       "/api/database/documents/collections",
       "/api/database/documents/collections/:collection",
       "/api/database/documents/write",
@@ -80,6 +75,15 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/references/:name",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/:id",
+      "/api/database/kv/:namespace/:key",
+      "/api/database/kv/:namespace/:key",
+      "/api/database/kv/:namespace/:key/exists",
+      "/api/database/kv/:namespace/:key",
+      "/api/database/kv/:namespace/scan",
+      "/api/database/kv/:namespace/changes",
+      "/api/database/kv/:namespace/write",
+      "/api/database/kv/:namespace",
+      "/api/database/kv/:namespace",
       "/api/database/schemas/collections",
       "/api/database/schemas/:collection",
       "/api/database/schemas/:collection",
@@ -196,6 +200,37 @@ test("a missing document is 404 even though the store answers with undefined", a
   });
 
   assert.equal(response.status, 404);
+});
+
+test("KV routes read and write the same collection records", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  await api.forTenant("acme").documents.createCollection({ name: "settings" });
+
+  const stored = await call(routeOf(service, "database.kv.set"), {
+    service: api,
+    params: { namespace: "settings", key: "theme" },
+    body: { tenantId: "acme", value: { mode: "dark" }, ifAbsent: true },
+  });
+  assert.equal(stored.body.version, 1);
+  assert.deepEqual(
+    (await api.forTenant("acme").documents.findById({ collection: "settings", id: "theme" })).data,
+    { mode: "dark" },
+  );
+
+  const found = await call(routeOf(service, "database.kv.get"), {
+    service: api,
+    params: { namespace: "settings", key: "theme" },
+    query: "tenantId=acme",
+  });
+  assert.deepEqual(found.body.value, { mode: "dark" });
+
+  const page = await call(routeOf(service, "database.kv.scan"), {
+    service: api,
+    params: { namespace: "settings" },
+    body: { tenantId: "acme", prefix: "the" },
+  });
+  assert.deepEqual(page.body.entries.map((entry) => entry.key), ["theme"]);
 });
 
 test("schemas are saved, activated and listed per Tenant", async (t) => {

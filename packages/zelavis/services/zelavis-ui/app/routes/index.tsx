@@ -165,7 +165,7 @@ function Overview() {
               <DataRow
                 key={service.name}
                 label={service.name}
-                detail={`${service.core ? 'core' : 'custom'} · ${service.apiPath}`}
+                detail={`${service.scope ?? 'extension'} ${service.kind ?? 'plugin'} · ${service.apiPath}`}
                 meta={<StatusBadge state="ready" />}
               />
             ))}

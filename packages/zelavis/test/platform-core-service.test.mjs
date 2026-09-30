@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createZelavisCoreService } from "../dist/platform/core-service.js";
+import { createPlatformEndpointGroup } from "../dist/platform/endpoints.js";
 
-test("Zelavis core owns the Platform Server surface", () => {
-  const service = createZelavisCoreService({ service: {}, routes: [] });
+test("the Server Control Plane is a native endpoint group, not a service", () => {
+  const group = createPlatformEndpointGroup({ context: {}, routes: [] });
 
-  assert.equal(service.name, "zelavis/platform");
-  assert.equal(service.basePath, "/runtime");
-  assert.equal(service.menu.title, "Server");
-  assert.equal(service.menu.surface, "platform");
+  assert.equal(group.id, "platform.control-plane");
+  assert.equal(group.basePath, "/runtime");
+  assert.equal(group.origin.type, "subsystem");
+  assert.equal("menu" in group, false);
+  assert.equal("kind" in group, false);
 });

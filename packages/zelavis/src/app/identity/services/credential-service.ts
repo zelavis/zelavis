@@ -40,10 +40,7 @@ export class CredentialService {
       );
     }
 
-    if (await this.repository.findByProviderIdentifier(input.provider, identifier)) {
-      throw new IdentityValidationError("That provider identifier is already registered.");
-    }
-
+    // Uniqueness is the repository's atomic job, not a check made here first.
     const now = new Date();
     return this.repository.create({
       ...input,

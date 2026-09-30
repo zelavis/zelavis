@@ -37,6 +37,8 @@ export interface ZelavisAgentProcessCommand {
    * the Agent runs whatever it is told to; the Project is the caller's concept.
    */
   readonly workloadId: string;
+  /** Required for Project workloads when the Agent enables placement fencing. */
+  readonly placement?: import("./placement-lease.js").AgentPlacementIdentity;
   readonly executable: string;
   readonly args?: readonly string[];
   readonly cwd: string;
@@ -165,6 +167,8 @@ export interface ZelavisAgentProcessRunner {
     workloadId?: string,
     options?: { readonly preservePrefixes?: readonly string[] },
   ): Promise<number>;
+  /** Proves every recorded process for this exact expired placement has stopped. */
+  fencePlacement?(placement: import("./placement-lease.js").AgentPlacementIdentity): Promise<boolean>;
   /**
    * Takes back processes this runner is still running for a workload.
    *

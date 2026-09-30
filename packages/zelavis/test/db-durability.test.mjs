@@ -135,10 +135,6 @@ const engines = [
   ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js")],
 ];
 
-// The discontinued `rocksdb` binding is absent while `rocksdb-js` is evaluated:
-// this file reopens every engine in one process, and opening the old binding
-// before the new one aborts inside libuv's timer. See db-kv-engines.test.mjs.
-
 for (const [engine, available] of engines) {
   test(`${engine}: a killed writer loses no transaction it had already committed`,
     { skip: available ? false : `${engine} is not installed` },

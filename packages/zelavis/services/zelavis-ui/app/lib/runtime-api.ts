@@ -1,3 +1,5 @@
+import { readServerSentEvents } from "./sse";
+
 export interface RuntimeServiceMenuDefinition {
   title: string;
   path?: string;
@@ -29,7 +31,6 @@ export interface RuntimeServiceDynamicMenuResponse {
 export interface RuntimeService {
   name: string;
   kind?: string;
-  core: boolean;
   /**
    * Whether the operator composed this service or it was installed at runtime.
    * The dashboard sandboxes an extension service's page.
@@ -395,7 +396,29 @@ export interface RuntimeAssistantMessage {
   role: "assistant" | "user";
   content: string;
   actions?: readonly RuntimeAssistantAction[];
+  /** What the Assistant looked up to answer. */
+  activity?: readonly RuntimeAssistantActivity[];
+  /** Changes this reply asked to make; see `RuntimeAssistantThread.approvals`. */
+  approvalIds?: readonly string[];
+  /** Which provider and model wrote the reply. */
+  provider?: string;
   createdAt: string;
+}
+
+export interface RuntimeAssistantActivity {
+  label: string;
+  status: "running" | "done" | "refused" | "awaiting";
+}
+
+export interface RuntimeAssistantApproval {
+  id: string;
+  threadId: string;
+  label: string;
+  target: { kind: string; id: string };
+  irreversible: boolean;
+  status: "pending" | "running" | "denied" | "expired" | "executed" | "failed";
+  expiresAt: string;
+  outcome?: string;
 }
 
 export interface RuntimeAssistantThread {
@@ -403,6 +426,8 @@ export interface RuntimeAssistantThread {
   title: string;
   projectId?: string;
   messages: readonly RuntimeAssistantMessage[];
+  /** Every change requested in this thread, with its current state. */
+  approvals?: readonly RuntimeAssistantApproval[];
   createdAt: string;
   updatedAt: string;
 }
@@ -411,6 +436,10 @@ export interface RuntimeServiceRegistryMutationResult {
   serviceRegistry: RuntimeServiceRegistryEntry[];
   activation?: RuntimeServiceActivationResult;
 }
+
+export type RuntimeCapabilities = Readonly<
+  Record<string, { available: boolean }>
+>;
 
 export interface RuntimeConfig {
   name: string;
@@ -430,6 +459,7 @@ export interface RuntimeConfig {
     engine: RuntimeEngine;
     availableEngines: readonly RuntimeEngine[];
   };
+  capabilities?: RuntimeCapabilities;
   services: RuntimeService[];
   serviceRegistry: RuntimeServiceRegistryEntry[];
   serviceActivation?: RuntimeServiceActivation;
@@ -793,253 +823,16 @@ const fallbackConfig: RuntimeConfig = {
     ],
     assetRoot: "/assets",
   },
-  services: [
-    {
-      name: "zelavis/platform",
-      core: true,
-      apiPath: "/api/v1/runtime",
-      menu: {
-        title: "Server",
-        path: "/server",
-        pageLabel: "Server",
-        sectionLabel: "Manage",
-        order: 60,
-        surface: "platform",
-        access: {
-          permissions: ["server.manage"],
-          scope: { type: "system" },
-        },
-        items: [
-          {
-            title: "Overview",
-            path: "/server",
-            pageLabel: "Server",
-          },
-          {
-            title: "Deployment backends",
-            path: "/server/runtimes",
-            pageLabel: "Deployment backends",
-            access: {
-              permissions: ["server.backends.view"],
-              scope: { type: "system" },
-            },
-          },
-          {
-            title: "Domains",
-            path: "/server/domains",
-            pageLabel: "Domains",
-            panelLabel: "Domains",
-            access: {
-              permissions: ["server.domains.view"],
-              scope: { type: "system" },
-            },
-            items: [
-              {
-                title: "Overview",
-                path: "/server/domains",
-                pageLabel: "Domains",
-              },
-              {
-                title: "Add Domain",
-                path: "/server/domains",
-                search: { domainAction: "add" },
-                pageLabel: "Add Domain",
-              },
-              {
-                title: "Buy",
-                path: "/server/domains",
-                search: { domainAction: "buy" },
-                pageLabel: "Buy Domain",
-              },
-              {
-                title: "Transfer",
-                path: "/server/domains",
-                search: { domainAction: "transfer" },
-                pageLabel: "Transfer Domain",
-              },
-            ],
-          },
-          {
-            title: "Access",
-            path: "/server/access",
-            pageLabel: "Access",
-            panelLabel: "Access",
-            access: {
-              permissions: ["access.manage"],
-              scope: { type: "system" },
-            },
-            items: [
-              {
-                title: "Overview",
-                path: "/server/access",
-                pageLabel: "Access",
-              },
-              {
-                title: "Users",
-                path: "/server/access/users",
-                pageLabel: "Users",
-              },
-              {
-                title: "Permissions",
-                path: "/server/access/permissions",
-                pageLabel: "Permissions",
-              },
-            ],
-          },
-          {
-            title: "Backups",
-            path: "/server/backups",
-            pageLabel: "Backups",
-          },
-          {
-            title: "Logs",
-            path: "/server/logs",
-            pageLabel: "Logs",
-          },
-        ],
-      },
-    },
-    {
-      name: "@zelavis/ui",
-      core: true,
-      apiPath: "/",
-      menu: {
-        title: "Dashboard",
-        path: "/",
-        surface: "root",
-      },
-    },
-    {
-      name: "@zelavis/auth",
-      core: true,
-      apiPath: "/api/v1/auth",
-      menu: {
-        title: "Auth",
-        path: "/auth",
-        surface: "core",
-      },
-    },
-    {
-      name: "@zelavis/db",
-      core: true,
-      apiPath: "/api/v1/database",
-      menu: {
-        title: "Database",
-        path: "/database",
-        surface: "core",
-        panelLabel: "Database",
-        dynamicItems: {
-          // No Tenant named: the menu lists every Tenant holding data. Pinning
-          // one here is what made an App's own tables invisible.
-          path: "/database/menu/tables",
-          emptyTitle: "No tables yet",
-        },
-        items: [
-          {
-            title: "Create Table",
-            path: "/database/new",
-            pageLabel: "Database",
-            fixed: true,
-            fixedOrder: 1,
-          },
-        ],
-      },
-    },
-    {
-      name: "@zelavis/storage",
-      core: true,
-      apiPath: "/api/v1/storage",
-      menu: {
-        title: "Storage",
-        path: "/storage",
-        surface: "core",
-      },
-    },
-    {
-      name: "@zelavis/website",
-      core: true,
-      apiPath: "/",
-      menu: {
-        title: "Website",
-        path: "/website",
-        pageLabel: "Website",
-        sectionLabel: "Build",
-        surface: "root",
-        access: {
-          permissions: ["project.website.manage"],
-          scope: { type: "project", projectIdParam: "projectId" },
-        },
-      },
-    },
-    {
-      name: "@zelavis/workloads",
-      core: true,
-      apiPath: "/api/v1/workloads",
-      menu: {
-        title: "Workloads",
-        path: "/workloads",
-        surface: "core",
-        panelLabel: "Workloads",
-        items: [
-          {
-            title: "Functions",
-            path: "/workloads/functions",
-            panelLabel: "Functions",
-            items: [
-              {
-                title: "Add Function",
-                path: "/workloads/new",
-                pageLabel: "Workloads",
-                fixed: true,
-                fixedOrder: 1,
-              },
-            ],
-            dynamicItems: {
-              path: "/workloads/menu/functions",
-              emptyTitle: "No functions yet",
-              emptyPath: "/workloads/functions",
-            },
-          },
-          {
-            title: "Jobs",
-            path: "/workloads/jobs",
-            panelLabel: "Jobs",
-            dynamicItems: {
-              path: "/workloads/menu/jobs",
-              emptyTitle: "No jobs yet",
-              emptyPath: "/workloads/jobs",
-            },
-          },
-          {
-            title: "Schedules",
-            path: "/workloads/schedules",
-            panelLabel: "Schedules",
-            dynamicItems: {
-              path: "/workloads/menu/schedules",
-              emptyTitle: "No schedules yet",
-              emptyPath: "/workloads/schedules",
-            },
-          },
-          {
-            title: "Webhooks",
-            path: "/workloads/webhooks",
-            panelLabel: "Webhooks",
-            dynamicItems: {
-              path: "/workloads/menu/webhooks",
-              emptyTitle: "No webhooks yet",
-              emptyPath: "/workloads/webhooks",
-            },
-          },
-          { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
-          {
-            title: "Settings",
-            path: "/workloads/settings",
-            pageLabel: "Workloads",
-          },
-        ],
-      },
-    },
-  ],
+  capabilities: {
+    server: { available: true },
+    fabric: { available: true },
+    database: { available: true },
+    identity: { available: true },
+    storage: { available: true },
+    workloads: { available: true },
+    site: { available: true },
+  },
+  services: [],
   serviceRegistry: [],
   serviceActivation: {
     mode: "runtime",
@@ -1708,10 +1501,24 @@ export async function getAssistantThread(
   config: RuntimeConfig,
   threadId: string,
 ): Promise<RuntimeAssistantThread> {
-  const result = await readJson<{ thread: RuntimeAssistantThread }>(
-    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}`,
+  const result = await readJson<{
+    thread: RuntimeAssistantThread;
+    approvals?: readonly RuntimeAssistantApproval[];
+  }>(`${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}`);
+  return { ...result.thread, approvals: result.approvals ?? [] };
+}
+
+export async function decideAssistantApproval(
+  config: RuntimeConfig,
+  threadId: string,
+  approvalId: string,
+  decision: "approve" | "deny",
+  confirm?: string,
+): Promise<{ approval: RuntimeAssistantApproval; message: RuntimeAssistantMessage }> {
+  return readJson(
+    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(approvalId)}`,
+    { method: "POST", body: JSON.stringify({ decision, ...(confirm ? { confirm } : {}) }) },
   );
-  return result.thread;
 }
 
 export async function createAssistantThread(
@@ -1740,6 +1547,95 @@ export async function sendAssistantMessage(
   );
 }
 
+export type AssistantStreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "tool"; id: string; name: string; label: string; status: "running" | "done" | "refused" | "awaiting" }
+  | {
+      type: "approval";
+      id: string;
+      label: string;
+      irreversible: boolean;
+      target: { kind: string; id: string };
+    }
+  | {
+      type: "done";
+      thread: RuntimeAssistantThread;
+      userMessage: RuntimeAssistantMessage;
+      assistantMessage: RuntimeAssistantMessage;
+    }
+  | { type: "error"; message: string };
+
+/**
+ * Posts a message and yields the reply as it is written. Refusals that happen
+ * before the stream opens (no such thread, no access, empty message) throw with
+ * their real status; anything after that arrives as an `error` event.
+ */
+export async function* streamAssistantMessage(
+  config: RuntimeConfig,
+  threadId: string,
+  content: string,
+  signal?: AbortSignal,
+): AsyncGenerator<AssistantStreamEvent> {
+  const path = `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/messages/stream`;
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify({ content }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(`Request failed for ${path}`);
+  }
+  if (!response.ok || !response.body) {
+    let message = `Request failed: ${response.status}`;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) message = body.error;
+    } catch {
+      // Keep the status-only message.
+    }
+    throw new RuntimeApiError(`${message} (${path})`, response.status, path);
+  }
+  for await (const frame of readServerSentEvents(response.body)) {
+    yield { ...(frame.data as object), type: frame.event } as AssistantStreamEvent;
+  }
+}
+
+/**
+ * The Platform packages that contribute to a Project's navigation.
+ *
+ * Project runtimes are headless and do not carry the Platform's own packages,
+ * yet a Project's navigation still offers what the operator composed for it
+ * (Marketplace, Auth settings). The contract is the menu's declared `surface`:
+ * `platform` belongs to the global shell and never crosses into a Project,
+ * while `root`, `core`, `extensions` and `settings` are Project surfaces. Only
+ * `system`-scope packages qualify; the Platform strips the surface from
+ * anything an operator did not compose, so an extension cannot claim one. A
+ * contributing package keeps its Platform API path rather than being proxied
+ * into the Project, and a Project's own package of the same name wins.
+ */
+export function selectPlatformProjectServices(
+  platformServices: readonly RuntimeService[],
+  projectServiceNames: ReadonlySet<string>,
+): RuntimeService[] {
+  return platformServices
+    .filter(
+      (service) =>
+        service.scope === "system" &&
+        service.name !== "@zelavis/ui" &&
+        !projectServiceNames.has(service.name),
+    )
+    .flatMap((service) => {
+      const menus = [...(service.menus ?? (service.menu ? [service.menu] : []))].filter(
+        (menu) => menu.surface !== undefined && menu.surface !== "platform",
+      );
+      return menus.length === 0 ? [] : [{ ...service, menu: menus[0], menus }];
+    });
+}
+
 export async function getProjectRuntimeConfig(
   controlConfig: RuntimeConfig,
   projectId: string,
@@ -1750,6 +1646,25 @@ export async function getProjectRuntimeConfig(
   );
   const projectApiBasePath = `${proxyRoot}${projectConfig.api.basePath}`;
 
+  const projectServices = normalizeRuntimeServices(
+    (projectConfig.services ?? [])
+      .filter(
+        (service) =>
+          service.name !== "@zelavis/ui" &&
+          service.name !== "@zelavis/ui:app",
+      )
+      .map((service) => ({
+        ...service,
+        apiPath: service.apiPath.startsWith(projectConfig.rootPath)
+          ? `${proxyRoot}${service.apiPath}`
+          : service.apiPath,
+      })),
+  );
+  const platformProjectServices = selectPlatformProjectServices(
+    controlConfig.services,
+    new Set(projectServices.map((service) => service.name)),
+  );
+
   return {
     ...projectConfig,
     rootPath: controlConfig.rootPath,
@@ -1759,20 +1674,7 @@ export async function getProjectRuntimeConfig(
       basePath: projectApiBasePath,
     },
     dashboard: controlConfig.dashboard,
-    services: normalizeRuntimeServices(
-      (projectConfig.services ?? [])
-        .filter(
-          (service) =>
-            service.name !== "@zelavis/ui" &&
-            service.name !== "@zelavis/ui:app",
-        )
-        .map((service) => ({
-          ...service,
-          apiPath: service.apiPath.startsWith(projectConfig.rootPath)
-            ? `${proxyRoot}${service.apiPath}`
-            : service.apiPath,
-        })),
-    ),
+    services: [...projectServices, ...platformProjectServices],
     serviceRegistry: normalizeRuntimeServiceRegistry(
       projectConfig.serviceRegistry ?? [],
     ),
@@ -1834,6 +1736,73 @@ export async function getDashboardSettings(
   return readJson<DashboardSettings>(
     `${config.api.basePath}/runtime/settings`,
   );
+}
+
+export const ASSISTANT_PROVIDERS = ["openrouter", "openai", "anthropic"] as const;
+export type AssistantProviderName = (typeof ASSISTANT_PROVIDERS)[number];
+
+export interface AssistantProviderStatus {
+  mode: "model" | "local-router";
+  provider?: AssistantProviderName;
+  model?: string;
+  /** Whether a key is stored here; the key itself is never returned. */
+  hasApiKey: boolean;
+  /** For a Project, `platform` means it inherits the installation's provider. */
+  source: "environment" | "stored" | "project" | "platform" | "none";
+  updatedAt?: string;
+}
+
+export interface AssistantAuditRecord {
+  id: string;
+  at: string;
+  principalId: string;
+  tool: string;
+  arguments: string;
+  decision: "allowed" | "denied" | "invalid" | "failed" | "pending_approval" | "executed";
+  reason?: string;
+}
+
+export async function listAssistantAudit(
+  config: RuntimeConfig,
+  input: { before?: string; limit?: number } = {},
+): Promise<{ records: AssistantAuditRecord[]; next?: string }> {
+  const query = new URLSearchParams({ limit: String(input.limit ?? 25) });
+  if (input.before) query.set("before", input.before);
+  return readJson(`${config.api.basePath}/runtime/assistant/audit?${query}`);
+}
+
+function assistantProviderPath(config: RuntimeConfig, projectId?: string) {
+  return projectId
+    ? `${config.api.basePath}/runtime/assistant/projects/${encodeURIComponent(projectId)}/provider`
+    : `${config.api.basePath}/runtime/assistant/provider`;
+}
+
+/** The installation's provider, or one Project's when `projectId` is given. */
+export async function getAssistantProvider(
+  config: RuntimeConfig,
+  projectId?: string,
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId));
+}
+
+export async function setAssistantProvider(
+  config: RuntimeConfig,
+  input: { provider: AssistantProviderName; model: string; apiKey: string },
+  projectId?: string,
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId), {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function clearAssistantProvider(
+  config: RuntimeConfig,
+  projectId?: string,
+): Promise<AssistantProviderStatus> {
+  return readJson<AssistantProviderStatus>(assistantProviderPath(config, projectId), {
+    method: "DELETE",
+  });
 }
 
 export async function updateDashboardSettings(

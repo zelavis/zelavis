@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { bundledServiceRegistry } from "./_bundled-services.mjs";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const PLATFORM_OWNER_CONTEXT = {
@@ -11,7 +12,10 @@ const PLATFORM_OWNER_CONTEXT = {
 const MARKETPLACE = "@zelavis/marketplace";
 
 async function bootWithMarketplace() {
-  const runtime = await zelavis({ frontend: zelavisUiFrontend });
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    serviceRegistry: await bundledServiceRegistry(),
+  });
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
@@ -41,11 +45,11 @@ test("the marketplace reaches the dashboard as an ordinary service", async () =>
   assert.equal(project.sectionLabel, "Extend");
 });
 
-test("a core service's page resolves to a fetchable src", async () => {
+test("a bundled package's page resolves to a fetchable src", async () => {
   const { runtime, service } = await bootWithMarketplace();
 
-  // A core service is not a registry entry. Its menu still has to be
-  // serialized, or the dashboard mounts a frame pointed at nothing.
+  // Each menu page has to be serialized with a src, or the dashboard mounts a
+  // frame pointed at nothing.
   for (const menu of service.menus) {
     assert.ok(menu.page.src, `${menu.page.id} has no src`);
 

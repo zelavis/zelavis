@@ -49,9 +49,11 @@ services in `packages/zelavis/src/platform` plus its dashboard service in:
 packages/zelavis/services
 ```
 
-The product-specific `zelavis/platform` and `zelavis/marketplace` service
-identities are internal definitions, while `@zelavis/ui` remains a focused
-dashboard package. None is a second backend framework.
+The Server Control Plane is a native Platform subsystem, mounted as endpoint
+groups rather than as a service. `@zelavis/marketplace`, `@zelavis/auth` and
+`@zelavis/ui` are loadable packages bundled in the distribution's `services/`
+folder and loaded through the same manifest loader as installed packages.
+None is a second backend framework.
 
 The official native Project recipe is the `zelavis/app` subpath implemented at
 `packages/zelavis/src/app`. It is a real `kind: "app"` service whose root
@@ -118,6 +120,14 @@ GET    /zelavis/api/v1/runtime/projects/:projectId/logs
 DELETE /zelavis/api/v1/runtime/projects/:projectId
 ```
 
+The Platform keeps Project runtime ownership in a conditional System Store
+record with a Node owner, session, lease, and increasing epoch. A Fabric plan
+alone cannot start a Project. The separately supervised local Agent verifies
+the committed placement before starting a Project process and stops it when
+that placement expires or changes. Remote worker dispatch is not available
+yet; a plan naming another Node leaves the Project unstarted unless the host
+provides a fenced dispatcher.
+
 Implemented now:
 
 - `kind: "app"` Project recipes in the service contract
@@ -141,3 +151,29 @@ Current limitations:
 
 Do not move existing project data into the System Store and do not use
 `zelavis/app/db` as a fallback for Platform OS records.
+
+## Project runtimes
+
+A Project runtime is the same composition as the Platform with `role: "project"`.
+It composes Identity, Database and Workloads as native subsystems; its accounts
+live in the Project's own database rather than the Platform System Store. The
+official `zelavis/app` recipe supplies identity, menu and defaults but mounts no
+backend itself. Each Project also has its own services folder inside its
+`.zelavis` data root, discovered and loaded like the Platform's, so packages
+installed into a Project belong to that Project alone.
+
+A Project's public site is the static frontend package (`kind: "frontend"`)
+installed in that folder. It is served at the Project's root straight from the
+package directory, and the placeholder answers until one is installed. On the
+Platform the same kind of package is mounted under `/apps/<name>`, so it cannot
+replace the Platform's own root.
+
+A Project serves one frontend at a time. Choosing one is installing it through
+the service registry, which sets the previously installed frontend aside, and the
+choice persists across restarts.
+
+A Project's recipe is frozen into the Project when it is prepared: the recipe
+package is copied into the Project's data root and locked by content digest. The
+Project runs that copy, and refuses to start if it has been modified, so a
+Platform upgrade cannot change the recipe an existing Project runs. The runtime
+engine that hosts the recipe is still the Platform's own.

@@ -1,6 +1,6 @@
 import type { ZelavisServiceSetupContext } from "../../service.js";
 import type {
-  ZelavisAnyRuntimeServiceInput,
+  ZelavisEndpointGroupInput,
   ZelavisRuntimeServiceMenuDefinition,
   ZelavisServerRoute,
 } from "../runtime/contracts.js";
@@ -19,8 +19,8 @@ export type PluginFrontendBehavior = Pick<ZelavisServiceAppDefinition,
   "shell" | "devUrl" | "devUrlExcludePaths">;
 
 export type PluginSetupHandler = (context: ZelavisServiceSetupContext) =>
-  void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] } |
-  Promise<void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }>;
+  void | { endpointGroups?: readonly ZelavisEndpointGroupInput<any>[] } |
+  Promise<void | { endpointGroups?: readonly ZelavisEndpointGroupInput<any>[] }>;
 
 export interface PluginExecutionContext {
   name: string;
@@ -31,7 +31,6 @@ export interface PluginExecutionContext {
   routes: ZelavisServerRoute[];
   commands: Map<string, ZelavisCommandDefinition>;
   events: Array<{ event: string; handler: (...args: unknown[]) => void | Promise<void> }>;
-  services: ZelavisAnyRuntimeServiceInput[];
   authenticators: ZelavisRequestAuthenticator[];
   providers: Map<string, unknown>;
   metadata: Record<string, unknown>;
@@ -104,7 +103,6 @@ export function createPluginExecutionContext(
     routes: [],
     commands: new Map(),
     events: [],
-    services: [],
     authenticators: [],
     providers: new Map(),
     metadata: {},

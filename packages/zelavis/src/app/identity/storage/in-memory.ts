@@ -5,6 +5,7 @@ import type {
   IdentityRepositories,
   AuthSecurityEventRepository,
   CredentialRepository,
+  Mutation,
   SessionRepository,
 } from "../contracts/repositories.js";
 import type {
@@ -15,6 +16,36 @@ import type {
   Credential,
   Session,
 } from "../domain/entities.js";
+import {
+  withUniqueAccounts,
+  withUniqueCredentials,
+  type ClaimBackend,
+} from "./unique-claims.js";
+
+/**
+ * Claims held in a Map. Each method runs to completion with no `await` inside
+ * it, so on one event loop a claim is atomic.
+ */
+class InMemoryClaims implements ClaimBackend {
+  private readonly items = new Map<string, { owner: string; at: number }>();
+
+  async claim(key: string, owner: string) {
+    const existing = this.items.get(key);
+    if (existing) return { claimed: false as const, owner: existing.owner, at: existing.at };
+    this.items.set(key, { owner, at: Date.now() });
+    return { claimed: true as const };
+  }
+
+  async takeover(key: string, staleOwner: string, owner: string) {
+    if (this.items.get(key)?.owner !== staleOwner) return false;
+    this.items.set(key, { owner, at: Date.now() });
+    return true;
+  }
+
+  async release(key: string, owner: string) {
+    if (this.items.get(key)?.owner === owner) this.items.delete(key);
+  }
+}
 
 class InMemoryAccountRepository implements AccountRepository {
   private readonly items = new Map<string, Account>();
@@ -48,6 +79,13 @@ class InMemoryAccountRepository implements AccountRepository {
     this.items.set(account.id, account);
     return account;
   }
+
+  async mutate(id: string, mutation: Mutation<Account>): Promise<Account | null> {
+    const next = mutation(this.items.get(id) ?? null);
+    if (next) this.items.set(id, next);
+    else this.items.delete(id);
+    return next;
+  }
 }
 
 class InMemorySessionRepository implements SessionRepository {
@@ -77,6 +115,13 @@ class InMemorySessionRepository implements SessionRepository {
   async update(session: Session): Promise<Session> {
     this.items.set(session.id, session);
     return session;
+  }
+
+  async mutate(id: string, mutation: Mutation<Session>): Promise<Session | null> {
+    const next = mutation(this.items.get(id) ?? null);
+    if (next) this.items.set(id, next);
+    else this.items.delete(id);
+    return next;
   }
 }
 
@@ -171,9 +216,11 @@ export function createInMemoryAuthRepositories(
   overrides: Partial<IdentityRepositories> = {},
 ): IdentityRepositories {
   return {
-    accounts: overrides.accounts ?? new InMemoryAccountRepository(),
+    accounts: overrides.accounts ??
+      withUniqueAccounts(new InMemoryAccountRepository(), new InMemoryClaims()),
     sessions: overrides.sessions ?? new InMemorySessionRepository(),
-    credentials: overrides.credentials ?? new InMemoryCredentialRepository(),
+    credentials: overrides.credentials ??
+      withUniqueCredentials(new InMemoryCredentialRepository(), new InMemoryClaims()),
     attempts: overrides.attempts ?? new InMemoryAuthAttemptRepository(),
     authorizationFlows:
       overrides.authorizationFlows ?? new InMemoryAuthAuthorizationFlowRepository(),

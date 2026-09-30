@@ -4,19 +4,14 @@ import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
-  type ZelavisServiceRegistryEntry,
-  type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
-  createLocalRuntimeServicePackageInstaller,
-  createLocalRuntimeServiceImporter,
-  createLocalRuntimeServiceManifestResolver,
-  type LocalRuntimeServiceOptions,
+  createLocalServiceSources,
+  type LocalServiceSourceOptions,
 } from "./_local-runtime.js";
-import { officialProjectRecipes } from "../project-recipes.js";
 
 export interface BunAdapterDatabaseOptions {
   /** Directory holding one SQLite file per shard. */
@@ -34,9 +29,7 @@ export interface BunAdapterKeyValueOptions {
   kind?: "memory";
 }
 
-export type BunAdapterServiceOptions = LocalRuntimeServiceOptions & {
-  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
-};
+export type BunAdapterServiceOptions = LocalServiceSourceOptions;
 
 export interface BunAdapterSystemStoreOptions {
   filename?: string;
@@ -89,9 +82,8 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
 
       if (databaseOptions !== false) {
-        // One store implementation, built on `node:sqlite`, which Bun provides.
-        // A second Bun-specific driver would be a second physical format for
-        // the same logical database.
+        // One store implementation over SQLite. Bun has no `node:sqlite`, so the
+        // engine binds `bun:sqlite` there; the file format is the same.
         nextSubsystems.database = {
           directory: databaseOptions.directory
             ? resolve(databaseOptions.directory)
@@ -104,8 +96,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         };
       }
 
-      const serviceOptions = options.services === false ? undefined : options.services;
-      const serviceDirectory = join(dataDirectory, "services");
       const fileStorage =
         options.files === false
           ? undefined
@@ -114,39 +104,25 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
+      // The same sources the Node adapter serves: the official catalog, the
+      // runtime's own services folder, installed packages and folder frontends.
+      const serviceSources = await createLocalServiceSources({
+        dataDirectory,
+        services: options.services,
+        isProjectRuntime,
+        fileStorage,
+      });
 
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
-        serviceRegistry:
-          options.services === false
-            ? undefined
-            : {
-                catalog: isProjectRuntime
-                  ? []
-                  : [
-                      ...officialProjectRecipes,
-                      ...(serviceOptions?.catalog ?? []),
-                    ],
-                importer: createLocalRuntimeServiceImporter({
-                  directory: serviceDirectory,
-                  ...(serviceOptions ?? {}),
-                }),
-                // Supplied per runtime rather than installed process-globally,
-                // so two embedded runtimes cannot affect each other.
-                manifestResolver: createLocalRuntimeServiceManifestResolver(),
-              },
+        ...(serviceSources.bundleStore ? { bundleStore: serviceSources.bundleStore } : {}),
+        serviceRegistry: serviceSources.serviceRegistry,
         resources: {
           systemStore,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
-          servicePackages:
-            options.services === false
-              ? undefined
-              : createLocalRuntimeServicePackageInstaller({
-                  directory: serviceDirectory,
-                  ...(serviceOptions ?? {}),
-                }),
+          servicePackages: serviceSources.servicePackages,
         },
         metadata: {
           runtime: "bun",

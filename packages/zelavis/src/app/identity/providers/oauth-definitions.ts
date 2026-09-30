@@ -80,9 +80,8 @@ export function oidcProvider(
  *
  * Only GitHub, and only because it is not OIDC: it issues no ID token, so its
  * profile endpoint and claim mapping are real code rather than a list of URLs.
- * Google used to sit beside it and no longer does — every OIDC issuer is
- * reached by pasting its issuer URL, which is why shipping a curated list of
- * popular providers is not a problem this package has to have.
+ * Every OIDC issuer is reached by pasting its issuer URL, so there is no curated
+ * list of popular providers to ship.
  */
 export const builtInOAuthProviders: readonly OAuthProviderDefinition[] =
   Object.freeze([githubProvider]);

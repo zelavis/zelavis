@@ -1,6 +1,6 @@
 /**
  * Platform file storage: object metadata, checksums, file references, and the
- * storage core service routes.
+ * storage subsystem routes.
  *
  * Split out of the Platform composition so the storage surface reads as one
  * unit. Contracts live in `storage-types.ts` so adapters can depend on the
@@ -21,7 +21,7 @@ import type {
   ZelavisFileStorageEntry,
   ZelavisStorageOptions,
 } from "./storage-types.js";
-import type { ZelavisRuntimeService } from "../core/index.js";
+import type { ZelavisEndpointGroup } from "../core/index.js";
 
 /** Metadata key under which an uploaded object's SHA-256 checksum is stored. */
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
@@ -135,14 +135,14 @@ export function createFileReference(
 }
 
 
-export async function resolveStorageCoreService(
+export async function resolveStorageEndpointGroup(
   option: ZelavisStorageOptions | undefined,
   context: {
     rootPath: string;
     apiPrefix: string;
     apiVersion: string;
   },
-): Promise<ZelavisRuntimeService<any> | undefined> {
+): Promise<ZelavisEndpointGroup<any> | undefined> {
   const storageOption = option ?? false;
 
   if (storageOption === false) {
@@ -157,16 +157,12 @@ export async function resolveStorageCoreService(
   }
 
   return {
-    name: "@zelavis/storage",
+    id: "storage",
     basePath: "/storage",
-    menu: {
-      title: "Storage",
-      path: "/storage",
-      surface: "core",
-    },
-    service: {
+    context: {
       storage,
     },
+    origin: { type: "subsystem", subsystem: "storage" },
     api: {
       v1: [
         {
@@ -359,4 +355,3 @@ export async function resolveStorageCoreService(
     },
   };
 }
-

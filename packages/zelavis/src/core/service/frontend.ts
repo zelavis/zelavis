@@ -4,8 +4,7 @@
  * A Frontend is what a Project serves to its visitors. It is deliberately not a
  * "theme": a theme implies presentation over a content model the host owns,
  * while a Frontend may be a complete application that brings its own routing
- * and data. The retired website service tried to be the former and could only
- * ever render one fixed shape.
+ * and data.
  *
  * Two runtimes, and the difference is a trust and resource decision rather than
  * a packaging detail:

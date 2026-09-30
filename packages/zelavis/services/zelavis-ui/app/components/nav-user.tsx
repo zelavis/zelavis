@@ -454,10 +454,10 @@ function buildUtilityPanel({
           {
             title: "Security checklist",
             icon: ShieldCheck,
-            url: "/security",
+            url: "/server/security",
           },
           { title: "Server logs", icon: Bell, url: "/server/logs" },
-          { title: "Resource usage", icon: Boxes, url: "/resources" },
+          { title: "Resource usage", icon: Boxes, url: "/server/resources" },
         ],
       }
     case "search":

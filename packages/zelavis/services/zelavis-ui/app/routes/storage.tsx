@@ -77,7 +77,7 @@ const storageSchema = {
 function StorageRoute() {
   const { files: filesResult, metadata } = useLoaderData<typeof clientLoader>();
   const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
-  const storageEnabled = config.services.some((service) => service.name === "@zelavis/storage");
+  const storageEnabled = config.capabilities?.storage?.available ?? false;
   const [{ prefix, path: selectedPath }, setParams] = useTypedSearchParams(storageSchema);
   const setPrefix = (value: string) => setParams({ prefix: value || null });
   const setSelectedPath = (value: string | undefined) => setParams({ path: value ?? null });
@@ -102,7 +102,7 @@ function StorageRoute() {
   const metadataResource = { data: metadata };
 
   const fileCount = filesResource.data?.files.length ?? 0;
-  const databaseEnabled = config.services.some((service) => service.name === "@zelavis/db");
+  const databaseEnabled = config.capabilities?.database?.available ?? false;
   const totalSize = useMemo(
     () =>
       (filesResource.data?.files ?? []).reduce(

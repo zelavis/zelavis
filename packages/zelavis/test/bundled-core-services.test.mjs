@@ -16,7 +16,7 @@ function bundledNames() {
   );
 }
 
-test("a core service is found in the distribution's own services folder", () => {
+test("a bundled package is found in the distribution's own services folder", () => {
   for (const name of [
     "@zelavis/app",
     "@zelavis/auth",
@@ -42,7 +42,7 @@ test("a name that does not ship here resolves to nothing", () => {
   assert.equal(resolveBundledServiceDirectory(""), undefined);
 });
 
-test("a core service manifest resolves without being installed", () => {
+test("a bundled package's manifest resolves without being installed", () => {
   // The point of the bundled lookup: these names are no longer declared as
   // dependencies, so import.meta.resolve cannot find them in node_modules.
   // Resolution has to come from the folder that ships beside the code.

@@ -37,10 +37,10 @@ async function runningPid(stateDirectory) {
 }
 
 const RECIPE = {
-  name: "zelavis/app",
+  name: "@zelavis/app",
   title: "Zelavis App",
   version: "1.0.0-test",
-  specifier: "zelavis/app",
+  specifier: "@zelavis/app",
 };
 
 /**
@@ -280,8 +280,8 @@ test("a Project the operator stopped is not left running by adoption", async () 
   const store = createMemorySystemStore();
   const recipes = [
     {
-      service: { name: "zelavis/app", kind: "app", version: "1.0.0-test", api: {}, service: {} },
-      specifier: "zelavis/app",
+      service: { name: "@zelavis/app", kind: "app", version: "1.0.0-test", api: {}, service: {} },
+      specifier: "@zelavis/app",
       status: "available",
       source: "official",
       order: 0,

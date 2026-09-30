@@ -25,6 +25,11 @@ import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
 } from "./system-store.js";
+import type {
+  ProjectPlacementAuthority,
+  ProjectPlacementRecord,
+  ProjectPlacementToken,
+} from "./platform/project-placement-authority.js";
 
 export type ZelavisProjectRuntimeStatus =
   | "provisioning"
@@ -65,6 +70,11 @@ export interface ZelavisProjectRecipeLock {
   runtimeKinds: readonly ZelavisProjectRuntimeKind[];
   /** Isolation declared by this exact recipe version, locked with it. */
   isolation?: ZelavisProjectIsolationIntent;
+  /**
+   * Content digest of the recipe package materialized into the Project. A
+   * runtime that finds one runs that artifact, not the Platform's copy.
+   */
+  artifact?: { digest: string };
 }
 
 export interface ZelavisProjectDescriptor {
@@ -154,8 +164,13 @@ export interface ZelavisProjectRuntimeDriver {
     project: ZelavisProjectRecord,
     recipe: ZelavisProjectRecipeLock,
   ): Promise<void>;
-  start(project: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeSnapshot>;
+  start(
+    project: ZelavisProjectRecord,
+    placement?: ProjectPlacementToken,
+  ): Promise<ZelavisProjectRuntimeSnapshot>;
   stop(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
+  /** Destination proof required before taking over an expired owner. */
+  fencePrevious?(placement: ProjectPlacementToken): Promise<boolean>;
   /**
    * Takes back Projects this host is still running.
    *
@@ -324,14 +339,11 @@ export class ZelavisProjectDeletionError extends Error {
 }
 
 const PROJECTS_NAMESPACE = "projects";
-const DEFAULT_PROJECT_RECIPE_NAME = "zelavis/app";
+const DEFAULT_PROJECT_RECIPE_NAME = "@zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_RUNTIME_KIND: ZelavisProjectRuntimeKind = "native";
 const OWNED_PROJECTS_CLEANUP_PARTICIPANT = "owned-projects";
 const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
-const RETIRED_OFFICIAL_RECIPE_LOCKS = new Map([
-  ["@zelavis/app", DEFAULT_PROJECT_RECIPE_NAME],
-]);
 
 function normalizeConcurrency(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) {
@@ -483,7 +495,7 @@ function applySnapshot(
 }
 
 function projectKindFromRecipe(recipeName: string): ZelavisProjectKind {
-  if (recipeName === "zelavis/app" || recipeName === "@zelavis/app") {
+  if (recipeName === "@zelavis/app") {
     return "zelavis";
   }
 
@@ -564,9 +576,7 @@ function normalizeRecipeRuntimeKinds(
 }
 
 function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProjectRecipeLock {
-  // `app` was the pre-recipe field name. Reading it here is a one-time stored
-  // data migration; repaired records are immediately rewritten with `recipe`.
-  const rawRecipe = rawProject.recipe ?? rawProject.app;
+  const rawRecipe = rawProject.recipe;
   if (!isObjectRecord(rawRecipe)) {
     throw new ZelavisProjectValidationError(
       "Stored project record is missing its Project recipe lock.",
@@ -634,6 +644,26 @@ export interface ZelavisProjectDispatcher {
     readonly projectId: string;
     readonly nodeId: string;
   }): Promise<void>;
+  /** Signs one short-lived, destination-bound start or stop attempt. */
+  authorizeDispatch?(request: {
+    readonly action: "start" | "stop";
+    readonly placement: ProjectPlacementToken;
+  }): Promise<string>;
+  /** Publishes a signed committed lease to the destination Agent. */
+  dispatchLeaseFenced?(placement: ProjectPlacementRecord): Promise<void>;
+  /** Remote Agent transport that validates committed placement at execution. */
+  dispatchStartFenced?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+    readonly placement: ProjectPlacementToken;
+    readonly authority: string;
+  }): Promise<void>;
+  dispatchStopFenced?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+    readonly placement: ProjectPlacementToken;
+    readonly authority: string;
+  }): Promise<void>;
 }
 
 /**
@@ -674,6 +704,8 @@ export async function createProjectManager(options: {
    * before.
    */
   placement?: () => ZelavisProjectPlacementAuthority | undefined;
+  /** Durable Platform ownership. When set, plans alone never authorize start. */
+  authoritativePlacement?: ProjectPlacementAuthority;
   /**
    * Which node this host is, and how to reach the others.
    *
@@ -702,6 +734,30 @@ export async function createProjectManager(options: {
     );
   }
   const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
+  const placementSession = crypto.randomUUID();
+  const placementLeaseMs = 60_000;
+  const localPlacementNodeId = options.dispatch?.()?.localNodeId ?? "local";
+  const ownedPlacements = new Map<string, ProjectPlacementToken>();
+  const placementRenewal = options.authoritativePlacement
+    ? setInterval(() => {
+        void mapWithConcurrency(
+          [...ownedPlacements.values()],
+          startupConcurrency,
+          async (token) => {
+            const renewed = await options.authoritativePlacement!.renew(token, placementLeaseMs);
+            if (!renewed.granted) {
+              ownedPlacements.delete(token.projectId);
+              if (token.nodeId === localPlacementNodeId) {
+                await runtime.stop(token.projectId).catch(() => undefined);
+              }
+            } else if (token.nodeId !== localPlacementNodeId) {
+              await options.dispatch?.()?.dispatchLeaseFenced?.(renewed.placement);
+            }
+          },
+        ).catch(() => undefined);
+      }, placementLeaseMs / 3)
+    : undefined;
+  placementRenewal?.unref?.();
 
   function assessIsolation(
     descriptor: Readonly<ZelavisProjectDescriptor>,
@@ -825,12 +881,6 @@ export async function createProjectManager(options: {
       .flatMap((entry) => [
         [entry.service.name, entry] as const,
         ...(entry.specifier ? [[entry.specifier, entry] as const] : []),
-        ...(entry.service.name === "zelavis/app" || entry.specifier === "zelavis/app"
-          ? [["@zelavis/app", entry] as const]
-          : []),
-        ...(entry.service.name === "@zelavis/app" || entry.specifier === "@zelavis/app"
-          ? [["zelavis/app", entry] as const]
-          : []),
       ]),
   );
 
@@ -856,20 +906,7 @@ export async function createProjectManager(options: {
     const rawRecord = rawProject as unknown as Record<string, unknown>;
     const storedRecipe = readStoredRecipeLock(rawRecord);
     const deletion = readStoredDeletionState(rawRecord);
-    const replacementName =
-      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.name) ??
-      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.specifier);
-    const replacement = replacementName
-      ? projectRecipeMap.get(replacementName)
-      : undefined;
-    const recipe = replacement
-      ? {
-          ...storedRecipe,
-          name: replacement.service.name,
-          title: recipeTitleFromService(replacement.service),
-          specifier: replacement.specifier ?? replacement.service.name,
-        }
-      : storedRecipe;
+    const recipe = storedRecipe;
     const storedOwner =
       typeof (rawProject as { ownerProjectId?: unknown }).ownerProjectId === "string"
         ? ((rawProject as { ownerProjectId: string }).ownerProjectId)
@@ -1000,6 +1037,18 @@ export async function createProjectManager(options: {
     }
 
     const snapshot = await runtime.status(project.id);
+    // A start that failed before any process existed (a recipe that cannot be
+    // prepared, a refused placement) leaves the driver with nothing to report.
+    // "Nothing running" must not erase the reason: the failure stays until the
+    // next lifecycle action replaces it.
+    if (
+      project.runtime.status === "failed" &&
+      project.runtime.error &&
+      snapshot.status === "stopped" &&
+      !snapshot.error
+    ) {
+      return project;
+    }
     const unchanged =
       snapshot.status === project.runtime.status &&
       snapshot.url === project.runtime.url &&
@@ -1050,7 +1099,7 @@ export async function createProjectManager(options: {
     });
 
     try {
-      const stopped = await runtime.stop(project.id);
+      const stopped = await stopPlacedRuntime(project.id);
       project = await write({
         ...applySnapshot(project, stopped),
         deletion: {
@@ -1177,7 +1226,12 @@ export async function createProjectManager(options: {
   }> {
     const empty = { blocked: new Set<string>(), elsewhere: new Map<string, string>() };
     const authority = options.placement?.();
-    if (!authority) return empty;
+    if (!authority) {
+      if (options.authoritativePlacement) {
+        throw new ZelavisProjectValidationError("Platform Fabric planning is unavailable.");
+      }
+      return empty;
+    }
 
     const requests: FabricProjectPlacementRequest[] = [];
     for (const record of records) {
@@ -1204,36 +1258,138 @@ export async function createProjectManager(options: {
       });
     }
 
-    const localNodeId = options.dispatch?.()?.localNodeId;
+    const localNodeId = options.authoritativePlacement
+      ? localPlacementNodeId
+      : options.dispatch?.()?.localNodeId;
 
     // Nothing owns anything and this host does not know which node it is, so
     // there is no group to violate and no assignment to compare against.
-    if (!localNodeId && !requests.some((request) => request.ownerProjectId)) {
+    if (!localNodeId && !requests.some((request) => request.ownerProjectId) &&
+        !options.authoritativePlacement) {
       return empty;
     }
 
     const plan = await authority
       .planProjectPlacements(requests)
       .catch(() => undefined);
-    if (!plan) return empty;
+    if (!plan) return options.authoritativePlacement
+      ? { blocked: new Set(requests.map((request) => request.identity.workloadId)), elsewhere: new Map() }
+      : empty;
 
     const blocked = new Set<string>();
     for (const replica of plan.unplaced) {
-      if (BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {
+      if (options.authoritativePlacement || BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {
         blocked.add(replica.identity.workloadId);
       }
     }
 
     const elsewhere = new Map<string, string>();
-    if (localNodeId) {
-      for (const replica of plan.replicas) {
-        if (replica.runtimeNodeId !== localNodeId) {
-          elsewhere.set(replica.identity.workloadId, replica.runtimeNodeId);
+    for (const replica of plan.replicas) {
+      const projectId = replica.identity.workloadId;
+      let nodeId = replica.runtimeNodeId;
+      if (options.authoritativePlacement) {
+        const committed = await ensureCommittedPlacement(projectId, nodeId);
+        if (!committed) {
+          blocked.add(projectId);
+          continue;
         }
+        nodeId = committed.nodeId;
+      }
+      if (localNodeId && nodeId !== localNodeId) {
+        elsewhere.set(projectId, nodeId);
       }
     }
 
     return { blocked, elsewhere };
+  }
+
+  async function ensureCommittedPlacement(
+    projectId: string,
+    plannedNodeId: string,
+  ): Promise<ProjectPlacementRecord | undefined> {
+    const authority = options.authoritativePlacement;
+    if (!authority) return undefined;
+    const current = await authority.current(projectId);
+    if (current?.state === "active" && current.leaseExpiresAt > Date.now()) {
+      // An older Platform session still owns it. Wait for its expiry or an
+      // explicit stop; never start or redispatch a second copy.
+      if (current.ownerSession !== placementSession) return undefined;
+      const claim = {
+        projectId, nodeId: current.nodeId,
+        ownerSession: placementSession, epoch: current.epoch,
+      };
+      const renewed = await authority.renew(claim, placementLeaseMs);
+      if (!renewed.granted) return undefined;
+      ownedPlacements.set(projectId, claim);
+      return renewed.placement;
+    }
+    if (current?.state === "active" && current.ownerSession === placementSession &&
+        current.nodeId === localPlacementNodeId) {
+      await runtime.stop(projectId);
+    }
+    const activated = await authority.acquire({
+      projectId, nodeId: plannedNodeId, ownerSession: placementSession,
+      expectedEpoch: current?.epoch ?? 0, leaseMs: placementLeaseMs,
+    });
+    if (!activated.granted) return undefined;
+    ownedPlacements.set(projectId, {
+      projectId, nodeId: activated.placement.nodeId,
+      ownerSession: placementSession, epoch: activated.placement.epoch,
+    });
+    return activated.placement;
+  }
+
+  async function localPlacementToken(projectId: string): Promise<ProjectPlacementToken | undefined> {
+    const authority = options.authoritativePlacement;
+    if (!authority) return undefined;
+    const token = ownedPlacements.get(projectId);
+    if (!token || token.nodeId !== localPlacementNodeId ||
+        !(await authority.validate(token))) {
+      throw new ZelavisProjectValidationError(
+        `Project "${projectId}" has no current local Fabric placement.`,
+      );
+    }
+    return token;
+  }
+
+  async function stopPlacedRuntime(projectId: string): Promise<ZelavisProjectRuntimeSnapshot> {
+    const token = ownedPlacements.get(projectId);
+    if (options.authoritativePlacement && !token) {
+      const current = await options.authoritativePlacement.current(projectId);
+      if (current?.state === "active" && current.leaseExpiresAt > Date.now() &&
+          current.nodeId !== localPlacementNodeId) {
+        throw new ZelavisProjectValidationError(
+          `Project "${projectId}" is remotely owned; this host cannot confirm its stop.`,
+        );
+      }
+    }
+    if (options.authoritativePlacement && token && token.nodeId !== localPlacementNodeId) {
+      if (!options.dispatch?.()?.dispatchStopFenced ||
+          !options.dispatch?.()?.authorizeDispatch) {
+        throw new ZelavisProjectValidationError(
+          `Project "${projectId}" has no fenced remote stop path.`,
+        );
+      }
+      const authority = await options.dispatch()!.authorizeDispatch!({ action: "stop", placement: token });
+      await options.dispatch()!.dispatchStopFenced!({
+        projectId, nodeId: token.nodeId, placement: token, authority,
+      });
+      const released = await options.authoritativePlacement.release(token);
+      if (!released.granted) throw new ZelavisProjectValidationError(
+        `Project "${projectId}" lost placement authority during stop.`,
+      );
+      ownedPlacements.delete(projectId);
+      return { status: "stopped" };
+    }
+    const stopped = await runtime.stop(projectId);
+    if (token && options.authoritativePlacement) {
+      const released = await options.authoritativePlacement.release(token);
+      if (!released.granted) throw new ZelavisProjectValidationError(
+        `Project "${projectId}" lost placement authority during stop.`,
+      );
+      ownedPlacements.delete(projectId);
+    }
+    return stopped;
   }
 
   /**
@@ -1261,8 +1417,9 @@ export async function createProjectManager(options: {
       // and before `prepare`, so the driver never runs for it.
       const refusal = isolationRefusal(project);
       if (refusal) throw refusal;
+      const placement = await localPlacementToken(project.id);
       await runtime.prepare(project, project.recipe);
-      return write(applySnapshot(project, await runtime.start(project)));
+      return write(applySnapshot(project, await runtime.start(project, placement)));
     } catch (error) {
       const failed = {
         ...project,
@@ -1295,6 +1452,11 @@ export async function createProjectManager(options: {
     const placement = await resolvePlacementDecisions(records, {
       alsoPlan: projectId,
     });
+    if (placement.blocked.has(projectId)) {
+      throw new ZelavisProjectValidationError(
+        `Project "${projectId}" has no committed Fabric placement.`,
+      );
+    }
     return placement.elsewhere.get(projectId);
   }
 
@@ -1314,10 +1476,34 @@ export async function createProjectManager(options: {
   ): Promise<void> {
     const dispatcher = options.dispatch?.();
     const now = new Date().toISOString();
+    if (project.desiredState !== "running") {
+      project = await write({ ...project, desiredState: "running", updatedAt: now });
+    }
 
-    if (dispatcher?.dispatchStart) {
+    const placement = ownedPlacements.get(project.id);
+    const fencedDispatch = options.authoritativePlacement !== undefined;
+    if (dispatcher && (fencedDispatch
+      ? dispatcher.dispatchStartFenced && dispatcher.dispatchStopFenced &&
+        dispatcher.dispatchLeaseFenced &&
+        dispatcher.authorizeDispatch && placement
+      : dispatcher.dispatchStart)) {
       try {
-        await dispatcher.dispatchStart({ projectId: project.id, nodeId });
+        if (fencedDispatch) {
+          if (!placement || placement.nodeId !== nodeId ||
+              !(await options.authoritativePlacement!.validate(placement))) {
+            throw new Error("The remote Project placement is no longer current.");
+          }
+          const committed = await options.authoritativePlacement!.current(project.id);
+          if (!committed || committed.epoch !== placement.epoch ||
+              committed.ownerSession !== placement.ownerSession) {
+            throw new Error("The remote Project lease is no longer committed.");
+          }
+          await dispatcher.dispatchLeaseFenced!(committed);
+          const authority = await dispatcher.authorizeDispatch!({ action: "start", placement });
+          await dispatcher.dispatchStartFenced!({ projectId: project.id, nodeId, placement, authority });
+        } else {
+          await dispatcher.dispatchStart!({ projectId: project.id, nodeId });
+        }
         await write({
           ...project,
           placement: { nodeId, dispatchedAt: now },
@@ -1527,13 +1713,22 @@ export async function createProjectManager(options: {
       const assignedNodeId = await resolveAssignedNodeElsewhere(placed.id);
       if (assignedNodeId !== undefined) {
         await dispatchElsewhere(placed, assignedNodeId);
-        const dispatched = options.dispatch?.()?.dispatchStart !== undefined;
+        const dispatched = options.authoritativePlacement
+          ? options.dispatch?.()?.dispatchStartFenced !== undefined &&
+            options.dispatch?.()?.dispatchStopFenced !== undefined &&
+            options.dispatch?.()?.dispatchLeaseFenced !== undefined &&
+            options.dispatch?.()?.authorizeDispatch !== undefined
+          : options.dispatch?.()?.dispatchStart !== undefined;
         if (!dispatched) {
           throw new ZelavisProjectValidationError(
             `Project "${placed.id}" is placed on node "${assignedNodeId}", which this host cannot start Projects on.`,
           );
         }
-        return requireProject(id);
+        const dispatchedProject = await requireProject(id);
+        if (dispatchedProject.placement?.error) {
+          throw new ZelavisProjectValidationError(dispatchedProject.placement.error);
+        }
+        return dispatchedProject;
       }
 
       return startLocally(id);
@@ -1551,7 +1746,7 @@ export async function createProjectManager(options: {
         runtime: { driver: runtime.name, status: "stopping" },
         updatedAt: new Date().toISOString(),
       });
-      return write(applySnapshot(project, await runtime.stop(project.id)));
+      return write(applySnapshot(project, await stopPlacedRuntime(project.id)));
       });
     },
     async restart(id) {
@@ -1562,13 +1757,27 @@ export async function createProjectManager(options: {
       // discover it may not be started again.
       const refusal = isolationRefusal(project);
       if (refusal) throw refusal;
+      if (options.authoritativePlacement) {
+        const assigned = await resolveAssignedNodeElsewhere(project.id);
+        if (assigned) {
+          throw new ZelavisProjectValidationError(
+            `Project "${project.id}" is placed on node "${assigned}" and cannot restart here.`,
+          );
+        }
+      }
       project = await write({
         ...project,
         desiredState: "running",
         runtime: { driver: runtime.name, status: "stopping" },
         updatedAt: new Date().toISOString(),
       });
-      await runtime.stop(project.id);
+      await stopPlacedRuntime(project.id);
+      if (options.authoritativePlacement &&
+          !(await ensureCommittedPlacement(project.id, localPlacementNodeId))) {
+        throw new ZelavisProjectValidationError(
+          `Project "${project.id}" could not reacquire its local Fabric placement.`,
+        );
+      }
       project = await write({
         ...project,
         runtime: { driver: runtime.name, status: "starting" },
@@ -1576,8 +1785,9 @@ export async function createProjectManager(options: {
       });
 
       try {
+        const placement = await localPlacementToken(project.id);
         await runtime.prepare(project, project.recipe);
-        return write(applySnapshot(project, await runtime.start(project)));
+        return write(applySnapshot(project, await runtime.start(project, placement)));
       } catch (error) {
         const failed = {
           ...project,
@@ -1684,18 +1894,34 @@ export async function createProjectManager(options: {
             }
           },
         );
-      })();
+      })().finally(() => {
+        reconciliationPromise = undefined;
+      });
       return reconciliationPromise;
     },
     close() {
       closePromise ??= (async () => {
         closing = true;
+        if (reconciliationTimer) clearInterval(reconciliationTimer);
+        if (placementRenewal) clearInterval(placementRenewal);
         await reconciliationPromise?.catch(() => undefined);
         await runtime.close();
+        for (const token of ownedPlacements.values()) {
+          if (token.nodeId === localPlacementNodeId) {
+            await options.authoritativePlacement?.release(token).catch(() => undefined);
+          }
+        }
       })();
       return closePromise;
     },
   };
+
+  // An old owner may expire after a control-plane restart. Retry boundedly so
+  // a blocked Project becomes runnable without an operator pressing Start.
+  const reconciliationTimer = options.authoritativePlacement
+    ? setInterval(() => { void manager.reconcile().catch(() => undefined); }, 15_000)
+    : undefined;
+  reconciliationTimer?.unref?.();
 
   if (options.autoReconcile !== false) {
     void manager.reconcile();

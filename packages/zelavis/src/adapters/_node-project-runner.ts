@@ -4,6 +4,7 @@ import { defineAdapter, Zelavis } from "../index.js";
 import { closeNodeServer, createNodeServer } from "../runtimes/node.js";
 import { toDefaultErrorResponse } from "../core/runtime/request-dispatcher.js";
 import { nodeAdapter } from "./node.js";
+import { loadRecipeArtifact } from "./_recipe-artifact.js";
 import {
   createGatewayNonceTracker,
   verifyGatewayAuthority,
@@ -49,6 +50,27 @@ if (
 const lockedRecipeName = recipe.name;
 const lockedRecipeVersion = recipe.version;
 const lockedRecipeSpecifier = recipe.specifier;
+
+// The exact locked recipe: the artifact materialized into this Project, verified
+// against its recorded digest. A Project without one was never prepared and
+// does not start; the Platform's own copy is never substituted for it.
+const lockedArtifact = (recipe as { artifact?: { digest?: unknown } }).artifact;
+if (typeof lockedArtifact?.digest !== "string") {
+  throw new Error(
+    `Project recipe ${lockedRecipeName}@${lockedRecipeVersion} has no frozen artifact; prepare the Project again.`,
+  );
+}
+const lockedRecipe = await loadRecipeArtifact(resolve(dataDirectory), {
+  name: lockedRecipeName,
+  version: lockedRecipeVersion,
+  digest: lockedArtifact.digest,
+}).then(({ service, manifest }) => ({
+  service,
+  specifier: lockedRecipeSpecifier,
+  status: "installed" as const,
+  source: "official" as const,
+  manifest,
+}));
 
 const projectNodeAdapter = nodeAdapter({
   role: "project",
@@ -115,16 +137,8 @@ const zv = new Zelavis({
           catalog: [
             ...(resolved?.serviceRegistry?.catalog ?? []),
             {
-              service: {
-                name: lockedRecipeName,
-                version: lockedRecipeVersion,
-                kind: "app",
-                scope: "system",
-                api: {},
-                service: {},
-              },
+              ...lockedRecipe,
               specifier: lockedRecipeSpecifier,
-              status: "installed",
               source: "official",
             },
           ],

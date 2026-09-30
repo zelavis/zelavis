@@ -15,3 +15,4 @@ export * from "./services/session-service.js";
 export * from "./services/security-service.js";
 export * from "./storage/in-memory.js";
 export * from "./storage/database.js";
+export * from "./storage/unique-claims.js";
