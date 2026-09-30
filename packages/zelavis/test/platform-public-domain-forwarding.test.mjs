@@ -257,3 +257,37 @@ test("a composed runtime refuses the dashboard on a bound domain", async () => {
   const dashboard = await runtime.fetch(new Request("http://localhost/zelavis"));
   assert.equal(dashboard.status, 200);
 });
+
+test("host spelling variants of a bound domain never reach the dashboard", async () => {
+  const bindings = createInMemoryDomainBindingStore();
+  await bindings.put({ ...verified(), host: "customer.example" });
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    subsystems: { auth: false, database: false },
+    domainBindings: bindings,
+  });
+
+  for (const host of [
+    "customer.example.",
+    "CUSTOMER.example",
+    "customer.example:8443",
+    "customer.example.:8443",
+  ]) {
+    for (const path of ["/zelavis", "/zelavis/", "/zelavis/api/v1/runtime/projects"]) {
+      const response = await runtime.fetch(new Request(`http://${host}${path}`));
+      assert.equal(response.status, 404, `${host}${path}`);
+    }
+  }
+});
+
+test("an unverified binding does not hide the dashboard", async () => {
+  const bindings = createInMemoryDomainBindingStore();
+  await bindings.put({ ...verified(), host: "pending.example", verifiedAt: undefined });
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    subsystems: { auth: false, database: false },
+    domainBindings: bindings,
+  });
+  const response = await runtime.fetch(new Request("http://pending.example/zelavis"));
+  assert.notEqual(response.status, 404);
+});
