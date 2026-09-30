@@ -1,7 +1,62 @@
 {
   "schemaVersion": 1,
-  "sequence": 1,
-  "issuedAt": "2026-09-30T00:00:00Z",
-  "expiresAt": "2027-09-30T00:00:00Z",
-  "services": []
+  "sequence": 2,
+  "issuedAt": "2026-09-30T14:13:56.360Z",
+  "expiresAt": "2027-09-30T14:13:56.360Z",
+  "services": [
+    {
+      "name": "@zelavis/app-auth-oidc",
+      "kind": "plugin",
+      "maintainer": "zelavis",
+      "title": "OpenID Connect Sign-in",
+      "summary": "Let people sign in with any OpenID Connect provider, or verify bearer tokens from one.",
+      "categories": [
+        "auth",
+        "identity",
+        "official"
+      ],
+      "tags": [
+        "oidc",
+        "jwks",
+        "sso"
+      ],
+      "versions": [
+        {
+          "version": "2.0.0-alpha.3",
+          "integrity": "sha512-3oLa5t4NIHR64mOIV/qqZQA/6MeLjKqwpWpOPMvr8IgFasGSwekdBEh1CF9TSgSjpq8gTCbeUvL2u/bbyzQWFw=="
+        }
+      ],
+      "latest": "2.0.0-alpha.3"
+    },
+    {
+      "name": "@zelavis/wordpress",
+      "kind": "app",
+      "maintainer": "zelavis",
+      "title": "WordPress",
+      "summary": "A native managed WordPress site with dedicated Nginx, PHP-FPM, and MariaDB instances.",
+      "categories": [
+        "apps",
+        "cms",
+        "official"
+      ],
+      "tags": [
+        "wordpress",
+        "cms",
+        "php",
+        "mariadb",
+        "native"
+      ],
+      "runtimeKinds": [
+        "native"
+      ],
+      "projectRuntime": true,
+      "versions": [
+        {
+          "version": "7.1.2",
+          "integrity": "sha512-wLQUhYJWn4QCLf48A+C16HDGFvB9iTxBeejN47eYko1nCuRT+MlDAJXN07dsg3VZErdfUftZ64/R1YBcT0lY0A=="
+        }
+      ],
+      "latest": "7.1.2"
+    }
+  ]
 }
