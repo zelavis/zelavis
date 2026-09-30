@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile }
 import { dirname, join, resolve, sep } from "node:path";
 
 import { createArtifactDigest, type ZelavisArtifactDigest } from "../core/artifact/index.js";
+import { HANDED_DOWN_ALLOWLIST_FILE } from "./_marketplace-allowlist.js";
 import { digestArtifactDirectory } from "./_recipe-artifact.js";
 import { ZELAVIS_VERSION } from "../version.js";
 
@@ -65,7 +66,12 @@ export async function packRemoteProjectSnapshot(
   if (!validProjectId(projectId)) throw new TypeError("Invalid Project id.");
   const root = resolve(projectsDirectory, projectId);
   if (!(await lstat(root)).isDirectory()) throw new Error("Project snapshot root is not a directory.");
-  const files = (await collect(root)).sort((left, right) => left.path.localeCompare(right.path));
+  // The allow-list the Platform handed this Project is the Platform's own file,
+  // not Project data: it neither forks the Project nor travels with it (a remote
+  // Node is handed the list separately).
+  const files = (await collect(root))
+    .filter((file) => file.path !== `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`)
+    .sort((left, right) => left.path.localeCompare(right.path));
   // Only the frozen recipe travels. Anything else under `.zelavis` is Project
   // data (database, uploads, runtime state) that a copy would fork.
   if (files.some((file) => file.path.startsWith(".zelavis/") &&
