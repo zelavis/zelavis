@@ -8,7 +8,7 @@
 # rather than typed into a workflow file so the same command runs in CI and on
 # a laptop.
 #
-# Usage: packages/zelavis/scripts/wordpress-provisioning-container.sh [repo-root]
+# Usage: zelavis-services/wordpress/scripts/wordpress-provisioning-container.sh [repo-root]
 set -euo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
@@ -64,13 +64,15 @@ docker run --rm \
       cd /build
       pnpm install --frozen-lockfile >/dev/null
       pnpm --filter zelavis build >/dev/null
-      node packages/zelavis/scripts/check-wordpress-provisioning.mjs
+      pnpm --filter @zelavis/wordpress build >/dev/null
+      node zelavis-services/wordpress/scripts/check-wordpress-provisioning.mjs
     else
       su node -s /bin/bash -c "
         cd /build
         pnpm install --frozen-lockfile >/dev/null
         pnpm --filter zelavis build >/dev/null
-        node packages/zelavis/scripts/check-wordpress-provisioning.mjs
+        pnpm --filter @zelavis/wordpress build >/dev/null
+        node zelavis-services/wordpress/scripts/check-wordpress-provisioning.mjs
       "
     fi
   '

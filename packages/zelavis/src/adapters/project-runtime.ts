@@ -1,0 +1,44 @@
+/**
+ * What a Project recipe needs to provide the runtime its Projects run under.
+ *
+ * A recipe whose Projects are not Zelavis apps (WordPress, for one) ships its
+ * own runtime in its package instead of the Platform hard-coding it. Its
+ * `package.json` declares `zelavis.project.runtime` (a path inside the package),
+ * and that module exports `createProjectRuntime(context)` returning a driver.
+ *
+ * This is host code: it starts and stops processes with the Platform's
+ * authority. The Platform only loads one from a recipe it has been told may
+ * provide a runtime, and only from the frozen, digest-verified copy inside the
+ * Project, never from the installed package it was copied from.
+ */
+export { ZelavisProjectRuntimeError } from "../project.js";
+export type {
+  ZelavisProjectDescriptor,
+  ZelavisProjectLogEntry,
+  ZelavisProjectRecipeLock,
+  ZelavisProjectRecord,
+  ZelavisProjectRuntimeDriver,
+  ZelavisProjectRuntimeSnapshot,
+} from "../project.js";
+export type {
+  ZelavisAgentProcess,
+  ZelavisAgentProcessRunner,
+} from "../core/agent/process-command.js";
+export { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+
+import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
+import type { ZelavisProjectRuntimeDriver } from "../project.js";
+
+/** What the Platform hands a recipe's runtime when it creates it. */
+export interface ZelavisRecipeRuntimeContext {
+  /** The directory holding every Project's directory. */
+  readonly directory: string;
+  /** The Agent that executes this host's Project processes. */
+  readonly agent: ZelavisAgentProcessRunner;
+  /** Options the operator set for this recipe's runtime. */
+  readonly options: Readonly<Record<string, unknown>>;
+}
+
+export type ZelavisRecipeRuntimeFactory = (
+  context: ZelavisRecipeRuntimeContext,
+) => ZelavisProjectRuntimeDriver;

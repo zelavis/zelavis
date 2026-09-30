@@ -1,0 +1,83 @@
+{
+  "name": "@zelavis/wordpress",
+  "version": "7.1.0",
+  "private": false,
+  "description": "Official Zelavis WordPress Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "app",
+    "namespace": "wordpress",
+    "capabilities": [
+      "app:project",
+      "app:managed",
+      "app:wordpress"
+    ],
+    "project": {
+      "runtimeKinds": [
+        "native"
+      ],
+      "runtime": "./dist/runtime.js"
+    },
+    "marketplace": {
+      "title": "WordPress",
+      "summary": "A native managed WordPress site with dedicated Nginx, PHP-FPM, and MariaDB instances.",
+      "categories": [
+        "apps",
+        "cms",
+        "official"
+      ],
+      "tags": [
+        "wordpress",
+        "cms",
+        "php",
+        "mariadb",
+        "native"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "update:wordpress": "node scripts/update-wordpress-release.mjs",
+    "check:provisioning": "node scripts/check-wordpress-provisioning.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "zelavis-services/wordpress"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/wordpress#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": {
+    "zelavis": ">=2.0.0-alpha.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2",
+    "zelavis": "workspace:*"
+  },
+  "keywords": [
+    "zelavis",
+    "wordpress",
+    "cms",
+    "recipe"
+  ]
+}

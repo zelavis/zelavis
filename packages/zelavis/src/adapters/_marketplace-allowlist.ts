@@ -114,6 +114,14 @@ export interface LocalMarketplace {
   readonly managedDirectories: readonly string[];
   /** What an operator sees and can refresh, through the Platform's own routes. */
   readonly control: ZelavisMarketplaceControl;
+  /** Where the checkout copy of each official service lies, by package name. */
+  readonly localPackages: ReadonlyMap<string, string>;
+  /**
+   * Whether a recipe may provide the runtime its Projects run under: the held
+   * allow-list says so, or it is a package in the operator's own checkout.
+   * Independent of how fresh the list is, so an outage never stops a Project.
+   */
+  runtimeTrusted(name: string): Promise<boolean>;
 }
 
 const CACHE_NAMESPACE = "marketplace-allowlist";
@@ -139,6 +147,8 @@ async function importKeys(keys: readonly MarketplaceTrustedKey[]): Promise<Map<s
 }
 
 interface LocalOfficialService {
+  /** The package declares the runtime its Projects run under. */
+  providesRuntime?: boolean;
   name: string;
   kind: "app" | "plugin" | "frontend";
   version: string;
@@ -159,7 +169,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     zelavis?: {
       kind?: unknown;
       marketplace?: { title?: unknown; summary?: unknown; categories?: unknown; tags?: unknown };
-      project?: { runtimeKinds?: unknown };
+      project?: { runtimeKinds?: unknown; runtime?: unknown };
     };
   };
   try {
@@ -187,6 +197,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     ...(categories ? { categories } : {}),
     ...(tags ? { tags } : {}),
     ...(runtimeKinds ? { runtimeKinds } : {}),
+    ...(typeof manifest.zelavis?.project?.runtime === "string" ? { providesRuntime: true } : {}),
     directory: resolve(directory),
   };
 }
@@ -320,9 +331,17 @@ export async function createLocalMarketplace(input: {
       : {};
   const gate = options.allowlist === false ? undefined : module.createAllowlistGate(client);
 
+  const localRuntimes = new Set(local.filter((entry) => entry.providesRuntime).map((entry) => entry.name));
   return {
     client,
     gate,
+    localPackages: new Map(local.map((entry) => [entry.name, entry.directory])),
+    async runtimeTrusted(name) {
+      if (localRuntimes.has(name)) return true;
+      const held = await client.current();
+      const services = (held?.allowlist.services ?? []) as readonly { name: string; projectRuntime?: boolean }[];
+      return services.some((entry) => entry.name === name && entry.projectRuntime === true);
+    },
     control: {
       gated: gate !== undefined,
       sources: sources.length,

@@ -92,10 +92,6 @@
       "types": "./dist/app/workloads/index.d.ts",
       "import": "./dist/app/workloads/index.js"
     },
-    "./wordpress": {
-      "types": "./dist/wordpress/index.d.ts",
-      "import": "./dist/wordpress/index.js"
-    },
     "./backends": {
       "types": "./dist/backends/index.d.ts",
       "import": "./dist/backends/index.js"
@@ -115,6 +111,10 @@
     "./adapters/bun": {
       "types": "./dist/adapters/bun.d.ts",
       "import": "./dist/adapters/bun.js"
+    },
+    "./adapters/project-runtime": {
+      "types": "./dist/adapters/project-runtime.d.ts",
+      "import": "./dist/adapters/project-runtime.js"
     },
     "./runtimes/node": {
       "types": "./dist/runtimes/node.d.ts",
@@ -171,7 +171,6 @@
     "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json --noEmit && pnpm run diagnostics:effect",
     "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
-    "update:wordpress": "node scripts/update-wordpress-release.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json",
     "bench": "node scripts/bench-engines.mjs",
     "bench:api": "node scripts/bench-api.mjs",

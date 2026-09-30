@@ -152,7 +152,7 @@ jobs:
       - name: Install WordPress from nothing
         env:
           ZELAVIS_PROVISIONING_IDENTITY: ${{ matrix.identity }}
-        run: packages/zelavis/scripts/wordpress-provisioning-container.sh
+        run: zelavis-services/wordpress/scripts/wordpress-provisioning-container.sh
 
   security:
     name: Dependency audit

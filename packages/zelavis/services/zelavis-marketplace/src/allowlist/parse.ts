@@ -84,6 +84,12 @@ function parseService(value: unknown, where: string): AllowlistService {
   const categories = texts(input.categories, `${where}.categories`);
   const tags = texts(input.tags, `${where}.tags`);
   const runtimeKinds = texts(input.runtimeKinds, `${where}.runtimeKinds`);
+  if (input.projectRuntime !== undefined && typeof input.projectRuntime !== "boolean") {
+    throw new AllowlistFormatError(`${where}.projectRuntime must be true or false.`);
+  }
+  if (input.projectRuntime === true && kind !== "app") {
+    throw new AllowlistFormatError(`${where}.projectRuntime is only for Project recipes (kind app).`);
+  }
   return {
     name,
     kind: kind as AllowlistService["kind"],
@@ -93,6 +99,7 @@ function parseService(value: unknown, where: string): AllowlistService {
     ...(categories ? { categories } : {}),
     ...(tags ? { tags } : {}),
     ...(runtimeKinds ? { runtimeKinds } : {}),
+    ...(input.projectRuntime === true ? { projectRuntime: true } : {}),
     versions,
     latest,
   };

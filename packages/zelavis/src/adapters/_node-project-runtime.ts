@@ -35,6 +35,8 @@ export interface NodeProcessProjectRuntimeOptions {
   startupConcurrency?: number;
   shutdownConcurrency?: number;
   logLimit?: number;
+  /** Where an installed or checked-out recipe package lies, so it can be frozen into a Project. */
+  recipePackageDirectory?: (name: string) => Promise<string | undefined> | string | undefined;
 }
 
 interface NodeProjectProcess {
@@ -299,6 +301,7 @@ export function createNodeProcessProjectRuntime(
         recipe,
         directory,
         dataDirectory,
+        options.recipePackageDirectory,
       );
       // Which engine created this Project. The engine that hosts it is still
       // the Platform's own code, so this is recorded, not enforced: it makes

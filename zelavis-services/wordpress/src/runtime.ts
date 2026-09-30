@@ -4,18 +4,17 @@ import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/pro
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
-import type {
-  ZelavisAgentProcess,
-  ZelavisAgentProcessRunner,
-} from "../core/agent/process-command.js";
 import {
+  createLocalAgentProcessRunner,
   ZelavisProjectRuntimeError,
-  type ZelavisProjectRecipeLock,
+  type ZelavisAgentProcess,
+  type ZelavisAgentProcessRunner,
   type ZelavisProjectLogEntry,
+  type ZelavisProjectRecipeLock,
   type ZelavisProjectRecord,
   type ZelavisProjectRuntimeDriver,
-} from "../project.js";
+  type ZelavisRecipeRuntimeContext,
+} from "zelavis/adapters/project-runtime";
 /*
  * Keep host executables shared while every Project owns its service processes,
  * configuration, sockets, ports, logs, credentials, site files, and data.
@@ -77,7 +76,20 @@ interface NativeWordPressExecutables {
   mariadbClient: string;
 }
 
-const WORDPRESS_APP_NAME = "zelavis/wordpress";
+export const WORDPRESS_APP_NAME = "@zelavis/wordpress";
+
+/**
+ * The WordPress release a recipe version installs.
+ *
+ * The package version is semver and WordPress names its `x.y.0` releases `x.y`,
+ * so `7.1.0` installs WordPress 7.1 and `6.9.4` installs 6.9.4. Anything else is
+ * refused rather than guessed at, because the result names a download.
+ */
+export function wordpressRelease(recipeVersion: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(recipeVersion);
+  if (!match) throw new Error(`Invalid locked WordPress version "${recipeVersion}".`);
+  return match[3] === "0" ? `${match[1]}.${match[2]}` : recipeVersion;
+}
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 const LOG_LIMIT = 500;
 const MAX_WORDPRESS_ARCHIVE_BYTES = 64 * 1024 * 1024;
@@ -930,11 +942,9 @@ export function createNativeWordPressProjectRuntime(
         await readFile(join(siteDirectory(project.id), "wp-includes", "version.php"));
       } catch (error) {
         if (!isMissingFileError(error)) throw error;
-        const archive = join(runtimeDirectory(project.id), `wordpress-${recipe.version}.tar.gz`);
-        if (!/^\d+\.\d+(?:\.\d+)?(?:[-a-zA-Z0-9.]*)?$/.test(recipe.version)) {
-          throw new Error(`Invalid locked WordPress version "${recipe.version}".`);
-        }
-        const response = await fetch(`https://wordpress.org/wordpress-${recipe.version}.tar.gz`);
+        const release = wordpressRelease(recipe.version);
+        const archive = join(runtimeDirectory(project.id), `wordpress-${release}.tar.gz`);
+        const response = await fetch(`https://wordpress.org/wordpress-${release}.tar.gz`);
         if (!response.ok || !response.body) throw new Error(`WordPress download failed with HTTP ${response.status}.`);
         const declaredSize = Number(response.headers.get("content-length") ?? 0);
         if (declaredSize > MAX_WORDPRESS_ARCHIVE_BYTES) {
@@ -1110,4 +1120,15 @@ export function createNativeWordPressProjectRuntime(
     },
   };
   return driver;
+}
+
+/** The runtime the Platform loads from the frozen copy of this package. */
+export function createProjectRuntime(context: ZelavisRecipeRuntimeContext): ZelavisProjectRuntimeDriver {
+  const options = context.options as { startupTimeoutMs?: number; user?: string };
+  return createNativeWordPressProjectRuntime({
+    directory: context.directory,
+    agent: context.agent,
+    ...(typeof options.startupTimeoutMs === "number" ? { startupTimeoutMs: options.startupTimeoutMs } : {}),
+    ...(typeof options.user === "string" ? { user: options.user } : {}),
+  });
 }

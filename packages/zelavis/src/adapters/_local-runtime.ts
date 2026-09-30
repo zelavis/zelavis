@@ -16,7 +16,7 @@ import {
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   resolvePackageExportsEntry,
@@ -39,6 +39,7 @@ import type {
 } from "../index.js";
 import { loadPluginPackage } from "../service.js";
 import type { ZelavisSystemStore } from "../system-store.js";
+import { createSystemStoreServiceRegistryStore } from "../platform/settings.js";
 import { createLocalMarketplace, type LocalMarketplace, type MarketplaceOptions } from "./_marketplace-allowlist.js";
 import type {
   ZelavisServiceRegistryEntry,
@@ -66,7 +67,6 @@ import type {
   ZelavisServiceManifestResolver,
   ZelavisServicePackageInstaller,
 } from "../index.js";
-import { wordpressApp } from "../wordpress/index.js";
 import type { ZelavisFileStorage, ZelavisServicePackageInstaller as LocalServicePackageInstaller, ZelavisServiceRegistryOptions } from "../index.js";
 import { createSharedBundleStore } from "../bundle-store.js";
 import type { BundleAsset, BundleScope, BundleStore } from "../bundle-store.js";
@@ -1192,6 +1192,32 @@ export function resolveBundledServiceDirectory(
 }
 
 /**
+ * The directory of a package the marketplace installed, from the registry's own
+ * record of it (the registry stores the path of its entry file).
+ */
+async function installedPackageDirectory(
+  store: ZelavisSystemStore,
+  name: string,
+): Promise<string | undefined> {
+  const entries = await createSystemStoreServiceRegistryStore(store).read();
+  const specifier = entries.find((entry) => entry.name === name)?.specifier;
+  if (!specifier || !isAbsolute(specifier)) return undefined;
+  // Walk up from the entry file to the package.json that names this package.
+  for (let current = dirname(specifier); current !== dirname(current); current = dirname(current)) {
+    const manifest = join(current, "package.json");
+    if (existsSync(manifest)) {
+      try {
+        const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown };
+        if (parsed.name === name) return current;
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Loads a package the host itself selected (bundled, or a recipe artifact it
  * materialized and verified) through the ordinary package loader. Trust comes
  * from that host-side selection, never from anything the package exports.
@@ -1244,29 +1270,18 @@ export async function loadBundledServiceCatalog(
 }
 
 /**
- * The official service catalog every host adapter starts from: the bundled
- * packages, plus the in-tree WordPress recipe until it ships as a package of
- * its own under `services/*`.
+ * The official service catalog every host adapter starts from: the packages the
+ * distribution bundles. Everything else officially maintained (WordPress, and
+ * the rest of `zelavis-services`) comes through the marketplace.
  */
 export async function loadOfficialServiceCatalog(): Promise<
   readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]
 > {
-  const bundled = await loadBundledServiceCatalog([
+  return loadBundledServiceCatalog([
     { name: "@zelavis/app", status: "available", order: 0 },
     { name: "@zelavis/marketplace", status: "installed", order: 10 },
     { name: "@zelavis/auth", status: "installed", order: 20 },
   ]);
-
-  return [
-    ...bundled,
-    Object.freeze({
-      service: wordpressApp,
-      specifier: "zelavis/wordpress",
-      status: "available" as const,
-      source: "official" as const,
-      order: 30,
-    }),
-  ];
 }
 
 const BUNDLE_CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -1697,6 +1712,13 @@ export interface LocalServiceSourcesInput {
 export interface LocalServiceSources {
   /** The marketplace this host built, for its status and refresh operations. */
   marketplace?: LocalMarketplace;
+  /**
+   * Where a recipe package lies: the checkout copy in development, or the copy
+   * the marketplace installed. What Projects are frozen from when it is not bundled.
+   */
+  recipePackageDirectory?: (name: string) => Promise<string | undefined>;
+  /** Whether the marketplace lets a recipe provide the runtime its Projects run under. */
+  recipeRuntimeTrusted?: (name: string) => Promise<boolean>;
   serviceRegistry?: ZelavisServiceRegistryOptions;
   servicePackages?: LocalServicePackageInstaller;
   bundleStore?: BundleStore;
@@ -1796,5 +1818,15 @@ export async function createLocalServiceSources(
     },
     servicePackages: createLocalRuntimeServicePackageInstaller(installerOptions),
     ...(marketplace ? { marketplace } : {}),
+    ...(input.isProjectRuntime
+      ? {}
+      : {
+          recipePackageDirectory: async (name: string) =>
+            marketplace?.localPackages.get(name) ??
+            (input.systemStore
+              ? await installedPackageDirectory(input.systemStore, name)
+              : undefined),
+          ...(marketplace ? { recipeRuntimeTrusted: (name: string) => marketplace.runtimeTrusted(name) } : {}),
+        }),
   };
 }
