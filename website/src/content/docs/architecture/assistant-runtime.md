@@ -100,13 +100,38 @@ Every tool call is shown in chat in the operator's words ("Reading logs for
 site-a"), with its outcome, and refusals are shown as such. The activity is
 saved with the reply, and `tool` stream events carry `id`, `label` and `status`.
 
+### Changes need approval
+
+`start_project`, `stop_project`, `restart_project` and `delete_project` never
+run from the model's call. Once the caller's permission for that Project is
+confirmed, the call becomes an approval request (`approval_required`) stored in
+the System Store with the exact validated arguments, and the model is told it
+has not run. The person decides with
+`POST /zelavis/api/v1/runtime/assistant/threads/:threadId/approvals/:approvalId`
+(`{decision: "approve" | "deny", confirm?}`); the thread reads back with its
+approvals.
+
+- Approval is a second gate, never a substitute: the caller's permission is
+  checked again at approval, against the stored arguments, so a revoked
+  permission stops the change and the model cannot alter what was approved.
+- Only the requester, in that thread, can decide; anyone else gets `404`.
+- The decision is a single compare-and-set out of `pending`, so a double click
+  or replay runs the change once. It is marked `running` before anything runs,
+  and a change that cannot be audited does not run.
+- `delete_project` is irreversible: the target id must be typed out
+  (`confirm`), and the card says so plainly.
+- Requests expire after ten minutes, at most five wait per thread, and the
+  outcome is added to the thread as a message.
+- The dashboard card names the target by id, marks irreversible changes, and has
+  no default action: nothing is focused and Approve is never the Enter key.
+
 ## Next Protocol Work
 
 Real provider adapters should preserve the existing capability boundary while
 adding:
 
 - multi-provider selection and per-Project provider keys
-- mutating tools with human approval requests
+- more mutating tools, and approvals for plugins
 - run progress, logs, generated files, and error state
 - retries, cancellation, branching, and richer thread metadata
 

@@ -90,8 +90,10 @@ import {
   createAssistantToolbox,
   createPlatformStatusTool,
   createProjectDatabaseTools,
+  createProjectLifecycleTools,
   createProjectReadTools,
 } from "./assistant-tools.js";
+import { createAssistantApprovalStore } from "./assistant-approvals.js";
 import {
   AssistantProviderConfigError,
   createAssistantProviderConfig,
@@ -208,6 +210,7 @@ export * from "./assistant.js";
 export * from "./assistant-model.js";
 export * from "./assistant-tools.js";
 export * from "./assistant-provider.js";
+export * from "./assistant-approvals.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -3774,14 +3777,19 @@ async function resolvePlatformEndpointGroup(
       projectErrorResponse,
     }),
   );
+  const assistantApprovals = systemStore
+    ? createAssistantApprovalStore(systemStore)
+    : undefined;
   const assistantToolbox = systemStore
     ? createAssistantToolbox({
         tools: [
           ...createProjectReadTools(() => projects),
           createPlatformStatusTool(() => projects),
           ...createProjectDatabaseTools(assistantProjectReader),
+          ...createProjectLifecycleTools(() => projects),
         ],
         audit: createAssistantToolAudit(systemStore),
+        approvals: assistantApprovals!,
       })
     : undefined;
   // An explicit responder or model in code wins. Otherwise the model is
@@ -4745,7 +4753,13 @@ async function resolvePlatformEndpointGroup(
               }
               const denied = assistantProjectDenied(principal, thread.projectId);
               if (denied) return denied;
-              return { status: 200, body: { thread } };
+              return {
+                status: 200,
+                body: {
+                  thread,
+                  approvals: (await assistantApprovals?.listForThread(thread.id)) ?? [],
+                },
+              };
             } catch (error) {
               return assistantErrorResponse(error);
             }
@@ -4793,6 +4807,88 @@ async function resolvePlatformEndpointGroup(
                   principal,
                 ),
               };
+            } catch (error) {
+              return assistantErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.assistant.approvals.decide",
+          spec: {
+            operationId: "decideAssistantApproval",
+            summary: "Approve or deny a change the Assistant asked to make",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Decided; the change ran if approved" },
+              404: { description: "No such request" },
+              403: { description: "No longer permitted" },
+              409: { description: "Already decided, expired, or the target was not confirmed" },
+            },
+          },
+          method: "POST",
+          path: "/assistant/threads/:threadId/approvals/:approvalId",
+          access: { permissions: ["assistant.use"] },
+          handler: async ({
+            body,
+            params,
+            principal,
+          }: {
+            body: unknown;
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistant || !assistantToolbox) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
+            try {
+              const input = readBodyObject(body);
+              if (input.decision !== "approve" && input.decision !== "deny") {
+                throw new ZelavisAssistantValidationError('decision must be "approve" or "deny".');
+              }
+              const threadId = params.threadId ?? "";
+              const thread = await assistant.get(threadId, principal.id);
+              if (!thread) {
+                throw new ZelavisAssistantNotFoundError(`Assistant thread "${threadId}" was not found.`);
+              }
+              const denied = assistantProjectDenied(principal, thread.projectId);
+              if (denied) return denied;
+
+              const result = await assistantToolbox.resolveApproval(principal, {
+                approvalId: params.approvalId ?? "",
+                threadId,
+                decision: input.decision,
+                ...(typeof input.confirm === "string" ? { confirm: input.confirm } : {}),
+              });
+              if (!result.ok) {
+                const status = result.code === "not_found" ? 404
+                  : result.code === "forbidden" ? 403
+                  : result.code === "audit_unavailable" || result.code === "failed" ? 500
+                  : 409;
+                // A decided request still tells the thread what happened.
+                if (result.approval && result.approval.status !== "pending" &&
+                    (result.code === "failed" || result.code === "forbidden")) {
+                  await assistant.recordOutcome(threadId, principal.id, {
+                    content: result.approval.outcome ?? result.message,
+                    activity: [{ label: result.approval.label, status: "refused" }],
+                  });
+                }
+                return { status, body: { error: result.message, code: result.code,
+                  ...(result.approval ? { approval: result.approval } : {}) } };
+              }
+              const approval = result.approval;
+              const recorded = await assistant.recordOutcome(threadId, principal.id, {
+                content: approval.status === "denied"
+                  ? `Understood. I did not ${approval.label.charAt(0).toLowerCase()}${approval.label.slice(1)}.`
+                  : `${approval.outcome ?? "Done."}`,
+                activity: [{
+                  label: approval.label,
+                  status: approval.status === "executed" ? "done" : "refused",
+                }],
+              });
+              return { status: 200, body: { approval, message: recorded.message } };
             } catch (error) {
               return assistantErrorResponse(error);
             }

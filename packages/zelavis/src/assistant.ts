@@ -16,6 +16,8 @@ export interface ZelavisAssistantMessage {
   actions?: readonly ZelavisAssistantAction[];
   /** What the Assistant looked up to answer, so the reply can show its work. */
   activity?: readonly ZelavisAssistantActivity[];
+  /** Changes this reply asked to make; their state lives with each approval. */
+  approvalIds?: readonly string[];
   createdAt: string;
 }
 
@@ -33,6 +35,7 @@ export interface ZelavisAssistantThread {
 export interface ZelavisAssistantReply {
   content: string;
   activity?: readonly ZelavisAssistantActivity[];
+  approvalIds?: readonly string[];
   actions?: readonly ZelavisAssistantAction[];
 }
 
@@ -46,13 +49,21 @@ export type ZelavisAssistantStreamEvent =
       readonly name: string;
       /** What the call is doing, in the operator's words. */
       readonly label: string;
-      readonly status: "running" | "done" | "refused";
+      readonly status: "running" | "done" | "refused" | "awaiting";
+    }
+  | {
+      /** A change was requested and waits for a person's decision. */
+      readonly type: "approval";
+      readonly id: string;
+      readonly label: string;
+      readonly irreversible: boolean;
+      readonly target: { readonly kind: string; readonly id: string };
     };
 
 /** One tool call as shown in chat, kept with the message it belongs to. */
 export interface ZelavisAssistantActivity {
   readonly label: string;
-  readonly status: "done" | "refused";
+  readonly status: "done" | "refused" | "awaiting";
 }
 
 export interface ZelavisAssistantResponder {
@@ -79,6 +90,15 @@ export interface ZelavisAssistantManager {
   /** `undefined` for a missing thread and for one another principal owns. */
   get(id: string, ownerId: string): Promise<ZelavisAssistantThread | undefined>;
   deleteProjectThreads(projectId: string): Promise<number>;
+  /**
+   * Adds an assistant message without asking the responder, for the result of
+   * something a person decided (an approved or denied change).
+   */
+  recordOutcome(
+    id: string,
+    ownerId: string,
+    message: { content: string; activity?: readonly ZelavisAssistantActivity[] },
+  ): Promise<{ thread: ZelavisAssistantThread; message: ZelavisAssistantMessage }>;
   create(
     ownerId: string,
     input?: {
@@ -201,6 +221,25 @@ export function createAssistantManager(options: {
       }
       return deleted;
     },
+    async recordOutcome(id, ownerId, outcome) {
+      const current = await readOwned(id, ownerId);
+      if (!current) {
+        throw new ZelavisAssistantNotFoundError(`Assistant thread "${id}" was not found.`);
+      }
+      const message: ZelavisAssistantMessage = {
+        id: createId("message"),
+        role: "assistant",
+        content: outcome.content,
+        ...(outcome.activity?.length ? { activity: outcome.activity } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      const thread = await write({
+        ...current,
+        messages: [...current.messages, message],
+        updatedAt: message.createdAt,
+      });
+      return { thread, message };
+    },
     async create(ownerId, input = {}) {
       if (!normalizeOptionalText(ownerId)) {
         throw new ZelavisAssistantValidationError("An Assistant thread needs an owner.");
@@ -270,6 +309,7 @@ export function createAssistantManager(options: {
         content: reply.content,
         ...(reply.actions?.length ? { actions: reply.actions } : {}),
         ...(reply.activity?.length ? { activity: reply.activity } : {}),
+        ...(reply.approvalIds?.length ? { approvalIds: reply.approvalIds } : {}),
         createdAt: new Date().toISOString(),
       };
       const thread = await write({

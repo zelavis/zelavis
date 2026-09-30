@@ -51,3 +51,103 @@ test("@smoke tool activity shows what the Assistant checked, including what it w
   await expect(checked.getByText("Not allowed: Reading logs for secret-project")).toBeVisible()
   await expect(page.getByText("One Project is running.")).toBeVisible()
 })
+
+const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+
+async function scriptApproval(page: import("@playwright/test").Page, approval: {
+  id: string; label: string; irreversible: boolean; target: { kind: string; id: string }
+}) {
+  const createdAt = new Date().toISOString()
+  await page.route("**/messages/stream", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body:
+        sse("tool", { type: "tool", id: "1", name: "x", label: approval.label, status: "running" }) +
+        sse("tool", { type: "tool", id: "1", name: "x", label: approval.label, status: "awaiting" }) +
+        sse("approval", { type: "approval", ...approval }) +
+        sse("text", { type: "text", delta: "I asked for your approval." }) +
+        sse("done", {
+          type: "done",
+          thread: { id: "t" },
+          userMessage: { id: "m1", role: "user", content: "x", createdAt },
+          assistantMessage: {
+            id: "m2", role: "assistant", content: "I asked for your approval.", createdAt,
+            activity: [{ label: approval.label, status: "awaiting" }],
+            approvalIds: [approval.id],
+          },
+        }),
+    }),
+  )
+}
+
+test("@smoke a requested change waits for a person, with nothing focused", async ({ page }) => {
+  await scriptApproval(page, {
+    id: "approval_1", label: "Stop Project site-a", irreversible: false, target: { kind: "project", id: "site-a" },
+  })
+  let decision: unknown
+  await page.route("**/approvals/approval_1", async (route) => {
+    decision = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        approval: { id: "approval_1", threadId: "t", label: "Stop Project site-a", irreversible: false,
+          target: { kind: "project", id: "site-a" }, status: "executed", expiresAt: "", outcome: "Done: Stop Project site-a." },
+        message: { id: "m3", role: "assistant", content: "Done: Stop Project site-a.", createdAt: new Date().toISOString() },
+      }),
+    })
+  })
+
+  await page.goto(`${basePath}/assistant`)
+  await page.getByLabel("Message input").fill("stop site-a")
+  await page.getByRole("button", { name: "Send message" }).click()
+
+  const card = page.getByRole("region", { name: "Approval needed" })
+  await expect(card.getByText("Stop Project site-a")).toBeVisible()
+  await expect(card.getByText("site-a", { exact: true })).toBeVisible()
+  await expect(page.getByText("Waiting for your approval: Stop Project site-a")).toBeVisible()
+  // No default action: neither button holds focus, so Enter approves nothing.
+  const focusedInCard = await card.evaluate((element) => element.contains(document.activeElement))
+  expect(focusedInCard).toBe(false)
+
+  await card.getByRole("button", { name: "Approve" }).click()
+  await expect(card.getByText("Approved. Done: Stop Project site-a.")).toBeVisible()
+  expect(decision).toEqual({ decision: "approve" })
+})
+
+test("@smoke an irreversible change must be confirmed by typing its id", async ({ page }) => {
+  await scriptApproval(page, {
+    id: "approval_2", label: "Delete Project site-a", irreversible: true, target: { kind: "project", id: "site-a" },
+  })
+  let decision: unknown
+  await page.route("**/approvals/approval_2", async (route) => {
+    decision = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        approval: { id: "approval_2", threadId: "t", label: "Delete Project site-a", irreversible: true,
+          target: { kind: "project", id: "site-a" }, status: "denied", expiresAt: "", outcome: "Nothing was changed." },
+        message: { id: "m3", role: "assistant", content: "Understood.", createdAt: new Date().toISOString() },
+      }),
+    })
+  })
+
+  await page.goto(`${basePath}/assistant`)
+  await page.getByLabel("Message input").fill("delete site-a")
+  await page.getByRole("button", { name: "Send message" }).click()
+
+  const card = page.getByRole("region", { name: "Approval needed" })
+  await expect(card.getByRole("alert").filter({ hasText: "This cannot be undone." })).toBeVisible()
+  const approve = card.getByRole("button", { name: "Approve" })
+  await expect(approve).toBeDisabled()
+  await card.getByLabel(/Type site-a to confirm/).fill("site-b")
+  await expect(approve).toBeDisabled()
+  await card.getByLabel(/Type site-a to confirm/).fill("site-a")
+  await expect(approve).toBeEnabled()
+
+  await card.getByRole("button", { name: "Deny" }).click()
+  await expect(card.getByText("Denied. Nothing was changed.")).toBeVisible()
+  expect(decision).toEqual({ decision: "deny" })
+})

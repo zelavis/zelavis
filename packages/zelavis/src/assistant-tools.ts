@@ -21,6 +21,12 @@ import {
   type ZelavisAccessScope,
   type ZelavisPrincipal,
 } from "./core/index.js";
+import {
+  APPROVAL_TTL_MS,
+  MAX_PENDING_APPROVALS_PER_THREAD,
+  type AssistantApproval,
+  type AssistantApprovalStore,
+} from "./assistant-approvals.js";
 import type { ZelavisProjectManager } from "./project.js";
 import type { ZelavisSystemStore } from "./system-store.js";
 
@@ -52,6 +58,14 @@ export interface AssistantTool<TArgs = Record<string, unknown>> {
   execute(args: TArgs, context: { readonly principal: ZelavisPrincipal }): Promise<unknown>;
   /** What this call is doing, in the operator's words, for the activity shown in chat. */
   describe?(args: TArgs): string;
+  /**
+   * Present on tools that change something. They never run from a model's call:
+   * the call becomes a request a person approves, naming this target.
+   */
+  readonly mutation?: {
+    readonly irreversible?: boolean;
+    target(args: TArgs): { readonly kind: string; readonly id: string };
+  };
 }
 
 export type AssistantToolRefusalCode =
@@ -59,6 +73,8 @@ export type AssistantToolRefusalCode =
   | "invalid_arguments"
   | "forbidden"
   | "audit_unavailable"
+  | "approval_required"
+  | "approval_unavailable"
   | "failed";
 
 export type AssistantToolResult =
@@ -70,6 +86,13 @@ export type AssistantToolResult =
         readonly tool: string;
         readonly message: string;
         readonly requires?: AssistantToolRequirement;
+        /** Set with `approval_required`: the request awaiting a person's decision. */
+        readonly approval?: {
+          readonly id: string;
+          readonly label: string;
+          readonly irreversible: boolean;
+          readonly target: { readonly kind: string; readonly id: string };
+        };
       };
     };
 
@@ -79,7 +102,13 @@ export interface AssistantToolAuditRecord {
   readonly principalId: string;
   readonly tool: string;
   readonly arguments: string;
-  readonly decision: "allowed" | "denied" | "invalid" | "failed";
+  readonly decision:
+    | "allowed"
+    | "denied"
+    | "invalid"
+    | "failed"
+    | "pending_approval"
+    | "executed";
   readonly reason?: string;
 }
 
@@ -95,10 +124,39 @@ export interface AssistantToolbox {
   run(
     principal: ZelavisPrincipal,
     call: { readonly name: string; readonly arguments: unknown },
+    context?: { readonly threadId?: string },
   ): Promise<AssistantToolResult>;
   /** A short operator-language label for a call. Never throws and never authorizes. */
   describe(call: { readonly name: string; readonly arguments: unknown }): string;
+  /** A person's decision on a change the Assistant asked to make. */
+  resolveApproval(
+    principal: ZelavisPrincipal,
+    input: {
+      readonly approvalId: string;
+      readonly threadId: string;
+      readonly decision: "approve" | "deny";
+      /** The target's id, typed out, required to approve an irreversible change. */
+      readonly confirm?: string;
+    },
+  ): Promise<AssistantApprovalResult>;
 }
+
+export type AssistantApprovalResult =
+  | { readonly ok: true; readonly approval: AssistantApproval }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "not_found"
+        | "already_decided"
+        | "expired"
+        | "forbidden"
+        | "confirmation_required"
+        | "audit_unavailable"
+        | "failed";
+      readonly message: string;
+      readonly approval?: AssistantApproval;
+    };
+
 
 const MAX_ARGUMENT_AUDIT_CHARS = 4_096;
 const MAX_RESULT_CHARS = 16_384;
@@ -142,6 +200,8 @@ export function createAssistantToolAudit(
 export function createAssistantToolbox(options: {
   readonly tools: readonly AssistantTool<any>[];
   readonly audit: (record: AssistantToolAuditRecord) => Promise<void>;
+  /** Without it, tools that change things are refused rather than run unasked. */
+  readonly approvals?: AssistantApprovalStore;
 }): AssistantToolbox {
   const byName = new Map<string, AssistantTool<any>>();
   for (const tool of options.tools) {
@@ -196,7 +256,9 @@ export function createAssistantToolbox(options: {
         .map(({ name, description, parameters }) => ({ name, description, parameters }));
     },
 
-    async run(principal, call) {
+    resolveApproval,
+
+    async run(principal, call, context) {
       const tool = byName.get(call.name);
       if (!tool) {
         await record(principal, call.name, call.arguments, "invalid", "unknown tool");
@@ -238,6 +300,10 @@ export function createAssistantToolbox(options: {
         };
       }
 
+      if (tool.mutation) {
+        return requestApproval(principal, tool, parsed, call.arguments, context?.threadId);
+      }
+
       // Fail closed: an action that cannot be recorded does not happen.
       if (!(await record(principal, tool.name, call.arguments, "allowed"))) {
         return auditUnavailable(tool.name);
@@ -257,6 +323,164 @@ export function createAssistantToolbox(options: {
       }
     },
   };
+
+
+  async function requestApproval(
+    principal: ZelavisPrincipal,
+    tool: AssistantTool<any>,
+    parsed: unknown,
+    rawArguments: unknown,
+    threadId: string | undefined,
+  ): Promise<AssistantToolResult> {
+    const approvals = options.approvals;
+    if (!approvals || !threadId) {
+      await record(principal, tool.name, rawArguments, "denied", "approval unavailable");
+      return {
+        ok: false,
+        refusal: {
+          code: "approval_unavailable",
+          tool: tool.name,
+          message: "Changes cannot be requested here, so nothing was changed.",
+        },
+      };
+    }
+    const pending = (await approvals.listForThread(threadId)).filter(
+      (approval) => approval.status === "pending" && Date.parse(approval.expiresAt) > Date.now(),
+    );
+    if (pending.length >= MAX_PENDING_APPROVALS_PER_THREAD) {
+      return {
+        ok: false,
+        refusal: {
+          code: "approval_unavailable",
+          tool: tool.name,
+          message: "Too many changes are already waiting for a decision. Decide those first.",
+        },
+      };
+    }
+    const target = tool.mutation!.target(parsed);
+    const now = Date.now();
+    const approval: AssistantApproval = {
+      id: `approval_${crypto.randomUUID().replaceAll("-", "")}`,
+      threadId,
+      principalId: principal.id,
+      tool: tool.name,
+      arguments: parsed,
+      label: tool.describe?.(parsed) ?? tool.name,
+      target,
+      irreversible: tool.mutation!.irreversible === true,
+      status: "pending",
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + APPROVAL_TTL_MS).toISOString(),
+    };
+    if (!(await record(principal, tool.name, rawArguments, "pending_approval", approval.id))) {
+      return auditUnavailable(tool.name);
+    }
+    await approvals.create(approval);
+    return {
+      ok: false,
+      refusal: {
+        code: "approval_required",
+        tool: tool.name,
+        message:
+          "This changes something, so it has been sent to the operator for approval. " +
+          "It has not run. Do not retry it; tell the operator what you asked to do.",
+        approval: {
+          id: approval.id,
+          label: approval.label,
+          irreversible: approval.irreversible,
+          target: approval.target,
+        },
+      },
+    };
+  }
+
+  async function resolveApproval(
+    principal: ZelavisPrincipal,
+    input: Parameters<AssistantToolbox["resolveApproval"]>[1],
+  ): Promise<AssistantApprovalResult> {
+    const approvals = options.approvals;
+    const fail = (
+      code: Extract<AssistantApprovalResult, { ok: false }>["code"],
+      message: string,
+      approval?: AssistantApproval,
+    ): AssistantApprovalResult => ({ ok: false, code, message, ...(approval ? { approval } : {}) });
+
+    const current = await approvals?.get(input.approvalId);
+    // Someone else's request looks exactly like one that does not exist.
+    if (!approvals || !current || current.principalId !== principal.id ||
+        current.threadId !== input.threadId) {
+      return fail("not_found", "There is no such request.");
+    }
+    if (current.status !== "pending") {
+      return fail("already_decided", "That request has already been decided.", current);
+    }
+    if (Date.parse(current.expiresAt) <= Date.now()) {
+      const expired = await approvals.decide(current.id, { status: "expired", outcome: "It was not decided in time." });
+      return fail("expired", "That request expired. Ask again if you still want it.", expired ?? current);
+    }
+
+    const tool = byName.get(current.tool);
+    if (input.decision === "deny") {
+      if (!(await record(principal, current.tool, current.arguments, "denied", `approval ${current.id} denied`))) {
+        return fail("audit_unavailable", "The decision could not be recorded, so it was not applied.");
+      }
+      const denied = await approvals.decide(current.id, { status: "denied", outcome: "Nothing was changed." });
+      return denied ? { ok: true, approval: denied } : fail("already_decided", "That request has already been decided.");
+    }
+
+    if (current.irreversible && input.confirm !== current.target.id) {
+      return fail("confirmation_required", `This cannot be undone. Type "${current.target.id}" to confirm.`, current);
+    }
+
+    // The second gate: approval never widens what the caller may do, so the
+    // caller's permission is checked again, now, against the stored arguments.
+    let permitted = false;
+    try {
+      const requirement = tool?.access(current.arguments);
+      permitted = Boolean(requirement) && requirement!.permissions.every((permission) =>
+        principalHasPermission(principal, permission, requirement!.scope));
+    } catch {
+      permitted = false;
+    }
+    if (!tool || !permitted) {
+      await record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: no longer permitted`);
+      const refused = await approvals.decide(current.id, {
+        status: "denied", outcome: "Not run: you no longer have permission for this.",
+      });
+      return fail("forbidden", "You no longer have permission to do that, so it was not run.", refused ?? current);
+    }
+
+    // One winner: only the request that moves it out of `pending` goes on.
+    // It is recorded as running before anything runs, so a crash cannot leave a
+    // request that looks undecided while the change may have happened.
+    const claimed = await approvals.decide(current.id, { status: "running", outcome: "Running…" });
+    if (!claimed) return fail("already_decided", "That request has already been decided.");
+    // Fail closed: a change that cannot be recorded does not happen.
+    if (!(await record(principal, current.tool, current.arguments, "allowed", `approval ${current.id} approved`))) {
+      const unrecorded = await settle(approvals, claimed, "failed", "Not run: the decision could not be recorded.");
+      return fail("audit_unavailable", "The decision could not be recorded, so it was not applied.", unrecorded);
+    }
+    try {
+      await tool.execute(current.arguments, { principal });
+      await record(principal, current.tool, current.arguments, "executed", current.id);
+      const done = await settle(approvals, claimed, "executed", `Done: ${current.label}.`);
+      return { ok: true, approval: done };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "The change failed.";
+      await record(principal, current.tool, current.arguments, "failed", reason);
+      const failed = await settle(approvals, claimed, "failed", reason);
+      return fail("failed", reason, failed);
+    }
+  }
+
+  async function settle(
+    approvals: AssistantApprovalStore,
+    approval: AssistantApproval,
+    status: "executed" | "failed",
+    outcome: string,
+  ): Promise<AssistantApproval> {
+    return (await approvals.finish(approval.id, { status, outcome })) ?? { ...approval, status, outcome };
+  }
 
   function auditUnavailable(tool: string): AssistantToolResult {
     return {
@@ -510,4 +734,89 @@ export function createProjectDatabaseTools(
     describe: ({ projectId, collection }) => `Reading ${collection} in ${projectId}`,
   };
   return [listCollections, readCollection];
+}
+
+/**
+ * Changes to a Project's lifecycle. None of them runs from the model's call:
+ * each becomes a request a person approves, naming the Project by id.
+ */
+export function createProjectLifecycleTools(
+  projects: () => ZelavisProjectManager | undefined,
+): readonly AssistantTool<any>[] {
+  const manager = () => {
+    const value = projects();
+    if (!value) throw new Error("Project management is unavailable on this installation.");
+    return value;
+  };
+  const schema = {
+    type: "object",
+    properties: { projectId: { type: "string" } },
+    required: ["projectId"],
+    additionalProperties: false,
+  } as const;
+
+  function lifecycle(input: {
+    name: string;
+    description: string;
+    permission: string;
+    verb: string;
+    irreversible?: boolean;
+    run(id: string): Promise<unknown>;
+  }): AssistantTool<{ projectId: string }> {
+    return {
+      name: input.name,
+      description: input.description,
+      parameters: schema,
+      advertisedPermissions: [input.permission],
+      access: (args) => {
+        const parsed = readProjectId(args);
+        return {
+          permissions: [input.permission],
+          scope: { type: "project", projectId: parsed.projectId },
+          parsed,
+        };
+      },
+      describe: ({ projectId }) => `${input.verb} Project ${projectId}`,
+      mutation: {
+        ...(input.irreversible ? { irreversible: true } : {}),
+        target: ({ projectId }) => ({ kind: "project", id: projectId }),
+      },
+      execute: async ({ projectId }) => input.run(projectId),
+    };
+  }
+
+  return [
+    lifecycle({
+      name: "start_project",
+      description: "Ask to start a stopped Project. A person must approve it.",
+      permission: "project.runtime.manage",
+      verb: "Start",
+      run: (id) => manager().start(id),
+    }),
+    lifecycle({
+      name: "stop_project",
+      description: "Ask to stop a running Project. A person must approve it.",
+      permission: "project.runtime.manage",
+      verb: "Stop",
+      run: (id) => manager().stop(id),
+    }),
+    lifecycle({
+      name: "restart_project",
+      description: "Ask to restart a Project. A person must approve it.",
+      permission: "project.runtime.manage",
+      verb: "Restart",
+      run: (id) => manager().restart(id),
+    }),
+    lifecycle({
+      name: "delete_project",
+      description:
+        "Ask to permanently delete a Project and all its data. A person must approve it and type the Project id.",
+      permission: "project.delete",
+      verb: "Delete",
+      irreversible: true,
+      run: async (id) => {
+        if (!(await manager().remove(id))) throw new Error(`Project "${id}" was not found.`);
+      },
+    }),
+  ];
 }

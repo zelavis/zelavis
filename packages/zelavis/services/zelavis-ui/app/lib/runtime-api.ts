@@ -398,12 +398,25 @@ export interface RuntimeAssistantMessage {
   actions?: readonly RuntimeAssistantAction[];
   /** What the Assistant looked up to answer. */
   activity?: readonly RuntimeAssistantActivity[];
+  /** Changes this reply asked to make; see `RuntimeAssistantThread.approvals`. */
+  approvalIds?: readonly string[];
   createdAt: string;
 }
 
 export interface RuntimeAssistantActivity {
   label: string;
-  status: "running" | "done" | "refused";
+  status: "running" | "done" | "refused" | "awaiting";
+}
+
+export interface RuntimeAssistantApproval {
+  id: string;
+  threadId: string;
+  label: string;
+  target: { kind: string; id: string };
+  irreversible: boolean;
+  status: "pending" | "running" | "denied" | "expired" | "executed" | "failed";
+  expiresAt: string;
+  outcome?: string;
 }
 
 export interface RuntimeAssistantThread {
@@ -411,6 +424,8 @@ export interface RuntimeAssistantThread {
   title: string;
   projectId?: string;
   messages: readonly RuntimeAssistantMessage[];
+  /** Every change requested in this thread, with its current state. */
+  approvals?: readonly RuntimeAssistantApproval[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1484,10 +1499,24 @@ export async function getAssistantThread(
   config: RuntimeConfig,
   threadId: string,
 ): Promise<RuntimeAssistantThread> {
-  const result = await readJson<{ thread: RuntimeAssistantThread }>(
-    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}`,
+  const result = await readJson<{
+    thread: RuntimeAssistantThread;
+    approvals?: readonly RuntimeAssistantApproval[];
+  }>(`${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}`);
+  return { ...result.thread, approvals: result.approvals ?? [] };
+}
+
+export async function decideAssistantApproval(
+  config: RuntimeConfig,
+  threadId: string,
+  approvalId: string,
+  decision: "approve" | "deny",
+  confirm?: string,
+): Promise<{ approval: RuntimeAssistantApproval; message: RuntimeAssistantMessage }> {
+  return readJson(
+    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(approvalId)}`,
+    { method: "POST", body: JSON.stringify({ decision, ...(confirm ? { confirm } : {}) }) },
   );
-  return result.thread;
 }
 
 export async function createAssistantThread(
@@ -1518,7 +1547,14 @@ export async function sendAssistantMessage(
 
 export type AssistantStreamEvent =
   | { type: "text"; delta: string }
-  | { type: "tool"; id: string; name: string; label: string; status: "running" | "done" | "refused" }
+  | { type: "tool"; id: string; name: string; label: string; status: "running" | "done" | "refused" | "awaiting" }
+  | {
+      type: "approval";
+      id: string;
+      label: string;
+      irreversible: boolean;
+      target: { kind: string; id: string };
+    }
   | {
       type: "done";
       thread: RuntimeAssistantThread;
