@@ -73,7 +73,7 @@ export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.
  */
 export const OFFICIAL_ALLOWLIST_SOURCES: readonly string[] = Object.freeze([
   "https://zelavis.com/allowlist.json",
-  "https://raw.githubusercontent.com/zelavis/allowlist/main/allowlist.json",
+  "https://raw.githubusercontent.com/zelavis/marketplace/main/allowlist.json",
 ]);
 
 interface MarketplaceModule {
