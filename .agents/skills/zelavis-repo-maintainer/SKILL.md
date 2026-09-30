@@ -42,7 +42,3 @@ pnpm audit:security
 pnpm ci:runtime
 pnpm ci:ui
 ```
-
-Pushing to a branch with an open pull request starts CI again. Do not push or
-open a pull request unless the maintainer asked; confirm before anything that
-starts a workflow run.
