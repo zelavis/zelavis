@@ -298,6 +298,7 @@ export function createModelAssistantResponder(options: {
       const tools = options.toolbox?.advertise(principal) ?? [];
       // Everything the model says is kept, so what is streamed is what is saved.
       const said: string[] = [];
+      const activity: { label: string; status: "done" | "refused" }[] = [];
       const emit = (delta: string) => onEvent?.({ type: "text", delta });
       const answer = () => said.join("\n\n").trim();
       for (let step = 0; step < maxSteps; step += 1) {
@@ -324,7 +325,7 @@ export function createModelAssistantResponder(options: {
         });
         if (result.content.trim()) said.push(result.content.trim());
         if (result.toolCalls.length === 0 || !options.toolbox) {
-          return { content: answer() || "I have nothing to add." };
+          return { content: answer() || "I have nothing to add.", ...(activity.length ? { activity } : {}) };
         }
         messages.push({
           role: "assistant",
@@ -332,9 +333,13 @@ export function createModelAssistantResponder(options: {
           toolCalls: result.toolCalls,
         });
         for (const call of result.toolCalls) {
-          onEvent?.({ type: "tool", name: call.name, status: "running" });
+          const label = options.toolbox.describe(call);
+          const base = { type: "tool" as const, id: call.id, name: call.name, label };
+          onEvent?.({ ...base, status: "running" });
           const outcome = await options.toolbox.run(principal, call);
-          onEvent?.({ type: "tool", name: call.name, status: outcome.ok ? "done" : "refused" });
+          const status = outcome.ok ? ("done" as const) : ("refused" as const);
+          activity.push({ label, status });
+          onEvent?.({ ...base, status });
           messages.push({
             role: "tool",
             toolCallId: call.id,
@@ -342,7 +347,10 @@ export function createModelAssistantResponder(options: {
           });
         }
       }
-      return { content: answer() || "I could not finish that within the allowed number of steps." };
+      return {
+        content: answer() || "I could not finish that within the allowed number of steps.",
+        ...(activity.length ? { activity } : {}),
+      };
     },
   };
 }

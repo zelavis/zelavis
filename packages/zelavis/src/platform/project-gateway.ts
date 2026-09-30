@@ -381,46 +381,35 @@ export interface ProjectGatewayDependencies {
   readonly projectErrorResponse: (error: unknown) => ZelavisRouteResponse;
 }
 
-/**
- * Builds the Project Gateway proxy routes.
- *
- * One factory rather than five near-identical route objects: method policy,
- * header filtering, target validation, timeouts, and response filtering are
- * defined once, so a change to any of them cannot apply to four verbs and miss
- * the fifth.
- */
-export function createProjectGatewayRoutes(
-  dependencies: ProjectGatewayDependencies,
-): readonly ZelavisServerRoute<any>[] {
-  const {
-    projects,
-    fabric,
-    unavailableProjectsResponse,
-    projectErrorResponse,
-  } = dependencies;
-
+export type ProjectForwardOptions = {
+  readonly projectId: string;
+  /** Path inside the Project runtime, already resolved by the caller. */
+  readonly wildcardPath: string;
+  readonly query: URLSearchParams;
+  readonly request: Request;
+  readonly principal?: ZelavisPrincipal;
+  /** Permissions to sign into the envelope for this request. */
+  readonly permissions: readonly string[];
   /**
-   * Forwards one request into a Project runtime.
-   *
-   * Both gateway surfaces share it: placement checks, the signed authority
-   * envelope, body limits, timeouts and response filtering are written once,
-   * so the App data path cannot quietly drift from the proxy it sits beside.
+   * Whether a running server frontend may answer instead of the runtime.
+   * Only the public proxy allows it; App data is a control-plane surface.
    */
-  const forwardToProject = async (options: {
-    readonly projectId: string;
-    /** Path inside the Project runtime, already resolved by the caller. */
-    readonly wildcardPath: string;
-    readonly query: URLSearchParams;
-    readonly request: Request;
-    readonly principal?: ZelavisPrincipal;
-    /** Permissions to sign into the envelope for this request. */
-    readonly permissions: readonly string[];
-    /**
-     * Whether a running server frontend may answer instead of the runtime.
-     * Only the public proxy allows it; App data is a control-plane surface.
-     */
-    readonly allowFrontend: boolean;
-  }): Promise<ZelavisRouteResponse> => {
+  readonly allowFrontend: boolean;
+};
+
+/**
+ * The one way the Platform reaches into a Project runtime.
+ *
+ * Shared by the Gateway routes and by anything else that acts for a caller
+ * (the Assistant's tools), so placement checks, the signed authority envelope,
+ * body limits, timeouts and response filtering are written once.
+ */
+export function createProjectForwarder(
+  dependencies: ProjectGatewayDependencies,
+): (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse> {
+  const { projects, fabric, unavailableProjectsResponse } = dependencies;
+
+  return async (options) => {
     if (!projects) {
       return unavailableProjectsResponse();
     }
@@ -576,6 +565,21 @@ export function createProjectGatewayRoutes(
       body: new Uint8Array(responseBody),
     };
   };
+}
+
+/**
+ * Builds the Project Gateway proxy routes.
+ *
+ * One factory rather than five near-identical route objects: method policy,
+ * header filtering, target validation, timeouts, and response filtering are
+ * defined once, so a change to any of them cannot apply to four verbs and miss
+ * the fifth.
+ */
+export function createProjectGatewayRoutes(
+  dependencies: ProjectGatewayDependencies,
+): readonly ZelavisServerRoute<any>[] {
+  const { projectErrorResponse } = dependencies;
+  const forwardToProject = createProjectForwarder(dependencies);
 
   const methods = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 

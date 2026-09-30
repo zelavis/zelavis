@@ -396,7 +396,14 @@ export interface RuntimeAssistantMessage {
   role: "assistant" | "user";
   content: string;
   actions?: readonly RuntimeAssistantAction[];
+  /** What the Assistant looked up to answer. */
+  activity?: readonly RuntimeAssistantActivity[];
   createdAt: string;
+}
+
+export interface RuntimeAssistantActivity {
+  label: string;
+  status: "running" | "done" | "refused";
 }
 
 export interface RuntimeAssistantThread {
@@ -1511,7 +1518,7 @@ export async function sendAssistantMessage(
 
 export type AssistantStreamEvent =
   | { type: "text"; delta: string }
-  | { type: "tool"; name: string; status: "running" | "done" | "refused" }
+  | { type: "tool"; id: string; name: string; label: string; status: "running" | "done" | "refused" }
   | {
       type: "done";
       thread: RuntimeAssistantThread;

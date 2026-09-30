@@ -66,7 +66,11 @@ import {
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createPlatformEndpointGroup } from "./platform/endpoints.js";
-import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
+import {
+  createProjectForwarder,
+  createProjectGatewayRoutes,
+} from "./platform/project-gateway.js";
+import { createAssistantProjectReader } from "./platform/assistant-project-reader.js";
 import { deleteAppShardPlacementReservations } from "./platform/app-data-placement.js";
 import {
   createProjectPlacementAuthority,
@@ -84,6 +88,8 @@ import {
 import {
   createAssistantToolAudit,
   createAssistantToolbox,
+  createPlatformStatusTool,
+  createProjectDatabaseTools,
   createProjectReadTools,
 } from "./assistant-tools.js";
 import {
@@ -3758,9 +3764,23 @@ async function resolvePlatformEndpointGroup(
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
 ): Promise<ZelavisEndpointGroup<any>> {
+  // The Assistant reaches a Project through the same forwarder as the Gateway,
+  // carrying only the database read authority the caller already holds.
+  const assistantProjectReader = createAssistantProjectReader(
+    createProjectForwarder({
+      projects,
+      fabric,
+      unavailableProjectsResponse,
+      projectErrorResponse,
+    }),
+  );
   const assistantToolbox = systemStore
     ? createAssistantToolbox({
-        tools: createProjectReadTools(() => projects),
+        tools: [
+          ...createProjectReadTools(() => projects),
+          createPlatformStatusTool(() => projects),
+          ...createProjectDatabaseTools(assistantProjectReader),
+        ],
         audit: createAssistantToolAudit(systemStore),
       })
     : undefined;

@@ -88,8 +88,17 @@ audit records or errors; changes are audited without it. The master secret lives
 in the same System Store, so this protects a leaked field or export, not a
 compromised store.
 
-Built-in read-only tools: `list_projects`, `get_project`, `project_logs`, each
-carrying the same requirement as its HTTP route.
+Built-in read-only tools, each carrying the same requirement as its HTTP route:
+`list_projects`, `get_project`, `project_logs`, `platform_status`,
+`list_collections` and `read_collection` (at most 20 records). The database
+tools are authorized against the caller's `project.view` for the Project named
+in the call, then reach the Project through the Gateway's forwarder carrying
+only the `database.inspect`/`database.read` authority the caller already holds,
+so the Project runtime enforces it again. They cannot write.
+
+Every tool call is shown in chat in the operator's words ("Reading logs for
+site-a"), with its outcome, and refusals are shown as such. The activity is
+saved with the reply, and `tool` stream events carry `id`, `label` and `status`.
 
 ## Next Protocol Work
 

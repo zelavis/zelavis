@@ -6,6 +6,7 @@ import {
   type ChatModelAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react"
+import { Ban, Check, Loader2 } from "lucide-react"
 import { Link } from "react-router"
 
 import {
@@ -18,6 +19,7 @@ import {
   createAssistantThread,
   streamAssistantMessage,
   type RuntimeAssistantAction,
+  type RuntimeAssistantActivity,
   type RuntimeAssistantThread,
   type RuntimeConfig,
 } from "#/lib/runtime-api"
@@ -34,6 +36,7 @@ function toInitialMessages(
     metadata: {
       custom: {
         ...(message.actions ? { actions: message.actions } : {}),
+        ...(message.activity ? { activity: message.activity } : {}),
       },
     },
   }))
@@ -74,9 +77,38 @@ function AssistantActions() {
   )
 }
 
+/** What the Assistant is looking up, or looked up, in the operator's words. */
+function AssistantActivity() {
+  const activity = useAuiState(
+    (state) => state.message.metadata.custom.activity,
+  ) as readonly RuntimeAssistantActivity[] | undefined
+
+  if (!activity?.length) return null
+
+  return (
+    <ul aria-label="What the Assistant checked" className="mb-1 grid gap-1 px-2 text-xs text-muted-foreground">
+      {activity.map((entry, index) => (
+        <li key={`${index}-${entry.label}`} className="flex items-center gap-1.5">
+          {entry.status === "running" ? (
+            <Loader2 className="size-3 animate-spin" aria-label="In progress" />
+          ) : entry.status === "done" ? (
+            <Check className="size-3" aria-label="Done" />
+          ) : (
+            <Ban className="size-3 text-destructive" aria-label="Not allowed" />
+          )}
+          <span className={entry.status === "refused" ? "text-destructive" : undefined}>
+            {entry.status === "refused" ? `Not allowed: ${entry.label}` : entry.label}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function ZelavisAssistantMessage() {
   return (
     <>
+      <AssistantActivity />
       <AssistantUiMessage />
       <AssistantActions />
     </>
@@ -115,25 +147,41 @@ export function AssistantChat({
           onThreadCreated?.(created)
         }
         let text = ""
-        let working: string | undefined
+        const activity = new Map<string, RuntimeAssistantActivity>()
         const view = (actions?: readonly RuntimeAssistantAction[]) => ({
-          content: [{ type: "text" as const, text: text || (working ? `${working}…` : "") }],
-          ...(actions ? { metadata: { custom: { actions } } } : {}),
+          content: [{ type: "text" as const, text }],
+          metadata: {
+            custom: {
+              ...(activity.size ? { activity: [...activity.values()] } : {}),
+              ...(actions ? { actions } : {}),
+            },
+          },
         })
         for await (const event of streamAssistantMessage(config, threadId, prompt, abortSignal)) {
           if (event.type === "text") {
-            working = undefined
             text += event.delta
             yield view()
           } else if (event.type === "tool") {
-            working = event.status === "running" ? "Looking that up" : undefined
-            if (!text) yield view()
+            activity.set(event.id, { label: event.label, status: event.status })
+            yield view()
           } else if (event.type === "error") {
             throw new Error(event.message)
           } else {
             // The saved message is authoritative over what was streamed.
             text = event.assistantMessage.content
-            yield view(event.assistantMessage.actions)
+            yield {
+              ...view(event.assistantMessage.actions),
+              metadata: {
+                custom: {
+                  ...(event.assistantMessage.activity
+                    ? { activity: event.assistantMessage.activity }
+                    : {}),
+                  ...(event.assistantMessage.actions
+                    ? { actions: event.assistantMessage.actions }
+                    : {}),
+                },
+              },
+            }
           }
         }
       },

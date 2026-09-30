@@ -83,9 +83,10 @@ test("the responder reports text and tool progress, and saves what it streamed",
     prompt: "how many", principal: owner, onEvent: (event) => events.push(event),
   });
   assert.deepEqual(events.filter((e) => e.type === "tool"), [
-    { type: "tool", name: "list_projects", status: "running" },
-    { type: "tool", name: "list_projects", status: "done" },
+    { type: "tool", id: "c", name: "list_projects", label: "Listing Projects", status: "running" },
+    { type: "tool", id: "c", name: "list_projects", label: "Listing Projects", status: "done" },
   ]);
+  assert.deepEqual(reply.activity, [{ label: "Listing Projects", status: "done" }]);
   assert.equal(events.filter((e) => e.type === "text").map((e) => e.delta).join("").replace(/\s+/g, " ").trim(),
     "Checking. Two projects.");
   assert.equal(reply.content, "Checking.\n\nTwo projects.");
@@ -181,4 +182,32 @@ test("cancelling the stream aborts the model call", async () => {
   assert.match(new TextDecoder().decode(first.value), /partial/);
   await reader.cancel();
   assert.equal(await Promise.race([aborted, new Promise((r) => setTimeout(() => r("timeout"), 2000))]), true);
+});
+
+test("tool activity is described in operator language, refusals included, and saved with the reply", async () => {
+  let step = 0;
+  const model = {
+    name: "m",
+    generate: async () => step++ === 0
+      ? { content: "", toolCalls: [
+          { id: "1", name: "get_project", arguments: { projectId: "p9" } },
+          { id: "2", name: "get_project", arguments: {} },
+          { id: "3", name: "drop_everything", arguments: {} },
+        ] }
+      : { content: "done", toolCalls: [] },
+  };
+  const { call, post } = harness({ model });
+  const viewer = { id: "v", type: "user", permissions: ["assistant.use"],
+    grants: [{ permission: "project.view", scope: { type: "project", projectId: "p1" } }] };
+  const created = await (await call(viewer, "/threads", post({}))).json();
+  const events = await readEvents(await call(viewer, `/threads/${created.thread.id}/messages/stream`,
+    post({ content: "look" })));
+  const tools = events.filter((e) => e.event === "tool").map((e) => [e.data.id, e.data.label, e.data.status]);
+  assert.deepEqual(tools, [
+    ["1", "Reading Project p9", "running"], ["1", "Reading Project p9", "refused"],
+    ["2", "Get project", "running"], ["2", "Get project", "refused"],
+    ["3", "Drop everything", "running"], ["3", "Drop everything", "refused"],
+  ]);
+  const saved = await (await call(viewer, `/threads/${created.thread.id}`)).json();
+  assert.deepEqual(saved.thread.messages.at(-1).activity.map((a) => a.status), ["refused", "refused", "refused"]);
 });

@@ -14,6 +14,8 @@ export interface ZelavisAssistantMessage {
   role: "assistant" | "user";
   content: string;
   actions?: readonly ZelavisAssistantAction[];
+  /** What the Assistant looked up to answer, so the reply can show its work. */
+  activity?: readonly ZelavisAssistantActivity[];
   createdAt: string;
 }
 
@@ -30,6 +32,7 @@ export interface ZelavisAssistantThread {
 
 export interface ZelavisAssistantReply {
   content: string;
+  activity?: readonly ZelavisAssistantActivity[];
   actions?: readonly ZelavisAssistantAction[];
 }
 
@@ -38,9 +41,19 @@ export type ZelavisAssistantStreamEvent =
   | { readonly type: "text"; readonly delta: string }
   | {
       readonly type: "tool";
+      /** Ties a call's `running` and final events together. */
+      readonly id: string;
       readonly name: string;
+      /** What the call is doing, in the operator's words. */
+      readonly label: string;
       readonly status: "running" | "done" | "refused";
     };
+
+/** One tool call as shown in chat, kept with the message it belongs to. */
+export interface ZelavisAssistantActivity {
+  readonly label: string;
+  readonly status: "done" | "refused";
+}
 
 export interface ZelavisAssistantResponder {
   readonly name: string;
@@ -256,6 +269,7 @@ export function createAssistantManager(options: {
         role: "assistant",
         content: reply.content,
         ...(reply.actions?.length ? { actions: reply.actions } : {}),
+        ...(reply.activity?.length ? { activity: reply.activity } : {}),
         createdAt: new Date().toISOString(),
       };
       const thread = await write({

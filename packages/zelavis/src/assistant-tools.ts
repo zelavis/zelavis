@@ -50,6 +50,8 @@ export interface AssistantTool<TArgs = Record<string, unknown>> {
    */
   access(args: unknown): AssistantToolRequirement & { readonly parsed: TArgs };
   execute(args: TArgs, context: { readonly principal: ZelavisPrincipal }): Promise<unknown>;
+  /** What this call is doing, in the operator's words, for the activity shown in chat. */
+  describe?(args: TArgs): string;
 }
 
 export type AssistantToolRefusalCode =
@@ -94,6 +96,8 @@ export interface AssistantToolbox {
     principal: ZelavisPrincipal,
     call: { readonly name: string; readonly arguments: unknown },
   ): Promise<AssistantToolResult>;
+  /** A short operator-language label for a call. Never throws and never authorizes. */
+  describe(call: { readonly name: string; readonly arguments: unknown }): string;
 }
 
 const MAX_ARGUMENT_AUDIT_CHARS = 4_096;
@@ -171,6 +175,17 @@ export function createAssistantToolbox(options: {
   }
 
   return {
+    describe(call) {
+      const tool = byName.get(call.name);
+      const fallback = call.name.replace(/[_-]+/g, " ").trim() || "Working";
+      if (!tool?.describe) return fallback[0]!.toUpperCase() + fallback.slice(1);
+      try {
+        const label = tool.describe(tool.access(call.arguments).parsed);
+        return label.length > 120 ? `${label.slice(0, 117)}…` : label;
+      } catch {
+        return fallback[0]!.toUpperCase() + fallback.slice(1);
+      }
+    },
     advertise(principal) {
       return options.tools
         .filter((tool) =>
@@ -293,6 +308,7 @@ export function createProjectReadTools(
     advertisedPermissions: ["projects.list"],
     access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),
     execute: async () => ({ projects: await manager().list() }),
+    describe: () => "Listing Projects",
   };
   const getProject: AssistantTool<{ projectId: string }> = {
     name: "get_project",
@@ -312,6 +328,7 @@ export function createProjectReadTools(
       if (!project) throw new Error(`Project "${projectId}" was not found.`);
       return { project };
     },
+    describe: ({ projectId }) => `Reading Project ${projectId}`,
   };
   const projectLogs: AssistantTool<{ projectId: string }> = {
     name: "project_logs",
@@ -327,6 +344,170 @@ export function createProjectReadTools(
       };
     },
     execute: async ({ projectId }) => ({ logs: await manager().logs(projectId) }),
+    describe: ({ projectId }) => `Reading logs for ${projectId}`,
   };
   return [listProjects, getProject, projectLogs];
+}
+
+/** Reaches into a Project runtime with the caller's authority and nothing more. */
+export type AssistantProjectReader = (input: {
+  readonly projectId: string;
+  readonly principal: ZelavisPrincipal;
+  readonly method: "GET" | "POST";
+  /** Path inside the Project runtime. */
+  readonly path: string;
+  readonly query?: URLSearchParams;
+  readonly body?: unknown;
+}) => Promise<{ readonly status: number; readonly body: unknown }>;
+
+const DEFAULT_APP_TENANT = "zelavis-app";
+const MAX_ROWS = 20;
+const MAX_COLLECTIONS = 100;
+
+function readName(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) {
+    throw new AssistantToolArgumentError(`${label} must be a plain identifier.`);
+  }
+  return value;
+}
+
+async function readFromProject(
+  reader: AssistantProjectReader,
+  input: Parameters<AssistantProjectReader>[0],
+): Promise<any> {
+  const result = await reader(input);
+  if (result.status !== 200) {
+    const detail =
+      result.body && typeof result.body === "object" &&
+      typeof (result.body as { error?: unknown }).error === "string"
+        ? (result.body as { error: string }).error
+        : `The Project answered ${result.status}.`;
+    throw new Error(detail);
+  }
+  return result.body;
+}
+
+/** Platform-wide status, from what the caller can already list. */
+export function createPlatformStatusTool(
+  projects: () => ZelavisProjectManager | undefined,
+): AssistantTool<Record<string, never>> {
+  return {
+    name: "platform_status",
+    description: "Summarize this installation: how many Projects there are and their runtime states.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    advertisedPermissions: ["projects.list"],
+    access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),
+    execute: async () => {
+      const manager = projects();
+      if (!manager) throw new Error("Project management is unavailable on this installation.");
+      const all = await manager.list();
+      const byStatus: Record<string, number> = {};
+      for (const project of all) {
+        const status = project.runtime?.status ?? "unknown";
+        byStatus[status] = (byStatus[status] ?? 0) + 1;
+      }
+      return { runtime: manager.runtime, projects: { total: all.length, byStatus } };
+    },
+    describe: () => "Checking platform status",
+  };
+}
+
+/**
+ * Read-only views of a Project's database. Each call is authorized here against
+ * the caller's `project.view` for that Project, then forwarded with only the
+ * database read authority the caller actually holds, so the Project enforces it
+ * a second time. Row contents are the Project's data: the model is told to treat
+ * them as data, and nothing here can write.
+ */
+export function createProjectDatabaseTools(
+  reader: AssistantProjectReader,
+): readonly AssistantTool<any>[] {
+  const viewOf = (projectId: string): AssistantToolRequirement => ({
+    permissions: ["project.view"],
+    scope: { type: "project", projectId },
+  });
+
+  const listCollections: AssistantTool<{ projectId: string; tenantId: string }> = {
+    name: "list_collections",
+    description: "List the collections (tables) in a Project's database.",
+    parameters: {
+      type: "object",
+      properties: { projectId: { type: "string" }, tenantId: { type: "string" } },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+    advertisedPermissions: ["project.view"],
+    access: (args) => {
+      const { projectId } = readProjectId(args);
+      const tenant = (args as { tenantId?: unknown }).tenantId;
+      const parsed = {
+        projectId,
+        tenantId: tenant === undefined ? DEFAULT_APP_TENANT : readName(tenant, "tenantId"),
+      };
+      return { ...viewOf(projectId), parsed };
+    },
+    execute: async ({ projectId, tenantId }, { principal }) => {
+      const body = await readFromProject(reader, {
+        projectId, principal, method: "GET",
+        path: "zelavis/api/v1/database/documents/collections",
+        query: new URLSearchParams({ tenantId }),
+      });
+      const collections = Array.isArray(body?.collections) ? body.collections : [];
+      return {
+        collections: collections.slice(0, MAX_COLLECTIONS).map((c: { name?: unknown }) => c.name),
+        ...(collections.length > MAX_COLLECTIONS ? { truncated: true } : {}),
+      };
+    },
+    describe: ({ projectId }) => `Listing collections in ${projectId}`,
+  };
+
+  const readCollection: AssistantTool<{
+    projectId: string; collection: string; tenantId: string; limit: number;
+  }> = {
+    name: "read_collection",
+    description: `Read up to ${MAX_ROWS} records from one collection (table) in a Project's database.`,
+    parameters: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        collection: { type: "string" },
+        tenantId: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: MAX_ROWS },
+      },
+      required: ["projectId", "collection"],
+      additionalProperties: false,
+    },
+    advertisedPermissions: ["project.view"],
+    access: (args) => {
+      const { projectId } = readProjectId(args);
+      const input = args as { collection?: unknown; tenantId?: unknown; limit?: unknown };
+      const limit = input.limit === undefined ? 10 : input.limit;
+      if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_ROWS) {
+        throw new AssistantToolArgumentError(`limit must be an integer from 1 to ${MAX_ROWS}.`);
+      }
+      const parsed = {
+        projectId,
+        collection: readName(input.collection, "collection"),
+        tenantId: input.tenantId === undefined ? DEFAULT_APP_TENANT : readName(input.tenantId, "tenantId"),
+        limit: limit as number,
+      };
+      return { ...viewOf(projectId), parsed };
+    },
+    execute: async ({ projectId, collection, tenantId, limit }, { principal }) => {
+      const body = await readFromProject(reader, {
+        projectId, principal, method: "POST",
+        path: `zelavis/api/v1/database/documents/${encodeURIComponent(collection)}/query`,
+        body: { tenantId, limit },
+      });
+      const documents = Array.isArray(body?.documents) ? body.documents : [];
+      return {
+        collection,
+        records: documents.slice(0, limit).map((d: { id?: unknown; data?: unknown }) => ({
+          id: d.id, data: d.data,
+        })),
+      };
+    },
+    describe: ({ projectId, collection }) => `Reading ${collection} in ${projectId}`,
+  };
+  return [listCollections, readCollection];
 }

@@ -213,3 +213,126 @@ test("Zelavis wires a model to the caller's authority and audits in its System S
   const toolMessage = model.seen[1].messages.find((m) => m.role === "tool");
   assert.equal(JSON.parse(toolMessage.content).refusal.code, "forbidden");
 });
+
+import { createServer } from "node:http";
+import {
+  createPlatformStatusTool,
+  createProjectDatabaseTools,
+} from "../dist/index.js";
+import { createProjectForwarder } from "../dist/platform/project-gateway.js";
+import { createAssistantProjectReader } from "../dist/platform/assistant-project-reader.js";
+
+test("platform_status summarizes Projects by runtime state", async () => {
+  const box = createAssistantToolbox({
+    audit: async () => {},
+    tools: [createPlatformStatusTool(() => ({
+      runtime: "node",
+      list: async () => [
+        { id: "a", runtime: { status: "running" } },
+        { id: "b", runtime: { status: "running" } },
+        { id: "c", runtime: { status: "stopped" } },
+      ],
+    }))],
+  });
+  const result = await box.run(admin, { name: "platform_status", arguments: {} });
+  assert.deepEqual(result.value.projects, { total: 3, byStatus: { running: 2, stopped: 1 } });
+  assert.equal((await box.run(viewsP1, { name: "platform_status", arguments: {} })).refusal.code, "forbidden");
+});
+
+function dbBox(reader) {
+  return createAssistantToolbox({ audit: async () => {}, tools: createProjectDatabaseTools(reader) });
+}
+
+test("database tools are scoped to the Project named in the call and validate every argument", async () => {
+  const calls = [];
+  const box = dbBox(async (input) => {
+    calls.push(input);
+    return { status: 200, body: { collections: [{ name: "posts" }], documents: [{ id: "1", data: { t: "x" }, version: 3 }] } };
+  });
+  const list = await box.run(viewsP1, { name: "list_collections", arguments: { projectId: "p1" } });
+  assert.deepEqual(list.value.collections, ["posts"]);
+  assert.equal(calls[0].query.get("tenantId"), "zelavis-app");
+
+  const rows = await box.run(viewsP1, {
+    name: "read_collection", arguments: { projectId: "p1", collection: "posts", limit: 5 },
+  });
+  assert.deepEqual(rows.value.records, [{ id: "1", data: { t: "x" } }]);
+  assert.deepEqual(calls[1].body, { tenantId: "zelavis-app", limit: 5 });
+
+  const before = calls.length;
+  const other = await box.run(viewsP1, { name: "read_collection", arguments: { projectId: "p2", collection: "posts" } });
+  assert.equal(other.refusal.code, "forbidden");
+  for (const args of [
+    { projectId: "p1", collection: "../secrets" },
+    { projectId: "p1", collection: "a/b" },
+    { projectId: "p1", collection: "posts", limit: 500 },
+    { projectId: "p1", collection: "posts", limit: 1.5 },
+    { projectId: "p1", collection: "posts", tenantId: "x y" },
+    { projectId: "p1" },
+  ]) {
+    const result = await box.run(viewsP1, { name: "read_collection", arguments: args });
+    assert.equal(result.refusal?.code, "invalid_arguments", JSON.stringify(args));
+  }
+  assert.equal(calls.length, before, "nothing reached the Project for refused calls");
+});
+
+test("a Project's error becomes a refusal the model can relay", async () => {
+  const box = dbBox(async () => ({ status: 403, body: { error: "Missing required permission" } }));
+  const result = await box.run(viewsP1, { name: "list_collections", arguments: { projectId: "p1" } });
+  assert.equal(result.refusal.code, "failed");
+  assert.match(result.refusal.message, /Missing required permission/);
+});
+
+test("the Assistant reaches a real Project runtime with only the caller's database read authority", async () => {
+  const seen = [];
+  const child = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      seen.push({ method: request.method, url: request.url, body, authority: request.headers["x-zelavis-authority"],
+        cookie: request.headers.cookie });
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(request.url.includes("/query")
+        ? { documents: [{ id: "d1", data: { title: "hi" } }] }
+        : { collections: [{ name: "posts" }] }));
+    });
+  });
+  await new Promise((resolve) => child.listen(0, "127.0.0.1", resolve));
+  const claims = [];
+  try {
+    const forward = createProjectForwarder({
+      projects: {
+        get: async (id) => ({ id, runtime: { status: "running", url: `http://127.0.0.1:${child.address().port}` } }),
+        signGatewayAuthority: async (_id, value) => { claims.push(value); return "signed"; },
+      },
+      fabric: {
+        getProjectPlacement: async (id) => ({
+          identity: { type: "project", workloadId: id, scopeId: "s" }, state: "active", generation: 1, runtimeNodeId: "n",
+        }),
+        getNode: async () => ({ status: "ready" }),
+      },
+      unavailableProjectsResponse: () => ({ status: 503 }),
+      projectErrorResponse: () => ({ status: 500 }),
+    });
+    const box = dbBox(createAssistantProjectReader(forward));
+    const reader = {
+      id: "reader", type: "user",
+      permissions: ["assistant.use", "project.settings.manage"],
+      grants: [{ permission: "project.view", scope: { type: "project", projectId: "p1" } }],
+    };
+    const result = await box.run(reader, {
+      name: "read_collection", arguments: { projectId: "p1", collection: "posts", limit: 3 },
+    });
+    assert.deepEqual(result.value.records, [{ id: "d1", data: { title: "hi" } }]);
+    assert.equal(seen[0].method, "POST");
+    assert.equal(seen[0].url, "/zelavis/api/v1/database/documents/posts/query");
+    assert.deepEqual(JSON.parse(seen[0].body), { tenantId: "zelavis-app", limit: 3 });
+    assert.equal(seen[0].authority, "signed");
+    assert.equal(seen[0].cookie, undefined, "no Platform credentials are relayed");
+    // Only database read authority is signed: not settings, not runtime management.
+    assert.deepEqual([...claims[0].permissions].sort(), ["database.inspect", "database.read"]);
+    assert.equal(claims[0].subject, "reader");
+  } finally {
+    child.close();
+  }
+});
