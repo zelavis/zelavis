@@ -233,6 +233,33 @@ test("the deployment backend runtime hands a driver the placement it starts unde
   assert.equal(without.adopt, undefined);
 });
 
+test("the deployment backend runtime exposes every member of the driver contract a driver implements", async () => {
+  // The wrapper used to forward a hand-picked list of members, so a member it
+  // did not know about was dropped without a sound (the placement token,
+  // fencing and adoption all were). The routing table is typed against the
+  // contract, and this is its runtime half: nothing a driver offers is lost.
+  const { PROJECT_DRIVER_MEMBER_ROUTING } = await import("../dist/backends/registry.js");
+  const store = createMemorySystemStore();
+  const driver = {
+    name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
+    capabilities: () => ({}),
+    async prepare() {}, async start() { return { status: "running" }; },
+    async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
+    async logs() { return []; }, async destroy() {}, async close() {},
+    async signGatewayAuthority() { return "signed"; },
+    async fencePrevious() { return true; }, async adopt() {},
+  };
+  const runtime = createDeploymentBackendProjectRuntime({
+    store,
+    backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: driver, detect: async () => ({}) }],
+  });
+
+  const contract = Object.keys(PROJECT_DRIVER_MEMBER_ROUTING).sort();
+  assert.deepEqual(contract.filter((member) => !(member in driver)), [], "the fixture implements the whole contract");
+  assert.deepEqual(contract.filter((member) => runtime[member] === undefined), [],
+    "a member a driver has is missing from the wrapper");
+});
+
 test("project process failures include the useful stderr cause", () => {
   assert.equal(
     formatProjectProcessExitError({

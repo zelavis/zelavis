@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defineAdapter, Zelavis } from "../index.js";
-import { closeNodeServer, createNodeServer } from "../runtimes/node.js";
+import { closeNodeServer, createNodeServer, shutdownOnSignals } from "../runtimes/node.js";
 import { toDefaultErrorResponse } from "../core/runtime/request-dispatcher.js";
 import { nodeAdapter } from "./node.js";
 import { loadRecipeArtifact } from "./_recipe-artifact.js";
@@ -167,19 +167,6 @@ server.listen(port, "127.0.0.1", () => {
   );
 });
 
-let shutdownPromise: Promise<void> | undefined;
-function shutdown() {
-  shutdownPromise ??= Promise.all([
-    closeNodeServer(server),
-    zv.close(),
-  ]).then(
-    () => undefined,
-    (error) => {
-      console.error(error);
-      process.exitCode = 1;
-    },
-  );
-}
-
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+shutdownOnSignals(async () => {
+  await Promise.all([closeNodeServer(server), zv.close()]);
+});
