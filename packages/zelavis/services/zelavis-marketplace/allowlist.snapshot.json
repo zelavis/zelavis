@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "sequence": 2,
-  "issuedAt": "2026-09-30T14:13:56.360Z",
-  "expiresAt": "2027-09-30T14:13:56.360Z",
+  "sequence": 3,
+  "issuedAt": "2026-09-30T14:39:50.991Z",
+  "expiresAt": "2027-09-30T14:39:50.991Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
@@ -27,6 +27,74 @@
         }
       ],
       "latest": "2.0.0-alpha.3"
+    },
+    {
+      "name": "@zelavis/ecommerce",
+      "kind": "plugin",
+      "maintainer": "zelavis",
+      "title": "Ecommerce",
+      "summary": "Products, orders, customers, coupons and subscriptions, with payment providers you choose.",
+      "categories": [
+        "commerce",
+        "official"
+      ],
+      "tags": [
+        "shop",
+        "store",
+        "payments"
+      ],
+      "versions": [
+        {
+          "version": "2.0.0-alpha.3",
+          "integrity": "sha512-W7HUy3XW9UkCRMR1uR/Bhv8Dmpd53NXBKqaQ4U2T+rEY+jdtN3eLSDt67AH1TPTZZOo8+FfWUoiRqP4lQYmKTQ=="
+        }
+      ],
+      "latest": "2.0.0-alpha.3"
+    },
+    {
+      "name": "@zelavis/ecommerce-paypal",
+      "kind": "plugin",
+      "maintainer": "zelavis",
+      "title": "PayPal Payments",
+      "summary": "Take PayPal payments in Ecommerce.",
+      "categories": [
+        "commerce",
+        "payments",
+        "official"
+      ],
+      "tags": [
+        "paypal"
+      ],
+      "versions": [
+        {
+          "version": "1.0.0-alpha.2",
+          "integrity": "sha512-IQ5PbQL9BzhlZwHY5azG2LPgw/3tlgUBAJlKK3/57+ULEDf54wMWGEcjq3px1kFMRmXgCoXTGo4d4yPGbh8+Qw=="
+        }
+      ],
+      "latest": "1.0.0-alpha.2"
+    },
+    {
+      "name": "@zelavis/ecommerce-stripe",
+      "kind": "plugin",
+      "maintainer": "zelavis",
+      "title": "Stripe Payments",
+      "summary": "Take card payments in Ecommerce through Stripe.",
+      "categories": [
+        "commerce",
+        "payments",
+        "official"
+      ],
+      "tags": [
+        "stripe",
+        "cards"
+      ],
+      "versions": [
+        {
+          "version": "1.0.0-alpha.2",
+          "integrity": "sha512-1bZbaAe5oPPzQYrl6GSq+QPF+AOsHOAgePICc6Ri8EI5BHcn8I8lFM/HpiHvk6sEPa3vWk9rEawW9rPyQUEGHQ=="
+        }
+      ],
+      "latest": "1.0.0-alpha.2"
     },
     {
       "name": "@zelavis/wordpress",
