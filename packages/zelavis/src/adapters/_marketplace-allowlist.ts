@@ -9,7 +9,7 @@
  * package lies, the same way the Platform loads its other bundled services.
  */
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -134,6 +134,29 @@ export interface LocalMarketplace {
    * Independent of how fresh the list is, so an outage never stops a Project.
    */
   runtimeTrusted(name: string): Promise<boolean>;
+  /**
+   * Writes the list this Platform holds into a Project's data folder, where that
+   * Project's own marketplace reads it. The signed envelope is handed over, not a
+   * verdict: the Project verifies it with the keys it was built with, so nothing
+   * about it has to be trusted on the way.
+   */
+  handDown(projectDataDirectory: string): Promise<void>;
+}
+
+/** The file a Platform hands its verified allow-list to a Project in. */
+export const HANDED_DOWN_ALLOWLIST_FILE = "allowlist.json";
+
+async function writeHandedDown(directory: string, value: unknown): Promise<void> {
+  const file = join(directory, HANDED_DOWN_ALLOWLIST_FILE);
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
+    await rename(temporary, file);
+  } catch {
+    // A Project that is gone, or a folder that cannot be written, must not stop
+    // the Platform from refreshing its own list. It keeps the one it has.
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 const CACHE_NAMESPACE = "marketplace-allowlist";
@@ -266,6 +289,10 @@ export async function createLocalMarketplace(input: {
    * that refreshes.
    */
   readonly role?: "platform" | "project";
+  /** This runtime's data root. A Project reads the list its Platform handed it from here. */
+  readonly dataDirectory: string;
+  /** The Platform's Projects folder, where a refreshed list is handed down to every Project. */
+  readonly projectsDirectory?: string;
 }): Promise<LocalMarketplace | undefined> {
   const options = input.options ?? {};
   const module = await loadMarketplaceModule();
@@ -276,21 +303,47 @@ export async function createLocalMarketplace(input: {
       OFFICIAL_ALLOWLIST_SOURCES);
   const keys = await importKeys([...OFFICIAL_ALLOWLIST_KEYS, ...(options.keys ?? [])]);
   const store = input.systemStore;
+  const projectsDirectory = input.projectsDirectory;
+
+  async function handDownToEveryProject(value: unknown) {
+    if (!projectsDirectory || !existsSync(projectsDirectory)) return;
+    for (const entry of await readdir(projectsDirectory, { withFileTypes: true }).catch(() => [])) {
+      const data = join(projectsDirectory, entry.name, ".zelavis");
+      if (entry.isDirectory() && existsSync(data)) await writeHandedDown(data, value);
+    }
+  }
+
+  // A Platform keeps the list in its System Store. A Project keeps none of its
+  // own: it reads what its Platform handed it, and verifies it again every time,
+  // so a file someone edited is refused rather than believed.
+  const handedDown = join(input.dataDirectory, HANDED_DOWN_ALLOWLIST_FILE);
+  const cache = input.role === "project"
+    ? {
+        async read() {
+          try {
+            return JSON.parse(await readFile(handedDown, "utf8"));
+          } catch {
+            return undefined;
+          }
+        },
+        async write() {},
+      }
+    : store
+      ? {
+          async read() {
+            return (await store.get(CACHE_NAMESPACE, CACHE_KEY))?.value;
+          },
+          async write(value: unknown) {
+            await store.set(CACHE_NAMESPACE, CACHE_KEY, value as never);
+            await handDownToEveryProject(value);
+          },
+        }
+      : undefined;
+
   const client = module.createAllowlistClient({
     sources,
     resolveKey: (keyId) => keys.get(keyId),
-    ...(store
-      ? {
-          cache: {
-            async read() {
-              return (await store.get(CACHE_NAMESPACE, CACHE_KEY))?.value;
-            },
-            async write(value) {
-              await store.set(CACHE_NAMESPACE, CACHE_KEY, value as never);
-            },
-          },
-        }
-      : {}),
+    ...(cache ? { cache } : {}),
     bundled: await readSnapshot(module),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
@@ -358,6 +411,10 @@ export async function createLocalMarketplace(input: {
     client,
     gate,
     localPackages: new Map(local.map((entry) => [entry.name, entry.directory])),
+    async handDown(projectDataDirectory) {
+      const held = await cache?.read();
+      if (held) await writeHandedDown(projectDataDirectory, held);
+    },
     async runtimeTrusted(name) {
       if (localRuntimes.has(name)) return true;
       const held = await client.current();

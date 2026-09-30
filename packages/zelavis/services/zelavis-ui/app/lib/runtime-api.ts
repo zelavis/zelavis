@@ -1852,6 +1852,48 @@ export async function listDashboardServices(
   return result.services;
 }
 
+export interface MarketplaceAllowlistStatus {
+  gated: boolean;
+  /** How many places the list is fetched from; none means only the list shipped with the release. */
+  sources: number;
+  list?: {
+    sequence: number;
+    issuedAt: string;
+    expiresAt: string;
+    origin: "remote" | "cache" | "bundled";
+    fetchedAt?: string;
+    status: "fresh" | "stale" | "expired";
+    services: number;
+  };
+}
+
+export interface MarketplaceRefreshReport extends MarketplaceAllowlistStatus {
+  updated: boolean;
+  attempts: readonly { source: string; outcome: string; detail?: string }[];
+}
+
+/** How current this installation's allow-list is; `undefined` when it may not see it or has none. */
+export async function getMarketplaceAllowlist(
+  config: RuntimeConfig,
+): Promise<MarketplaceAllowlistStatus | undefined> {
+  try {
+    return await readJson<MarketplaceAllowlistStatus>(
+      `${config.api.basePath}/runtime/marketplace/allowlist`,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export async function refreshMarketplaceAllowlist(
+  config: RuntimeConfig,
+): Promise<MarketplaceRefreshReport> {
+  return readJson<MarketplaceRefreshReport>(
+    `${config.api.basePath}/runtime/marketplace/allowlist/refresh`,
+    { method: "POST" },
+  );
+}
+
 export async function updateDashboardService(
   config: RuntimeConfig,
   name: string,

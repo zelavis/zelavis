@@ -1707,6 +1707,8 @@ export interface LocalServiceSourcesInput {
   fileStorage?: ZelavisFileStorage;
   /** Where the allow-list is cached. */
   systemStore?: ZelavisSystemStore;
+  /** Where the Platform's Projects live, so a refreshed allow-list can be handed to each. */
+  projectsDirectory?: string;
 }
 
 export interface LocalServiceSources {
@@ -1781,6 +1783,8 @@ export async function createLocalServiceSources(
     systemStore: input.systemStore,
     bundledNames: new Set(official.map((entry) => entry.service.name)),
     role: input.isProjectRuntime ? "project" : "platform",
+    dataDirectory: input.dataDirectory,
+    ...(input.projectsDirectory ? { projectsDirectory: input.projectsDirectory } : {}),
   });
   const installerOptions = {
     directory: serviceDirectory,

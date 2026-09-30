@@ -239,6 +239,13 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         isProjectRuntime,
         fileStorage,
         systemStore,
+        ...(projectsEnabled && !isProjectRuntime
+          ? {
+              projectsDirectory: projectOptions?.directory
+                ? resolve(projectOptions.directory)
+                : join(dataDirectory, "projects"),
+            }
+          : {}),
       });
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       let agentRunner: ZelavisAgentProcessRunner | undefined;
@@ -277,6 +284,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             : {}),
           ...(serviceSources.recipePackageDirectory
             ? { recipePackageDirectory: serviceSources.recipePackageDirectory }
+            : {}),
+          ...(serviceSources.marketplace
+            ? { handDownAllowlist: (directory: string) => serviceSources.marketplace!.handDown(directory) }
             : {}),
           // Without this a frontend Project cannot start at all: the driver
           // refuses rather than falling through to the Zelavis runner and

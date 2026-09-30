@@ -37,6 +37,8 @@ export interface NodeProcessProjectRuntimeOptions {
   logLimit?: number;
   /** Where an installed or checked-out recipe package lies, so it can be frozen into a Project. */
   recipePackageDirectory?: (name: string) => Promise<string | undefined> | string | undefined;
+  /** Gives a starting Project the allow-list this Platform holds (see `LocalMarketplace.handDown`). */
+  handDownAllowlist?: (projectDataDirectory: string) => Promise<void>;
 }
 
 interface NodeProjectProcess {
@@ -298,6 +300,7 @@ export function createNodeProcessProjectRuntime(
       await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
       await restrictDirectoryPermissions(directory);
       await restrictDirectoryPermissions(dataDirectory);
+      await options.handDownAllowlist?.(dataDirectory);
       // Freeze the recipe into the Project so a Platform upgrade cannot change
       // what it runs. Preparing fails, with the reason, when it cannot be frozen.
       const artifact = await ensureRecipeArtifact(

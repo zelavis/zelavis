@@ -5,6 +5,8 @@ import {
   Layers,
   LoaderCircle,
   Palette,
+  RefreshCw,
+  ShieldCheck,
   Plug,
   Plus,
   Search,
@@ -43,7 +45,9 @@ import {
 import {
   createDashboardService,
   createProject,
+  refreshMarketplaceAllowlist,
   updateDashboardService,
+  type MarketplaceAllowlistStatus,
   type RuntimeConfig,
   type RuntimeServiceRegistryEntry,
 } from "#/lib/runtime-api";
@@ -125,7 +129,82 @@ async function installService(runtime: RuntimeConfig, service: RuntimeServiceReg
   }
 }
 
-export function MarketplaceWorkspace({ scope }: { scope: MarketplaceScope }) {
+const ORIGIN_LABEL = {
+  remote: "fetched just now",
+  cache: "fetched from a source",
+  bundled: "shipped with this release",
+} as const;
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+/**
+ * How current the list of what may be installed is. Everything on this page is
+ * installed only if that list vouches for it, so its age is worth showing.
+ */
+function AllowlistStatus({
+  allowlist,
+  onRefresh,
+  refreshing,
+}: {
+  allowlist: MarketplaceAllowlistStatus;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
+  const list = allowlist.list;
+  const tone =
+    list?.status === "fresh"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : list?.status === "stale"
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-destructive";
+  return (
+    <div
+      aria-label="Allow-list"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+    >
+      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+        <ShieldCheck className="size-4" />
+        {allowlist.gated ? "Installs are limited to the signed allow-list" : "Allow-list gate is off"}
+      </span>
+      {list ? (
+        <>
+          <span>List {list.sequence}</span>
+          <span className={tone}>{list.status}</span>
+          <span>{ORIGIN_LABEL[list.origin]}</span>
+          <span>issued {formatDate(list.issuedAt)}</span>
+          <span>expires {formatDate(list.expiresAt)}</span>
+        </>
+      ) : (
+        <span>No list is held</span>
+      )}
+      {allowlist.sources > 0 ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="ml-auto"
+          disabled={refreshing}
+          onClick={onRefresh}
+        >
+          <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+          Refresh
+        </Button>
+      ) : (
+        <span className="ml-auto">No sources configured</span>
+      )}
+    </div>
+  );
+}
+
+export function MarketplaceWorkspace({
+  scope,
+  allowlist,
+}: {
+  scope: MarketplaceScope;
+  allowlist?: MarketplaceAllowlistStatus;
+}) {
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const revalidator = useRevalidator();
   const navigate = useNavigate();
@@ -134,6 +213,7 @@ export function MarketplaceWorkspace({ scope }: { scope: MarketplaceScope }) {
   const [message, setMessage] = React.useState<{ text: string; tone: "ok" | "error" }>();
   const [creating, setCreating] = React.useState<RuntimeServiceRegistryEntry>();
   const [projectName, setProjectName] = React.useState("");
+  const [refreshing, setRefreshing] = React.useState(false);
 
   const runtime = rootData?.runtime;
   const controlRuntime = rootData?.controlRuntime;
@@ -199,6 +279,27 @@ export function MarketplaceWorkspace({ scope }: { scope: MarketplaceScope }) {
       setMessage({ text: errorMessage(error), tone: "error" });
     } finally {
       setBusy(undefined);
+    }
+  }
+
+  async function refreshList() {
+    setRefreshing(true);
+    setMessage(undefined);
+    try {
+      const report = await refreshMarketplaceAllowlist(controlRuntime!);
+      const failed = report.attempts.filter((attempt) => attempt.outcome !== "ok");
+      setMessage(
+        report.updated
+          ? { text: `Allow-list updated to list ${report.list?.sequence}.`, tone: "ok" }
+          : failed.length === report.attempts.length && failed.length > 0
+            ? { text: `Could not reach a source: ${failed[0]?.detail ?? failed[0]?.outcome}`, tone: "error" }
+            : { text: "The allow-list is already the newest.", tone: "ok" },
+      );
+      revalidator.revalidate();
+    } catch (error) {
+      setMessage({ text: errorMessage(error), tone: "error" });
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -274,6 +375,10 @@ export function MarketplaceWorkspace({ scope }: { scope: MarketplaceScope }) {
       </div>
 
       <p className="text-sm text-muted-foreground">{TAB_INTRO[tab]}</p>
+
+      {allowlist ? (
+        <AllowlistStatus allowlist={allowlist} onRefresh={() => void refreshList()} refreshing={refreshing} />
+      ) : null}
 
       {message ? (
         <p
