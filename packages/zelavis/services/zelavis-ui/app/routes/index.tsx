@@ -39,7 +39,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   return { databaseHealth, providers }
 }
 
-function ManagedProjectOverview({ kind }: { kind: string }) {
+function ManagedProjectOverview({ kind, managed }: { kind: string; managed: { adminTitle?: string; adminPath?: string } }) {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <div className="flex justify-end">
@@ -81,8 +81,8 @@ function ManagedProjectOverview({ kind }: { kind: string }) {
           <DataRow
             label="Application admin"
             detail={
-              kind === "WordPress"
-                ? "WordPress Admin will open the app's own dashboard."
+              managed.adminPath
+                ? `${managed.adminTitle ?? "App Admin"} will open the app's own dashboard.`
                 : "The app keeps its own runtime/admin surface."
             }
             meta={<StatusBadge state="draft" />}
@@ -114,16 +114,8 @@ function Overview() {
   const { runtime, projects } = useRouteLoaderData<typeof rootClientLoader>('root')!
   const services = runtime.services
   const project = projects.find((candidate) => candidate.id === params.projectId);
-  const managedProjectKind = project?.kind === "wordpress"
-    ? "WordPress"
-    : project?.kind === "static"
-      ? "Static website"
-      : project?.kind === "generic"
-        ? "Generic app"
-        : undefined;
-
-  if (managedProjectKind) {
-    return <ManagedProjectOverview kind={managedProjectKind} />;
+  if (project?.recipe.managed) {
+    return <ManagedProjectOverview kind={project.recipe.title} managed={project.recipe.managed} />;
   }
 
   return (

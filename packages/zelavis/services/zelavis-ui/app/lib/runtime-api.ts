@@ -249,6 +249,8 @@ export interface RuntimeProject {
     version?: string;
     specifier: string;
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
+    /** Set for a managed app: hosting-style controls and the app's own admin entry. */
+    managed?: { adminTitle?: string; adminPath?: string };
   };
   capabilities: RuntimeProjectDriverCapabilities;
   /** How the locked recipe compares with what this Platform ships. */

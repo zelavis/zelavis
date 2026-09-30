@@ -1122,7 +1122,7 @@ Each package should remain independently useful and focused.
 - Project runtimes do not host private or secondary dashboards. The one Platform `@zelavis/ui` shell renders project menus fetched from project services through the project proxy.
 - Global dashboard areas such as `/zelavis/marketplace` and `/zelavis/server/*` sit outside any project. Project-local marketplace/plugins live under `/zelavis/projects/:projectId/marketplace`.
 - Server-level dashboard routes include `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs`.
-- Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
+- Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation. A recipe declares itself a managed app in `package.json` under `zelavis.project.managed` (`adminTitle`, `adminPath`), locked with the recipe; the dashboard renders that and must not recognise any recipe by name.
 - The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER` or `frontend.devServerUrl`. The `coreServices` option it used to live under is gone: Platform subsystems are `subsystems` on `zelavis(...)`, the frontend options are the public `frontend` option, and the settings store is `runtimeSettingsStore`.
 - The main local platform workflow is `pnpm dev`.
 - In repository development through `pnpm dev`, runtime state lives below

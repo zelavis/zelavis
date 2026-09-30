@@ -19,7 +19,11 @@
       "runtimeKinds": [
         "native"
       ],
-      "runtime": "./dist/runtime.js"
+      "runtime": "./dist/runtime.js",
+      "managed": {
+        "adminTitle": "WordPress Admin",
+        "adminPath": "/wp-admin/"
+      }
     },
     "marketplace": {
       "title": "WordPress",

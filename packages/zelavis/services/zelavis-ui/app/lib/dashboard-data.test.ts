@@ -360,7 +360,7 @@ describe("dashboard navigation ownership", () => {
   });
 
   it("groups managed app project navigation like hosting controls", () => {
-    const nav = buildManagedProjectNavItems("wp", "wordpress");
+    const nav = buildManagedProjectNavItems("wp", { adminTitle: "WordPress Admin" });
 
     expect(nav.map((item) => [item.title, item.sectionLabel])).toEqual([
       ["Overview", "Overview"],
@@ -372,6 +372,9 @@ describe("dashboard navigation ownership", () => {
       ["Updates", "Operations"],
       ["WordPress Admin", "Settings"],
     ]);
+    expect(
+      buildManagedProjectNavItems("app", {}).at(-1)?.title,
+    ).toBe("App Admin");
   });
 
   it("uses a management nav for the all-projects view", () => {

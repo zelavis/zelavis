@@ -4631,6 +4631,9 @@ async function resolvePlatformEndpointGroup(
                   ...(entry.service.project?.isolation
                     ? { isolation: entry.service.project.isolation }
                     : {}),
+                  ...(entry.service.project?.managed
+                    ? { managed: entry.service.project.managed }
+                    : {}),
                 })),
             },
           }),

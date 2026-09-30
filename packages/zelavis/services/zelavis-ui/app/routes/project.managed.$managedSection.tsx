@@ -6,7 +6,7 @@ import { ServicePageMount } from "#/components/ServicePageMount";
 import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import { getManagedProjectKind } from "#/lib/routing";
+import { getManagedProject } from "#/lib/routing";
 import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
@@ -47,7 +47,7 @@ const managedSections = {
   admin: {
     title: "App Admin",
     icon: MonitorCog,
-    detail: "This opens or proxies the app's own admin area, such as wp-admin for WordPress.",
+    detail: "This opens or proxies the app's own admin area, such as the admin area a recipe declares.",
   },
 } as const;
 
@@ -55,14 +55,14 @@ export default function ManagedProjectSectionRoute() {
   const params = useParams();
   const { projects } = useRouteLoaderData<typeof rootClientLoader>("root")!;
   const project = projects.find((candidate) => candidate.id === params.projectId);
-  const managedKind = getManagedProjectKind(project?.kind);
+  const managed = getManagedProject(project);
 
   // This route's pattern swallows every single-segment path under a project,
   // which is also where a service's project-surface pages live. A Zelavis-native
   // project has no managed sections, so hand the path to the service page mount
   // — the same thing the splat route would have done had this pattern not
   // matched first.
-  if (!managedKind) {
+  if (!managed) {
     return <ServicePageMount allowPlaceholder fallback={<DashboardNotFound />} />;
   }
 
@@ -93,16 +93,16 @@ export default function ManagedProjectSectionRoute() {
         title="Managed app boundary"
         description="This project does not expose Zelavis-native sections like Auth, Content, and Plugins. It gets hosting controls similar to managed WordPress or generic app hosting."
       />
-      {managedKind === "wordpress" && params.managedSection === "admin" && project?.runtime.url ? (
+      {managed.adminPath && params.managedSection === "admin" && project?.runtime.url ? (
         <Button
           className="w-fit"
           render={<a
-            href={`${project.runtime.url.replace(/\/$/, "")}/wp-admin/`}
+            href={`${project.runtime.url.replace(/\/$/, "")}${managed.adminPath}`}
             target="_blank"
             rel="noreferrer"
           />}
         >
-          Open WordPress Admin
+          Open {managed.adminTitle ?? "App Admin"}
         </Button>
       ) : null}
     </section>

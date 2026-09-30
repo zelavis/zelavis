@@ -21,6 +21,8 @@ import {
   type ZelavisProjectIsolationIntent,
 } from "./project-isolation.js";
 export * from "./project-isolation.js";
+import { normalizeProjectManaged, type ZelavisProjectManagedDefinition } from "./project-managed.js";
+export type { ZelavisProjectManagedDefinition } from "./project-managed.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -70,6 +72,8 @@ export interface ZelavisProjectRecipeLock {
   runtimeKinds: readonly ZelavisProjectRuntimeKind[];
   /** Isolation declared by this exact recipe version, locked with it. */
   isolation?: ZelavisProjectIsolationIntent;
+  /** Set for a managed app: hosting-style controls and its own admin entry. */
+  managed?: ZelavisProjectManagedDefinition;
   /**
    * Content digest of the recipe package materialized into the Project. A
    * runtime that finds one runs that artifact, not the Platform's copy.
@@ -560,7 +564,22 @@ function recipeLockFromRegistryEntry(
       entry.service.project?.isolation,
       `Project recipe "${entry.service.name}"`,
     ),
+    ...managedField(entry.service.project?.managed, `Project recipe "${entry.service.name}"`),
   };
+}
+
+function managedField(
+  value: unknown,
+  label: string,
+): { managed?: ZelavisProjectManagedDefinition } {
+  try {
+    const managed = normalizeProjectManaged(value);
+    return managed ? { managed } : {};
+  } catch (error) {
+    throw new ZelavisProjectValidationError(
+      `${label} declares invalid managed metadata: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function isolationIntentField(
@@ -630,6 +649,7 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
         : undefined,
     ),
     ...isolationIntentField(rawRecipe.isolation, "Stored Project recipe lock"),
+    ...managedField(rawRecipe.managed, "Stored Project recipe lock"),
   };
 }
 

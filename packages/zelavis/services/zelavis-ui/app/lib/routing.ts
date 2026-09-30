@@ -12,10 +12,14 @@ export function isProjectRootPath(pathname: string) {
   return /^\/projects\/[^/]+\/?$/.test(pathname);
 }
 
-export function getManagedProjectKind(kind: string | undefined) {
-  return kind === "wordpress" || kind === "static" || kind === "generic"
-    ? kind
-    : undefined;
+/**
+ * What a managed app's recipe declared about itself, or `undefined` for a
+ * Zelavis-native Project. The recipe says so; no recipe is known by name.
+ */
+export function getManagedProject(
+  project: { recipe?: { managed?: { adminTitle?: string; adminPath?: string } } } | undefined,
+) {
+  return project?.recipe?.managed;
 }
 
 export function toProjectPath(path = "/", projectId?: string) {
