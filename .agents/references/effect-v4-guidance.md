@@ -18,10 +18,14 @@ This project uses **Effect v4** with the source code vendored under `repos/effec
 - Branded types: `Schema.String.pipe(Schema.brand("MyBrand"))`.
 
 ### 2. Decoding & Encoding
-- `Schema.decodeUnknownEither(MySchema)(data)`
+- `Schema.decodeUnknownResult(MySchema)(data)` (v4 replaced `Either` with `Result`;
+  there is no `decodeUnknownEither`)
+- `Schema.decodeUnknownEffect`, `decodeUnknownExit`, `decodeUnknownOption`
 - `Schema.decodeUnknownSync(MySchema)(data)`
 - `Schema.decodeUnknownPromise(MySchema)(data)`
 - `Schema.encodeSync(MySchema)(entity)`
+- Check the exact export in `repos/effect/packages/effect/src/Schema.ts` before
+  using a helper; names changed between v3 and v4.
 
 ### 3. Usage Rules
 - `repos/effect/` is strictly **read-only reference material**.

@@ -11,7 +11,7 @@ Use this skill for changes in:
 - `packages/zelavis/src/app`
 - `packages/zelavis/src/platform`
 - `packages/zelavis/services/*`
-- `packages/zelavis/adapters/*`
+- `packages/zelavis/src/adapters`
 - `plugins/*` when an official optional provider or capability plugin consumes
   the unified package's public contracts
 
@@ -31,12 +31,13 @@ before editing.
 
 - Treat `new Zelavis(...)` as the public Platform entrypoint and the `zelavis`
   package as the one official framework/App Platform distribution.
-- Do not recreate separate `@zelavis/server`, `@zelavis/app`, or
-  `@zelavis/core` packages. Their responsibilities are now public subpaths of
-  `zelavis`.
+- Do not recreate separate `@zelavis/server` or `@zelavis/core` packages, or a
+  second copy of the built-in App stack. Their responsibilities are public
+  subpaths of `zelavis`. (`@zelavis/app` is the official Project recipe package
+  under `services/`, not a framework package.)
 - Ship first-party product surfaces as their own packages under
-  `packages/zelavis/services/*` — `@zelavis/ui`, `@zelavis/marketplace`
-  and `@zelavis/auth` today. A product service owns a face, never an authority:
+  `packages/zelavis/services/*` — `@zelavis/ui`, `@zelavis/marketplace`,
+  `@zelavis/auth` and the `@zelavis/app` Project recipe today. A product service owns a face, never an authority:
   `@zelavis/auth` is the settings page for core auth, and removing it costs the
   page rather than the ability to sign in. A product service is built the way a
   third-party one is: a `package.json` manifest declaring `zelavis.kind`, and a
@@ -96,8 +97,8 @@ before editing.
   there installed as a package with a menu and no endpoints while the same
   object composed in code worked — the supported path was the broken one.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
-  through `zelavis/app`, `zelavis/app/identity`, `zelavis/app/db`, and
-  `zelavis/app/workloads`. It reuses the core implementation; never create an
+  through `zelavis/app`, `zelavis/app/identity`, and `zelavis/app/workloads`
+  (the database is `zelavis/db`). It reuses the core implementation; never create an
   App-private dispatcher or server contracts.
 - Use **Project recipe** as the canonical name for a versioned create-project
   definition. A service with `kind: "app"` is a Project recipe; its optional
@@ -254,7 +255,7 @@ before editing.
   `CLAUDE.md`, so do not add one.
 - If durable Platform guidance changes, update this skill or a focused
   `.agents/references/*` resource so skill-loaded agents stay current.
-- For `zelavis/app/db`, preserve the event-sourced per-collection-table model.
+- For `zelavis/db`, preserve the event-sourced per-collection-table model.
   Do not reintroduce a shared `documents` table, write directly to registered
   collection tables (including indirectly through raw SQL triggers), or bury
   `surface` in metadata.
@@ -264,7 +265,7 @@ before editing.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,
   and asset paths before composition; filesystem root containment is not enough.
-- Treat local physical sharding as the official `zelavis/app` default, not a
+- Treat local physical sharding as the official `@zelavis/app` default, not a
   future multi-node migration. A new official App routes stable virtual shard
   ranges across several SQLite files even when all placements share one Node.
   Keep the low-level one-shard topology available only as the collapsed form of
@@ -290,21 +291,27 @@ before editing.
 - Project runtime ownership uses the Platform System Store CAS record in
   `src/platform/project-placement-authority.ts`. The Project manager must
   acquire it before start; the Agent process lease supervisor fences local
-  workloads on a foreign/missing/expired record. The fenced dispatch callback
-  is an internal seam with a short-lived signed authority token, not a shipped
-  remote worker transport. Remote execution still needs Agent-side durable
-  replay protection, destination fencing, and verified runtime artifacts.
+  workloads on a foreign/missing/expired record. Remote Project start is
+  implemented: signed destination-bound single-use dispatch and a signed lease
+  feed (`src/core/agent/project-dispatch.ts`, `remote-placement.ts`), a
+  pinned-CA HTTPS worker (`src/adapters/_project-dispatch-https.ts`,
+  `_remote-project-agent.ts`) with durable replay protection and
+  fence-before-takeover, and digest-verified install-once artifact preparation
+  (`_remote-project-snapshot.ts`). Read a request body only after its authority
+  verifies, and never snapshot a Project that already has local runtime data.
+  Still unproven: multi-host partition drills and Bun as the Agent runtime;
+  remote App shard movement is not operational.
 - The public logical database boundary is `db.forTenant(tenantId)`. Documents,
   events, and time-series reads live on that Tenant handle; schema, projection,
   and time-series definitions remain logical database concerns. Do not restore
   implicit Tenant fields, `DatabaseApi.driver`, or logical `db.sql` aliases.
   Event continuation uses opaque `DatabaseEvent.cursor` values and `read({
   after })`; physical positions stay inside drivers and topology routing.
-- Keep breaking public APIs clean, but treat persisted Project state as durable.
-  Storage rewrites need explicit, idempotent, durably marked recovery that
-  preserves the old source artifact and stops on ambiguous merges. Canonicalize
-  retired official locks as stored-data migrations; never restore retired
-  package aliases merely to make an old Project boot.
+- Pre-release means no compatibility: do not write migrations, aliases or
+  fallbacks for data an earlier build wrote, and never restore a retired package
+  or recipe name to make an old Project boot. Development Projects that predate
+  a change are deleted and recreated. A Project that cannot be prepared must fail
+  at prepare with its reason, never start and crash later.
 
 Host-operation validation must retain an immutable snapshot of request fields
 and arguments across asynchronous authorization/journal work, require own
@@ -337,6 +344,16 @@ plugin context storage propagates async context; an abandoned package's
 context is sealed. Recipe `isolation.resources` limits and required intent may
 select another enabled, healthy, executable backend at creation only.
 
+## Admin Agent
+
+The Assistant's authority rules (caller's authority checked at execution,
+audited, approvals as a second gate, untrusted model and data, per-scope
+providers, Project chats confined to their Project) are in AGENTS.md's
+Endpoint-Backed Capability section. Code lives in `src/assistant*.ts`; read them
+before adding a tool, and give every tool an `access` requirement, an operator
+`describe` label, and a test. A tool that changes anything must declare
+`mutation` so it becomes an approval request.
+
 ## Design checklist
 
 1. Start from the public API and authority boundary.
@@ -353,8 +370,9 @@ select another enabled, healthy, executable backend at creation only.
 Run the smallest useful checks first, then broaden as needed:
 
 ```bash
+pnpm run verify              # from the repository root; the check that counts
 pnpm --filter zelavis test
 pnpm --filter @zelavis/ui test
 pnpm --filter @zelavis/ecommerce test
-pnpm check
+pnpm run docs:check
 ```

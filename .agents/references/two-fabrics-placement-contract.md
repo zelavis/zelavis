@@ -7,7 +7,10 @@ Project-wide reservation ledger. A reservation is neither a writer grant nor a
 routable target. The official App starts with virtual ranges spread over local
 SQLite shards; its `PartitionMap` and `movement.rebalance` operate inside one
 Project runtime. The Platform Fabric currently places whole Projects. Remote
-shard placement and movement are not operational.
+shard placement and movement are not operational. (Whole-Project placement is
+separate and implemented: a `{owner, epoch}` CAS record per Project, Agent
+self-fencing, and signed remote Project dispatch; see AGENTS.md. Nothing here
+activates App shards on another Node.)
 
 ## Ownership
 

@@ -20,9 +20,8 @@ Rows marked *(roadmap)* are committed product direction, not shipped behavior. P
 real-time collaboration complete the lifecycle the product positioning claims — plan, build, and
 manage in one self-hosted platform — and self-hosting a team's tickets, roadmap, and discussion is
 a stronger ownership claim than self-hosting a database alone. No implementation exists yet. Do not
-describe either as available in docs, README, dashboard, or marketing copy until it ships, and keep
-them out of `pnotes/TODO.md`, which tracks core, App-versioning, and Fabric capabilities
-rather than product scope.
+describe either as available in docs, README, dashboard, or marketing copy until it ships;
+`pnotes/TODO.md` lists them as roadmap only.
 
 The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
@@ -87,8 +86,9 @@ durable guidance that affects a specific agent workflow, update the relevant
 `.claude/` is Claude-specific tool configuration, not a second instruction
 system, and it stays: Claude Code does not read anything under `.agents/`, so the
 tracked session-start hook in `.claude/settings.json` is what makes the
-`.agents/skills/*` skills visible to it. It may contain Claude settings, local permissions, worktree state, or
-symlinks that point Claude at `.agents/skills/*` and `.agents/references`.
+`.agents/skills/*` skills visible to it. It may contain Claude settings, local
+permissions, worktree state, or symlinks that point Claude at `.agents/skills/*`
+and `.agents/references`.
 Do not duplicate instructions or skill content into `.claude/`. If a Claude
 integration needs access to repo-maintained guidance, point it at `AGENTS.md`
 or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
@@ -122,13 +122,16 @@ current automatically.
   with the current `@zelavis/app` version built-in under `packages/zelavis/services/zelavis-app`,
   operators and projects can install and lock alternative recipe versions via
   marketplaces. Runtime drivers execute the exact version locked in the
-  Project's runtime database.
+  Project's runtime database. Today only the version this Platform bundles can
+  be prepared: a Project locked to a version the Platform no longer ships and
+  holding no frozen copy of it fails to prepare with that reason, and there is no
+  upgrade path yet, only delete and recreate.
 - **Frontends (The WordPress Theme Analogy)**: Services with `kind: "frontend"`
   are the visual "face" of an installation or a Project, functioning exactly
   like themes and templates do in WordPress, but for headless, modern web apps.
   - The Platform itself uses `@zelavis/ui` (`kind: "frontend"`) as its face (the dashboard).
-  - A blog project uses the `zelavis/app` recipe for backend infrastructure + a Blog Frontend theme (`kind: "frontend"`).
-  - An ecommerce project uses `zelavis/app` + `@zelavis/ecommerce` plugin + a Storefront theme (`kind: "frontend"`).
+  - A blog project uses the `@zelavis/app` recipe for backend infrastructure + a Blog Frontend theme (`kind: "frontend"`).
+  - An ecommerce project uses `@zelavis/app` + `@zelavis/ecommerce` plugin + a Storefront theme (`kind: "frontend"`).
   - Swapping a frontend (e.g. from an Astro blog to a Next.js blog) leaves all project data, auth accounts, and schemas untouched.
 - **Standardized Nested Child Marketplaces**: The marketplace architecture is
   strictly hierarchical and standardized across CLI, REST API, and UI for all
@@ -249,7 +252,7 @@ namespaced contribution map when the generic extension-point mechanism is
 introduced.
 
 The Platform OS can create multiple Zelavis App Projects from the official
-`zelavis/app` Project recipe. The default Node adapter prepares each Project
+`@zelavis/app` Project recipe. The default Node adapter prepares each Project
 under `.zelavis/projects/<id>`, locks the exact Zelavis App recipe/runtime
 version, and runs it in a separate Node process. A parent Platform update must
 never rewrite that lock. Preparing a Project materializes its recipe package
@@ -277,9 +280,9 @@ last, and delete the Project registry record only after every participant has
 completed. Failed deletion remains visible and retryable, and reconciliation
 must resume it after restart without rerunning durably completed participants.
 Any new Platform resource keyed by Project identity must register a cleanup
-participant; deleting a Project must not leave Assistant threads, domain
-bindings, bundle assets, project-private databases, logs, locks, or runtime
-metadata behind.
+participant; deleting a Project must not leave Assistant threads and their
+approval requests, its own Assistant provider key, domain bindings, bundle
+assets, project-private databases, logs, locks, or runtime metadata behind.
 
 The canonical hierarchy is: Platform scales Projects, Projects scale Tenants,
 and exceptional Tenants scale Shards by being divided into parts, each of which
@@ -404,8 +407,9 @@ durable first-owner claim, not extra authority hidden in `/auth/bootstrap` and
 not one transaction with account creation. A DNS/ACME failure leaves the owner
 claim complete and the installation reachable through its local recovery path;
 the dashboard shows the incomplete production-readiness action until retry.
-CLI, HTTP/SDK and dashboard onboarding use the same Edge operations. Do not add
-a hostname form to either wizard until that authority exists. Child-app domains
+CLI, HTTP/SDK and dashboard onboarding use the same Edge operations, and both
+wizards already offer the hostname step over them; never let a wizard hold
+hostname or TLS authority of its own. Child-app domains
 remain separate Edge resources, and provider fleets should prefer distinct
 per-instance certificates rather than distributing one wildcard private key to
 every server.
@@ -424,7 +428,7 @@ mutations carry the observed revision (including absence), re-read and reapply
 intent on bounded conflicts, and never retry a stale whole snapshot. System
 Store adapters must atomically enforce `expectedValue` when supplied to CAS.
 
-Every official `zelavis/app` Project uses the App Data Fabric topology from
+Every official `@zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite
 shards; the placements merely happen to share one Node. `zelavis/db` may
@@ -449,13 +453,19 @@ admission persists reservations, not writer grants or routable targets. Do not
 start remote shard movement until durable `{owner, epoch}` authority,
 destination fencing, publication ordering, and failure-path proof are implemented.
 
-Project runtime placement now has a Platform System Store `{owner, epoch}` CAS
-record and a local Agent lease supervisor. The Project manager requires a
+Project runtime placement is a Platform System Store `{owner, epoch}` CAS
+record with a local Agent lease supervisor. The Project manager requires a
 committed placement for start, and the Gateway reads its epoch and active state.
-This is local Project ownership, not a remote App shard grant or an operational
-remote worker transport. A remote Project start must reach a worker Agent that
-verifies signed, destination-bound authority and has the locked runtime/artifact;
-the injected fenced dispatcher alone is not that proof.
+Remote Project start is implemented end to end: the Platform signs
+destination-bound, single-use authority and a short-lived placement grant; a
+pinned-CA HTTPS worker Agent (`src/adapters/_project-dispatch-https.ts`,
+`_remote-project-agent.ts`) verifies them against its own durable placement
+high-water and replay store, fences a previous owner before accepting a newer
+one, and installs the frozen recipe and descriptor from a digest-verified,
+install-once snapshot before starting the Project. A test runs a real locked
+App Project through it. Not yet proven: multi-host network-partition drills and
+Bun as the Agent runtime. This is Project placement, not a remote App shard
+grant: remote shard movement is still not operational.
 
 Zelavis is pre-release with no users, so nothing carries compatibility for old
 data or old shapes: no aliases, no legacy fields, no migrations from retired
@@ -464,7 +474,9 @@ stored shape changes, existing development Projects are deleted and recreated
 rather than migrated. (The one exception is durability of a *current* store: a
 migration that upgrades data an earlier build of the *same* design wrote is not
 needed either until there is a released design to protect.) Do not reintroduce
-the retired `zelavis/app` package name or its import alias.
+the retired `zelavis/app` recipe name (the official recipe is `@zelavis/app`;
+`zelavis/app` remains only the public subpath of the built-in App stack) or its
+import alias.
 
 The public logical database boundary is `db.forTenant(tenantId)`. Documents,
 events, and time-series reads live on that Tenant handle; schema, projection,
@@ -660,7 +672,7 @@ Key rules:
   interrupted one resumes. Routing is one record for every tenant in a
   rebalance, so it moves once, after all of them are copied — applying it while
   one was still uncopied would route a tenant to a shard that does not hold it.
-  `topology.update` still refuses an occupied range; `topology.update` still refuses an occupied range. Routing is read
+  `topology.update` still refuses an occupied range. Routing is read
   from the topology on every call — never cached from the map a handle opened
   with, which would go on reading the shard the records left.
 - Crossing partitions is a separate API, never a fallback. `forTenant` is
@@ -842,15 +854,41 @@ Examples:
 
 This rule keeps Zelavis automatable, scriptable, plugin-friendly, AI-agent-friendly, and independent from any single dashboard framework.
 
-The Zelavis Assistant follows the same rule. Thread persistence and Assistant
-operations belong to the Platform OS and System Store, with versioned endpoints
-under `/zelavis/api/v1/runtime/assistant`. `@assistant-ui/react` is a dashboard
+The Zelavis Assistant (the Admin Agent) follows the same rule. Threads,
+approvals, provider settings, tools and the audit trail belong to the Platform OS
+and System Store, with versioned endpoints under
+`/zelavis/api/v1/runtime/assistant`. `@assistant-ui/react` is a dashboard
 rendering/runtime library only; it must not own provider credentials, thread
-authority, tools, approvals, or privileged actions. Model and agent providers
-implement the `ZelavisAssistantResponder` boundary. The built-in
-`zelavis-local-router` is an honest deterministic development responder, not an
-LLM. Future streaming and rich tool state should extend the endpoint protocol
-without moving authority into React or Assistant Cloud.
+authority, tools, approvals, or privileged actions. Never move that authority
+into React or Assistant Cloud. Responders implement the
+`ZelavisAssistantResponder` boundary; a model sits behind the thin
+`AssistantModel` seam (OpenRouter, OpenAI, Anthropic), and without one the
+deterministic local router answers. Rules that hold for every change here:
+
+- **The agent is not a principal.** It borrows the caller's authority. A tool
+  call is authorized at execution against the caller's permissions with a scope
+  built from that call's own arguments, never from the thread or the prompt;
+  advertising a tool is a convenience, not the gate; refusals are structured
+  data; the system prompt enforces nothing.
+- **Every call is audited** with principal, arguments and decision, redacted
+  when written, and a call that cannot be audited does not run. The trail is
+  readable at `GET …/assistant/audit` (`server.assistant.audit`) and kept 90 days.
+- **Changes are requests a person approves.** Mutating tools never run from a
+  model's call: they create a stored approval carrying the validated arguments,
+  pinned to the exact target. Approval is a second gate that re-authorizes at
+  decision time; the decision is one compare-and-set; irreversible changes need
+  the typed id; the approval card focuses nothing.
+- **The model and everything it reads are untrusted.** Tool results are bounded
+  and redacted; the database tools read one fixed tenant and never identity
+  records; the dashboard never loads an image a reply names; prompts, history,
+  chats and turns per caller are capped.
+- **Providers are per scope.** A Project may bring its own provider and key,
+  which answers only that Project's chats and whose tools are confined to that
+  Project (what a chat reads goes to the provider its Project chose). Keys are
+  encrypted, bound to their scope, never returned or logged, and deleted with
+  the Project. There are no custom provider endpoints on purpose.
+- Threads are owned by their principal; a foreign thread is `404`, and a
+  Project thread also needs the Project's own `project.view` on every touch.
 
 Dashboard menu metadata may include dynamic sections through `dynamicItems`.
 Dynamic menu sections must point at service-owned endpoints and return
@@ -987,15 +1025,17 @@ those grants, while endpoints remain the authority layer.
   touched on the way past: an item left open because nobody revisited it reads
   as work outstanding, which is the same defect as a stale comment, and the
   next reader plans around it.
-- `packages/zelavis/src/app` owns the official `zelavis/app` Project recipe,
-  document-first database, auth primitives, and Project-scoped workloads. It
-  consumes the same core implementation and must never grow private server
+- `packages/zelavis/src/app` owns the built-in App stack exported as `zelavis/app`
+  (identity primitives and Project-scoped workloads; the document-first database
+  is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`
+  package in `packages/zelavis/services/zelavis-app`. The stack consumes the same core implementation and must never grow private server
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
 - `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
-- `packages/zelavis/adapters/*` contains optional framework, runtime, database,
-  or external-system adapters distributed with the package workspace.
+- `packages/zelavis/src/adapters` holds the host, runtime and storage adapters
+  (Node, Bun, Agent, Project runtimes), exported through `zelavis/adapters/*`
+  subpaths.
 - `plugins/*` contains official optional capability and provider plugins,
   including Auth methods. Do not place plugin packages inside
   `packages/zelavis`; the unified package exports contracts and built-in App
@@ -1126,8 +1166,6 @@ When creating a new core package, service package, or plugin package:
 - Shared UI primitives must stay aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
 - Dashboard routes should use shared control defaults. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
 - Do not add blog-style route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Dashboard content should start with the actual workspace, table, form, chart, or contextual controls unless the page needs a title for a genuinely distinct object or focused editor.
-- The "Community" section is intentionally rendered inside the first navigation slide.
-- Dummy community entries may exist as markup-only placeholders and do not imply real routes.
 - Content Studio routes must create collections with
   `surface: "content-studio"` as a top-level field.
 - Database routes that create raw tables must use `surface: "database"`.
@@ -1183,6 +1221,13 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   invisible — the command still succeeds, having quietly checked less. Prefer
   `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
   deliberate exceptions, so a new package is covered by default.
+- Dashboard behavior is proven in a real browser: `pnpm run ci:ui:local` runs the
+  smoke specs against a throwaway Platform, and `pnpm run ci:ui:setup:local` runs
+  the first-run wizard against an unclaimed one. Both pick free ports and stop
+  only the processes they started; never make an e2e script claim a fixed port
+  or kill by port or command line, because that can take down a running dev
+  server. Specs share one runtime and run one at a time. Run `pnpm run docs:check`
+  after docs changes.
 - Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
   workspace package is invisible to every root command, whatever its scripts say.
 
@@ -1224,9 +1269,12 @@ When acting as an agent in this repo:
 
 Zelavis core must only depend on the JavaScript language and standard platform APIs.
 
-Node.js is the current supported production host runtime. Core contracts stay
-runtime-neutral so Bun, future Deno, OCI, and stronger project-runtime drivers
-can be added without changing the project lifecycle model.
+Node.js is the current supported production host runtime. Bun has an adapter
+(`zelavis/adapters/bun`) and its services model and Project database are proven
+under real Bun; Project runtime processes, the Agent, the WordPress recipe and
+Edge are not yet proven there. Core contracts stay runtime-neutral so Bun,
+future Deno, OCI, and stronger project-runtime drivers can be added without
+changing the project lifecycle model.
 Serverless function platforms are not Zelavis runtime targets. They may appear as
 optional plugins for deploying user websites, storage, email, images, DNS, CDN,
 or other provider adapters, but must not define the core runtime
