@@ -56,7 +56,6 @@ Default root namespace:
 /zelavis/api/v1/database
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/storage/files/*?format=metadata
-/zelavis/api/v1/website/pages
 /zelavis/api/v1/workloads
 /zelavis/api/v1/workloads/http/:projectId/*path
 ```

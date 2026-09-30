@@ -227,7 +227,7 @@ Services can also ship full web apps. The app contract should stay small:
 ```ts
 export default {
   name: "@acme/storefront",
-  kind: "web-app",
+  kind: "frontend",
   capabilities: ["web:app", "api:routes"],
   app: {
     mount: "/",
@@ -377,6 +377,5 @@ For possible alternatives:
 
 - [Official Service Packages](../guides/official-service-packages.md)
 - [Service Authoring](../guides/service-authoring.md)
-- [Website Core Service](./website-core-service.md)
 - [Adapter Entry Points](../adapters/entry-points.md)
 - [Marketplace](../adapters/index.md)

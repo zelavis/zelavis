@@ -47,6 +47,16 @@ must compile canonical route publications, stage certificate material through
 signed Agent operations, perform live probes, and atomically activate or roll
 back the generated directory before the installer can publish a hostname.
 
+## Where Edge runs
+
+Edge needs a host that can run signed Agent operations. On a packaged Linux
+install it is active. In repository development (`pnpm dev`) there is no proxy at
+all: the runtime serves the dashboard and API directly, and the Traefik adapter
+is created only when the host has an Agent and host operations. Caddy exists today
+only as a test fixture that proves the contract fits a second proxy. See
+[Execution Backends and Traffic](./execution-backends.md) for why Traefik is the
+default.
+
 ## First-run hostname
 
 Owner bootstrap and public ingress are separate authority boundaries. The first
