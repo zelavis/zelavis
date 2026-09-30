@@ -812,6 +812,22 @@ test('@smoke a service the operator did not compose is sandboxed', async ({
   expect(result.reachable).toBe(false)
 })
 
+test('@smoke the project switcher is neutral outside a Project and names the Project inside one', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  // The Projects overview is not a Project: nothing is selected, and the first
+  // Project in the list is not shown as if it were.
+  await gotoPlatformDashboard(page, '/projects')
+  await expect(page.getByRole('button', { name: /Select project/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toHaveCount(0)
+
+  await gotoDashboard(page, '/')
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Select project/ })).toHaveCount(0)
+})
+
 test('@smoke a Project sidebar lists Overview once', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
 
@@ -1201,7 +1217,8 @@ test('dashboard shows a not found page inside the shell', async ({
 
   await gotoDashboard(page, '/not-a-dashboard-route')
 
-  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
+  // Not inside a Project, so the switcher is neutral.
+  await expect(page.getByRole('button', { name: /Select project/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
 })
