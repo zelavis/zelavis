@@ -120,6 +120,8 @@ Rules that hold for every change:
   and npm's digests, bump `sequence`) and `pnpm allowlist sign` (the envelope every
   source hosts). The signing private key stays outside the repository; only its
   public half is in `OFFICIAL_ALLOWLIST_KEYS`.
+  The signed file is published from `allowlist/`, an ignored nested repository (like
+  `pnotes/`) that becomes `zelavis/allowlist`, the GitHub mirror source.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
 

@@ -62,3 +62,4 @@ test-results/
 Thumbs.db
 # Confidential design notes and implementation roadmap; separate private repository.
 /pnotes/
+/allowlist/
