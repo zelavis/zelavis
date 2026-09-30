@@ -268,6 +268,9 @@ test("database tools are scoped to the Project named in the call and validate ev
     { projectId: "p1", collection: "posts", limit: 500 },
     { projectId: "p1", collection: "posts", limit: 1.5 },
     { projectId: "p1", collection: "posts", tenantId: "x y" },
+    { projectId: "p1", collection: "posts", tenantId: "service:zelavis-auth" },
+    { projectId: "p1", collection: "posts", extra: 1 },
+    { projectId: "p1", collection: "a:b" },
     { projectId: "p1" },
   ]) {
     const result = await box.run(viewsP1, { name: "read_collection", arguments: args });
@@ -335,4 +338,42 @@ test("the Assistant reaches a real Project runtime with only the caller's databa
   } finally {
     child.close();
   }
+});
+
+test("database tools can only reach the app tenant, never identity records", async () => {
+  const seen = [];
+  const box = dbBox(async (input) => { seen.push(input); return { status: 200, body: { collections: [], documents: [] } }; });
+  const asker = { id: "u", type: "user", permissions: ["*"] };
+  const listing = await box.run(asker, { name: "list_collections", arguments: { projectId: "p1", tenantId: "service:zelavis-auth" } });
+  assert.equal(listing.refusal.code, "invalid_arguments");
+  await box.run(asker, { name: "list_collections", arguments: { projectId: "p1" } });
+  await box.run(asker, { name: "read_collection", arguments: { projectId: "p1", collection: "posts" } });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].query.get("tenantId"), "zelavis-app");
+  assert.equal(seen[1].body.tenantId, "zelavis-app");
+});
+
+test("credential-shaped values are removed from what a tool returns", async () => {
+  const box = createAssistantToolbox({
+    audit: async () => {},
+    tools: [{
+      name: "leaky", description: "", parameters: { type: "object" }, advertisedPermissions: [],
+      access: () => ({ permissions: [], parsed: {} }),
+      execute: async () => ({
+        line: "connecting with Authorization: Bearer abcdef1234567890 and ZELAVIS_BOOTSTRAP_TOKEN=0123456789abcdef0123",
+        key: "sk-or-v1-abcdefghijklmnop1234",
+        session: "zvs_abcdef123456",
+        jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
+        pem: "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----",
+        nested: { password: "hunter2hunter2", apiKey: "k", note: "fine", list: ["cookie: zelavis_session=abc"] },
+      }),
+    }],
+  });
+  const result = await box.run(admin, { name: "leaky", arguments: {} });
+  const text = JSON.stringify(result.value);
+  for (const secret of ["abcdef1234567890", "0123456789abcdef0123", "abcdefghijklmnop1234",
+    "zvs_abcdef123456", "eyJhbGciOiJIUzI1NiJ9", "MIIB", "hunter2hunter2", "zelavis_session=abc"]) {
+    assert.ok(!text.includes(secret), `${secret} leaked: ${text}`);
+  }
+  assert.equal(result.value.nested.note, "fine");
 });

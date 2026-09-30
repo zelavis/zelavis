@@ -27,6 +27,7 @@ import {
   type AssistantApproval,
   type AssistantApprovalStore,
 } from "./assistant-approvals.js";
+import { redactSecrets } from "./assistant-redaction.js";
 import type { ZelavisProjectManager } from "./project.js";
 import type { ZelavisSystemStore } from "./system-store.js";
 
@@ -65,6 +66,12 @@ export interface AssistantTool<TArgs = Record<string, unknown>> {
   readonly mutation?: {
     readonly irreversible?: boolean;
     target(args: TArgs): { readonly kind: string; readonly id: string };
+    /**
+     * Pins the request to the target as it is now, and fails if there is none.
+     * Checked again at approval, so the change cannot land on something else
+     * that later took the same name.
+     */
+    fingerprint?(args: TArgs): Promise<string>;
   };
 }
 
@@ -151,6 +158,7 @@ export type AssistantApprovalResult =
         | "expired"
         | "forbidden"
         | "confirmation_required"
+        | "target_changed"
         | "audit_unavailable"
         | "failed";
       readonly message: string;
@@ -310,7 +318,7 @@ export function createAssistantToolbox(options: {
       }
 
       try {
-        const value = await tool.execute(parsed, { principal });
+        const value = redactSecrets(await tool.execute(parsed, { principal }));
         const text = JSON.stringify(value) ?? "null";
         if (text.length > MAX_RESULT_CHARS) {
           return { ok: true, value: `${text.slice(0, MAX_RESULT_CHARS)}…`, truncated: true };
@@ -358,6 +366,16 @@ export function createAssistantToolbox(options: {
       };
     }
     const target = tool.mutation!.target(parsed);
+    let fingerprint: string | undefined;
+    try {
+      fingerprint = await tool.mutation!.fingerprint?.(parsed);
+    } catch (error) {
+      // Nothing to ask a person about: refuse instead of queueing a request
+      // that cannot be carried out.
+      const reason = error instanceof Error ? error.message : "The target could not be found.";
+      await record(principal, tool.name, rawArguments, "failed", reason);
+      return { ok: false, refusal: { code: "failed", tool: tool.name, message: reason } };
+    }
     const now = Date.now();
     const approval: AssistantApproval = {
       id: `approval_${crypto.randomUUID().replaceAll("-", "")}`,
@@ -368,6 +386,7 @@ export function createAssistantToolbox(options: {
       label: tool.describe?.(parsed) ?? tool.name,
       target,
       irreversible: tool.mutation!.irreversible === true,
+      ...(fingerprint ? { fingerprint } : {}),
       status: "pending",
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + APPROVAL_TTL_MS).toISOString(),
@@ -405,7 +424,7 @@ export function createAssistantToolbox(options: {
       approval?: AssistantApproval,
     ): AssistantApprovalResult => ({ ok: false, code, message, ...(approval ? { approval } : {}) });
 
-    const current = await approvals?.get(input.approvalId);
+    const current = await approvals?.get(input.threadId, input.approvalId);
     // Someone else's request looks exactly like one that does not exist.
     if (!approvals || !current || current.principalId !== principal.id ||
         current.threadId !== input.threadId) {
@@ -415,7 +434,7 @@ export function createAssistantToolbox(options: {
       return fail("already_decided", "That request has already been decided.", current);
     }
     if (Date.parse(current.expiresAt) <= Date.now()) {
-      const expired = await approvals.decide(current.id, { status: "expired", outcome: "It was not decided in time." });
+      const expired = await approvals.decide(current.threadId, current.id, { status: "expired", outcome: "It was not decided in time." });
       return fail("expired", "That request expired. Ask again if you still want it.", expired ?? current);
     }
 
@@ -424,7 +443,7 @@ export function createAssistantToolbox(options: {
       if (!(await record(principal, current.tool, current.arguments, "denied", `approval ${current.id} denied`))) {
         return fail("audit_unavailable", "The decision could not be recorded, so it was not applied.");
       }
-      const denied = await approvals.decide(current.id, { status: "denied", outcome: "Nothing was changed." });
+      const denied = await approvals.decide(current.threadId, current.id, { status: "denied", outcome: "Nothing was changed." });
       return denied ? { ok: true, approval: denied } : fail("already_decided", "That request has already been decided.");
     }
 
@@ -444,16 +463,32 @@ export function createAssistantToolbox(options: {
     }
     if (!tool || !permitted) {
       await record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: no longer permitted`);
-      const refused = await approvals.decide(current.id, {
+      const refused = await approvals.decide(current.threadId, current.id, {
         status: "denied", outcome: "Not run: you no longer have permission for this.",
       });
       return fail("forbidden", "You no longer have permission to do that, so it was not run.", refused ?? current);
     }
 
+    if (current.fingerprint !== undefined) {
+      let now: string | undefined;
+      try {
+        now = await tool.mutation?.fingerprint?.(current.arguments);
+      } catch {
+        now = undefined;
+      }
+      if (now !== current.fingerprint) {
+        const changed = await approvals.decide(current.threadId, current.id, {
+          status: "denied", outcome: "Not run: the target changed since this was requested.",
+        });
+        await record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: target changed`);
+        return fail("target_changed", "The target changed since this was requested, so it was not run.", changed ?? current);
+      }
+    }
+
     // One winner: only the request that moves it out of `pending` goes on.
     // It is recorded as running before anything runs, so a crash cannot leave a
     // request that looks undecided while the change may have happened.
-    const claimed = await approvals.decide(current.id, { status: "running", outcome: "Running…" });
+    const claimed = await approvals.decide(current.threadId, current.id, { status: "running", outcome: "Running…" });
     if (!claimed) return fail("already_decided", "That request has already been decided.");
     // Fail closed: a change that cannot be recorded does not happen.
     if (!(await record(principal, current.tool, current.arguments, "allowed", `approval ${current.id} approved`))) {
@@ -479,7 +514,7 @@ export function createAssistantToolbox(options: {
     status: "executed" | "failed",
     outcome: string,
   ): Promise<AssistantApproval> {
-    return (await approvals.finish(approval.id, { status, outcome })) ?? { ...approval, status, outcome };
+    return (await approvals.finish(approval.threadId, approval.id, { status, outcome })) ?? { ...approval, status, outcome };
   }
 
   function auditUnavailable(tool: string): AssistantToolResult {
@@ -501,12 +536,27 @@ function readObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function readProjectId(value: unknown): { projectId: string } {
-  const projectId = readObject(value).projectId;
-  if (typeof projectId !== "string" || !projectId.trim() || projectId.length > 128) {
-    throw new AssistantToolArgumentError("projectId must be a non-empty string.");
+/** Refuses arguments the tool does not define, rather than silently ignoring them. */
+function requireOnly(args: Record<string, unknown>, allowed: readonly string[]): void {
+  for (const key of Object.keys(args)) {
+    if (!allowed.includes(key)) {
+      throw new AssistantToolArgumentError(`"${key}" is not an argument of this tool.`);
+    }
   }
-  return { projectId: projectId.trim() };
+}
+
+// Exactly the shape a Project id has: what a model invents or an attacker
+// plants in data must never widen into another spelling of an id.
+const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/;
+
+function readProjectId(value: unknown, extra: readonly string[] = []): { projectId: string } {
+  const args = readObject(value);
+  requireOnly(args, ["projectId", ...extra]);
+  const projectId = args.projectId;
+  if (typeof projectId !== "string" || !PROJECT_ID_PATTERN.test(projectId)) {
+    throw new AssistantToolArgumentError("projectId must be a Project id such as my-project.");
+  }
+  return { projectId };
 }
 
 /** Read-only Project tools. Each carries the same requirement as its HTTP route. */
@@ -584,12 +634,12 @@ export type AssistantProjectReader = (input: {
   readonly body?: unknown;
 }) => Promise<{ readonly status: number; readonly body: unknown }>;
 
-const DEFAULT_APP_TENANT = "zelavis-app";
+const APP_TENANT = "zelavis-app";
 const MAX_ROWS = 20;
 const MAX_COLLECTIONS = 100;
 
 function readName(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
     throw new AssistantToolArgumentError(`${label} must be a plain identifier.`);
   }
   return value;
@@ -651,30 +701,28 @@ export function createProjectDatabaseTools(
     scope: { type: "project", projectId },
   });
 
-  const listCollections: AssistantTool<{ projectId: string; tenantId: string }> = {
+  // The tenant is fixed, never an argument. Identity records (accounts,
+  // credentials, sessions) live in service tenants of the same database, and
+  // anything this tool returns is sent to the model provider.
+  const listCollections: AssistantTool<{ projectId: string }> = {
     name: "list_collections",
     description: "List the collections (tables) in a Project's database.",
     parameters: {
       type: "object",
-      properties: { projectId: { type: "string" }, tenantId: { type: "string" } },
+      properties: { projectId: { type: "string" } },
       required: ["projectId"],
       additionalProperties: false,
     },
     advertisedPermissions: ["project.view"],
     access: (args) => {
-      const { projectId } = readProjectId(args);
-      const tenant = (args as { tenantId?: unknown }).tenantId;
-      const parsed = {
-        projectId,
-        tenantId: tenant === undefined ? DEFAULT_APP_TENANT : readName(tenant, "tenantId"),
-      };
-      return { ...viewOf(projectId), parsed };
+      const parsed = readProjectId(args);
+      return { ...viewOf(parsed.projectId), parsed };
     },
-    execute: async ({ projectId, tenantId }, { principal }) => {
+    execute: async ({ projectId }, { principal }) => {
       const body = await readFromProject(reader, {
         projectId, principal, method: "GET",
         path: "zelavis/api/v1/database/documents/collections",
-        query: new URLSearchParams({ tenantId }),
+        query: new URLSearchParams({ tenantId: APP_TENANT }),
       });
       const collections = Array.isArray(body?.collections) ? body.collections : [];
       return {
@@ -686,7 +734,7 @@ export function createProjectDatabaseTools(
   };
 
   const readCollection: AssistantTool<{
-    projectId: string; collection: string; tenantId: string; limit: number;
+    projectId: string; collection: string; limit: number;
   }> = {
     name: "read_collection",
     description: `Read up to ${MAX_ROWS} records from one collection (table) in a Project's database.`,
@@ -695,7 +743,6 @@ export function createProjectDatabaseTools(
       properties: {
         projectId: { type: "string" },
         collection: { type: "string" },
-        tenantId: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: MAX_ROWS },
       },
       required: ["projectId", "collection"],
@@ -703,8 +750,8 @@ export function createProjectDatabaseTools(
     },
     advertisedPermissions: ["project.view"],
     access: (args) => {
-      const { projectId } = readProjectId(args);
-      const input = args as { collection?: unknown; tenantId?: unknown; limit?: unknown };
+      const { projectId } = readProjectId(args, ["collection", "limit"]);
+      const input = args as { collection?: unknown; limit?: unknown };
       const limit = input.limit === undefined ? 10 : input.limit;
       if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_ROWS) {
         throw new AssistantToolArgumentError(`limit must be an integer from 1 to ${MAX_ROWS}.`);
@@ -712,16 +759,15 @@ export function createProjectDatabaseTools(
       const parsed = {
         projectId,
         collection: readName(input.collection, "collection"),
-        tenantId: input.tenantId === undefined ? DEFAULT_APP_TENANT : readName(input.tenantId, "tenantId"),
         limit: limit as number,
       };
       return { ...viewOf(projectId), parsed };
     },
-    execute: async ({ projectId, collection, tenantId, limit }, { principal }) => {
+    execute: async ({ projectId, collection, limit }, { principal }) => {
       const body = await readFromProject(reader, {
         projectId, principal, method: "POST",
         path: `zelavis/api/v1/database/documents/${encodeURIComponent(collection)}/query`,
-        body: { tenantId, limit },
+        body: { tenantId: APP_TENANT, limit },
       });
       const documents = Array.isArray(body?.documents) ? body.documents : [];
       return {
@@ -780,6 +826,13 @@ export function createProjectLifecycleTools(
       mutation: {
         ...(input.irreversible ? { irreversible: true } : {}),
         target: ({ projectId }) => ({ kind: "project", id: projectId }),
+        // Pinned to this Project's creation time: deleting and recreating a
+        // Project under the same name must not inherit an earlier approval.
+        fingerprint: async ({ projectId }) => {
+          const project = await manager().get(projectId);
+          if (!project) throw new Error(`Project "${projectId}" was not found.`);
+          return `${project.id}@${project.createdAt}`;
+        },
       },
       execute: async ({ projectId }) => input.run(projectId),
     };

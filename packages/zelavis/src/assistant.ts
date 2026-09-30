@@ -90,6 +90,8 @@ export interface ZelavisAssistantManager {
   /** `undefined` for a missing thread and for one another principal owns. */
   get(id: string, ownerId: string): Promise<ZelavisAssistantThread | undefined>;
   deleteProjectThreads(projectId: string): Promise<number>;
+  /** Deletes one of the owner's threads. `false` when there is none (or it is not theirs). */
+  delete(id: string, ownerId: string): Promise<boolean>;
   /**
    * Adds an assistant message without asking the responder, for the result of
    * something a person decided (an approved or denied change).
@@ -136,6 +138,11 @@ export class ZelavisAssistantNotFoundError extends Error {
 }
 
 const ASSISTANT_THREADS_NAMESPACE = "assistant-threads";
+
+/** A prompt is a sentence or a paragraph, not a document; it is stored and re-sent on every turn. */
+export const ASSISTANT_MAX_PROMPT_CHARS = 8_000;
+export const ASSISTANT_MAX_THREADS_PER_OWNER = 200;
+export const ASSISTANT_MAX_MESSAGES_PER_THREAD = 400;
 
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -203,6 +210,10 @@ export function createAssistantManager(options: {
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
     get: readOwned,
+    async delete(id, ownerId) {
+      const thread = await readOwned(id, ownerId);
+      return thread ? store.delete(ASSISTANT_THREADS_NAMESPACE, thread.id) : false;
+    },
     async deleteProjectThreads(projectId) {
       const normalizedProjectId = normalizeOptionalText(projectId);
       if (!normalizedProjectId) {
@@ -244,6 +255,14 @@ export function createAssistantManager(options: {
       if (!normalizeOptionalText(ownerId)) {
         throw new ZelavisAssistantValidationError("An Assistant thread needs an owner.");
       }
+      const owned = (await store.list(ASSISTANT_THREADS_NAMESPACE))
+        .map((record) => parseStoredThread(record.value))
+        .filter((thread) => thread.ownerId === ownerId).length;
+      if (owned >= ASSISTANT_MAX_THREADS_PER_OWNER) {
+        throw new ZelavisAssistantValidationError(
+          `You already have ${ASSISTANT_MAX_THREADS_PER_OWNER} chats. Delete some before starting another.`,
+        );
+      }
       const timestamp = new Date().toISOString();
       return write({
         id: createId("thread"),
@@ -262,7 +281,17 @@ export function createAssistantManager(options: {
       if (!normalizedPrompt) {
         throw new ZelavisAssistantValidationError("Assistant prompt is required.");
       }
+      if (normalizedPrompt.length > ASSISTANT_MAX_PROMPT_CHARS) {
+        throw new ZelavisAssistantValidationError(
+          `A message may be at most ${ASSISTANT_MAX_PROMPT_CHARS} characters.`,
+        );
+      }
       const current = await readOwned(id, principal.id);
+      if (current && current.messages.length >= ASSISTANT_MAX_MESSAGES_PER_THREAD) {
+        throw new ZelavisAssistantValidationError(
+          "This chat is full. Start a new one to keep going.",
+        );
+      }
       if (!current) {
         throw new ZelavisAssistantNotFoundError(
           `Assistant thread "${id}" was not found.`,

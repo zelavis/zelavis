@@ -94,6 +94,7 @@ import {
   createProjectReadTools,
 } from "./assistant-tools.js";
 import { createAssistantApprovalStore } from "./assistant-approvals.js";
+import { createAssistantTurnLimiter } from "./assistant-limits.js";
 import {
   AssistantProviderConfigError,
   createAssistantProviderConfig,
@@ -102,7 +103,7 @@ import {
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
-import type { ZelavisPrincipal } from "./core/runtime/contracts.js";
+import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
   assertListableFrontend,
   readFrontendManifest,
@@ -211,6 +212,7 @@ export * from "./assistant-model.js";
 export * from "./assistant-tools.js";
 export * from "./assistant-provider.js";
 export * from "./assistant-approvals.js";
+export * from "./assistant-limits.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -3815,6 +3817,12 @@ async function resolvePlatformEndpointGroup(
           ...(assistantToolbox ? { toolbox: assistantToolbox } : {}),
         })
       : assistantOption;
+  const assistantTurns = createAssistantTurnLimiter();
+  const tooManyAssistantTurns = (retryAfterSeconds: number): ZelavisRouteResponse => ({
+    status: 429,
+    headers: { "retry-after": String(retryAfterSeconds) },
+    body: { error: "You are sending messages too quickly. Try again shortly." },
+  });
   const assistant =
     systemStore && assistantOption !== false
       ? createAssistantManager({
@@ -4799,17 +4807,59 @@ async function resolvePlatformEndpointGroup(
               const thread = await assistant.get(params.threadId ?? "", principal.id);
               const denied = assistantProjectDenied(principal, thread?.projectId);
               if (denied) return denied;
-              return {
-                status: 201,
-                body: await assistant.appendMessage(
-                  params.threadId ?? "",
-                  typeof input.content === "string" ? input.content : "",
-                  principal,
-                ),
-              };
+              const turn = assistantTurns.acquire(principal.id);
+              if ("retryAfterSeconds" in turn) {
+                return tooManyAssistantTurns(turn.retryAfterSeconds);
+              }
+              try {
+                return {
+                  status: 201,
+                  body: await assistant.appendMessage(
+                    params.threadId ?? "",
+                    typeof input.content === "string" ? input.content : "",
+                    principal,
+                  ),
+                };
+              } finally {
+                turn.permit.release();
+              }
             } catch (error) {
               return assistantErrorResponse(error);
             }
+          },
+        },
+        {
+          id: "runtime.assistant.threads.delete",
+          spec: {
+            operationId: "deleteAssistantThread",
+            summary: "Delete one of your assistant threads and its requests",
+            tags: ["assistant"],
+            responses: { 200: { description: "Deleted" }, 404: { description: "No such thread" } },
+          },
+          method: "DELETE",
+          path: "/assistant/threads/:threadId",
+          access: { permissions: ["assistant.use"] },
+          handler: async ({
+            params,
+            principal,
+          }: {
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistant) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
+            const threadId = params.threadId ?? "";
+            if (!(await assistant.delete(threadId, principal.id))) {
+              return assistantErrorResponse(
+                new ZelavisAssistantNotFoundError(`Assistant thread "${threadId}" was not found.`),
+              );
+            }
+            await assistantApprovals?.deleteForThread(threadId);
+            return { status: 200, body: { deleted: true } };
           },
         },
         {
@@ -4949,6 +4999,10 @@ async function resolvePlatformEndpointGroup(
               return assistantErrorResponse(error);
             }
 
+            const turn = assistantTurns.acquire(principal.id);
+            if ("retryAfterSeconds" in turn) {
+              return tooManyAssistantTurns(turn.retryAfterSeconds);
+            }
             const encoder = new TextEncoder();
             const cancelled = new AbortController();
             const signal = AbortSignal.any([
@@ -4985,6 +5039,7 @@ async function resolvePlatformEndpointGroup(
                           : "The assistant could not answer.",
                   });
                 } finally {
+                  turn.permit.release();
                   try {
                     controller.close();
                   } catch {

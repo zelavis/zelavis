@@ -125,6 +125,33 @@ approvals.
 - The dashboard card names the target by id, marks irreversible changes, and has
   no default action: nothing is focused and Approve is never the Enter key.
 
+## Threat model
+
+The model is untrusted, and so is everything it reads: Project records, logs
+and any text another user could have written. What the design relies on, and
+what it does not:
+
+- **Authority is the caller's, checked at execution.** Prompt injection can make
+  the model ask for anything; it cannot make a tool run that the caller may not
+  run, and every change still needs a person's approval.
+- **The approval names what will run.** The card is built from the stored,
+  validated arguments, not from the model's words, and the change is pinned to
+  the exact target (a Project recreated under the same name is refused).
+- **Data reaching the provider is bounded.** The database tools read one fixed
+  tenant, never the identity records that live beside it, at most 20 records at
+  a time, and every result has credential-shaped values removed. That removal is
+  defense in depth, not a boundary.
+- **Model output cannot phone home.** The dashboard never loads an image a reply
+  names (that would send what the URL encodes to its host with no click), and
+  links open without the dashboard's window.
+- **Cost and volume are bounded per caller:** 8,000 characters per message, 48,000
+  characters of history per turn, 200 chats and 400 messages per chat, and 30
+  turns per ten minutes with two at once (`429` with `retry-after`). The limiter
+  is in memory, so it bounds one caller, not the installation's total spend.
+- **Not covered:** a fleet-wide budget, retention of the audit records (they are
+  written but there is no reader for them yet), and anything a provider does
+  with what it is sent.
+
 ## Next Protocol Work
 
 Real provider adapters should preserve the existing capability boundary while
