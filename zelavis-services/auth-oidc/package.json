@@ -34,9 +34,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "plugins/auth-oidc"
+    "directory": "zelavis-services/auth-oidc"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/auth-oidc#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/auth-oidc#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },

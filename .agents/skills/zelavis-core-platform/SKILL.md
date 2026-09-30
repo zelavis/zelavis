@@ -12,8 +12,8 @@ Use this skill for changes in:
 - `packages/zelavis/src/platform`
 - `packages/zelavis/services/*`
 - `packages/zelavis/src/adapters`
-- `plugins/*` when an official optional provider or capability plugin consumes
-  the unified package's public contracts
+- `zelavis-services/*` when an officially maintained optional service (plugin,
+  provider or Project recipe) consumes the unified package's public contracts
 
 Start by reading `AGENTS.md` and the relevant `packages/zelavis` documentation
 before editing.
@@ -111,7 +111,7 @@ before editing.
   and dashboard rendering in `@zelavis/ui`. Core must not own Zelavis product
   menus or root Platform policy.
 - Put framework or host behavior in `adapters/*`; put optional provider or
-  domain capabilities in `plugins/*`.
+  domain capabilities in `zelavis-services/*`.
 - Treat complete native installation removal as a host-local lifecycle
   capability: the runtime-neutral contract belongs in core, concrete removal
   belongs in the host adapter/distribution, and the packaged CLI is the

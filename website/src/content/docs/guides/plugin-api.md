@@ -1080,7 +1080,7 @@ When this document and the repository disagree, follow the repository:
   manifest rules.
 - `packages/zelavis/src/service.ts` — package loading and contribution merge.
 - `packages/zelavis/README.md` — public package authoring documentation.
-- `plugins/ecommerce/src/ecommerce-plugin.ts` — first-party SDK usage,
+- `zelavis-services/ecommerce/src/ecommerce-plugin.ts` — first-party SDK usage,
   including a service added from `setup` rather than at module scope.
 - `packages/zelavis/services/zelavis-auth/src/index.ts` — a smaller
   first-party plugin: one menu, one page, no routes of its own.

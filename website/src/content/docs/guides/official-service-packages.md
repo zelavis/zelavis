@@ -1,7 +1,7 @@
 ---
 title: Official Service Packages
 ---
-Official Zelavis service packages live under `plugins/*`.
+Official Zelavis service packages live under `zelavis-services/*` in the repository. They are published to npm on their own release cycle and are not shipped with the Platform.
 
 These packages are first-party marketplace/runtime services written by the Zelavis team. They are configured via modern `package.json` manifests (`"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`) and use the official Zelavis SDK or export `ZelavisRuntimeService` instances.
 
@@ -16,14 +16,14 @@ An official service package is a top-level Zelavis plugin:
 
 Example:
 
-- `plugins/ecommerce`
+- `zelavis-services/ecommerce`
 
 ## Recommended structure
 
 Use standard `package.json` manifests and put definitions in named files under `src/`:
 
 ```text
-plugins/example/
+zelavis-services/example/
   package.json
   src/
     index.ts

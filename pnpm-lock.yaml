@@ -550,7 +550,22 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  plugins/auth-oidc:
+  website:
+    dependencies:
+      '@astrojs/starlight':
+        specifier: ^0.42.4
+        version: 0.42.4(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))
+      '@fontsource/poppins':
+        specifier: ^5.3.0
+        version: 5.3.0
+      astro:
+        specifier: ^7.3.3
+        version: 7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0)
+      sharp:
+        specifier: ^0.35.3
+        version: 0.35.4(@types/node@26.6.2)
+
+  zelavis-services/auth-oidc:
     dependencies:
       jose:
         specifier: ^6.2.12
@@ -563,7 +578,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/zelavis
 
-  plugins/ecommerce:
+  zelavis-services/ecommerce:
     dependencies:
       effect:
         specifier: 4.0.0-rc.117
@@ -576,7 +591,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/zelavis
 
-  plugins/ecommerce/plugins/paypal:
+  zelavis-services/ecommerce/plugins/paypal:
     dependencies:
       '@paypal/paypal-server-sdk':
         specifier: ^2.5.0
@@ -592,7 +607,7 @@ importers:
         specifier: workspace:*
         version: link:../../../../packages/zelavis
 
-  plugins/ecommerce/plugins/stripe:
+  zelavis-services/ecommerce/plugins/stripe:
     dependencies:
       '@zelavis/ecommerce':
         specifier: workspace:*
@@ -607,21 +622,6 @@ importers:
       zelavis:
         specifier: workspace:*
         version: link:../../../../packages/zelavis
-
-  website:
-    dependencies:
-      '@astrojs/starlight':
-        specifier: ^0.42.4
-        version: 0.42.4(astro@7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))
-      '@fontsource/poppins':
-        specifier: ^5.3.0
-        version: 5.3.0
-      astro:
-        specifier: ^7.3.3
-        version: 7.3.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0)
-      sharp:
-        specifier: ^0.35.3
-        version: 0.35.4(@types/node@26.6.2)
 
 packages:
 

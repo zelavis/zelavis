@@ -7,7 +7,7 @@ packages:
   # pnpm always ignores node_modules; build output is excluded below because
   # it is globbed from the filesystem, not from git.
   - "packages/**"
-  - "plugins/**"
+  - "zelavis-services/**"
   - "examples/*"
   - "website"
   - "!**/dist/**"
