@@ -21,7 +21,10 @@ test("the Bun adapter serves the services model like the Node adapter", { skip: 
 
   // Platform: official catalog, a dropped-in package, a folder frontend that
   // stays under its own prefix and cannot take the root.
-  assert.deepEqual(seen.platform.registry, [
+  // What the marketplace's shipped list offers to install is not part of the
+  // services model under test, so it is set aside.
+  const registry = seen.platform.registry.filter((entry) => !/^@zelavis\/.*:available:community$/.test(entry));
+  assert.deepEqual(registry, [
     "@acme/blog-frontend:installed:community",
     "@acme/hello:installed:community",
     "@zelavis/app:available:official",
