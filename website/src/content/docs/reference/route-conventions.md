@@ -24,7 +24,6 @@ With the default runtime settings:
 /zelavis/api/v1/database/*
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/storage/files/*?format=metadata
-/zelavis/api/v1/website/pages
 /zelavis/api/v1/workloads/*
 /zelavis/api/v1/workloads/http/:projectId/*path
 ```
@@ -74,7 +73,6 @@ the mounted paths become:
 /admin/api/v2/database/*
 /admin/api/v2/storage/files/*
 /admin/api/v2/storage/files/*?format=metadata
-/admin/api/v2/website/pages
 /admin/api/v2/workloads/*
 /admin/api/v2/workloads/http/:projectId/*path
 ```
@@ -94,15 +92,13 @@ If a dashboard surface can run a check, mutate settings, create a domain, instal
 
 This keeps the dashboard, CLI, AI agents, plugins, scripts, and external admin tools on the same platform contract.
 
-## Website core service
+## The public root
 
-When the built-in website core service is enabled, public website pages are mounted at `/`.
-
-Important rules:
-
-- `/` can serve the home page managed by the website core service.
-- Zelavis reserves the configured dashboard root path and anything under it.
-- Creating a website page at the active dashboard root path is rejected.
+Zelavis reserves the configured dashboard root path and anything under it. The
+public root `/` is served by the installed frontend: on a Project, its static
+`kind: "frontend"` package (a placeholder answers until one is installed); on the
+Platform, a folder frontend is mounted under `/apps/<name>` and can never take over
+`/`.
 
 ## Service app routes
 

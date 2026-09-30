@@ -8,7 +8,7 @@ Zelavis starts from Projects because the dashboard is meant to manage apps, webs
 A project is the operational unit shown in the dashboard. Different project types can expose different navigation:
 
 - **Zelavis-native projects** use Zelavis backend primitives such as Auth, Database, Content, Media, Settings, and project plugins.
-- **Managed app projects** represent software Zelavis hosts or manages, such as WordPress, static sites, or generic apps. These projects should expose hosting-style controls instead of pretending they use Zelavis Auth or Database.
+- **Managed app projects** represent software Zelavis hosts or manages, such as WordPress. Their recipe declares itself managed (`zelavis.project.managed`), and the dashboard then shows hosting-style controls and the app's own admin entry instead of pretending the app uses Zelavis Auth or Database. See [Recipe Runtimes and Managed Apps](./recipe-runtimes.md).
 
 Projects do not host private copies of the Zelavis dashboard. The Platform OS
 mounts one `@zelavis/ui` application. For a Zelavis-native project, that shell
@@ -29,19 +29,25 @@ reported as an error instead of falling back to Platform data.
 Some dashboard surfaces are intentionally outside any project:
 
 - `/zelavis` opens the Projects overview.
-- `/zelavis/marketplace` is the global Marketplace for Project recipes
-  presented as apps and starters, plus templates and server provider plugins.
+- `/zelavis/marketplace` is the global Marketplace. Its Apps tab creates a new
+  Project from a recipe in one click, its Plugins tab installs into the
+  Platform, and its Frontends tab is closed: the dashboard's own frontend cannot
+  be switched, so it cannot be disabled by installing another.
 - Global management pages cover Domains, Resources, Server, and Security.
   Server-owned backing routes currently live under `/zelavis/server/*` for
   areas such as domains, backups, and logs.
 
 The global Marketplace can create new Projects from Project recipes presented
-as apps and starters. Project plugins only make sense inside a Zelavis-native
-Project, so they belong under:
+as apps and starters. Plugins and frontends installed into one Project belong to
+that Project's own marketplace, the same workspace with the Frontends tab open:
 
 ```txt
 /zelavis/projects/:projectId/marketplace
 ```
+
+A Project's marketplace offers plugins and frontends only, never apps (an app is
+a Project), behind the same install gate as the Platform's. See the
+[Marketplace Allow-List](./marketplace-allowlist.md).
 
 ## Native hosting first
 
