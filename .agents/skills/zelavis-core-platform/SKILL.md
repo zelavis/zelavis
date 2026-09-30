@@ -250,8 +250,8 @@ before editing.
   to it.
 - When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
-- Keep `AGENTS.md` as the canonical durable instruction source; do not add
-  project rules to `CLAUDE.md`.
+- Keep `AGENTS.md` as the canonical durable instruction source; there is no
+  `CLAUDE.md`, so do not add one.
 - If durable Platform guidance changes, update this skill or a focused
   `.agents/references/*` resource so skill-loaded agents stay current.
 - For `zelavis/app/db`, preserve the event-sourced per-collection-table model.

@@ -19,7 +19,7 @@ Use this skill for changes in:
 - Do not claim GitHub settings are enabled unless they were verified.
 - Separate repo-policy changes from product code changes when possible.
 - Treat `AGENTS.md` as the canonical coding-agent instruction file.
-- Do not add durable project guidance to `CLAUDE.md`; if a change would do so, tell the developer the content belongs in `AGENTS.md`.
+- There is no `CLAUDE.md`; do not add one. Durable project guidance belongs in `AGENTS.md`.
 - Keep `.agents/` synchronized with `AGENTS.md`. When repo guidance affects a specific workflow, update the relevant skill or add a focused reference file.
 
 ## Repo checklist
