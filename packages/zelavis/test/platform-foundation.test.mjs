@@ -246,16 +246,64 @@ test("System Store keeps platform records outside project database APIs", async 
 test("Assistant manager persists project-scoped threads and responder actions", async () => {
   const store = createMemorySystemStore();
   const assistant = createAssistantManager({ store });
-  const created = await assistant.create({ projectId: "project-a" });
-  const result = await assistant.appendMessage(created.id, "Open the database");
+  const caller = { id: "user-1", type: "user", permissions: ["*"] };
+  const created = await assistant.create(caller.id, { projectId: "project-a" });
+  const result = await assistant.appendMessage(created.id, "Open the database", caller);
 
   assert.equal(result.thread.title, "Open the database");
   assert.equal(result.thread.messages.length, 2);
   assert.deepEqual(result.assistantMessage.actions, [
     { label: "Open Database", to: "/projects/project-a/database" },
   ]);
-  assert.equal((await assistant.list("project-a"))[0].id, created.id);
-  assert.equal((await assistant.get(created.id)).messages.length, 2);
+  assert.equal((await assistant.list(caller.id, "project-a"))[0].id, created.id);
+  assert.equal((await assistant.get(created.id, caller.id)).messages.length, 2);
+});
+
+test("Assistant threads belong to the principal that started them", async () => {
+  const assistant = createAssistantManager({ store: createMemorySystemStore() });
+  const alice = { id: "alice", type: "user", permissions: ["*"] };
+  const bob = { id: "bob", type: "user", permissions: ["*"] };
+  const thread = await assistant.create(alice.id, { title: "private" });
+
+  assert.equal(await assistant.get(thread.id, bob.id), undefined);
+  assert.deepEqual(await assistant.list(bob.id), []);
+  await assert.rejects(
+    assistant.appendMessage(thread.id, "hi", bob),
+    { name: "ZelavisAssistantNotFoundError" },
+  );
+  assert.equal((await assistant.get(thread.id, alice.id)).messages.length, 0);
+});
+
+test("Assistant endpoints scope threads to the caller and to Project access", async () => {
+  const zv = new Zelavis();
+  const call = (path, principal, init) =>
+    zv.fetch(new Request(`http://localhost/zelavis/api/v1/runtime/assistant${path}`, init),
+      { principal });
+  const post = (body) => ({
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const alice = { id: "alice", type: "user", permissions: ["assistant.use"],
+    grants: [{ permission: "project.view", scope: { type: "project", projectId: "p1" } }] };
+  const bob = { id: "bob", type: "user", permissions: ["assistant.use"] };
+
+  const created = await (await call("/threads", alice, post({ projectId: "p1" }))).json();
+  assert.ok(created.thread.id);
+
+  // Another chat user cannot read, extend or list it, and cannot learn it exists.
+  assert.equal((await call(`/threads/${created.thread.id}`, bob)).status, 404);
+  assert.equal((await call(`/threads/${created.thread.id}/messages`, bob,
+    post({ content: "hi" }))).status, 404);
+  assert.deepEqual((await (await call("/threads", bob)).json()).threads, []);
+
+  // Chat permission alone does not reach a Project the caller cannot view.
+  assert.equal((await call("/threads", bob, post({ projectId: "p1" }))).status, 403);
+  assert.equal((await call("/threads?projectId=p1", bob)).status, 403);
+
+  // Losing Project access closes an existing Project thread to its owner too.
+  const revoked = { ...alice, grants: [] };
+  assert.equal((await call(`/threads/${created.thread.id}`, revoked)).status, 403);
+  assert.equal((await call(`/threads/${created.thread.id}/messages`, revoked,
+    post({ content: "hi" }))).status, 403);
 });
 
 test("Assistant capability is available through versioned runtime endpoints", async () => {
@@ -301,7 +349,7 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
   const zv = new Zelavis({
     assistant: {
       name: "test-responder",
-      respond: ({ prompt }) => ({ content: `Received: ${prompt}` }),
+      respond: ({ prompt, principal }) => ({ content: `Received: ${prompt} from ${principal.id}` }),
     },
   });
   const created = await (
@@ -326,7 +374,7 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
     PLATFORM_OWNER_CONTEXT,
   );
   const result = await response.json();
-  assert.equal(result.assistantMessage.content, "Received: hello");
+  assert.equal(result.assistantMessage.content, "Received: hello from test-owner");
 });
 
 test("Node adapter registers shipped Project recipes and persists Platform Store SQLite", async () => {

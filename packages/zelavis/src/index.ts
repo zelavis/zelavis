@@ -75,7 +75,19 @@ import {
   type ProjectPlacementRecord,
 } from "./platform/project-placement-authority.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
+import {
+  createModelAssistantResponder,
+  isAssistantModelOption,
+  type AssistantModelOption,
+} from "./assistant-model.js";
+import {
+  createAssistantToolAudit,
+  createAssistantToolbox,
+  createProjectReadTools,
+} from "./assistant-tools.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
+import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
+import type { ZelavisPrincipal } from "./core/runtime/contracts.js";
 export {
   assertListableFrontend,
   readFrontendManifest,
@@ -180,6 +192,8 @@ export * from "./system-store.js";
 export * from "./project.js";
 export * from "./platform/host-operations.js";
 export * from "./assistant.js";
+export * from "./assistant-model.js";
+export * from "./assistant-tools.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -531,7 +545,7 @@ export interface ZelavisServerOptions {
   edgeRoutes?: ZelavisEdgeRouteStore;
   /** Edge certificate authority and ACME controller. */
   edgeCertificates?: ZelavisCertificateController;
-  assistant?: false | ZelavisAssistantResponder;
+  assistant?: false | ZelavisAssistantResponder | AssistantModelOption;
   bootstrap?: {
     /** One-time secret required to claim the first Platform owner account. */
     token: string;
@@ -758,7 +772,7 @@ export interface ZelavisOptions {
    * installed. The Platform names none of its own.
    */
   frontend?: ZelavisFrontendInput;
-  assistant?: false | ZelavisAssistantResponder;
+  assistant?: false | ZelavisAssistantResponder | AssistantModelOption;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
   bootstrap?: {
@@ -3730,17 +3744,34 @@ async function resolvePlatformEndpointGroup(
   hostOperations?: ZelavisHostOperationBroker,
   edge?: ZelavisEdgeManager,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
-  assistantOption?: false | ZelavisAssistantResponder,
+  assistantOption?: false | ZelavisAssistantResponder | AssistantModelOption,
   edgeRoutes?: ZelavisEdgeRouteStore,
   edgeCertificates?: ZelavisCertificateController,
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
 ): Promise<ZelavisEndpointGroup<any>> {
+  const assistantResponder = !assistantOption
+    ? undefined
+    : isAssistantModelOption(assistantOption)
+      ? createModelAssistantResponder({
+          model: assistantOption.model,
+          ...(assistantOption.system ? { system: assistantOption.system } : {}),
+          ...(assistantOption.maxSteps ? { maxSteps: assistantOption.maxSteps } : {}),
+          ...(systemStore
+            ? {
+                toolbox: createAssistantToolbox({
+                  tools: createProjectReadTools(() => projects),
+                  audit: createAssistantToolAudit(systemStore),
+                }),
+              }
+            : {}),
+        })
+      : assistantOption;
   const assistant =
     systemStore && assistantOption !== false
       ? createAssistantManager({
           store: systemStore,
-          ...(assistantOption ? { responder: assistantOption } : {}),
+          ...(assistantResponder ? { responder: assistantResponder } : {}),
         })
       : undefined;
 
@@ -3788,6 +3819,27 @@ async function resolvePlatformEndpointGroup(
           ? 400
           : 500;
     return createJsonErrorResponse(status, error);
+  }
+
+  /**
+   * A Project thread is only as reachable as the Project. `assistant.use`
+   * says the caller may chat; it says nothing about which Projects, so the
+   * Project's own view permission is checked on every touch, not only creation.
+   */
+  function assistantProjectDenied(
+    principal: ZelavisPrincipal | undefined,
+    projectId: string | undefined,
+  ) {
+    if (projectId === undefined) return undefined;
+    if (
+      principalHasPermission(principal, "project.view", {
+        type: "project",
+        projectId,
+      })
+    ) {
+      return undefined;
+    }
+    return { status: 403, body: { error: "Missing required permission" } };
   }
 
   function deploymentBackendErrorResponse(error: unknown) {
@@ -4443,19 +4495,33 @@ async function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
-          handler: async ({ query }: { query: URLSearchParams }) =>
-            assistant
-              ? {
-                  status: 200,
-                  body: {
-                    responder: assistant.responder,
-                    threads: await assistant.list(query.get("projectId") ?? undefined),
-                  },
-                }
-              : {
-                  status: 503,
-                  body: { error: "Assistant requires the Platform System Store." },
-                },
+          handler: async ({
+            query,
+            principal,
+          }: {
+            query: URLSearchParams;
+            principal?: ZelavisPrincipal;
+          }) => {
+            if (!assistant) {
+              return {
+                status: 503,
+                body: { error: "Assistant requires the Platform System Store." },
+              };
+            }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
+            const projectId = query.get("projectId") ?? undefined;
+            const denied = assistantProjectDenied(principal, projectId);
+            if (denied) return denied;
+            return {
+              status: 200,
+              body: {
+                responder: assistant.responder,
+                threads: await assistant.list(principal.id, projectId),
+              },
+            };
+          },
         },
         {
           id: "runtime.assistant.threads.create",
@@ -4471,16 +4537,30 @@ async function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: async ({
+            body,
+            principal,
+          }: {
+            body: unknown;
+            principal?: ZelavisPrincipal;
+          }) => {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
             try {
               const input = readBodyObject(body);
+              const denied = assistantProjectDenied(
+                principal,
+                typeof input.projectId === "string" ? input.projectId : undefined,
+              );
+              if (denied) return denied;
               return {
                 status: 201,
                 body: {
-                  thread: await assistant.create({
+                  thread: await assistant.create(principal.id, {
                     ...(typeof input.title === "string" ? { title: input.title } : {}),
                     ...(typeof input.projectId === "string"
                       ? { projectId: input.projectId }
@@ -4507,17 +4587,28 @@ async function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/threads/:threadId",
           access: { permissions: ["assistant.use"] },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: async ({
+            params,
+            principal,
+          }: {
+            params: Record<string, string>;
+            principal?: ZelavisPrincipal;
+          }) => {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
             try {
-              const thread = await assistant.get(params.threadId ?? "");
+              const thread = await assistant.get(params.threadId ?? "", principal.id);
               if (!thread) {
                 throw new ZelavisAssistantNotFoundError(
                   `Assistant thread "${params.threadId ?? ""}" was not found.`,
                 );
               }
+              const denied = assistantProjectDenied(principal, thread.projectId);
+              if (denied) return denied;
               return { status: 200, body: { thread } };
             } catch (error) {
               return assistantErrorResponse(error);
@@ -4541,20 +4632,29 @@ async function resolvePlatformEndpointGroup(
           handler: async ({
             body,
             params,
+            principal,
           }: {
             body: unknown;
             params: Record<string, string>;
+            principal?: ZelavisPrincipal;
           }) => {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
+            if (!principal) {
+              return { status: 401, body: { error: "Authentication required" } };
+            }
             try {
               const input = readBodyObject(body);
+              const thread = await assistant.get(params.threadId ?? "", principal.id);
+              const denied = assistantProjectDenied(principal, thread?.projectId);
+              if (denied) return denied;
               return {
                 status: 201,
                 body: await assistant.appendMessage(
                   params.threadId ?? "",
                   typeof input.content === "string" ? input.content : "",
+                  principal,
                 ),
               };
             } catch (error) {

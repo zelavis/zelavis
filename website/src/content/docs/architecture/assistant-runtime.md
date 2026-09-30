@@ -27,9 +27,11 @@ GET  /zelavis/api/v1/runtime/assistant/threads/:threadId
 POST /zelavis/api/v1/runtime/assistant/threads/:threadId/messages
 ```
 
-Threads may carry a `projectId`. This lets the dashboard present Assistant
-navigation as Projects -> project -> Chats and enforce the same project access
-boundaries later.
+Threads belong to the principal that started them. Another principal cannot
+list, read or extend a thread and gets `404`, so it cannot learn the thread
+exists. A thread may carry a `projectId`; `assistant.use` only allows chatting,
+so the Project's own `project.view` permission is checked on create, list, read
+and every message, and losing it closes the thread to its owner too.
 
 ## Implemented Today
 
@@ -43,15 +45,36 @@ boundaries later.
 The built-in responder is not a language model. It recognizes a small set of
 supported platform intents and returns text plus safe dashboard links.
 
+## Model and tools
+
+`Zelavis({ assistant: { model } })` answers with a language model behind the
+thin `AssistantModel` seam. `createOpenRouterModel({ apiKey, model })` is the
+first provider (plain `fetch`, HTTPS only, bounded responses, provider errors
+never echo the key). The seam knows nothing about threads or permissions.
+
+The Admin Agent is not a principal. It borrows the caller's authority:
+
+- a tool call is authorized at execution against the caller's permissions, with
+  a scope built from that call's own arguments, never from the thread or prompt
+- tools are advertised only to callers who hold their permissions at some scope
+  (a convenience, not the gate)
+- refusals (`forbidden`, `invalid_arguments`, `unknown_tool`, `failed`,
+  `audit_unavailable`) are returned to the model as structured data
+- every call is audited with principal, arguments and decision in the System
+  Store, and a call that cannot be audited does not run
+- the system prompt enforces nothing
+
+Built-in read-only tools: `list_projects`, `get_project`, `project_logs`, each
+carrying the same requirement as its HTTP route.
+
 ## Next Protocol Work
 
 Real provider adapters should preserve the existing capability boundary while
 adding:
 
 - streamed message events
-- model and agent provider selection
-- typed tool calls backed by Zelavis endpoints
-- permission checks and human approval requests
+- multi-provider selection and per-Project provider keys
+- mutating tools with human approval requests
 - run progress, logs, generated files, and error state
 - retries, cancellation, branching, and richer thread metadata
 

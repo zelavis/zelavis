@@ -1,3 +1,4 @@
+import type { ZelavisPrincipal } from "./core/index.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -18,6 +19,8 @@ export interface ZelavisAssistantMessage {
 
 export interface ZelavisAssistantThread {
   id: string;
+  /** The principal that started the thread; the only one that may read or extend it. */
+  ownerId: string;
   title: string;
   projectId?: string;
   messages: readonly ZelavisAssistantMessage[];
@@ -35,21 +38,32 @@ export interface ZelavisAssistantResponder {
   respond(input: {
     thread: ZelavisAssistantThread;
     prompt: string;
+    /**
+     * The caller's own authority. A responder acts with it and never with
+     * authority of its own; it is not persisted with the thread.
+     */
+    principal: ZelavisPrincipal;
   }): Promise<ZelavisAssistantReply> | ZelavisAssistantReply;
 }
 
 export interface ZelavisAssistantManager {
   readonly responder: string;
-  list(projectId?: string): Promise<readonly ZelavisAssistantThread[]>;
-  get(id: string): Promise<ZelavisAssistantThread | undefined>;
+  /** Only the owner's threads; other principals' threads are never listed. */
+  list(ownerId: string, projectId?: string): Promise<readonly ZelavisAssistantThread[]>;
+  /** `undefined` for a missing thread and for one another principal owns. */
+  get(id: string, ownerId: string): Promise<ZelavisAssistantThread | undefined>;
   deleteProjectThreads(projectId: string): Promise<number>;
-  create(input?: {
-    title?: string;
-    projectId?: string;
-  }): Promise<ZelavisAssistantThread>;
+  create(
+    ownerId: string,
+    input?: {
+      title?: string;
+      projectId?: string;
+    },
+  ): Promise<ZelavisAssistantThread>;
   appendMessage(
     id: string,
     prompt: string,
+    principal: ZelavisPrincipal,
   ): Promise<{
     thread: ZelavisAssistantThread;
     userMessage: ZelavisAssistantMessage;
@@ -114,6 +128,11 @@ export function createAssistantManager(options: {
     return record ? parseStoredThread(record.value) : undefined;
   }
 
+  async function readOwned(id: string, ownerId: string) {
+    const thread = await read(id);
+    return thread && thread.ownerId === ownerId ? thread : undefined;
+  }
+
   async function write(thread: ZelavisAssistantThread) {
     await store.set(ASSISTANT_THREADS_NAMESPACE, thread.id, toStoreValue(thread));
     return thread;
@@ -121,18 +140,19 @@ export function createAssistantManager(options: {
 
   return {
     responder: responder.name,
-    async list(projectId) {
+    async list(ownerId, projectId) {
       const normalizedProjectId = normalizeOptionalText(projectId);
       const records = await store.list(ASSISTANT_THREADS_NAMESPACE);
       return records
         .map((record) => parseStoredThread(record.value))
         .filter(
           (thread) =>
-            normalizedProjectId === undefined || thread.projectId === normalizedProjectId,
+            thread.ownerId === ownerId &&
+            (normalizedProjectId === undefined || thread.projectId === normalizedProjectId),
         )
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
-    get: read,
+    get: readOwned,
     async deleteProjectThreads(projectId) {
       const normalizedProjectId = normalizeOptionalText(projectId);
       if (!normalizedProjectId) {
@@ -151,10 +171,14 @@ export function createAssistantManager(options: {
       }
       return deleted;
     },
-    async create(input = {}) {
+    async create(ownerId, input = {}) {
+      if (!normalizeOptionalText(ownerId)) {
+        throw new ZelavisAssistantValidationError("An Assistant thread needs an owner.");
+      }
       const timestamp = new Date().toISOString();
       return write({
         id: createId("thread"),
+        ownerId,
         title: normalizeOptionalText(input.title) ?? "New chat",
         ...(normalizeOptionalText(input.projectId)
           ? { projectId: normalizeOptionalText(input.projectId) }
@@ -164,12 +188,12 @@ export function createAssistantManager(options: {
         updatedAt: timestamp,
       });
     },
-    async appendMessage(id, prompt) {
+    async appendMessage(id, prompt, principal) {
       const normalizedPrompt = prompt.trim();
       if (!normalizedPrompt) {
         throw new ZelavisAssistantValidationError("Assistant prompt is required.");
       }
-      const current = await read(id);
+      const current = await readOwned(id, principal.id);
       if (!current) {
         throw new ZelavisAssistantNotFoundError(
           `Assistant thread "${id}" was not found.`,
@@ -194,6 +218,7 @@ export function createAssistantManager(options: {
       const reply = await responder.respond({
         thread: withUser,
         prompt: normalizedPrompt,
+        principal,
       });
       const assistantMessage: ZelavisAssistantMessage = {
         id: createId("message"),
