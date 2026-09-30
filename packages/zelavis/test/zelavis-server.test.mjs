@@ -1411,6 +1411,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.assistant.threads.create",
       "runtime.assistant.threads.get",
       "runtime.assistant.messages.create",
+      "runtime.assistant.messages.stream",
       "runtime.projects.list",
       "runtime.projects.create",
       "runtime.projects.get",
