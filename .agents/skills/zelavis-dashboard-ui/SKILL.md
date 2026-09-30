@@ -109,7 +109,6 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 - Keep shared UI primitives aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
 - Use shared control defaults in dashboard routes. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
 - Avoid route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Zelavis is a dense dashboard, not a blog/document page; content areas should usually begin with the real workspace, table, form, chart, or contextual actions.
-- `Community` is content inside the first sidebar slide
 
 ## Working rules
 
@@ -142,7 +141,7 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
   "JS, HTTP, and CLI parity" rule. Dashboard reachability alone is incomplete.
 - Do not make route modules, component callbacks, local React state, or framework-specific server actions the only implementation of privileged platform behavior.
 - The mounted dashboard path is `/zelavis`, including in dev mode
-- `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.
+- `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*` and always need a real Project id; there is no implicit `default` Project.
 - `/zelavis/marketplace` is the global marketplace for Project recipes presented as apps and starters, plus templates and server provider plugins. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.
 - Label the create-project choice **Project recipe**, not App service,
   Blueprint, or Boilerplate.
@@ -159,8 +158,16 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 pnpm dev
 pnpm --filter @zelavis/ui typecheck
 pnpm --filter @zelavis/ui build
-pnpm --filter @zelavis/ui test:e2e
+pnpm run ci:ui:local          # smoke specs against a throwaway Platform
+pnpm run ci:ui:setup:local    # first-run wizard against an unclaimed Platform
 ```
+
+The e2e scripts pick their own free ports and stop only what they started; never
+make one claim 3000/3100 or kill by port. Browser specs live in `tests/e2e`
+(needs a session) and `tests/setup-e2e` (needs an unclaimed Platform), and are
+excluded from the unit runner. Assistant UI (chat, approval card, settings cards)
+is covered there; the approval card must keep focusing nothing, and reply
+Markdown must never load an image.
 
 After substantial UI changes, verify the mounted dashboard flow still works at:
 
