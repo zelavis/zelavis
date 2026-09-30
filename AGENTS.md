@@ -74,14 +74,10 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 ## Agent Instruction Source Of Truth
 
 `AGENTS.md` is the canonical instruction file for coding agents in this repo.
-Do not add new project rules, architecture notes, or workflow instructions to
-`CLAUDE.md`. If an agent finds something worth preserving from `CLAUDE.md`,
-move or summarize it here instead.
-
-It is technically acceptable for `CLAUDE.md` to become a short pointer to
-`AGENTS.md`. Until that migration happens, treat `CLAUDE.md` as legacy context
-only. If a requested change would add or update `CLAUDE.md`, stop and notify
-the developer that the content belongs in `AGENTS.md`.
+There is no `CLAUDE.md`: Claude Code reads `AGENTS.md` directly when a repository
+has no `CLAUDE.md` (Claude Code v2.1.277 or later; `/memory` lists it). Do not add
+a `CLAUDE.md` or `CLAUDE.local.md` to the project tree: either one makes Claude
+read it instead of `AGENTS.md`. Put durable project guidance here.
 
 Keep the `.agents/` folder in sync with this file. When adding or changing
 durable guidance that affects a specific agent workflow, update the relevant
@@ -89,7 +85,9 @@ durable guidance that affects a specific agent workflow, update the relevant
 `.agents/references/` so skill-loaded agents receive the same current guidance.
 
 `.claude/` is Claude-specific tool configuration, not a second instruction
-system. It may contain Claude settings, local permissions, worktree state, or
+system, and it stays: Claude Code does not read anything under `.agents/`, so the
+tracked session-start hook in `.claude/settings.json` is what makes the
+`.agents/skills/*` skills visible to it. It may contain Claude settings, local permissions, worktree state, or
 symlinks that point Claude at `.agents/skills/*` and `.agents/references`.
 Do not duplicate instructions or skill content into `.claude/`. If a Claude
 integration needs access to repo-maintained guidance, point it at `AGENTS.md`
