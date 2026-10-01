@@ -5,6 +5,7 @@ The Node.js adapter has two pieces:
 
 - `nodeAdapter()` from `zelavis/adapters/node` — the environment adapter that provides SQLite, file storage, and Platform System Store persistence.
 - `createNodeServer(zv)` from `zelavis/runtimes/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
+- `shutdownOnSignals(shutdown)` from the same subpath — stops the process cleanly on SIGINT, SIGTERM and SIGHUP.
 
 ## Basic usage
 
@@ -17,6 +18,29 @@ const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
 server.listen(3000);
 ```
+
+## Stopping cleanly
+
+A Platform that runs Projects must finish `zv.close()` before the process ends: that
+is what stops the Projects and releases their placements. Register it with
+`shutdownOnSignals` rather than `process.once`:
+
+```ts
+import { closeNodeServer, shutdownOnSignals } from "zelavis/runtimes/node";
+
+shutdownOnSignals(async () => {
+  await Promise.all([closeNodeServer(server), zv.close()]);
+});
+```
+
+A one-shot handler is removed by the first signal, so a second Ctrl-C (a terminal
+and a dev script that forwards it each send one) kills the process in the middle
+of the shutdown and leaves the placements active. `shutdownOnSignals` ignores
+repeated signals while it runs, also handles a closed terminal (SIGHUP), exits with
+the shutdown's result, and cuts off a shutdown that hangs (30 seconds by default,
+`forceAfterMs`). A Platform that still did not shut down cleanly (killed outright,
+a crash) is taken over on the next start, because the new session fences the old
+one.
 
 ## Node adapter options
 

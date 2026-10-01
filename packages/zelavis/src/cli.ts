@@ -11,7 +11,7 @@ import {
   type NodeAdapterProjectOptions,
 } from "./adapters/node.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
-import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
+import { closeNodeServer, createNodeServer, shutdownOnSignals } from "./runtimes/node.js";
 
 /** Real path of this CLI, symlinks resolved; undefined if it cannot be read. */
 async function resolveInstallationPath(): Promise<string | undefined> {
@@ -121,21 +121,9 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   );
   console.log(`Platform data: ${dataDirectory}`);
 
-  let shutdownPromise: Promise<void> | undefined;
-  const shutdown = () => {
-    shutdownPromise ??= Promise.all([
-      closeNodeServer(server),
-      zv.close(),
-    ]).then(
-      () => undefined,
-      (error) => {
-        console.error(error);
-        process.exitCode = 1;
-      },
-    );
-  };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  shutdownOnSignals(async () => {
+    await Promise.all([closeNodeServer(server), zv.close()]);
+  });
 }
 
 const installationPath = await resolveInstallationPath();

@@ -43,7 +43,7 @@ const zv = new Zelavis({ adapter: nodeAdapter() });
 The main package ships the standalone Node HTTP host utility:
 
 ```txt
-zelavis/runtimes/node          — createNodeServer(zv)
+zelavis/runtimes/node          — createNodeServer(zv), closeNodeServer(server), shutdownOnSignals(fn)
 zelavis/runtimes/bun           — bun marker
 zelavis/runtimes/deno          — deno marker
 ```

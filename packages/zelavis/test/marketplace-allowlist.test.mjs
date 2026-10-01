@@ -215,6 +215,24 @@ test("in development, an official service in the local checkout stands in for it
   assert.deepEqual(marketplace.managedDirectories, [checkout]);
 });
 
+test("packages the shipped list offers are listed, never imported, so booting does not warn about them", async (t) => {
+  const directory = await scratch(t);
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(" ")); };
+  t.after(() => { console.warn = original; });
+  // No sources: only the list shipped with this release, which names real packages on npm.
+  const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory, services: { marketplace: { sources: [] } } }) });
+  t.after(() => zv.close());
+  const runtime = await zv.runtime();
+  const response = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/services"), OWNER);
+  const { services } = await response.json();
+
+  assert.ok(services.some((service) => service.status === "available" && service.name.startsWith("@zelavis/")),
+    "the shipped list is offered");
+  assert.deepEqual(warnings.filter((line) => line.includes("could not load")), []);
+});
+
 test("a Project's marketplace offers plugins and frontends, from the shipped list, behind the same gate", async (t) => {
   const directory = await scratch(t);
   const checkout = join(directory, "zelavis-services");

@@ -34,8 +34,12 @@ export function ProjectSwitcher({
   const navigate = useNavigate()
   const location = useLocation()
   const currentProjectId = getProjectIdFromPathname(location.pathname)
-  const activeProject =
-    projects.find((project) => project.id === currentProjectId) ?? projects[0]
+  // Only a Project the address names is "current". Outside a Project (the
+  // Projects overview, the Marketplace, Server pages) nothing is selected, so
+  // the switcher stays neutral instead of showing whichever Project is first.
+  const activeProject = currentProjectId
+    ? projects.find((project) => project.id === currentProjectId)
+    : undefined
   const ActiveLogo = activeProject?.logo ?? ZelavisMark
 
   return (
@@ -64,10 +68,14 @@ export function ProjectSwitcher({
           >
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-semibold">
-                {activeProject?.name ?? "Zelavis"}
+                {activeProject?.name ?? "Select project"}
               </span>
               <span className="truncate text-xs">
-                {activeProject?.domain ?? "No projects yet"}
+                {activeProject
+                  ? activeProject.domain
+                  : projects.length > 0
+                    ? `${projects.length} ${projects.length === 1 ? "project" : "projects"}`
+                    : "No projects yet"}
               </span>
             </div>
             <ChevronsUpDown className="ms-auto" />
@@ -129,7 +137,8 @@ export function ProjectSwitcher({
               className="gap-2 p-2"
               onClick={() => navigate("/projects", { viewTransition: true })}
             >
-              <div className="flex size-6 items-center justify-center rounded-md border bg-background">
+              {/* No fill of its own: a highlighted row turns its text near-white, and a light box would hide the icon. */}
+              <div className="flex size-6 items-center justify-center rounded-md border">
                 <LayoutDashboard className="size-4" />
               </div>
               <div className="font-medium">All projects</div>
@@ -141,7 +150,8 @@ export function ProjectSwitcher({
                 navigate("/projects?new=1", { viewTransition: true })
               }
             >
-              <div className="flex size-6 items-center justify-center rounded-md border bg-background">
+              {/* No fill of its own: a highlighted row turns its text near-white, and a light box would hide the icon. */}
+              <div className="flex size-6 items-center justify-center rounded-md border">
                 <Plus className="size-4" />
               </div>
               <div className="font-medium">New project</div>

@@ -1307,7 +1307,12 @@ async function loadConfiguredServiceRegistryModules(
     // Official entries are supplied by the host adapter already loaded (bundled
     // packages through the package loader, in-tree recipes as objects);
     // re-importing them by specifier would only repeat that work.
-    if (!entry.specifier || entry.manifest || entry.source === "official") {
+    // An available entry from the marketplace's list names a package on npm that
+    // is not installed. It is listed from what the list says about it, never
+    // imported: importing it would run code that nobody chose to install.
+    const listedNotInstalled =
+      entry.status === "available" && entry.specifier?.startsWith("npm:");
+    if (!entry.specifier || entry.manifest || entry.source === "official" || listedNotInstalled) {
       resolved.push(...createServiceRegistry([entry]));
       continue;
     }

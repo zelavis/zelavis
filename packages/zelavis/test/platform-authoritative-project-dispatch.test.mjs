@@ -88,6 +88,56 @@ test("local start requires a committed placement and passes its token to the dri
   }
 });
 
+test("reconciliation and a start reaching for the same placements at once share one claim", async () => {
+  // Startup reconciliation plans every Project that should be running, and a
+  // person's click plans the fleet plus the one they chose. Both read the same
+  // epochs and both tried to take them; the loser was told the Project had no
+  // placement, though the winner was this same session, and nothing started.
+  const memory = createMemorySystemStore();
+  // A real store yields between calls, which is what lets two callers interleave.
+  const yieldTurn = () => new Promise((resolve) => setImmediate(resolve));
+  const store = new Proxy(memory, {
+    get(target, name) {
+      const member = target[name];
+      return typeof member === "function"
+        ? async (...args) => { await yieldTurn(); return member.apply(target, args); }
+        : member;
+    },
+  });
+  const setup = await createProjectManager({
+    store, projectRecipes: recipes, runtime: driver().runtime, autoReconcile: false,
+  });
+  await setup.create({ id: "shop", name: "shop", start: false });
+  await setup.create({ id: "blog", name: "blog", start: false });
+  await setup.close();
+  const blog = await store.get("projects", "blog");
+  await store.set("projects", "blog", { ...blog.value, desiredState: "running" });
+
+  const authority = createProjectPlacementAuthority({ store, mayPlace: () => true });
+  const running = driver();
+  const manager = await createProjectManager({
+    store, projectRecipes: recipes, runtime: running.runtime, autoReconcile: false,
+    placement: () => ({
+      async planProjectPlacements(requests) {
+        return { replicas: requests.map((request) => ({
+          identity: request.identity, projectKind: request.projectKind,
+          replicaId: `${request.identity.workloadId}:runtime:1`, replicaIndex: 0, runtimeNodeId: "node-a",
+        })), unplaced: [] };
+      },
+    }),
+    authoritativePlacement: authority,
+    dispatch: () => ({ localNodeId: "node-a" }),
+  });
+  try {
+    const results = await Promise.allSettled([manager.reconcile(), manager.start("shop"), manager.start("blog")]);
+    for (const result of results) assert.equal(result.status, "fulfilled", result.reason?.message);
+    assert.equal((await authority.current("blog")).epoch, 1, "one claim, not one per caller");
+    assert.equal((await authority.current("shop")).epoch, 1);
+  } finally {
+    await manager.close();
+  }
+});
+
 test("an unavailable planner cannot authorize a local start", async () => {
   const store = createMemorySystemStore();
   await seed(store);

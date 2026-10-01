@@ -1378,7 +1378,29 @@ export async function createProjectManager(options: {
     return { blocked, elsewhere };
   }
 
-  async function ensureCommittedPlacement(
+  /**
+   * One claim per Project at a time. Startup reconciliation and a person's click
+   * can both ask for the same Project's placement at once; each would read the
+   * same epoch and both would try to take it, and the one that lost was reported
+   * as having no placement at all, though the winner was this very session.
+   * Asking again while a claim is in flight joins it.
+   */
+  const placementClaims = new Map<string, Promise<ProjectPlacementRecord | undefined>>();
+  function ensureCommittedPlacement(
+    projectId: string,
+    plannedNodeId: string,
+  ): Promise<ProjectPlacementRecord | undefined> {
+    const key = `${projectId}\u0000${plannedNodeId}`;
+    let claim = placementClaims.get(key);
+    if (!claim) {
+      claim = commitPlacement(projectId, plannedNodeId)
+        .finally(() => placementClaims.delete(key));
+      placementClaims.set(key, claim);
+    }
+    return claim;
+  }
+
+  async function commitPlacement(
     projectId: string,
     plannedNodeId: string,
   ): Promise<ProjectPlacementRecord | undefined> {

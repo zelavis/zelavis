@@ -180,6 +180,86 @@ test("deployment backend runtime registry dispatches from the stored Project ass
   assert.deepEqual(calls, ["docker:start:site-a", "docker:stop:site-a"]);
 });
 
+test("the deployment backend runtime hands a driver the placement it starts under and lets it fence a previous owner", async () => {
+  const store = createMemorySystemStore();
+  const seen = { placement: undefined, fenced: [], adopted: 0 };
+  const native = {
+    name: "native-driver",
+    runtimeKinds: ["native"],
+    capabilities: () => ({}),
+    async prepare() {},
+    async start(_project, placement) { seen.placement = placement; return { status: "running" }; },
+    async fencePrevious(placement) { seen.fenced.push(placement.projectId); return true; },
+    async adopt() { seen.adopted += 1; },
+    async stop() { return { status: "stopped" }; },
+    async status() { return { status: "stopped" }; },
+    async logs() { return []; },
+    async destroy() {},
+    async close() {},
+  };
+  const runtime = createDeploymentBackendProjectRuntime({
+    store,
+    backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: native, detect: async () => ({}) }],
+  });
+  const project = {
+    id: "site-a", name: "Site A", kind: "zelavis", runtimeKind: "native",
+    recipe: { name: "@zelavis/app", title: "App", version: "1.0.0", specifier: "@zelavis/app", runtimeKinds: ["native"] },
+  };
+  await store.set("projects", project.id, project);
+  const token = { projectId: "site-a", nodeId: "local", ownerSession: "s1", epoch: 3 };
+
+  // Dropping the token meant a process was recorded with no placement to be
+  // fenced against, and a previous session's ownership could never be taken over.
+  await runtime.start(project, token);
+  assert.deepEqual(seen.placement, token);
+
+  assert.equal(await runtime.fencePrevious(token), true);
+  assert.deepEqual(seen.fenced, ["site-a"]);
+  // A Project the store does not know is not fenced on a guess.
+  assert.equal(await runtime.fencePrevious({ ...token, projectId: "unknown" }), false);
+
+  await runtime.adopt();
+  assert.equal(seen.adopted, 1);
+
+  // Offered only when a driver can do it, so its absence still means "cannot".
+  const plain = { ...native };
+  delete plain.fencePrevious;
+  delete plain.adopt;
+  const without = createDeploymentBackendProjectRuntime({
+    store,
+    backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: plain, detect: async () => ({}) }],
+  });
+  assert.equal(without.fencePrevious, undefined);
+  assert.equal(without.adopt, undefined);
+});
+
+test("the deployment backend runtime exposes every member of the driver contract a driver implements", async () => {
+  // The wrapper used to forward a hand-picked list of members, so a member it
+  // did not know about was dropped without a sound (the placement token,
+  // fencing and adoption all were). The routing table is typed against the
+  // contract, and this is its runtime half: nothing a driver offers is lost.
+  const { PROJECT_DRIVER_MEMBER_ROUTING } = await import("../dist/backends/registry.js");
+  const store = createMemorySystemStore();
+  const driver = {
+    name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
+    capabilities: () => ({}),
+    async prepare() {}, async start() { return { status: "running" }; },
+    async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
+    async logs() { return []; }, async destroy() {}, async close() {},
+    async signGatewayAuthority() { return "signed"; },
+    async fencePrevious() { return true; }, async adopt() {},
+  };
+  const runtime = createDeploymentBackendProjectRuntime({
+    store,
+    backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: driver, detect: async () => ({}) }],
+  });
+
+  const contract = Object.keys(PROJECT_DRIVER_MEMBER_ROUTING).sort();
+  assert.deepEqual(contract.filter((member) => !(member in driver)), [], "the fixture implements the whole contract");
+  assert.deepEqual(contract.filter((member) => runtime[member] === undefined), [],
+    "a member a driver has is missing from the wrapper");
+});
+
 test("project process failures include the useful stderr cause", () => {
   assert.equal(
     formatProjectProcessExitError({

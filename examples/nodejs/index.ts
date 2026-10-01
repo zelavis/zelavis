@@ -1,6 +1,6 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { closeNodeServer, createNodeServer } from "zelavis/runtimes/node";
+import { closeNodeServer, createNodeServer, shutdownOnSignals } from "zelavis/runtimes/node";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 async function main(): Promise<void> {
@@ -33,22 +33,11 @@ async function main(): Promise<void> {
     );
   });
 
-  let shutdownPromise: Promise<void> | undefined;
-  const shutdown = () => {
-    shutdownPromise ??= Promise.all([
-      closeNodeServer(server),
-      zv.close(),
-    ]).then(
-      () => undefined,
-      (error) => {
-        console.error(error);
-        process.exitCode = 1;
-      },
-    );
-  };
-
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  // Waits for the Projects to stop and their placements to be released, and
+  // ignores a repeated Ctrl-C while it does.
+  shutdownOnSignals(async () => {
+    await Promise.all([closeNodeServer(server), zv.close()]);
+  });
 }
 
 await main();

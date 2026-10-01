@@ -812,6 +812,78 @@ test('@smoke a service the operator did not compose is sandboxed', async ({
   expect(result.reachable).toBe(false)
 })
 
+test('@smoke the project switcher is neutral outside a Project and names the Project inside one', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  // The Projects overview is not a Project: nothing is selected, and the first
+  // Project in the list is not shown as if it were.
+  await gotoPlatformDashboard(page, '/projects')
+  await expect(page.getByRole('button', { name: /Select project/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toHaveCount(0)
+
+  await gotoDashboard(page, '/')
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Select project/ })).toHaveCount(0)
+})
+
+test('@smoke the project switcher icons stay visible when a row is highlighted', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  await gotoDashboard(page, '/')
+  await page.getByRole('button', { name: /Zelavis Runtime/ }).click()
+
+  for (const name of [/All projects/, /New project/]) {
+    const row = page.getByRole('menuitem', { name })
+    await row.hover()
+    // A highlighted row turns its text near-white. The icon follows it, so the
+    // box behind the icon must not be a light fill of its own.
+    const box = await row.locator('svg').first().evaluate((icon) => {
+      const parent = icon.parentElement!
+      return {
+        icon: getComputedStyle(icon).color,
+        fill: getComputedStyle(parent).backgroundColor,
+      }
+    })
+    expect(box.fill, `${name} icon box`).toBe('rgba(0, 0, 0, 0)')
+    expect(box.icon).not.toBe(box.fill)
+  }
+})
+
+test('@smoke content starts as far from the top of the content area as from its left edge', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  // The Projects overview used to keep an empty toolbar row on desktop (its
+  // search and button live in the header there), and that row still took a grid
+  // gap above the first card.
+  for (const path of ['/projects', '/server/domains', '/server/backups']) {
+    await gotoPlatformDashboard(page, path)
+    const offsets = await page.evaluate(() => {
+      const scroll = document.querySelector('[data-dashboard-scroll="content"]')!
+      const first = scroll.querySelector('[data-slot="card"]')!
+      const area = scroll.getBoundingClientRect()
+      const card = first.getBoundingClientRect()
+      return { top: Math.round(card.top - area.top), left: Math.round(card.left - area.left) }
+    })
+    expect(offsets.top, path).toBe(offsets.left)
+  }
+})
+
+test('@smoke a Project sidebar lists Overview once', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  await gotoDashboard(page, '/')
+
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+  await expect(rootSlide.getByRole('link', { name: 'Overview', exact: true })).toHaveCount(1)
+})
+
 test('@smoke the marketplace lists WordPress and Zelavis as apps', async ({
   page,
 }, testInfo) => {
@@ -1191,7 +1263,8 @@ test('dashboard shows a not found page inside the shell', async ({
 
   await gotoDashboard(page, '/not-a-dashboard-route')
 
-  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
+  // Not inside a Project, so the switcher is neutral.
+  await expect(page.getByRole('button', { name: /Select project/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
 })

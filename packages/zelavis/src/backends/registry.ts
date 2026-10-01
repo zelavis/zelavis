@@ -393,6 +393,42 @@ export function createDeploymentBackendManager(options: {
 }
 
 /**
+ * How the deployment-backend runtime treats each member of the Project driver
+ * contract it stands in front of:
+ *
+ * - `wrapper`: describes the wrapper itself (its name, what it can run).
+ * - `descriptor`: routed by the Project's own `runtimeKind`.
+ * - `project-id`: routed by the stored assignment for that Project id.
+ * - `placement`: routed by the placement's Project id; offered only if a driver has it.
+ * - `every-driver`: applied to each driver; offered only if a driver has it.
+ *
+ * Typed against the contract, so a member added to `ZelavisProjectRuntimeDriver`
+ * does not compile until it is listed here. That is the point: a hand-picked
+ * forward list silently dropped the placement token, fencing and adoption, and
+ * a Platform that had not shut down cleanly could then never take its Projects back.
+ */
+export const PROJECT_DRIVER_MEMBER_ROUTING = {
+  name: "wrapper",
+  runtimeKinds: "wrapper",
+  defaultRuntimeKind: "wrapper",
+  startupConcurrency: "wrapper",
+  capabilities: "descriptor",
+  prepare: "descriptor",
+  start: "descriptor",
+  stop: "project-id",
+  status: "project-id",
+  logs: "project-id",
+  destroy: "project-id",
+  signGatewayAuthority: "project-id",
+  fencePrevious: "placement",
+  adopt: "every-driver",
+  close: "every-driver",
+} as const satisfies Record<
+  keyof ZelavisProjectRuntimeDriver,
+  "wrapper" | "descriptor" | "project-id" | "placement" | "every-driver"
+>;
+
+/**
  * Composes backend-owned Project drivers behind the existing lifecycle contract.
  * Stored Project assignment remains the only dispatch authority.
  */
@@ -473,7 +509,30 @@ export function createDeploymentBackendProjectRuntime(options: {
     ),
     capabilities: (project) => forDescriptor(project).capabilities(project),
     prepare: (project, app) => forDescriptor(project).prepare(project, app),
-    start: (project) => forDescriptor(project).start(project),
+    // The placement token travels with the start: it is what the Agent records
+    // against the process, and what a later fence is checked against.
+    start: (project, placement) => forDescriptor(project).start(project, placement),
+    // Fencing a previous owner is the driver's to prove, so it is offered only
+    // when some driver can, and routed to the one that ran that Project. A
+    // wrapper that dropped it left a Platform that had not shut down cleanly
+    // unable to take its own Projects back.
+    ...(uniqueRuntimes.some((runtime) => runtime.fencePrevious)
+      ? {
+          fencePrevious: async (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) => {
+            let runtime: ZelavisProjectRuntimeDriver;
+            try { runtime = await forProjectId(placement.projectId); }
+            catch { return false; }
+            return (await runtime.fencePrevious?.(placement)) ?? false;
+          },
+        }
+      : {}),
+    ...(uniqueRuntimes.some((runtime) => runtime.adopt)
+      ? {
+          adopt: async () => {
+            for (const runtime of uniqueRuntimes) await runtime.adopt?.();
+          },
+        }
+      : {}),
     stop: async (projectId) => (await forProjectId(projectId)).stop(projectId),
     status: async (projectId) => (await forProjectId(projectId)).status(projectId),
     logs: async (projectId) => (await forProjectId(projectId)).logs(projectId),
