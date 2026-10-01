@@ -132,7 +132,10 @@ before editing.
   never execute user package-cache files as root. User mode owns only its
   `~/.local/share/zelavis` prefix and command link. Runtime checksum helpers
   have one distribution source; shipped copies are generated at build time.
-  Singleton locks, doctor and named instances remain planned.
+  Install/removal take an exclusive prefix lock and share the Node/Bun Platform
+  data ownership guard; never bypass live data or port conflicts with `--force`.
+  Current receipts carry source, entry, version, mode and default instance.
+  Doctor is read-only and host-local. Named instances remain planned.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
   dashboard `/setup` route must call the same endpoint and must not introduce

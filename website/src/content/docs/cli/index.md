@@ -86,7 +86,26 @@ command tree.
   complete removal owns. `uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA`
   then removes the Platform, Agent, releases, package records, Zelavis data and
   local configuration. It is a host-local adapter operation, not an HTTP
-  endpoint, and it refuses npm and source installations.
+  endpoint. A current installer receipt covers create/package installs; plain
+  npm/source copies without one use their originating lifecycle. The inventory
+  includes installer/data locks and the Platform ownership record.
+
+## Host-local install and doctor
+
+`zelavis install --from-release /absolute/release` uses a staged release, while
+`zelavis install --from package --version <exact-version>` acquires its matching
+verified prebuilt archive. Both use the same plan; `--dry-run` inspects it,
+`--user` selects user mode and `--json` selects structured output. Existing
+receipts identify the source, entry, mode and default instance. Foreign layouts,
+live data owners and occupied port 3000 are refused. `--force` only permits
+command replacement; stop user processes before maintenance. A matching owned
+systemd Platform can be stopped and restarted for repair/upgrade.
+
+`zelavis doctor [--user|--system] [--json]` inspects PATH, receipt/current/private
+Node, data owner, service state, ports and Agent cgroup/delegation. Use sudo for
+root-readable system receipts. It writes no files, takes no locks and downloads
+nothing; errors return exit status 1. Install, doctor and complete removal are
+host-local commands with no HTTP/dashboard route. Named instances remain planned.
 
 ## Runtime Operations
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,7 @@ const installer = fileURLToPath(
  * behaviour under test executes.
  */
 async function stage(t) {
-  const root = await mkdtemp(join(tmpdir(), "zelavis-archive-install-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zelavis-archive-install-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, "source");
   for (const dir of ["bin", "platform", "share", "operations", "runtime/node/bin"]) {
@@ -52,6 +52,7 @@ function install({ script, source, prefix, binDir, dataDir }, env = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
       ZELAVIS_PREFIX: prefix,
       ZELAVIS_BIN_DIR: binDir,
       ZELAVIS_DATA_DIR: dataDir,
@@ -72,6 +73,7 @@ test("a clean install links the command", async (t) => {
     JSON.parse(await readFile(join(tree.prefix, "installation.json"), "utf8")),
     {
       schemaVersion: 1,
+      mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: tree.prefix, configDirectory: "/etc/zelavis",
       dataDirectory: tree.dataDir,
       commandPath: join(tree.binDir, "zelavis"),
       ownsUser: false,

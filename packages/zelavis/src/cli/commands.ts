@@ -43,6 +43,7 @@ export interface ZelavisCliServeOptions {
 export interface ZelavisCliRuntime {
   serve(options: ZelavisCliServeOptions): Promise<void>;
   install?(args: readonly string[]): Promise<void>;
+  doctor?(args: readonly string[]): Promise<void>;
   createInstallationUninstaller?(options: {
     dataDirectory?: string;
   }):
@@ -108,6 +109,7 @@ Usage:
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
   zelavis install --from package --version <version> [--user] [--dry-run]
+  zelavis doctor [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
@@ -133,7 +135,8 @@ Usage:
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
-  install                   Install a staged release on this host (no HTTP route).
+  install                   Install a release on this host (no HTTP route).
+  doctor                    Inspect local installation health without changes.
   uninstall                 Completely remove a packaged installation and all
                             Zelavis-owned data from this host. Local-only.
   setup                     Run the interactive first-install wizard.
@@ -563,6 +566,15 @@ export async function runCli(
     }
     if (args[0] === "edge") {
       await runEdgeCommand(args.slice(1));
+      return;
+    }
+    if (args[0] === "doctor") {
+      if (args.includes("--help") || args.includes("-h")) {
+        console.log("zelavis doctor [--user | --system] [--json]\nRead-only host inspection; no HTTP endpoint.");
+        return;
+      }
+      if (!options.runtime?.doctor) throw new Error("Doctor requires the local host adapter.");
+      await options.runtime.doctor(args.slice(1));
       return;
     }
     if (args[0] === "install") {

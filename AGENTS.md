@@ -1134,7 +1134,10 @@ fetches and verifies a private root-owned release; never execute a file from a
 user package cache as root. User mode keeps data/config/releases under
 `~/.local/share/zelavis` and owns only that prefix and its command link. Runtime
 pins/checksum helpers have one source in distribution; package assets are generated
-at build time. Singleton locks, doctor and named instances remain planned. Never add an installation HTTP/dashboard route.
+at build time. Install/removal take an exclusive prefix lock and share the Node/Bun Platform
+data ownership guard; `--force` cannot bypass live data or port conflicts. Current
+receipts carry source, entry, version, mode and default instance. Doctor is
+read-only and host-local. Named instances remain planned. Never add an installation HTTP/dashboard route.
 
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in
@@ -1147,7 +1150,9 @@ data/config/trust, repository configuration, and a safely identified dedicated
 account. Retain shared host packages, journal history, external archives and
 backups, and operator-managed proxy/firewall/DNS/TLS state. Never add a remote
 complete-wipe route: the operation destroys the authority and server that would
-authorize it. npm/source copies must use their originating lifecycle. Whenever
+authorize it. Plain npm/source copies without a current installer receipt use their originating
+lifecycle. Receipted package/create installs use the shared removal inventory,
+including prefix `.install.lock` and data `.platform.lock`/`.platform-owner.json`. Whenever
 an installer starts owning another resource, update the complete-uninstall
 inventory, staged program, isolated destructive-path tests, and public docs in
 the same change.

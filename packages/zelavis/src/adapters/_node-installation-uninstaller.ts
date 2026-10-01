@@ -1,3 +1,5 @@
+import { acquireNodeInstallerLock } from "./_local-ownership.js";
+import { preflightZelavisDataMaintenance } from "../core/runtime/installation-health.js";
 import {
   assertCompleteUninstallConfirmation,
   type ZelavisInstallationIdentity,
@@ -23,7 +25,7 @@ export interface NodeInstallationUninstallerOptions {
 
 /** Executes the inspected TypeScript plan directly; no script or remote route. */
 export function createNodeInstallationUninstaller(options: NodeInstallationUninstallerOptions): ZelavisInstallationUninstaller {
-  if (options.installation.kind !== "packaged" || !options.installation.root) {
+  if (!options.installation.root) {
     throw new TypeError("Complete host uninstall is available only to a packaged Zelavis installation. Use the package manager that installed npm or source copies.");
   }
   const prefix = options.installation.root;
@@ -37,12 +39,18 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
       if (value !== undefined && value !== "0" && value !== "1") throw new Error("Refusing invalid installer account ownership receipt.");
     }
     const receipt = await readNativeInstallationReceipt(host, prefix);
-    const user = receipt?.mode === "user";
+    if (!receipt) throw new Error("Complete uninstall requires a current installer receipt. npm/source copies without one must use their originating lifecycle.");
+    if (options.dataDirectory !== undefined) {
+      assertInstallationPath(options.dataDirectory, "data directory");
+      if (options.dataDirectory !== receipt.dataDirectory) throw new Error("Requested data directory does not match the installer receipt; refusing removal outside its inventory.");
+    }
+    const user = receipt.mode === "user";
     const base = options.paths ?? (user ? nodeUserInstallationPaths() : nodeInstallationPaths());
     if (user && (prefix !== base.prefix || receipt.dataDirectory !== base.dataDirectory || receipt.commandPath !== base.commandPath || options.dataDirectory !== undefined && options.dataDirectory !== base.dataDirectory)) throw new Error("User receipt does not match this user's installation inventory.");
     const paths = {
       ...base,
       prefix,
+      configDirectory: receipt.configDirectory,
       dataDirectory: options.dataDirectory ?? receipt?.dataDirectory ?? base.dataDirectory,
       commandPath: receipt?.commandPath ?? base.commandPath,
     };
@@ -63,7 +71,7 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
       const action = step.action;
       const path = "path" in action ? action.path : undefined;
       return {
-        id: path === plan.dataDirectory ? "data" : step.id,
+        id: action.kind === "remove" && path === plan.dataDirectory ? "data" : step.id,
         kind: action.kind === "remove-link" ? "command" : action.kind === "purge-packages" ? "package" : action.kind === "remove-account" ? "account" : action.kind === "remove" ? "directory" : "service",
         description: step.description,
         ...(path ? { path, exists: await host.exists(path) } : {}),
@@ -75,11 +83,16 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
     async plan() { return describe((await resolvePlan()).plan); },
     async uninstall(input) {
       assertCompleteUninstallConfirmation(input.confirmation);
-      const { paths, plan, user } = await resolvePlan();
-      await assertNodeInstallationPrivilege(paths, skip || user);
-      const described = await describe(plan);
-      const output = await executeZelavisInstallationPlan(host, plan, input.confirmation);
-      return { removed: true, plan: described, output: [...output, "Zelavis installation, configuration and data removed."].join("\n") };
+      const initial = await resolvePlan();
+      await assertNodeInstallationPrivilege(initial.paths, skip || initial.user);
+      const lock = await acquireNodeInstallerLock(prefix);
+      try {
+        const { paths, plan, user } = await resolvePlan();
+        await preflightZelavisDataMaintenance({ host, paths, system: !user && !skip });
+        const described = await describe(plan);
+        const output = await executeZelavisInstallationPlan(host, plan, input.confirmation);
+        return { removed: true, plan: described, output: [...output, "Zelavis installation, configuration and data removed."].join("\n") };
+      } finally { await lock.release(); }
     },
   };
 }

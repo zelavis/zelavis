@@ -63,4 +63,4 @@ NODE="$RELEASE/runtime/node/bin/node"
   if (npm.name !== "zelavis" || npm.version !== version || !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(npm.dist?.integrity ?? "")) throw Error("Invalid published package metadata.");
   if (release.name !== "zelavis" || release.version !== version || release.platform !== platform || release.architecture !== architecture) throw Error("Release identity does not match the published package and host.");
 ' "$TEMPORARY/package.json" "$RELEASE" "$VERSION" "$OS" "$ARCH"
-"$NODE" "$RELEASE/platform/dist/cli.js" install --from-release "$RELEASE" "$@"
+"$NODE" "$RELEASE/platform/dist/cli.js" install --from-release "$RELEASE" --source package --installed-by create "$@"

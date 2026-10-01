@@ -104,7 +104,7 @@ test("a new Project freezes its recipe and keeps running it when the Platform's 
   record.recipe.artifact = { digest };
   record.engine = { createdWith: "0.0.9-engine" };
   await writeFile(projectFile, JSON.stringify(record, null, 2));
-  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const systemStore = zv.platform.resources.systemStore;
   const stored = await systemStore.get("projects", "frozen");
   await systemStore.set("projects", "frozen", {
     ...stored.value,
@@ -154,7 +154,7 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   record.recipe.version = "0.0.1-old";
   await writeFile(projectFile, JSON.stringify(record, null, 2));
   await rm(join(directory, ".zelavis", "recipe"), { recursive: true, force: true });
-  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const systemStore = zv.platform.resources.systemStore;
   const stored = await systemStore.get("projects", "legacy");
   const lock = { ...stored.value.recipe, version: "0.0.1-old" };
   delete lock.artifact;

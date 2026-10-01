@@ -353,13 +353,24 @@ explicitly pass `--public` to bind to all interfaces. Existing bootstrap tokens
 and trust configuration are preserved. `zelavis install --from package --version
 <exact-version>` verifies npm metadata and the matching prebuilt archive before
 using the same plan; a matching archive must be published. Create takes no
-folder argument. User mode installs no systemd, Agent or Edge. Singleton locks,
-doctor and named instances remain planned.
+folder argument. User mode installs no systemd, Agent or Edge. Install/removal
+use an exclusive installer lock and share the runtime data ownership guard.
+Foreign installations, live data owners and port 3000 conflicts are refused;
+`--force` permits command replacement only. Stop user processes before maintenance;
+a matching owned systemd Platform can be stopped for repair/upgrade. Named
+instances and zero-downtime upgrades remain planned.
+
+`sudo zelavis doctor --json` (or `zelavis doctor --user --json`) inspects receipt,
+PATH, release/private Node, data owner, units, ports and Agent cgroup/delegation.
+It changes no configuration and takes no locks; errors return exit status 1.
+Node/Bun Platforms hold `<data>/.platform.lock` before opening their System Store,
+with `.platform-owner.json` metadata, until `Zelavis.close()` or process death.
 
 Native packaged installations, including create installs, expose a host-local complete-removal flow:
 
 For user mode, omit sudo: removal deletes the user prefix, private environment,
-data, receipt and owned command link, and retains system state.
+data and its ownership lock/record, installer lock/receipt and owned command
+link, and retains system state.
 
 ```bash
 sudo zelavis uninstall --all --dry-run
@@ -371,8 +382,10 @@ The runtime-neutral `ZelavisInstallationUninstaller` contract is exported from
 `zelavis/adapters/node`. This capability intentionally has no Platform HTTP
 route: it deletes the Platform, Agent, authority material, all Projects and all
 Zelavis-owned host state. Install and complete removal have no HTTP/dashboard
-route. npm and source installations are refused because
-their package manager or development workflow owns their lifecycle.
+route. A current installer receipt covers package/create installs. Plain npm
+and source copies without one use their package manager or development lifecycle.
+Complete removal includes the prefix's `.install.lock` and the data directory's
+`.platform.lock`/`.platform-owner.json`.
 
 Local Project recovery is data-safe across the pre-release App Data Fabric
 rewrite. When a Project still has the retired single-file App database, Zelavis

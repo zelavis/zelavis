@@ -62,15 +62,15 @@ export function selectInstallMode(requested: InstallArguments["mode"], platform:
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-/** Only literal bootstrap code and an exact version cross the sudo boundary. */
-export function installationCommand(input: { version: string; script: string; mode: "user" | "system"; root: boolean; flags?: readonly string[] }) {
+/** Root executes literal bootstrap code; version, flags and diagnostic PATH/home are literal argv. */
+export function installationCommand(input: { version: string; script: string; mode: "user" | "system"; root: boolean; invokingPath?: string; invokingHome?: string; flags?: readonly string[] }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(input.version)) throw new Error("The create package must select an exact Zelavis version.");
   const flags = input.flags ?? [];
   if (flags.some((flag) => !["--public", "--force", "--allow-downgrade", "--enable-agent"].includes(flag))) throw new Error("Invalid installer flag.");
   if (input.mode === "user" && flags.includes("--enable-agent")) throw new Error("The Agent requires system mode.");
   const elevated = input.mode === "system" && !input.root;
   const command = elevated ? "sudo" : "/bin/sh";
-  const args = [...elevated ? ["--", "/bin/sh"] : [], "-c", input.script, "--", input.version, ...input.mode === "user" ? ["--user"] : [], ...flags];
+  const args = [...elevated ? ["--", "/bin/sh"] : [], "-c", input.script, "--", input.version, ...input.mode === "user" ? ["--user"] : [], ...flags, ...input.invokingPath ? ["--invoking-path", input.invokingPath] : [], ...input.invokingHome ? ["--invoking-home", input.invokingHome] : []];
   return { command, args, display: [command, ...args].map(shellQuote).join(" ") };
 }
 

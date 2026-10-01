@@ -135,7 +135,38 @@ An installed CLI can also acquire an exact release with
 `zelavis install --from package --version <exact-version>` (add `--user` for user
 mode). Package dry-run shows acquisition and layout without downloading; the
 full step inventory is computed after the archive has been verified.
-Singleton locks, doctor and named instances remain planned.
+Named instances remain planned.
+
+## Installation ownership and health
+
+The current receipt records the source, entry point, version, paths and
+`default` instance. All installer entries repair or upgrade that same installation.
+A different recorded installation or service layout is refused. Foreign npm,
+source or other commands on PATH are reported with removal/PATH guidance.
+`--force` permits deliberate command replacement; it cannot bypass a live data
+owner or another listener on port 3000. Public ports 80/443 remain unclaimed.
+
+Install and complete removal use an exclusive `<prefix>/.install.lock` (`flock`
+on Linux, supplied by `util-linux`). Node and Bun Platforms and installer
+maintenance share `<data>/.platform.lock`, with PID/start/session metadata in
+`.platform-owner.json`. Two Platforms cannot open the same default System Store.
+Normal close and process death release ownership; the lock file remains for reuse.
+Stop user-run Platforms before maintenance. A matching owned systemd Platform
+can be stopped and restarted by the installer for repair/upgrade; this involves
+downtime. Old pre-release receipts/layouts are not migrated.
+
+Inspect the installation locally:
+
+```bash
+sudo zelavis doctor --json    # system mode
+zelavis doctor --user --json  # user mode; no sudo
+```
+
+Doctor reports PATH, receipt and selected release/private Node, data ownership,
+service state, ports and Agent cgroup/delegation. It writes no files, takes no
+locks, downloads nothing and never reads the bootstrap environment. An error
+returns exit status 1. Agent host features do not prove production containment;
+real-server qualification remains pending. Named instances are not available yet.
 
 ## Manual release archive (.tar.gz)
 
@@ -292,19 +323,20 @@ sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 
 This:
 - Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
-- Removes `/opt/zelavis`, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
+- Removes `/opt/zelavis`, including the receipt and `.install.lock`, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
 - Removes configuration, signed host operations, and certificates.
-- Completely deletes `/var/lib/zelavis`, including all project databases and runtimes.
+- Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock` and `.platform-owner.json`.
 - Removes the Zelavis APT source/key and Debian package records when present.
 - Removes the `zelavis` user/group only when the receipt records installer ownership and their current properties are safe.
 
 Shared host packages, journal history, external archives/backups and
 operator-managed proxy/firewall/DNS/TLS state are retained. Complete uninstall
-has no remote HTTP/dashboard route. npm/source copies use their originating
-package manager or development lifecycle.
+has no remote HTTP/dashboard route. Package/create installs with a current
+receipt use this inventory; plain npm/source copies without one use their
+originating package manager or development lifecycle.
 
 For a **user installation**, run those two uninstall commands without sudo.
 Its inventory is the complete `~/.local/share/zelavis` prefix (including releases,
-data, configuration/token and receipt) and the owned `~/.local/bin/zelavis` link.
+data and ownership lock/record, configuration/token, installer lock and receipt) and the owned `~/.local/bin/zelavis` link.
 It does not touch systemd units, APT sources/keys, system commands or accounts.
 Stop the user-run Platform before removing it.

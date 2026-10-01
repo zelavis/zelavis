@@ -1,3 +1,4 @@
+import { acquireLocalDataOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { readFile } from "node:fs/promises";
@@ -165,15 +166,33 @@ export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   installAsyncPluginContextStorage();
+  let ownership: Promise<LocalOwnershipLease> | undefined;
+  let ownerOptions: ZelavisOptions | undefined;
+  const stores = new Set<{ close?(): void | Promise<void> }>();
   let projectRuntime: ReturnType<typeof createLocalProjectRuntime> | undefined;
 
   return defineAdapter({
     name: "node",
+    async close(requester) {
+      if (requester && ownerOptions && requester !== ownerOptions) return;
+      await Promise.all([...stores].map((store) => store.close?.()));
+      stores.clear();
+      const lease = await ownership?.catch(() => undefined);
+      await lease?.release();
+      ownership = undefined;
+      ownerOptions = undefined;
+    },
     async resolve(
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const isProjectRuntime = options.role === "project";
+      if (!isProjectRuntime && options.systemStore !== false) {
+        if (ownerOptions && ownerOptions !== _constructorOptions) throw new Error("This adapter already owns a Platform; close it before creating another.");
+        ownerOptions = _constructorOptions;
+        ownership ??= acquireLocalDataOwnership(dataDirectory);
+        await ownership;
+      }
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextSubsystems: Record<string, unknown> = isProjectRuntime
@@ -200,6 +219,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
+      if (systemStore) stores.add(systemStore);
 
       if (databaseOptions !== false) {
         // The topology is no longer resolved here: the partition map lives in

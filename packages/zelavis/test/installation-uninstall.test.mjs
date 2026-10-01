@@ -6,6 +6,8 @@ import test from "node:test";
 import { ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION, assertCompleteUninstallConfirmation } from "../dist/core/runtime/installation.js";
 import { createNodeInstallationUninstaller } from "../dist/adapters/node.js";
 
+const receipt = (paths, overrides = {}) => ({ schemaVersion: 1, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: false, ownsGroup: false, ...overrides });
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-api-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -16,6 +18,7 @@ async function fixture(t) {
     aptSource: join(root, "apt/zelavis.sources"), aptKeyring: join(root, "keys/zelavis-archive-keyring.gpg"),
   };
   for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, dirname(paths.commandPath)]) await mkdir(path, { recursive: true });
+  await writeFile(`${paths.prefix}/installation.json`, JSON.stringify(receipt(paths)));
   await symlink(`${paths.prefix}/current/bin/zelavis`, paths.commandPath);
   const installation = { kind: "packaged", root: paths.prefix, path: `${paths.prefix}/current/platform/dist/cli.js` };
   return { paths, installation, skipHostCommands: true };
@@ -31,6 +34,8 @@ test("the Node adapter executes its inspected plan and removes only isolated pat
   const uninstaller = createNodeInstallationUninstaller(options);
   const plan = await uninstaller.plan();
   assert.equal(plan.targets.find((target) => target.id === "data").exists, true);
+  assert.equal(plan.targets.find((target) => target.id === "data").kind, "directory");
+  assert.equal(new Set(plan.targets.map((target) => target.id)).size, plan.targets.length);
   assert.ok(plan.steps.some((step) => step.action.path === options.paths.aptSource));
   await assert.rejects(uninstaller.uninstall({ confirmation: "yes" }), /DELETE-ALL-ZELAVIS-DATA/);
   await access(options.paths.dataDirectory);
@@ -44,7 +49,7 @@ test("custom receipt paths override defaults and account ownership remains visib
   const options = await fixture(t);
   const data = join(dirname(options.paths.prefix), "custom-data");
   await mkdir(data);
-  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, dataDirectory: data, commandPath: options.paths.commandPath, ownsUser: true, ownsGroup: true }));
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify(receipt(options.paths, { dataDirectory: data, ownsUser: true, ownsGroup: true })));
   const uninstaller = createNodeInstallationUninstaller(options);
   assert.equal((await uninstaller.plan()).dataDirectory, data);
   await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
@@ -52,8 +57,8 @@ test("custom receipt paths override defaults and account ownership remains visib
   await access(options.paths.dataDirectory);
 });
 
-test("the Node host adapter refuses source and npm copies", () => {
-  for (const kind of ["source", "npm"]) assert.throws(() => createNodeInstallationUninstaller({ installation: { kind, path: `/tmp/${kind}/dist/cli.js`, root: `/tmp/${kind}` } }), /only to a packaged/);
+test("the Node host adapter refuses source and npm copies without installer receipts", async () => {
+  for (const kind of ["source", "npm"]) await assert.rejects(createNodeInstallationUninstaller({ installation: { kind, path: `/tmp/${kind}/dist/cli.js`, root: `/tmp/${kind}` } }).plan(), /originating lifecycle/);
 });
 
 test("the Node adapter refuses broad, non-normalized and external CLI paths", async (t) => {
@@ -68,7 +73,7 @@ test("a Debian receipt after an archive removes both owned command links", async
   const options = await fixture(t);
   await mkdir(dirname(options.paths.systemCommandPath), { recursive: true });
   await symlink(`${options.paths.prefix}/current/bin/zelavis`, options.paths.systemCommandPath);
-  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, dataDirectory: options.paths.dataDirectory, commandPath: options.paths.systemCommandPath, ownsUser: false, ownsGroup: false }));
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify(receipt(options.paths, { commandPath: options.paths.systemCommandPath })));
   const uninstaller = createNodeInstallationUninstaller(options);
   const plan = await uninstaller.plan();
   assert.ok(plan.targets.some((target) => target.path === options.paths.commandPath));
@@ -86,14 +91,35 @@ test("user uninstall removes its entire inventory and cannot touch system units,
   const retained = [join(options.paths.systemdDirectories[0], "zelavis.service"), options.paths.aptSource, options.paths.aptKeyring, options.paths.systemCommandPath];
   for (const path of retained) await writeFile(path, "operator/system state");
   await writeFile(join(options.paths.configDirectory, "zelavis.env"), "private first-owner token", { mode: 0o600 });
-  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, mode: "user", dataDirectory: options.paths.dataDirectory, commandPath: options.paths.commandPath, ownsUser: false, ownsGroup: false }));
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify(receipt(options.paths, { mode: "user", source: "package", installedBy: "create" })));
   const uninstaller = createNodeInstallationUninstaller(options);
   await assert.rejects(createNodeInstallationUninstaller({ ...options, dataDirectory: "/outside/user-data" }).plan(), /does not match/);
   const plan = await uninstaller.plan();
-  assert.ok(plan.steps.every((step) => ["remove", "remove-link"].includes(step.action.kind)));
+  assert.ok(plan.steps.every((step) => ["remove", "remove-link", "reserve-data"].includes(step.action.kind)));
   assert.ok(!plan.targets.some((target) => retained.includes(target.path)));
   await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
   await assert.rejects(access(options.paths.prefix), { code: "ENOENT" });
   await assert.rejects(access(options.paths.commandPath), { code: "ENOENT" });
   for (const path of retained) await access(path);
+});
+
+
+for (const kind of ["npm", "source"]) test(`a ${kind} identity with a current package receipt uses the shared removal inventory`, async (t) => {
+  const options = await fixture(t);
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify(receipt(options.paths, { source: "package", installedBy: "create" })));
+  const uninstaller = createNodeInstallationUninstaller({ ...options, installation: { ...options.installation, kind } });
+  assert.equal((await uninstaller.plan()).dataDirectory, options.paths.dataDirectory);
+  await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
+  await assert.rejects(access(options.paths.prefix), { code: "ENOENT" });
+});
+
+test("complete uninstall refuses live data ownership and does not delete operator state", async (t) => {
+  const options = await fixture(t);
+  const { acquireLocalDataOwnership } = await import("../dist/adapters/_local-ownership.js");
+  const lease = await acquireLocalDataOwnership(options.paths.dataDirectory);
+  t.after(() => lease.release());
+  await assert.rejects(createNodeInstallationUninstaller(options).uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION }), /owned by running PID/);
+  await access(options.paths.dataDirectory);
+  await access(`${options.paths.prefix}/installation.json`);
+  await lease.release();
 });

@@ -1,11 +1,14 @@
+import { acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
+import { isAlive, processAgeMs } from "./_agent-process-runner.js";
+import type { ZelavisInstallationProbeHost } from "../core/runtime/installation-health.js";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, appendFile, chmod, cp, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { ZelavisInstallHost, ZelavisInstallPaths } from "../core/runtime/installation-plan.js";
+import type { ZelavisInstallPaths } from "../core/runtime/installation-plan.js";
 
 const exec = promisify(execFile);
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -38,8 +41,78 @@ export async function assertNodeInstallationPrivilege(paths: ZelavisInstallPaths
 }
 
 /** No shell evaluation: commands use an executable and literal argv. */
-export function createNodeInstallHost(): ZelavisInstallHost {
-  const host: ZelavisInstallHost = {
+export function createNodeInstallHost(options: { invokingPath?: string } = {}): ZelavisInstallationProbeHost {
+  let maintenance: LocalOwnershipLease | undefined;
+  const listeningInodes = async (port: number) => {
+    const tables = await Promise.all(["tcp", "tcp6"].map((table) => host.read(`/proc/net/${table}`)));
+    if (tables.every((table) => table === undefined)) throw new Error("Cannot inspect listening TCP ports on this host.");
+    return new Set(tables.flatMap((table) => (table ?? "").trim().split("\n").slice(1)
+      .map((line) => line.trim().split(/\s+/u))
+      .filter((fields) => fields[3] === "0A" && parseInt(fields[1]?.split(":").at(-1) ?? "", 16) === port)
+      .map((fields) => fields[9])));
+  };
+  const host: ZelavisInstallationProbeHost = {
+    async releaseMaintenance() { const lease = maintenance; maintenance = undefined; await lease?.release(); },
+    async dataOwnership(path) {
+      const owner = await readLocalDataOwner(path);
+      if (!owner || !isAlive(owner.pid)) return { active: false };
+      const age = await processAgeMs(owner.pid);
+      // Unknown process identity is conservatively treated as an occupied directory.
+      const active = age === undefined || Math.abs(age - (Date.now() - Date.parse(owner.startedAt))) <= 30_000;
+      return { active, pid: owner.pid, installationRoot: owner.installationRoot, purpose: owner.purpose };
+    },
+    async portAvailable(port) {
+      // Read-only inspection: a temporary bind would itself look like a
+      // foreign listener to another installer or doctor running concurrently.
+      if (process.platform === "linux") return (await listeningInodes(port)).size === 0;
+      try { return !(await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { timeout: 5_000 })).stdout.trim(); }
+      catch (error) {
+        if ((error as { code?: number }).code === 1 && !(error as { stdout?: string }).stdout?.trim()) return true;
+        throw error;
+      }
+    },
+    async portOwnedBy(pid, port) {
+      if (process.platform !== "linux") {
+        try { return (await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { timeout: 5_000 })).stdout.trim().split("\n").every((owner) => owner === String(pid)); } catch { return false; }
+      }
+      const inodes = await listeningInodes(port);
+      if (!inodes.size) return false;
+      try {
+        const owned = new Set<string>();
+        for (const fd of await readdir(`/proc/${pid}/fd`)) {
+          const target = await host.readlink(`/proc/${pid}/fd/${fd}`);
+          const match = /^socket:\[(\d+)\]$/u.exec(target ?? "");
+          if (match && inodes.has(match[1])) owned.add(match[1]);
+        }
+        return [...inodes].every((inode) => owned.has(inode));
+      } catch { return false; }
+    },
+    async unitState(unit, paths) {
+      const present = (await Promise.all(paths.systemdDirectories.map((directory) => host.exists(join(directory, unit))))).some(Boolean);
+      if (!await host.which("systemctl")) return { present, active: false, enabled: false };
+      const query = async (args: string[]) => { try { return (await exec("systemctl", args, { timeout: 5_000 })).stdout.trim(); } catch { return ""; } };
+      const [enabled, active, pid, delegated] = await Promise.all([query(["is-enabled", unit]), query(["is-active", unit]), query(["show", "--property=MainPID", "--value", unit]), query(["show", "--property=Delegate", "--value", unit])]);
+      return { present, enabled: enabled === "enabled", active: active === "active", ...(Number(pid) > 0 ? { pid: Number(pid) } : {}), delegates: delegated === "yes" };
+    },
+    async dataOwner(path) {
+      try {
+        const info = await stat(path);
+        let expectedUid = process.getuid?.();
+        if (path === "/var/lib/zelavis") {
+          try { expectedUid = Number((await exec("id", ["-u", "zelavis"])).stdout.trim()); } catch { expectedUid = undefined; }
+        }
+        return { uid: info.uid, expectedUid };
+      } catch (error) { if (missing(error)) return undefined; throw error; }
+    },
+    async agentSupport() {
+      const cgroupV2 = await host.exists("/sys/fs/cgroup/cgroup.controllers");
+      let group = "";
+      if (process.platform === "linux" && await host.which("systemctl")) {
+        try { group = (await exec("systemctl", ["show", "--property=ControlGroup", "--value", "zelavis-agent.service"], { timeout: 5_000 })).stdout.trim(); } catch {}
+      }
+      const safeGroup = group.startsWith("/") && !group.split("/").includes("..");
+      return { cgroupV2, cgroupKill: safeGroup && await host.exists(`/sys/fs/cgroup${group}/cgroup.kill`) };
+    },
     async exists(path) {
       try { await lstat(path); return true; } catch (error) { if (missing(error)) return false; throw error; }
     },
@@ -53,7 +126,7 @@ export function createNodeInstallHost(): ZelavisInstallHost {
       }
     },
     async which(command, plannedCommandPath) {
-      for (const directory of (process.env.PATH ?? "").split(":")) {
+      for (const directory of (command === "zelavis" ? options.invokingPath ?? process.env.PATH ?? "" : process.env.PATH ?? "").split(":")) {
         const path = join(directory, command);
         if (path === plannedCommandPath) return path;
         try { await access(path, constants.X_OK); return path; } catch {}
@@ -65,6 +138,8 @@ export function createNodeInstallHost(): ZelavisInstallHost {
     },
     async execute(action) {
       switch (action.kind) {
+        case "reserve-data": maintenance = await acquireLocalDataOwnership(action.path, "maintenance"); break;
+        case "release-data": await host.releaseMaintenance?.(); break;
         case "mkdir":
           await mkdir(action.path, { recursive: true, mode: action.mode });
           if (action.mode !== undefined) await chmod(action.path, action.mode);
