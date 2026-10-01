@@ -23,6 +23,7 @@ export * from "./kv.js";
 export * from "./kv-store.js";
 export * from "./documents.js";
 export * from "./key-value.js";
+export * from "./key-value-effect.js";
 export * from "./topology.js";
 export * from "./domain-events.js";
 export * from "./projections.js";
