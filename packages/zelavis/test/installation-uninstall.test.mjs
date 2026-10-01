@@ -142,6 +142,8 @@ for (const first of ["default", "preview"]) test(`isolated destructive inventory
   await symlink(`${options.paths.prefix}/releases/1.0.0`, `${scope}/current`);
   await mkdir(`${options.paths.prefix}/releases/1.0.0`, {recursive: true});
   await writeFile(`${options.paths.prefix}/releases/1.0.0/private-runtime`, "shared release");
+  await mkdir(`${options.paths.prefix}/package`, {recursive: true});
+  await writeFile(`${options.paths.prefix}/package/incoming-payload`, "shared Debian payload");
   await writeFile(`${named.dataDirectory}/project.sqlite`, "preview project");
   await writeFile(`${options.paths.dataDirectory}/project.sqlite`, "default project");
   await claimLocalEdgeOwner({prefix: options.paths.prefix, instance: "default", dataDirectory: options.paths.dataDirectory});
@@ -149,7 +151,7 @@ for (const first of ["default", "preview"]) test(`isolated destructive inventory
   const inventory = await createNodeInstallationUninstaller({...options, instance: first}).plan();
   assert.ok(!inventory.steps.some((step) => step.action.path === options.paths.prefix || step.action.kind === "purge-packages"));
   await remove(first);
-  for (const path of [template, options.paths.aptSource, `${options.paths.prefix}/releases/1.0.0/private-runtime`]) await access(path);
+  for (const path of [template, options.paths.aptSource, `${options.paths.prefix}/package/incoming-payload`, `${options.paths.prefix}/releases/1.0.0/private-runtime`]) await access(path);
   // lstat the command because this fixture deliberately has no runnable launcher.
   const { lstat } = await import("node:fs/promises"); await lstat(options.paths.commandPath);
   const remaining = first === "default" ? named : options.paths;

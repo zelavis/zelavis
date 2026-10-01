@@ -45,10 +45,11 @@ await mkdir(join(packageRoot, "opt", "zelavis"), { recursive: true });
 await mkdir(join(packageRoot, "usr", "bin"), { recursive: true });
 await mkdir(join(packageRoot, "lib", "systemd", "system"), { recursive: true });
 await mkdir(artifactsDirectory, { recursive: true });
-const releaseDirectory = join(packageRoot, "opt", "zelavis", "releases", manifest.version);
+// dpkg owns only the incoming payload. Installer-owned immutable releases must
+// survive package upgrades while another instance still selects an older version.
+const releaseDirectory = join(packageRoot, "opt", "zelavis", "package");
 await mkdir(dirname(releaseDirectory), { recursive: true });
 await cp(stageDirectory, releaseDirectory, { recursive: true });
-await symlink(`releases/${manifest.version}`, join(packageRoot, "opt", "zelavis", "current"));
 await symlink("/opt/zelavis/current/bin/zelavis", join(packageRoot, "usr", "bin", "zelavis"));
 await cp(
   join(stageDirectory, "share", "zelavis.service"),
@@ -94,7 +95,7 @@ await writeFile(
   join(packageRoot, "DEBIAN", "postinst"),
   `#!/bin/sh
 set -e
-ZELAVIS_BIN_DIR=/usr/bin exec /opt/zelavis/current/runtime/node/bin/node /opt/zelavis/current/platform/dist/cli.js install --from-release /opt/zelavis/current --installed-by deb
+ZELAVIS_BIN_DIR=/usr/bin exec /opt/zelavis/package/runtime/node/bin/node /opt/zelavis/package/platform/dist/cli.js install --from-release /opt/zelavis/package --installed-by deb
 `,
   { mode: 0o755 },
 );
@@ -108,7 +109,7 @@ await writeFile(
   `#!/bin/sh\nset -e\nif command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload; fi\n`,
   { mode: 0o755 },
 );
-await chmod(join(packageRoot, "opt", "zelavis", "current", "bin", "zelavis"), 0o755);
+await chmod(join(packageRoot, "opt", "zelavis", "package", "bin", "zelavis"), 0o755);
 if (!options.prepareOnly) {
   execFileSync("dpkg-deb", ["--root-owner-group", "--build", packageRoot, artifact], {
     stdio: "inherit",

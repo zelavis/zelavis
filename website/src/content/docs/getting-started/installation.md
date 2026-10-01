@@ -167,7 +167,11 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
 
 The immutable `/opt/zelavis/releases/<version>` tree and management command are
-shared. Each instance selects its own release, so upgrading `preview` leaves
+shared. Debian packages own the incoming `/opt/zelavis/package` payload;
+postinst calls the same installer to copy it into the release tree. dpkg never
+owns the persistent release folders or their `current` links, so package
+upgrades cannot delete a version selected by another instance. Each instance
+selects its own release, so upgrading `preview` leaves
 default and other named instances on their selected versions. If a named
 instance is installed first, `/opt/zelavis/current` selects the initial management
 CLI without creating a default Platform. `zelavis serve --instance preview`
@@ -201,12 +205,12 @@ sudo zelavis uninstall --instance preview --all --confirm DELETE-ALL-ZELAVIS-DAT
 Removal stops only its own units and deletes its data, configuration/token,
 installer-owned account, receipt, descriptor and release link. Removing default
 also releases its Edge record/lock. While any other instance receipt remains,
-the shared releases, management `current`, command links, unit templates, APT
-source/key and Debian package records are retained. Removing the last instance
+the shared releases, incoming Debian payload, management `current`, command
+links, unit templates, APT source/key and Debian package records are retained. Removing the last instance
 removes that shared inventory too. `--all` means all data of the selected
 instance, including its Projects; it does not remove every instance on the host.
-The instance directories, descriptors, template units and Edge ownership files
-are covered by the destructive uninstall inventory and tests.
+The instance directories, incoming Debian payload, descriptors, template units
+and Edge ownership files are covered by the destructive uninstall inventory and tests.
 
 ## Installation ownership and health
 

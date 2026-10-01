@@ -95,6 +95,6 @@ and the opt-in `zelavis-agent@preview.service`. Its `current`, receipt and publi
 `runtime.json` live under `/opt/zelavis/instances/preview`. Only default may own
 host Edge, enforced by the persistent Edge record and kernel reservation;
 secondary instances run with Edge off. Use explicit `--url` for their setup/API.
-Removing one instance retains shared releases, management command/current,
-unit templates and package/APT state until the last instance is removed.
+Removing one instance retains shared releases, the incoming Debian payload,
+management command/current, unit templates and package/APT state until the last instance is removed.
 Removal of default releases its Edge record/lock. No Project transfer is added.

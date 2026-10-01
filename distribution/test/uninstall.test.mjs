@@ -62,6 +62,8 @@ async function installation(t) {
   }
   await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
   await writeFile(join(paths.data, "project.sqlite"), "data");
+  await mkdir(join(paths.prefix, "package"));
+  await writeFile(join(paths.prefix, "package", "incoming-payload"), "Debian payload");
   await writeFile(join(paths.prefix, ".install.lock"), "");
   await writeFile(join(paths.prefix, "runtime.json"), "public descriptor");
   await writeFile(join(paths.prefix, ".edge-owner.lock"), "");
@@ -180,6 +182,7 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
     join(fixture.paths.prefix, ".install.lock"),
     join(fixture.paths.prefix, "installation.json"),
     join(fixture.paths.prefix, "runtime.json"),
+    join(fixture.paths.prefix, "package", "incoming-payload"),
     join(fixture.paths.prefix, "edge-owner.json"),
     join(fixture.paths.prefix, ".edge-owner.lock"),
     join(fixture.paths.data, ".platform.lock"),

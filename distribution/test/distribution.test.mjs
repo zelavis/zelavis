@@ -83,7 +83,8 @@ test("the Debian package installs the native WordPress host stack", async () => 
     assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
   }
   assert.match(builder, /cli\.js install --from-release/u);
-  assert.match(builder, /"releases", manifest.version/u);
+  assert.match(builder, /"opt", "zelavis", "package"/u);
+  assert.doesNotMatch(builder, /symlink\(`releases/);
 });
 
 test("the Platform service reads installer-generated first-run configuration", async () => {

@@ -118,8 +118,10 @@ before editing.
   operator surface. It intentionally has no HTTP/dashboard equivalent because
   it deletes the Platform, Agent, authority material, and all Project data.
   Require a dry run and exact acknowledgement; remove only provably
-  installer-owned resources and retain shared host/operator state. When an
-  installer starts owning a new resource, update the uninstall inventory,
+  installer-owned resources and retain shared host/operator state.
+  Debian owns only the incoming `/opt/zelavis/package` payload; immutable releases
+  and current links belong to the installer so upgrades preserve other instances.
+  When an installer starts owning a new resource, update the uninstall inventory,
   staged script, destructive-path tests, and docs together.
 - Native release installation has the same host-local boundary. Archive
   installers and Debian `postinst` call `zelavis install --from-release` with

@@ -390,8 +390,8 @@ and source copies without one use their package manager or development lifecycle
 Complete removal includes the prefix's `.install.lock` and the data directory's
 `.platform.lock`/`.platform-owner.json`, the public `runtime.json` descriptor and
 instance inventory. `uninstall --instance <name> --all` removes only that
-instance. Other receipts retain shared releases/current/commands, templates and
-package/APT state; the last instance removes them. Removing default also removes
+instance. Other receipts retain shared releases/current/commands, the incoming
+Debian payload, templates and package/APT state; the last instance removes them. Removing default also removes
 its `edge-owner.json` and `.edge-owner.lock`.
 
 Local Project recovery is data-safe across the pre-release App Data Fabric

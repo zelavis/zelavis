@@ -1142,6 +1142,9 @@ but own separate current links, receipts, runtime descriptors, data/config, acco
 ports and units. Only default owns host Edge, with a persistent record and kernel
 reservation; secondary instances must run with Edge off. Instance removal retains
 shared releases/commands/templates/package/APT state while other receipts remain.
+Debian packages own only the incoming `/opt/zelavis/package` payload; persistent
+release trees and current links belong to the installer, so APT cannot remove an
+older release selected by another instance.
 Never add an installation HTTP/dashboard route.
 
 Complete native installation removal is a host-local lifecycle capability, not
@@ -1158,7 +1161,7 @@ complete-wipe route: the operation destroys the authority and server that would
 authorize it. Plain npm/source copies without a current installer receipt use their originating
 lifecycle. Receipted package/create installs use the shared removal inventory,
 including prefix `.install.lock`, public runtime descriptors, named instance
-directories/templates, host `edge-owner.json`/`.edge-owner.lock`, and data
+directories/templates, incoming Debian payload, host `edge-owner.json`/`.edge-owner.lock`, and data
 `.platform.lock`/`.platform-owner.json`. Whenever
 an installer starts owning another resource, update the complete-uninstall
 inventory, staged program, isolated destructive-path tests, and public docs in
