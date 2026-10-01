@@ -828,6 +828,31 @@ test('@smoke the project switcher is neutral outside a Project and names the Pro
   await expect(page.getByRole('button', { name: /Select project/ })).toHaveCount(0)
 })
 
+test('@smoke the project switcher icons stay visible when a row is highlighted', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
+
+  await gotoDashboard(page, '/')
+  await page.getByRole('button', { name: /Zelavis Runtime/ }).click()
+
+  for (const name of [/All projects/, /New project/]) {
+    const row = page.getByRole('menuitem', { name })
+    await row.hover()
+    // A highlighted row turns its text near-white. The icon follows it, so the
+    // box behind the icon must not be a light fill of its own.
+    const box = await row.locator('svg').first().evaluate((icon) => {
+      const parent = icon.parentElement!
+      return {
+        icon: getComputedStyle(icon).color,
+        fill: getComputedStyle(parent).backgroundColor,
+      }
+    })
+    expect(box.fill, `${name} icon box`).toBe('rgba(0, 0, 0, 0)')
+    expect(box.icon).not.toBe(box.fill)
+  }
+})
+
 test('@smoke a Project sidebar lists Overview once', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
 

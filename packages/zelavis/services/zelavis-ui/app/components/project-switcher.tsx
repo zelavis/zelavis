@@ -137,7 +137,8 @@ export function ProjectSwitcher({
               className="gap-2 p-2"
               onClick={() => navigate("/projects", { viewTransition: true })}
             >
-              <div className="flex size-6 items-center justify-center rounded-md border bg-background">
+              {/* No fill of its own: a highlighted row turns its text near-white, and a light box would hide the icon. */}
+              <div className="flex size-6 items-center justify-center rounded-md border">
                 <LayoutDashboard className="size-4" />
               </div>
               <div className="font-medium">All projects</div>
@@ -149,7 +150,8 @@ export function ProjectSwitcher({
                 navigate("/projects?new=1", { viewTransition: true })
               }
             >
-              <div className="flex size-6 items-center justify-center rounded-md border bg-background">
+              {/* No fill of its own: a highlighted row turns its text near-white, and a light box would hide the icon. */}
+              <div className="flex size-6 items-center justify-center rounded-md border">
                 <Plus className="size-4" />
               </div>
               <div className="font-medium">New project</div>
