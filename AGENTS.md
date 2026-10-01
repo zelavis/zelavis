@@ -1295,6 +1295,16 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 
 - The `main` branch is protected and does not allow direct pushes.
 - Changes must be pushed to a branch and merged through a pull request.
+- `dev` is the long-lived branch for everyday work; it is merged into `main` from
+  time to time through a pull request, and CI must be green first.
+  **Merge `dev` into `main` with a merge commit (`gh pr merge --merge`), never a
+  squash or a rebase.** Pull requests are otherwise squash-merged, and a squashed
+  `dev` leaves `main` holding one new commit that `dev` does not contain, so the
+  two diverge and the next pull request carries the old commits again. A merge commit
+  keeps `dev` an ancestor of `main`, so afterwards `git merge origin/main` on `dev`
+  is a fast-forward. When something lands on `main` any other way, run
+  `git merge origin/main` on `dev` before continuing.
+- Short feature branches go off `dev` or `main` and are squash-merged as usual.
 - Do not assume GitHub app or automation credentials can open PRs automatically; if that fails, leave the branch pushed and provide the PR URL to the user.
 
 ## Documentation Expectations
