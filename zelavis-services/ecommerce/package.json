@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/ecommerce",
-  "version": "2.0.0-alpha.3",
+  "version": "2.0.0-alpha.4",
   "private": false,
   "description": "Official Zelavis ecommerce plugin with runtime APIs, commerce domain APIs, and payment provider integrations.",
   "license": "MIT",

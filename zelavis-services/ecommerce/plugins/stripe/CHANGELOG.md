@@ -1,5 +1,13 @@
 # @zelavis/ecommerce-stripe
 
+## 1.0.0-alpha.3
+
+### Patch Changes
+
+- Services are self-contained: the Stripe and PayPal plugins bundle their SDKs, `effect` and `zelavis` come from the Platform, and unused dependencies are gone, so the Platform accepts them.
+- Updated dependencies
+  - @zelavis/ecommerce@2.0.0-alpha.4
+
 ## 1.0.0-alpha.2
 
 ### Major Changes
