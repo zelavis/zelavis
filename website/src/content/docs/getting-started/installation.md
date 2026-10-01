@@ -336,17 +336,15 @@ firewall permits inbound traffic on port 3000:
    ```
 2. Paste the **bootstrap token** from `/etc/zelavis/zelavis.env`.
 3. Enter your administrator email and password to claim the **Owner** account.
-4. In the **Edge Onboarding** step, enter your domain name (e.g. `app.example.com` or `example.com`).
-   Make sure your domain's DNS A/AAAA record points to your server's public IP.
-5. Select **Managed TLS** and click **Continue**.
-6. Zelavis performs DNS preflight verification, requests automated Let's Encrypt
-   certificates using pure RFC 8555 ACME v2, and switches Traefik to serve production
-   traffic on standard ports **80** and **443**.
-7. Once completed, port 3000 is no longer needed—you can close it in your firewall
-   and access your dashboard directly over secure HTTPS at:
-   ```text
-   https://yourdomain.com/zelavis
-   ```
+4. The optional Platform hostname step follows the durable Owner claim. An apex
+   (`example.com`) or subdomain (`panel.example.com`) is a valid hostname.
+5. Choose **Configure later** to keep using the installation’s recovery address,
+   or configure an external TLS terminator separately. Automatic certificate
+   issuance and reconciled Traefik activation still need production qualification;
+   installation does not establish public HTTPS.
+
+Hostname/TLS setup uses authenticated Edge operations after ownership is claimed.
+A failure there does not undo the Owner account or reopen first-owner setup.
 
 ### Option B: Secure Access via SSH Port Forwarding (With SSH Tunnel)
 
@@ -383,13 +381,12 @@ Use an SSH tunnel for the default loopback listener:
    http://localhost:3000/zelavis/setup
    ```
 3. Enter the **bootstrap token** from `/etc/zelavis/zelavis.env` and configure your Owner credentials.
-4. Select **Managed TLS** and provide your domain.
-5. When the wizard confirms your domain is live and certificates are active, close
-   the SSH tunnel (`Ctrl+C` or exit the SSH session).
-6. Access your platform directly at:
-   ```text
-   https://yourdomain.com/zelavis
-   ```
+4. Configure the optional Platform hostname after the Owner claim, or choose
+   **Configure later**. Keep the tunnel as the local recovery path until you have
+   independently verified a working public HTTPS endpoint.
+
+Managed DNS/ACME and traffic cutover reconciliation remain planned; the wizard
+must not be treated as evidence that production certificates and routes are active.
 
 ### Option C: Interactive Terminal Setup (CLI)
 
@@ -400,9 +397,10 @@ terminal without a web browser:
 zelavis setup
 ```
 
-The CLI wizard prompts for the bootstrap token, creates the first Owner, runs
-DNS preflight checks on your domain, issues certificates, and activates Edge Traefik
-routing.
+The CLI wizard prompts for the bootstrap token and claims the first Owner
+through the same bootstrap capability as the dashboard. Hostname/TLS setup is a
+separate authenticated Edge operation; automatic production certificate issuance
+and route activation remain pending qualification.
 
 For unattended automation or cloud-init scripts, use the non-interactive equivalent:
 ```bash
