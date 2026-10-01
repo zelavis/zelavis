@@ -6,6 +6,39 @@ description: Install the long-running Zelavis Platform OS with the quick install
 Zelavis is a long-running Platform OS. It is installed on a server or local
 machine; it is not deployed as an ephemeral serverless function.
 
+## Create a Platform in a folder
+
+For development, or a small host where you would rather keep everything in one
+folder, use the create command. It needs Node 24 and nothing else:
+
+```bash
+npm create @zelavis@latest my-platform
+# the same command, shorter:
+npm create zelavis@latest my-platform
+```
+
+(`pnpm create @zelavis`, `bun create @zelavis` and `yarn create @zelavis` work too.)
+
+It writes a small project (`package.json`, `.gitignore`, `README.md`, and a `.env`
+holding a freshly generated one-time first-owner token), installs the `zelavis`
+package, and tells you what to run. The dashboard and the default services ship
+inside that one package, so there is nothing else to install.
+
+```bash
+cd my-platform
+npm run dev
+```
+
+Open http://127.0.0.1:3000/zelavis. The setup asks for the token in `.env` to
+create the first owner account, and the token stops working once it has been used.
+The Platform keeps its data in `.zelavis/` in that folder, so running it from
+another folder is a different installation. Options: `--yes` (no prompts),
+`--no-install`, `--no-git`, `--pm <npm|pnpm|yarn|bun>`.
+
+This is the same Platform the quick installer sets up; the installer is the right
+choice for a production Linux server, because it also registers the service
+units, the Agent and Edge.
+
 ## Quick install
 
 The quick installer automatically detects your operating system and CPU

@@ -1,0 +1,33 @@
+{
+  "name": "create-zelavis",
+  "version": "0.1.0-alpha.1",
+  "private": false,
+  "description": "Create a Zelavis Platform in a new folder: npm create zelavis",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "bin": {
+    "create-zelavis": "./bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@zelavis/create": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zelavis/zelavis.git",
+    "directory": "packages/create-zelavis"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/create-zelavis"
+}
