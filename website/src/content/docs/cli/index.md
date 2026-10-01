@@ -96,8 +96,8 @@ command tree.
 `zelavis install --from package --version <exact-version>` acquires its matching
 verified prebuilt archive. Both use the same plan; `--dry-run` inspects it,
 `--user` selects user mode and `--json` selects structured output. Existing
-receipts identify the source, entry, mode and default instance. Foreign layouts,
-live data owners and occupied port 3000 are refused. `--force` only permits
+receipts identify the source, entry, mode, selected instance, port and Edge ownership. Foreign layouts,
+live data owners and occupied or reserved instance ports are refused. `--force` only permits
 command replacement; stop user processes before maintenance. A matching owned
 systemd Platform can be stopped and restarted for repair/upgrade.
 
@@ -105,7 +105,17 @@ systemd Platform can be stopped and restarted for repair/upgrade.
 Node, data owner, service state, ports and Agent cgroup/delegation. Use sudo for
 root-readable system receipts. It writes no files, takes no locks and downloads
 nothing; errors return exit status 1. Install, doctor and complete removal are
-host-local commands with no HTTP/dashboard route. Named instances remain planned.
+host-local commands with no HTTP/dashboard route. Use `--instance <name>` on install, serve, doctor and complete removal for a
+named Linux/systemd instance. A new install needs an explicit `--port` (1024–65535).
+User mode supports default only. The selected `current`/receipt/runtime descriptor
+live under `/opt/zelavis/instances/<name>`, with data/config/account/unit names
+scoped to the instance. Releases and the management command remain shared.
+Only default may own host Edge; secondary instances run with Edge off.
+`uninstall --instance <name> --all` removes all of that instance’s data and
+retains shared state needed by other receipts. The last instance removes shared
+releases, templates and package/APT state. Removing default releases its host
+Edge record/kernel lock. Use `--url` for endpoint-backed commands on a secondary
+Platform; `--instance` never changes a remote target.
 
 ## Runtime Operations
 

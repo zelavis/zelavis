@@ -1,4 +1,4 @@
-import { acquireLocalDataOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
+import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { readFile } from "node:fs/promises";
@@ -159,6 +159,8 @@ export interface NodeAdapterOptions {
     kind?: "memory";
   };
   edge?: false;
+  /** Installer-selected host authority, never inferred from an HTTP request. */
+  installation?: { prefix: string; instance: string; edge: boolean };
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -167,6 +169,7 @@ export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   installAsyncPluginContextStorage();
   let ownership: Promise<LocalOwnershipLease> | undefined;
+  let edgeOwnership: Promise<LocalOwnershipLease> | undefined;
   let ownerOptions: ZelavisOptions | undefined;
   const stores = new Set<{ close?(): void | Promise<void> }>();
   let projectRuntime: ReturnType<typeof createLocalProjectRuntime> | undefined;
@@ -180,6 +183,8 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const lease = await ownership?.catch(() => undefined);
       await lease?.release();
       ownership = undefined;
+      await (await edgeOwnership?.catch(() => undefined))?.release();
+      edgeOwnership = undefined;
       ownerOptions = undefined;
     },
     async resolve(
@@ -192,6 +197,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         ownerOptions = _constructorOptions;
         ownership ??= acquireLocalDataOwnership(dataDirectory);
         await ownership;
+        if (options.installation?.edge && options.edge !== false) {
+          edgeOwnership ??= acquireLocalEdgeOwnership({ ...options.installation, dataDirectory });
+          await edgeOwnership;
+        }
       }
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
@@ -428,7 +437,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let edgeManager: ZelavisEdgeManager | undefined;
       let edgeRoutes: ZelavisEdgeRouteStore | undefined;
       let edgeCertificates: ZelavisCertificateController | undefined;
-      if (options.edge !== false && !isProjectRuntime && systemStore) {
+      if (options.edge !== false && options.installation?.edge !== false && !isProjectRuntime && systemStore) {
         edgeRoutes = createZelavisEdgeRouteStore({ store: systemStore });
         const masterSecret = await loadPlatformMasterSecret(systemStore);
         edgeCertificates = createZelavisCertificateController({

@@ -1291,6 +1291,7 @@ async function installedPackageDirectory(
 export async function loadSystemPackage(
   manifest: ZelavisPackageManifest & { packageDir: string },
 ) {
+  provideHostPackagesTo(manifest.packageDir);
   return loadPluginPackage({
     manifest,
     packageDir: manifest.packageDir,
@@ -1314,7 +1315,8 @@ export async function loadBundledServiceCatalog(
 ): Promise<readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]> {
   return Promise.all(
     selections.map(async (selection) => {
-      const manifest = resolveLocalPackageManifest(selection.name);
+      const directory = resolveBundledServiceDirectory(selection.name);
+      const manifest = resolveLocalPackageManifest(directory ?? selection.name);
       if (!manifest) {
         throw new Error(
           `Unable to resolve bundled service manifest for ${selection.name}.`,

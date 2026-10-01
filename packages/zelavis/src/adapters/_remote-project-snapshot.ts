@@ -41,6 +41,11 @@ async function collect(root: string, directory = root,
     if (!entry.isFile()) throw new Error("Remote Project snapshot contains a non-regular entry.");
     const relative = path.slice(root.length + 1).split(sep).join("/");
     if (!validPath(relative)) throw new Error("Remote Project snapshot contains an invalid path.");
+    // The Platform's handed-down cache may be atomically renamed during collection.
+    // Exclude its exact final/temporary names before opening either one.
+    const allowlist = `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`;
+    if (relative === allowlist || relative.startsWith(`${allowlist}.`) &&
+        /^[1-9]\d*\.tmp$/u.test(relative.slice(allowlist.length + 1))) continue;
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = await file.stat();
@@ -70,7 +75,6 @@ export async function packRemoteProjectSnapshot(
   // not Project data: it neither forks the Project nor travels with it (a remote
   // Node is handed the list separately).
   const files = (await collect(root))
-    .filter((file) => file.path !== `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`)
     .sort((left, right) => left.path.localeCompare(right.path));
   // Only the frozen recipe travels. Anything else under `.zelavis` is Project
   // data (database, uploads, runtime state) that a copy would fork.

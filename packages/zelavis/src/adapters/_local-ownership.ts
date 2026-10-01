@@ -82,3 +82,57 @@ export async function readLocalDataOwner(directory: string): Promise<LocalDataOw
   if (!Number.isSafeInteger(value.pid) || value.pid <= 0 || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.session !== "string" || !["platform", "maintenance"].includes(value.purpose)) throw new Error("Malformed Platform ownership record.");
   return value;
 }
+
+
+export interface LocalEdgeSelection { readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
+/** The prefix installer lock serializes persistent host Edge claims. */
+export async function claimLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
+  if (selection.instance !== "default") throw new Error("Only the default instance may own host Edge.");
+  const file = join(selection.prefix, "edge-owner.json");
+  const current = await readEdgeOwner(selection.prefix);
+  if (current && (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory)) throw new Error(`Host Edge belongs to instance ${current.instance} at ${current.dataDirectory}.`);
+  const lock = join(selection.prefix, ".edge-owner.lock");
+  await refuseEdgeSymlink(lock);
+  const lease = await sqliteReservation(lock);
+  try {
+    // The default service can reserve the existing inode, but cannot alter its
+    // root-owned parent or the persistent ownership record.
+    await chmod(lock, 0o660);
+    const temporary = `${file}.${randomUUID()}`;
+    try { await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, ...selection })}\n`, { mode: 0o644, flag: "wx" }); await chmod(temporary, 0o644); await rename(temporary, file); }
+    finally { await rm(temporary, { force: true }); }
+  } finally { await lease.release(); }
+}
+async function refuseEdgeSymlink(path: string) {
+  try { if ((await lstat(path)).isSymbolicLink()) throw new Error("Refusing a symlinked Edge ownership path."); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+}
+export async function readEdgeOwner(prefix: string): Promise<LocalEdgeSelection | undefined> {
+  const file = join(prefix, "edge-owner.json");
+  await refuseEdgeSymlink(file);
+  let content: string;
+  try { content = await readFile(file, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  const value = JSON.parse(content);
+  if (value.schemaVersion !== 1 || value.prefix !== prefix || typeof value.instance !== "string" || typeof value.dataDirectory !== "string") throw new Error("Malformed host Edge ownership record.");
+  return value;
+}
+/** Held until Platform.close; process death releases the kernel reservation. */
+export async function acquireLocalEdgeOwnership(selection: LocalEdgeSelection): Promise<LocalOwnershipLease> {
+  const current = await readEdgeOwner(selection.prefix);
+  if (selection.instance !== "default" || !current || current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory) throw new Error("This instance has no host Edge ownership; secondary instances must run with Edge off.");
+  const lock = join(selection.prefix, ".edge-owner.lock");
+  await refuseEdgeSymlink(lock);
+  // Runtime never creates a missing root-owned reservation.
+  await lstat(lock);
+  return sqliteReservation(lock);
+}
+export async function releaseLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
+  const current = await readEdgeOwner(selection.prefix);
+  if (!current) return;
+  if (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory) throw new Error(`Refusing to release Edge owned by ${current.instance}.`);
+  const lock = join(selection.prefix, ".edge-owner.lock");
+  await refuseEdgeSymlink(lock);
+  const lease = await sqliteReservation(lock);
+  try { await rm(join(selection.prefix, "edge-owner.json"), { force: true }); await rm(lock, { force: true }); }
+  finally { await lease.release(); }
+}

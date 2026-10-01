@@ -1,3 +1,4 @@
+import { assertInstallationInstance } from "../core/runtime/installation-instance.js";
 import {
   bootstrapPlatformOwner,
   formatBootstrapStatus,
@@ -33,6 +34,10 @@ import {
 } from "./services.js";
 
 export interface ZelavisCliServeOptions {
+  instance?: string;
+  portExplicit?: boolean;
+  dataExplicit?: boolean;
+  hostExplicit?: boolean;
   host: string;
   port: number;
   dataDirectory?: string;
@@ -45,6 +50,7 @@ export interface ZelavisCliRuntime {
   install?(args: readonly string[]): Promise<void>;
   doctor?(args: readonly string[]): Promise<void>;
   createInstallationUninstaller?(options: {
+    instance?: string;
     dataDirectory?: string;
   }):
     | ZelavisInstallationUninstaller
@@ -65,6 +71,7 @@ export interface ZelavisCliOptions {
 }
 
 interface ParsedArgs {
+  instance?: string;
   command?: string;
   target?: string;
   name?: string;
@@ -107,9 +114,9 @@ function printHelp(): void {
 Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
-  zelavis serve [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
-  zelavis install --from package --version <version> [--user] [--dry-run]
-  zelavis doctor [--user | --system] [--json]
+  zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
+  zelavis install --from package --version <version> [--instance <name> --port <port>] [--user] [--dry-run]
+  zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
@@ -163,6 +170,7 @@ Options:
   --host <host>             Listener host. Defaults to 127.0.0.1.
   --port <port>             Listener port. Defaults to 3000.
   --data-dir <path>         Platform data directory.
+  --instance <name>        Select a local system installation (install/serve/doctor/uninstall).
   --services-dir <path>     Folder the Platform loads and installs services from.
                             Defaults to <data-dir>/services (or ZELAVIS_SERVICES_DIR).
   --url <url>               Zelavis root URL for endpoint-backed commands.
@@ -246,6 +254,9 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--confirm=")) {
       parsed.confirmation = arg.slice("--confirm=".length);
+    } else if (arg === "--instance" || arg.startsWith("--instance=")) {
+      parsed.instance = arg.includes("=") ? arg.slice("--instance=".length) : readValue(args, index++, arg);
+      assertInstallationInstance(parsed.instance);
     } else if (arg === "--host") {
       parsed.host = readValue(args, index, arg);
       index += 1;
@@ -570,7 +581,7 @@ export async function runCli(
     }
     if (args[0] === "doctor") {
       if (args.includes("--help") || args.includes("-h")) {
-        console.log("zelavis doctor [--user | --system] [--json]\nRead-only host inspection; no HTTP endpoint.");
+        console.log("zelavis doctor [--instance <name>] [--user | --system] [--json]\nRead-only host inspection; no HTTP endpoint.");
         return;
       }
       if (!options.runtime?.doctor) throw new Error("Doctor requires the local host adapter.");
@@ -579,7 +590,7 @@ export async function runCli(
     }
     if (args[0] === "install") {
       if (args.includes("--help") || args.includes("-h")) {
-        console.log("zelavis install (--from-release <absolute path> | --from package --version <exact version>) [--user] [--dry-run] [--json] [--force] [--public] [--enable-agent] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
+        console.log("zelavis install (--from-release <absolute path> | --from package --version <exact version>) [--instance <name> --port <port>] [--user] [--dry-run] [--json] [--force] [--public] [--enable-agent] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
         return;
       }
       if (!options.runtime?.install) throw new Error("Install requires the local host adapter.");
@@ -587,6 +598,7 @@ export async function runCli(
       return;
     }
     const parsed = parseArgs(args);
+    if (parsed.instance && !["serve", "uninstall"].includes(parsed.command ?? "")) throw new Error("--instance selects local installation lifecycle commands. Use --url for endpoint-backed commands.");
 
     if (parsed.version) {
       // The bare version stays on its own first line, so anything parsing this
@@ -608,6 +620,8 @@ export async function runCli(
         );
       }
       await options.runtime.serve({
+        ...(parsed.instance ? { instance: parsed.instance } : {}),
+        ...(parsed.instance || parsed.host !== undefined || parsed.port !== undefined || parsed.dataDirectory !== undefined ? { dataExplicit: parsed.dataDirectory !== undefined, portExplicit: parsed.port !== undefined, hostExplicit: parsed.host !== undefined } : {}),
         host: parsed.host ?? process.env.HOST ?? "127.0.0.1",
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
@@ -629,8 +643,9 @@ export async function runCli(
         );
       }
       const uninstaller = await options.runtime.createInstallationUninstaller({
+        ...(parsed.instance ? { instance: parsed.instance } : {}),
         dataDirectory:
-          parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
+          parsed.dataDirectory ?? (parsed.instance ? undefined : process.env.ZELAVIS_DATA_DIR),
       });
       if (parsed.dryRun) {
         const plan = await uninstaller.plan();

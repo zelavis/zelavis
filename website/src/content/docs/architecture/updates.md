@@ -32,7 +32,7 @@ running, stopping takes as long as stopping them does.
 | Project runtimes | Not if a separate Agent supervises them (its own systemd unit; the Platform re-adopts them on start). Yes when the Platform itself runs them, as in development: they stop and are started again. |
 | Visitors to a Project's domain | Yes. The Platform process forwards that traffic to the Project today, so it is down while the Platform is. |
 | Edge (Traefik) | No. It is its own unit, and its configuration is output the Platform compiles. |
-| The System Store | No. SQLite in WAL mode; a second process may open it. |
+| The System Store | Persistent across restarts. The current Platform data ownership guard refuses a second Platform on the same System Store. Safe overlap needs the leadership/follower coordination below. |
 
 ## The plan, in order
 
@@ -67,7 +67,10 @@ seconds:
 
 **4. Blue/green.** Releases live in versioned folders with a `current` link (the
 shared installer already lays them out this way), so the new version starts from
-its own files while the old keeps running from its own. A `zelavis upgrade`
+its own files while the old keeps running from its own. Named installations
+also retain independent `instances/<name>/current` links over the shared release
+tree. Their separate System Stores are not an implementation of blue/green
+overlap on one Store; that still needs phase 3 above. A `zelavis upgrade`
 command (and the Agent, as a signed host operation like the Edge ones) does:
 start the new release on another port, wait for `/ready`, move Edge to it, drain
 the old, and roll back by moving Edge back if the new one fails its probe. A

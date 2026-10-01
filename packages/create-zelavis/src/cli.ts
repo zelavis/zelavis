@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const mode = selectInstallMode(parsed.mode, process.platform, root, sudo);
   const assets = await loadInstallerAssets();
   const command = installationCommand({ ...assets, mode, root, flags: parsed.flags, invokingHome: realpathSync(homedir()), invokingPath: (process.env.PATH ?? "").split(":").map((path) => resolve(path)).join(":") });
-  console.log(installationOverview(mode, assets.version));
+  console.log(installationOverview(mode, assets.version, homedir(), parsed.flags));
   console.log(`Exact installation command:\n${command.display}`);
   if (parsed.dryRun) { console.log("No changes were made."); return; }
   if (!parsed.yes) {

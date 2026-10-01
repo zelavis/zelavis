@@ -72,7 +72,7 @@ test("a clean install links the command", async (t) => {
   assert.deepEqual(
     JSON.parse(await readFile(join(tree.prefix, "installation.json"), "utf8")),
     {
-      schemaVersion: 1,
+      schemaVersion: 2, port: 3000, edge: false,
       mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: tree.prefix, configDirectory: "/etc/zelavis",
       dataDirectory: tree.dataDir,
       commandPath: join(tree.binDir, "zelavis"),

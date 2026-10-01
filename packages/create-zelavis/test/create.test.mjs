@@ -76,3 +76,13 @@ test("invoking PATH is forwarded as literal diagnostic data while sudo execution
   assert.match(assets.script, /PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin/);
   assert.doesNotMatch(assets.script, /eval /);
 });
+
+test("named system flags remain literal argv and overview shows isolated paths and port", async () => {
+  const assets = await loadInstallerAssets();
+  const flags = parseArguments(["--system", "--instance", "preview", "--port", "3100"]).flags;
+  const command = installationCommand({...assets, mode: "system", root: false, flags});
+  assert.deepEqual(command.args.slice(-4), ["--instance", "preview", "--port", "3100"]);
+  assert.match(installationOverview("system", "1.2.3", "/home/operator", flags), /Instance: preview; port: 3100[\s\S]*\/var\/lib\/zelavis-preview[\s\S]*\/etc\/zelavis-preview/);
+  assert.throws(() => installationCommand({...assets, mode: "user", root: false, flags}), /system mode/);
+  for (const args of [["--instance", "../escape"], ["--instance"], ["--port", "80"], ["--port", "NaN"]]) assert.throws(() => parseArguments(args), /requires a value|Invalid/);
+});
