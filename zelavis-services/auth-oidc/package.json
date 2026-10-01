@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/app-auth-oidc",
-  "version": "2.0.0-alpha.3",
+  "version": "2.0.0-alpha.4",
   "private": false,
   "description": "OIDC/JWKS bearer authentication plugin for Zelavis.",
   "license": "MIT",
@@ -56,9 +56,6 @@
   },
   "peerDependencies": {
     "zelavis": ">=2.0.0-alpha.4"
-  },
-  "dependencies": {
-    "jose": "^6.2.12"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

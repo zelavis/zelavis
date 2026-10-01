@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/ecommerce",
-  "version": "2.0.0-alpha.3",
+  "version": "2.0.0-alpha.4",
   "private": false,
   "description": "Official Zelavis ecommerce plugin with runtime APIs, commerce domain APIs, and payment provider integrations.",
   "license": "MIT",
@@ -55,13 +55,12 @@
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
-  "dependencies": {
+  "peerDependencies": {
+    "zelavis": ">=2.0.0-alpha.4",
     "effect": "4.0.0"
   },
-  "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.4"
-  },
   "devDependencies": {
+    "effect": "4.0.0",
     "typescript": "^7.0.2",
     "zelavis": "workspace:*"
   },

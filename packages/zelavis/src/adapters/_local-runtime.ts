@@ -4,6 +4,7 @@
  * All APIs here depend only on standard node: built-ins that are available
  * identically in both Node.js and Bun — no runtime-specific imports.
  */
+import { provideHostPackagesTo, unprovidedDependencies } from "./_service-resolution.js";
 import {
   existsSync,
   mkdirSync,
@@ -13,7 +14,7 @@ import {
   renameSync,
   statSync,
 } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -636,6 +637,46 @@ const materializePackage = Effect.fn("materializePackage")(function* (
   return packageDirectory;
 });
 
+/**
+ * Removes what the registry no longer points at from a services folder.
+ *
+ * An installed package lives in `packages/<digest>`, so each update leaves the
+ * previous version behind and an uninstall leaves the package. Done once, at
+ * start, because nothing is loaded then: a folder deleted under a running
+ * service would break a lazy import it makes later. `.tmp` holds installs that
+ * were interrupted. Anything that cannot be read as a registry is left alone.
+ */
+export async function pruneServicePackages(options: {
+  readonly directory: string;
+  readonly referencedSpecifiers: readonly string[];
+}): Promise<{ readonly removed: readonly string[] }> {
+  const root = resolve(options.directory);
+  const packages = join(root, "packages");
+  const referenced = new Set<string>();
+  for (const specifier of options.referencedSpecifiers) {
+    if (!isAbsolute(specifier)) continue;
+    const relativePath = relative(packages, specifier);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) continue;
+    const digest = relativePath.split(sep)[0];
+    if (digest) referenced.add(digest);
+  }
+
+  const removed: string[] = [];
+  if (existsSync(packages)) {
+    for (const entry of await readdir(packages, { withFileTypes: true })) {
+      if (!entry.isDirectory() || referenced.has(entry.name)) continue;
+      await rm(join(packages, entry.name), { recursive: true, force: true });
+      removed.push(join("packages", entry.name));
+    }
+  }
+  const temporary = join(root, ".tmp");
+  if (existsSync(temporary)) {
+    await rm(temporary, { recursive: true, force: true });
+    removed.push(".tmp");
+  }
+  return { removed };
+}
+
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
 ): ZelavisServicePackageInstaller {
@@ -698,6 +739,29 @@ export function createLocalRuntimeServicePackageInstaller(
 
     const entry = yield* Effect.try({
       try: () => resolveServicePackageEntry(acquired.entries),
+      catch: (cause) =>
+        new UnusablePackage({
+          reference: input.reference,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+    // A service carries what it needs: the Platform installs nobody's
+    // dependencies, so one that lists some would fail to load, and it should
+    // say why here, before anything is written down, not at import.
+    yield* Effect.try({
+      try: () => {
+        const manifestEntry = acquired.entries.find((candidate) => candidate.path === "package.json");
+        const missing = manifestEntry
+          ? unprovidedDependencies(JSON.parse(new TextDecoder().decode(manifestEntry.body)))
+          : [];
+        if (missing.length > 0) {
+          throw new Error(
+            `${acquired.resolved} lists runtime dependencies the Platform does not install (${missing.join(", ")}). ` +
+              "A service has to carry what it needs, bundled into its own files; only zelavis and effect come from the host.",
+          );
+        }
+      },
       catch: (cause) =>
         new UnusablePackage({
           reference: input.reference,
@@ -996,6 +1060,8 @@ export function createLocalRuntimeServiceImporter(
     serviceDirectory,
     ...(options.managedDirectories ?? []).map((directory) => resolve(directory)),
   ];
+  // A service finds `zelavis` and `effect` in the host, wherever its folder lies.
+  for (const directory of managedDirectories) provideHostPackagesTo(directory);
   // Packages shipped in this distribution's `services/` folder are the host's
   // own code: the same trust as a bare dependency, and immutable to operators.
   const isManaged = (path: string) =>
@@ -1759,6 +1825,19 @@ export async function createLocalServiceSources(
       console.warn(`Zelavis skipped product service "${name}": ${reason}`);
     },
   });
+
+  // What the registry no longer points at is removed, once, before anything is
+  // loaded. Best effort: a registry that cannot be read leaves everything in place.
+  if (input.systemStore) {
+    const store = input.systemStore;
+    void (async () => {
+      const entries = await createSystemStoreServiceRegistryStore(store).read();
+      await pruneServicePackages({
+        directory: productServiceDirectory,
+        referencedSpecifiers: entries.flatMap((entry) => (entry.specifier ? [entry.specifier] : [])),
+      });
+    })().catch(() => undefined);
+  }
 
   // Static frontends dropped into this runtime's services folder are served
   // from where they lie. Other bundles keep using the shared store.

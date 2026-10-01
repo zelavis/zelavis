@@ -2,6 +2,8 @@
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBundledServiceDirectory } from "./adapters/_local-runtime.js";
+import { resolveBundledFrontend } from "./cli/bundled-frontend.js";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { describeInstallation } from "./cli/installation.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
@@ -10,7 +12,7 @@ import {
   nodeAdapter,
   type NodeAdapterProjectOptions,
 } from "./adapters/node.js";
-import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
+import { Zelavis } from "./index.js";
 import { closeNodeServer, createNodeServer, shutdownOnSignals } from "./runtimes/node.js";
 
 /** Real path of this CLI, symlinks resolved; undefined if it cannot be read. */
@@ -36,31 +38,10 @@ async function readVersion(): Promise<string> {
  * `@zelavis/ui` leaves an installation whose API is unchanged and whose root
  * path says no frontend is installed, which is the whole point of the split.
  */
-const BUNDLED_DASHBOARD = "@zelavis/ui/frontend";
-
-async function resolveBundledFrontend(): Promise<
-  ZelavisPlatformFrontendFactory | undefined
-> {
-  try {
-    // The specifier is held in a variable so TypeScript does not resolve it.
-    // The dashboard is an optional dependency, and a static specifier would
-    // make the Platform fail to compile without the very package it was
-    // decoupled from — the build-time version of the problem this fixes.
-    const loaded = (await import(BUNDLED_DASHBOARD)) as {
-      zelavisUiFrontend?: unknown;
-    };
-    return typeof loaded.zelavisUiFrontend === "function"
-      ? (loaded.zelavisUiFrontend as ZelavisPlatformFrontendFactory)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
-  const frontend = await resolveBundledFrontend();
+  const frontend = await resolveBundledFrontend({ bundledDirectory: resolveBundledServiceDirectory });
   let remoteDispatch: NodeAdapterProjectOptions["remoteDispatch"];
   const dispatchFile = process.env.ZELAVIS_PROJECT_DISPATCH_CONFIG;
   if (dispatchFile) {
@@ -88,6 +69,9 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
     ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
       dataDirectory,
+      ...(options.servicesDirectory
+        ? { services: { directory: resolve(options.servicesDirectory) } }
+        : {}),
       // Projects run through a separately supervised Agent when the host
       // names its endpoint (the packaged zelavis-agent unit); otherwise they
       // run in this process.

@@ -15,6 +15,7 @@ Architecture docs should describe real current behavior and stable design constr
 - [Fabric and Placement](./fabric.md): how a Project is placed on a Node, and what is not operational yet.
 - [Execution Backends and Traffic](./execution-backends.md): native and container execution, Kubernetes, and the proxy choice.
 - [Zelavis Edge](./edge.md): public ingress and safe proxy switching.
+- [Updating Without Downtime](./updates.md): what an update interrupts today, and the plan to make it invisible.
 
 ## Services and the marketplace
 

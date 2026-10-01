@@ -95,6 +95,25 @@ or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
 `.agents/`. The tracked Claude session-start hook should keep those symlinks
 current automatically.
 
+## Service Loading Rules
+
+- A service is a folder with a `package.json` manifest and an ES module entry,
+  loaded by `import()`. npm and registries are only a transport; the signed
+  allow-list decides trust. The server never runs `npm install`.
+- Default services ship inside the `zelavis` package (`services/`), at the
+  Platform's version. They are not copied into generated projects and cannot be
+  shadowed from a services folder (official identities are refused).
+- `zelavis` and `effect` are host-provided: imports of them from managed service
+  roots resolve to the Platform's copy (`_service-resolution.ts`, Node
+  `registerHooks`; a documented no-op on Bun). Every other dependency must be
+  bundled into the service; acquisition refuses a package whose manifest lists
+  `dependencies` the Platform will not install.
+- Acquired packages live in content-addressed folders, so an update is a new
+  module with no restart; unreferenced folders are pruned at start. Activation
+  of an update or uninstall reports `restartRecommended`.
+- Update plan (zero downtime): `website/.../architecture/updates.md`. Mark it
+  planned until built.
+
 ## Marketplace Allow-List
 
 `@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
@@ -1295,6 +1314,16 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 
 - The `main` branch is protected and does not allow direct pushes.
 - Changes must be pushed to a branch and merged through a pull request.
+- `dev` is the long-lived branch for everyday work; it is merged into `main` from
+  time to time through a pull request, and CI must be green first.
+  **Merge `dev` into `main` with a merge commit (`gh pr merge --merge`), never a
+  squash or a rebase.** Pull requests are otherwise squash-merged, and a squashed
+  `dev` leaves `main` holding one new commit that `dev` does not contain, so the
+  two diverge and the next pull request carries the old commits again. A merge commit
+  keeps `dev` an ancestor of `main`, so afterwards `git merge origin/main` on `dev`
+  is a fast-forward. When something lands on `main` any other way, run
+  `git merge origin/main` on `dev` before continuing.
+- Short feature branches go off `dev` or `main` and are squash-merged as usual.
 - Do not assume GitHub app or automation credentials can open PRs automatically; if that fails, leave the branch pushed and provide the PR URL to the user.
 
 ## Documentation Expectations
