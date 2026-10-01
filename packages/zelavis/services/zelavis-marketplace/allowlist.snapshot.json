@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "sequence": 3,
-  "issuedAt": "2026-09-30T14:39:50.991Z",
-  "expiresAt": "2027-09-30T14:39:50.991Z",
+  "sequence": 4,
+  "issuedAt": "2026-10-01T07:26:54.050Z",
+  "expiresAt": "2027-10-01T07:26:54.050Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
@@ -24,9 +24,13 @@
         {
           "version": "2.0.0-alpha.3",
           "integrity": "sha512-3oLa5t4NIHR64mOIV/qqZQA/6MeLjKqwpWpOPMvr8IgFasGSwekdBEh1CF9TSgSjpq8gTCbeUvL2u/bbyzQWFw=="
+        },
+        {
+          "version": "2.0.0-alpha.4",
+          "integrity": "sha512-A2/vo+n9W1ePNCw2mhQmyUTy+IcnMqxmi099gGCIzOrmMVSWr1BQewTsODYAaWvZqjNa2apcfzJvyaEWCy011g=="
         }
       ],
-      "latest": "2.0.0-alpha.3"
+      "latest": "2.0.0-alpha.4"
     },
     {
       "name": "@zelavis/ecommerce",
@@ -47,9 +51,13 @@
         {
           "version": "2.0.0-alpha.3",
           "integrity": "sha512-W7HUy3XW9UkCRMR1uR/Bhv8Dmpd53NXBKqaQ4U2T+rEY+jdtN3eLSDt67AH1TPTZZOo8+FfWUoiRqP4lQYmKTQ=="
+        },
+        {
+          "version": "2.0.0-alpha.4",
+          "integrity": "sha512-s5xXJiisDREqnhd+Fh+1ReinUF9Q2Fr/h+EwndlnU/q8d1AQFXbIrPEE5dNifASch0MDurKOjobgEEz4FoL8xA=="
         }
       ],
-      "latest": "2.0.0-alpha.3"
+      "latest": "2.0.0-alpha.4"
     },
     {
       "name": "@zelavis/ecommerce-paypal",
@@ -69,9 +77,13 @@
         {
           "version": "1.0.0-alpha.2",
           "integrity": "sha512-IQ5PbQL9BzhlZwHY5azG2LPgw/3tlgUBAJlKK3/57+ULEDf54wMWGEcjq3px1kFMRmXgCoXTGo4d4yPGbh8+Qw=="
+        },
+        {
+          "version": "1.0.0-alpha.3",
+          "integrity": "sha512-Hhda5urtvEeyOLGRg1oObO52OY/ToDZSUmR+offeXFQLSxS/4Gx5K4c5IOVw8pkkKBsjXp0Fb7rRfvf6Q87IKQ=="
         }
       ],
-      "latest": "1.0.0-alpha.2"
+      "latest": "1.0.0-alpha.3"
     },
     {
       "name": "@zelavis/ecommerce-stripe",
@@ -92,9 +104,13 @@
         {
           "version": "1.0.0-alpha.2",
           "integrity": "sha512-1bZbaAe5oPPzQYrl6GSq+QPF+AOsHOAgePICc6Ri8EI5BHcn8I8lFM/HpiHvk6sEPa3vWk9rEawW9rPyQUEGHQ=="
+        },
+        {
+          "version": "1.0.0-alpha.3",
+          "integrity": "sha512-Fe92VFksko5zlEwhnTt7FF7LsFAJKstkxcjaxTL7KkxF0QZQ0Zg7vAblRApNyWo19a0DxrwQ1raYOedQA5C4ew=="
         }
       ],
-      "latest": "1.0.0-alpha.2"
+      "latest": "1.0.0-alpha.3"
     },
     {
       "name": "@zelavis/wordpress",
