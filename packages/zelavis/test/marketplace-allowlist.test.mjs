@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -153,6 +153,44 @@ test("only listed packages install, at the listed version, with the listed diges
   const installed = await runStep(servicePackages.acquire({ reference: "npm:@example/thing@1.0.0" }));
   assert.equal(installed.resolved, "npm:@example/thing@1.0.0");
   assert.match(installed.specifier, /index\.js$/);
+});
+
+test("a service that needs dependencies the Platform will not install is refused, with the reason, before anything is written", async (t) => {
+  const withDependencies = (dependencies) => makeTarball({
+    "package/package.json": JSON.stringify({
+      name: "@example/thing", version: "1.0.0", type: "module",
+      exports: { ".": { import: "./index.js" } },
+      zelavis: { kind: "plugin", namespace: "thing" },
+      dependencies,
+    }),
+    "package/index.js": "export default {}",
+  });
+  const needy = withDependencies({ stripe: "^22.0.0", effect: "4.0.0" });
+  const providedOnly = withDependencies({ effect: "4.0.0", zelavis: ">=2.0.0-alpha.4" });
+
+  for (const [bytes, installs] of [[needy, false], [providedOnly, true]]) {
+    const directory = await scratch(t);
+    const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(bytes) }])]);
+    const { servicePackages, marketplace } = await sourcesFor(directory, {
+      sources: ["https://list.example/allowlist.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher,
+    });
+    await marketplace.control.refresh();
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    globalThis.fetch = registry({ "1.0.0": bytes });
+
+    if (installs) {
+      // zelavis and effect are the host's, so listing them is fine.
+      const installed = await runStep(servicePackages.acquire({ reference: "npm:@example/thing@1.0.0" }));
+      assert.match(installed.specifier, /index\.js$/);
+    } else {
+      const refusal = await Effect.runPromise(Effect.flip(Effect.scoped(servicePackages.acquire({ reference: "npm:@example/thing@1.0.0" }))));
+      assert.equal(refusal._tag, "UnusablePackage");
+      assert.match(refusal.reason, /does not install \(stripe\)\./, "only what would have to be installed is named, not effect");
+      assert.match(refusal.reason, /only zelavis and effect come from the host/);
+      await assert.rejects(readdir(join(directory, "packages")), "nothing was written down for a package that cannot load");
+    }
+  }
 });
 
 test("other kinds of source are refused while the allow-list gates installs", async (t) => {

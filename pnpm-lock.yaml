@@ -575,10 +575,6 @@ importers:
         version: 0.35.4(@types/node@26.6.2)
 
   zelavis-services/auth-oidc:
-    dependencies:
-      jose:
-        specifier: ^6.2.12
-        version: 6.2.12
     devDependencies:
       typescript:
         specifier: ^7.0.2
@@ -588,11 +584,10 @@ importers:
         version: link:../../packages/zelavis
 
   zelavis-services/ecommerce:
-    dependencies:
+    devDependencies:
       effect:
         specifier: 4.0.0
         version: 4.0.0
-    devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -601,14 +596,16 @@ importers:
         version: link:../../packages/zelavis
 
   zelavis-services/ecommerce/plugins/paypal:
-    dependencies:
+    devDependencies:
       '@paypal/paypal-server-sdk':
         specifier: ^2.5.0
         version: 2.5.0(debug@4.4.3)
       '@zelavis/ecommerce':
         specifier: workspace:*
         version: link:../..
-    devDependencies:
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -617,14 +614,16 @@ importers:
         version: link:../../../../packages/zelavis
 
   zelavis-services/ecommerce/plugins/stripe:
-    dependencies:
+    devDependencies:
       '@zelavis/ecommerce':
         specifier: workspace:*
         version: link:../..
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       stripe:
         specifier: ^22.6.2
         version: 22.6.2(@types/node@26.6.2)
-    devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

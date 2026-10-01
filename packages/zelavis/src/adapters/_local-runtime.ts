@@ -4,6 +4,7 @@
  * All APIs here depend only on standard node: built-ins that are available
  * identically in both Node.js and Bun — no runtime-specific imports.
  */
+import { provideHostPackagesTo, unprovidedDependencies } from "./_service-resolution.js";
 import {
   existsSync,
   mkdirSync,
@@ -705,6 +706,29 @@ export function createLocalRuntimeServicePackageInstaller(
         }),
     });
 
+    // A service carries what it needs: the Platform installs nobody's
+    // dependencies, so one that lists some would fail to load, and it should
+    // say why here, before anything is written down, not at import.
+    yield* Effect.try({
+      try: () => {
+        const manifestEntry = acquired.entries.find((candidate) => candidate.path === "package.json");
+        const missing = manifestEntry
+          ? unprovidedDependencies(JSON.parse(new TextDecoder().decode(manifestEntry.body)))
+          : [];
+        if (missing.length > 0) {
+          throw new Error(
+            `${acquired.resolved} lists runtime dependencies the Platform does not install (${missing.join(", ")}). ` +
+              "A service has to carry what it needs, bundled into its own files; only zelavis and effect come from the host.",
+          );
+        }
+      },
+      catch: (cause) =>
+        new UnusablePackage({
+          reference: input.reference,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
     // Addressed by the verified digest rather than a hash of the bytes we
     // happened to receive: the digest is what the source committed to, and it
     // is what makes two installs of the same reference the same install.
@@ -996,6 +1020,8 @@ export function createLocalRuntimeServiceImporter(
     serviceDirectory,
     ...(options.managedDirectories ?? []).map((directory) => resolve(directory)),
   ];
+  // A service finds `zelavis` and `effect` in the host, wherever its folder lies.
+  for (const directory of managedDirectories) provideHostPackagesTo(directory);
   // Packages shipped in this distribution's `services/` folder are the host's
   // own code: the same trust as a bare dependency, and immutable to operators.
   const isManaged = (path: string) =>
