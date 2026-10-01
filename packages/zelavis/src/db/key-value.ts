@@ -1,5 +1,12 @@
-import { Clock, Effect, Encoding, Layer, Result, Schema } from "effect";
-import * as EffectKeyValueStore from "effect/unstable/persistence/KeyValueStore";
+// @effect-diagnostics unstableApiUsage:off
+// This file adapts the KV engine to Effect's `KeyValueStore` interface, which
+// Effect tags `@stability unstable`: it can change between releases. That is
+// the point of the adapter, so the warning is acknowledged here and nowhere
+// else; any other use of an unstable Effect API in this package is still flagged.
+import { Clock, Effect, Layer, Result, Schema } from "effect";
+import * as Base64 from "effect/encoding/Base64";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as EffectKeyValueStore from "effect/persistence/KeyValueStore";
 import type {
   Document,
   DocumentsApi,
@@ -205,12 +212,12 @@ interface CursorPayload {
 }
 
 const encodeCursor = (payload: CursorPayload): KvCursor =>
-  Encoding.encodeBase64Url(JSON.stringify(payload)) as KvCursor;
+  Base64Url.encode(JSON.stringify(payload)) as KvCursor;
 
 const decodeCursor = (cursor: KvCursor): Effect.Effect<CursorPayload, KeyValueCursorMismatch> =>
   Effect.try({
     try: () => {
-      const decoded = Encoding.decodeBase64UrlString(cursor);
+      const decoded = Base64Url.decodeString(cursor);
       if (Result.isFailure(decoded)) throw decoded.failure;
       const value = JSON.parse(decoded.success) as Partial<CursorPayload>;
       if (value.v !== 1 || typeof value.namespace !== "string" || typeof value.key !== "string"
@@ -531,7 +538,7 @@ export const toEffectKeyValueStore = (
         ? undefined
         : entry.value.encoding === "utf8"
           ? new TextEncoder().encode(entry.value.value)
-          : Encoding.decodeBase64(entry.value.value).pipe((result) => {
+          : Base64.decode(entry.value.value).pipe((result) => {
               if (result._tag === "Failure") throw result.failure;
               return result.success;
             })),
@@ -539,7 +546,7 @@ export const toEffectKeyValueStore = (
       "set",
       namespace.set(key, typeof value === "string"
         ? { encoding: "utf8", value }
-        : { encoding: "base64", value: Encoding.encodeBase64(value) }),
+        : { encoding: "base64", value: Base64.encode(value) }),
       key,
     ).pipe(Effect.asVoid),
     remove: (key) => attempt("remove", namespace.remove(key), key).pipe(Effect.asVoid),
@@ -555,13 +562,13 @@ export const toEffectKeyValueStore = (
       modify("modifyUint8Array", key, (held) => {
         const bytes = held.encoding === "utf8"
           ? new TextEncoder().encode(held.value)
-          : Encoding.decodeBase64(held.value).pipe((result) => {
+          : Base64.decode(held.value).pipe((result) => {
               if (result._tag === "Failure") throw result.failure;
               return result.success;
             });
-        return { encoding: "base64", value: Encoding.encodeBase64(f(bytes)) };
+        return { encoding: "base64", value: Base64.encode(f(bytes)) };
       }),
-      (value) => value === undefined ? undefined : Encoding.decodeBase64(value.value).pipe((result) => {
+      (value) => value === undefined ? undefined : Base64.decode(value.value).pipe((result) => {
         if (result._tag === "Failure") throw result.failure;
         return result.success;
       }),

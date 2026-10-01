@@ -540,8 +540,15 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Effect Version & Vendored Source (@repos/effect)
 
-- Use **Effect v4** instead of Effect v3.
-- The authoritative Effect v4 codebase is vendored locally under `repos/effect/`.
+- Use **Effect v4** instead of Effect v3. The `effect` dependency is pinned to an
+  exact release (stable `4.0.0` since 2026-10-01); every `@effect/*` package that
+  is used moves with it.
+- The authoritative Effect v4 codebase is vendored locally under `repos/effect/`,
+  at the release tag that matches the pinned `effect` version (`repos/effect/VENDORED_FROM`
+  names the tag and commit). When the `effect` version changes, refresh it in the
+  same change with `scripts/update-effect-source.sh effect@<version>`. It is a script
+  and not `git subtree pull` because pull requests are squash-merged, which erases
+  subtree's bookkeeping.
 - When writing or refactoring Effect code (Schema, Services, Layer, HttpApi, Stream, Context):
   - Check `repos/effect/LLMS.md` first for official Effect v4 rules and patterns.
   - Review `repos/effect/packages/effect/SCHEMA.md` and `repos/effect/packages/effect/HTTPAPI.md` for dedicated sub-module guidance.
