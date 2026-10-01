@@ -175,10 +175,81 @@ Debian packages. Older versions are refused unless `--allow-downgrade` is given;
 previous archive releases are kept.
 
 Install and complete uninstall are host-local maintenance operations and have
-no HTTP/dashboard route. Named instances remain planned.
+no HTTP/dashboard route. Named system instances use explicit `--instance` and `--port`.
 The quick installer's APT repository selection remains a bootstrap concern in
 this phase; both APT postinst and its archive branch delegate host setup to the
 same TypeScript command.
+
+
+## Named system instances
+
+With no `--instance`, every entry installs or repairs `default`. To create a
+second Linux/systemd instance, choose a name and a distinct port:
+
+```bash
+sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100 --dry-run
+sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100
+# Or: npm create zelavis@latest -- --system --instance preview --port 3100 --yes
+sudo zelavis doctor --instance preview --json
+```
+
+Names start with a lowercase letter and contain at most 24 lowercase letters,
+digits or hyphens. Named instances require system mode; `--user` has only the
+default instance. A new named instance requires an explicit port from 1024 to
+65535. A port recorded by another instance is reserved even while it is stopped.
+Rerunning a named install retains its port unless `--port` changes it.
+
+| Resource | Default | Named `preview` |
+|---|---|---|
+| Data and System Store | `/var/lib/zelavis` | `/var/lib/zelavis-preview` |
+| Config, trust and token | `/etc/zelavis` | `/etc/zelavis-preview` |
+| User/group | `zelavis` | `zelavis-preview` |
+| Platform unit | `zelavis.service` | `zelavis@preview.service` |
+| Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
+| Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
+
+The immutable `/opt/zelavis/releases/<version>` tree and management command are
+shared. Each instance selects its own release, so upgrading `preview` leaves
+default and other named instances on their selected versions. If a named
+instance is installed first, `/opt/zelavis/current` selects the initial management
+CLI without creating a default Platform. `zelavis serve --instance preview`
+reads that instance's secret-free `runtime.json` descriptor and executes its
+selected release's private Node. Systemd uses the release-shipped templates
+`zelavis@.service` and `zelavis-agent@.service`. Prefer systemd for system instances.
+
+Only `default` may own host Edge. The installer serializes its persistent
+`/opt/zelavis/edge-owner.json` claim with the prefix installer lock. The default
+Platform holds the kernel reservation in `/opt/zelavis/.edge-owner.lock`; a live
+reservation refuses another claimant, and process death releases the lock.
+The service can reserve the existing lock inode but cannot rewrite its
+root-owned ownership record. Installation still leaves Traefik disabled and
+claims no public ports. Secondary instances run with Edge off and receive
+traffic through the primary's Edge or an operator-managed external proxy.
+Configure those routes explicitly; installation does not publish them.
+
+Endpoint-backed commands select the secondary Platform with its URL, for
+example `zelavis setup --url http://127.0.0.1:3100/zelavis`.
+`--instance` selects host-local install, serve, doctor and complete removal;
+it never selects a remote wipe target. Moving a Project between instances is
+separate from installation; this change provides no Project export/import.
+
+Inspect and remove just the selected instance:
+
+```bash
+sudo zelavis uninstall --instance preview --all --dry-run
+sudo zelavis uninstall --instance preview --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+Removal stops only its own units and deletes its data, configuration/token,
+installer-owned account, receipt, descriptor and release link. Removing default
+also releases its Edge record/lock. While any other instance receipt remains,
+the shared releases, management `current`, command links, unit templates, APT
+source/key and Debian package records are retained. Removing the last instance
+removes that shared inventory too. `--all` means all data of the selected
+instance, including its Projects; it does not remove every instance on the host.
+The instance directories, descriptors, template units and Edge ownership files
+are covered by the destructive uninstall inventory and tests.
 
 ## Package acquisition and user mode
 
@@ -209,15 +280,15 @@ Every install/removal takes the prefix's exclusive `.install.lock` (`flock` on
 Linux; a SQLite kernel reservation on macOS). Linux needs `util-linux`.
 Process death releases the reservation; no stale PID-based takeover is used.
 The current receipt records mode, source (`release|package`), instance
-(`default`), entry (`archive|deb|create|cli`), version, paths and account ownership.
+(default or the selected name), port, Edge ownership, entry (`archive|deb|create|cli`), version, paths and account ownership.
 Old pre-release receipt shapes are refused; no layout migration is performed.
 
 Preflight rejects another recorded system/user installation, a different service
-layout, foreign PATH commands, live data owners and occupied port 3000. `--force`
+layout, foreign PATH commands, live data owners and an occupied or reserved instance port. `--force`
 only permits deliberate command replacement; it cannot bypass data or ports.
 Create forwards the invoking PATH for inspection, while the privileged bootstrap
-continues executing commands through a fixed trusted PATH. Named instances and
-an Edge-owner lock are later work; installation claims no ports 80/443.
+continues executing commands through a fixed trusted PATH. Named instances share the prefix and releases, with their own data/config/port.
+Only default may hold the host Edge reservation; installation claims no ports 80/443.
 
 Node and Bun Platforms reserve `<data>/.platform.lock` before opening their
 System Store and record PID/start/session metadata in `.platform-owner.json`.
@@ -259,8 +330,9 @@ units and files, Debian package
 records when present, recorded command links and the default archive/Debian links
 when they still point into this installation, the complete release tree, Platform and
 Project data, `/etc/zelavis`, the Zelavis APT source/key, and the dedicated
-system account when its properties prove it is installer-owned. Removing the
-prefix includes `.install.lock` and the receipt; removing data includes
+system account when its properties prove it is installer-owned. Removing the last instance
+removes the prefix, including `.install.lock`, receipts, public runtime descriptors,
+instance directories, and the Edge ownership record/kernel lock; removing data includes
 `.platform.lock` and `.platform-owner.json`. These files are retained during
 ordinary runs so concurrent processes cannot lock different inodes. It deliberately
 retains shared host dependencies, journal history, external archives/backups,

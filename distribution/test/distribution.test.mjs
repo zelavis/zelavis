@@ -232,3 +232,23 @@ test("shipped host operation sources are valid, signable and produce their decla
   });
   assert.ok(staged.signed.includes("zelavis.host-report@v1"));
 });
+
+test("named templates use the instance's private Node launcher, account, config and data, without Edge", async () => {
+  const platform = await readFile(new URL("runtime/zelavis@.service", distribution), "utf8");
+  const agent = await readFile(new URL("runtime/zelavis-agent@.service", distribution), "utf8");
+  for (const unit of [platform, agent]) {
+    assert.match(unit, /^User=zelavis-%i$/m);
+    assert.match(unit, /^Group=zelavis-%i$/m);
+    assert.match(unit, /ZELAVIS_DATA_DIR=\/var\/lib\/zelavis-%i/);
+    assert.match(unit, /\/opt\/zelavis\/instances\/%i\/current\/bin\/zelavis/);
+    assert.doesNotMatch(unit, /CAP_NET_BIND_SERVICE|zelavis-traefik/);
+  }
+  assert.match(platform, /serve --instance %i/);
+  assert.match(platform, /EnvironmentFile=-\/etc\/zelavis-%i\/zelavis.env/);
+  assert.match(agent, /Delegate=yes/);
+  assert.match(agent, /\/var\/lib\/zelavis-%i\/system\/agent-authority/);
+  for (const script of ["scripts/build-stage.mjs", "scripts/build-deb.mjs"]) {
+    const source = await readFile(new URL(script, distribution), "utf8");
+    assert.match(source, /zelavis@\.service/); assert.match(source, /zelavis-agent@\.service/);
+  }
+});

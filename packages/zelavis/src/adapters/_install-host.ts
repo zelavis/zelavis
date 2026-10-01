@@ -1,4 +1,5 @@
-import { acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
+import { assertInstallationInstance, installationInstanceScope } from "../core/runtime/installation-instance.js";
+import { claimLocalEdgeOwner, releaseLocalEdgeOwner, acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
 import { isAlive, processAgeMs } from "./_agent-process-runner.js";
 import type { ZelavisInstallationProbeHost } from "../core/runtime/installation-health.js";
 import { execFile } from "node:child_process";
@@ -13,12 +14,15 @@ import type { ZelavisInstallPaths } from "../core/runtime/installation-plan.js";
 const exec = promisify(execFile);
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
-export function nodeInstallationPaths(env: NodeJS.ProcessEnv = process.env): ZelavisInstallPaths {
+export function nodeInstallationPaths(env: NodeJS.ProcessEnv = process.env, instance = "default"): ZelavisInstallPaths {
+  assertInstallationInstance(instance);
+  const suffix = instance === "default" ? "" : `-${instance}`;
   const bin = env.ZELAVIS_BIN_DIR ?? "/usr/local/bin";
   return {
+    instance,
     prefix: env.ZELAVIS_PREFIX ?? "/opt/zelavis",
-    dataDirectory: env.ZELAVIS_DATA_DIR ?? "/var/lib/zelavis",
-    configDirectory: env.ZELAVIS_UNINSTALL_ETC_DIR ?? "/etc/zelavis",
+    dataDirectory: `${env.ZELAVIS_DATA_DIR ?? "/var/lib/zelavis"}${suffix}`,
+    configDirectory: `${env.ZELAVIS_UNINSTALL_ETC_DIR ?? "/etc/zelavis"}${suffix}`,
     commandPath: env.ZELAVIS_UNINSTALL_COMMAND ?? join(bin, "zelavis"),
     systemCommandPath: env.ZELAVIS_UNINSTALL_SYSTEM_BIN ?? "/usr/bin/zelavis",
     systemdDirectories: [env.ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR ?? "/etc/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR ?? "/lib/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR ?? "/usr/lib/systemd/system"],
@@ -88,27 +92,36 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
       } catch { return false; }
     },
     async unitState(unit, paths) {
-      const present = (await Promise.all(paths.systemdDirectories.map((directory) => host.exists(join(directory, unit))))).some(Boolean);
+      const present = (await Promise.all(paths.systemdDirectories.map((directory) => host.exists(join(directory, unit.includes("@") ? unit.replace(/@[^.]+\.service$/u, "@.service") : unit))))).some(Boolean);
       if (!await host.which("systemctl")) return { present, active: false, enabled: false };
       const query = async (args: string[]) => { try { return (await exec("systemctl", args, { timeout: 5_000 })).stdout.trim(); } catch { return ""; } };
       const [enabled, active, pid, delegated] = await Promise.all([query(["is-enabled", unit]), query(["is-active", unit]), query(["show", "--property=MainPID", "--value", unit]), query(["show", "--property=Delegate", "--value", unit])]);
       return { present, enabled: enabled === "enabled", active: active === "active", ...(Number(pid) > 0 ? { pid: Number(pid) } : {}), delegates: delegated === "yes" };
     },
-    async dataOwner(path) {
+    async listInstances(prefix) {
+      const instances: string[] = [];
+      if (await host.exists(`${prefix}/installation.json`)) instances.push("default");
+      try { for (const entry of await readdir(`${prefix}/instances`)) {
+        assertInstallationInstance(entry);
+        if (await host.exists(installationInstanceScope(prefix, entry).receipt)) instances.push(entry);
+      } } catch (error) { if (!missing(error)) throw error; }
+      return instances;
+    },
+    async dataOwner(path, account) {
       try {
         const info = await stat(path);
         let expectedUid = process.getuid?.();
-        if (path === "/var/lib/zelavis") {
-          try { expectedUid = Number((await exec("id", ["-u", "zelavis"])).stdout.trim()); } catch { expectedUid = undefined; }
+        if (account) {
+          try { expectedUid = Number((await exec("id", ["-u", account])).stdout.trim()); } catch { expectedUid = undefined; }
         }
         return { uid: info.uid, expectedUid };
       } catch (error) { if (missing(error)) return undefined; throw error; }
     },
-    async agentSupport() {
+    async agentSupport(unit = "zelavis-agent.service") {
       const cgroupV2 = await host.exists("/sys/fs/cgroup/cgroup.controllers");
       let group = "";
       if (process.platform === "linux" && await host.which("systemctl")) {
-        try { group = (await exec("systemctl", ["show", "--property=ControlGroup", "--value", "zelavis-agent.service"], { timeout: 5_000 })).stdout.trim(); } catch {}
+        try { group = (await exec("systemctl", ["show", "--property=ControlGroup", "--value", unit], { timeout: 5_000 })).stdout.trim(); } catch {}
       }
       const safeGroup = group.startsWith("/") && !group.split("/").includes("..");
       return { cgroupV2, cgroupKill: safeGroup && await host.exists(`/sys/fs/cgroup${group}/cgroup.kill`) };
@@ -173,16 +186,18 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
           await mkdir(dirname(action.path), { recursive: true });
           if (action.ifAbsent) {
             try { await writeFile(action.path, action.content, { mode: action.mode, flag: "wx" }); }
-            catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+            catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; break; }
           } else if (action.atomic) {
             const temporary = `${action.path}.install-${process.pid}`;
             try {
               await writeFile(temporary, action.content, { mode: action.mode, flag: "wx" });
+              await chmod(temporary, action.mode);
               await rename(temporary, action.path);
             } finally { await rm(temporary, { force: true }); }
           } else {
             await writeFile(action.path, action.content, { mode: action.mode });
           }
+          await chmod(action.path, action.mode);
           break;
         }
         case "bootstrap": {
@@ -218,19 +233,22 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
           if (packages.length) await exec("apt-get", ["purge", "-y", ...packages], { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } });
           break;
         }
+        case "claim-edge": await claimLocalEdgeOwner(action); break;
+        case "release-edge": await releaseLocalEdgeOwner(action); break;
         case "remove-account": {
+          const account = action.account ?? "zelavis";
           if (!await host.which("getent")) break;
           const messages: string[] = [];
-          if (await host.accountExists("user", "zelavis")) {
-            const fields = (await exec("getent", ["passwd", "zelavis"])).stdout.trim().split(":");
+          if (await host.accountExists("user", account)) {
+            const fields = (await exec("getent", ["passwd", account])).stdout.trim().split(":");
             if (action.ownsUser && fields[5] === action.dataDirectory && /\/(?:nologin|false)$/u.test(fields[6] ?? "")) {
-              try { await exec("userdel", ["zelavis"]); } catch { messages.push("Retaining zelavis account: userdel failed."); }
-            } else messages.push("Retaining zelavis account: ownership or current properties do not prove a dedicated installer account.");
+              try { await exec("userdel", [account]); } catch { messages.push(`Retaining ${account} account: userdel failed.`); }
+            } else messages.push(`Retaining ${account} account: ownership or current properties do not prove a dedicated installer account.`);
           }
-          if (await host.accountExists("group", "zelavis")) {
+          if (await host.accountExists("group", account)) {
             if (action.ownsGroup) {
-              try { await exec("groupdel", ["zelavis"]); } catch { messages.push("Retaining zelavis group because another account still uses it."); }
-            } else messages.push("Retaining zelavis group: the installer did not record creating it.");
+              try { await exec("groupdel", [account]); } catch { messages.push(`Retaining ${account} group because another account still uses it.`); }
+            } else messages.push(`Retaining ${account} group: the installer did not record creating it.`);
           }
           return messages.join("\n") || undefined;
         }

@@ -134,8 +134,13 @@ before editing.
   have one distribution source; shipped copies are generated at build time.
   Install/removal take an exclusive prefix lock and share the Node/Bun Platform
   data ownership guard; never bypass live data or port conflicts with `--force`.
-  Current receipts carry source, entry, version, mode and default instance.
-  Doctor is read-only and host-local. Named instances remain planned.
+  Current receipts carry source, entry, version, mode, selected instance, port
+  and Edge ownership. Named system instances share immutable releases but own
+  separate current/receipt/runtime descriptors, data/config/accounts/ports/units.
+  Only default may own host Edge, enforced by a persistent record and kernel
+  reservation; secondary instances run with Edge off. Removing an instance retains
+  shared releases/commands/templates/package/APT state until the last receipt is
+  removed. Doctor remains read-only and host-local.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
   dashboard `/setup` route must call the same endpoint and must not introduce

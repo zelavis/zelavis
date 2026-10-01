@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { readNodeInstallationRuntime } from "./adapters/_installation-runtime.js";
+import { spawn } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { provideHostPackagesTo } from "./adapters/_service-resolution.js";
 import { resolveBundledServiceDirectory } from "./adapters/_local-runtime.js";
 import { resolveBundledFrontend } from "./cli/bundled-frontend.js";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
@@ -42,8 +45,33 @@ async function readVersion(): Promise<string> {
  */
 
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
+  const identity = installationPath ? describeInstallation(installationPath) : undefined;
+  const installed = await readNodeInstallationRuntime(identity?.kind === "packaged" ? identity.root : undefined, options.instance);
+  if (options.instance && !installed) throw new Error("--instance requires an installed runtime descriptor.");
+  if (installed && (await realpath(process.execPath) !== await realpath(installed.node) || installationPath !== await realpath(installed.cli))) {
+    // The shared management CLI may belong to another instance's release.
+    // Re-execute only the selected instance's private Node and immutable CLI.
+    await new Promise<void>((resolveChild, reject) => {
+      const child = spawn(installed.node, [installed.cli, ...process.argv.slice(2)], { stdio: "inherit" });
+      const forward = (signal: NodeJS.Signals) => child.kill(signal);
+      const term = () => forward("SIGTERM"), interrupt = () => forward("SIGINT");
+      process.on("SIGTERM", term); process.on("SIGINT", interrupt);
+      child.once("error", reject);
+      child.once("exit", (code, signal) => { process.off("SIGTERM", term); process.off("SIGINT", interrupt); if (code === 0) resolveChild(); else reject(new Error(`Selected instance exited ${signal ?? code}.`)); });
+    });
+    return;
+  }
+  if (installed) {
+    if (options.dataExplicit && options.dataDirectory && resolveCliDataDirectory(options.dataDirectory) !== installed.dataDirectory) throw new Error("--data-dir disagrees with the selected instance inventory.");
+    if (options.portExplicit && options.port !== installed.port) throw new Error("--port disagrees with the selected instance inventory; change it with zelavis install.");
+    options = { ...options, dataDirectory: installed.dataDirectory, port: installed.port, host: options.hostExplicit ? options.host : installed.host };
+  }
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
-  const frontend = await resolveBundledFrontend({ bundledDirectory: resolveBundledServiceDirectory });
+  const frontend = await resolveBundledFrontend({ bundledDirectory: (name) => {
+    const directory = resolveBundledServiceDirectory(name);
+    if (directory) provideHostPackagesTo(directory);
+    return directory;
+  } });
   let remoteDispatch: NodeAdapterProjectOptions["remoteDispatch"];
   const dispatchFile = process.env.ZELAVIS_PROJECT_DISPATCH_CONFIG;
   if (dispatchFile) {
@@ -71,6 +99,7 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
     ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
       dataDirectory,
+      ...(installed ? { installation: { prefix: installed.prefix, instance: installed.instance, edge: installed.edge }, ...(!installed.edge ? { edge: false as const } : {}) } : {}),
       ...(options.servicesDirectory
         ? { services: { directory: resolve(options.servicesDirectory) } }
         : {}),
@@ -128,13 +157,14 @@ await runCli(process.argv.slice(2), {
       if (!installationPath) throw new Error("The running CLI path could not be resolved.");
       await runInstallationDoctor(args, installationPath);
     },
-    createInstallationUninstaller({ dataDirectory }) {
+    createInstallationUninstaller({ dataDirectory, instance }) {
       if (!installationPath) {
         throw new Error("The running Zelavis installation path could not be resolved.");
       }
       const installation = describeInstallation(installationPath);
       return createNodeInstallationUninstaller({
         installation,
+        instance,
         dataDirectory:
           dataDirectory ??
           (installation.kind === "packaged"

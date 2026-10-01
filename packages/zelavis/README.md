@@ -355,10 +355,13 @@ and trust configuration are preserved. `zelavis install --from package --version
 using the same plan; a matching archive must be published. Create takes no
 folder argument. User mode installs no systemd, Agent or Edge. Install/removal
 use an exclusive installer lock and share the runtime data ownership guard.
-Foreign installations, live data owners and port 3000 conflicts are refused;
+Foreign installations, live data owners and instance port conflicts are refused;
 `--force` permits command replacement only. Stop user processes before maintenance;
-a matching owned systemd Platform can be stopped for repair/upgrade. Named
-instances and zero-downtime upgrades remain planned.
+a matching owned systemd Platform can be stopped for repair/upgrade. Named Linux/systemd instances use `--instance <name> --port <port>` for a new
+installation. Each has its own data/config/account/token/System Store and
+`instances/<name>/current`, over shared immutable releases. The default instance
+alone may own host Edge, enforced by a persistent record and kernel lock;
+secondary instances run with Edge off. Zero-downtime upgrades remain planned.
 
 `sudo zelavis doctor --json` (or `zelavis doctor --user --json`) inspects receipt,
 PATH, release/private Node, data owner, units, ports and Agent cgroup/delegation.
@@ -385,7 +388,11 @@ Zelavis-owned host state. Install and complete removal have no HTTP/dashboard
 route. A current installer receipt covers package/create installs. Plain npm
 and source copies without one use their package manager or development lifecycle.
 Complete removal includes the prefix's `.install.lock` and the data directory's
-`.platform.lock`/`.platform-owner.json`.
+`.platform.lock`/`.platform-owner.json`, the public `runtime.json` descriptor and
+instance inventory. `uninstall --instance <name> --all` removes only that
+instance. Other receipts retain shared releases/current/commands, templates and
+package/APT state; the last instance removes them. Removing default also removes
+its `edge-owner.json` and `.edge-owner.lock`.
 
 Local Project recovery is data-safe across the pre-release App Data Fabric
 rewrite. When a Project still has the retired single-file App database, Zelavis

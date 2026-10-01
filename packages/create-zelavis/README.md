@@ -30,7 +30,7 @@ not register systemd, Agent or Edge. The launcher loads the private token and
 data location from `config/zelavis.env` regardless of the working directory.
 
 Options: `--user`, `--system`, `-y/--yes`, `--dry-run`, `--public`, `--force`,
-`--allow-downgrade`, `--enable-agent`, `--help`, `--version`. A non-interactive
+`--instance <name>`, `--port <port>`, `--allow-downgrade`, `--enable-agent`, `--help`, `--version`. A non-interactive
 installation requires `--yes`. Dry-run prints the layout and exact bootstrap
 command without downloads, elevation or changes.
 
@@ -49,12 +49,13 @@ maintained once in `distribution/installers/package-bootstrap.sh` and copied
 into the package at build time.
 
 The receipt identifies source `package`, entry `create`, version, mode and the
-`default` instance. Re-running repairs/upgrades the same layout. Installer locks
-serialize maintenance; live data and port 3000 conflicts cannot be forced.
+selected instance and port. Re-running repairs/upgrades the same layout. Installer locks
+serialize maintenance; live data and instance port conflicts cannot be forced.
 Foreign PATH commands are checked using the invoking user's PATH, passed only as
 diagnostic data; privileged command execution still uses a fixed trusted PATH.
 Stop a user-run Platform before maintenance. A matching systemd Platform can be
-stopped and restarted during repair/upgrade. Named instances remain planned.
+stopped and restarted during repair/upgrade. Named system instances share immutable releases and have their own data, config,
+account, units, token, System Store and release selection.
 
 Run `zelavis doctor --user --json` for user mode or `sudo zelavis doctor --json`
 for system mode. It inspects installation health without changing configuration
@@ -74,3 +75,26 @@ Embedding remains `npm install zelavis` in an application; it is a library use,
 not the create command.
 
 See [Installation](https://zelavis.com/docs/getting-started/installation).
+
+
+To install a named Linux/systemd instance:
+
+```bash
+npm create zelavis@latest -- --system --instance preview --port 3100 --dry-run
+npm create zelavis@latest -- --system --instance preview --port 3100 --yes
+sudo zelavis doctor --instance preview --json
+sudo zelavis uninstall --instance preview --all --dry-run
+sudo zelavis uninstall --instance preview --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+Names use at most 24 lowercase letters, digits and hyphens, starting with a
+letter. A new named instance requires a distinct port (1024–65535). User mode
+supports only default. `preview` owns `/var/lib/zelavis-preview`,
+`/etc/zelavis-preview`, the `zelavis-preview` account, `zelavis@preview.service`
+and the opt-in `zelavis-agent@preview.service`. Its `current`, receipt and public
+`runtime.json` live under `/opt/zelavis/instances/preview`. Only default may own
+host Edge, enforced by the persistent Edge record and kernel reservation;
+secondary instances run with Edge off. Use explicit `--url` for their setup/API.
+Removing one instance retains shared releases, management command/current,
+unit templates and package/APT state until the last instance is removed.
+Removal of default releases its Edge record/lock. No Project transfer is added.

@@ -1,12 +1,14 @@
+import { assertInstallationInstance, assertInstallationPort } from "../../core/runtime/installation-instance.js";
 import { acquireNodeInstallerLock } from "../../adapters/_local-ownership.js";
 import { preflightZelavisInstall } from "../../core/runtime/installation-health.js";
 import { createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths, assertNodeInstallationPrivilege } from "../../adapters/_install-host.js";
 import { acquirePackageRelease, EXACT_INSTALL_VERSION } from "../../adapters/_package-release.js";
-import { executeZelavisInstallationPlan, planZelavisReleaseInstall, validateInstallationPaths, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
+import { executeZelavisInstallationPlan, planZelavisReleaseInstall, validateInstallationPaths, readNativeInstallationReceipt, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
 
 /** Host-local acquisition and execution of the shared installation plan. */
 export async function runReleaseInstall(args: readonly string[]): Promise<void> {
   let invokingPath: string | undefined, invokingHome: string | undefined;
+  let instance = "default", port: number | undefined;
   let source: string | undefined, from: string | undefined, version: string | undefined;
   let dryRun = false, json = false, publicBind = false, allowDowngrade = false, user = false;
   let sourceKind: "release" | "package" = "release";
@@ -19,7 +21,9 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--from-release") source = value(++i, arg);
+    if (arg === "--instance") instance = value(++i, arg);
+    else if (arg === "--port") port = Number(value(++i, arg));
+    else if (arg === "--from-release") source = value(++i, arg);
     else if (arg === "--invoking-home") invokingHome = value(++i, arg);
     else if (arg === "--invoking-path") invokingPath = value(++i, arg);
     else if (arg === "--from") from = value(++i, arg);
@@ -48,8 +52,11 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   if (from && (!version || !EXACT_INSTALL_VERSION.test(version))) throw new Error("Package installation requires --version <exact version>; tags and ranges are refused.");
   if (!source && !from) throw new Error("zelavis install requires --from-release <absolute staged-release path> or --from package --version <exact version>.");
   if (user && enableAgent) throw new Error("User installations do not support the Agent.");
+  assertInstallationInstance(instance);
+  if (port !== undefined) assertInstallationPort(port);
+  if (user && instance !== "default") throw new Error("Named instances require system mode.");
   const host = createNodeInstallHost({ invokingPath });
-  const paths = user ? nodeUserInstallationPaths() : nodeInstallationPaths();
+  const paths = user ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, instance);
   validateInstallationPaths(paths);
   const system = !user && process.getuid?.() === 0 && !!await host.which("systemctl");
   if (!user && paths.prefix === "/opt/zelavis") {
@@ -64,7 +71,7 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   const otherPrefixes = paths.prefix === "/opt/zelavis" || user ? [nodeInstallationPaths().prefix, nodeUserInstallationPaths().prefix, ...invokingUserPrefix ? [invokingUserPrefix] : []] : [];
   // A package dry-run describes acquisition without downloads or temporary state.
   if (from && dryRun) {
-    await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes });
+    await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port });
     const overview = { operation: "install", source: "package", version, mode: user ? "user" : "system", paths, steps: ["Verify exact npm version metadata", "Download and verify matching prebuilt release SHA-256", "Plan release installation; detailed steps require the verified tree"], public: publicBind };
     console.log(json ? JSON.stringify(overview, null, 2) : `${JSON.stringify(overview, null, 2)}\nNo changes were made.`);
     return;
@@ -72,9 +79,10 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   const lock = dryRun ? undefined : await acquireNodeInstallerLock(paths.prefix);
   let acquired: Awaited<ReturnType<typeof acquirePackageRelease>> | undefined;
   try {
-    const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes });
+    const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port });
     acquired = from ? await acquirePackageRelease(version!) : undefined;
-    const plan = await planZelavisReleaseInstall({ host, source: acquired?.source ?? source!, paths, system, user, force, public: publicBind, allowDowngrade, enableAgent, stopPlatform, sourceKind: from ? "package" : sourceKind, installedBy });
+    port ??= (await readNativeInstallationReceipt(host, paths.prefix, instance))?.port ?? 3000;
+    const plan = await planZelavisReleaseInstall({ host, source: acquired?.source ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: publicBind, allowDowngrade, enableAgent, stopPlatform, sourceKind: from ? "package" : sourceKind, installedBy });
     if (dryRun) {
       console.log(json ? JSON.stringify(plan, null, 2) : ["Zelavis install plan", ...plan.steps.map((step) => `  ${step.id}: ${step.description} (idempotent: ${step.idempotent})`), ...plan.warnings, "No changes were made."].join("\n"));
       return;
@@ -83,9 +91,9 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     const output = await executeZelavisInstallationPlan(host, plan);
     if (json) console.log(JSON.stringify({ installed: true, plan, output }, null, 2));
     else {
-      console.log("Zelavis installed.\nDashboard: http://127.0.0.1:3000/zelavis");
+      console.log(`Zelavis instance ${instance} installed.\nDashboard: http://127.0.0.1:${port}/zelavis`);
       if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${publicBind ? " --host 0.0.0.0" : ""}`);
-      if (system && !publicBind) console.log("From your local machine: ssh -N -L 3000:127.0.0.1:3000 <user>@<server>");
+      if (system && !publicBind) console.log(`From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
       for (const line of output) console.log(line);
     }
   } finally {

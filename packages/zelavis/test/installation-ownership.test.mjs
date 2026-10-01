@@ -96,3 +96,53 @@ test("read-only socket probes correlate occupied ports with the actual listener 
   assert.equal(await host.portOwnedBy(process.pid, port), true);
   assert.equal(await host.portOwnedBy(2147483647, port), false);
 });
+
+const { claimLocalEdgeOwner, acquireLocalEdgeOwnership, releaseLocalEdgeOwner } = await import("../dist/adapters/_local-ownership.js");
+test("host Edge has one owner and live reservation, refusing secondary/foreign claims and removal", async (t) => {
+  const prefix = await root(t);
+  const selection = { prefix, instance: "default", dataDirectory: join(prefix, "data") };
+  await claimLocalEdgeOwner(selection);
+  const lease = await acquireLocalEdgeOwnership(selection);
+  await assert.rejects(acquireLocalEdgeOwnership(selection), /already reserved/);
+  await assert.rejects(releaseLocalEdgeOwner(selection), /already reserved/);
+  await assert.rejects(claimLocalEdgeOwner({ ...selection, instance: "preview" }), /Only the default/);
+  await assert.rejects(acquireLocalEdgeOwnership({ ...selection, instance: "preview" }), /Edge off/);
+  await assert.rejects(claimLocalEdgeOwner({ ...selection, dataDirectory: join(prefix, "foreign-data") }), /Host Edge belongs/);
+  await lease.release();
+  await releaseLocalEdgeOwner(selection);
+  await assert.rejects(readFile(join(prefix, "edge-owner.json")), {code: "ENOENT"});
+  await assert.rejects(readFile(join(prefix, ".edge-owner.lock")), {code: "ENOENT"});
+});
+test("Edge kernel reservation excludes another process and recovers after SIGKILL", async (t) => {
+  const prefix = await root(t);
+  const selection = { prefix, instance: "default", dataDirectory: join(prefix, "data") };
+  await claimLocalEdgeOwner(selection);
+  const child = holder(t, "acquireLocalEdgeOwnership", selection);
+  await child.ready;
+  await assert.rejects(acquireLocalEdgeOwnership(selection), /already reserved/);
+  child.child.kill("SIGKILL"); await child.exited;
+  const lease = await acquireLocalEdgeOwnership(selection);
+  await lease.release();
+  await releaseLocalEdgeOwner(selection);
+});
+test("managed Node instances gate Edge before opening the System Store and release it on close", async (t) => {
+  const prefix = await root(t);
+  const dataDirectory = join(prefix, "data");
+  await claimLocalEdgeOwner({prefix, instance: "default", dataDirectory});
+  const owner = new Zelavis({ adapter: nodeAdapter({dataDirectory, services: false, projects: false, installation: {prefix, instance: "default", edge: true}}) });
+  t.after(() => owner.close());
+  await owner.runtime();
+  await assert.rejects(acquireLocalEdgeOwnership({prefix, instance: "default", dataDirectory}), /already reserved/);
+  await owner.close();
+  const lease = await acquireLocalEdgeOwnership({prefix, instance: "default", dataDirectory}); await lease.release();
+  const secondary = new Zelavis({ adapter: nodeAdapter({dataDirectory: join(prefix, "preview"), services: false, projects: false, installation: {prefix, instance: "preview", edge: false}}) });
+  t.after(() => secondary.close());
+  const runtime = await secondary.runtime();
+  assert.equal(runtime.edge, undefined);
+  assert.equal(runtime.edgeCertificates, undefined);
+  await secondary.close();
+  const wrong = new Zelavis({ adapter: nodeAdapter({dataDirectory: join(prefix, "foreign"), services: false, projects: false, installation: {prefix, instance: "preview", edge: true}}) });
+  t.after(() => wrong.close());
+  await assert.rejects(wrong.runtime(), /Edge off/);
+  assert.deepEqual(await createNodeInstallHost().dataOwnership(join(prefix, "foreign")), {active: false});
+});

@@ -10,7 +10,7 @@ const paths = {
   aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg",
 };
 const templates = {};
-for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "traefik.yml"]) {
   templates[file] = await readFile(new URL(`../../../distribution/runtime/${file}`, import.meta.url), "utf8");
 }
 
@@ -50,8 +50,8 @@ class FakeHost {
         break;
       }
       case "command":
-        if (a.command === "groupadd") this.accounts.add("group:zelavis");
-        if (a.command === "useradd") this.accounts.add("user:zelavis");
+        if (a.command === "groupadd") this.accounts.add(`group:${a.args.at(-1)}`);
+        if (a.command === "useradd") this.accounts.add(`user:${a.args.at(-1)}`);
         break;
       case "remove-link": if (this.links.get(a.path)?.startsWith(`${a.prefix}/`)) this.links.delete(a.path); break;
       case "remove":
@@ -76,7 +76,7 @@ test("fresh install plans the existing inventory, without mutations or secret ma
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 127\.0\.0\.1/);
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "disable zelavis-traefik.service"));
   assert.ok(!host.actions.some((a) => a.command === "systemctl" && a.args.includes("zelavis-agent.service")));
-  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 1, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
+  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
 
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {
@@ -187,4 +187,59 @@ test("user installation owns only its prefix, private environment and command; r
   assert.equal(JSON.parse(await host.read(`${prefix}/installation.json`)).mode, "user");
   assert.equal(await host.exists("/etc/systemd/system/zelavis.service"), false);
   await assert.rejects(install(host, { paths: userPaths, system: false, user: true, enableAgent: true }), /do not support/);
+});
+
+
+const namedPaths = (name) => ({ ...paths, instance: name, dataDirectory: `/var/lib/zelavis-${name}`, configDirectory: `/etc/zelavis-${name}` });
+test("named instances select independent releases, accounts, units and tokens with Edge off", async () => {
+  const host = new FakeHost();
+  await executeZelavisInstallationPlan(host, await install(host));
+  const defaultToken = await host.read("/etc/zelavis/zelavis.env");
+  const secondary = namedPaths("preview");
+  host.release("2.0.0");
+  const plan = await install(host, { paths: secondary, port: 3100, enableAgent: true });
+  assert.equal(plan.instance, "preview");
+  assert.ok(!plan.steps.some((step) => ["edge-owner", "edge-disable", "command"].includes(step.id)));
+  assert.ok(!plan.steps.some((step) => step.action.args?.includes("zelavis.service")));
+  await executeZelavisInstallationPlan(host, plan);
+  assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
+  assert.equal(host.links.get("/opt/zelavis/instances/preview/current"), "/opt/zelavis/releases/2.0.0");
+  assert.equal(await host.read("/etc/zelavis/zelavis.env"), defaultToken);
+  assert.ok(host.accounts.has("user:zelavis-preview"));
+  assert.match(await host.read("/etc/systemd/system/zelavis@.service"), /User=zelavis-%i[\s\S]*serve --instance %i/);
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis@preview.service"));
+  const runtime = JSON.parse(await host.read("/opt/zelavis/instances/preview/runtime.json"));
+  assert.equal(runtime.edge, false); assert.equal(runtime.port, 3100);
+  assert.equal(runtime.dataDirectory, secondary.dataDirectory);
+  const receipt = JSON.parse(await host.read("/opt/zelavis/instances/preview/installation.json"));
+  assert.equal(receipt.instance, "preview"); assert.equal(receipt.edge, false);
+  const repair = await install(host, { paths: secondary });
+  assert.ok(!repair.steps.some((step) => ["user", "group", "release"].includes(step.id)));
+  await executeZelavisInstallationPlan(host, repair);
+  assert.equal(host.tokens, 2);
+  assert.equal(JSON.parse(await host.read("/opt/zelavis/instances/preview/runtime.json")).port, 3100);
+  host.release("3.0.0");
+  await executeZelavisInstallationPlan(host, await install(host, { paths: secondary }));
+  assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
+});
+test("named-first creates a shared command, validates names/ports, and refuses user instances", async () => {
+  const host = new FakeHost();
+  await assert.rejects(install(host, { paths: namedPaths("preview") }), /explicit --port/);
+  for (const name of ["../escape", "UPPER", "x%2f", "a".repeat(25)]) await assert.rejects(install(host, { paths: namedPaths(name), port: 3100 }), /Instance names/);
+  for (const port of [0, 80, 3100.5, 65536]) await assert.rejects(install(host, { paths: namedPaths("preview"), port }), /port must/);
+  await assert.rejects(install(host, { paths: namedPaths("preview"), port: 3100, user: true, system: false }), /system mode/);
+  await executeZelavisInstallationPlan(host, await install(host, { paths: namedPaths("preview"), port: 3100 }));
+  assert.equal(host.links.get(paths.commandPath), "/opt/zelavis/current/bin/zelavis");
+  assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
+  assert.equal(await host.read("/opt/zelavis/installation.json"), undefined);
+});
+test("removal retains shared releases/templates/command/packages while another instance exists", () => {
+  for (const selected of [paths, namedPaths("preview")]) {
+    const plan = planZelavisUninstall({ paths: selected, hostCommands: true, ownsUser: true, ownsGroup: true, retainShared: true });
+    assert.ok(!plan.steps.some((step) => step.action.kind === "purge-packages" || step.action.kind === "remove-link"));
+    assert.ok(!plan.steps.some((step) => [paths.prefix, paths.aptSource, "/etc/systemd/system/zelavis@.service"].includes(step.action.path)));
+    const account = plan.steps.find((step) => step.action.kind === "remove-account").action;
+    assert.equal(account.account, selected.instance ? "zelavis-preview" : "zelavis");
+    if (selected.instance) assert.ok(!plan.steps.some((step) => step.action.kind === "release-edge"));
+  }
 });

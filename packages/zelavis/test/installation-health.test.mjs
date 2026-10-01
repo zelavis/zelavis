@@ -3,14 +3,14 @@ import test from "node:test";
 import { inspectZelavisInstallation, preflightZelavisInstall } from "../dist/core/runtime/installation-health.js";
 
 const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"], aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg" };
-const receipt = { schemaVersion: 1, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
+const receipt = { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
 const installation = { kind: "packaged", path: "/opt/zelavis/current/platform/dist/cli.js", root: paths.prefix };
 class Probe {
   files = new Map([["/opt/zelavis/installation.json", JSON.stringify(receipt)], ["/opt/zelavis/current/manifest.json", '{"version":"1.2.3"}'], ["/etc/systemd/system/zelavis.service", "ExecStart=/opt/zelavis/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis"]]);
   links = new Map([[paths.commandPath, "/opt/zelavis/current/bin/zelavis"], ["/opt/zelavis/current", "releases/1.2.3"]]);
   owner = { active: false }; command = paths.commandPath; busy = new Set(); matchesPort = false; uid = { uid: 10, expectedUid: 10 };
   units = { present: true, active: true, enabled: true, pid: 42, delegates: true }; support = { cgroupV2: true, cgroupKill: true };
-  constructor() { for (const name of ["zelavis-agent.service", "zelavis-traefik.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
+  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
   reads = []; mutations = [];
   async read(path) { this.reads.push(path); return this.files.get(path); }
   async exists(path) { return path.endsWith("runtime/node/bin/node") || this.files.has(path); }
@@ -66,7 +66,7 @@ test("maintenance stops only its own service, with matching live data and listen
 });
 
 test("user Platforms must stop before maintenance and units with competing layouts are refused", async () => {
-  const host = new Probe(); host.files.set("/opt/zelavis/installation.json", JSON.stringify({ ...receipt, mode: "user" }));
+  const host = new Probe(); host.files.set("/opt/zelavis/installation.json", JSON.stringify({ ...receipt, mode: "user", edge: false }));
   host.owner = { active: true, pid: 42, installationRoot: paths.prefix, purpose: "platform" };
   await assert.rejects(preflight(host, { system: false, user: true, force: true }), /Stop that Platform/);
   host.files.set("/opt/zelavis/installation.json", JSON.stringify(receipt)); host.owner = { active: false };
@@ -112,5 +112,43 @@ test("preflight inspects the command answering now even when the future command 
   const host = new Probe();
   host.which = async (_command, planned) => planned ?? "/source/node_modules/.bin/zelavis";
   await assert.rejects(preflight(host), /Another Zelavis installation answers on PATH/);
+  assert.equal(host.mutations.length, 0);
+});
+
+
+test("named preflight allows the shared prefix but refuses missing/reserved ports and foreign units", async () => {
+  const host = new Probe(); host.units = { present: true, active: false, enabled: false };
+  host.listInstances = async (prefix) => prefix === paths.prefix ? ["default"] : [];
+  const named = { ...paths, instance: "preview", dataDirectory: "/var/lib/zelavis-preview", configDirectory: "/etc/zelavis-preview" };
+  const input = { host, paths: named, system: true };
+  await assert.rejects(preflightZelavisInstall(input), /reserved by instance default|explicit --port/);
+  await assert.rejects(preflightZelavisInstall({ ...input, port: 3000, force: true }), /reserved by instance default/);
+  assert.deepEqual(await preflightZelavisInstall({ ...input, port: 3100 }), { stopPlatform: false });
+  host.busy.add(3100);
+  await assert.rejects(preflightZelavisInstall({ ...input, port: 3100, force: true }), /Port 3100/);
+  host.busy.clear();
+  host.files.set("/etc/systemd/system/zelavis@.service", "ExecStart=/foreign/current/bin/zelavis");
+  await assert.rejects(preflightZelavisInstall({ ...input, port: 3100 }), /different layout/);
+  assert.equal(host.mutations.length, 0);
+});
+test("named doctor inspects its own receipt/release/port and expanded templates without mutations", async () => {
+  const host = new Probe();
+  const named = { ...paths, instance: "preview", dataDirectory: "/var/lib/zelavis-preview", configDirectory: "/etc/zelavis-preview" };
+  const scope = "/opt/zelavis/instances/preview";
+  host.files.set(`${scope}/runtime.json`, JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "preview", dataDirectory: named.dataDirectory, configDirectory: named.configDirectory, port: 3100, host: "127.0.0.1", edge: false}));
+  host.files.set(`${scope}/installation.json`, JSON.stringify({ ...receipt, ...named, instance: "preview", port: 3100, edge: false }));
+  host.files.set(`${scope}/current/manifest.json`, '{"version":"1.2.3"}');
+  host.links.set(`${scope}/current`, "/opt/zelavis/releases/1.2.3");
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) host.files.set(`/etc/systemd/system/${unit}`, "ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i");
+  const report = await inspectZelavisInstallation({ host, paths: named, installation });
+  assert.equal(report.healthy, true, JSON.stringify(report));
+  assert.ok(report.checks.some((item) => item.id === "port:3100"));
+  assert.ok(!report.checks.some((item) => item.id === "unit:zelavis.service" || item.id.includes("traefik")));
+  assert.match(report.checks.find((item) => item.id === "edge-owner").detail, /Edge off/);
+  assert.equal(host.mutations.length, 0);
+});
+test("a foreign host Edge owner blocks default repair before any changes", async () => {
+  const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
+  await assert.rejects(preflight(host, { force: true }), /Host Edge belongs/);
   assert.equal(host.mutations.length, 0);
 });

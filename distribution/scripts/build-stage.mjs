@@ -121,6 +121,9 @@ async function main() {
       join(options.output, "share", "traefik.yml"),
     );
   }
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) {
+    await copyFile(join(distributionDirectory, "runtime", unit), join(options.output, "share", unit));
+  }
   // The trust store ships beside the release; packages install it root-owned
   // at /etc/zelavis/operation-trust.json. Operations are signed now, before
   // the runtime artifact digest covers them.

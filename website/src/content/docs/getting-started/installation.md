@@ -135,16 +135,87 @@ An installed CLI can also acquire an exact release with
 `zelavis install --from package --version <exact-version>` (add `--user` for user
 mode). Package dry-run shows acquisition and layout without downloading; the
 full step inventory is computed after the archive has been verified.
-Named instances remain planned.
+
+
+
+## Named system instances
+
+With no `--instance`, every entry installs or repairs `default`. To create a
+second Linux/systemd instance, choose a name and a distinct port:
+
+```bash
+sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100 --dry-run
+sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100
+# Or: npm create zelavis@latest -- --system --instance preview --port 3100 --yes
+sudo zelavis doctor --instance preview --json
+```
+
+Names start with a lowercase letter and contain at most 24 lowercase letters,
+digits or hyphens. Named instances require system mode; `--user` has only the
+default instance. A new named instance requires an explicit port from 1024 to
+65535. A port recorded by another instance is reserved even while it is stopped.
+Rerunning a named install retains its port unless `--port` changes it.
+
+| Resource | Default | Named `preview` |
+|---|---|---|
+| Data and System Store | `/var/lib/zelavis` | `/var/lib/zelavis-preview` |
+| Config, trust and token | `/etc/zelavis` | `/etc/zelavis-preview` |
+| User/group | `zelavis` | `zelavis-preview` |
+| Platform unit | `zelavis.service` | `zelavis@preview.service` |
+| Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
+| Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
+
+The immutable `/opt/zelavis/releases/<version>` tree and management command are
+shared. Each instance selects its own release, so upgrading `preview` leaves
+default and other named instances on their selected versions. If a named
+instance is installed first, `/opt/zelavis/current` selects the initial management
+CLI without creating a default Platform. `zelavis serve --instance preview`
+reads that instance's secret-free `runtime.json` descriptor and executes its
+selected release's private Node. Systemd uses the release-shipped templates
+`zelavis@.service` and `zelavis-agent@.service`. Prefer systemd for system instances.
+
+Only `default` may own host Edge. The installer serializes its persistent
+`/opt/zelavis/edge-owner.json` claim with the prefix installer lock. The default
+Platform holds the kernel reservation in `/opt/zelavis/.edge-owner.lock`; a live
+reservation refuses another claimant, and process death releases the lock.
+The service can reserve the existing lock inode but cannot rewrite its
+root-owned ownership record. Installation still leaves Traefik disabled and
+claims no public ports. Secondary instances run with Edge off and receive
+traffic through the primary's Edge or an operator-managed external proxy.
+Configure those routes explicitly; installation does not publish them.
+
+Endpoint-backed commands select the secondary Platform with its URL, for
+example `zelavis setup --url http://127.0.0.1:3100/zelavis`.
+`--instance` selects host-local install, serve, doctor and complete removal;
+it never selects a remote wipe target. Moving a Project between instances is
+separate from installation; this change provides no Project export/import.
+
+Inspect and remove just the selected instance:
+
+```bash
+sudo zelavis uninstall --instance preview --all --dry-run
+sudo zelavis uninstall --instance preview --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+Removal stops only its own units and deletes its data, configuration/token,
+installer-owned account, receipt, descriptor and release link. Removing default
+also releases its Edge record/lock. While any other instance receipt remains,
+the shared releases, management `current`, command links, unit templates, APT
+source/key and Debian package records are retained. Removing the last instance
+removes that shared inventory too. `--all` means all data of the selected
+instance, including its Projects; it does not remove every instance on the host.
+The instance directories, descriptors, template units and Edge ownership files
+are covered by the destructive uninstall inventory and tests.
 
 ## Installation ownership and health
 
 The current receipt records the source, entry point, version, paths and
-`default` instance. All installer entries repair or upgrade that same installation.
+selected instance and port. Without `--instance`, all installer entries repair or upgrade `default`.
 A different recorded installation or service layout is refused. Foreign npm,
 source or other commands on PATH are reported with removal/PATH guidance.
 `--force` permits deliberate command replacement; it cannot bypass a live data
-owner or another listener on port 3000. Public ports 80/443 remain unclaimed.
+owner or another listener on the selected port. Public ports 80/443 remain unclaimed at installation.
 
 Install and complete removal use an exclusive `<prefix>/.install.lock` (`flock`
 on Linux, supplied by `util-linux`). Node and Bun Platforms and installer
@@ -166,7 +237,7 @@ Doctor reports PATH, receipt and selected release/private Node, data ownership,
 service state, ports and Agent cgroup/delegation. It writes no files, takes no
 locks, downloads nothing and never reads the bootstrap environment. An error
 returns exit status 1. Agent host features do not prove production containment;
-real-server qualification remains pending. Named instances are not available yet.
+real-server qualification remains pending.
 
 ## Manual release archive (.tar.gz)
 
@@ -321,9 +392,10 @@ Then execute the complete removal with the confirmation phrase:
 sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 ```
 
-This:
+For the default instance, when it is the last installation on the host, this:
+
 - Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
-- Removes `/opt/zelavis`, including the receipt and `.install.lock`, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
+- Removes `/opt/zelavis`, including the receipt, `runtime.json`, `.install.lock`, instance directories and host Edge ownership files, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
 - Removes configuration, signed host operations, and certificates.
 - Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock` and `.platform-owner.json`.
 - Removes the Zelavis APT source/key and Debian package records when present.
@@ -337,6 +409,6 @@ originating package manager or development lifecycle.
 
 For a **user installation**, run those two uninstall commands without sudo.
 Its inventory is the complete `~/.local/share/zelavis` prefix (including releases,
-data and ownership lock/record, configuration/token, installer lock and receipt) and the owned `~/.local/bin/zelavis` link.
+data and ownership lock/record, configuration/token, installer lock, receipt and runtime descriptor) and the owned `~/.local/bin/zelavis` link.
 It does not touch systemd units, APT sources/keys, system commands or accounts.
 Stop the user-run Platform before removing it.

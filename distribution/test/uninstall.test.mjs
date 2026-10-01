@@ -60,9 +60,12 @@ async function installation(t) {
   ]) {
     await mkdir(path, { recursive: true });
   }
-  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 1, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
+  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
   await writeFile(join(paths.data, "project.sqlite"), "data");
   await writeFile(join(paths.prefix, ".install.lock"), "");
+  await writeFile(join(paths.prefix, "runtime.json"), "public descriptor");
+  await writeFile(join(paths.prefix, ".edge-owner.lock"), "");
+  await writeFile(join(paths.prefix, "edge-owner.json"), JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.data}));
   await writeFile(join(paths.data, ".platform.lock"), "");
   await writeFile(join(paths.data, ".platform-owner.json"), JSON.stringify({ pid: 2147483647, startedAt: "1970-01-01T00:00:00.000Z", session: "crashed-platform", purpose: "platform", installationRoot: paths.prefix }));
   await writeFile(join(paths.etc, "operation-trust.json"), "{}");
@@ -70,6 +73,8 @@ async function installation(t) {
   await writeFile(paths.aptKeyring, "key");
   for (const directory of [paths.systemdEtc, paths.systemdLib]) {
     await writeFile(join(directory, "zelavis.service"), "unit");
+    await writeFile(join(directory, "zelavis@.service"), "instance unit");
+    await writeFile(join(directory, "zelavis-agent@.service"), "instance agent unit");
     await writeFile(join(directory, "zelavis-agent.service"), "unit");
     await writeFile(join(directory, "zelavis-traefik.service"), "unit");
   }
@@ -174,6 +179,9 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
   for (const path of [
     join(fixture.paths.prefix, ".install.lock"),
     join(fixture.paths.prefix, "installation.json"),
+    join(fixture.paths.prefix, "runtime.json"),
+    join(fixture.paths.prefix, "edge-owner.json"),
+    join(fixture.paths.prefix, ".edge-owner.lock"),
     join(fixture.paths.data, ".platform.lock"),
     join(fixture.paths.data, ".platform-owner.json"),
     fixture.paths.prefix,
@@ -183,6 +191,8 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
     fixture.paths.aptKeyring,
     fixture.command,
     join(fixture.paths.systemdEtc, "zelavis.service"),
+    join(fixture.paths.systemdEtc, "zelavis@.service"),
+    join(fixture.paths.systemdLib, "zelavis-agent@.service"),
     join(fixture.paths.systemdEtc, "zelavis-traefik.service"),
     join(fixture.paths.systemdLib, "zelavis-agent.service"),
     join(fixture.paths.systemdLib, "zelavis-traefik.service"),

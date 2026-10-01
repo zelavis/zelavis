@@ -13,6 +13,8 @@ export const HELP = `Install Zelavis on this machine.
   --system           Install system-wide on Linux with systemd (sudo when needed)
   --yes, -y          Accept the displayed plan without an interactive prompt
   --dry-run          Show acquisition, layout and the exact command; make no changes
+  --instance <name>  Select a named system instance
+  --port <port>      Reserve its Platform port (required for a new named instance)
   --public           Bind the Platform to 0.0.0.0 instead of 127.0.0.1
   --force            Replace a conflicting Zelavis command deliberately
   --allow-downgrade  Permit an older release deliberately
@@ -37,7 +39,15 @@ export function parseArguments(args: readonly string[]): InstallArguments {
   let mode: "system" | "user" | undefined;
   let yes = false, dryRun = false, help = false, version = false;
   const flags: string[] = [];
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--instance" || arg === "--port") {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
+      if (arg === "--instance" && !/^[a-z][a-z0-9-]{0,23}$/u.test(value) || arg === "--port" && (!Number.isInteger(Number(value)) || Number(value) < 1024 || Number(value) > 65535)) throw new Error(`Invalid ${arg} value.`);
+      flags.push(arg, value);
+      continue;
+    }
     if (arg === "--") continue;
     if (arg === "--user" || arg === "--system") {
       const next = arg === "--user" ? "user" : "system";
@@ -66,7 +76,9 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 export function installationCommand(input: { version: string; script: string; mode: "user" | "system"; root: boolean; invokingPath?: string; invokingHome?: string; flags?: readonly string[] }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(input.version)) throw new Error("The create package must select an exact Zelavis version.");
   const flags = input.flags ?? [];
-  if (flags.some((flag) => !["--public", "--force", "--allow-downgrade", "--enable-agent"].includes(flag))) throw new Error("Invalid installer flag.");
+  try { if (parseArguments(flags).flags.length !== flags.length) throw new Error("Invalid installer flag."); } catch { throw new Error("Invalid installer flag."); }
+  const instance = flags[flags.indexOf("--instance") + 1];
+  if (input.mode === "user" && flags.includes("--instance") && instance !== "default") throw new Error("Named instances require system mode.");
   if (input.mode === "user" && flags.includes("--enable-agent")) throw new Error("The Agent requires system mode.");
   const elevated = input.mode === "system" && !input.root;
   const command = elevated ? "sudo" : "/bin/sh";
@@ -74,9 +86,12 @@ export function installationCommand(input: { version: string; script: string; mo
   return { command, args, display: [command, ...args].map(shellQuote).join(" ") };
 }
 
-export function installationOverview(mode: "system" | "user", version: string, home = homedir()): string {
+export function installationOverview(mode: "system" | "user", version: string, home = homedir(), flags: readonly string[] = []): string {
   const prefix = mode === "user" ? join(home, ".local/share/zelavis") : "/opt/zelavis";
-  return [`Install Zelavis ${version} (${mode})`, "Verify npm version metadata and the matching prebuilt release SHA-256.", `Release: ${prefix}/releases/${version}; current selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : "/var/lib/zelavis"}`, `Config: ${mode === "user" ? join(prefix, "config") : "/etc/zelavis"}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : "Start the systemd Platform on private Node. Agent is opt-in; Edge stays disabled."].join("\n");
+  const instance = flags.includes("--instance") ? flags[flags.indexOf("--instance") + 1] : "default";
+  const suffix = instance === "default" ? "" : `-${instance}`;
+  const port = flags.includes("--port") ? flags[flags.indexOf("--port") + 1] : instance === "default" ? "3000" : "required for a new instance";
+  return [`Instance: ${instance}; port: ${port}`, `Install Zelavis ${version} (${mode})`, "Verify npm version metadata and the matching prebuilt release SHA-256.", `Release: ${prefix}/releases/${version}; ${instance === "default" ? "current" : `instances/${instance}/current`} selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : `/var/lib/zelavis${suffix}`}`, `Config: ${mode === "user" ? join(prefix, "config") : `/etc/zelavis${suffix}`}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : "Start the systemd Platform on private Node. Agent is opt-in; Edge stays disabled."].join("\n");
 }
 
 export async function loadInstallerAssets(): Promise<{ version: string; script: string }> {
