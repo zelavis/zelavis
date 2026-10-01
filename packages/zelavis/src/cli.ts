@@ -7,6 +7,7 @@ import { resolveBundledFrontend } from "./cli/bundled-frontend.js";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { describeInstallation } from "./cli/installation.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
+import { runInstallationDoctor } from "./cli/install/doctor.js";
 import { runReleaseInstall } from "./cli/install/index.js";
 import {
   createNodeInstallationUninstaller,
@@ -89,16 +90,18 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
-  const server = await createNodeServer(zv);
+  let server: Awaited<ReturnType<typeof createNodeServer>>;
+  try { server = await createNodeServer(zv); }
+  catch (error) { await zv.close(); throw error; }
 
-  await new Promise<void>((resolveListening, reject) => {
+  try { await new Promise<void>((resolveListening, reject) => {
     const onError = (error: Error) => reject(error);
     server.once("error", onError);
     server.listen(options.port, options.host, () => {
       server.off("error", onError);
       resolveListening();
     });
-  });
+  }); } catch (error) { await zv.close(); throw error; }
 
   process.title = "zelavis";
   console.log(
@@ -121,6 +124,10 @@ await runCli(process.argv.slice(2), {
   runtime: {
     serve,
     install: runReleaseInstall,
+    async doctor(args) {
+      if (!installationPath) throw new Error("The running CLI path could not be resolved.");
+      await runInstallationDoctor(args, installationPath);
+    },
     createInstallationUninstaller({ dataDirectory }) {
       if (!installationPath) {
         throw new Error("The running Zelavis installation path could not be resolved.");

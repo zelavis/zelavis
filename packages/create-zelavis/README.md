@@ -48,6 +48,18 @@ file from the invoking user's package cache as root. The bootstrap source is
 maintained once in `distribution/installers/package-bootstrap.sh` and copied
 into the package at build time.
 
+The receipt identifies source `package`, entry `create`, version, mode and the
+`default` instance. Re-running repairs/upgrades the same layout. Installer locks
+serialize maintenance; live data and port 3000 conflicts cannot be forced.
+Foreign PATH commands are checked using the invoking user's PATH, passed only as
+diagnostic data; privileged command execution still uses a fixed trusted PATH.
+Stop a user-run Platform before maintenance. A matching systemd Platform can be
+stopped and restarted during repair/upgrade. Named instances remain planned.
+
+Run `zelavis doctor --user --json` for user mode or `sudo zelavis doctor --json`
+for system mode. It inspects installation health without changing configuration
+or taking locks and returns status 1 for errors.
+
 Inspect removal before confirming it (add `sudo` for system mode):
 
 ```bash
@@ -55,7 +67,8 @@ zelavis uninstall --all --dry-run
 zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 ```
 
-User removal deletes its prefix, data, private configuration/token, receipt and
+User removal deletes its prefix, data and `.platform.lock`/`.platform-owner.json`,
+private configuration/token, `.install.lock`, receipt and
 owned command link, while retaining system packages, units and APT state.
 Embedding remains `npm install zelavis` in an application; it is a library use,
 not the create command.

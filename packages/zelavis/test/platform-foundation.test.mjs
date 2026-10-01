@@ -460,8 +460,10 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
 test("Node adapter registers shipped Project recipes and persists Platform Store SQLite", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-platform-"));
 
+  const firstAdapter = nodeAdapter({ dataDirectory: directory });
+  const secondAdapter = nodeAdapter({ dataDirectory: directory });
+  const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory }) });
   try {
-    const firstAdapter = nodeAdapter({ dataDirectory: directory });
     const first = await firstAdapter.resolve({});
     const systemStore = first.resources?.systemStore;
     const appService = first.serviceRegistry?.catalog?.find(
@@ -489,13 +491,14 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     if (wordpressService) assert.equal(wordpressService.status, "available");
     await systemStore.set("platform", "marker", { ready: true });
 
-    const second = await nodeAdapter({ dataDirectory: directory }).resolve({});
+    await firstAdapter.close();
+    const second = await secondAdapter.resolve({});
     assert.deepEqual(
       (await second.resources.systemStore.get("platform", "marker"))?.value,
       { ready: true },
     );
 
-    const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory }) });
+    await secondAdapter.close();
     const runtime = await zv.runtime();
     const response = await runtime.fetch(
       new Request("http://localhost/zelavis/api/v1/runtime/project-recipes"),
@@ -515,6 +518,9 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     }
 
   } finally {
+    await zv.close();
+    await firstAdapter.close();
+    await secondAdapter.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

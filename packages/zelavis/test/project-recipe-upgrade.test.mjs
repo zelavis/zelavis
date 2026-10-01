@@ -226,7 +226,7 @@ test("a real Project created before recipes were frozen is upgraded, keeps its d
   await writeFile(join(directory, "project.json"), JSON.stringify(descriptor, null, 2));
   await rm(join(directory, ".zelavis", "recipe"), { recursive: true, force: true });
   await writeFile(join(directory, ".zelavis", "data", "keepme.txt"), "user data");
-  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const systemStore = zv.platform.resources.systemStore;
   const stored = await systemStore.get("projects", "legacy");
   const lock = { ...stored.value.recipe, version: "0.0.1-old" };
   delete lock.artifact;

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { accessSync, constants, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { HELP, executeInstallation, installationCommand, installationOverview, loadInstallerAssets, parseArguments, selectInstallMode } from "./index.js";
 
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
   const sudo = (process.env.PATH ?? "").split(":").some((path) => { try { accessSync(join(path, "sudo"), constants.X_OK); return true; } catch { return false; } });
   const mode = selectInstallMode(parsed.mode, process.platform, root, sudo);
   const assets = await loadInstallerAssets();
-  const command = installationCommand({ ...assets, mode, root, flags: parsed.flags });
+  const command = installationCommand({ ...assets, mode, root, flags: parsed.flags, invokingHome: realpathSync(homedir()), invokingPath: (process.env.PATH ?? "").split(":").map((path) => resolve(path)).join(":") });
   console.log(installationOverview(mode, assets.version));
   console.log(`Exact installation command:\n${command.display}`);
   if (parsed.dryRun) { console.log("No changes were made."); return; }

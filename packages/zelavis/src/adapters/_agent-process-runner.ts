@@ -169,7 +169,7 @@ export interface LocalAgentProcessRunnerOptions {
 }
 
 /** Whether a pid is alive, without signalling it. */
-function isAlive(pid: number): boolean {
+export function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -195,7 +195,7 @@ function isAlive(pid: number): boolean {
  * work but arrives from `ps` as a local-time string that has to be parsed back;
  * elapsed time is a number of seconds and needs no timezone at all.
  */
-async function processAgeMs(pid: number): Promise<number | undefined> {
+export async function processAgeMs(pid: number): Promise<number | undefined> {
   const elapsed = await new Promise<string | undefined>((resolveElapsed) => {
     execFile("ps", ["-o", "etime=", "-p", String(pid)], (error, stdout) => {
       resolveElapsed(error ? undefined : stdout.trim() || undefined);

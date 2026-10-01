@@ -18,7 +18,7 @@ deployment under `distribution/.tmp/stage/platform`, and adds:
 - the archive installer, complete-uninstall program, and release manifest
 
 The Debian package also declares Nginx, PHP-FPM and the WordPress PHP
-extensions, MariaDB server/client core binaries, and `tar` as dependencies. The
+extensions, MariaDB server/client core binaries, `tar`, and `util-linux` (installer `flock`) as dependencies. The
 core MariaDB packages avoid provisioning a machine-wide database instance. This
 gives native WordPress Projects their required host stack without Docker. Each
 Project runs its own service instances and owns its own configuration, sockets,
@@ -175,8 +175,7 @@ Debian packages. Older versions are refused unless `--allow-downgrade` is given;
 previous archive releases are kept.
 
 Install and complete uninstall are host-local maintenance operations and have
-no HTTP/dashboard route. Singleton locks, doctor and named instances remain
-planned.
+no HTTP/dashboard route. Named instances remain planned.
 The quick installer's APT repository selection remains a bootstrap concern in
 this phase; both APT postinst and its archive branch delegate host setup to the
 same TypeScript command.
@@ -204,6 +203,42 @@ private (0700 directory, 0600 environment/receipt). The launcher reads the token
 and data location and always requires the private Node; it never falls back to
 host Node. Run `zelavis serve` yourself. No systemd, Agent or Edge is enabled.
 
+## Ownership guards and doctor
+
+Every install/removal takes the prefix's exclusive `.install.lock` (`flock` on
+Linux; a SQLite kernel reservation on macOS). Linux needs `util-linux`.
+Process death releases the reservation; no stale PID-based takeover is used.
+The current receipt records mode, source (`release|package`), instance
+(`default`), entry (`archive|deb|create|cli`), version, paths and account ownership.
+Old pre-release receipt shapes are refused; no layout migration is performed.
+
+Preflight rejects another recorded system/user installation, a different service
+layout, foreign PATH commands, live data owners and occupied port 3000. `--force`
+only permits deliberate command replacement; it cannot bypass data or ports.
+Create forwards the invoking PATH for inspection, while the privileged bootstrap
+continues executing commands through a fixed trusted PATH. Named instances and
+an Edge-owner lock are later work; installation claims no ports 80/443.
+
+Node and Bun Platforms reserve `<data>/.platform.lock` before opening their
+System Store and record PID/start/session metadata in `.platform-owner.json`.
+`Zelavis.close()` releases ownership after runtime resources close; failed initial
+construction releases it too. Installer maintenance uses this same guard. For
+repair/upgrade, the installer can stop a matching owned systemd Platform, reserve
+data, then hand it back before service startup. Stop user-run Platforms yourself.
+This is a restart upgrade; blue/green updates remain planned.
+
+```bash
+sudo zelavis doctor --json     # system; receipt is root-readable
+zelavis doctor --user --json   # user mode
+```
+
+Doctor inspects PATH, receipt/current/private Node, data owner, services, ports
+and Agent cgroup v2/delegation. It changes no files or configuration, acquires no
+locks, downloads nothing and never reads the bootstrap environment. Errors
+return exit status 1; warnings include unqualified Agent containment. A feature
+probe is not a real-server conformance result. KVM is not checked without a
+configured Firecracker backend.
+
 ## Complete native uninstall
 
 Every staged release carries a thin `share/uninstall.sh` entry, and the packaged
@@ -224,7 +259,10 @@ units and files, Debian package
 records when present, recorded command links and the default archive/Debian links
 when they still point into this installation, the complete release tree, Platform and
 Project data, `/etc/zelavis`, the Zelavis APT source/key, and the dedicated
-system account when its properties prove it is installer-owned. It deliberately
+system account when its properties prove it is installer-owned. Removing the
+prefix includes `.install.lock` and the receipt; removing data includes
+`.platform.lock` and `.platform-owner.json`. These files are retained during
+ordinary runs so concurrent processes cannot lock different inodes. It deliberately
 retains shared host dependencies, journal history, external archives/backups,
 and operator networking/TLS configuration.
 
@@ -235,8 +273,9 @@ the user process before removal. Isolated destructive tests cover both modes.
 
 Any release change that adds installer-owned state must update the uninstall
 inventory, its isolated destructive-path test, and the public installation
-guide in the same change. Complete removal is not offered to npm/source copies:
-their original package manager or development workflow owns that lifecycle.
+guide in the same change. A current installer receipt authorizes the shared removal
+inventory, including package/create installs. Plain npm/source copies without a
+receipt use their original package manager or development workflow.
 
 Archive and npm installations can provision the native WordPress dependencies
 through APT or Homebrew on first use when Zelavis has package-install authority.

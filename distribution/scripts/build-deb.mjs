@@ -79,7 +79,7 @@ await chmod(join(packageRoot, "etc", "zelavis", "operation-trust.json"), 0o644);
 
 await writeFile(
   join(packageRoot, "DEBIAN", "control"),
-  `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, nginx, php-fpm, php-cli, php-mysql, php-curl, php-gd, php-intl, php-mbstring, php-xml, php-zip, mariadb-server-core, mariadb-client-core, tar\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
+  `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, nginx, php-fpm, php-cli, php-mysql, php-curl, php-gd, php-intl, php-mbstring, php-xml, php-zip, mariadb-server-core, mariadb-client-core, tar, util-linux\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
 );
 // The trust store is operator configuration: dpkg keeps local edits (added or
 // revoked keys) across upgrades instead of overwriting them.
@@ -91,7 +91,7 @@ await writeFile(
   join(packageRoot, "DEBIAN", "postinst"),
   `#!/bin/sh
 set -e
-ZELAVIS_BIN_DIR=/usr/bin exec /opt/zelavis/current/runtime/node/bin/node /opt/zelavis/current/platform/dist/cli.js install --from-release /opt/zelavis/current
+ZELAVIS_BIN_DIR=/usr/bin exec /opt/zelavis/current/runtime/node/bin/node /opt/zelavis/current/platform/dist/cli.js install --from-release /opt/zelavis/current --installed-by deb
 `,
   { mode: 0o755 },
 );

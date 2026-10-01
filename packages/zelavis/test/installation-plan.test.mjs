@@ -76,7 +76,7 @@ test("fresh install plans the existing inventory, without mutations or secret ma
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 127\.0\.0\.1/);
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "disable zelavis-traefik.service"));
   assert.ok(!host.actions.some((a) => a.command === "systemctl" && a.args.includes("zelavis-agent.service")));
-  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 1, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
+  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 1, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
 
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {

@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readlink,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -31,7 +32,7 @@ async function exists(path) {
 }
 
 async function installation(t) {
-  const root = await mkdtemp(join(tmpdir(), "zelavis-complete-uninstall-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zelavis-complete-uninstall-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const paths = {
     prefix: join(root, "opt", "zelavis"),
@@ -59,7 +60,11 @@ async function installation(t) {
   ]) {
     await mkdir(path, { recursive: true });
   }
+  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 1, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
   await writeFile(join(paths.data, "project.sqlite"), "data");
+  await writeFile(join(paths.prefix, ".install.lock"), "");
+  await writeFile(join(paths.data, ".platform.lock"), "");
+  await writeFile(join(paths.data, ".platform-owner.json"), JSON.stringify({ pid: 2147483647, startedAt: "1970-01-01T00:00:00.000Z", session: "crashed-platform", purpose: "platform", installationRoot: paths.prefix }));
   await writeFile(join(paths.etc, "operation-trust.json"), "{}");
   await writeFile(paths.aptSource, "source");
   await writeFile(paths.aptKeyring, "key");
@@ -84,6 +89,7 @@ async function installation(t) {
     script: stagedScript,
     env: {
       ...process.env,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
       ZELAVIS_PREFIX: paths.prefix,
       ZELAVIS_DATA_DIR: paths.data,
       ZELAVIS_UNINSTALL_ETC_DIR: paths.etc,
@@ -166,6 +172,10 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
   );
   assert.equal(result.status, 0, result.stderr);
   for (const path of [
+    join(fixture.paths.prefix, ".install.lock"),
+    join(fixture.paths.prefix, "installation.json"),
+    join(fixture.paths.data, ".platform.lock"),
+    join(fixture.paths.data, ".platform-owner.json"),
     fixture.paths.prefix,
     fixture.paths.data,
     fixture.paths.etc,

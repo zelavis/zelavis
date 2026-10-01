@@ -14,6 +14,8 @@ export type ZelavisInstallAction =
   | { readonly kind: "command"; readonly command: string; readonly args: readonly string[]; readonly ignoreFailure?: boolean }
   | { readonly kind: "remove"; readonly path: string; readonly recursive?: boolean }
   | { readonly kind: "remove-link"; readonly path: string; readonly prefix: string }
+  | { readonly kind: "reserve-data"; readonly path: string }
+  | { readonly kind: "release-data" }
   | { readonly kind: "purge-packages" }
   | { readonly kind: "remove-account"; readonly dataDirectory: string; readonly ownsUser: boolean; readonly ownsGroup: boolean };
 
@@ -42,6 +44,7 @@ export interface ZelavisInstallHost {
   readlink(path: string): Promise<string | undefined>;
   which(command: string, plannedCommandPath?: string): Promise<string | undefined>;
   accountExists(kind: "user" | "group", name: string): Promise<boolean>;
+  releaseMaintenance?(): Promise<void>;
   execute(action: ZelavisInstallAction): Promise<string | undefined>;
 }
 
@@ -59,6 +62,7 @@ export interface ZelavisInstallPaths {
 const UNSAFE_ROOTS = new Set("/ /Applications /Library /System /Users /bin /dev /etc /home /lib /media /mnt /opt /private /proc /root /run /sbin /srv /sys /tmp /usr /var".split(" "));
 
 export function assertInstallationPath(path: string, label: string, name?: string): void {
+  if (/[\x00-\x1f\x7f]/u.test(path)) throw new Error(`Refusing control characters in ${label} path.`);
   if (!path.startsWith("/")) throw new Error(`Refusing non-absolute ${label} path: ${path}`);
   if (UNSAFE_ROOTS.has(path)) throw new Error(`Refusing unsafe ${label} path: ${path}`);
   if (/\/\/|\/(?:\.|\.\.)(?:\/|$)/u.test(path) || path.endsWith("/")) {
@@ -82,7 +86,13 @@ export function validateInstallationPaths(paths: ZelavisInstallPaths): void {
 
 export interface ZelavisNativeInstallationReceipt {
   readonly schemaVersion: 1;
-  readonly mode?: "user";
+  readonly mode: "system" | "user";
+  readonly source: "release" | "package";
+  readonly instance: "default";
+  readonly installedBy: "archive" | "deb" | "create" | "cli";
+  readonly version: string;
+  readonly prefix: string;
+  readonly configDirectory: string;
   readonly dataDirectory: string;
   readonly commandPath: string;
   readonly ownsUser: boolean;
@@ -94,9 +104,13 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   if (content === undefined) return undefined;
   const value = JSON.parse(content) as ZelavisNativeInstallationReceipt;
   if (!value || value.schemaVersion !== 1 || typeof value.dataDirectory !== "string" ||
-      (value.mode !== undefined && value.mode !== "user") || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
+      !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
+      value.instance !== "default" || !["archive", "deb", "create", "cli"].includes(value.installedBy) ||
+      typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(value.version) || typeof value.prefix !== "string" || typeof value.configDirectory !== "string" || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
     throw new Error(`Native installation receipt at ${prefix}/installation.json is malformed.`);
   }
+  validateInstallationPaths({ prefix: value.prefix, dataDirectory: value.dataDirectory, configDirectory: value.configDirectory, commandPath: value.commandPath, systemCommandPath: value.commandPath, systemdDirectories: [], aptSource: `${prefix}/zelavis.sources`, aptKeyring: `${prefix}/zelavis-archive-keyring.gpg` });
+  if (value.prefix !== prefix) throw new Error("Installation receipt names another prefix.");
   return value;
 }
 
@@ -145,6 +159,9 @@ export async function planZelavisReleaseInstall(input: {
   readonly enableAgent?: boolean;
   readonly public?: boolean;
   readonly allowDowngrade?: boolean;
+  readonly sourceKind?: "release" | "package";
+  readonly installedBy?: ZelavisNativeInstallationReceipt["installedBy"];
+  readonly stopPlatform?: boolean;
 }): Promise<ZelavisHostInstallationPlan> {
   const { host, paths, source } = input;
   validateInstallationPaths(paths);
@@ -178,9 +195,10 @@ export async function planZelavisReleaseInstall(input: {
   let ownsUser = previous?.ownsUser ?? false;
   let ownsGroup = previous?.ownsGroup ?? false;
   const recordOwnership = (id: string) => {
-    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 1, ...(input.user ? { mode: "user" as const } : {}), dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
+    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 1, mode: input.user ? "user" : "system", source: input.sourceKind ?? "release", instance: "default", installedBy: input.installedBy ?? "cli", version, prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
     addStep(steps, id, "Record installer paths and preserve account ownership (0600)", { kind: "write", path: `${paths.prefix}/installation.json`, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600, atomic: true });
   };
+  if (input.stopPlatform) addStep(steps, "platform-stop", "Stop this installation's Platform before taking data ownership", { kind: "command", command: "systemctl", args: ["stop", "zelavis.service"] });
   if (input.user) {
     addStep(steps, "user-prefix", "Create private user installation root", { kind: "mkdir", path: paths.prefix, mode: 0o700 });
     // Record user scope before selecting a runnable command, even if later steps fail.
@@ -189,6 +207,8 @@ export async function planZelavisReleaseInstall(input: {
   for (const path of [`${paths.prefix}/releases`, paths.dataDirectory, paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))]) {
     addStep(steps, `directory:${path}`, `Create ${path}`, { kind: "mkdir", path, ...(input.user && path !== paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/")) ? { mode: 0o700 } : {}) });
   }
+  if (!input.user) recordOwnership("initial-receipt");
+  addStep(steps, "data-reservation", "Reserve the shared Platform data ownership lock for maintenance", { kind: "reserve-data", path: paths.dataDirectory });
   if (!await host.exists(release)) {
     addStep(steps, "release", `Copy staged release ${version} to ${release}`, { kind: "copy", source, path: release });
   }
@@ -235,6 +255,8 @@ export async function planZelavisReleaseInstall(input: {
       // Do not expose the existing first-owner token in a plan or dry-run.
       addStep(steps, "agent-environment", "Add Agent endpoint without changing existing environment values", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${paths.dataDirectory}/agent` });
     }
+    recordOwnership("receipt");
+    addStep(steps, "data-handover", "Release data ownership before starting the Platform", { kind: "release-data" });
     command("reload", "Reload systemd units", "systemctl", ["daemon-reload"]);
     if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", "zelavis-agent.service"]);
     command("platform-enable", "Enable and start the Platform", "systemctl", ["enable", "--now", "zelavis.service"]);
@@ -247,7 +269,7 @@ export async function planZelavisReleaseInstall(input: {
     addStep(steps, "config-directory", "Create private user configuration", { kind: "mkdir", path: paths.configDirectory, mode: 0o700 });
     addStep(steps, "bootstrap", "Generate first-owner token and record user data location (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env`, dataDirectory: paths.dataDirectory, public: input.public });
   }
-  recordOwnership("receipt");
+  if (!input.system) recordOwnership("receipt");
   return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: "default", dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
 }
 
@@ -267,8 +289,10 @@ export function planZelavisUninstall(input: {
   if (input.hostCommands) {
     command("stop", ["stop", ...UNITS]);
     command("disable", ["disable", ...UNITS]);
+    addStep(steps, "data-reservation", "Reserve Platform data after stopping the owned units", { kind: "reserve-data", path: paths.dataDirectory });
     addStep(steps, "packages", "Purge zelavis and zelavis-repository when installed through dpkg", { kind: "purge-packages" });
   }
+  if (!input.hostCommands) addStep(steps, "data-reservation", "Refuse removal while a Platform owns these data", { kind: "reserve-data", path: paths.dataDirectory });
   for (const path of new Set(input.user ? [paths.commandPath] : [paths.commandPath, paths.systemCommandPath, ...input.additionalCommandPaths ?? []])) {
     assertInstallationPath(path, "command", "zelavis");
     addStep(steps, `command:${path}`, `Remove only a Zelavis-owned command link at ${path}`, { kind: "remove-link", path, prefix: paths.prefix });
@@ -284,22 +308,25 @@ export function planZelavisUninstall(input: {
     remove(paths.aptKeyring);
   }
   remove(paths.configDirectory, true);
-  remove(paths.dataDirectory, true);
-  remove(paths.prefix, true);
+  // Keep both ownership inodes until every other host mutation has completed.
   if (input.hostCommands) {
     addStep(steps, "account", "Remove only recorded installer-created accounts with safe current properties", { kind: "remove-account", dataDirectory: paths.dataDirectory, ownsUser: input.ownsUser, ownsGroup: input.ownsGroup });
     command("reload", ["daemon-reload"]);
     command("reset", ["reset-failed", ...UNITS]);
   }
+  addStep(steps, `remove:${paths.dataDirectory}`, `Remove ${paths.dataDirectory}, including Platform ownership lock/record and every Project`, { kind: "remove", path: paths.dataDirectory, recursive: true });
+  addStep(steps, `remove:${paths.prefix}`, `Remove ${paths.prefix}, including installer lock, receipt and all releases`, { kind: "remove", path: paths.prefix, recursive: true });
   return { operation: "uninstall", installation: { kind: "packaged", path: `${paths.prefix}/current/platform/dist/cli.js`, root: paths.prefix }, instance: "default", dataDirectory: paths.dataDirectory, steps, warnings: [], retained: ZELAVIS_INSTALLATION_RETAINED_STATE };
 }
 
 export async function executeZelavisInstallationPlan(host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Promise<readonly string[]> {
   if (plan.operation === "uninstall") assertCompleteUninstallConfirmation(confirmation ?? "");
   const output: string[] = [];
-  for (const step of plan.steps) {
-    const result = await host.execute(step.action);
-    if (result) output.push(result);
-  }
-  return output;
+  try {
+    for (const step of plan.steps) {
+      const result = await host.execute(step.action);
+      if (result) output.push(result);
+    }
+    return output;
+  } finally { await host.releaseMaintenance?.(); }
 }

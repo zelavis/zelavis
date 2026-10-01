@@ -758,6 +758,8 @@ export interface ZelavisResolvedPlatformOptions
 
 export interface ZelavisAdapterDefinition {
   name: string;
+  /** Release host reservations after all runtime resources have closed. */
+  close?(options?: ZelavisOptions): Promise<void>;
   resolve?(
     options: ZelavisOptions,
   ):
@@ -767,6 +769,7 @@ export interface ZelavisAdapterDefinition {
 
 export interface ZelavisAdapter {
   name: string;
+  close?(options?: ZelavisOptions): Promise<void>;
   resolve?(
     options: ZelavisOptions,
   ):
@@ -7016,7 +7019,10 @@ export class Zelavis {
       const runtime = await zelavis(runtimeOptions);
       this.activeRuntimes.add(runtime);
       return runtime;
-    })();
+    })().catch(async (error) => {
+      if (!this.activeRuntimes.size) await this.options.adapter?.close?.(this.options);
+      throw error;
+    });
 
     return this.runtimePromise;
   }
@@ -7073,10 +7079,11 @@ export class Zelavis {
     this.closePromise ??= (async () => {
       this.closed = true;
       await this.runtimePromise?.catch(() => undefined);
-      await Promise.all(
-        [...this.activeRuntimes].map((runtime) => runtime.close()),
-      );
+      // A failed runtime shutdown must retain its host reservation: releasing
+      // it while resources still run would allow a second owner.
+      await Promise.all([...this.activeRuntimes].map((runtime) => runtime.close()));
       this.activeRuntimes.clear();
+      await this.options.adapter?.close?.(this.options);
     })();
     return this.closePromise;
   }

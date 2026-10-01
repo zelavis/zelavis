@@ -65,3 +65,14 @@ test("overview shows fixed system paths and isolated user paths", () => {
   assert.match(installationOverview("system", "1.2.3"), /\/opt\/zelavis[\s\S]*\/var\/lib\/zelavis[\s\S]*\/etc\/zelavis/);
   assert.match(installationOverview("user", "1.2.3", "/home/operator"), /\/home\/operator\/\.local\/share\/zelavis\/data/);
 });
+
+test("invoking PATH is forwarded as literal diagnostic data while sudo execution keeps a trusted PATH", async () => {
+  const assets = await loadInstallerAssets();
+  const invokingPath = "/home/operator/.cache/bin:/tmp/$(touch unexpected):/usr/bin";
+  const command = installationCommand({ ...assets, mode: "system", root: false, invokingPath, invokingHome: "/home/operator" });
+  assert.deepEqual(command.args.slice(-4), ["--invoking-path", invokingPath, "--invoking-home", "/home/operator"]);
+  assert.equal(command.args[1], "/bin/sh");
+  assert.equal(command.args[3], assets.script);
+  assert.match(assets.script, /PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin/);
+  assert.doesNotMatch(assets.script, /eval /);
+});

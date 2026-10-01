@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,7 +18,7 @@ async function fixture(t) {
   await symlink(process.execPath, join(source, "runtime/node/bin/node"));
   await copyFile(new URL("../runtime/zelavis", import.meta.url), join(source, "bin/zelavis"));
   await stageCli(source);
-  const env = { ...process.env, HOME: home, ZELAVIS_ENABLE_AGENT: "0" };
+  const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home, ZELAVIS_ENABLE_AGENT: "0" };
   const run = (args) => spawnSync(process.execPath, [join(source, "platform/dist/cli.js"), ...args], { encoding: "utf8", env });
   const prefix = join(home, ".local/share/zelavis");
   return { source, home, prefix, env, run, command: join(home, ".local/bin/zelavis") };
@@ -66,4 +66,25 @@ test("launcher loads user data/token from any cwd and never falls back to host N
   const missing = spawnSync(f.command, [], { env: f.env, encoding: "utf8" });
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /private Node runtime is missing/);
+});
+
+
+test("staged user doctor is read-only, returns JSON and reports missing receipts without creating state", async (t) => {
+  const f = await fixture(t);
+  const absent = f.run(["doctor", "--user", "--json"]);
+  assert.equal(absent.status, 1, absent.stderr);
+  assert.equal(JSON.parse(absent.stdout).healthy, false);
+  await assert.rejects(stat(f.prefix), { code: "ENOENT" });
+  assert.equal(f.run(["install", "--from-release", f.source, "--user"]).status, 0);
+  const receipt = await readFile(join(f.prefix, "installation.json"), "utf8");
+  const env = await readFile(join(f.prefix, "config/zelavis.env"), "utf8");
+  const snapshot = () => Promise.all([f.prefix, join(f.prefix, "data"), join(f.prefix, "config")].map((directory) => readdir(directory)));
+  const inventory = await snapshot();
+  const report = spawnSync(f.command, ["doctor", "--json"], { env: { ...f.env, PATH: `${f.home}/.local/bin:${f.env.PATH}` }, encoding: "utf8" });
+  assert.equal(report.status, 0, report.stderr);
+  assert.equal(JSON.parse(report.stdout).healthy, true, report.stdout);
+  assert.doesNotMatch(report.stdout, /ZELAVIS_BOOTSTRAP_TOKEN|session.*secret/);
+  assert.equal(await readFile(join(f.prefix, "installation.json"), "utf8"), receipt);
+  assert.equal(await readFile(join(f.prefix, "config/zelavis.env"), "utf8"), env);
+  assert.deepEqual(await snapshot(), inventory);
 });
