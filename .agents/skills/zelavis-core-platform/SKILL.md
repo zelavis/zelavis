@@ -126,8 +126,13 @@ before editing.
   the release's private Node. Keep planning in core runtime, host effects in
   adapters, unit/configuration templates in the release tree, and pins/checksums
   in distribution staging. Default native units to `127.0.0.1`; `--public` is
-  the explicit all-interface opt-in. Package acquisition, create-command
-  replacement, singleton locks and named instances are later phases.
+  the explicit all-interface opt-in. Package acquisition and create use the
+  matching verified prebuilt release and the same plan. Create takes no folder
+  argument. Its sudo bootstrap fetches and verifies a private root-owned release;
+  never execute user package-cache files as root. User mode owns only its
+  `~/.local/share/zelavis` prefix and command link. Runtime checksum helpers
+  have one distribution source; shipped copies are generated at build time.
+  Singleton locks, doctor and named instances remain planned.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
   dashboard `/setup` route must call the same endpoint and must not introduce

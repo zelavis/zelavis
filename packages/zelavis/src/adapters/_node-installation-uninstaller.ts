@@ -11,7 +11,7 @@ import {
   readNativeInstallationReceipt,
   type ZelavisInstallPaths,
 } from "../core/runtime/installation-plan.js";
-import { assertNodeInstallationPrivilege, createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
+import { assertNodeInstallationPrivilege, createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths } from "./_install-host.js";
 
 export interface NodeInstallationUninstallerOptions {
   readonly installation: ZelavisInstallationIdentity;
@@ -37,7 +37,9 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
       if (value !== undefined && value !== "0" && value !== "1") throw new Error("Refusing invalid installer account ownership receipt.");
     }
     const receipt = await readNativeInstallationReceipt(host, prefix);
-    const base = options.paths ?? nodeInstallationPaths();
+    const user = receipt?.mode === "user";
+    const base = options.paths ?? (user ? nodeUserInstallationPaths() : nodeInstallationPaths());
+    if (user && (prefix !== base.prefix || receipt.dataDirectory !== base.dataDirectory || receipt.commandPath !== base.commandPath || options.dataDirectory !== undefined && options.dataDirectory !== base.dataDirectory)) throw new Error("User receipt does not match this user's installation inventory.");
     const paths = {
       ...base,
       prefix,
@@ -49,11 +51,12 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
       // A Debian install after an archive may leave the archive command link.
       // Retain both in the removal inventory, each checked against this prefix.
       additionalCommandPaths: [base.commandPath],
-      hostCommands: !skip && process.getuid?.() === 0,
+      user,
+      hostCommands: !user && !skip && process.getuid?.() === 0,
       ownsUser: receipt?.ownsUser ?? process.env.ZELAVIS_UNINSTALL_OWNS_USER === "1",
       ownsGroup: receipt?.ownsGroup ?? process.env.ZELAVIS_UNINSTALL_OWNS_GROUP === "1",
     });
-    return { paths, plan };
+    return { paths, plan, user };
   };
   const describe = async (plan: Awaited<ReturnType<typeof resolvePlan>>["plan"]) => {
     const targets: ZelavisInstallationRemovalTarget[] = await Promise.all(plan.steps.map(async (step) => {
@@ -72,8 +75,8 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
     async plan() { return describe((await resolvePlan()).plan); },
     async uninstall(input) {
       assertCompleteUninstallConfirmation(input.confirmation);
-      const { paths, plan } = await resolvePlan();
-      await assertNodeInstallationPrivilege(paths, skip);
+      const { paths, plan, user } = await resolvePlan();
+      await assertNodeInstallationPrivilege(paths, skip || user);
       const described = await describe(plan);
       const output = await executeZelavisInstallationPlan(host, plan, input.confirmation);
       return { removed: true, plan: described, output: [...output, "Zelavis installation, configuration and data removed."].join("\n") };

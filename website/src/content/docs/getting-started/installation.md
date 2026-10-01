@@ -6,44 +6,59 @@ description: Install the long-running Zelavis Platform OS with the quick install
 Zelavis is a long-running Platform OS. It is installed on a server or local
 machine; it is not deployed as an ephemeral serverless function.
 
-## Create a Platform in a folder
+## Install with npm, pnpm or Bun create
 
-For development, or a small host where you would rather keep everything in one
-folder, use the create command. It needs Node 24 and nothing else:
-
-```bash
-npm create zelavis@latest my-platform
-```
-
-(`pnpm create zelavis`, `bun create zelavis` and `yarn create zelavis` work too.)
-
-It writes a small project (`package.json`, `.gitignore`, `README.md`, a `.env`
-holding a freshly generated one-time first-owner token, and an empty `services/`
-folder), installs the `zelavis` package, and tells you what to run. The dashboard
-and the default services (Zelavis App, Auth, Marketplace) ship inside that one
-package at the same version as the Platform, so there is nothing else to install.
-
-The `services/` folder is yours and is tracked in git: the Platform loads services
-from it, and the marketplace installs into it. The default services cannot be
-replaced from there: the Platform refuses a service that takes the name of a default
-one, so a stray package cannot stand in for login. Services must be self-contained;
-the Platform does not install a service's own dependencies, except that `zelavis`
-and `effect` always come from the Platform.
+The create command installs Zelavis on this machine. It takes no folder argument:
 
 ```bash
-cd my-platform
-npm run dev
+npm create zelavis@latest -- --dry-run
+npm create zelavis@latest -- --yes
+# pnpm create zelavis --yes
+# bun create zelavis --yes
 ```
 
-Open http://127.0.0.1:3000/zelavis. The setup asks for the token in `.env` to
-create the first owner account, and the token stops working once it has been used.
-The Platform keeps its data in `.zelavis/` in that folder, so running it from
-another folder is a different installation. Options: `--yes` (no prompts),
-`--no-install`, `--no-git`, `--pm <npm|pnpm|yarn|bun>`.
+Linux defaults to system mode when root or sudo is available. Releases live in
+`/opt/zelavis/releases/<version>` with a `current` link, data in `/var/lib/zelavis`,
+and configuration in `/etc/zelavis`. The Platform starts through systemd. The
+invoking Node or Bun runs only the create frontend; the installed Platform
+always uses its checksum-verified private Node.
 
-This is the same Platform the quick installer sets up; the installer is the right
-choice for a production Linux server, because it also registers the service
-units, the Agent and Edge.
+The frontend shows the layout and exact command before installation. When sudo
+is needed, the privileged bootstrap downloads and verifies its own release into
+a root-owned temporary directory. It never executes a file in the user's package
+cache as root. Dry-run makes no downloads or changes. Non-interactive installs
+require `--yes`.
+
+Each create package selects an exact Platform version, checks npm metadata and
+verifies the matching prebuilt GitHub release archive's SHA-256. Native dependencies
+are built for that release target in advance. A matching archive must be
+published; missing assets fail explicitly rather than selecting an older version.
+Some published prereleases predate this installer and do not carry the required assets.
+
+### User mode
+
+macOS and Linux without sudo default to user mode. Use it explicitly on a laptop
+or for a local trial:
+
+```bash
+npm create zelavis@latest -- --user --yes
+# Add ~/.local/bin to PATH, then start the Platform:
+zelavis serve
+```
+
+The same versioned layout lives under `~/.local/share/zelavis`: `releases/`,
+`current`, `data/`, `config/` and `installation.json`. The command is linked at
+`~/.local/bin/zelavis`. Its launcher loads `config/zelavis.env` (0600), which
+holds the one-time first-owner token and data location, from any working directory.
+Open http://127.0.0.1:3000/zelavis and use the token printed at installation to
+claim the first owner. Rerunning preserves it. User mode starts no systemd,
+Agent or Edge, and offers no automatic login service yet.
+
+Options: `--user`, `--system`, `--yes`, `--dry-run`, `--public`, `--force`,
+`--allow-downgrade`, `--enable-agent` (system mode only). Services acquired by
+the operator live in `<data>/services`; default services ship inside the Platform
+and cannot be shadowed there. For embedding the runtime in an application,
+use `npm install zelavis` as a library dependency.
 
 ## Quick install
 
@@ -95,7 +110,7 @@ database integrity.
 
 ## One host-local native installation plan
 
-Archive installers and Debian `postinst` run `zelavis install --from-release`
+Archive installers, Debian `postinst` and the create bootstrap run `zelavis install --from-release`
 with the staged release's private Node. The TypeScript command computes an
 ordered plan with each step's idempotence; dry-run and execution use that same inventory. It reads
 unit templates, Edge configuration and operation trust from the release tree.
@@ -116,9 +131,11 @@ configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
 `current` selecting the active one; previous archive releases are retained.
 Downtime-free blue/green updates remain [planned](../../architecture/updates/).
 
-The create command still scaffolds a folder today. Unifying it with this
-installer, package acquisition, user mode, singleton locks, doctor and named
-instances remain planned.
+An installed CLI can also acquire an exact release with
+`zelavis install --from package --version <exact-version>` (add `--user` for user
+mode). Package dry-run shows acquisition and layout without downloading; the
+full step inventory is computed after the archive has been verified.
+Singleton locks, doctor and named instances remain planned.
 
 ## Manual release archive (.tar.gz)
 
@@ -140,36 +157,22 @@ symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis
 creates the dedicated `zelavis` system user, and enables the Platform unit.
 The Agent is opt-in and Traefik remains disabled until Edge activates routes.
 
-## npm (Self-managed Node runtime)
+## Direct npm library and CLI use
 
-Use npm when you deliberately manage the host runtime yourself:
+`npm install zelavis` remains available for embedding. A deliberate global
+npm CLI installation uses the operator's Node 24 and package-manager lifecycle;
+it is separate from the host installation produced by create. For a machine
+installation with a private Node, use the create workflow above.
 
-```bash
-npm install --global zelavis
-zelavis serve
-```
-
-The npm path requires Node.js 24 or newer. It exposes the same CLI as the
-operating-system packages.
-
-Both paths install a command called `zelavis`. The archive installer refuses to
-replace a `zelavis` binary it did not create rather than overwriting an npm install
-silently. `zelavis --version` prints which installation is currently active:
-
-```bash
-zelavis --version
-# 1.0.1-alpha.2
-# packaged installation at /opt/zelavis
-```
-
-Platform data is written to `/var/lib/zelavis` for packaged systemd services, or
-to `~/.local/share/zelavis` for user-run npm processes.
+`zelavis --version` reports which installation is answering. The shared installer
+refuses a foreign command unless `--force` is given, and warns if another command
+shadows it on PATH.
 
 ---
 
 ## First-Run Setup & Ownership Claim
 
-When Zelavis finishes installing, it starts its HTTP service listener at
+A system installation starts its HTTP service listener at
 `http://127.0.0.1:3000` (port 3000 on loopback). Use the SSH tunnel below for
 remote browser access. Passing `--public` to the archive installer deliberately
 writes a unit that binds to all interfaces; rerunning without it restores loopback.
@@ -180,7 +183,8 @@ your domain and verified DNS.
 
 A one-time **bootstrap token** is generated during installation and printed in
 your terminal output (also saved in `/etc/zelavis/zelavis.env` with
-strict `0600` permissions).
+strict `0600` permissions). In user mode, it is saved in
+`~/.local/share/zelavis/config/zelavis.env`, and the operator starts `zelavis serve`.
 
 You have two primary ways to access the graphical onboarding wizard, plus an
 interactive terminal option:
@@ -298,3 +302,9 @@ Shared host packages, journal history, external archives/backups and
 operator-managed proxy/firewall/DNS/TLS state are retained. Complete uninstall
 has no remote HTTP/dashboard route. npm/source copies use their originating
 package manager or development lifecycle.
+
+For a **user installation**, run those two uninstall commands without sudo.
+Its inventory is the complete `~/.local/share/zelavis` prefix (including releases,
+data, configuration/token and receipt) and the owned `~/.local/bin/zelavis` link.
+It does not touch systemd units, APT sources/keys, system commands or accounts.
+Stop the user-run Platform before removing it.

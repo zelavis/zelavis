@@ -77,3 +77,23 @@ test("a Debian receipt after an archive removes both owned command links", async
   await assert.rejects(access(options.paths.commandPath), { code: "ENOENT" });
   await assert.rejects(access(options.paths.systemCommandPath), { code: "ENOENT" });
 });
+
+test("user uninstall removes its entire inventory and cannot touch system units, APT or commands", async (t) => {
+  const options = await fixture(t);
+  options.paths.dataDirectory = join(options.paths.prefix, "data");
+  options.paths.configDirectory = join(options.paths.prefix, "config");
+  for (const path of [options.paths.dataDirectory, options.paths.configDirectory, options.paths.systemdDirectories[0], dirname(options.paths.aptSource), dirname(options.paths.aptKeyring), dirname(options.paths.systemCommandPath)]) await mkdir(path, { recursive: true });
+  const retained = [join(options.paths.systemdDirectories[0], "zelavis.service"), options.paths.aptSource, options.paths.aptKeyring, options.paths.systemCommandPath];
+  for (const path of retained) await writeFile(path, "operator/system state");
+  await writeFile(join(options.paths.configDirectory, "zelavis.env"), "private first-owner token", { mode: 0o600 });
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, mode: "user", dataDirectory: options.paths.dataDirectory, commandPath: options.paths.commandPath, ownsUser: false, ownsGroup: false }));
+  const uninstaller = createNodeInstallationUninstaller(options);
+  await assert.rejects(createNodeInstallationUninstaller({ ...options, dataDirectory: "/outside/user-data" }).plan(), /does not match/);
+  const plan = await uninstaller.plan();
+  assert.ok(plan.steps.every((step) => ["remove", "remove-link"].includes(step.action.kind)));
+  assert.ok(!plan.targets.some((target) => retained.includes(target.path)));
+  await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
+  await assert.rejects(access(options.paths.prefix), { code: "ENOENT" });
+  await assert.rejects(access(options.paths.commandPath), { code: "ENOENT" });
+  for (const path of retained) await access(path);
+});

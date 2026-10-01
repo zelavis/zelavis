@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { access, appendFile, chmod, cp, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { ZelavisInstallHost, ZelavisInstallPaths } from "../core/runtime/installation-plan.js";
@@ -21,6 +22,12 @@ export function nodeInstallationPaths(env: NodeJS.ProcessEnv = process.env): Zel
     aptSource: env.ZELAVIS_UNINSTALL_APT_SOURCE ?? "/etc/apt/sources.list.d/zelavis.sources",
     aptKeyring: env.ZELAVIS_UNINSTALL_APT_KEYRING ?? "/usr/share/keyrings/zelavis-archive-keyring.gpg",
   };
+}
+
+/** User state is entirely below the user's private prefix, except its command. */
+export function nodeUserInstallationPaths(home = realpathSync(homedir())): ZelavisInstallPaths {
+  const prefix = join(home, ".local/share/zelavis");
+  return { ...nodeInstallationPaths(), prefix, dataDirectory: join(prefix, "data"), configDirectory: join(prefix, "config"), commandPath: join(home, ".local/bin/zelavis") };
 }
 
 export async function assertNodeInstallationPrivilege(paths: ZelavisInstallPaths, skipHostCommands = false): Promise<void> {
@@ -106,7 +113,8 @@ export function createNodeInstallHost(): ZelavisInstallHost {
         case "bootstrap": {
           if (await host.exists(action.path)) break;
           const token = randomBytes(32).toString("hex");
-          try { await writeFile(action.path, `ZELAVIS_BOOTSTRAP_TOKEN=${token}\n`, { mode: 0o600, flag: "wx" }); }
+          const environment = `ZELAVIS_BOOTSTRAP_TOKEN=${token}\n` + (action.dataDirectory ? `ZELAVIS_DATA_DIR=${JSON.stringify(action.dataDirectory)}\nHOST=${action.public ? "0.0.0.0" : "127.0.0.1"}\n` : "");
+          try { await writeFile(action.path, environment, { mode: 0o600, flag: "wx" }); }
           catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") break; throw error; }
           return `First-run bootstrap token: ${token}\nEnter it in the dashboard setup wizard or run: zelavis setup`;
         }

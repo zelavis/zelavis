@@ -10,15 +10,18 @@ Project planning and real-time collaboration are committed roadmap direction, no
 
 ## Install
 
-Production packages bundle a private pinned Node runtime, while developers who
-already manage Node 24 can install from npm:
+Installations bundle a private pinned Node runtime. A host Node or Bun is needed
+only to start the create frontend:
 
 ```bash
 curl -fsSL https://zelavis.com/install.sh | sudo sh
 # or
-npm install --global zelavis
-zelavis serve
+npm create zelavis@latest -- --yes
 ```
+
+Linux create uses system mode with root/sudo; macOS and Linux without sudo use
+user mode (`--user`), followed by `zelavis serve`. Matching release archives must
+be published for the exact version selected by create.
 
 APT, direct `.deb`, and manual `.tar.gz`/`.zip` releases use the same staged
 Platform payload. See the [installation guide](website/src/content/docs/getting-started/installation.md)

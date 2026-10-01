@@ -9,7 +9,7 @@ export type ZelavisInstallAction =
   | { readonly kind: "copy"; readonly source: string; readonly path: string }
   | { readonly kind: "link"; readonly target: string; readonly path: string; readonly atomic?: boolean }
   | { readonly kind: "write"; readonly path: string; readonly content: string; readonly mode: number; readonly ifAbsent?: boolean; readonly atomic?: boolean }
-  | { readonly kind: "bootstrap"; readonly path: string }
+  | { readonly kind: "bootstrap"; readonly path: string; readonly dataDirectory?: string; readonly public?: boolean }
   | { readonly kind: "agent-environment"; readonly path: string; readonly endpoint: string }
   | { readonly kind: "command"; readonly command: string; readonly args: readonly string[]; readonly ignoreFailure?: boolean }
   | { readonly kind: "remove"; readonly path: string; readonly recursive?: boolean }
@@ -82,6 +82,7 @@ export function validateInstallationPaths(paths: ZelavisInstallPaths): void {
 
 export interface ZelavisNativeInstallationReceipt {
   readonly schemaVersion: 1;
+  readonly mode?: "user";
   readonly dataDirectory: string;
   readonly commandPath: string;
   readonly ownsUser: boolean;
@@ -93,7 +94,7 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   if (content === undefined) return undefined;
   const value = JSON.parse(content) as ZelavisNativeInstallationReceipt;
   if (!value || value.schemaVersion !== 1 || typeof value.dataDirectory !== "string" ||
-      typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
+      (value.mode !== undefined && value.mode !== "user") || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
     throw new Error(`Native installation receipt at ${prefix}/installation.json is malformed.`);
   }
   return value;
@@ -139,6 +140,7 @@ export async function planZelavisReleaseInstall(input: {
   readonly source: string;
   readonly paths: ZelavisInstallPaths;
   readonly system: boolean;
+  readonly user?: boolean;
   readonly force?: boolean;
   readonly enableAgent?: boolean;
   readonly public?: boolean;
@@ -146,6 +148,7 @@ export async function planZelavisReleaseInstall(input: {
 }): Promise<ZelavisHostInstallationPlan> {
   const { host, paths, source } = input;
   validateInstallationPaths(paths);
+  if (input.user && (input.system || input.enableAgent)) throw new Error("User installations do not support systemd or the Agent.");
   assertInstallationPath(source, "release source");
   const manifest = JSON.parse(await host.read(`${source}/manifest.json`) ?? "null") as { version?: unknown } | null;
   if (!manifest || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(manifest.version)) {
@@ -172,20 +175,25 @@ export async function planZelavisReleaseInstall(input: {
     warnings.push(`Warning: 'zelavis' on PATH resolves to ${resolved}, not ${paths.commandPath}. That installation will answer instead of this one. Run 'zelavis --version' to see which one is in use.`);
   }
   const steps: ZelavisInstallStep[] = [];
+  let ownsUser = previous?.ownsUser ?? false;
+  let ownsGroup = previous?.ownsGroup ?? false;
+  const recordOwnership = (id: string) => {
+    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 1, ...(input.user ? { mode: "user" as const } : {}), dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
+    addStep(steps, id, "Record installer paths and preserve account ownership (0600)", { kind: "write", path: `${paths.prefix}/installation.json`, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600, atomic: true });
+  };
+  if (input.user) {
+    addStep(steps, "user-prefix", "Create private user installation root", { kind: "mkdir", path: paths.prefix, mode: 0o700 });
+    // Record user scope before selecting a runnable command, even if later steps fail.
+    recordOwnership("user-mode-receipt");
+  }
   for (const path of [`${paths.prefix}/releases`, paths.dataDirectory, paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))]) {
-    addStep(steps, `directory:${path}`, `Create ${path}`, { kind: "mkdir", path });
+    addStep(steps, `directory:${path}`, `Create ${path}`, { kind: "mkdir", path, ...(input.user && path !== paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/")) ? { mode: 0o700 } : {}) });
   }
   if (!await host.exists(release)) {
     addStep(steps, "release", `Copy staged release ${version} to ${release}`, { kind: "copy", source, path: release });
   }
   addStep(steps, "current", "Select the versioned release", { kind: "link", target: release, path: `${paths.prefix}/current`, atomic: true });
   addStep(steps, "command", "Link the Zelavis command", { kind: "link", target: `${paths.prefix}/current/bin/zelavis`, path: paths.commandPath });
-  let ownsUser = previous?.ownsUser ?? false;
-  let ownsGroup = previous?.ownsGroup ?? false;
-  const recordOwnership = (id: string) => {
-    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 1, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
-    addStep(steps, id, "Record installer paths and preserve account ownership (0600)", { kind: "write", path: `${paths.prefix}/installation.json`, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600, atomic: true });
-  };
   const command = (id: string, description: string, executable: string, args: readonly string[], ignoreFailure = false) =>
     addStep(steps, id, description, { kind: "command", command: executable, args, ignoreFailure });
   if (input.system) {
@@ -235,6 +243,10 @@ export async function planZelavisReleaseInstall(input: {
     }
     command("edge-disable", "Leave Traefik disabled until Edge publishes routes", "systemctl", ["disable", "zelavis-traefik.service"], true);
   }
+  if (input.user) {
+    addStep(steps, "config-directory", "Create private user configuration", { kind: "mkdir", path: paths.configDirectory, mode: 0o700 });
+    addStep(steps, "bootstrap", "Generate first-owner token and record user data location (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env`, dataDirectory: paths.dataDirectory, public: input.public });
+  }
   recordOwnership("receipt");
   return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: "default", dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
 }
@@ -242,6 +254,7 @@ export async function planZelavisReleaseInstall(input: {
 export function planZelavisUninstall(input: {
   readonly paths: ZelavisInstallPaths;
   readonly hostCommands: boolean;
+  readonly user?: boolean;
   readonly ownsUser: boolean;
   readonly ownsGroup: boolean;
   readonly additionalCommandPaths?: readonly string[];
@@ -250,23 +263,26 @@ export function planZelavisUninstall(input: {
   validateInstallationPaths(paths);
   const steps: ZelavisInstallStep[] = [];
   const command = (id: string, args: readonly string[]) => addStep(steps, id, `systemctl ${args.join(" ")}`, { kind: "command", command: "systemctl", args, ignoreFailure: true });
+  if (input.user && input.hostCommands) throw new Error("User uninstall must not execute system maintenance commands.");
   if (input.hostCommands) {
     command("stop", ["stop", ...UNITS]);
     command("disable", ["disable", ...UNITS]);
     addStep(steps, "packages", "Purge zelavis and zelavis-repository when installed through dpkg", { kind: "purge-packages" });
   }
-  for (const path of new Set([paths.commandPath, paths.systemCommandPath, ...input.additionalCommandPaths ?? []])) {
+  for (const path of new Set(input.user ? [paths.commandPath] : [paths.commandPath, paths.systemCommandPath, ...input.additionalCommandPaths ?? []])) {
     assertInstallationPath(path, "command", "zelavis");
     addStep(steps, `command:${path}`, `Remove only a Zelavis-owned command link at ${path}`, { kind: "remove-link", path, prefix: paths.prefix });
   }
   const remove = (path: string, recursive = false) => addStep(steps, `remove:${path}`, `Remove ${path}`, { kind: "remove", path, recursive });
-  for (const unit of UNITS) {
-    for (const directory of paths.systemdDirectories) remove(`${directory}/${unit}`);
-    remove(`${paths.systemdDirectories[0]}/multi-user.target.wants/${unit}`);
-    remove(`${paths.systemdDirectories[0]}/${unit}.d`, true);
+  if (!input.user) {
+    for (const unit of UNITS) {
+      for (const directory of paths.systemdDirectories) remove(`${directory}/${unit}`);
+      remove(`${paths.systemdDirectories[0]}/multi-user.target.wants/${unit}`);
+      remove(`${paths.systemdDirectories[0]}/${unit}.d`, true);
+    }
+    remove(paths.aptSource);
+    remove(paths.aptKeyring);
   }
-  remove(paths.aptSource);
-  remove(paths.aptKeyring);
   remove(paths.configDirectory, true);
   remove(paths.dataDirectory, true);
   remove(paths.prefix, true);

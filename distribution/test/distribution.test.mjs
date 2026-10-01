@@ -61,6 +61,7 @@ test("install and packaging shell scripts have valid syntax", () => {
   for (const path of [
     "installers/install.sh",
     "installers/archive-install.sh",
+    "installers/package-bootstrap.sh",
     "installers/uninstall.sh",
     "scripts/build-all.sh",
     "scripts/build-apt-repository.sh",

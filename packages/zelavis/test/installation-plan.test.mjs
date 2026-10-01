@@ -172,3 +172,19 @@ test("uninstall inspects all paths and requires acknowledgement before executing
   assert.equal(host.links.get(paths.systemCommandPath), "/foreign/cli.js");
   assert.equal(await host.read("/outside/backups/platform.tar.gz"), "keep");
 });
+
+test("user installation owns only its prefix, private environment and command; repair preserves token", async () => {
+  const host = new FakeHost();
+  const prefix = "/home/operator/.local/share/zelavis";
+  const userPaths = { ...paths, prefix, dataDirectory: `${prefix}/data`, configDirectory: `${prefix}/config`, commandPath: "/home/operator/.local/bin/zelavis" };
+  const create = () => install(host, { paths: userPaths, system: false, user: true });
+  const plan = await create();
+  assert.ok(plan.steps.every((step) => step.action.kind !== "command"));
+  assert.deepEqual(plan.steps.find((step) => step.id === "bootstrap").action, { kind: "bootstrap", path: `${prefix}/config/zelavis.env`, dataDirectory: `${prefix}/data`, public: undefined });
+  await executeZelavisInstallationPlan(host, plan);
+  await executeZelavisInstallationPlan(host, await create());
+  assert.equal(host.tokens, 1);
+  assert.equal(JSON.parse(await host.read(`${prefix}/installation.json`)).mode, "user");
+  assert.equal(await host.exists("/etc/systemd/system/zelavis.service"), false);
+  await assert.rejects(install(host, { paths: userPaths, system: false, user: true, enableAgent: true }), /do not support/);
+});

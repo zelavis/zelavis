@@ -107,7 +107,7 @@ Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
-  zelavis install --from-release <path> [--dry-run] [--public]
+  zelavis install --from package --version <version> [--user] [--dry-run]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
@@ -567,7 +567,7 @@ export async function runCli(
     }
     if (args[0] === "install") {
       if (args.includes("--help") || args.includes("-h")) {
-        console.log("zelavis install --from-release <absolute path> [--dry-run] [--json] [--force] [--public] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
+        console.log("zelavis install (--from-release <absolute path> | --from package --version <exact version>) [--user] [--dry-run] [--json] [--force] [--public] [--enable-agent] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
         return;
       }
       if (!options.runtime?.install) throw new Error("Install requires the local host adapter.");
