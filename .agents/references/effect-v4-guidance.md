@@ -41,7 +41,7 @@ Refresh it with `scripts/update-effect-source.sh effect@<version>` whenever the 
   `repos/effect/packages/effect/package.json` `exports` rather than guessing a path.
 - APIs tagged `@stability unstable` can change between releases; the Effect language
   service warns on them (`effect(unstableApiUsage)`). Acknowledge one deliberately,
-  with the reason, in the file that needs it, as `src/db/key-value.ts` does.
+  with the reason, in the one file that needs it, as `src/db/key-value-effect.ts` does.
 - When an Effect API seems to have changed, read `repos/effect/packages/effect/CHANGELOG.md`.
 
 ### 4. Usage Rules

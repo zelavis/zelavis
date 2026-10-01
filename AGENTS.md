@@ -546,7 +546,8 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 - The authoritative Effect v4 codebase is vendored locally under `repos/effect/`,
   at the release tag that matches the pinned `effect` version (`repos/effect/VENDORED_FROM`
   names the tag and commit). When the `effect` version changes, refresh it in the
-  same change with `scripts/update-effect-source.sh effect@<version>`. It is a script
+  same change with `scripts/update-effect-source.sh effect@<version>`; `pnpm run verify`
+  (the `check:effect-source` step) fails when they differ. It is a script
   and not `git subtree pull` because pull requests are squash-merged, which erases
   subtree's bookkeeping.
 - When writing or refactoring Effect code (Schema, Services, Layer, HttpApi, Stream, Context):
