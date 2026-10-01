@@ -853,6 +853,27 @@ test('@smoke the project switcher icons stay visible when a row is highlighted',
   }
 })
 
+test('@smoke content starts as far from the top of the content area as from its left edge', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  // The Projects overview used to keep an empty toolbar row on desktop (its
+  // search and button live in the header there), and that row still took a grid
+  // gap above the first card.
+  for (const path of ['/projects', '/server/domains', '/server/backups']) {
+    await gotoPlatformDashboard(page, path)
+    const offsets = await page.evaluate(() => {
+      const scroll = document.querySelector('[data-dashboard-scroll="content"]')!
+      const first = scroll.querySelector('[data-slot="card"]')!
+      const area = scroll.getBoundingClientRect()
+      const card = first.getBoundingClientRect()
+      return { top: Math.round(card.top - area.top), left: Math.round(card.left - area.left) }
+    })
+    expect(offsets.top, path).toBe(offsets.left)
+  }
+})
+
 test('@smoke a Project sidebar lists Overview once', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop' || !e2eProjectId)
 

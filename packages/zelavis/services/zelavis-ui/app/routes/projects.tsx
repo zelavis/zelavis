@@ -361,8 +361,10 @@ function ProjectsRoute() {
         <ResourceNotice title="Action failed" description={error} />
       ) : null}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full lg:hidden sm:max-w-sm">
+      {/* The header carries these on desktop. The row is hidden with them: left
+          in place, an empty row still takes a grid gap above the first card. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:hidden">
+        <div className="relative w-full sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={q}
@@ -372,10 +374,9 @@ function ProjectsRoute() {
           />
         </div>
         {canCreateProjects ? (
-          <div className="flex items-center justify-end lg:ms-auto">
+          <div className="flex items-center justify-end">
             <Button
               type="button"
-              className="lg:hidden"
               onClick={() => setParams({ new: "1" })}
             >
               <Plus className="size-4" />
