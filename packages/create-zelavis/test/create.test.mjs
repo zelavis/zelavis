@@ -29,7 +29,7 @@ test("published create selects the exact Platform and ships the canonical bootst
   const assets = await loadInstallerAssets();
   const platform = JSON.parse(await readFile(new URL("../../zelavis/package.json", import.meta.url), "utf8"));
   assert.equal(assets.version, platform.version);
-  assert.equal(assets.script, await readFile(new URL("../../../distribution/installers/package-bootstrap.sh", import.meta.url), "utf8"));
+  assert.equal(assets.script, await readFile(new URL("../../../distribution/installers/install.sh", import.meta.url), "utf8"));
 });
 
 test("sudo executes literal bootstrap code, never a user cache file or invoking runtime", async () => {

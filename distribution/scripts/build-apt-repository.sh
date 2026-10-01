@@ -8,7 +8,7 @@ REPOSITORY_DIR=${ZELAVIS_APT_OUTPUT:-$ARTIFACTS_DIR/apt}
 SUITE=${ZELAVIS_APT_SUITE:-stable}
 KEY_ID=${ZELAVIS_GPG_KEY_ID:-}
 
-for command in dpkg-scanpackages apt-ftparchive gpg gzip; do
+for command in dpkg-scanpackages apt-ftparchive dpkg-deb gpg gzip; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Missing required command: $command" >&2
     exit 1

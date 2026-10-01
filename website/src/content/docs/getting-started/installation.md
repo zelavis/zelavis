@@ -72,37 +72,56 @@ system user, and sets up systemd service units.
 Zero build dependencies are required on your server: no `git`, `node`, `pnpm`,
 or compilers are needed.
 
-```bash
-# Production server installation (enables Edge Agent & Traefik management)
-curl -fsSL https://raw.githubusercontent.com/zelavis/zelavis/main/distribution/installers/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
-```
-
-Or via the canonical short URL:
+The public bootstrap route and new signed release are being prepared. These
+commands require that route and a matching release to be published; older
+prereleases lack the unified installer’s assets.
 
 ```bash
-curl -fsSL https://zelavis.com/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
+# Current prerelease channel; an exact version can replace --channel alpha.
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
+
+# Unprivileged installation (also the default on macOS).
+curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user
 ```
 
-The packaged installation contains an isolated, private pinned Node runtime. It
-does not replace or interfere with the host's global Node installation. Setting
-`ZELAVIS_ENABLE_AGENT=1` ensures the Zelavis Edge Agent service (`zelavis-agent.service`)
-is enabled alongside the main Platform OS (`zelavis.service`), allowing automated
-Let's Encrypt TLS certificate issuance and reverse-proxy cutovers via Traefik.
+Place `--version <exact-version>` or `--channel alpha|latest` before installer
+flags. A channel is resolved once, then the bootstrap fetches only the matching
+versioned archive and checksum manifest. Missing assets fail explicitly. The
+default channel is `latest`; prerelease installation uses `alpha` deliberately.
+The archive is verified before its private Node calls `zelavis install` with all
+remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`.
+
+The runtime does not depend on the host’s Node. The Platform binds loopback by
+default; use the printed SSH tunnel for first-owner setup. The Agent is opt-in
+with `--enable-agent` on system installations and requires a qualified cgroup v2
+host. Traefik stays disabled at installation. Production Agent qualification and
+automated ACME/cutover reconciliation remain pending.
 
 ## Direct Debian / Ubuntu package (.deb)
 
 If you prefer managing packages natively with `apt`, download the `.deb` release
 matching your server CPU and install it:
 
-```bash
-# For x86_64 / amd64 servers (e.g. Hetzner CX22, standard cloud instances)
-curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_amd64.deb
-sudo apt install -y ./zelavis_1.0.1.alpha.2_amd64.deb
+Download the versioned `.deb` and `SHA256SUMS` from the same
+`zelavis@<exact-version>` GitHub Release, verify the checksum, then install the
+local package. The Debian version replaces a prerelease hyphen with `~`:
 
-# For ARM64 servers (e.g. AWS Graviton, Ampere)
-curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_arm64.deb
-sudo apt install -y ./zelavis_1.0.1.alpha.2_arm64.deb
+```bash
+# Example variables: select an actually published exact version and your CPU.
+VERSION=<exact-version>
+DEBIAN_VERSION=<matching-debian-version>
+ARCH=amd64 # arm64 for ARM servers
+BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
+curl -fsSLO "$BASE/zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
+curl -fsSLO "$BASE/SHA256SUMS"
+grep "  zelavis_${DEBIAN_VERSION}_${ARCH}.deb$" SHA256SUMS | sha256sum -c -
+sudo apt install -y "./zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
 ```
+
+The separate signed APT repository and repository bootstrap package at
+`apt.zelavis.com` require owner publication. Once available, install the verified
+`zelavis-repository` package and run `sudo apt update && sudo apt install zelavis`.
+Its `postinst` uses the same private Node and TypeScript installation plan.
 
 Installing through `apt install ./<package>.deb` rather than `dpkg` directly
 allows the system package manager to verify dependencies and maintain package
@@ -248,15 +267,26 @@ real-server qualification remains pending.
 The standalone `.tar.gz` and `.zip` archives are self-contained and suitable for
 manual download, SFTP upload, or air-gapped environments:
 
-```bash
-# 1. Download and extract the matching archive
-curl -fsSLO https://github.com/zelavis/zelavis/releases/latest/download/zelavis-linux-x64.tar.gz
-tar -xzf zelavis-linux-x64.tar.gz
-cd zelavis-*
+Fetch an exact `zelavis@<version>` GitHub Release archive and its
+`SHA256SUMS`, verify the archive, then extract it:
 
-# 2. Run the archive installer
-sudo ZELAVIS_ENABLE_AGENT=1 ./install.sh
+```bash
+VERSION=<exact-version>
+TARGET=linux-x64 # linux-arm64, darwin-x64 or darwin-arm64
+NAME="zelavis-$VERSION-$TARGET"
+BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
+curl -fsSLO "$BASE/$NAME.tar.gz"
+curl -fsSLO "$BASE/SHA256SUMS"
+grep "  $NAME.tar.gz$" SHA256SUMS | sha256sum -c - # macOS: shasum -a 256 -c -
+tar -xzf "$NAME.tar.gz"
+cd "$NAME"
+sudo ./install.sh # macOS or unprivileged use: ./install.sh --user
 ```
+
+Versioned downloads and `alpha/` / `latest/` aliases with checksum sidecars are
+prepared for `downloads.zelavis.com`; hosting still needs owner deployment.
+Alpha aliases are separate from stable latest. Prefer exact versions when
+copying archives to an offline server.
 
 The installer places versioned releases under `/opt/zelavis/releases/<version>`,
 symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis`,

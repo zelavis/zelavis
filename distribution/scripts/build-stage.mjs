@@ -1,4 +1,5 @@
 import { installNodeRuntime, installTraefikRuntime } from "./runtime-assets.mjs";
+import { exactVersion, stagePublishedPackage } from "./published-package.mjs";
 import { execFileSync } from "node:child_process";
 import {
   chmod,
@@ -10,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const distributionDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryDirectory = resolve(distributionDirectory, "..");
@@ -22,6 +23,7 @@ function parseArgs(args) {
     build: true,
     platform: undefined,
     architecture: undefined,
+    version: undefined,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -30,6 +32,9 @@ function parseArgs(args) {
       index += 1;
     } else if (arg === "--skip-build") {
       options.build = false;
+    } else if (arg === "--version") {
+      options.version = args[++index];
+      if (!options.version || !exactVersion.test(options.version)) throw new Error("--version requires an exact published version.");
     } else if (arg === "--platform") {
       options.platform = args[index + 1];
       index += 1;
@@ -74,28 +79,37 @@ function target(options = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   assertDistributionPath(options.output);
-  const packageManifest = JSON.parse(
+  let packageManifest = JSON.parse(
     await readFile(join(repositoryDirectory, "packages", "zelavis", "package.json"), "utf8"),
   );
   const releaseConfig = JSON.parse(
     await readFile(join(distributionDirectory, "release.json"), "utf8"),
   );
   const releaseTarget = target(options);
+  if (options.version && (releaseTarget.platform !== process.platform || releaseTarget.architecture !== process.arch)) {
+    throw new Error("Published package staging requires a target-native release runner.");
+  }
+  if (options.version && options.version !== packageManifest.version) throw new Error("Release tag does not match the checked-out Platform version.");
 
   await rm(options.output, { recursive: true, force: true });
   await mkdir(options.output, { recursive: true });
 
-  if (options.build) {
-    run("pnpm", ["--filter", "zelavis", "build"]);
+  await installNodeRuntime(options.output, releaseConfig.nodeVersion, releaseTarget, join(distributionDirectory, ".cache"));
+  if (options.version) {
+    packageManifest = await stagePublishedPackage(options.output, options.version);
+  } else {
+    if (options.build) {
+      run("pnpm", ["--filter", "zelavis", "build"]);
+    }
+    run("pnpm", [
+      "--filter",
+      "zelavis",
+      "deploy",
+      "--legacy",
+      "--prod",
+      join(options.output, "platform"),
+    ]);
   }
-  run("pnpm", [
-    "--filter",
-    "zelavis",
-    "deploy",
-    "--legacy",
-    "--prod",
-    join(options.output, "platform"),
-  ]);
 
   await mkdir(join(options.output, "bin"), { recursive: true });
   await mkdir(join(options.output, "share"), { recursive: true });
@@ -155,7 +169,6 @@ async function main() {
     join(options.output, "share", "uninstall.sh"),
   );
 
-  await installNodeRuntime(options.output, releaseConfig.nodeVersion, releaseTarget, join(distributionDirectory, ".cache"));
   const traefikBundled = await installTraefikRuntime(
     options.output,
     releaseConfig.traefikVersion,
@@ -187,7 +200,7 @@ async function main() {
   await chmod(join(options.output, "share", "uninstall.sh"), 0o755);
 
   const { createArtifactDigest, createRuntimeArtifactManifestDigest, defineRuntimeArtifact } =
-    await import("../../packages/zelavis/dist/core/artifact/index.js");
+    await import(pathToFileURL(join(options.output, "platform", "dist", "core", "artifact", "index.js")));
   async function stagedFiles(directory, prefix = "") {
     const files = [];
     for (const entry of await readdir(directory, { withFileTypes: true })) {

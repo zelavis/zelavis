@@ -14,14 +14,15 @@ Installations bundle a private pinned Node runtime. A host Node or Bun is needed
 only to start the create frontend:
 
 ```bash
-curl -fsSL https://zelavis.com/install.sh | sudo sh
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
 # or
 npm create zelavis@latest -- --yes
 ```
 
 Linux create uses system mode with root/sudo; macOS and Linux without sudo use
 user mode (`--user`), followed by `zelavis serve`. Matching release archives must
-be published for the exact version selected by create.
+be published for the exact version selected by create. Public installer hosting
+and the matching new signed release still require owner publication.
 
 APT, direct `.deb`, and manual `.tar.gz`/`.zip` releases use the same staged
 Platform payload. See the [installation guide](website/src/content/docs/getting-started/installation.md)

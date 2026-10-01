@@ -1,13 +1,17 @@
 # Zelavis Distribution
 
 This directory owns operating-system delivery for the Zelavis Platform OS. It
-does not contain another runtime implementation. Every format is built from the
-published `zelavis` package and the same staged release tree.
+does not contain another runtime implementation. Production formats are built from an exact
+published `zelavis` package and the same staged release tree. Manual development
+builds use the local workspace and are never published by the workflow.
 
 ## Release layout
 
-`pnpm distribution:stage` builds `packages/zelavis`, creates a production
-deployment under `distribution/.tmp/stage/platform`, and adds:
+`pnpm distribution:stage` builds the workspace for local qualification.
+`pnpm distribution:stage --version <exact-version>` instead installs the published
+package and production dependencies using the staged private Node’s bundled npm,
+then relocates them under `distribution/.tmp/stage/platform`. This production
+mode requires a target-native runner and a version matching the checkout. Both add:
 
 - the exact official Project recipe catalog and dashboard assets shipped by `zelavis`
 - production package dependencies, including native modules for the target CPU
@@ -58,8 +62,25 @@ Build each release on the same OS and architecture it targets so native modules
 are correct. Debian packages require Linux and `dpkg-deb`.
 
 The `Distribution artifacts` GitHub workflow performs those target-native builds
-for Linux and macOS on both x64 and ARM64. It uploads unsigned release artifacts;
-APT repository signing remains a separate protected release-host step.
+for Linux and macOS on both x64 and ARM64. Only `zelavis@<version>` tags publish.
+Tag builds require owner-provided operation and APT signing secrets before any
+matrix job starts, then stage the exact published npm package. Manual runs build
+workspace diagnostic artifacts and may omit host operations; they do not publish.
+
+Each native job uploads its own artifacts and checksum manifest. The final job
+requires all four jobs, verifies every input checksum and expected filename, and
+creates **one** `SHA256SUMS` containing every archive and Linux `.deb`. It signs the
+APT repository, builds the repository bootstrap package, extends the manifest,
+and attaches the complete artifact set once to a draft before publishing it.
+An alpha tag creates a GitHub
+prerelease without replacing the stable latest release. Temporary Actions
+artifacts have one-day retention on standard runners in this public repository.
+
+`pnpm release:publish:alpha` / `pnpm release:publish:latest` run root verification
+and docs checks, publish with Changesets, and push only the exact Platform tag to
+start that workflow. They never push a branch. Publishing npm packages still
+requires the release owner’s authentication. Read the Distribution run after
+publication: publishing a package alone does not mean the archives are ready.
 
 Generated files stay in `distribution/.tmp`, `distribution/.cache`, and
 `distribution/artifacts`; none are committed.
@@ -143,8 +164,8 @@ in this repository.
 
 ## Public installation routes
 
-- Quick install: `curl` installer chooses APT on Debian/Ubuntu and an archive on
-  other supported Unix hosts.
+- Quick install: the generated `curl` bootstrap acquires one exact verified
+  archive and delegates to the shared TypeScript installer on private Node.
 - APT: install `zelavis-repository`, then `apt install zelavis`.
 - Direct Debian package: `apt install ./zelavis_<version>_<arch>.deb`.
 - Manual upload: extract `.tar.gz` or `.zip`, then run its `install.sh`.
@@ -169,16 +190,15 @@ Native Platform units bind to `127.0.0.1:3000` by default. Connect from a local
 machine with `ssh -N -L 3000:127.0.0.1:3000 <user>@<server>` and open
 `http://127.0.0.1:3000/zelavis`. An explicit `./install.sh --public` writes a unit
 binding to `0.0.0.0`; rerunning without it restores the private bind. Agent opt-in
-is still `ZELAVIS_ENABLE_AGENT=1`; Traefik remains disabled until Edge activates
+is `--enable-agent`; Traefik remains disabled until Edge activates
 routes. Releases stay in `releases/<version>` with a `current` link, including
 Debian packages. Older versions are refused unless `--allow-downgrade` is given;
 previous archive releases are kept.
 
 Install and complete uninstall are host-local maintenance operations and have
 no HTTP/dashboard route. Named system instances use explicit `--instance` and `--port`.
-The quick installer's APT repository selection remains a bootstrap concern in
-this phase; both APT postinst and its archive branch delegate host setup to the
-same TypeScript command.
+APT setup uses the separate repository bootstrap package. The quick installer
+performs only verified acquisition and delegates host setup to the same command.
 
 
 ## Named system instances
@@ -270,7 +290,7 @@ It prints the layout and exact command before running. Linux defaults to system
 mode with root/sudo; macOS and Linux without sudo default to user mode. The
 privileged bootstrap is literal shell code, not a path in the user's package
 cache, and fetches/verifies its own release before running its private Node.
-The one authored bootstrap is `installers/package-bootstrap.sh`.
+The one authored bootstrap is `installers/install.sh`.
 
 User mode (`--user`) keeps releases, `data/`, `config/` and `installation.json`
 under `~/.local/share/zelavis` and links `~/.local/bin/zelavis`. Configuration is
@@ -358,7 +378,57 @@ through APT or Homebrew on first use when Zelavis has package-install authority.
 An unprivileged installation must have those packages installed by the host
 operator before creating its first WordPress Project.
 
-The generic quick-installer archive URLs are stable aliases such as
-`https://downloads.zelavis.com/latest/zelavis-linux-x64.tar.gz`. Release
-publishing must point those aliases at the versioned artifacts generated here
-and publish the raw SHA-256 digest beside each alias as `<archive>.sha256`.
+## Public delivery and owner setup
+
+The website’s static `/install.sh` endpoint, the delivery builder and create
+all ship the one authored `installers/install.sh`. Create passes its stamped
+exact version as the first argument; the public entry accepts a version or
+channel selector. No verification logic, unit templates or runtime pins are copied
+into a second authored source.
+
+```bash
+# Alpha until a stable release exists; selection flags precede installer flags.
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
+# Repeatable exact release, or unprivileged laptop installation:
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --version <exact-version> --instance preview --port 3100
+curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user
+```
+
+The default channel is `latest`; `--channel alpha` is explicit. A channel resolves
+once from npm dist-tags, then every request names that exact version. The
+bootstrap verifies npm identity, the versioned GitHub archive’s SHA-256, archive
+members/link containment and target identity before executing private Node. It
+never falls back to a different release. Installer flags are literal arguments;
+macOS defaults to user mode. Linux system mode requires root and systemd.
+
+The workflow prepares a `zelavis-public-delivery` artifact with three static
+roots: `site/install.sh` for zelavis.com, `downloads/` for downloads.zelavis.com,
+and, on signed tag runs, `apt/` for apt.zelavis.com. Downloads include immutable
+`releases/<version>/` artifacts and their digest sidecars, plus `alpha/` or
+`latest/` aliases and sidecars. Alpha never replaces the stable aliases. Publish
+immutable files first, then switch the complete channel directory atomically;
+do not independently replace an archive and its checksum. Serve the installer
+as text and avoid caching channel pointers across a cutover. The Astro website
+build also produces the same `/install.sh` file directly.
+
+Before a real tag, the owner must configure these repository Actions secrets:
+
+- `ZELAVIS_OPERATION_SIGNING_KEY`: base64 PKCS8 Ed25519 private key matching an
+  existing non-revoked `release.json` trust entry.
+- `ZELAVIS_OPERATION_SIGNING_KEY_ID`: its exact trust-store id (currently
+  `release-2026`).
+- `ZELAVIS_GPG_SIGNING_KEY`: armored private APT signing key, importable without
+  an interactive passphrase prompt on the runner.
+- `ZELAVIS_GPG_KEY_ID`: its full signing fingerprint.
+
+The APT key is imported into an ephemeral 0700 `GNUPGHOME` and deleted on exit;
+private keys never enter delivery artifacts. Verify `InRelease`, `Release.gpg`
+and the public key fingerprint before serving the signed APT root. Existing APT
+configuration remains owned by `zelavis-repository` and is covered by complete
+uninstall. Phase 5 adds delivery/build files, no installer-owned host resources.
+
+Hosting provider, deployment credentials, npm authentication and production
+signing secrets are owner setup. They are not configured by this change. The
+public routes and matching new signed release still need live publication; old
+prerelease assets cannot satisfy the unified installer. Real-server/systemd and
+Agent cgroup qualification remain pending.

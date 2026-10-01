@@ -12,4 +12,4 @@ writeFileSync(join(out, "versions.json"), `${JSON.stringify({ zelavis: platform.
 console.log(`Stamped zelavis ${platform.version}.`);
 
 // One authored bootstrap, shipped as a generated transport asset.
-copyFileSync(join(here, "../../../distribution/installers/package-bootstrap.sh"), join(out, "package-bootstrap.sh"));
+copyFileSync(join(here, "../../../distribution/installers/install.sh"), join(out, "package-bootstrap.sh"));
