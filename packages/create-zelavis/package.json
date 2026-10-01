@@ -7,19 +7,28 @@
   "author": "Ivan Jeremic",
   "type": "module",
   "bin": {
-    "create-zelavis": "./bin.js"
+    "create-zelavis": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": [
-    "bin.js"
+    "dist"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/stamp-versions.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "engines": {
     "node": ">=24"
   },
-  "dependencies": {
-    "@zelavis/create": "workspace:*"
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public"

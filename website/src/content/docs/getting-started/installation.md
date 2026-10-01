@@ -12,17 +12,21 @@ For development, or a small host where you would rather keep everything in one
 folder, use the create command. It needs Node 24 and nothing else:
 
 ```bash
-npm create @zelavis@latest my-platform
-# the same command, shorter:
 npm create zelavis@latest my-platform
 ```
 
-(`pnpm create @zelavis`, `bun create @zelavis` and `yarn create @zelavis` work too.)
+(`pnpm create zelavis`, `bun create zelavis` and `yarn create zelavis` work too.)
 
-It writes a small project (`package.json`, `.gitignore`, `README.md`, and a `.env`
-holding a freshly generated one-time first-owner token), installs the `zelavis`
-package, and tells you what to run. The dashboard and the default services ship
-inside that one package, so there is nothing else to install.
+It writes a small project (`package.json`, `.gitignore`, `README.md`, a `.env`
+holding a freshly generated one-time first-owner token, and an empty `services/`
+folder), installs the `zelavis` package, and tells you what to run. The dashboard
+and the default services (Zelavis App, Auth, Marketplace) ship inside that one
+package at the same version as the Platform, so there is nothing else to install.
+
+The `services/` folder is yours and is tracked in git: the Platform loads services
+from it, and the marketplace installs into it. A service dropped in there with the
+same name as a default one takes its place. Services must be self-contained; the
+Platform does not install a service's own dependencies.
 
 ```bash
 cd my-platform

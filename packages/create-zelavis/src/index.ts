@@ -1,5 +1,5 @@
 /**
- * `npm create @zelavis`: makes a folder that runs a Zelavis Platform.
+ * `npm create zelavis`: makes a folder that runs a Zelavis Platform.
  *
  * It writes a handful of files, installs the `zelavis` package, and prints the
  * one thing a first run needs: the token that claims the first owner account. It
@@ -10,7 +10,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
@@ -45,8 +45,8 @@ const PACKAGE_MANAGERS: readonly PackageManager[] = ["npm", "pnpm", "yarn", "bun
 export const HELP = `Create a Zelavis Platform in a new folder.
 
 Usage
-  npm create @zelavis@latest [directory] [options]
-  pnpm create @zelavis [directory] [options]
+  npm create zelavis@latest [directory] [options]
+  pnpm create zelavis [directory] [options]
 
 Options
   -y, --yes             Use the defaults and ask nothing
@@ -119,7 +119,28 @@ function readVersions(): Versions {
   return JSON.parse(readFileSync(new URL("./versions.json", import.meta.url), "utf8")) as Versions;
 }
 
-const START = "node --env-file=.env node_modules/zelavis/dist/cli.js serve --data-dir ./.zelavis";
+const START =
+  "node --env-file=.env node_modules/zelavis/dist/cli.js serve --data-dir ./.zelavis --services-dir ./services";
+
+const SERVICES_README = `# services
+
+The Platform loads services from this folder and installs new ones into it, so
+what is here is part of your project.
+
+A service is a folder with a package.json that has a "zelavis" section (its kind,
+namespace and menus) and an ES module entry. To add one by hand, drop its folder
+in here and restart. To add one from the marketplace, press Install in the
+dashboard: it is downloaded, checked against the signed allow-list, put in this
+folder and started without a restart.
+
+The dashboard, the Zelavis App recipe, Auth and the Marketplace are default
+services. They come with the zelavis package, at the same version as the
+Platform, so they are not copied here and an update brings them along. A service
+in this folder with the same name takes their place.
+
+A service must be self-contained: the Platform does not install a service's own
+dependencies. zelavis and effect come from the Platform.
+`;
 
 export function templateFiles(name: string, token: string, versions: Versions): Readonly<Record<string, string>> {
   return {
@@ -136,9 +157,11 @@ export function templateFiles(name: string, token: string, versions: Versions): 
     // history, so there is nothing to copy around or remember.
     ".env": `# Claims the first owner account in the dashboard. Keep this file private.\nZELAVIS_BOOTSTRAP_TOKEN=${token}\n`,
     ".gitignore": "node_modules\n.env\n# The Platform's data: accounts, Projects, databases.\n.zelavis\n",
+    // Yours, and tracked: what you add here is part of the project.
+    "services/README.md": SERVICES_README,
     "README.md": `# ${name}
 
-A Zelavis Platform, started from \`npm create @zelavis\`.
+A Zelavis Platform, started from \`npm create zelavis\`.
 
 ## Run it
 
@@ -152,6 +175,7 @@ the token stops working.
 
 ## Where things are
 
+- \`services/\` is where services you add live (see the README in it).
 - \`.zelavis/\` holds everything the Platform stores: accounts, Projects and their
   databases. It is in \`.gitignore\`. Back it up like any database.
 - \`.env\` holds the first-owner token. Keep it out of git.
@@ -200,6 +224,7 @@ export async function createProject(options: CreateOptions): Promise<CreatedProj
 
   await mkdir(directory, { recursive: true });
   for (const [file, content] of Object.entries(templateFiles(name, token, readVersions()))) {
+    await mkdir(dirname(join(directory, file)), { recursive: true });
     await writeFile(join(directory, file), content, { mode: file === ".env" ? 0o600 : 0o644 });
   }
 

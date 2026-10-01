@@ -59,6 +59,9 @@ test("it writes a project that runs the release it was built with", async (t) =>
   assert.equal(manifest.engines.node, platform.engines.node);
   assert.match(manifest.scripts.dev, /node_modules\/zelavis\/dist\/cli\.js serve --data-dir \.\/\.zelavis/);
   assert.match(manifest.scripts.dev, /--env-file=\.env/);
+  assert.match(manifest.scripts.dev, /--services-dir \.\/services/, "the Platform loads the folder the project owns");
+  assert.match(await readFile(join(directory, "services", "README.md"), "utf8"), /self-contained/);
+  assert.ok(!(await readFile(join(directory, ".gitignore"), "utf8")).split("\n").includes("services"), "services are tracked");
 
   // The first-owner token: long enough for the Platform to accept, unique, and private.
   assert.match(project.token, /^[0-9a-f]{48}$/);

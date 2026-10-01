@@ -36,6 +36,8 @@ export interface ZelavisCliServeOptions {
   host: string;
   port: number;
   dataDirectory?: string;
+  /** Where the Platform finds and installs services; defaults to `<data>/services`. */
+  servicesDirectory?: string;
 }
 
 export interface ZelavisCliRuntime {
@@ -67,6 +69,7 @@ interface ParsedArgs {
   host?: string;
   port?: number;
   dataDirectory?: string;
+  servicesDirectory?: string;
   url?: string;
   specifier?: string;
   source?: RuntimeServiceSource;
@@ -102,7 +105,7 @@ function printHelp(): void {
 Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
-  zelavis serve [--host <host>] [--port <port>] [--data-dir <path>]
+  zelavis serve [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
@@ -154,6 +157,8 @@ Options:
   --host <host>             Listener host. Defaults to 127.0.0.1.
   --port <port>             Listener port. Defaults to 3000.
   --data-dir <path>         Platform data directory.
+  --services-dir <path>     Folder the Platform loads and installs services from.
+                            Defaults to <data-dir>/services (or ZELAVIS_SERVICES_DIR).
   --url <url>               Zelavis root URL for endpoint-backed commands.
   --specifier <specifier>   ESM specifier for services register.
   --name <name>             Optional service name override.
@@ -250,6 +255,11 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--data-dir=")) {
       parsed.dataDirectory = arg.slice("--data-dir=".length);
+    } else if (arg === "--services-dir") {
+      parsed.servicesDirectory = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--services-dir=")) {
+      parsed.servicesDirectory = arg.slice("--services-dir=".length);
     } else if (arg === "--url") {
       parsed.url = readValue(args, index, arg);
       index += 1;
@@ -577,6 +587,9 @@ export async function runCli(
         host: parsed.host ?? process.env.HOST ?? "127.0.0.1",
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
+        ...((parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)
+          ? { servicesDirectory: (parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)! }
+          : {}),
       });
       return;
     }
