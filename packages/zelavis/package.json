@@ -184,7 +184,17 @@
   },
   "files": [
     "dist",
-    "services"
+    "services/zelavis-app/package.json",
+    "services/zelavis-auth/package.json",
+    "services/zelavis-marketplace/package.json",
+    "services/zelavis-ui/package.json",
+    "services/zelavis-app/dist",
+    "services/zelavis-auth/dist",
+    "services/zelavis-auth/dashboard",
+    "services/zelavis-marketplace/dist",
+    "services/zelavis-marketplace/allowlist.snapshot.json",
+    "services/zelavis-ui/dist",
+    "services/zelavis-ui/build/client"
   ],
   "publishConfig": {
     "access": "public"

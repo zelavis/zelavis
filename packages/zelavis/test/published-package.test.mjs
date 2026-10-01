@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, constants, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 
@@ -36,12 +36,17 @@ let workRoot;
 before(async () => {
   workRoot = await mkdtemp(join(tmpdir(), "zelavis-published-"));
 
+  // Packed the way a release publishes (`changeset publish` runs `pnpm publish`).
+  // `npm pack` differs: it applies a nested .gitignore, such as the dashboard's
+  // `/build/`, even to a path `files` lists, and would report assets missing that
+  // the published package does carry.
   const { stdout } = await execFileAsync(
-    "npm",
+    "pnpm",
     ["pack", "--pack-destination", workRoot, "--ignore-scripts"],
     { cwd: packageDir, timeout: 300_000 },
   );
-  const tarball = join(workRoot, stdout.trim().split("\n").pop().trim());
+  const packed = stdout.trim().split("\n").pop().trim();
+  const tarball = isAbsolute(packed) ? packed : join(workRoot, packed);
 
   unpacked = join(workRoot, "unpacked");
   await mkdir(unpacked, { recursive: true });
@@ -136,6 +141,21 @@ test("everything `files` promises is actually in the tarball", async () => {
   // directory would pass a existence check while shipping nothing.
   const services = await readdir(join(unpacked, "services")).catch(() => []);
   assert.equal(services.length > 0, true, "services/ shipped but is empty");
+});
+
+test("the default services ship their manifest and built output, not their source", async () => {
+  // `files: ["services"]` once published whole folders: the dashboard's React
+  // source, its tests and test results, generated types and a node_modules.
+  const expected = ["zelavis-app", "zelavis-auth", "zelavis-marketplace", "zelavis-ui"];
+  assert.deepEqual((await readdir(join(unpacked, "services"))).sort(), expected);
+  for (const service of expected) {
+    assert.equal(await shipped(`services/${service}/package.json`), true, `${service} has no manifest`);
+    assert.equal(await shipped(`services/${service}/dist`), true, `${service} has no built output`);
+  }
+  assert.equal(await shipped("services/zelavis-ui/build/client"), true, "the dashboard's browser assets");
+  for (const leftover of ["app", "tests", "test-results", ".react-router", "node_modules"]) {
+    assert.equal(await shipped(`services/zelavis-ui/${leftover}`), false, `services/zelavis-ui/${leftover} must not be published`);
+  }
 });
 
 test("the package loads from the tarball in a bare consumer", async () => {
