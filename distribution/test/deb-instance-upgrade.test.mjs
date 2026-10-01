@@ -15,8 +15,13 @@ test("Debian payload replacement leaves independently selected persistent releas
   const packageRoot = join(distribution, ".tmp/deb-root");
   const toolsPath = join(root, "tools");
   await mkdir(toolsPath);
-  // Permit the macOS port probe while keeping systemctl/account tools unavailable.
+  // Permit genuine port/lock probes while keeping systemctl/account tools unavailable.
   if (process.platform === "darwin") await symlink("/usr/sbin/lsof", join(toolsPath, "lsof"));
+  if (process.platform === "linux") {
+    await symlink("/usr/bin/flock", join(toolsPath, "flock"));
+    // The lock holder uses cat to wait for EOF from the installing process.
+    await symlink("/bin/cat", join(toolsPath, "cat"));
+  }
   const environment = {...process.env, PATH: toolsPath, ZELAVIS_PREFIX: prefix, ZELAVIS_DATA_DIR: join(root, "host/data"), ZELAVIS_UNINSTALL_ETC_DIR: join(root, "host/config"), ZELAVIS_BIN_DIR: join(root, "host/bin"), ZELAVIS_UNINSTALL_SYSTEM_BIN: join(root, "host/usr/bin/zelavis"), ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR: join(root, "host/units/etc"), ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR: join(root, "host/units/lib"), ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR: join(root, "host/units/usr"), ZELAVIS_UNINSTALL_APT_SOURCE: join(root, "host/apt/zelavis.sources"), ZELAVIS_UNINSTALL_APT_KEYRING: join(root, "host/keys/zelavis-archive-keyring.gpg")};
   async function unpack(version) {
     const stage = join(root, `stage-${version}`);
