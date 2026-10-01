@@ -1122,6 +1122,15 @@ private Node runtime, but must not introduce a second Platform implementation or
 install over the host's global Node runtime. Keep generated release trees,
 download caches, and artifacts out of Git.
 
+Native release installation is host-local too: archive installers and Debian
+`postinst` call `zelavis install --from-release` using the release's private
+Node. Keep the ordered plan in core runtime and concrete host operations in
+adapters; unit/configuration templates come from the release tree, and runtime
+pins/checksums remain in distribution staging. Native Platform units bind to
+`127.0.0.1` by default; `--public` deliberately opts into all interfaces.
+Package acquisition, changing the create command, singleton locks and named
+instances remain planned. Never add an installation HTTP/dashboard route.
+
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in
 core runtime, concrete filesystem/process/package behavior belongs in the host

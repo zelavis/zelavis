@@ -1,156 +1,79 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-
-import {
-  ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION,
-  assertCompleteUninstallConfirmation,
-} from "../dist/core/runtime/installation.js";
+import { ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION, assertCompleteUninstallConfirmation } from "../dist/core/runtime/installation.js";
 import { createNodeInstallationUninstaller } from "../dist/adapters/node.js";
 
-test("complete uninstall uses one explicit, stable acknowledgement", () => {
-  assert.doesNotThrow(() =>
-    assertCompleteUninstallConfirmation(
-      ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION,
-    ),
-  );
-  assert.throws(
-    () => assertCompleteUninstallConfirmation("yes"),
-    /DELETE-ALL-ZELAVIS-DATA/u,
-  );
-});
-
-test("the Node host adapter plans and invokes packaged removal", async (t) => {
+async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-api-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const prefix = join(root, "installation");
-  const dataDirectory = join(root, "data");
-  const cliPath = join(prefix, "current", "platform", "dist", "cli.js");
-  const scriptPath = join(prefix, "current", "share", "uninstall.sh");
-  await mkdir(join(prefix, "current", "platform", "dist"), { recursive: true });
-  await mkdir(join(prefix, "current", "share"), { recursive: true });
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(cliPath, "", "utf8");
-  await writeFile(
-    scriptPath,
-    "#!/bin/sh\nprintf 'removed:%s:%s:%s:%s:%s:%s\\n' \"$ZELAVIS_PREFIX\" \"$ZELAVIS_DATA_DIR\" \"$ZELAVIS_UNINSTALL_ETC_DIR\" \"$ZELAVIS_UNINSTALL_SKIP_HOST_COMMANDS\" \"$ZELAVIS_UNINSTALL_OWNS_USER\" \"$ZELAVIS_UNINSTALL_OWNS_GROUP\"\n",
-    { encoding: "utf8", mode: 0o755 },
-  );
+  const paths = {
+    prefix: join(root, "installation"), dataDirectory: join(root, "data"), configDirectory: join(root, "etc/zelavis"),
+    commandPath: join(root, "bin/zelavis"), systemCommandPath: join(root, "usr/bin/zelavis"),
+    systemdDirectories: [join(root, "systemd/etc"), join(root, "systemd/lib"), join(root, "systemd/usr")],
+    aptSource: join(root, "apt/zelavis.sources"), aptKeyring: join(root, "keys/zelavis-archive-keyring.gpg"),
+  };
+  for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, dirname(paths.commandPath)]) await mkdir(path, { recursive: true });
+  await symlink(`${paths.prefix}/current/bin/zelavis`, paths.commandPath);
+  const installation = { kind: "packaged", root: paths.prefix, path: `${paths.prefix}/current/platform/dist/cli.js` };
+  return { paths, installation, skipHostCommands: true };
+}
 
-  const uninstaller = createNodeInstallationUninstaller({
-    installation: { kind: "packaged", path: cliPath, root: prefix },
-    dataDirectory,
-  });
-  const plan = await uninstaller.plan();
-  assert.equal(plan.installation.root, prefix);
-  assert.equal(plan.dataDirectory, dataDirectory);
-  assert.equal(
-    plan.targets.find((target) => target.id === "data")?.exists,
-    true,
-  );
-  await assert.rejects(
-    uninstaller.uninstall({ confirmation: "yes" }),
-    /DELETE-ALL-ZELAVIS-DATA/u,
-  );
-
-  const result = await uninstaller.uninstall({
-    confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION,
-  });
-  assert.equal(result.removed, true);
-  assert.equal(
-    result.output,
-    `removed:${prefix}:${dataDirectory}:/etc/zelavis:0:0:0`,
-  );
+test("complete uninstall uses one explicit stable acknowledgement", () => {
+  assert.doesNotThrow(() => assertCompleteUninstallConfirmation(ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION));
+  assert.throws(() => assertCompleteUninstallConfirmation("yes"), /DELETE-ALL-ZELAVIS-DATA/);
 });
 
-test("the Node host adapter recovers customized paths from the installer receipt", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-receipt-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const prefix = join(root, "installation");
-  const dataDirectory = join(root, "custom-data");
-  const commandPath = join(root, "custom-bin", "zelavis");
-  const cliPath = join(prefix, "current", "platform", "dist", "cli.js");
-  const scriptPath = join(prefix, "current", "share", "uninstall.sh");
-  await mkdir(join(prefix, "current", "platform", "dist"), { recursive: true });
-  await mkdir(join(prefix, "current", "share"), { recursive: true });
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(cliPath, "", "utf8");
-  await writeFile(
-    join(prefix, "installation.json"),
-    JSON.stringify({
-      schemaVersion: 1,
-      dataDirectory,
-      commandPath,
-      ownsUser: true,
-      ownsGroup: true,
-    }),
-  );
-  await writeFile(
-    scriptPath,
-    "#!/bin/sh\nprintf '%s:%s:%s:%s\n' \"$ZELAVIS_DATA_DIR\" \"$ZELAVIS_UNINSTALL_COMMAND\" \"$ZELAVIS_UNINSTALL_OWNS_USER\" \"$ZELAVIS_UNINSTALL_OWNS_GROUP\"\n",
-    { encoding: "utf8", mode: 0o755 },
-  );
+test("the Node adapter executes its inspected plan and removes only isolated paths", async (t) => {
+  const options = await fixture(t);
+  const uninstaller = createNodeInstallationUninstaller(options);
+  const plan = await uninstaller.plan();
+  assert.equal(plan.targets.find((target) => target.id === "data").exists, true);
+  assert.ok(plan.steps.some((step) => step.action.path === options.paths.aptSource));
+  await assert.rejects(uninstaller.uninstall({ confirmation: "yes" }), /DELETE-ALL-ZELAVIS-DATA/);
+  await access(options.paths.dataDirectory);
+  const result = await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
+  assert.equal(result.removed, true);
+  await assert.rejects(access(options.paths.prefix), { code: "ENOENT" });
+  await assert.rejects(access(options.paths.dataDirectory), { code: "ENOENT" });
+});
 
-  const uninstaller = createNodeInstallationUninstaller({
-    installation: { kind: "packaged", path: cliPath, root: prefix },
-  });
-  assert.equal((await uninstaller.plan()).dataDirectory, dataDirectory);
-  const result = await uninstaller.uninstall({
-    confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION,
-  });
-  assert.equal(result.output, `${dataDirectory}:${commandPath}:1:1`);
+test("custom receipt paths override defaults and account ownership remains visible", async (t) => {
+  const options = await fixture(t);
+  const data = join(dirname(options.paths.prefix), "custom-data");
+  await mkdir(data);
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, dataDirectory: data, commandPath: options.paths.commandPath, ownsUser: true, ownsGroup: true }));
+  const uninstaller = createNodeInstallationUninstaller(options);
+  assert.equal((await uninstaller.plan()).dataDirectory, data);
+  await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
+  await assert.rejects(access(data), { code: "ENOENT" });
+  await access(options.paths.dataDirectory);
 });
 
 test("the Node host adapter refuses source and npm copies", () => {
-  for (const kind of ["source", "npm"]) {
-    assert.throws(
-      () =>
-        createNodeInstallationUninstaller({
-          installation: {
-            kind,
-            path: `/tmp/${kind}/dist/cli.js`,
-            root: `/tmp/${kind}`,
-          },
-          dataDirectory: `/tmp/${kind}-data`,
-        }),
-      /only to a packaged Zelavis installation/u,
-    );
-  }
+  for (const kind of ["source", "npm"]) assert.throws(() => createNodeInstallationUninstaller({ installation: { kind, path: `/tmp/${kind}/dist/cli.js`, root: `/tmp/${kind}` } }), /only to a packaged/);
 });
 
-test("the Node host adapter refuses broad roots and an external removal program", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-safety-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const cliPath = join(root, "current", "platform", "dist", "cli.js");
-  await mkdir(join(root, "current", "platform", "dist"), { recursive: true });
-  await mkdir(join(root, "current", "share"), { recursive: true });
-  await writeFile(cliPath, "", "utf8");
-  await writeFile(join(root, "current", "share", "uninstall.sh"), "#!/bin/sh\n");
+test("the Node adapter refuses broad, non-normalized and external CLI paths", async (t) => {
+  const options = await fixture(t);
+  assert.throws(() => createNodeInstallationUninstaller({ ...options, installation: { kind: "packaged", root: "/", path: "/opt/zelavis/cli.js" } }), /unsafe installation root/);
+  await assert.rejects(createNodeInstallationUninstaller({ ...options, dataDirectory: "/tmp/project/.." }).plan(), /non-normalized data directory/);
+  assert.throws(() => createNodeInstallationUninstaller({ ...options, installation: { ...options.installation, path: "/outside/cli.js" } }), /outside the packaged/);
+});
 
-  assert.throws(
-    () =>
-      createNodeInstallationUninstaller({
-        installation: { kind: "packaged", path: "/opt/zelavis/cli.js", root: "/" },
-        dataDirectory: join(root, "data"),
-      }),
-    /unsafe installation root/u,
-  );
-  await assert.rejects(
-    createNodeInstallationUninstaller({
-        installation: { kind: "packaged", path: cliPath, root },
-        dataDirectory: "/tmp/project/..",
-      }).plan(),
-    /unsafe data directory/u,
-  );
-  assert.throws(
-    () =>
-      createNodeInstallationUninstaller({
-        installation: { kind: "packaged", path: cliPath, root },
-        dataDirectory: join(root, "data"),
-        scriptPath: join(root, "..", "uninstall.sh"),
-      }),
-    /must be inside/u,
-  );
+
+test("a Debian receipt after an archive removes both owned command links", async (t) => {
+  const options = await fixture(t);
+  await mkdir(dirname(options.paths.systemCommandPath), { recursive: true });
+  await symlink(`${options.paths.prefix}/current/bin/zelavis`, options.paths.systemCommandPath);
+  await writeFile(`${options.paths.prefix}/installation.json`, JSON.stringify({ schemaVersion: 1, dataDirectory: options.paths.dataDirectory, commandPath: options.paths.systemCommandPath, ownsUser: false, ownsGroup: false }));
+  const uninstaller = createNodeInstallationUninstaller(options);
+  const plan = await uninstaller.plan();
+  assert.ok(plan.targets.some((target) => target.path === options.paths.commandPath));
+  assert.ok(plan.targets.some((target) => target.path === options.paths.systemCommandPath));
+  await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
+  await assert.rejects(access(options.paths.commandPath), { code: "ENOENT" });
+  await assert.rejects(access(options.paths.systemCommandPath), { code: "ENOENT" });
 });

@@ -44,16 +44,17 @@ test("the Debian package manages Traefik unit, conffiles, and leaves it disabled
   assert.match(builder, /zelavis-traefik\.service/);
   assert.match(builder, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
   assert.match(builder, /conffiles.*\/etc\/zelavis\/edge\/traefik\/traefik\.yml/s);
-  assert.match(builder, /systemctl disable zelavis-traefik\.service/);
+  assert.match(builder, /cli\.js install --from-release/);
+  const plan = await readFile(new URL("../../packages/zelavis/src/core/runtime/installation-plan.ts", import.meta.url), "utf8");
+  assert.match(plan, /\["disable", "zelavis-traefik\.service"\]/);
   assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
 });
 
-test("the archive installer sets up Traefik unit and leaves it disabled by default", async () => {
+test("archive bootstrap delegates all host setup to the staged CLI", async () => {
   const installer = await readFile(new URL("installers/archive-install.sh", distribution), "utf8");
-  assert.match(installer, /zelavis-traefik\.service/);
-  assert.match(installer, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
-  assert.match(installer, /\$DATA_DIR\/edge\/traefik\/active/);
-  assert.match(installer, /systemctl disable zelavis-traefik\.service/);
+  assert.match(installer, /runtime\/node\/bin\/node/);
+  assert.match(installer, /platform\/dist\/cli\.js.*install --from-release/);
+  assert.doesNotMatch(installer, /systemctl|useradd|randomBytes/);
 });
 
 test("install and packaging shell scripts have valid syntax", () => {
@@ -80,18 +81,17 @@ test("the Debian package installs the native WordPress host stack", async () => 
   for (const dependency of ["nginx", "php-fpm", "php-mysql", "mariadb-server-core", "mariadb-client-core"]) {
     assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
   }
-  assert.match(builder, /ownsUser: previous\.ownsUser === true/u);
-  assert.match(builder, /ownsGroup: previous\.ownsGroup === true/u);
-  assert.match(builder, /randomBytes\(32\)/u);
-  assert.match(builder, /\/etc\/zelavis\/zelavis\.env/u);
+  assert.match(builder, /cli\.js install --from-release/u);
+  assert.match(builder, /"releases", manifest.version/u);
 });
 
 test("the Platform service reads installer-generated first-run configuration", async () => {
   const unit = await readFile(new URL("runtime/zelavis.service", distribution), "utf8");
   assert.match(unit, /^EnvironmentFile=-\/etc\/zelavis\/zelavis\.env$/m);
-  const archiveInstaller = await readFile(new URL("installers/archive-install.sh", distribution), "utf8");
-  assert.match(archiveInstaller, /randomBytes\(32\)/u);
-  assert.match(archiveInstaller, /First-run bootstrap token/u);
+  assert.match(unit, /--host 127\.0\.0\.1/u);
+  const host = await readFile(new URL("../../packages/zelavis/src/adapters/_install-host.ts", import.meta.url), "utf8");
+  assert.match(host, /randomBytes\(32\)/u);
+  assert.match(host, /First-run bootstrap token/u);
 });
 
 test("the quick archive installer verifies its payload", async () => {

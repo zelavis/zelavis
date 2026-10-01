@@ -93,6 +93,33 @@ Installing through `apt install ./<package>.deb` rather than `dpkg` directly
 allows the system package manager to verify dependencies and maintain package
 database integrity.
 
+## One host-local native installation plan
+
+Archive installers and Debian `postinst` run `zelavis install --from-release`
+with the staged release's private Node. The TypeScript command computes an
+ordered plan with each step's idempotence; dry-run and execution use that same inventory. It reads
+unit templates, Edge configuration and operation trust from the release tree.
+It has no HTTP/dashboard route: installation is local host maintenance.
+
+For an extracted archive, inspect and execute the plan:
+
+```bash
+sudo ./install.sh --dry-run
+sudo ./install.sh
+```
+
+The equivalent local command is `zelavis install --from-release
+/absolute/path/to/release`. `--json` provides machine-readable output,
+`--force` deliberately replaces a foreign command link, and
+`--allow-downgrade` permits an older release. Existing tokens, trust and Edge
+configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
+`current` selecting the active one; previous archive releases are retained.
+Downtime-free blue/green updates remain [planned](../../architecture/updates/).
+
+The create command still scaffolds a folder today. Unifying it with this
+installer, package acquisition, user mode, singleton locks, doctor and named
+instances remain planned.
+
 ## Manual release archive (.tar.gz)
 
 The standalone `.tar.gz` and `.zip` archives are self-contained and suitable for
@@ -110,7 +137,8 @@ sudo ZELAVIS_ENABLE_AGENT=1 ./install.sh
 
 The installer places versioned releases under `/opt/zelavis/releases/<version>`,
 symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis`,
-creates the dedicated `zelavis` system user, and enables the systemd services.
+creates the dedicated `zelavis` system user, and enables the Platform unit.
+The Agent is opt-in and Traefik remains disabled until Edge activates routes.
 
 ## npm (Self-managed Node runtime)
 
@@ -142,14 +170,16 @@ to `~/.local/share/zelavis` for user-run npm processes.
 ## First-Run Setup & Ownership Claim
 
 When Zelavis finishes installing, it starts its HTTP service listener at
-`http://0.0.0.0:3000` (listening on port 3000).
+`http://127.0.0.1:3000` (port 3000 on loopback). Use the SSH tunnel below for
+remote browser access. Passing `--public` to the archive installer deliberately
+writes a unit that binds to all interfaces; rerunning without it restores loopback.
 
 Public web ports (`80` and `443`) intentionally remain dormant during first install:
 Zelavis never hijacks public HTTP/HTTPS ports before you have explicitly configured
 your domain and verified DNS.
 
 A one-time **bootstrap token** is generated during installation and printed in
-your terminal output (also saved in `/var/lib/zelavis/system/bootstrap.token` with
+your terminal output (also saved in `/etc/zelavis/zelavis.env` with
 strict `0600` permissions).
 
 You have two primary ways to access the graphical onboarding wizard, plus an
@@ -157,15 +187,14 @@ interactive terminal option:
 
 ### Option A: Direct Browser Access (Without SSH Tunnel)
 
-If your server's cloud firewall allows inbound traffic on port 3000 (which is the
-default on new cloud instances like Hetzner CX22 unless an external firewall profile
-is attached):
+If you deliberately installed with `sudo ./install.sh --public` and your
+firewall permits inbound traffic on port 3000:
 
 1. Open your browser and navigate directly to:
    ```text
    http://<your-server-ip>:3000/zelavis/setup
    ```
-2. Paste the **bootstrap token** from `/var/lib/zelavis/system/bootstrap.token`.
+2. Paste the **bootstrap token** from `/etc/zelavis/zelavis.env`.
 3. Enter your administrator email and password to claim the **Owner** account.
 4. In the **Edge Onboarding** step, enter your domain name (e.g. `app.example.com` or `example.com`).
    Make sure your domain's DNS A/AAAA record points to your server's public IP.
@@ -181,9 +210,7 @@ is attached):
 
 ### Option B: Secure Access via SSH Port Forwarding (With SSH Tunnel)
 
-Use an SSH tunnel if port 3000 is blocked by a cloud firewall, or if you prefer not
-transmitting initial setup credentials over unencrypted HTTP over the public internet
-before TLS is active:
+Use an SSH tunnel for the default loopback listener:
 
 1. On your **local machine**, open an SSH tunnel using your preferred SSH authentication method:
 
@@ -215,7 +242,7 @@ before TLS is active:
    ```text
    http://localhost:3000/zelavis/setup
    ```
-3. Enter the **bootstrap token** from `/var/lib/zelavis/system/bootstrap.token` and configure your Owner credentials.
+3. Enter the **bootstrap token** from `/etc/zelavis/zelavis.env` and configure your Owner credentials.
 4. Select **Managed TLS** and provide your domain.
 5. When the wizard confirms your domain is live and certificates are active, close
    the SSH tunnel (`Ctrl+C` or exit the SSH session).
@@ -261,7 +288,13 @@ sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 
 This:
 - Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
-- Removes `/opt/zelavis`, `/usr/local/bin/zelavis`, and systemd unit files.
+- Removes `/opt/zelavis`, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
 - Removes configuration, signed host operations, and certificates.
 - Completely deletes `/var/lib/zelavis`, including all project databases and runtimes.
-- Removes the `zelavis` system account.
+- Removes the Zelavis APT source/key and Debian package records when present.
+- Removes the `zelavis` user/group only when the receipt records installer ownership and their current properties are safe.
+
+Shared host packages, journal history, external archives/backups and
+operator-managed proxy/firewall/DNS/TLS state are retained. Complete uninstall
+has no remote HTTP/dashboard route. npm/source copies use their originating
+package manager or development lifecycle.

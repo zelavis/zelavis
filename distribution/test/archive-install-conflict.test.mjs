@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { stageCli } from "./staged-cli.mjs";
+
 const installer = fileURLToPath(
   new URL("../installers/archive-install.sh", import.meta.url),
 );
@@ -32,6 +34,7 @@ async function stage(t) {
   // The script derives its source directory from its own location, because it
   // ships inside the archive it installs. Copy it in rather than running it
   // from the repository, so the test exercises the shipped arrangement.
+  await stageCli(source);
   const script = join(source, "archive-install.sh");
   await copyFile(installer, script);
   return {
@@ -145,4 +148,17 @@ test("ZELAVIS_FORCE_BIN replaces it deliberately", async (t) => {
     await readlink(join(tree.binDir, "zelavis")),
     join(tree.prefix, "current", "bin", "zelavis"),
   );
+});
+
+
+test("release copies preserve relative dependency links after the extracted tree is removed", async (t) => {
+  const tree = await stage(t);
+  await mkdir(join(tree.source, "platform", "dependencies"), { recursive: true });
+  await writeFile(join(tree.source, "platform", "dependencies", "value"), "dependency");
+  await symlink("dependencies/value", join(tree.source, "platform", "relative-dependency"));
+  const result = install(tree);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readlink(join(tree.prefix, "current", "platform", "relative-dependency")), "dependencies/value");
+  await rm(tree.source, { recursive: true, force: true });
+  assert.equal(await readFile(join(tree.prefix, "current", "platform", "relative-dependency"), "utf8"), "dependency");
 });

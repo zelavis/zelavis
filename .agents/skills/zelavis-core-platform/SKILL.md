@@ -121,6 +121,13 @@ before editing.
   installer-owned resources and retain shared host/operator state. When an
   installer starts owning a new resource, update the uninstall inventory,
   staged script, destructive-path tests, and docs together.
+- Native release installation has the same host-local boundary. Archive
+  installers and Debian `postinst` call `zelavis install --from-release` with
+  the release's private Node. Keep planning in core runtime, host effects in
+  adapters, unit/configuration templates in the release tree, and pins/checksums
+  in distribution staging. Default native units to `127.0.0.1`; `--public` is
+  the explicit all-interface opt-in. Package acquisition, create-command
+  replacement, singleton locks and named instances are later phases.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
   dashboard `/setup` route must call the same endpoint and must not introduce

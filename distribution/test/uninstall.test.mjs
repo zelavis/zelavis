@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   access,
+  copyFile,
   mkdir,
   mkdtemp,
   readlink,
@@ -13,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import { stageCli } from "./staged-cli.mjs";
 
 const script = fileURLToPath(
   new URL("../installers/uninstall.sh", import.meta.url),
@@ -65,12 +68,20 @@ async function installation(t) {
     await writeFile(join(directory, "zelavis-agent.service"), "unit");
     await writeFile(join(directory, "zelavis-traefik.service"), "unit");
   }
+  const release = join(paths.prefix, "current");
+  await stageCli(release);
+  await mkdir(join(release, "runtime/node/bin"), { recursive: true });
+  await symlink(process.execPath, join(release, "runtime/node/bin/node"));
+  await mkdir(join(release, "share"), { recursive: true });
+  const stagedScript = join(release, "share/uninstall.sh");
+  await copyFile(script, stagedScript);
   const command = join(paths.bin, "zelavis");
   await symlink(join(paths.prefix, "current", "bin", "zelavis"), command);
 
   return {
     paths,
     command,
+    script: stagedScript,
     env: {
       ...process.env,
       ZELAVIS_PREFIX: paths.prefix,
@@ -88,16 +99,16 @@ async function installation(t) {
   };
 }
 
-function run(args, env) {
-  return spawnSync("sh", [script, ...args], {
+function run(args, fixture) {
+  return spawnSync("sh", [fixture.script, ...args], {
     encoding: "utf8",
-    env,
+    env: fixture.env,
   });
 }
 
 test("complete uninstall dry-run lists scope and changes nothing", async (t) => {
   const fixture = await installation(t);
-  const result = run(["--dry-run"], fixture.env);
+  const result = run(["--dry-run"], fixture);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Complete Zelavis uninstall plan/u);
   assert.equal(await exists(fixture.paths.data), true);
@@ -106,7 +117,7 @@ test("complete uninstall dry-run lists scope and changes nothing", async (t) => 
 
 test("complete uninstall refuses without the exact acknowledgement", async (t) => {
   const fixture = await installation(t);
-  const result = run(["--confirm", "yes"], fixture.env);
+  const result = run(["--confirm", "yes"], fixture);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /DELETE-ALL-ZELAVIS-DATA/u);
   assert.equal(await exists(fixture.paths.prefix), true);
@@ -115,33 +126,33 @@ test("complete uninstall refuses without the exact acknowledgement", async (t) =
 test("complete uninstall refuses broad and non-normalized owned paths", async (t) => {
   const fixture = await installation(t);
   const broad = run(["--dry-run"], {
-    ...fixture.env,
+    ...fixture, env: { ...fixture.env,
     ZELAVIS_DATA_DIR: "/tmp",
-  });
+  } });
   assert.equal(broad.status, 1);
   assert.match(broad.stderr, /unsafe data directory/u);
 
   const nonNormalized = run(["--dry-run"], {
-    ...fixture.env,
+    ...fixture, env: { ...fixture.env,
     ZELAVIS_DATA_DIR: `${fixture.paths.data}/../data`,
-  });
+  } });
   assert.equal(nonNormalized.status, 1);
   assert.match(nonNormalized.stderr, /non-normalized data directory/u);
 
   const foreignAptFile = run(["--dry-run"], {
-    ...fixture.env,
+    ...fixture, env: { ...fixture.env,
     ZELAVIS_UNINSTALL_APT_SOURCE: join(
       dirname(fixture.paths.aptSource),
       "other.sources",
     ),
-  });
+  } });
   assert.equal(foreignAptFile.status, 1);
   assert.match(foreignAptFile.stderr, /name is not zelavis\.sources/u);
 
   const invalidOwnership = run(["--dry-run"], {
-    ...fixture.env,
+    ...fixture, env: { ...fixture.env,
     ZELAVIS_UNINSTALL_OWNS_USER: "maybe",
-  });
+  } });
   assert.equal(invalidOwnership.status, 1);
   assert.match(invalidOwnership.stderr, /invalid installer account ownership/u);
   assert.equal(await exists(fixture.paths.data), true);
@@ -151,7 +162,7 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
   const fixture = await installation(t);
   const result = run(
     ["--confirm", "DELETE-ALL-ZELAVIS-DATA"],
-    fixture.env,
+    fixture,
   );
   assert.equal(result.status, 0, result.stderr);
   for (const path of [
