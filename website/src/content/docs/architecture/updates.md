@@ -66,7 +66,7 @@ seconds:
   their state is stored, so reconnecting loses nothing.
 
 **4. Blue/green.** Releases live in versioned folders with a `current` link (the
-archive installer already lays them out this way), so the new version starts from
+shared installer already lays them out this way), so the new version starts from
 its own files while the old keeps running from its own. A `zelavis upgrade`
 command (and the Agent, as a signed host operation like the Edge ones) does:
 start the new release on another port, wait for `/ready`, move Edge to it, drain
@@ -81,10 +81,11 @@ separate from the above.
 
 - **Debian package or archive:** phases 1 and 4 apply fully. The package script
   today restarts the unit; it would start the new release instead.
-- **`npm create zelavis` project:** `npm update` rewrites `node_modules` under a
-  running process, which can break a lazy import in it. Update with the process
-  stopped; this install is for development and small hosts, where a half-second
-  restart is acceptable.
+- **`npm|pnpm|bun create zelavis`:** the same versioned release layout and private
+  Node as an archive. Rerunning installs or repairs the selected exact release;
+  system mode restarts the unit today. User mode requires stopping and restarting
+  `zelavis serve` yourself. `npm update` does not manage this installation.
+  Blue/green orchestration remains planned for both modes.
 - **Development:** a restart is fine, and `Ctrl-C` now waits for Projects to stop
   and releases their placements.
 

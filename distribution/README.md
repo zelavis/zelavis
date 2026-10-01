@@ -148,7 +148,8 @@ in this repository.
 - APT: install `zelavis-repository`, then `apt install zelavis`.
 - Direct Debian package: `apt install ./zelavis_<version>_<arch>.deb`.
 - Manual upload: extract `.tar.gz` or `.zip`, then run its `install.sh`.
-- npm: users who manage Node 24 themselves can run `npm install -g zelavis`.
+- npm/pnpm/Bun create: install the matching prebuilt release through the same
+  TypeScript command, in system or user mode.
 
 ## Host-local installation plan
 
@@ -156,8 +157,8 @@ The archive's `install.sh` and Debian `postinst` invoke the packaged
 `zelavis install --from-release <absolute-release-path>` command using the
 release's private Node. The runtime-neutral planner describes ordered steps with their idempotence; the Node host adapter executes those same steps. Unit files,
 Traefik configuration and operation trust are read from `share/` in that release,
-not embedded again in TypeScript. Downloads and runtime pins remain owned by
-`build-stage.mjs`; this phase adds no second download implementation.
+not embedded again in TypeScript. Runtime pins remain in `release.json`; staging and package acquisition share
+`distribution/scripts/runtime-assets.mjs`, shipped as a generated Platform asset.
 
 ```bash
 sudo ./install.sh --dry-run
@@ -174,11 +175,34 @@ Debian packages. Older versions are refused unless `--allow-downgrade` is given;
 previous archive releases are kept.
 
 Install and complete uninstall are host-local maintenance operations and have
-no HTTP/dashboard route. Package acquisition, changing `create-zelavis`, user
-mode, singleton locks, doctor and named instances are not implemented yet.
+no HTTP/dashboard route. Singleton locks, doctor and named instances remain
+planned.
 The quick installer's APT repository selection remains a bootstrap concern in
 this phase; both APT postinst and its archive branch delegate host setup to the
 same TypeScript command.
+
+## Package acquisition and user mode
+
+`zelavis install --from package --version <exact-version>` uses npm metadata to
+identify the release and verifies its prebuilt archive against the release's
+`SHA256SUMS`. The production dependencies, private pinned Node and templates
+are the ones staging built; installation needs no native compilation. The
+archive must exist for that exact version and OS/CPU. Published older alpha
+assets do not satisfy new create builds; publish matching archives and checksums
+alongside the packages. Installation never substitutes an older release.
+
+`npm|pnpm|bun create zelavis` is a machine installer with no folder argument.
+It prints the layout and exact command before running. Linux defaults to system
+mode with root/sudo; macOS and Linux without sudo default to user mode. The
+privileged bootstrap is literal shell code, not a path in the user's package
+cache, and fetches/verifies its own release before running its private Node.
+The one authored bootstrap is `installers/package-bootstrap.sh`.
+
+User mode (`--user`) keeps releases, `data/`, `config/` and `installation.json`
+under `~/.local/share/zelavis` and links `~/.local/bin/zelavis`. Configuration is
+private (0700 directory, 0600 environment/receipt). The launcher reads the token
+and data location and always requires the private Node; it never falls back to
+host Node. Run `zelavis serve` yourself. No systemd, Agent or Edge is enabled.
 
 ## Complete native uninstall
 
@@ -203,6 +227,11 @@ Project data, `/etc/zelavis`, the Zelavis APT source/key, and the dedicated
 system account when its properties prove it is installer-owned. It deliberately
 retains shared host dependencies, journal history, external archives/backups,
 and operator networking/TLS configuration.
+
+User-mode removal uses the same confirmation without sudo. Its inventory is the
+user prefix (all releases, data, configuration/token and receipt) and its owned
+command link. It performs no systemd, APT, package or account maintenance. Stop
+the user process before removal. Isolated destructive tests cover both modes.
 
 Any release change that adds installer-owned state must update the uninstall
 inventory, its isolated destructive-path test, and the public installation

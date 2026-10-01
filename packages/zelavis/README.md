@@ -317,18 +317,19 @@ external admin clients can perform the same work.
 
 ## Install and run
 
-Developers who already manage Node 24 can install the public package directly:
+Install Zelavis on this machine with a private Node runtime:
 
 ```bash
-npm install --global zelavis
-zelavis serve
+npm create zelavis@latest -- --yes
+# For user mode: npm create zelavis@latest -- --user --yes
+# Then run: zelavis serve
 ```
 
 Production archives and operating-system packages carry a private pinned Node
 runtime, so they do not require or modify the server's global Node installation.
 The public command is the same in every delivery format. By default it listens
-on `127.0.0.1:3000`, stores Platform state in `.zelavis`, and serves the
-dashboard at `/zelavis`.
+on `127.0.0.1:3000` and serves the dashboard at `/zelavis`. System data lives
+in `/var/lib/zelavis`; user data lives in `~/.local/share/zelavis/data`.
 
 ```bash
 zelavis serve --host 0.0.0.0 --port 3000 --data-dir /var/lib/zelavis
@@ -349,10 +350,16 @@ sudo zelavis install --from-release /absolute/path/to/extracted-release
 Units and configuration come from the release tree; the service uses its private
 Node and binds to `127.0.0.1:3000`. Use an SSH tunnel to reach a remote host, or
 explicitly pass `--public` to bind to all interfaces. Existing bootstrap tokens
-and trust configuration are preserved. Package acquisition and the replacement
-of the folder create command remain planned.
+and trust configuration are preserved. `zelavis install --from package --version
+<exact-version>` verifies npm metadata and the matching prebuilt archive before
+using the same plan; a matching archive must be published. Create takes no
+folder argument. User mode installs no systemd, Agent or Edge. Singleton locks,
+doctor and named instances remain planned.
 
-Native packaged installations also expose a host-local complete-removal flow:
+Native packaged installations, including create installs, expose a host-local complete-removal flow:
+
+For user mode, omit sudo: removal deletes the user prefix, private environment,
+data, receipt and owned command link, and retains system state.
 
 ```bash
 sudo zelavis uninstall --all --dry-run

@@ -2,7 +2,7 @@
   "name": "create-zelavis",
   "version": "0.1.0-alpha.2",
   "private": false,
-  "description": "Create a Zelavis Platform in a new folder: npm create zelavis",
+  "description": "Install Zelavis on this machine: npm create zelavis",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",

@@ -163,8 +163,8 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json",
-    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json",
+    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && node scripts/copy-installation-assets.mjs",
+    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/app build && tsc -p tsconfig.json && node scripts/copy-installation-assets.mjs",
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",

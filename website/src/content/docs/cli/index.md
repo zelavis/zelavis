@@ -6,15 +6,15 @@ The public `zelavis` command starts and operates the long-running Platform OS.
 Its endpoint-backed command implementation is `zelavis/cli`, importable on its
 own for tooling that wants the commands without the binary.
 
-Install the Platform package to get the complete command, including `serve`:
+Install the Platform on this machine to get the complete command, including `serve`:
 
 ```bash
-npm install --global zelavis
+npm create zelavis@latest -- --yes
 zelavis --help
 ```
 
-Operating-system packages expose the same executable without requiring a global
-Node installation:
+All installed release formats use a private Node. In user mode, start the
+Platform yourself:
 
 ```bash
 zelavis serve

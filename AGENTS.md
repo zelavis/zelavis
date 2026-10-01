@@ -1128,8 +1128,13 @@ Node. Keep the ordered plan in core runtime and concrete host operations in
 adapters; unit/configuration templates come from the release tree, and runtime
 pins/checksums remain in distribution staging. Native Platform units bind to
 `127.0.0.1` by default; `--public` deliberately opts into all interfaces.
-Package acquisition, changing the create command, singleton locks and named
-instances remain planned. Never add an installation HTTP/dashboard route.
+Package acquisition and npm/pnpm/Bun create use the matching verified prebuilt
+release and the same plan. Create takes no folder argument. Its sudo bootstrap
+fetches and verifies a private root-owned release; never execute a file from a
+user package cache as root. User mode keeps data/config/releases under
+`~/.local/share/zelavis` and owns only that prefix and its command link. Runtime
+pins/checksum helpers have one source in distribution; package assets are generated
+at build time. Singleton locks, doctor and named instances remain planned. Never add an installation HTTP/dashboard route.
 
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in
