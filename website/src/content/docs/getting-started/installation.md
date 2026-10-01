@@ -24,9 +24,11 @@ and the default services (Zelavis App, Auth, Marketplace) ship inside that one
 package at the same version as the Platform, so there is nothing else to install.
 
 The `services/` folder is yours and is tracked in git: the Platform loads services
-from it, and the marketplace installs into it. A service dropped in there with the
-same name as a default one takes its place. Services must be self-contained; the
-Platform does not install a service's own dependencies.
+from it, and the marketplace installs into it. The default services cannot be
+replaced from there: the Platform refuses a service that takes the name of a default
+one, so a stray package cannot stand in for login. Services must be self-contained;
+the Platform does not install a service's own dependencies, except that `zelavis`
+and `effect` always come from the Platform.
 
 ```bash
 cd my-platform

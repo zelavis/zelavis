@@ -14,7 +14,7 @@ import {
   renameSync,
   statSync,
 } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -636,6 +636,46 @@ const materializePackage = Effect.fn("materializePackage")(function* (
 
   return packageDirectory;
 });
+
+/**
+ * Removes what the registry no longer points at from a services folder.
+ *
+ * An installed package lives in `packages/<digest>`, so each update leaves the
+ * previous version behind and an uninstall leaves the package. Done once, at
+ * start, because nothing is loaded then: a folder deleted under a running
+ * service would break a lazy import it makes later. `.tmp` holds installs that
+ * were interrupted. Anything that cannot be read as a registry is left alone.
+ */
+export async function pruneServicePackages(options: {
+  readonly directory: string;
+  readonly referencedSpecifiers: readonly string[];
+}): Promise<{ readonly removed: readonly string[] }> {
+  const root = resolve(options.directory);
+  const packages = join(root, "packages");
+  const referenced = new Set<string>();
+  for (const specifier of options.referencedSpecifiers) {
+    if (!isAbsolute(specifier)) continue;
+    const relativePath = relative(packages, specifier);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) continue;
+    const digest = relativePath.split(sep)[0];
+    if (digest) referenced.add(digest);
+  }
+
+  const removed: string[] = [];
+  if (existsSync(packages)) {
+    for (const entry of await readdir(packages, { withFileTypes: true })) {
+      if (!entry.isDirectory() || referenced.has(entry.name)) continue;
+      await rm(join(packages, entry.name), { recursive: true, force: true });
+      removed.push(join("packages", entry.name));
+    }
+  }
+  const temporary = join(root, ".tmp");
+  if (existsSync(temporary)) {
+    await rm(temporary, { recursive: true, force: true });
+    removed.push(".tmp");
+  }
+  return { removed };
+}
 
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
@@ -1785,6 +1825,19 @@ export async function createLocalServiceSources(
       console.warn(`Zelavis skipped product service "${name}": ${reason}`);
     },
   });
+
+  // What the registry no longer points at is removed, once, before anything is
+  // loaded. Best effort: a registry that cannot be read leaves everything in place.
+  if (input.systemStore) {
+    const store = input.systemStore;
+    void (async () => {
+      const entries = await createSystemStoreServiceRegistryStore(store).read();
+      await pruneServicePackages({
+        directory: productServiceDirectory,
+        referencedSpecifiers: entries.flatMap((entry) => (entry.specifier ? [entry.specifier] : [])),
+      });
+    })().catch(() => undefined);
+  }
 
   // Static frontends dropped into this runtime's services folder are served
   // from where they lie. Other bundles keep using the shared store.

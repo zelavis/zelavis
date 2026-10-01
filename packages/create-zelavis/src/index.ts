@@ -135,8 +135,9 @@ folder and started without a restart.
 
 The dashboard, the Zelavis App recipe, Auth and the Marketplace are default
 services. They come with the zelavis package, at the same version as the
-Platform, so they are not copied here and an update brings them along. A service
-in this folder with the same name takes their place.
+Platform, so they are not copied here and an update brings them along. They
+cannot be replaced from this folder: the Platform refuses a service that takes the
+name of a default one, so a stray package cannot stand in for login.
 
 A service must be self-contained: the Platform does not install a service's own
 dependencies. zelavis and effect come from the Platform.

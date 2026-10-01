@@ -784,6 +784,13 @@ export interface ZelavisServiceActivationRequest {
 export interface ZelavisServiceActivationResult {
   status: "active" | "pending";
   message?: string;
+  /**
+   * The change is live, but the Platform still holds the previous code in memory.
+   * ES modules cannot be unloaded: an update runs the new version straight away
+   * (it is a different folder, so a different module) and an uninstall stops the
+   * service, yet the old module stays loaded until the process restarts.
+   */
+  restartRecommended?: boolean;
 }
 
 export interface ZelavisServiceActivationCapabilities {
@@ -6950,12 +6957,17 @@ export class Zelavis {
               description:
                 "Recomposes the in-process Zelavis runtime graph after service registry changes.",
             },
-            activate: async () => {
+            activate: async (request) => {
               this.invalidateRuntime();
+              // An install adds code; an update or uninstall leaves the previous
+              // module loaded, which is worth saying.
+              const leavesCodeLoaded = request.action === "update" || request.action === "uninstall";
               return {
                 status: "active",
-                message:
-                  "Service registry state changed. Zelavis will recompose the runtime for the next request.",
+                message: leavesCodeLoaded
+                  ? `${request.serviceName} is ${request.action === "update" ? "updated" : "uninstalled"}. The previous code stays in memory until the Platform restarts; restart when convenient.`
+                  : "Service registry state changed. Zelavis will recompose the runtime for the next request.",
+                ...(leavesCodeLoaded ? { restartRecommended: true } : {}),
               };
             },
           },
