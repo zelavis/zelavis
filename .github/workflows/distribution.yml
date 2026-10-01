@@ -5,28 +5,41 @@ env:
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   workflow_dispatch:
   push:
     tags:
-      # `changeset publish` tags the root package as `zelavis@<version>`, and
-      # that is the only tag a release actually creates. Listening for `v*`
-      # alone meant the release path in use could never trigger this workflow:
-      # no artifacts, and no error either, because a tag that matches nothing
-      # simply does not start a run.
-      #
-      # `*` does not match `/`, so `zelavis@*` covers the root package without
-      # catching the scoped `@zelavis/<name>@<version>` tags — otherwise every
-      # plugin and adapter publish would build all four targets too.
-      #
-      # `v*` is kept so a hand-cut release tag still works.
-      - "v*"
       - "zelavis@*"
 
+concurrency:
+  group: distribution-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Validate release identity and required signing secrets
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATION_KEY: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY }}
+          OPERATION_KEY_ID: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY_ID }}
+          APT_KEY: ${{ secrets.ZELAVIS_GPG_SIGNING_KEY }}
+          APT_KEY_ID: ${{ secrets.ZELAVIS_GPG_KEY_ID }}
+        run: node distribution/scripts/release-context.mjs
+
   package:
+    needs: prepare
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -41,60 +54,125 @@ jobs:
           - target: darwin-arm64
             runner: macos-15
     runs-on: ${{ matrix.runner }}
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
-
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zip
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
+      - run: pnpm install --frozen-lockfile
       - name: Build the runtime used by distribution contracts
         run: pnpm --filter zelavis build
-
-      - name: Validate distribution contracts
-        run: pnpm distribution:test
-
+      - run: pnpm distribution:test
       - name: Build target-native release artifacts
         env:
-          # Host operations shipped in distribution/operations are signed with
-          # the release key. Tag builds must sign them; manual builds without
-          # the secret omit them rather than shipping unsigned operations.
           ZELAVIS_OPERATION_SIGNING_KEY: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY }}
           ZELAVIS_OPERATION_SIGNING_KEY_ID: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY_ID }}
           ZELAVIS_SKIP_UNSIGNED_OPERATIONS: ${{ startsWith(github.ref, 'refs/tags/') && '0' || '1' }}
-        run: pnpm distribution:build
-
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            pnpm distribution:build --version "$VERSION"
+          else
+            pnpm distribution:build
+          fi
       - name: Smoke-test packaged CLI
         shell: bash
         run: |
           distribution/.tmp/stage/bin/zelavis --version
           test "$(distribution/.tmp/stage/runtime/node/bin/node --version)" = "v$(node -p "require('./distribution/release.json').nodeVersion")"
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
           name: zelavis-${{ matrix.target }}
           path: distribution/artifacts/*
           if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
 
-      - name: Attach artifacts to GitHub Release
+  publish:
+    permissions:
+      contents: write
+    needs: [prepare, package]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: zelavis-*
+          path: distribution/.tmp/targets
+          merge-multiple: false
+      - name: Verify and consolidate all four targets
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node distribution/scripts/release-delivery.mjs collect distribution/.tmp/targets distribution/artifacts "$VERSION"
+      - name: Install APT publishing tools
+        if: startsWith(github.ref, 'refs/tags/')
+        run: sudo apt-get update && sudo apt-get install -y apt-utils dpkg-dev
+      - name: Build signed APT repository
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          ZELAVIS_GPG_SIGNING_KEY: ${{ secrets.ZELAVIS_GPG_SIGNING_KEY }}
+          ZELAVIS_GPG_KEY_ID: ${{ secrets.ZELAVIS_GPG_KEY_ID }}
+        shell: bash
+        run: |
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 0700 "$GNUPGHOME"
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+          printf '%s' "$ZELAVIS_GPG_SIGNING_KEY" | gpg --batch --import
+          sh distribution/scripts/build-apt-repository.sh
+          gpgv --keyring "$PWD/distribution/artifacts/apt/zelavis-archive-keyring.gpg" distribution/artifacts/apt/dists/stable/InRelease
+          gpgv --keyring "$PWD/distribution/artifacts/apt/zelavis-archive-keyring.gpg" distribution/artifacts/apt/dists/stable/Release.gpg distribution/artifacts/apt/dists/stable/Release
+          node distribution/scripts/build-repository-package.mjs
+          node distribution/scripts/build-checksums.mjs
+      - name: Prepare static public delivery roots
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            node distribution/scripts/release-delivery.mjs public distribution/artifacts distribution/.tmp/public "$VERSION" distribution/artifacts/apt
+          else
+            node distribution/scripts/release-delivery.mjs public distribution/artifacts distribution/.tmp/public "$VERSION"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zelavis-public-delivery
+          path: distribution/.tmp/public
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+      - name: Attach the complete verified release once
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: distribution/artifacts/*
+          files: |
+            distribution/artifacts/*.tar.gz
+            distribution/artifacts/*.zip
+            distribution/artifacts/*.deb
+            distribution/artifacts/SHA256SUMS
+          fail_on_unmatched_files: true
+          draft: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.prerelease == 'true' && 'false' || 'true' }}
+      - name: Publish the completed draft release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        shell: bash
+        run: |
+          if [[ "$PRERELEASE" == true ]]; then
+            gh release edit "$GITHUB_REF_NAME" --verify-tag --draft=false --prerelease --latest=false
+          else
+            gh release edit "$GITHUB_REF_NAME" --verify-tag --draft=false --prerelease=false --latest
+          fi

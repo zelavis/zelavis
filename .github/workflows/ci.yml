@@ -50,6 +50,12 @@ jobs:
       - name: Validate distribution contracts
         run: pnpm distribution:test
 
+      - name: Check docs and the public installer output
+        run: |
+          pnpm run docs:check
+          pnpm run website:typecheck
+          cmp distribution/installers/install.sh website/dist/install.sh
+
   ui:
     name: Dashboard e2e
     runs-on: ubuntu-latest

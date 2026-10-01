@@ -61,7 +61,6 @@ test("install and packaging shell scripts have valid syntax", () => {
   for (const path of [
     "installers/install.sh",
     "installers/archive-install.sh",
-    "installers/package-bootstrap.sh",
     "installers/uninstall.sh",
     "scripts/build-all.sh",
     "scripts/build-apt-repository.sh",
@@ -98,7 +97,7 @@ test("the Platform service reads installer-generated first-run configuration", a
 
 test("the quick archive installer verifies its payload", async () => {
   const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
-  assert.match(installer, /\.sha256/);
+  assert.match(installer, /SHA256SUMS/);
   assert.match(installer, /checksum verification failed/);
 });
 

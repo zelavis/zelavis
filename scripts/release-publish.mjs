@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -36,7 +36,7 @@ if (env.NPM_TOKEN) {
       "always-auth=true",
       "",
     ].join("\n"),
-    "utf8",
+    { encoding: "utf8", mode: 0o600 },
   );
 
   env.NPM_CONFIG_USERCONFIG = npmrcPath;
@@ -61,7 +61,9 @@ function run(command, args) {
   }
 
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    const error = new Error(`${command} exited with status ${result.status ?? 1}.`);
+    error.exitCode = result.status ?? 1;
+    throw error;
   }
 }
 
@@ -72,23 +74,38 @@ try {
 
   if (preState) {
     if (tag === "latest") {
-      console.error(
-        `Changesets prerelease mode is active with tag "${preState.tag}". Exit prerelease mode before publishing to latest.`,
-      );
-      process.exit(1);
+      throw new Error(`Changesets prerelease mode is active with tag "${preState.tag}". Exit prerelease mode before publishing to latest.`);
     }
 
     if (preState.tag !== tag) {
-      console.error(
-        `Changesets prerelease mode is active with tag "${preState.tag}", which does not match the requested publish tag "${tag}".`,
-      );
-      process.exit(1);
+      throw new Error(`Changesets prerelease mode is active with tag "${preState.tag}", which does not match the requested publish tag "${tag}".`);
     }
   } else if (tag !== "latest") {
     publishArgs.push("--tag", tag);
   }
 
+  // Tags must represent the files being published, including version changes.
+  run("git", ["diff", "--quiet"]);
+  run("git", ["diff", "--cached", "--quiet"]);
   run("pnpm", publishArgs);
+
+  // Push only the Platform's exact Changesets tag. That starts target-native
+  // distribution builds; scoped package tags and branch refs are never pushed.
+  const platform = JSON.parse(readFileSync(join(process.cwd(), "packages/zelavis/package.json"), "utf8"));
+  const releaseTag = `zelavis@${platform.version}`;
+  const capture = (command, args) => execFileSync(command, args, { encoding: "utf8", env }).trim();
+  if (capture("git", ["rev-parse", "HEAD"]) !== capture("git", ["rev-parse", "--verify", `refs/tags/${releaseTag}^{commit}`])) {
+    throw new Error(`Refusing to push a stale ${releaseTag}; the Platform tag must name this release commit.`);
+  }
+  const published = JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", "--registry=https://registry.npmjs.org"]));
+  if (published.name !== "zelavis" || published.version !== platform.version || !/^sha512-/.test(published["dist.integrity"] ?? "")) {
+    throw new Error("The exact Platform package is not available from npm; distribution was not requested.");
+  }
+  run("git", ["push", "origin", `refs/tags/${releaseTag}`]);
+  console.log(`Distribution requested for ${releaseTag}. Check its workflow before publishing the static delivery roots.`);
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = error.exitCode ?? 1;
 } finally {
   if (tempDir) {
     rmSync(tempDir, { recursive: true, force: true });

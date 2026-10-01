@@ -45,7 +45,7 @@ not on the installing host.
 For system mode, sudo runs literal bootstrap code that downloads and verifies
 its own release into a private root-owned temporary directory. It never runs a
 file from the invoking user's package cache as root. The bootstrap source is
-maintained once in `distribution/installers/package-bootstrap.sh` and copied
+maintained once in `distribution/installers/install.sh` and copied
 into the package at build time.
 
 The receipt identifies source `package`, entry `create`, version, mode and the

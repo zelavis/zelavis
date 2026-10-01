@@ -72,37 +72,56 @@ system user, and sets up systemd service units.
 Zero build dependencies are required on your server: no `git`, `node`, `pnpm`,
 or compilers are needed.
 
-```bash
-# Production server installation (enables Edge Agent & Traefik management)
-curl -fsSL https://raw.githubusercontent.com/zelavis/zelavis/main/distribution/installers/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
-```
-
-Or via the canonical short URL:
+The public bootstrap route and new signed release are being prepared. These
+commands require that route and a matching release to be published; older
+prereleases lack the unified installer’s assets.
 
 ```bash
-curl -fsSL https://zelavis.com/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
+# Current prerelease channel; an exact version can replace --channel alpha.
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
+
+# Unprivileged installation (also the default on macOS).
+curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user
 ```
 
-The packaged installation contains an isolated, private pinned Node runtime. It
-does not replace or interfere with the host's global Node installation. Setting
-`ZELAVIS_ENABLE_AGENT=1` ensures the Zelavis Edge Agent service (`zelavis-agent.service`)
-is enabled alongside the main Platform OS (`zelavis.service`), allowing automated
-Let's Encrypt TLS certificate issuance and reverse-proxy cutovers via Traefik.
+Place `--version <exact-version>` or `--channel alpha|latest` before installer
+flags. A channel is resolved once, then the bootstrap fetches only the matching
+versioned archive and checksum manifest. Missing assets fail explicitly. The
+default channel is `latest`; prerelease installation uses `alpha` deliberately.
+The archive is verified before its private Node calls `zelavis install` with all
+remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`.
+
+The runtime does not depend on the host’s Node. The Platform binds loopback by
+default; use the printed SSH tunnel for first-owner setup. The Agent is opt-in
+with `--enable-agent` on system installations and requires a qualified cgroup v2
+host. Traefik stays disabled at installation. Production Agent qualification and
+automated ACME/cutover reconciliation remain pending.
 
 ## Direct Debian / Ubuntu package (.deb)
 
 If you prefer managing packages natively with `apt`, download the `.deb` release
 matching your server CPU and install it:
 
-```bash
-# For x86_64 / amd64 servers (e.g. Hetzner CX22, standard cloud instances)
-curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_amd64.deb
-sudo apt install -y ./zelavis_1.0.1.alpha.2_amd64.deb
+Download the versioned `.deb` and `SHA256SUMS` from the same
+`zelavis@<exact-version>` GitHub Release, verify the checksum, then install the
+local package. The Debian version replaces a prerelease hyphen with `~`:
 
-# For ARM64 servers (e.g. AWS Graviton, Ampere)
-curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_arm64.deb
-sudo apt install -y ./zelavis_1.0.1.alpha.2_arm64.deb
+```bash
+# Example variables: select an actually published exact version and your CPU.
+VERSION=<exact-version>
+DEBIAN_VERSION=<matching-debian-version>
+ARCH=amd64 # arm64 for ARM servers
+BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
+curl -fsSLO "$BASE/zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
+curl -fsSLO "$BASE/SHA256SUMS"
+grep "  zelavis_${DEBIAN_VERSION}_${ARCH}.deb$" SHA256SUMS | sha256sum -c -
+sudo apt install -y "./zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
 ```
+
+The separate signed APT repository and repository bootstrap package at
+`apt.zelavis.com` require owner publication. Once available, install the verified
+`zelavis-repository` package and run `sudo apt update && sudo apt install zelavis`.
+Its `postinst` uses the same private Node and TypeScript installation plan.
 
 Installing through `apt install ./<package>.deb` rather than `dpkg` directly
 allows the system package manager to verify dependencies and maintain package
@@ -248,15 +267,26 @@ real-server qualification remains pending.
 The standalone `.tar.gz` and `.zip` archives are self-contained and suitable for
 manual download, SFTP upload, or air-gapped environments:
 
-```bash
-# 1. Download and extract the matching archive
-curl -fsSLO https://github.com/zelavis/zelavis/releases/latest/download/zelavis-linux-x64.tar.gz
-tar -xzf zelavis-linux-x64.tar.gz
-cd zelavis-*
+Fetch an exact `zelavis@<version>` GitHub Release archive and its
+`SHA256SUMS`, verify the archive, then extract it:
 
-# 2. Run the archive installer
-sudo ZELAVIS_ENABLE_AGENT=1 ./install.sh
+```bash
+VERSION=<exact-version>
+TARGET=linux-x64 # linux-arm64, darwin-x64 or darwin-arm64
+NAME="zelavis-$VERSION-$TARGET"
+BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
+curl -fsSLO "$BASE/$NAME.tar.gz"
+curl -fsSLO "$BASE/SHA256SUMS"
+grep "  $NAME.tar.gz$" SHA256SUMS | sha256sum -c - # macOS: shasum -a 256 -c -
+tar -xzf "$NAME.tar.gz"
+cd "$NAME"
+sudo ./install.sh # macOS or unprivileged use: ./install.sh --user
 ```
+
+Versioned downloads and `alpha/` / `latest/` aliases with checksum sidecars are
+prepared for `downloads.zelavis.com`; hosting still needs owner deployment.
+Alpha aliases are separate from stable latest. Prefer exact versions when
+copying archives to an offline server.
 
 The installer places versioned releases under `/opt/zelavis/releases/<version>`,
 symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis`,
@@ -306,17 +336,15 @@ firewall permits inbound traffic on port 3000:
    ```
 2. Paste the **bootstrap token** from `/etc/zelavis/zelavis.env`.
 3. Enter your administrator email and password to claim the **Owner** account.
-4. In the **Edge Onboarding** step, enter your domain name (e.g. `app.example.com` or `example.com`).
-   Make sure your domain's DNS A/AAAA record points to your server's public IP.
-5. Select **Managed TLS** and click **Continue**.
-6. Zelavis performs DNS preflight verification, requests automated Let's Encrypt
-   certificates using pure RFC 8555 ACME v2, and switches Traefik to serve production
-   traffic on standard ports **80** and **443**.
-7. Once completed, port 3000 is no longer needed—you can close it in your firewall
-   and access your dashboard directly over secure HTTPS at:
-   ```text
-   https://yourdomain.com/zelavis
-   ```
+4. The optional Platform hostname step follows the durable Owner claim. An apex
+   (`example.com`) or subdomain (`panel.example.com`) is a valid hostname.
+5. Choose **Configure later** to keep using the installation’s recovery address,
+   or configure an external TLS terminator separately. Automatic certificate
+   issuance and reconciled Traefik activation still need production qualification;
+   installation does not establish public HTTPS.
+
+Hostname/TLS setup uses authenticated Edge operations after ownership is claimed.
+A failure there does not undo the Owner account or reopen first-owner setup.
 
 ### Option B: Secure Access via SSH Port Forwarding (With SSH Tunnel)
 
@@ -353,13 +381,12 @@ Use an SSH tunnel for the default loopback listener:
    http://localhost:3000/zelavis/setup
    ```
 3. Enter the **bootstrap token** from `/etc/zelavis/zelavis.env` and configure your Owner credentials.
-4. Select **Managed TLS** and provide your domain.
-5. When the wizard confirms your domain is live and certificates are active, close
-   the SSH tunnel (`Ctrl+C` or exit the SSH session).
-6. Access your platform directly at:
-   ```text
-   https://yourdomain.com/zelavis
-   ```
+4. Configure the optional Platform hostname after the Owner claim, or choose
+   **Configure later**. Keep the tunnel as the local recovery path until you have
+   independently verified a working public HTTPS endpoint.
+
+Managed DNS/ACME and traffic cutover reconciliation remain planned; the wizard
+must not be treated as evidence that production certificates and routes are active.
 
 ### Option C: Interactive Terminal Setup (CLI)
 
@@ -370,9 +397,10 @@ terminal without a web browser:
 zelavis setup
 ```
 
-The CLI wizard prompts for the bootstrap token, creates the first Owner, runs
-DNS preflight checks on your domain, issues certificates, and activates Edge Traefik
-routing.
+The CLI wizard prompts for the bootstrap token and claims the first Owner
+through the same bootstrap capability as the dashboard. Hostname/TLS setup is a
+separate authenticated Edge operation; automatic production certificate issuance
+and route activation remain pending qualification.
 
 For unattended automation or cloud-init scripts, use the non-interactive equivalent:
 ```bash

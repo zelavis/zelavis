@@ -32,7 +32,7 @@
     "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
     "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
-    "release:check": "pnpm typecheck && pnpm test && pnpm build",
+    "release:check": "pnpm run verify && pnpm run docs:check",
     "release:status": "changeset status --verbose",
     "release:version": "node scripts/release-version.mjs stable",
     "release:version:alpha": "node scripts/release-version.mjs alpha",
