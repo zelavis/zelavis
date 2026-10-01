@@ -56,7 +56,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.0"
   },
   "peerDependencies": {
     "zelavis": ">=2.0.0-alpha.4"
