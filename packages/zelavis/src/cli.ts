@@ -7,6 +7,7 @@ import { resolveBundledFrontend } from "./cli/bundled-frontend.js";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { describeInstallation } from "./cli/installation.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
+import { runReleaseInstall } from "./cli/install/index.js";
 import {
   createNodeInstallationUninstaller,
   nodeAdapter,
@@ -119,6 +120,7 @@ await runCli(process.argv.slice(2), {
   installationPath,
   runtime: {
     serve,
+    install: runReleaseInstall,
     createInstallationUninstaller({ dataDirectory }) {
       if (!installationPath) {
         throw new Error("The running Zelavis installation path could not be resolved.");

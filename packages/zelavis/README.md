@@ -338,6 +338,20 @@ zelavis services list
 See the public installation guide for APT, direct `.deb`, archive, and quick
 installer workflows.
 
+Native release installers and Debian postinst run the same host-local command:
+
+```bash
+sudo zelavis install --from-release /absolute/path/to/extracted-release --dry-run
+sudo zelavis install --from-release /absolute/path/to/extracted-release
+```
+
+`--dry-run` prints the ordered TypeScript plan and each step's idempotence without changes.
+Units and configuration come from the release tree; the service uses its private
+Node and binds to `127.0.0.1:3000`. Use an SSH tunnel to reach a remote host, or
+explicitly pass `--public` to bind to all interfaces. Existing bootstrap tokens
+and trust configuration are preserved. Package acquisition and the replacement
+of the folder create command remain planned.
+
 Native packaged installations also expose a host-local complete-removal flow:
 
 ```bash
@@ -349,7 +363,8 @@ The runtime-neutral `ZelavisInstallationUninstaller` contract is exported from
 `zelavis/runtime`; Node hosts use `createNodeInstallationUninstaller` from
 `zelavis/adapters/node`. This capability intentionally has no Platform HTTP
 route: it deletes the Platform, Agent, authority material, all Projects and all
-Zelavis-owned host state. npm and source installations are refused because
+Zelavis-owned host state. Install and complete removal have no HTTP/dashboard
+route. npm and source installations are refused because
 their package manager or development workflow owns their lifecycle.
 
 Local Project recovery is data-safe across the pre-release App Data Fabric

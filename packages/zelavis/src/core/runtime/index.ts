@@ -9,3 +9,4 @@ export * from "./request-dispatcher.js";
 export * from "./resolve-endpoints.js";
 export * from "./create-runtime.js";
 export * from "./installation.js";
+export * from "./installation-plan.js";

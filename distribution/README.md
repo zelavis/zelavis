@@ -150,10 +150,40 @@ in this repository.
 - Manual upload: extract `.tar.gz` or `.zip`, then run its `install.sh`.
 - npm: users who manage Node 24 themselves can run `npm install -g zelavis`.
 
+## Host-local installation plan
+
+The archive's `install.sh` and Debian `postinst` invoke the packaged
+`zelavis install --from-release <absolute-release-path>` command using the
+release's private Node. The runtime-neutral planner describes ordered steps with their idempotence; the Node host adapter executes those same steps. Unit files,
+Traefik configuration and operation trust are read from `share/` in that release,
+not embedded again in TypeScript. Downloads and runtime pins remain owned by
+`build-stage.mjs`; this phase adds no second download implementation.
+
+```bash
+sudo ./install.sh --dry-run
+sudo ./install.sh
+```
+
+Native Platform units bind to `127.0.0.1:3000` by default. Connect from a local
+machine with `ssh -N -L 3000:127.0.0.1:3000 <user>@<server>` and open
+`http://127.0.0.1:3000/zelavis`. An explicit `./install.sh --public` writes a unit
+binding to `0.0.0.0`; rerunning without it restores the private bind. Agent opt-in
+is still `ZELAVIS_ENABLE_AGENT=1`; Traefik remains disabled until Edge activates
+routes. Releases stay in `releases/<version>` with a `current` link, including
+Debian packages. Older versions are refused unless `--allow-downgrade` is given;
+previous archive releases are kept.
+
+Install and complete uninstall are host-local maintenance operations and have
+no HTTP/dashboard route. Package acquisition, changing `create-zelavis`, user
+mode, singleton locks, doctor and named instances are not implemented yet.
+The quick installer's APT repository selection remains a bootstrap concern in
+this phase; both APT postinst and its archive branch delegate host setup to the
+same TypeScript command.
+
 ## Complete native uninstall
 
-Every staged release carries `share/uninstall.sh`, and the packaged CLI invokes
-it through the Node host adapter. Operators can inspect the owned inventory and
+Every staged release carries a thin `share/uninstall.sh` entry, and the packaged
+CLI executes the same TypeScript removal plan through the Node host adapter. Operators can inspect the owned inventory and
 then remove the complete native installation:
 
 ```bash
@@ -167,7 +197,8 @@ uninstall does not depend on recreating the original shell environment.
 
 The removal inventory includes the Platform, Agent, and Zelavis-owned Traefik
 units and files, Debian package
-records when present, command links, the complete release tree, Platform and
+records when present, recorded command links and the default archive/Debian links
+when they still point into this installation, the complete release tree, Platform and
 Project data, `/etc/zelavis`, the Zelavis APT source/key, and the dedicated
 system account when its properties prove it is installer-owned. It deliberately
 retains shared host dependencies, journal history, external archives/backups,
