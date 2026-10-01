@@ -123,6 +123,10 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   try { server = await createNodeServer(zv); }
   catch (error) { await zv.close(); throw error; }
 
+  // HTTP readiness must never precede graceful signal handling.
+  const shutdown = shutdownOnSignals(async () => {
+    await Promise.all([closeNodeServer(server), zv.close()]);
+  });
   try { await new Promise<void>((resolveListening, reject) => {
     const onError = (error: Error) => reject(error);
     server.once("error", onError);
@@ -130,7 +134,7 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
       server.off("error", onError);
       resolveListening();
     });
-  }); } catch (error) { await zv.close(); throw error; }
+  }); } catch (error) { shutdown.dispose(); await zv.close(); throw error; }
 
   process.title = "zelavis";
   console.log(
@@ -138,9 +142,6 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   );
   console.log(`Platform data: ${dataDirectory}`);
 
-  shutdownOnSignals(async () => {
-    await Promise.all([closeNodeServer(server), zv.close()]);
-  });
 }
 
 const installationPath = await resolveInstallationPath();
