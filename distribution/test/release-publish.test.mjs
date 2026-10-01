@@ -24,6 +24,7 @@ async function fixture(t) {
       fs.writeFileSync("auth-mode", String(fs.statSync(process.env.NPM_CONFIG_USERCONFIG).mode & 0o777));
       if (process.env.TEST_FAILURE === "validation") process.exit(42);
     }
+    if (tool === "git" && args[0] === "diff" && process.env.TEST_FAILURE === "dirty-tree") process.exit(1);
     if (tool === "git" && args[0] === "rev-parse") console.log(args.includes("HEAD") || process.env.TEST_FAILURE !== "stale-tag" ? "abc123" : "old123");
     if (tool === "npm") console.log(JSON.stringify({ name: "zelavis", version: process.env.TEST_FAILURE === "npm" ? "2.0.0-alpha.5" : "2.0.0-alpha.6", "dist.integrity": "sha512-YWJjZA==" }));
   `);
@@ -40,13 +41,13 @@ test("publishing requests distribution with only the verified exact Platform tag
   const result = run();
   assert.equal(result.status, 0, result.stderr);
   const commands = (await readFile(join(root, "commands"), "utf8")).trim().split("\n").map(JSON.parse);
-  assert.deepEqual(commands.slice(0, 2), [{ tool: "pnpm", args: ["release:check"] }, { tool: "pnpm", args: ["changeset", "publish"] }]);
+  assert.deepEqual(commands.filter(({ tool }) => tool === "pnpm"), [{ tool: "pnpm", args: ["release:check"] }, { tool: "pnpm", args: ["changeset", "publish"] }]);
   assert.deepEqual(commands.filter(({ tool, args }) => tool === "git" && args[0] === "push"), [{ tool: "git", args: ["push", "origin", "refs/tags/zelavis@2.0.0-alpha.6"] }]);
   assert.equal(await readFile(join(root, "auth-mode"), "utf8"), String(0o600));
   assert.deepEqual(await readdir(join(root, "temporary")), []);
 });
 
-for (const failure of ["validation", "stale-tag", "npm", "prerelease-mode"]) {
+for (const failure of ["validation", "stale-tag", "npm", "prerelease-mode", "dirty-tree"]) {
   test(`failed ${failure} never requests distribution and removes temporary npm authentication`, async (t) => {
     const { root, run } = await fixture(t);
     const result = run(failure, failure === "prerelease-mode" ? "latest" : "alpha");

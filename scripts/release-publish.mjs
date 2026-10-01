@@ -84,6 +84,9 @@ try {
     publishArgs.push("--tag", tag);
   }
 
+  // Tags must represent the files being published, including version changes.
+  run("git", ["diff", "--quiet"]);
+  run("git", ["diff", "--cached", "--quiet"]);
   run("pnpm", publishArgs);
 
   // Push only the Platform's exact Changesets tag. That starts target-native

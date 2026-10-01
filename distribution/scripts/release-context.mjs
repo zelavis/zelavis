@@ -1,4 +1,6 @@
 import { appendFile, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { exactVersion } from "./published-package.mjs";
 
 export function releaseContext(ref, packageVersion, secrets = {}) {
@@ -15,8 +17,21 @@ export function releaseContext(ref, packageVersion, secrets = {}) {
   return { version: packageVersion, prerelease, tagged };
 }
 
-if (process.env.GITHUB_OUTPUT) {
+export async function assertUnpublishedRelease(repository, tag, token, request = fetch) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !token) throw new Error("GitHub release identity/authentication is required.");
+  const response = await request(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`, {
+    headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status === 404) return;
+  if (!response.ok) throw new Error(`Could not check existing release: HTTP ${response.status}.`);
+  if ((await response.json()).draft !== true) throw new Error("This release is already public. Its versioned artifacts are immutable; publish a new version instead.");
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required for workflow preparation.");
   const manifest = JSON.parse(await readFile(new URL("../../packages/zelavis/package.json", import.meta.url), "utf8"));
   const context = releaseContext(process.env.GITHUB_REF ?? "", manifest.version, process.env);
+  if (context.tagged) await assertUnpublishedRelease(process.env.GITHUB_REPOSITORY, `zelavis@${context.version}`, process.env.GH_TOKEN);
   await appendFile(process.env.GITHUB_OUTPUT, `version=${context.version}\nprerelease=${context.prerelease}\n`);
 }

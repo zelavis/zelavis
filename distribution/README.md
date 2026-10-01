@@ -73,12 +73,14 @@ creates **one** `SHA256SUMS` containing every archive and Linux `.deb`. It signs
 APT repository, builds the repository bootstrap package, extends the manifest,
 and attaches the complete artifact set once to a draft before publishing it.
 An alpha tag creates a GitHub
-prerelease without replacing the stable latest release. Temporary Actions
+prerelease without replacing the stable latest release. Already public releases cannot be overwritten; only an incomplete draft can be
+retried. Temporary Actions
 artifacts have one-day retention on standard runners in this public repository.
 
 `pnpm release:publish:alpha` / `pnpm release:publish:latest` run root verification
 and docs checks, publish with Changesets, and push only the exact Platform tag to
-start that workflow. They never push a branch. Publishing npm packages still
+start that workflow. Tracked version/source changes must be committed before publishing. These commands
+never push a branch. Publishing npm packages still
 requires the release owner’s authentication. Read the Distribution run after
 publication: publishing a package alone does not mean the archives are ready.
 

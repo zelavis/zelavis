@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { writeChecksums } from "../scripts/checksums.mjs";
 import { buildPublicDelivery, collectReleaseArtifacts, releaseTargets } from "../scripts/release-delivery.mjs";
-import { releaseContext } from "../scripts/release-context.mjs";
+import { assertUnpublishedRelease, releaseContext } from "../scripts/release-context.mjs";
 import { stagePublishedPackage } from "../scripts/published-package.mjs";
 
 const version = "2.0.0-alpha.6";
@@ -67,6 +67,26 @@ test("tags match package identity and require owner keys; alpha never becomes Gi
   assert.throws(() => releaseContext("refs/tags/v2.0.0", version, secrets), /must match/);
   assert.throws(() => releaseContext("refs/heads/dev", "latest"), /Invalid Platform/);
   assert.equal(releaseContext("refs/heads/dev", version).tagged, false);
+});
+
+test("public releases are immutable; only an absent release or incomplete draft can be published", async () => {
+  const check = (status, draft) => assertUnpublishedRelease("zelavis/zelavis", `zelavis@${version}`, "ephemeral-test-token", async (url) => {
+    assert.ok(url.endsWith(`zelavis%40${version}`));
+    return { status, ok: status === 200, json: async () => ({ draft }) };
+  });
+  await check(404);
+  await check(200, true);
+  await assert.rejects(check(200, false), /already public/);
+  await assert.rejects(check(403), /HTTP 403/);
+});
+
+test("importing release policy on a tag runner has no workflow or signing side effects", async (t) => {
+  const { root } = await fixture(t);
+  const output = join(root, "workflow-output");
+  const module = new URL("../scripts/release-context.mjs", import.meta.url).href;
+  const imported = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(module)})`], { encoding: "utf8", env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_REF: `refs/tags/zelavis@${version}`, OPERATION_KEY: "", APT_KEY: "" } });
+  assert.equal(imported.status, 0, imported.stderr);
+  await assert.rejects(readFile(output), { code: "ENOENT" });
 });
 
 test("published staging retains hoisted dependencies, package self resolution and executable links after relocation", async (t) => {
