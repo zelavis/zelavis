@@ -55,7 +55,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.8"
+    "zelavis": ">=2.0.0-alpha.9"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

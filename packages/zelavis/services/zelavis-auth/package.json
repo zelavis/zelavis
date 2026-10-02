@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/auth",
-  "version": "1.1.0-alpha.8",
+  "version": "1.1.0-alpha.9",
   "private": false,
   "description": "Auth settings page for the Zelavis dashboard, with a catalogue of installable auth plugins.",
   "license": "MIT",
