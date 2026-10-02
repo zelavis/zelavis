@@ -141,6 +141,9 @@ and none may be reintroduced without the owner asking for them explicitly.
   when `--require-root-owned-operations` is set. The Platform-to-Agent authority key
   (Ed25519, generated per installation) is a runtime mechanism, not a release
   secret, and stays.
+- A server installation updates itself from the dashboard (see "Platform And App Service
+  Boundary" and `website/.../architecture/updates.md`). That adds no new trust: the updater
+  fetches only what the installer already does (nodejs.org and npm), by the same script.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.
 
@@ -1175,7 +1178,16 @@ shared releases/commands/templates/package state while other receipts remain.
 Debian packages own only the incoming `/opt/zelavis/package` payload; persistent
 release trees and current links belong to the installer, so a package manager cannot
 remove an older release selected by another instance.
-Never add an installation HTTP/dashboard route.
+Never add an installation or removal HTTP/dashboard route. Updating is the one narrow
+exception, and it is a request, not an installer: `GET|POST /runtime/updates*`
+(`system.updates.view|manage`, SDK `client.updates`, CLI `zelavis update`) lets the
+unprivileged Platform check npm and drop `<data>/update/request.json`, and a root-owned
+`zelavis-update.path`/`.service` pair runs `zelavis update --run` (host-local, root only).
+The updater never trusts the request's contents: it resolves the newest version on the
+running version's channel from npm itself, refuses anything not newer, runs the installer
+embedded in the installed release, health-checks the new release and rolls back to the
+previous one on failure. Keep it that way: no version, path or command may come from the
+request file, and anything the updater owns must be in the uninstall inventory.
 
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in

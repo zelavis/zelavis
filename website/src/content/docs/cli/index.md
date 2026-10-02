@@ -57,6 +57,13 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
+- `update status|check|apply [--wait]` shows the running version and the newest one on
+  its channel, looks again, or asks the installation to update itself and, with
+  `--wait`, follows it to the end. It calls the same routes as the dashboard
+  (`client.updates`). `sudo zelavis update --run` is the other half, run by the
+  `zelavis-update` systemd unit and never by hand; it replaces the installed release,
+  so it has no HTTP route and refuses to run unless it is root. See
+  [Updating without downtime](../architecture/updates/).
 - `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,
   `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>

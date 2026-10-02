@@ -72,6 +72,19 @@ and never rotate the token. The durable bootstrap claim closes after the first
 owner is created; complete uninstall removes this installer-owned configuration
 with the rest of `/etc/zelavis`.
 
+## Updating a running installation
+
+The default system installation also gets two units, `zelavis-update.path` (enabled,
+watching `<data>/update/request.json`) and `zelavis-update.service` (a root oneshot, started
+only by the path). The Platform drops the request, the oneshot runs
+`zelavis update --run`, and that runs the `install.sh` embedded in the installed release
+(`dist/installation-assets/install.sh`, generated from `installers/install.sh`), checks the
+new release answers, and rolls back to the previous release if it does not. The request
+carries no version: the updater reads the newest one on the running version's channel from npm
+and refuses anything not newer. The units are installed by the same plan as the others,
+listed in the uninstall inventory and checked by `doctor` (`update-watch`). Named instances and
+user installs do not get them.
+
 ## Releasing
 
 A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs root

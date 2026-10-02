@@ -160,6 +160,8 @@ export async function runUpdate(options: UpdateRunnerOptions): Promise<ZelavisUp
     restored = await options.healthy(receipt.port);
     if (!restored) await options.sleep(2000);
   }
+  // The release that did not work is no use to anyone; keep it only when the rollback itself failed.
+  if (restored) await pruneReleases(options.prefix, previous).catch(() => undefined);
   return finish("rolled-back", restored
     ? `${failure} Rolled back to ${receipt.version}, which is running again.`
     : `${failure} Rolling back to ${receipt.version} did not bring it back; check the server with: journalctl -u zelavis`,

@@ -119,6 +119,11 @@ export async function inspectZelavisInstallation(input: { host: ZelavisInstallat
       const matches = actual.length > 0 && actual.every((text) => text.includes(`${scope.current}/`) && text.includes(paths.dataDirectory));
       return { status: !state.present || !matches || unit === scope.units[0] && !state.active ? "error" : "ok", detail: `${unit}: layout ${matches ? "matches" : "differs or is missing"}, ${state.present ? "present" : "absent"}, ${state.enabled ? "enabled" : "disabled"}, ${state.active ? "active" : "inactive"}${state.pid ? `, PID ${state.pid}` : ""}.` };
     });
+    if (!scope.named) await check("update-watch", async () => {
+      const state = await host.unitState("zelavis-update.path", paths);
+      const armed = state.present && state.enabled && state.active;
+      return { status: armed ? "ok" : "warning", detail: armed ? "Dashboard updates are armed: zelavis-update.path is watching for requests." : "Dashboard updates are off (zelavis-update.path is missing or not running). Run the installer again to enable them." };
+    });
     await check("agent", async () => {
       const [support, unit] = await Promise.all([host.agentSupport(scope.units[1]), host.unitState(scope.units[1], paths)]);
       const qualified = support.cgroupV2 && support.cgroupKill && !!unit.delegates;

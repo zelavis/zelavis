@@ -180,6 +180,11 @@ function updater(t, state, overrides = {}) {
         await symlink(join(state.prefix, "releases", target), join(state.prefix, "current"));
         return { code: 0, output: `Installing Zelavis ${target}\nFirst-run bootstrap token: SECRET\nZelavis instance default installed.\n` };
       }
+      // A rollback: the previous release's own installer selects that release again.
+      if (args.includes("--from-release")) {
+        await rm(join(state.prefix, "current"), { force: true });
+        await symlink(args[args.indexOf("--from-release") + 1], join(state.prefix, "current"));
+      }
       return { code: 0, output: "" };
     },
     ...overrides,
@@ -256,6 +261,7 @@ test("a release that never answers is rolled back to the previous one, which is 
   assert.deepEqual(back.slice(2, 5), ["install", "--from-release", join(state.prefix, "releases", state.version)]);
   assert.ok(commands.some((command) => command[0] === "systemctl" && command.includes("restart")));
   assert.equal((await status(state.dataDirectory)).state, "rolled-back");
+  assert.deepEqual(await readdir(join(state.prefix, "releases")), [state.version], "the release that did not work is removed");
 });
 
 test("an installer that fails is rolled back too, and a rollback that does not recover says so", async (t) => {

@@ -54,6 +54,28 @@ with `--enable-agent` on system installations and requires a qualified cgroup v2
 host. Traefik stays disabled at installation. Production Agent qualification and
 automated ACME/cutover reconciliation remain pending.
 
+## Updating
+
+Open the dashboard: when a newer version exists, a banner offers **Update now**, and
+Settings has an Updates card with the same button. Or from a terminal on the server:
+
+```bash
+zelavis update status
+zelavis update apply --wait
+```
+
+The server downloads the new version beside the current one, switches over, restarts
+and checks that it answers; if it does not, it goes back to the previous version by
+itself. Your data, token and configuration are untouched. The dashboard is
+unreachable for about as long as the download and restart take. How it works, and why
+the Platform only asks while a root unit does the work, is in
+[Updating without downtime](../../architecture/updates/).
+
+Only a default system installation can do this. A user-mode install, a named instance
+or a macOS laptop updates by running the installer again, which keeps everything and
+moves to the newest version. `sudo zelavis doctor` shows whether dashboard updates are
+armed.
+
 ## Install with npm, pnpm or Bun create
 
 The create command installs Zelavis on this machine. It takes no folder argument:

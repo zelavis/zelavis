@@ -3,8 +3,55 @@ title: Updating Without Downtime
 description: What an update interrupts today, and the plan to make a Platform update invisible to visitors and operators.
 ---
 
-This page is a plan. Where it says "today" it describes what the code does now;
+The first section describes what is built: updating a server from its own
+dashboard, CLI or API. The rest is a plan for making an update invisible to
+visitors; where it says "today" it describes what the code does now, and
 everything else is not built.
+
+## Updating from the dashboard (built)
+
+A server installation set up by the installer can update itself. The Platform
+checks npm for a newer version on its own channel (`alpha` for an alpha, `latest`
+for a stable release) when it starts and every six hours. When one exists, a banner
+shows on every page and Settings has an Updates card with an **Update now** button.
+The same operations exist as `zelavis update status|check|apply [--wait]`, the SDK
+(`client.updates`) and HTTP (`GET /runtime/updates`, `POST /runtime/updates/check`,
+`POST /runtime/updates/apply`). Looking needs `system.updates.view`; checking and
+applying need `system.updates.manage` (an owner has both).
+
+The Platform runs as an unprivileged user, so it cannot replace its own release or
+restart itself. It only **asks**: it writes a request file into its own
+`<data>/update/` folder. A root-owned systemd path unit, `zelavis-update.path`, sees
+the file and starts `zelavis-update.service`, which runs `zelavis update --run` as
+root. That updater:
+
+1. consumes the request first, so a failure cannot repeat it, and ignores everything
+   in it except that it exists;
+2. looks up the newest version on the channel of the running version from npm itself,
+   and refuses anything that is not newer, so a request can at worst trigger the
+   update you could have run by hand;
+3. runs the installer that shipped inside the installed release (no new download
+   source: it fetches the pinned Node and the exact package, as the first install did),
+   which installs beside the current release, switches `current` and restarts the
+   service;
+4. waits up to 90 seconds for the dashboard to answer;
+5. if it does not, or the installer fails, selects the previous release again with that
+   release's own installer and restarts, and records a rollback, with the installer's
+   output for diagnosis;
+6. on success keeps the new release and the one it replaced, and removes older ones.
+
+Progress is a small `status.json` in the same folder, so the dashboard keeps showing
+it across the restart and reloads itself onto the new version when it arrives. The
+update is not instant: expect the dashboard to be unreachable for the time the
+download, install and restart take (about half a minute in tests), which is the
+interruption the plan below sets out to remove.
+
+Only the default system installation updates this way, and only on Linux with
+systemd. User-mode installs, named instances and development runs report that updates
+are manual there; rerunning the installer updates them. `zelavis doctor` reports
+whether the watcher is armed (`update-watch`), and complete uninstall removes the two
+units. A rollback was tested with a release whose Platform cannot start: the server
+returned to the previous version by itself.
 
 ## Can an update involve no restart?
 
@@ -96,5 +143,6 @@ separate from the above.
 
 - Whether the leader lease lives in the System Store or in a separate coordination
   file; the System Store is simpler and is already the authority for placement.
-- Whether `zelavis upgrade` ships before the Agent can run it as a signed
-  operation (a command an administrator runs is the smaller first version).
+- `zelavis upgrade` as an Agent host operation is no longer needed for the first
+  version: the root updater above covers it. It would still matter for updating a
+  fleet of servers from a Fabric.

@@ -72,6 +72,8 @@ async function installation(t) {
     await writeFile(join(directory, "zelavis-agent@.service"), "instance agent unit");
     await writeFile(join(directory, "zelavis-agent.service"), "unit");
     await writeFile(join(directory, "zelavis-traefik.service"), "unit");
+    await writeFile(join(directory, "zelavis-update.service"), "unit");
+    await writeFile(join(directory, "zelavis-update.path"), "unit");
   }
   const release = join(paths.prefix, "current");
   await stageCli(release);
@@ -178,6 +180,10 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
     join(fixture.paths.systemdEtc, "zelavis-traefik.service"),
     join(fixture.paths.systemdLib, "zelavis-agent.service"),
     join(fixture.paths.systemdLib, "zelavis-traefik.service"),
+    join(fixture.paths.systemdEtc, "zelavis-update.service"),
+    join(fixture.paths.systemdEtc, "zelavis-update.path"),
+    join(fixture.paths.systemdLib, "zelavis-update.service"),
+    join(fixture.paths.systemdLib, "zelavis-update.path"),
   ]) {
     assert.equal(await exists(path), false, `${path} should be removed`);
   }

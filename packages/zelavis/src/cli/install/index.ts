@@ -72,7 +72,7 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     // The bootstrap fetched the private Node and the package; this completes the tree.
     if (npmPrepared) await assembleNpmReleaseTree(npmPrepared);
     port ??= (await readNativeInstallationReceipt(host, paths.prefix, instance))?.port ?? 3000;
-    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: bindPublic, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : "release", installedBy });
+    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: bindPublic, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : await releaseSourceKind(host, paths, instance, source!), installedBy });
     if (dryRun) {
       console.log(json ? JSON.stringify(plan, null, 2) : ["Zelavis install plan", ...plan.steps.map((step) => `  ${step.id}: ${step.description} (idempotent: ${step.idempotent})`), ...plan.warnings, "No changes were made."].join("\n"));
       return;
@@ -101,4 +101,14 @@ function serverAddress(): string {
     }
   }
   return "<server-ip>";
+}
+
+/**
+ * Where an installation came from. A release tree that is already one of this installation's
+ * own (a rollback selects the previous one again) is the same installation, so it keeps its
+ * receipt's source instead of becoming a "release" install.
+ */
+async function releaseSourceKind(host: Parameters<typeof readNativeInstallationReceipt>[0], paths: { prefix: string }, instance: string, source: string): Promise<"release" | "package"> {
+  if (!source.startsWith(`${paths.prefix}/releases/`)) return "release";
+  return (await readNativeInstallationReceipt(host, paths.prefix, instance).catch(() => undefined))?.source ?? "release";
 }
