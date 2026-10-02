@@ -6,12 +6,6 @@ description: Install the long-running Zelavis Platform OS with the shell install
 Zelavis is a long-running Platform OS. It is installed on a server or local
 machine; it is not deployed as an ephemeral serverless function.
 
-:::caution[Ships with the next alpha]
-The installer described here is merged but not yet published to npm. The current
-alpha (`2.0.0-alpha.5`) predates it, so these commands fail until the next alpha
-is published. Expect them to work from `2.0.0-alpha.6`.
-:::
-
 Both methods do the same thing and end in the same installation: the shell
 installer needs nothing but `curl`; `npm create` is for people who already have a
 JavaScript toolchain. The [Install page](/install) has copy-ready commands.
