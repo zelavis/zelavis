@@ -122,7 +122,7 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   return value;
 }
 
-const UNITS = ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service"] as const;
+const UNITS = ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
 export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
   "nginx, PHP, MariaDB and other shared host packages",
   "systemd journal history",
@@ -247,6 +247,7 @@ export async function planZelavisReleaseInstall(input: {
       ownsUser = true;
       recordOwnership("user-receipt");
     }
+    if (!scope.named) addStep(steps, "update-directory", "Create the folder the Platform leaves update requests in", { kind: "mkdir", path: `${paths.dataDirectory}/update`, mode: 0o750 });
     command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
     const dataBase = scope.named ? paths.dataDirectory.slice(0, -scope.instance.length - 1) : paths.dataDirectory;
     const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
@@ -283,6 +284,8 @@ export async function planZelavisReleaseInstall(input: {
     addStep(steps, "data-handover", "Release data ownership before starting the Platform", { kind: "release-data" });
     command("reload", "Reload systemd units", "systemctl", ["daemon-reload"]);
     if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", scope.units[1]]);
+    // The path unit watches for the Platform's update request and starts the root updater.
+    if (!scope.named) command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", "zelavis-update.path"]);
     command("platform-enable", "Enable and start the Platform", "systemctl", ["enable", "--now", scope.units[0]]);
     if (previous || installedManifest && JSON.parse(installedManifest).version !== version) {
       command("platform-restart", "Restart the Platform on the newly selected release", "systemctl", ["restart", scope.units[0]]);

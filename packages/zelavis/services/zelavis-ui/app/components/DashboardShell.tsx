@@ -3,6 +3,7 @@ import { Plus, Search } from "lucide-react";
 import { Link, useLocation, useMatches } from "react-router";
 
 import { AppSidebar } from "#/components/app-sidebar";
+import { UpdateBanner } from "#/components/update-banner";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -383,6 +384,7 @@ export function DashboardShell({
                 className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4"
               >
                 <RestartRequiredBanner settings={activeDashboardData?.settings} />
+                <UpdateBanner runtime={activeDashboardData?.controlRuntime} />
                 {children}
               </div>
             </div>

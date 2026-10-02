@@ -1,4 +1,5 @@
 import type { IdentityApi } from "../app/identity/index.js";
+import type { ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
 import type { ServiceSourceDiagnostic } from "../platform/service-registry-view.js";
 import type {
@@ -281,6 +282,7 @@ export interface ZelavisClient {
   readonly projects: ZelavisProjectsClient;
   /** The marketplace allow-list, over `/runtime/marketplace`. Same contract as `zelavis marketplace`. */
   readonly marketplace: ZelavisMarketplaceClient;
+  readonly updates: ZelavisUpdatesClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -573,6 +575,19 @@ export interface ZelavisMarketplaceClient {
   refresh(): Promise<ZelavisMarketplaceRefreshResult>;
 }
 
+export interface ZelavisUpdatesClient {
+  /** Which version runs and whether a newer one is available; needs `system.updates.view`. */
+  status(): Promise<ZelavisUpdateStatus>;
+  /** Looks up the newest version on this installation's channel; needs `system.updates.manage`. */
+  check(): Promise<ZelavisUpdateStatus>;
+  /**
+   * Asks for the update to the newest version and returns at once (HTTP 202);
+   * the update runs as root and survives a restart, so poll `status`. Refused
+   * with 409 when it cannot run; needs `system.updates.manage`.
+   */
+  apply(): Promise<ZelavisUpdateStatus>;
+}
+
 export interface ZelavisProjectsClient {
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
@@ -840,6 +855,11 @@ export function createZelavisClient(
       allowlist: () => json<ZelavisMarketplaceAllowlistStatus>("/runtime/marketplace/allowlist"),
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
+    },
+    updates: {
+      status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
+      check: () => json<ZelavisUpdateStatus>("/runtime/updates/check", { method: "POST" }),
+      apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
     },
     data: (projectId) => createDataClient(json, projectId),
     auth: {

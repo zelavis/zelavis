@@ -1,0 +1,14 @@
+[Unit]
+Description=Update the Zelavis Platform to the newest version
+# Started by zelavis-update.path, never enabled on its own.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=ZELAVIS_PREFIX=/opt/zelavis
+Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis
+ExecStart=/opt/zelavis/current/bin/zelavis update --run
+TimeoutStartSec=20min
+PrivateTmp=true

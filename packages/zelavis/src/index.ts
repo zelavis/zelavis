@@ -105,6 +105,7 @@ import {
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
+import { ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
   assertListableFrontend,
@@ -505,6 +506,7 @@ export interface ZelavisServerOptions {
   api?: ZelavisApiOptions;
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   marketplace?: ZelavisMarketplaceControl;
+  updates?: ZelavisUpdateControl;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
   subsystems?: ZelavisSubsystemOptions;
@@ -681,6 +683,14 @@ export interface ZelavisMarketplaceControl {
   refresh(): Promise<ZelavisMarketplaceRefreshReport>;
 }
 
+export { ZelavisUpdateRefusal } from "./updates.js";
+export type {
+  ZelavisUpdateControl,
+  ZelavisUpdateRun,
+  ZelavisUpdateState,
+  ZelavisUpdateStatus,
+} from "./updates.js";
+
 export interface ZelavisMarketplaceAllowlistStatus {
   /** Absent when no list is held at all. */
   readonly list?: {
@@ -724,6 +734,8 @@ export interface ZelavisPlatformResources {
   servicePackages?: ZelavisServicePackageInstaller;
   /** The marketplace allow-list: what may be installed, and how current it is. */
   marketplace?: ZelavisMarketplaceControl;
+  /** Looking up and asking for a newer release of this installation. */
+  updates?: ZelavisUpdateControl;
   /**
    * TLS certificate provider. Adapters that terminate TLS in-process
    * (Node/Bun self-host) wire a real provider here; adapters behind a reverse
@@ -1656,6 +1668,7 @@ async function resolveRuntimeManagementCore(
     serviceManifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     marketplace?: ZelavisMarketplaceControl;
+    updates?: ZelavisUpdateControl;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
     getServices: () => readonly ZelavisRuntimeService<any>[];
@@ -2395,6 +2408,63 @@ async function resolveRuntimeManagementCore(
               return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
             }
             return { status: 200, headers: { "cache-control": "no-store" }, body: await context.marketplace.refresh() };
+          },
+        },
+        {
+          id: "runtime.updates.read",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/updates"),
+          access: { permissions: ["system.updates.view"], scope: { type: "system" } },
+          spec: {
+            operationId: "getUpdateStatus",
+            summary: "Which version is running and whether a newer one is available",
+            tags: ["runtime"],
+            responses: { 200: { description: "Update status" }, 404: { description: "This runtime does not manage updates" } },
+          },
+          handler: async () => {
+            if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
+            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.updates.status() };
+          },
+        },
+        {
+          id: "runtime.updates.check",
+          method: "POST",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/updates/check"),
+          access: { permissions: ["system.updates.manage"] },
+          spec: {
+            operationId: "checkForUpdate",
+            summary: "Look up the newest version on this installation's channel",
+            tags: ["runtime"],
+            responses: { 200: { description: "Update status after the lookup" }, 404: { description: "This runtime does not manage updates" } },
+          },
+          handler: async () => {
+            if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
+            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.updates.check() };
+          },
+        },
+        {
+          id: "runtime.updates.apply",
+          method: "POST",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/updates/apply"),
+          access: { permissions: ["system.updates.manage"] },
+          spec: {
+            operationId: "applyUpdate",
+            summary: "Ask for the update to the newest version; it runs as root and survives a restart",
+            tags: ["runtime"],
+            responses: {
+              202: { description: "Requested; poll the status for progress" },
+              404: { description: "This runtime does not manage updates" },
+              409: { description: "Cannot update: unmanaged, already newest, unchecked, or one is in progress" },
+            },
+          },
+          handler: async ({ principal }) => {
+            if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
+            try {
+              return { status: 202, headers: { "cache-control": "no-store" }, body: await context.updates.apply(principal?.id ?? "unknown") };
+            } catch (error) {
+              if (error instanceof ZelavisUpdateRefusal) return { status: 409, body: { error: error.message, code: error.code } };
+              throw error;
+            }
           },
         },
         {
@@ -6313,6 +6383,7 @@ export async function zelavis(
         compositionOptions.serviceRegistry?.manifestResolver,
       servicePackageInstaller: options.servicePackageInstaller,
       marketplace: options.marketplace,
+      updates: options.updates,
       serviceActivation: options.serviceActivation,
       rootPath,
       getServices: () => runtimeConfigServices,
@@ -6730,6 +6801,7 @@ function mergeZelavisServerOptions(
     servicePackageInstaller:
       override.servicePackageInstaller ?? base.servicePackageInstaller,
     marketplace: override.marketplace ?? base.marketplace,
+    updates: override.updates ?? base.updates,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
@@ -7006,6 +7078,7 @@ export class Zelavis {
           serviceRegistry,
           servicePackageInstaller: platformResources.servicePackages,
           marketplace: platformResources.marketplace,
+          updates: platformResources.updates,
           serviceActivation: platformResources.services,
           bundleStore,
           domainBindings,

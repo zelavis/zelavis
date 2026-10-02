@@ -9,6 +9,7 @@ import { runAuthCommand } from "./auth.js";
 import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
+import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
@@ -114,11 +115,12 @@ Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
-  zelavis install --from package --version <version> [--instance <name> --port <port>] [--user] [--dry-run]
+  zelavis install --from-release <path> | --from-npm <path> [--instance <name> --port <port>] [--user] [--dry-run]
   zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
@@ -155,6 +157,8 @@ Commands:
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
   marketplace               Show or refresh the marketplace allow-list.
+  update                    Check for a newer version and update this installation
+                            from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes.
   auth service-accounts     Create and revoke machine identities and rotate their
@@ -559,6 +563,10 @@ export async function runCli(
     }
     if (args[0] === "marketplace") {
       await runMarketplaceCommand(args.slice(1));
+      return;
+    }
+    if (args[0] === "update") {
+      await runUpdateCommand(args.slice(1));
       return;
     }
     if (args[0] === "auth") {

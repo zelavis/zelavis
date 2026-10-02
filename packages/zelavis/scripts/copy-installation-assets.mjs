@@ -10,10 +10,13 @@ for (const file of ["scripts/runtime-assets.mjs", "scripts/stage-operations.mjs"
   await copyFile(new URL(file, distribution), new URL(file.split("/").at(-1), output));
 }
 await mkdir(new URL("share/", output), { recursive: true });
-for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "traefik.yml"]) {
   await copyFile(new URL(`runtime/${file}`, distribution), new URL(`share/${file}`, output));
 }
 await copyFile(new URL("runtime/zelavis", distribution), new URL("zelavis-launcher", output));
+// The updater runs the installer that shipped inside the installed release, so a server
+// updates itself without fetching anything but Node and the package.
+await copyFile(new URL("installers/install.sh", distribution), new URL("install.sh", output));
 await copyFile(new URL("installers/uninstall.sh", distribution), new URL("share/uninstall.sh", output));
 const { stageOperations } = await import(new URL("scripts/stage-operations.mjs", distribution).href);
 const { validateHostOperationManifest } = await import(pathToFileURL(new URL("../dist/core/deployment/index.js", import.meta.url).pathname).href);

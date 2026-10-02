@@ -43,6 +43,7 @@ import {
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
 import { createNodeBackendHostProbes } from "./_node-backend-host.js";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
+import { createNodeUpdateControl } from "./_node-updates.js";
 import { readOrCreatePlatformAuthorityKey } from "./_platform-authority-key.js";
 import {
   createHostOperationBroker,
@@ -504,6 +505,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           files: fileStorage,
           servicePackages: serviceSources.servicePackages,
           ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
+          ...(!isProjectRuntime && systemStore ? { updates: createNodeUpdateControl({ dataDirectory }) } : {}),
         },
         metadata: {
           runtime: "node",

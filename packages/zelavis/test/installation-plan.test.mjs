@@ -9,7 +9,7 @@ const paths = {
   systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"],
 };
 const templates = {};
-for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "traefik.yml"]) {
   templates[file] = await readFile(new URL(`../../../distribution/runtime/${file}`, import.meta.url), "utf8");
 }
 

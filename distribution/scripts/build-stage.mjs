@@ -123,7 +123,7 @@ async function main() {
       join(options.output, "share", "traefik.yml"),
     );
   }
-  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) {
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-update.service", "zelavis-update.path"]) {
     await copyFile(join(distributionDirectory, "runtime", unit), join(options.output, "share", unit));
   }
   const { validateHostOperationManifest } = await import(

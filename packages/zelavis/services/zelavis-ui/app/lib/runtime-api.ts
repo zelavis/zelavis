@@ -1786,6 +1786,45 @@ export interface AssistantAuditRecord {
   reason?: string;
 }
 
+/** Mirrors the runtime's update status; see `ZelavisUpdateStatus` in the `zelavis` package. */
+export type UpdateState = "idle" | "requested" | "running" | "succeeded" | "failed" | "rolled-back";
+
+export interface UpdateRun {
+  id: string;
+  state: Exclude<UpdateState, "idle" | "requested">;
+  from: string;
+  to?: string;
+  startedAt: string;
+  finishedAt?: string;
+  message?: string;
+  log?: readonly string[];
+}
+
+export interface UpdateStatus {
+  current: string;
+  channel?: "alpha" | "latest";
+  latest?: string;
+  available: boolean;
+  checkedAt?: string;
+  checkError?: string;
+  managed: boolean;
+  unmanagedReason?: string;
+  state: UpdateState;
+  run?: UpdateRun;
+}
+
+export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates`);
+}
+
+export async function checkForUpdate(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates/check`, { method: "POST" });
+}
+
+export async function applyUpdate(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates/apply`, { method: "POST" });
+}
+
 export async function listAssistantAudit(
   config: RuntimeConfig,
   input: { before?: string; limit?: number } = {},
