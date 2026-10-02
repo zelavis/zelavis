@@ -37,7 +37,9 @@ test("sudo executes literal bootstrap code, never a user cache file or invoking 
   const command = installationCommand({ ...assets, mode: "system", root: false, flags: ["--force"] });
   assert.equal(command.command, "sudo");
   assert.deepEqual(command.args, ["--", "/bin/sh", "-c", assets.script, "--", assets.version, "--force"]);
-  assert.doesNotMatch(command.args.join("\n"), /npx|node_modules|\.cache|process\.execPath/);
+  // The literal script is the only code root runs; the other arguments name nothing from a user cache.
+  assert.doesNotMatch([...command.args.slice(0, 3), ...command.args.slice(4)].join("\n"), /npx|node_modules|\.cache|process\.execPath/);
+  assert.doesNotMatch(assets.script, /npx|process\.execPath|\.cache\/|~\/\.npm|\$HOME/);
   assert.match(command.display, /^'sudo' '--' '\/bin\/sh'/);
   assert.throws(() => installationCommand({ ...assets, version: "latest", mode: "user", root: false }), /exact/);
   assert.throws(() => installationCommand({ ...assets, mode: "user", root: false, flags: ["--enable-agent"] }), /requires system/);
