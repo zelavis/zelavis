@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectZelavisInstallation, preflightZelavisInstall } from "../dist/core/runtime/installation-health.js";
 
-const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"], aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg" };
+const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"] };
 const receipt = { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
 const installation = { kind: "packaged", path: "/opt/zelavis/current/platform/dist/cli.js", root: paths.prefix };
 class Probe {

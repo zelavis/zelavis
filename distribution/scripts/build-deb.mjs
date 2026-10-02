@@ -75,21 +75,16 @@ await cp(
   join(stageDirectory, "share", "traefik.yml"),
   join(packageRoot, "etc", "zelavis", "edge", "traefik", "traefik.yml"),
 );
-await cp(
-  join(stageDirectory, "share", "operation-trust.json"),
-  join(packageRoot, "etc", "zelavis", "operation-trust.json"),
-);
-await chmod(join(packageRoot, "etc", "zelavis", "operation-trust.json"), 0o644);
 
 await writeFile(
   join(packageRoot, "DEBIAN", "control"),
   `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, nginx, php-fpm, php-cli, php-mysql, php-curl, php-gd, php-intl, php-mbstring, php-xml, php-zip, mariadb-server-core, mariadb-client-core, tar, util-linux\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
 );
-// The trust store is operator configuration: dpkg keeps local edits (added or
-// revoked keys) across upgrades instead of overwriting them.
+// The Edge configuration is operator configuration: dpkg keeps local edits
+// across upgrades instead of overwriting them.
 await writeFile(
   join(packageRoot, "DEBIAN", "conffiles"),
-  "/etc/zelavis/operation-trust.json\n/etc/zelavis/edge/traefik/traefik.yml\n",
+  "/etc/zelavis/edge/traefik/traefik.yml\n",
 );
 await writeFile(
   join(packageRoot, "DEBIAN", "postinst"),

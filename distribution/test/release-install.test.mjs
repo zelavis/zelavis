@@ -1,19 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { stageCli } from "./staged-cli.mjs";
-
-const installer = fileURLToPath(
-  new URL("../installers/archive-install.sh", import.meta.url),
-);
+import { freePort, stageCli } from "./staged-cli.mjs";
 
 /**
- * A staged tree just complete enough for the installer to run unprivileged.
+ * A staged tree just complete enough for `zelavis install --from-release` to run unprivileged.
  *
  * `ZELAVIS_PREFIX` is set away from /opt/zelavis, which is what lets the script
  * run without root, so the systemd branch is skipped and only the linking
@@ -31,23 +26,20 @@ async function stage(t) {
   // The installer reads the version with the runtime it ships; the real Node
   // running this test stands in for it.
   await symlink(process.execPath, join(source, "runtime", "node", "bin", "node"));
-  // The script derives its source directory from its own location, because it
-  // ships inside the archive it installs. Copy it in rather than running it
-  // from the repository, so the test exercises the shipped arrangement.
+  // A staged release (what the Debian package ships) is installed by its own
+  // CLI, so the test runs the staged CLI the way postinst does.
   await stageCli(source);
-  const script = join(source, "archive-install.sh");
-  await copyFile(installer, script);
   return {
-    script,
     source,
     prefix: join(root, "prefix"),
     binDir: join(root, "bin"),
     dataDir: join(root, "data"),
+    port: await freePort(),
   };
 }
 
-function install({ script, source, prefix, binDir, dataDir }, env = {}) {
-  return spawnSync("sh", [script], {
+function install({ source, prefix, binDir, dataDir, port }, env = {}) {
+  return spawnSync(process.execPath, [join(source, "platform", "dist", "cli.js"), "install", "--from-release", source, "--installed-by", "script", "--port", String(port)], {
     cwd: source,
     encoding: "utf8",
     env: {
@@ -72,8 +64,8 @@ test("a clean install links the command", async (t) => {
   assert.deepEqual(
     JSON.parse(await readFile(join(tree.prefix, "installation.json"), "utf8")),
     {
-      schemaVersion: 2, port: 3000, edge: false,
-      mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: tree.prefix, configDirectory: "/etc/zelavis",
+      schemaVersion: 2, port: tree.port, edge: false,
+      mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: tree.prefix, configDirectory: "/etc/zelavis",
       dataDirectory: tree.dataDir,
       commandPath: join(tree.binDir, "zelavis"),
       ownsUser: false,

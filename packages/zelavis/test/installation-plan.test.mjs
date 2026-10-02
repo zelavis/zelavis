@@ -7,7 +7,6 @@ const paths = {
   prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis",
   commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis",
   systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"],
-  aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg",
 };
 const templates = {};
 for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "traefik.yml"]) {
@@ -234,7 +233,7 @@ test("removal retains shared releases/templates/command/packages while another i
   for (const selected of [paths, namedPaths("preview")]) {
     const plan = planZelavisUninstall({ paths: selected, hostCommands: true, ownsUser: true, ownsGroup: true, retainShared: true });
     assert.ok(!plan.steps.some((step) => step.action.kind === "purge-packages" || step.action.kind === "remove-link"));
-    assert.ok(!plan.steps.some((step) => [paths.prefix, paths.aptSource, "/etc/systemd/system/zelavis@.service"].includes(step.action.path)));
+    assert.ok(!plan.steps.some((step) => [paths.prefix, "/etc/systemd/system/zelavis@.service"].includes(step.action.path)));
     const account = plan.steps.find((step) => step.action.kind === "remove-account").action;
     assert.equal(account.account, selected.instance ? "zelavis-preview" : "zelavis");
     if (selected.instance) assert.ok(!plan.steps.some((step) => step.action.kind === "release-edge"));

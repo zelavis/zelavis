@@ -26,8 +26,6 @@ export function nodeInstallationPaths(env: NodeJS.ProcessEnv = process.env, inst
     commandPath: env.ZELAVIS_UNINSTALL_COMMAND ?? join(bin, "zelavis"),
     systemCommandPath: env.ZELAVIS_UNINSTALL_SYSTEM_BIN ?? "/usr/bin/zelavis",
     systemdDirectories: [env.ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR ?? "/etc/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR ?? "/lib/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR ?? "/usr/lib/systemd/system"],
-    aptSource: env.ZELAVIS_UNINSTALL_APT_SOURCE ?? "/etc/apt/sources.list.d/zelavis.sources",
-    aptKeyring: env.ZELAVIS_UNINSTALL_APT_KEYRING ?? "/usr/share/keyrings/zelavis-archive-keyring.gpg",
   };
 }
 
@@ -39,7 +37,7 @@ export function nodeUserInstallationPaths(home = realpathSync(homedir())): Zelav
 
 export async function assertNodeInstallationPrivilege(paths: ZelavisInstallPaths, skipHostCommands = false): Promise<void> {
   if (skipHostCommands || process.getuid?.() === 0) return;
-  for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, paths.commandPath, paths.systemCommandPath, ...paths.systemdDirectories, paths.aptSource, paths.aptKeyring]) {
+  for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, paths.commandPath, paths.systemCommandPath, ...paths.systemdDirectories]) {
     if (/^\/(?:etc|usr|var|opt|lib)\//u.test(path)) throw new Error("Installation maintenance of a system installation must run as root.");
   }
 }
@@ -227,7 +225,7 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
         case "purge-packages": {
           if (!await host.which("dpkg-query") || !await host.which("apt-get")) break;
           const packages: string[] = [];
-          for (const name of ["zelavis", "zelavis-repository"]) {
+          for (const name of ["zelavis"]) {
             try { if ((await exec("dpkg-query", ["-W", "-f=${db:Status-Abbrev}", name])).stdout.startsWith("ii")) packages.push(name); } catch {}
           }
           if (packages.length) await exec("apt-get", ["purge", "-y", ...packages], { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } });

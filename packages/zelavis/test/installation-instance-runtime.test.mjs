@@ -94,7 +94,7 @@ test("shared prefix/release/instance directories and public descriptors survive 
   const { createNodeInstallHost } = await import("../dist/adapters/_install-host.js");
   const { planZelavisReleaseInstall, executeZelavisInstallationPlan } = await import("../dist/core/runtime/installation-plan.js");
   const source = join(f.root, "source"); await mkdir(source); await writeFile(`${source}/manifest.json`, '{"version":"1.0.0"}');
-  const paths = {prefix: f.prefix, instance: "preview", dataDirectory: f.descriptor.dataDirectory, configDirectory: f.descriptor.configDirectory, commandPath: `${f.root}/bin/zelavis`, systemCommandPath: `${f.root}/system-bin/zelavis`, systemdDirectories: [`${f.root}/units`], aptSource: `${f.root}/zelavis.sources`, aptKeyring: `${f.root}/zelavis-archive-keyring.gpg`};
+  const paths = {prefix: f.prefix, instance: "preview", dataDirectory: f.descriptor.dataDirectory, configDirectory: f.descriptor.configDirectory, commandPath: `${f.root}/bin/zelavis`, systemCommandPath: `${f.root}/system-bin/zelavis`, systemdDirectories: [`${f.root}/units`]};
   const host = createNodeInstallHost();
   const mask = process.umask(0o077);
   try {

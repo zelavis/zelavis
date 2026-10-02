@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { stageCli } from "./staged-cli.mjs";
+import { freePort, stageCli } from "./staged-cli.mjs";
 
 const distribution = fileURLToPath(new URL("../", import.meta.url));
 test("Debian payload replacement leaves independently selected persistent releases intact", async (t) => {
@@ -22,7 +22,7 @@ test("Debian payload replacement leaves independently selected persistent releas
     // The lock holder uses cat to wait for EOF from the installing process.
     await symlink("/bin/cat", join(toolsPath, "cat"));
   }
-  const environment = {...process.env, PATH: toolsPath, ZELAVIS_PREFIX: prefix, ZELAVIS_DATA_DIR: join(root, "host/data"), ZELAVIS_UNINSTALL_ETC_DIR: join(root, "host/config"), ZELAVIS_BIN_DIR: join(root, "host/bin"), ZELAVIS_UNINSTALL_SYSTEM_BIN: join(root, "host/usr/bin/zelavis"), ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR: join(root, "host/units/etc"), ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR: join(root, "host/units/lib"), ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR: join(root, "host/units/usr"), ZELAVIS_UNINSTALL_APT_SOURCE: join(root, "host/apt/zelavis.sources"), ZELAVIS_UNINSTALL_APT_KEYRING: join(root, "host/keys/zelavis-archive-keyring.gpg")};
+  const environment = {...process.env, PATH: toolsPath, ZELAVIS_PREFIX: prefix, ZELAVIS_DATA_DIR: join(root, "host/data"), ZELAVIS_UNINSTALL_ETC_DIR: join(root, "host/config"), ZELAVIS_BIN_DIR: join(root, "host/bin"), ZELAVIS_UNINSTALL_SYSTEM_BIN: join(root, "host/usr/bin/zelavis"), ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR: join(root, "host/units/etc"), ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR: join(root, "host/units/lib"), ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR: join(root, "host/units/usr")};
   async function unpack(version) {
     const stage = join(root, `stage-${version}`);
     for (const path of ["bin", "runtime/node/bin", "share"]) await mkdir(join(stage, path), {recursive: true});
@@ -31,7 +31,6 @@ test("Debian payload replacement leaves independently selected persistent releas
     await writeFile(join(stage, "bin/zelavis"), "#!/bin/sh\n", {mode: 0o755});
     await symlink(process.execPath, join(stage, "runtime/node/bin/node"));
     for (const unit of ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service", "zelavis@.service", "zelavis-agent@.service", "traefik.yml"]) await cp(join(distribution, "runtime", unit), join(stage, "share", unit));
-    await writeFile(join(stage, "share/operation-trust.json"), '{"keys":[]}');
     execFileSync(process.execPath, [join(distribution, "scripts/build-deb.mjs"), "--stage", stage, "--prepare-only"], {stdio: "pipe"});
     // The actual prepared package must contain no dpkg-owned releases/current.
     const owned = join(packageRoot, "opt/zelavis");
@@ -45,8 +44,9 @@ test("Debian payload replacement leaves independently selected persistent releas
     await rm(join(prefix, "package"), {recursive: true, force: true});
     await cp(join(owned, "package"), join(prefix, "package"), {recursive: true});
   }
+  const defaultPort = String(await freePort());
   function install(args = []) {
-    const result = spawnSync(process.execPath, [join(prefix, "package/platform/dist/cli.js"), "install", "--from-release", join(prefix, "package"), "--installed-by", "deb", ...args], {encoding: "utf8", env: environment});
+    const result = spawnSync(process.execPath, [join(prefix, "package/platform/dist/cli.js"), "install", "--from-release", join(prefix, "package"), "--installed-by", "deb", ...args.includes("--port") ? [] : ["--port", defaultPort], ...args], {encoding: "utf8", env: environment});
     assert.equal(result.status, 0, result.stderr);
   }
   await unpack("1.0.0"); install(); install(["--instance", "preview", "--port", "3100"]);

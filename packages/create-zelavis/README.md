@@ -34,16 +34,17 @@ Options: `--user`, `--system`, `-y/--yes`, `--dry-run`, `--public`, `--force`,
 installation requires `--yes`. Dry-run prints the layout and exact bootstrap
 command without downloads, elevation or changes.
 
-Each build stamps the exact Platform version. npm supplies that version's
-metadata; the matching prebuilt GitHub release supplies the production package,
-native dependencies, private Node and release templates. SHA-256 is verified
-before extraction or execution. Missing archives fail explicitly; no older
-release is substituted. Published prereleases must include these assets for
-this path to work. Native dependency compilation is done at release build time,
-not on the installing host.
+Each build stamps the exact Platform version. The bootstrap downloads the
+private Node pinned by the release from nodejs.org and verifies it against
+nodejs.org's published SHA-256, then installs that exact `zelavis` version from
+npm, which verifies it against the registry digest. Install scripts stay off for
+the whole dependency tree, and only the one native module (`better-sqlite3`) is
+rebuilt. A missing version fails explicitly; no other version is substituted.
+Those two https origins are the whole trust chain: there are no release
+signatures or keys to manage.
 
 For system mode, sudo runs literal bootstrap code that downloads and verifies
-its own release into a private root-owned temporary directory. It never runs a
+its own tree into a private root-owned temporary directory. It never runs a
 file from the invoking user's package cache as root. The bootstrap source is
 maintained once in `distribution/installers/install.sh` and copied
 into the package at build time.

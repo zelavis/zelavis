@@ -60,8 +60,6 @@ export interface ZelavisInstallPaths {
   readonly commandPath: string;
   readonly systemCommandPath: string;
   readonly systemdDirectories: readonly string[];
-  readonly aptSource: string;
-  readonly aptKeyring: string;
 }
 
 const UNSAFE_ROOTS = new Set("/ /Applications /Library /System /Users /bin /dev /etc /home /lib /media /mnt /opt /private /proc /root /run /sbin /srv /sys /tmp /usr /var".split(" "));
@@ -87,8 +85,6 @@ export function validateInstallationPaths(paths: ZelavisInstallPaths): void {
   for (const path of paths.systemdDirectories) assertInstallationPath(path, "systemd directory");
   assertInstallationPath(paths.commandPath, "command", "zelavis");
   assertInstallationPath(paths.systemCommandPath, "system command", "zelavis");
-  assertInstallationPath(paths.aptSource, "APT source", "zelavis.sources");
-  assertInstallationPath(paths.aptKeyring, "APT keyring", "zelavis-archive-keyring.gpg");
 }
 
 export interface ZelavisNativeInstallationReceipt {
@@ -98,7 +94,7 @@ export interface ZelavisNativeInstallationReceipt {
   readonly mode: "system" | "user";
   readonly source: "release" | "package";
   readonly instance: string;
-  readonly installedBy: "archive" | "deb" | "create" | "cli";
+  readonly installedBy: "script" | "deb" | "create" | "cli";
   readonly version: string;
   readonly prefix: string;
   readonly configDirectory: string;
@@ -115,13 +111,13 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   const value = JSON.parse(content) as ZelavisNativeInstallationReceipt;
   if (!value || value.schemaVersion !== 2 || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
       !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
-      value.instance !== instance || !["archive", "deb", "create", "cli"].includes(value.installedBy) ||
+      value.instance !== instance || !["script", "deb", "create", "cli"].includes(value.installedBy) ||
       typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(value.version) || typeof value.prefix !== "string" || typeof value.configDirectory !== "string" || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
     throw new Error(`Native installation receipt at ${scope.receipt} is malformed.`);
   }
   assertInstallationInstance(value.instance);
   if (value.mode === "user" && value.edge || value.instance !== "default" && (value.mode === "user" || value.edge)) throw new Error("Installation receipt requires user mode with Edge off, or a system instance; secondary instances must keep Edge off.");
-  validateInstallationPaths({ prefix: value.prefix, instance: value.instance, dataDirectory: value.dataDirectory, configDirectory: value.configDirectory, commandPath: value.commandPath, systemCommandPath: value.commandPath, systemdDirectories: [], aptSource: `${prefix}/zelavis.sources`, aptKeyring: `${prefix}/zelavis-archive-keyring.gpg` });
+  validateInstallationPaths({ prefix: value.prefix, instance: value.instance, dataDirectory: value.dataDirectory, configDirectory: value.configDirectory, commandPath: value.commandPath, systemCommandPath: value.commandPath, systemdDirectories: [] });
   if (value.prefix !== prefix) throw new Error("Installation receipt names another prefix.");
   return value;
 }
@@ -328,7 +324,7 @@ export function planZelavisUninstall(input: {
   }
   if (!input.hostCommands) addStep(steps, "data-reservation", "Refuse removal while a Platform owns these data", { kind: "reserve-data", path: paths.dataDirectory });
   if (!input.user && !scope.named) addStep(steps, "edge-release", `Release ${paths.prefix}/edge-owner.json and ${paths.prefix}/.edge-owner.lock only when owned by this instance`, { kind: "release-edge", prefix: paths.prefix, instance: scope.instance, dataDirectory: paths.dataDirectory });
-  if (input.hostCommands && !input.retainShared) addStep(steps, "packages", "Purge zelavis and zelavis-repository when installed through dpkg", { kind: "purge-packages" });
+  if (input.hostCommands && !input.retainShared) addStep(steps, "packages", "Purge zelavis when installed through dpkg", { kind: "purge-packages" });
   for (const path of new Set(input.retainShared ? [] : input.user ? [paths.commandPath] : [paths.commandPath, paths.systemCommandPath, ...input.additionalCommandPaths ?? []])) {
     assertInstallationPath(path, "command", "zelavis");
     addStep(steps, `command:${path}`, `Remove only a Zelavis-owned command link at ${path}`, { kind: "remove-link", path, prefix: paths.prefix });
@@ -343,8 +339,6 @@ export function planZelavisUninstall(input: {
     }
     if (!input.retainShared) {
       for (const template of ["zelavis@.service", "zelavis-agent@.service", ...UNITS]) for (const directory of paths.systemdDirectories) remove(`${directory}/${template}`);
-      remove(paths.aptSource);
-      remove(paths.aptKeyring);
     }
   }
   remove(paths.configDirectory, true);

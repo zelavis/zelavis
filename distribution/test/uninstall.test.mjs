@@ -43,8 +43,6 @@ async function installation(t) {
     systemdEtc: join(root, "etc", "systemd", "system"),
     systemdLib: join(root, "lib", "systemd", "system"),
     systemdUsrLib: join(root, "usr", "lib", "systemd", "system"),
-    aptSource: join(root, "etc", "apt", "sources.list.d", "zelavis.sources"),
-    aptKeyring: join(root, "usr", "share", "keyrings", "zelavis-archive-keyring.gpg"),
   };
   for (const path of [
     paths.prefix,
@@ -54,13 +52,11 @@ async function installation(t) {
     paths.systemdEtc,
     paths.systemdLib,
     paths.systemdUsrLib,
-    dirname(paths.aptSource),
-    dirname(paths.aptKeyring),
     dirname(paths.systemBin),
   ]) {
     await mkdir(path, { recursive: true });
   }
-  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "archive", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
+  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
   await writeFile(join(paths.data, "project.sqlite"), "data");
   await mkdir(join(paths.prefix, "package"));
   await writeFile(join(paths.prefix, "package", "incoming-payload"), "Debian payload");
@@ -70,9 +66,6 @@ async function installation(t) {
   await writeFile(join(paths.prefix, "edge-owner.json"), JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.data}));
   await writeFile(join(paths.data, ".platform.lock"), "");
   await writeFile(join(paths.data, ".platform-owner.json"), JSON.stringify({ pid: 2147483647, startedAt: "1970-01-01T00:00:00.000Z", session: "crashed-platform", purpose: "platform", installationRoot: paths.prefix }));
-  await writeFile(join(paths.etc, "operation-trust.json"), "{}");
-  await writeFile(paths.aptSource, "source");
-  await writeFile(paths.aptKeyring, "key");
   for (const directory of [paths.systemdEtc, paths.systemdLib]) {
     await writeFile(join(directory, "zelavis.service"), "unit");
     await writeFile(join(directory, "zelavis@.service"), "instance unit");
@@ -105,8 +98,6 @@ async function installation(t) {
       ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR: paths.systemdEtc,
       ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR: paths.systemdLib,
       ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR: paths.systemdUsrLib,
-      ZELAVIS_UNINSTALL_APT_SOURCE: paths.aptSource,
-      ZELAVIS_UNINSTALL_APT_KEYRING: paths.aptKeyring,
       ZELAVIS_UNINSTALL_SKIP_HOST_COMMANDS: "1",
     },
   };
@@ -152,16 +143,6 @@ test("complete uninstall refuses broad and non-normalized owned paths", async (t
   assert.equal(nonNormalized.status, 1);
   assert.match(nonNormalized.stderr, /non-normalized data directory/u);
 
-  const foreignAptFile = run(["--dry-run"], {
-    ...fixture, env: { ...fixture.env,
-    ZELAVIS_UNINSTALL_APT_SOURCE: join(
-      dirname(fixture.paths.aptSource),
-      "other.sources",
-    ),
-  } });
-  assert.equal(foreignAptFile.status, 1);
-  assert.match(foreignAptFile.stderr, /name is not zelavis\.sources/u);
-
   const invalidOwnership = run(["--dry-run"], {
     ...fixture, env: { ...fixture.env,
     ZELAVIS_UNINSTALL_OWNS_USER: "maybe",
@@ -190,8 +171,6 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
     fixture.paths.prefix,
     fixture.paths.data,
     fixture.paths.etc,
-    fixture.paths.aptSource,
-    fixture.paths.aptKeyring,
     fixture.command,
     join(fixture.paths.systemdEtc, "zelavis.service"),
     join(fixture.paths.systemdEtc, "zelavis@.service"),

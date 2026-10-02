@@ -89,20 +89,15 @@ try {
   run("git", ["diff", "--cached", "--quiet"]);
   run("pnpm", publishArgs);
 
-  // Push only the Platform's exact Changesets tag. That starts target-native
-  // distribution builds; scoped package tags and branch refs are never pushed.
+  // The release is the npm package: install.sh and `npm create zelavis` fetch
+  // exactly that version. Nothing else is built, signed or uploaded.
   const platform = JSON.parse(readFileSync(join(process.cwd(), "packages/zelavis/package.json"), "utf8"));
-  const releaseTag = `zelavis@${platform.version}`;
   const capture = (command, args) => execFileSync(command, args, { encoding: "utf8", env }).trim();
-  if (capture("git", ["rev-parse", "HEAD"]) !== capture("git", ["rev-parse", "--verify", `refs/tags/${releaseTag}^{commit}`])) {
-    throw new Error(`Refusing to push a stale ${releaseTag}; the Platform tag must name this release commit.`);
-  }
   const published = JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", "--registry=https://registry.npmjs.org"]));
   if (published.name !== "zelavis" || published.version !== platform.version || !/^sha512-/.test(published["dist.integrity"] ?? "")) {
-    throw new Error("The exact Platform package is not available from npm; distribution was not requested.");
+    throw new Error("The exact Platform package is not available from npm.");
   }
-  run("git", ["push", "origin", `refs/tags/${releaseTag}`]);
-  console.log(`Distribution requested for ${releaseTag}. Check its workflow before publishing the static delivery roots.`);
+  console.log(`zelavis@${platform.version} is published; install.sh and npm create zelavis can install it now.`);
 } catch (error) {
   console.error(error.message);
   process.exitCode = error.exitCode ?? 1;
