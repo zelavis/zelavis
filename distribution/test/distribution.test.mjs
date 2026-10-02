@@ -74,10 +74,10 @@ test("install and packaging shell scripts have valid syntax", () => {
   }
 });
 
-test("the Debian package installs the native WordPress host stack", async () => {
+test("the Debian package does not carry the WordPress host stack; the WordPress recipe provisions it", async () => {
   const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
   for (const dependency of ["nginx", "php-fpm", "php-mysql", "mariadb-server-core", "mariadb-client-core"]) {
-    assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
+    assert.doesNotMatch(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
   }
   assert.match(builder, /cli\.js install --from-release/u);
   assert.match(builder, /"opt", "zelavis", "package"/u);

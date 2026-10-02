@@ -144,6 +144,7 @@ and none may be reintroduced without the owner asking for them explicitly.
 - A server installation updates itself from the dashboard (see
   `website/.../architecture/updates.md`). That adds no new trust: the updater
   fetches only what the installer already does (nodejs.org and npm), by the same script.
+- The installer and any package (`.deb` included) install no web server, PHP or database. Those belong to the WordPress recipe, which provisions its own Nginx, PHP-FPM and MariaDB when a WordPress Project is created; a base Platform install stays free of them.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.
 

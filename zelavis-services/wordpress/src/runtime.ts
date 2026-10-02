@@ -275,7 +275,7 @@ async function provisionNativeWordPressPackages(): Promise<void> {
         : undefined;
     if (!apt) {
       throw new ZelavisProjectRuntimeError(
-        "Native WordPress packages are missing and Zelavis cannot invoke apt with host-package authority. Install the Zelavis Debian package, run Zelavis as root for first provisioning, or grant its host Agent passwordless package installation.",
+        "Native WordPress packages are missing and Zelavis cannot invoke apt with host-package authority. Run Zelavis as root for first provisioning, or grant its host Agent passwordless package installation.",
       );
     }
     try {

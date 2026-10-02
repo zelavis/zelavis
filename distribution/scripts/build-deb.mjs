@@ -78,7 +78,7 @@ await cp(
 
 await writeFile(
   join(packageRoot, "DEBIAN", "control"),
-  `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, nginx, php-fpm, php-cli, php-mysql, php-curl, php-gd, php-intl, php-mbstring, php-xml, php-zip, mariadb-server-core, mariadb-client-core, tar, util-linux\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
+  `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, tar, util-linux\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
 );
 // The Edge configuration is operator configuration: dpkg keeps local edits
 // across upgrades instead of overwriting them.
