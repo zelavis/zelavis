@@ -71,6 +71,10 @@ unreachable for about as long as the download and restart take. How it works, an
 the Platform only asks while a root unit does the work, is in
 [Updating without downtime](../../architecture/updates/).
 
+This arrives with `2.0.0-alpha.10`. An installation older than that has no updater, so
+run the installer once (the command in Quick install) to get it; every update after
+that is a click.
+
 Only a default system installation can do this. A user-mode install, a named instance
 or a macOS laptop updates by running the installer again, which keeps everything and
 moves to the newest version. `sudo zelavis doctor` shows whether dashboard updates are

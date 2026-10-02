@@ -10,7 +10,8 @@ everything else is not built.
 
 ## Updating from the dashboard (built)
 
-A server installation set up by the installer can update itself. The Platform
+A server installation set up by the installer can update itself (from `2.0.0-alpha.10`;
+older installs have no updater, so run the installer once to get it). The Platform
 checks npm for a newer version on its own channel (`alpha` for an alpha, `latest`
 for a stable release) when it starts and every six hours. When one exists, a banner
 shows on every page and Settings has an Updates card with an **Update now** button.

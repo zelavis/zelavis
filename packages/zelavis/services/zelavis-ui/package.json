@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/ui",
-  "version": "1.1.0-alpha.9",
+  "version": "1.1.0-alpha.10",
   "private": false,
   "description": "Zelavis dashboard frontend, registered through the Zelavis SDK.",
   "license": "MIT",

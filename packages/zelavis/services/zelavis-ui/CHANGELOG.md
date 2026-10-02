@@ -1,5 +1,12 @@
 # @zelavis/ui
 
+## 1.1.0-alpha.10
+
+### Patch Changes
+
+- Updated dependencies [587d43e]
+  - zelavis@2.0.0-alpha.10
+
 ## 1.1.0-alpha.9
 
 ### Patch Changes
