@@ -124,7 +124,7 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
 
 const UNITS = ["zelavis.service", "zelavis.socket", "zelavis-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
 export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
-  "nginx, PHP, MariaDB and other shared host packages",
+  "packages Zelavis did not install itself (the installer adds none; a web server, PHP or database you set up yourself stays)",
   "systemd journal history",
   "downloaded archives and backups outside the data directory",
   "operator-managed reverse-proxy, firewall, DNS and TLS configuration",
