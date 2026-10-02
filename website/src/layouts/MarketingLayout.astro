@@ -141,6 +141,7 @@ const resourceColumns = [
 					<button type="button" data-menu-trigger="platform" aria-expanded="false">Platform</button>
 					<button type="button" data-menu-trigger="solutions" aria-expanded="false">Solutions</button>
 					<button type="button" data-menu-trigger="resources" aria-expanded="false">Resources</button>
+					<a href="/install">Install</a>
 					<a href="/pricing">Pricing</a>
 				</nav>
 
@@ -191,6 +192,7 @@ const resourceColumns = [
 				<details><summary>Platform</summary><div>{platformColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
 				<details><summary>Solutions</summary><div>{solutionColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
 				<details><summary>Resources</summary><div>{resourceColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
+				<a href="/install">Install</a>
 				<a href="/pricing">Pricing</a>
 			</div>
 			</div>
@@ -215,7 +217,7 @@ const resourceColumns = [
 					<div>
 						<h3>Product</h3>
 						<a href="/pricing">Pricing</a>
-						<a href="/getting-started/installation">Install</a>
+						<a href="/install">Install</a>
 						<a href="/architecture/project-model">Architecture</a>
 					</div>
 					<div>
