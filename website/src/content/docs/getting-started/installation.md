@@ -32,8 +32,9 @@ It trusts exactly two https origins and nothing else:
    your machine.
 2. **npm** supplies the exact `zelavis` package. npm verifies it against the
    registry digest. Dependency install scripts stay off for the whole tree (this may
-   run as root and the dependencies are not Zelavis's); only the one native module,
-   `better-sqlite3`, is rebuilt.
+   run as root and the dependencies are not Zelavis's). Nothing needs them: every
+   dependency is plain JavaScript and the Platform uses Node's built-in SQLite, so
+   there is no compiler or native build on your server.
 
 There are no release signatures, keys or second download host to manage. Read the
 script first at [zelavis.com/install.sh](https://zelavis.com/install.sh): it is one

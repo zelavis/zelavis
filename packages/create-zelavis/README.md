@@ -38,8 +38,9 @@ Each build stamps the exact Platform version. The bootstrap downloads the
 private Node pinned by the release from nodejs.org and verifies it against
 nodejs.org's published SHA-256, then installs that exact `zelavis` version from
 npm, which verifies it against the registry digest. Install scripts stay off for
-the whole dependency tree, and only the one native module (`better-sqlite3`) is
-rebuilt. A missing version fails explicitly; no other version is substituted.
+the whole dependency tree; none is needed, since every dependency is plain
+JavaScript and the Platform uses Node's built-in SQLite, so no compiler is needed on
+the host. A missing version fails explicitly; no other version is substituted.
 Those two https origins are the whole trust chain: there are no release
 signatures or keys to manage.
 

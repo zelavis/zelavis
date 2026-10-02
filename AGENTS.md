@@ -130,7 +130,9 @@ and none may be reintroduced without the owner asking for them explicitly.
   deployed from `website/` to Cloudflare Pages). `distribution/installers/install.sh`
   is the one authored bootstrap; the website and create ship it unchanged.
 - The bootstrap runs `npm install` with install scripts off (it may run as root)
-  and rebuilds only the single native module, then hands a tree to
+  (nothing needs them: the dependency tree is plain JavaScript, the Platform uses
+  Node's built-in `node:sqlite`, and a native dependency must never be reintroduced
+  because a server has no compiler), then hands a tree to
   `zelavis install --from-npm`. The tree is completed from the package's own
   `dist/installation-assets` (generated from `distribution/`), so templates, pins and
   operations are authored once.

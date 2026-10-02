@@ -17,8 +17,9 @@ generated copy. It:
 1. resolves an exact version from npm dist-tags (or takes `--version`),
 2. downloads and verifies the pinned private Node,
 3. runs that Node's own npm: `npm install zelavis@<version>` with install scripts
-   off for the whole tree (it may run as root and the dependencies are not ours)
-   and then `npm rebuild better-sqlite3`, the one native module,
+   off for the whole tree (it may run as root and the dependencies are not ours;
+   nothing needs them, because every dependency is plain JavaScript and the
+   Platform uses Node's built-in `node:sqlite`),
 4. moves the package into `platform/` beside `runtime/node` and runs
    `platform/dist/cli.js install --from-npm <tree>`.
 
@@ -38,7 +39,7 @@ A release tree (assembled at install time, or staged by `pnpm distribution:stage
 contains:
 
 - the exact official Project recipe catalog and dashboard assets shipped by `zelavis`
-- production package dependencies, including the native module for the target CPU
+- production package dependencies (plain JavaScript; no native modules)
 - the private Node runtime pinned by `release.json`
 - on Linux, a release-pinned Traefik binary plus the hardened
   `zelavis-traefik.service` Edge adapter
@@ -93,7 +94,7 @@ pnpm distribution:test
 ```
 
 Staging builds the workspace and deploys its production dependencies; build on the
-OS and architecture you target so the native module is correct. Generated files stay
+OS and architecture you target. Generated files stay
 in `distribution/.tmp`, `distribution/.cache` and `distribution/artifacts`; none are
 committed.
 

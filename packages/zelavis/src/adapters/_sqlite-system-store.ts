@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   type ZelavisSystemStore,
   type ZelavisSystemStoreRecord,
@@ -39,14 +39,18 @@ export function createLocalSqliteSystemStore(
   // service user; this is defence in depth, not a substitute.
   mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
   chmodSync(dirname(filename), 0o700);
-  const database = new Database(filename);
+  // Node's own SQLite: nothing native to build or install on the host.
+  const database = new DatabaseSync(filename);
   restrictFilePermissions(filename);
   // WAL keeps its own sidecar files, which hold the same data.
   restrictFilePermissions(`${filename}-wal`);
   restrictFilePermissions(`${filename}-shm`);
 
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
+  // Wait for another process holding the file (the Platform, an Agent and the
+  // CLI share this store) instead of failing at once: better-sqlite3's old default.
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA foreign_keys = ON");
   database.exec(`
     CREATE TABLE IF NOT EXISTS zelavis_system_records (
       namespace TEXT NOT NULL,
@@ -126,7 +130,7 @@ export function createLocalSqliteSystemStore(
       ).changes > 0;
       const row = readStatement.get(namespace, key);
       if (!row) throw new Error("System Store failed to read an atomic create.");
-  return { created, record: toRecord(row) };
+      return { created, record: toRecord(row) };
     },
     compareAndSet(namespace, key, expectedUpdatedAt, value, expectedValue) {
       const updatedAt = new Date(

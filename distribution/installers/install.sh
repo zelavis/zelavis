@@ -87,8 +87,8 @@ NPM="$TREE/runtime/node/lib/node_modules/npm/bin/npm-cli.js"
 
 # 2. The exact package from npm. npm verifies it against the registry digest.
 # Install scripts stay off for the whole tree: this may run as root and the
-# dependencies are not ours. Only better-sqlite3, the one native module, is
-# rebuilt below.
+# dependencies are not ours. Nothing needs them: every dependency is plain
+# JavaScript, so there is no compiler or native build on the host.
 PROJECT="$TEMPORARY/project"
 mkdir "$PROJECT"
 printf '{"private":true}\n' > "$PROJECT/package.json"
@@ -98,8 +98,6 @@ printf '{"private":true}\n' > "$PROJECT/package.json"
 NPM_OPTIONS="--prefix $PROJECT --registry=https://registry.npmjs.org --userconfig=$TEMPORARY/npmrc-user --globalconfig=$TEMPORARY/npmrc-global --cache=$TEMPORARY/npm-cache --no-audit --no-fund --loglevel=error"
 # shellcheck disable=SC2086
 PATH="$TREE/runtime/node/bin:$PATH" "$NODE" "$NPM" install $NPM_OPTIONS --omit=dev --ignore-scripts --install-strategy=hoisted "zelavis@$VERSION"
-# shellcheck disable=SC2086
-PATH="$TREE/runtime/node/bin:$PATH" "$NODE" "$NPM" rebuild $NPM_OPTIONS better-sqlite3
 "$NODE" -e '
   const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[1] + "/node_modules/zelavis/package.json", "utf8"));
   if (manifest.name !== "zelavis" || manifest.version !== process.argv[2]) throw Error("Installed package identity does not match the requested version.");
@@ -111,4 +109,4 @@ mv "$PROJECT/node_modules" "$TREE/platform/node_modules"
 ln -s .. "$TREE/platform/node_modules/zelavis"
 
 # 3. Everything else is the shared installer, run by the private Node.
-"$NODE" "$TREE/platform/dist/cli.js" install --from-npm "$TREE" "$@"
+"$NODE" --disable-warning=ExperimentalWarning "$TREE/platform/dist/cli.js" install --from-npm "$TREE" "$@"

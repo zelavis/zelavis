@@ -210,7 +210,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "better-sqlite3": "^13.0.3",
     "effect": "4.0.0",
     "jose": "^6.2.12",
     "picocolors": "^1.1.1"
@@ -220,7 +219,6 @@
     "@effect/tsgo": "^0.47.2",
     "@harperfast/rocksdb-js": "2.9.1",
     "@libsql/client": "^0.18.0",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.2",
     "@zelavis/app": "workspace:*",
     "@zelavis/auth": "workspace:*",

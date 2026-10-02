@@ -44,7 +44,7 @@ Bun.serve({
 
 | Adapter | Import path | Provides |
 |---|---|---|
-| Node.js | `zelavis/adapters/node` | better-sqlite3, local files, local service packages |
+| Node.js | `zelavis/adapters/node` | node:sqlite, local files, local service packages |
 | Bun | `zelavis/adapters/bun` | bun:sqlite, local files, local service packages |
 
 All adapters are also re-exported from the barrel `zelavis/adapters` under both

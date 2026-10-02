@@ -58,7 +58,7 @@ test("the bootstrap acquires only Node and the npm package, and trusts nothing e
   assert.match(installer, /Node checksum verification failed/);
   assert.match(installer, /registry=https:\/\/registry\.npmjs\.org/);
   assert.match(installer, /--omit=dev --ignore-scripts/, "dependency install scripts never run, possibly as root");
-  assert.match(installer, /rebuild \$NPM_OPTIONS better-sqlite3/, "only the one native module is rebuilt");
+  assert.doesNotMatch(installer, /rebuild|node-gyp|build-essential/, "no native build: every dependency is plain JavaScript");
   assert.match(installer, /install --from-npm "\$TREE"/);
   assert.doesNotMatch(installer, /github\.com|SHA256SUMS|\bgpg\b|apt-get/i, "no GitHub release, signature or package-manager dependency");
   assert.doesNotMatch(installer, /systemctl|useradd|randomBytes/, "host setup is zelavis install, not shell");
