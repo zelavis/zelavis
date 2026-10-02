@@ -6,6 +6,13 @@ description: Install the long-running Zelavis Platform OS with the quick install
 Zelavis is a long-running Platform OS. It is installed on a server or local
 machine; it is not deployed as an ephemeral serverless function.
 
+:::caution[Installer not published yet]
+The unified installer described below (`install.sh`, `npm create zelavis`, the
+Debian package and the archive) is built but has not shipped in a release. No
+published release carries the archives these commands download, so they fail
+until the first release that includes them.
+:::
+
 ## Install with npm, pnpm or Bun create
 
 The create command installs Zelavis on this machine. It takes no folder argument:
