@@ -2,6 +2,7 @@ import { assertInstallationInstance, assertInstallationPort } from "../../core/r
 import { acquireNodeInstallerLock } from "../../adapters/_local-ownership.js";
 import { preflightZelavisInstall } from "../../core/runtime/installation-health.js";
 import { createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths, assertNodeInstallationPrivilege } from "../../adapters/_install-host.js";
+import { networkInterfaces } from "node:os";
 import { assembleNpmReleaseTree } from "../../adapters/_release-tree.js";
 import { executeZelavisInstallationPlan, planZelavisReleaseInstall, validateInstallationPaths, readNativeInstallationReceipt, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
 
@@ -10,7 +11,9 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   let invokingPath: string | undefined, invokingHome: string | undefined;
   let instance = "default", port: number | undefined;
   let source: string | undefined, npmPrepared: string | undefined;
-  let dryRun = false, json = false, publicBind = false, allowDowngrade = false, user = false;
+  let dryRun = false, json = false, allowDowngrade = false, user = false;
+  // Unset means the default: a server's default instance is reachable, anything else stays local.
+  let publicBind: boolean | undefined;
   let installedBy: ZelavisNativeInstallationReceipt["installedBy"] = "cli";
   let force = process.env.ZELAVIS_FORCE_BIN === "1", enableAgent = process.env.ZELAVIS_ENABLE_AGENT === "1";
   const value = (i: number, flag: string) => {
@@ -50,6 +53,9 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   const paths = user ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, instance);
   validateInstallationPaths(paths);
   const system = !user && process.getuid?.() === 0 && !!await host.which("systemctl");
+  // A server install ends with a URL you can open, as a WordPress install does. The first-owner
+  // token gates who may claim the account; there is deliberately no loopback-only server mode.
+  const bindPublic = publicBind ?? (system && instance === "default");
   if (!user && paths.prefix === "/opt/zelavis") {
     if (process.platform !== "linux") throw new Error("System installation requires Linux with systemd; use --user on this host.");
     if (!dryRun && process.getuid?.() !== 0) throw new Error("System installation must run as root. Use create-zelavis for safe elevation, or --user.");
@@ -66,7 +72,7 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     // The bootstrap fetched the private Node and the package; this completes the tree.
     if (npmPrepared) await assembleNpmReleaseTree(npmPrepared);
     port ??= (await readNativeInstallationReceipt(host, paths.prefix, instance))?.port ?? 3000;
-    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: publicBind, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : "release", installedBy });
+    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: bindPublic, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : "release", installedBy });
     if (dryRun) {
       console.log(json ? JSON.stringify(plan, null, 2) : ["Zelavis install plan", ...plan.steps.map((step) => `  ${step.id}: ${step.description} (idempotent: ${step.idempotent})`), ...plan.warnings, "No changes were made."].join("\n"));
       return;
@@ -75,12 +81,24 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     const output = await executeZelavisInstallationPlan(host, plan);
     if (json) console.log(JSON.stringify({ installed: true, plan, output }, null, 2));
     else {
-      console.log(`Zelavis instance ${instance} installed.\nDashboard: http://127.0.0.1:${port}/zelavis`);
-      if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${publicBind ? " --host 0.0.0.0" : ""}`);
-      if (system && !publicBind) console.log(`From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
+      const address = system && bindPublic ? serverAddress() : "127.0.0.1";
+      console.log(`Zelavis instance ${instance} installed.\nOpen the dashboard: http://${address}:${port}/zelavis`);
+      if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${bindPublic ? " --host 0.0.0.0" : ""}`);
+      if (system && bindPublic) console.log(`This address is plain HTTP, so claim the owner account now and add a hostname with HTTPS in the setup wizard. If a firewall blocks port ${port}, allow it, or reach it with: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
+      if (system && !bindPublic) console.log(`This instance listens on 127.0.0.1 only. From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
       for (const line of output) console.log(line);
     }
   } finally {
     await lock?.release();
   }
+}
+
+/** The server's first routable IPv4 address, for the URL to open; a placeholder when there is none. */
+function serverAddress(): string {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const entry of addresses ?? []) {
+      if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) return entry.address;
+    }
+  }
+  return "<server-ip>";
 }

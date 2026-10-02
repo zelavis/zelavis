@@ -47,8 +47,9 @@ deliberately. The installed CLI then runs `zelavis install --from-npm` with all
 remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`
 (a dry run still downloads into a temporary directory, and changes nothing else).
 
-The runtime does not depend on the host's Node. The Platform binds loopback by
-default; use the printed SSH tunnel for first-owner setup. The Agent is opt-in
+The runtime does not depend on the host's Node. On a server the dashboard listens on
+all interfaces at port 3000 and the installer prints the URL to open; the one-time
+first-owner token decides who may claim the account. The Agent is opt-in
 with `--enable-agent` on system installations and requires a qualified cgroup v2
 host. Traefik stays disabled at installation. Production Agent qualification and
 automated ACME/cutover reconciliation remain pending.
@@ -253,10 +254,12 @@ shadows it on PATH.
 
 ## First-Run Setup & Ownership Claim
 
-A system installation starts its HTTP service listener at
-`http://127.0.0.1:3000` (port 3000 on loopback). Use the SSH tunnel below for
-remote browser access. Passing `--public` to the installer deliberately
-writes a unit that binds to all interfaces; rerunning without it restores loopback.
+A system installation starts its HTTP service listener on port 3000, on all
+interfaces, and prints `http://<server-ip>:3000/zelavis` when it finishes. That
+address is plain HTTP, so claim the owner account straight away and add a hostname
+with HTTPS in the setup wizard. If a cloud firewall blocks the port, allow it.
+Named instances and user-mode installs stay on `127.0.0.1` unless given `--public`;
+rerunning the installer applies the flag it is given.
 
 Public web ports (`80` and `443`) intentionally remain dormant during first install:
 Zelavis never hijacks public HTTP/HTTPS ports before you have explicitly configured
@@ -270,10 +273,9 @@ strict `0600` permissions). In user mode, it is saved in
 You have two primary ways to access the graphical onboarding wizard, plus an
 interactive terminal option:
 
-### Option A: Direct Browser Access (Without SSH Tunnel)
+### Option A: Direct Browser Access (the default on a server)
 
-If you deliberately installed with `--public` and your
-firewall permits inbound traffic on port 3000:
+If your firewall permits inbound traffic on port 3000:
 
 1. Open your browser and navigate directly to:
    ```text
@@ -291,9 +293,9 @@ firewall permits inbound traffic on port 3000:
 Hostname/TLS setup uses authenticated Edge operations after ownership is claimed.
 A failure there does not undo the Owner account or reopen first-owner setup.
 
-### Option B: Secure Access via SSH Port Forwarding (With SSH Tunnel)
+### Option B: SSH Port Forwarding (if you would rather not open port 3000)
 
-Use an SSH tunnel for the default loopback listener:
+Use an SSH tunnel when a firewall blocks the port or you prefer not to expose it, including for a named or user-mode instance:
 
 1. On your **local machine**, open an SSH tunnel using your preferred SSH authentication method:
 

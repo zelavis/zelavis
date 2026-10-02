@@ -13,8 +13,9 @@ npm create zelavis@latest -- --yes
 Linux defaults to system mode when root or sudo is available: `/opt/zelavis`
 contains versioned releases, `/var/lib/zelavis` contains data, and `/etc/zelavis`
 contains configuration. The Platform starts through systemd using the release's
-private Node. The default listener is `127.0.0.1:3000`; use an SSH tunnel for a
-remote host. Agent enablement is opt-in (`--enable-agent`).
+private Node. On a server the dashboard listens on all interfaces at port 3000 and the
+installer prints the URL to open; the first-owner token gates who can claim the account.
+Agent enablement is opt-in (`--enable-agent`).
 
 macOS and Linux without sudo default to user mode. Select it explicitly with:
 

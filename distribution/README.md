@@ -161,10 +161,13 @@ curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
 (A dry run still downloads Node and the package into a temporary directory; it
 changes nothing else.)
 
-Native Platform units bind to `127.0.0.1:3000` by default. Connect from a local
-machine with `ssh -N -L 3000:127.0.0.1:3000 <user>@<server>` and open
-`http://127.0.0.1:3000/zelavis`. An explicit `--public` writes a unit binding to
-`0.0.0.0`; rerunning without it restores the private bind. Agent opt-in is
+A server's default instance binds `0.0.0.0:3000` by default and the installer prints
+`http://<server-ip>:3000/zelavis` to open (plain HTTP: the first-owner token gates who
+may claim the account, and the setup wizard's hostname step adds HTTPS). There is no
+loopback-only server mode; a cloud firewall or an SSH tunnel is how an operator keeps
+it off the internet. `--public` is the opt-in for a named instance or a user-mode
+install, which stay on `127.0.0.1` otherwise. Rerunning the installer applies the flag
+it is given. Agent opt-in is
 `--enable-agent`; Traefik remains disabled until Edge activates routes. Releases
 stay in `releases/<version>` with a `current` link. Older versions are refused
 unless `--allow-downgrade` is given; previous releases are kept.

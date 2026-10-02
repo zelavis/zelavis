@@ -15,7 +15,7 @@ export const HELP = `Install Zelavis on this machine.
   --dry-run          Show acquisition, layout and the exact command; make no changes
   --instance <name>  Select a named system instance
   --port <port>      Reserve its Platform port (required for a new named instance)
-  --public           Bind the Platform to 0.0.0.0 instead of 127.0.0.1
+  --public           Listen on all interfaces (already the default for a server's default instance)
   --force            Replace a conflicting Zelavis command deliberately
   --allow-downgrade  Permit an older release deliberately
   --enable-agent     Enable the Agent (system mode only)

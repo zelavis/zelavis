@@ -102,11 +102,11 @@ const steps = [
 	{ n: '1', title: 'Fetches a private Node', body: 'The Node version Zelavis is built for comes from nodejs.org and is checked against its published SHA-256. It never replaces the Node already on your machine.' },
 	{ n: '2', title: 'Installs the exact package from npm', body: 'The version you ask for, verified by npm against the registry digest. Dependency install scripts stay off, and nothing needs a compiler: it is all plain JavaScript.' },
 	{ n: '3', title: 'Lays out one installation', body: 'Releases under /opt/zelavis, data in /var/lib/zelavis, configuration in /etc/zelavis, a systemd service, a receipt, and a single zelavis command.' },
-	{ n: '4', title: 'Starts safely', body: 'It listens on 127.0.0.1 only, prints a one-time first-owner token, keeps the Edge proxy off and the Agent opt-in. Nothing is exposed until you choose.' },
+	{ n: '4', title: 'Starts safely', body: 'It prints the address to open, plus a one-time first-owner token that decides who may claim the account. The Edge proxy and the Agent stay off until you turn them on.' },
 ];
 
 const after = [
-	{ title: 'Open the dashboard', body: 'On a server, tunnel to it, then open the page and finish setup with the token the installer printed.', code: 'ssh -N -L 3000:127.0.0.1:3000 you@your-server\nopen http://127.0.0.1:3000/zelavis' },
+	{ title: 'Open the dashboard', body: 'Open the address the installer printed and finish setup with the token. It is plain HTTP until you add a hostname with HTTPS in the wizard, so claim the account straight away.', code: 'http://YOUR-SERVER-IP:3000/zelavis' },
 	{ title: 'Check the installation', body: 'Read-only, changes nothing, and tells you what is wrong in plain words.', code: 'sudo zelavis doctor' },
 	{ title: 'Add a hostname and HTTPS', body: 'The setup wizard has an optional Platform hostname step that verifies DNS before enabling HTTPS through the Edge.', code: 'zelavis setup' },
 ];
