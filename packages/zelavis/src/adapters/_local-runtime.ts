@@ -1268,8 +1268,12 @@ async function installedPackageDirectory(
   const entries = await createSystemStoreServiceRegistryStore(store).read();
   const specifier = entries.find((entry) => entry.name === name)?.specifier;
   if (!specifier || !isAbsolute(specifier)) return undefined;
-  // Walk up from the entry file to the package.json that names this package.
-  for (let current = dirname(specifier); current !== dirname(current); current = dirname(current)) {
+  return packageDirectoryOf(specifier, name);
+}
+
+/** Walks up from a package's entry file to the folder whose package.json names it. */
+function packageDirectoryOf(entryFile: string, name: string): string | undefined {
+  for (let current = dirname(entryFile); current !== dirname(current); current = dirname(current)) {
     const manifest = join(current, "package.json");
     if (existsSync(manifest)) {
       try {
@@ -1281,6 +1285,29 @@ async function installedPackageDirectory(
     }
   }
   return undefined;
+}
+
+/**
+ * Fetches the exact locked version of a recipe the marketplace offered but this
+ * installation never installed. It goes through the ordinary acquisition path,
+ * so the allow-list authorizes the exact version before any fetch and checks
+ * the digest after; a Project can never be frozen from anything else.
+ */
+async function acquireRecipePackage(
+  installer: ZelavisServicePackageInstaller,
+  name: string,
+  version: string,
+): Promise<string> {
+  if (!installer.acquire) throw new Error(`Cannot install ${name}@${version}: this installation does not fetch packages.`);
+  try {
+    const result = await Effect.runPromise(Effect.scoped(installer.acquire({ reference: `npm:${name}@${version}` })));
+    const directory = packageDirectoryOf(result.specifier, name);
+    if (!directory) throw new Error("the downloaded package has no package.json naming it");
+    return directory;
+  } catch (cause) {
+    const reason = (cause as { reason?: string; message?: string })?.reason ?? (cause as Error)?.message ?? String(cause);
+    throw new Error(`Project recipe ${name}@${version} could not be installed from the marketplace allow-list: ${reason}`);
+  }
 }
 
 /**
@@ -1786,7 +1813,7 @@ export interface LocalServiceSources {
    * Where a recipe package lies: the checkout copy in development, or the copy
    * the marketplace installed. What Projects are frozen from when it is not bundled.
    */
-  recipePackageDirectory?: (name: string) => Promise<string | undefined>;
+  recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined>;
   /** Whether the marketplace lets a recipe provide the runtime its Projects run under. */
   recipeRuntimeTrusted?: (name: string) => Promise<boolean>;
   serviceRegistry?: ZelavisServiceRegistryOptions;
@@ -1873,6 +1900,8 @@ export async function createLocalServiceSources(
     ...(marketplace?.gate ? { acquisitionGate: marketplace.gate } : {}),
   };
 
+  const packageInstaller = createLocalRuntimeServicePackageInstaller(installerOptions);
+
   return {
     ...(folderFrontends.size > 0
       ? {
@@ -1902,15 +1931,19 @@ export async function createLocalServiceSources(
       // embedded runtimes cannot affect each other.
       manifestResolver: createLocalRuntimeServiceManifestResolver(),
     },
-    servicePackages: createLocalRuntimeServicePackageInstaller(installerOptions),
+    servicePackages: packageInstaller,
     ...(marketplace ? { marketplace } : {}),
     ...(input.isProjectRuntime
       ? {}
       : {
-          recipePackageDirectory: async (name: string) =>
+          recipePackageDirectory: async (name: string, version?: string) =>
             marketplace?.localPackages.get(name) ??
             (input.systemStore
               ? await installedPackageDirectory(input.systemStore, name)
+              : undefined) ??
+            // Offered by the allow-list but never installed: fetch exactly the locked version.
+            (version && marketplace?.gate
+              ? await acquireRecipePackage(packageInstaller, name, version)
               : undefined),
           ...(marketplace ? { recipeRuntimeTrusted: (name: string) => marketplace.runtimeTrusted(name) } : {}),
         }),

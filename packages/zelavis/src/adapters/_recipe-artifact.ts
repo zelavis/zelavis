@@ -150,7 +150,7 @@ export async function ensureRecipeArtifact(
    * Where an installed or checked-out recipe package lies. Bundled recipes are
    * found without it; anything installed from the marketplace is not.
    */
-  packageDirectory?: (name: string) => Promise<string | undefined> | string | undefined,
+  packageDirectory?: (name: string, version?: string) => Promise<string | undefined> | string | undefined,
 ): Promise<{ digest: string }> {
   try {
     const existing = JSON.parse(
@@ -174,7 +174,12 @@ export async function ensureRecipeArtifact(
   // frozen copy and this Platform cannot supply that exact version, say so
   // now: preparing would otherwise succeed and the runner would then exit
   // with a message that tells the operator to do what just failed.
-  const bundled = (await packageDirectory?.(recipe.name)) ?? resolveBundledServiceDirectory(recipe.name);
+  // Local sources first (a checkout, an installed package, what this Platform bundles). Only when
+  // none has it is the exact locked version asked for by name and version, which may fetch it.
+  const bundled =
+    (await packageDirectory?.(recipe.name)) ??
+    resolveBundledServiceDirectory(recipe.name) ??
+    (await packageDirectory?.(recipe.name, recipe.version));
   if (!bundled) {
     throw new Error(
       `Project recipe ${recipe.name}@${recipe.version} is not shipped with this Platform and the Project has no frozen copy of it. Upgrade the Project to a recipe this Platform ships, or delete and recreate it.`,

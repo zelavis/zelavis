@@ -8,6 +8,7 @@ import { Zelavis } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
 import { resolveBundledServiceDirectory } from "../dist/adapters/_local-runtime.js";
 import {
+  ensureRecipeArtifact,
   loadRecipeArtifact,
   materializeRecipeArtifact,
   digestArtifactDirectory,
@@ -169,4 +170,23 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   assert.match(project.runtime.error, /cannot be prepared: this Platform ships/);
   assert.match(project.runtime.error, /delete and recreate the Project/);
   assert.doesNotMatch(project.runtime.error, /prepare the Project again/);
+});
+
+test("a recipe the marketplace offered but this install never installed is fetched at its exact locked version", async () => {
+  const root = await scratch();
+  const { directory, manifest } = await bundledApp();
+  const asked = [];
+  // Nothing local has it: the first (name-only) question finds nothing, the second names the version.
+  const supply = async (name, version) => { asked.push([name, version]); return version ? directory : undefined; };
+  const project = join(root, "p"); const data = join(project, ".zelavis");
+  await mkdir(data, { recursive: true });
+  // A name nothing bundles, so only a download can provide it.
+  const { digest } = await ensureRecipeArtifact({ name: "@acme/offered", version: manifest.version }, project, data, supply);
+  assert.match(digest, /^sha256:/);
+  assert.deepEqual(asked, [["@acme/offered", undefined], ["@acme/offered", manifest.version]], "local sources are asked first; the exact version is only asked for after");
+
+  // A supplier that hands back another version is refused rather than frozen.
+  const other = join(root, "q"); const otherData = join(other, ".zelavis");
+  await mkdir(otherData, { recursive: true });
+  await assert.rejects(() => ensureRecipeArtifact({ name: "@acme/offered", version: "9.9.9" }, other, otherData, supply), /cannot be prepared/);
 });

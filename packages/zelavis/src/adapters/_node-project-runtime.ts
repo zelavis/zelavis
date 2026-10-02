@@ -36,7 +36,7 @@ export interface NodeProcessProjectRuntimeOptions {
   shutdownConcurrency?: number;
   logLimit?: number;
   /** Where an installed or checked-out recipe package lies, so it can be frozen into a Project. */
-  recipePackageDirectory?: (name: string) => Promise<string | undefined> | string | undefined;
+  recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined> | string | undefined;
   /** Gives a starting Project the allow-list this Platform holds (see `LocalMarketplace.handDown`). */
   handDownAllowlist?: (projectDataDirectory: string) => Promise<void>;
 }
