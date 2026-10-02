@@ -1,5 +1,12 @@
 # @zelavis/auth
 
+## 1.1.0-alpha.7
+
+### Patch Changes
+
+- Updated dependencies [02a8ba1]
+  - zelavis@2.0.0-alpha.7
+
 ## 1.1.0-alpha.6
 
 ### Patch Changes
