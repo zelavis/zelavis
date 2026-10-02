@@ -98,7 +98,7 @@ current automatically.
 ## Service Loading Rules
 
 - A service is a folder with a `package.json` manifest and an ES module entry,
-  loaded by `import()`. npm and registries are only a transport; the signed
+  loaded by `import()`. npm and registries are only a transport; the
   allow-list decides trust. The server never runs `npm install`.
 - Default services ship inside the `zelavis` package (`services/`), at the
   Platform's version. They are not copied into generated projects and cannot be
@@ -114,6 +114,34 @@ current automatically.
 - Update plan (zero downtime): `website/.../architecture/updates.md`. Mark it
   planned until built.
 
+## Distribution Trust Model
+
+The owner decided (2026-10-02) that distribution stays dead simple, for the
+project and for everyone installing it. There are no release signatures, signing
+keys, GPG/APT keys, CI secrets or GitHub Actions/Releases in the delivery path,
+and none may be reintroduced without the owner asking for them explicitly.
+
+- A release is the published `zelavis` npm package (`pnpm release:publish:*` is
+  `changeset publish` plus a check that the version is on npm). Nothing is built,
+  signed, uploaded or hosted per release.
+- Trust anchors are https origins and nothing else: **npm** (package integrity is
+  npm's own registry digest), **nodejs.org** (the pinned private Node, checked against
+  its published SHA-256) and **zelavis.com** (`/install.sh` and `/allowlist.json`,
+  deployed from `website/` to Cloudflare Pages). `distribution/installers/install.sh`
+  is the one authored bootstrap; the website and create ship it unchanged.
+- The bootstrap runs `npm install` with install scripts off (it may run as root)
+  and rebuilds only the single native module, then hands a tree to
+  `zelavis install --from-npm`. The tree is completed from the package's own
+  `dist/installation-assets` (generated from `distribution/`), so templates, pins and
+  operations are authored once.
+- Host operations ship as plain manifests in a root-owned tree, and the Agent
+  refuses a manifest that is not a regular, root-owned, non-group/world-writable file
+  when `--require-root-owned-operations` is set. The Platform-to-Agent authority key
+  (Ed25519, generated per installation) is a runtime mechanism, not a release
+  secret, and stays.
+- APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
+  staged tree and its `postinst` runs `zelavis install --from-release`.
+
 ## Marketplace Allow-List
 
 `@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
@@ -122,12 +150,13 @@ documented in `website/.../architecture/marketplace-allowlist.md`) names which
 packages an installation may install, at which exact versions, with which digest.
 Rules that hold for every change:
 
-- The list is an Ed25519-signed envelope, so any source (primary, mirror, gist,
-  API) is as trustworthy as any other. Never add an unsigned or unverified path
-  that changes what may be installed.
-- A client never moves backwards: sequence is strictly increasing, an older
-  validly signed list is a replay and is ignored, and the cache is verified again
-  on every read. Keep expiry, https-only, no-redirect and size bounds.
+- The list is plain JSON served over https from `https://zelavis.com/allowlist.json`;
+  that origin is the trust anchor, the same as for the installer. There are no
+  keys or envelopes. Never add a path that changes what may be installed from an
+  unverified or non-https source, or from a redirect nobody named.
+- A client never moves backwards: sequence is strictly increasing, an older list is
+  a replay and is ignored, and the cache is parsed again on every read. Keep expiry,
+  https-only, no-redirect and size bounds.
 - The install gate authorizes an exact listed version before any fetch and
   verifies the listed digest after; a tag or range is never a listed version.
   Registry `official` is reserved for what the host bundled, so listed services
@@ -136,11 +165,8 @@ Rules that hold for every change:
   packages in the operator's own checkout and must never become a way to install
   from anywhere else.
 - Releases run `pnpm allowlist update` (rebuild the list from `zelavis-services/*`
-  and npm's digests, bump `sequence`) and `pnpm allowlist sign` (the envelope every
-  source hosts). The signing private key stays outside the repository; only its
-  public half is in `OFFICIAL_ALLOWLIST_KEYS`.
-  The signed file is published from `marketplace/`, an ignored nested repository (like
-  `pnotes/`) that is `zelavis/marketplace` on GitHub, the mirror source.
+  and npm's digests, bump `sequence`) and `pnpm allowlist publish` (a plain copy with
+  a fresh expiry at `website/public/allowlist.json`, served by the next website deploy).
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
 
@@ -585,8 +611,8 @@ revalidate the deadline immediately before execution. The Node executor must
 re-prove artifact/parent inode identity at execution, spawn a private copy of
 the verified bytes rather than the registered path, and kill the operation's
 process group at the deadline and when its leader exits. Host operations are
-installed only with Ed25519 release-signed manifests verified against the
-operator trust store; scripts name their interpreter inside the signature.
+installed as plain manifests in a root-owned tree (see "Distribution Trust
+Model"); scripts name their interpreter in the manifest.
 On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
 and never fall back from it silently. This does not substitute for pinned
 shared libraries or destination fencing.
@@ -594,10 +620,10 @@ shared libraries or destination fencing.
 Agent authority is Ed25519: only the Platform holds the private key, Agents
 trust its public file, and envelopes bind the exact arguments
 (`argumentsDigest`). The Platform issues authority only through the host
-operation broker, for installed operations whose release-signed manifest names
+operation broker, for installed operations whose manifest names
 the permission and scope, after recording an audit entry; there is no general
 command runner. Agents reach operations only over their local socket.
-Operation output is journaled only when the signed manifest declares a bounded
+Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
@@ -1113,25 +1139,26 @@ those grants, while endpoints remain the authority layer.
   services, not installable package source.
 - `examples/*` contains runnable example workspace packages.
 - `website/` contains the public Astro Starlight documentation site (`website/src/content/docs/`).
-- `distribution/` owns release staging, archives, Debian packages, signed APT
-  repository metadata, installers, and operating-system service files.
+- `distribution/` owns the bootstrap installer, release staging for the deferred
+  Debian package, runtime pins, host operation sources and operating-system service
+  files.
 
-All production delivery formats must be assembled from the published `zelavis`
-package and one common staged release tree. OS packages may bundle a pinned,
+All delivery formats must be assembled from the published `zelavis` package and
+one common release tree. OS packages may bundle a pinned,
 private Node runtime, but must not introduce a second Platform implementation or
 install over the host's global Node runtime. Keep generated release trees,
 download caches, and artifacts out of Git.
 
-Native release installation is host-local too: archive installers and Debian
-`postinst` call `zelavis install --from-release` using the release's private
-Node. Keep the ordered plan in core runtime and concrete host operations in
+Native release installation is host-local too: the shell installer and create
+bootstrap call `zelavis install --from-npm`, and a Debian `postinst` calls
+`zelavis install --from-release`, using the release's private Node. Keep the ordered plan in core runtime and concrete host operations in
 adapters; unit/configuration templates come from the release tree, and runtime
 pins/checksums remain in distribution staging. Native Platform units bind to
 `127.0.0.1` by default; `--public` deliberately opts into all interfaces.
-Package acquisition and npm/pnpm/Bun create use the matching verified prebuilt
-release and the same plan. Create takes no folder argument. Its sudo bootstrap
-fetches and verifies a private root-owned release; never execute a file from a
-user package cache as root. User mode keeps data/config/releases under
+npm/pnpm/Bun create use the same bootstrap and plan. Create takes no folder
+argument. Its sudo bootstrap fetches its own Node and package into a private
+root-owned temporary directory; never execute a file from a user package cache as
+root. User mode keeps data/config/releases under
 `~/.local/share/zelavis` and owns only that prefix and its command link. Runtime
 pins/checksum helpers have one source in distribution; package assets are generated
 at build time. Install/removal take an exclusive prefix lock and share the Node/Bun Platform
@@ -1141,10 +1168,10 @@ read-only and host-local. Named Linux/systemd instances share immutable releases
 but own separate current links, receipts, runtime descriptors, data/config, accounts,
 ports and units. Only default owns host Edge, with a persistent record and kernel
 reservation; secondary instances must run with Edge off. Instance removal retains
-shared releases/commands/templates/package/APT state while other receipts remain.
+shared releases/commands/templates/package state while other receipts remain.
 Debian packages own only the incoming `/opt/zelavis/package` payload; persistent
-release trees and current links belong to the installer, so APT cannot remove an
-older release selected by another instance.
+release trees and current links belong to the installer, so a package manager cannot
+remove an older release selected by another instance.
 Never add an installation HTTP/dashboard route.
 
 Complete native installation removal is a host-local lifecycle capability, not

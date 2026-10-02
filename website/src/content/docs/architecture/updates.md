@@ -71,7 +71,7 @@ its own files while the old keeps running from its own. Named installations
 also retain independent `instances/<name>/current` links over the shared release
 tree. Their separate System Stores are not an implementation of blue/green
 overlap on one Store; that still needs phase 3 above. A `zelavis upgrade`
-command (and the Agent, as a signed host operation like the Edge ones) does:
+command (and the Agent, as a host operation like the Edge ones) does:
 start the new release on another port, wait for `/ready`, move Edge to it, drain
 the old, and roll back by moving Edge back if the new one fails its probe. A
 failed update never takes the old version down.

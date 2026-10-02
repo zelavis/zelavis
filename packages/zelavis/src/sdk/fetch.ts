@@ -289,7 +289,7 @@ export interface ZelavisClient {
    * client ends up writing another App's records.
    */
   data(projectId: string): ZelavisDataClient;
-  /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
+  /** Host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
   readonly environment: ZelavisEnvironmentClient;
   /** Proxy-neutral Edge management. Same contract as `zelavis edge`. */

@@ -423,7 +423,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           preservePrefixes: [REMOTE_ENVIRONMENT_WORKLOAD_PREFIX],
         }).catch(() => undefined);
       }
-      // Signed host operations are requestable only through a supervised Agent,
+      // Host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
       let hostOperations: ZelavisHostOperationBroker | undefined;
       if (agentClient && platformAuthority && systemStore) {

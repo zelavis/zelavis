@@ -202,7 +202,7 @@ export interface AgentProcessServerOptions {
     readonly checkIntervalMs?: number;
   };
   /**
-   * Signed host operations, when this Agent was started with an installed
+   * Host operations, when this Agent was started with an installed
    * operation tree. Each request still carries its own signed authority; the
    * socket token only proves the caller may talk to the Agent at all.
    */

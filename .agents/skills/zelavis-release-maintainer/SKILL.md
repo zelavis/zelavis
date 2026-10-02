@@ -29,6 +29,12 @@ Use this skill for:
    complete-uninstall documentation cover every newly owned host resource.
 5. Run the release validation commands before publishing.
 6. Keep alpha vs stable intent explicit.
+7. A release is `npm publish` and nothing else: no signing keys, secrets, GitHub
+   Actions/Releases, archives or APT repository (AGENTS.md "Distribution Trust
+   Model"). Do not add them without the owner asking. After publishing, install the
+   new version on a real host and run `zelavis doctor`; refresh
+   `pnpm allowlist update` / `pnpm allowlist publish` and deploy `website/` when
+   services changed.
 
 ## Useful commands
 

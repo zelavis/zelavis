@@ -1,9 +1,9 @@
 /**
- * Issuing authority for release-signed host operations.
+ * Issuing authority for host operations.
  *
  * The Platform is the only holder of the Ed25519 key an Agent trusts, so this
  * is the one place an envelope can come from. It issues one only when the
- * caller holds the permission the operation's *signed* manifest names, for
+ * caller holds the permission the operation's installed manifest names, for
  * the scope that manifest names, and only for arguments that manifest accepts.
  * Every issuance is recorded before the Agent sees the request; argument
  * values are not stored, only their digest.

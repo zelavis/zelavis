@@ -1,17 +1,62 @@
 ---
 title: Installation
-description: Install the long-running Zelavis Platform OS with the quick installer, Debian package, archive, or npm.
+description: Install the long-running Zelavis Platform OS with the shell installer or npm create.
 ---
 
 Zelavis is a long-running Platform OS. It is installed on a server or local
 machine; it is not deployed as an ephemeral serverless function.
 
-:::caution[Installer not published yet]
-The unified installer described below (`install.sh`, `npm create zelavis`, the
-Debian package and the archive) is built but has not shipped in a release. No
-published release carries the archives these commands download, so they fail
-until the first release that includes them.
+:::caution[Ships with the next alpha]
+The installer described here is merged but not yet published to npm. The current
+alpha (`2.0.0-alpha.5`) predates it, so these commands fail until the next alpha
+is published. Expect them to work from `2.0.0-alpha.6`.
 :::
+
+Both methods do the same thing and end in the same installation: the shell
+installer needs nothing but `curl`; `npm create` is for people who already have a
+JavaScript toolchain. The [Install page](/install) has copy-ready commands.
+
+## Quick install
+
+The shell installer detects your operating system and CPU (`x86_64`/`amd64` and
+`arm64`) and runs unattended:
+
+```bash
+# Linux server (root, systemd). Current prerelease channel; an exact version can
+# replace --channel alpha.
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
+
+# Unprivileged installation (also the default on macOS).
+curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user
+```
+
+It trusts exactly two https origins and nothing else:
+
+1. **nodejs.org** supplies the private Node the Platform runs on. The Node version
+   is pinned by the release and the archive is checked against nodejs.org's
+   published SHA-256 before it is unpacked. It never touches the Node already on
+   your machine.
+2. **npm** supplies the exact `zelavis` package. npm verifies it against the
+   registry digest. Dependency install scripts stay off for the whole tree (this may
+   run as root and the dependencies are not Zelavis's); only the one native module,
+   `better-sqlite3`, is rebuilt.
+
+There are no release signatures, keys or second download host to manage. Read the
+script first at [zelavis.com/install.sh](https://zelavis.com/install.sh): it is one
+short, commented file, and the same file `npm create zelavis` runs.
+
+Place `--version <exact-version>` or `--channel alpha|latest` before installer
+flags. A channel is resolved once from npm's dist-tags and a missing version fails
+explicitly. The default channel is `latest`; prerelease installation uses `alpha`
+deliberately. The installed CLI then runs `zelavis install --from-npm` with all
+remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`
+(a dry run still downloads into a temporary directory, and changes nothing else).
+
+The runtime does not depend on the host's Node. The Platform binds loopback by
+default; use the printed SSH tunnel for first-owner setup. The Agent is opt-in
+with `--enable-agent` on system installations and requires a qualified cgroup v2
+host. Traefik stays disabled at installation. Production Agent qualification and
+automated ACME/cutover reconciliation remain pending.
 
 ## Install with npm, pnpm or Bun create
 
@@ -36,11 +81,10 @@ a root-owned temporary directory. It never executes a file in the user's package
 cache as root. Dry-run makes no downloads or changes. Non-interactive installs
 require `--yes`.
 
-Each create package selects an exact Platform version, checks npm metadata and
-verifies the matching prebuilt GitHub release archive's SHA-256. Native dependencies
-are built for that release target in advance. A matching archive must be
-published; missing assets fail explicitly rather than selecting an older version.
-Some published prereleases predate this installer and do not carry the required assets.
+Each create package selects an exact Platform version. It runs the same shell
+bootstrap as the quick installer, so the trust chain is the same two origins:
+nodejs.org for the private Node and npm for the package. A missing version fails
+explicitly rather than selecting an older one.
 
 ### User mode
 
@@ -67,101 +111,31 @@ the operator live in `<data>/services`; default services ship inside the Platfor
 and cannot be shadowed there. For embedding the runtime in an application,
 use `npm install zelavis` as a library dependency.
 
-## Quick install
+## Debian package and APT (planned)
 
-The quick installer automatically detects your operating system and CPU
-architecture (`x86_64` / `amd64` and `arm64`). On production Linux servers
-(such as Hetzner, AWS, DigitalOcean, or bare metal), it pulls the
-verified standalone distribution bundle from the release registry, verifies its
-SHA-256 integrity, unpacks the private Node 24 runtime, registers the `zelavis`
-system user, and sets up systemd service units.
-
-Zero build dependencies are required on your server: no `git`, `node`, `pnpm`,
-or compilers are needed.
-
-The public bootstrap route and new signed release are being prepared. These
-commands require that route and a matching release to be published; older
-prereleases lack the unified installer’s assets.
-
-```bash
-# Current prerelease channel; an exact version can replace --channel alpha.
-curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
-
-# Unprivileged installation (also the default on macOS).
-curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user
-```
-
-Place `--version <exact-version>` or `--channel alpha|latest` before installer
-flags. A channel is resolved once, then the bootstrap fetches only the matching
-versioned archive and checksum manifest. Missing assets fail explicitly. The
-default channel is `latest`; prerelease installation uses `alpha` deliberately.
-The archive is verified before its private Node calls `zelavis install` with all
-remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`.
-
-The runtime does not depend on the host’s Node. The Platform binds loopback by
-default; use the printed SSH tunnel for first-owner setup. The Agent is opt-in
-with `--enable-agent` on system installations and requires a qualified cgroup v2
-host. Traefik stays disabled at installation. Production Agent qualification and
-automated ACME/cutover reconciliation remain pending.
-
-## Direct Debian / Ubuntu package (.deb)
-
-If you prefer managing packages natively with `apt`, download the `.deb` release
-matching your server CPU and install it:
-
-Download the versioned `.deb` and `SHA256SUMS` from the same
-`zelavis@<exact-version>` GitHub Release, verify the checksum, then install the
-local package. The Debian version replaces a prerelease hyphen with `~`:
-
-```bash
-# Example variables: select an actually published exact version and your CPU.
-VERSION=<exact-version>
-DEBIAN_VERSION=<matching-debian-version>
-ARCH=amd64 # arm64 for ARM servers
-BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
-curl -fsSLO "$BASE/zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
-curl -fsSLO "$BASE/SHA256SUMS"
-grep "  zelavis_${DEBIAN_VERSION}_${ARCH}.deb$" SHA256SUMS | sha256sum -c -
-sudo apt install -y "./zelavis_${DEBIAN_VERSION}_${ARCH}.deb"
-```
-
-The separate signed APT repository and repository bootstrap package at
-`apt.zelavis.com` require owner publication. Once available, install the verified
-`zelavis-repository` package and run `sudo apt update && sudo apt install zelavis`.
-Its `postinst` uses the same private Node and TypeScript installation plan.
-
-Installing through `apt install ./<package>.deb` rather than `dpkg` directly
-allows the system package manager to verify dependencies and maintain package
-database integrity.
+A `.deb` can be built from the same release tree (`pnpm distribution:stage` then
+`pnpm distribution:deb` on a Linux host), but none is published, and there is no
+APT repository: `apt.zelavis.com` does not exist yet. Both are planned, and the
+[Install page](/install) says so. The supported Linux path today is the shell
+installer. A package's `postinst` runs the same `zelavis install --from-release`,
+so it will produce the same installation.
 
 ## One host-local native installation plan
 
-Archive installers, Debian `postinst` and the create bootstrap run `zelavis install --from-release`
-with the staged release's private Node. The TypeScript command computes an
-ordered plan with each step's idempotence; dry-run and execution use that same inventory. It reads
-unit templates, Edge configuration and operation trust from the release tree.
-It has no HTTP/dashboard route: installation is local host maintenance.
+The shell installer and the create bootstrap run `zelavis install --from-npm` with
+the private Node they just fetched, on a tree assembled from the npm package's own
+installation assets. A staged release tree (what a Debian package ships) is
+installed with `zelavis install --from-release`. Both feed one TypeScript command
+that computes an ordered plan with each step's idempotence; dry-run and execution
+use that same inventory. It reads unit templates and Edge configuration from the
+tree. It has no HTTP/dashboard route: installation is local host maintenance.
 
-For an extracted archive, inspect and execute the plan:
-
-```bash
-sudo ./install.sh --dry-run
-sudo ./install.sh
-```
-
-The equivalent local command is `zelavis install --from-release
-/absolute/path/to/release`. `--json` provides machine-readable output,
-`--force` deliberately replaces a foreign command link, and
-`--allow-downgrade` permits an older release. Existing tokens, trust and Edge
-configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
-`current` selecting the active one; previous archive releases are retained.
-Downtime-free blue/green updates remain [planned](../../architecture/updates/).
-
-An installed CLI can also acquire an exact release with
-`zelavis install --from package --version <exact-version>` (add `--user` for user
-mode). Package dry-run shows acquisition and layout without downloading; the
-full step inventory is computed after the archive has been verified.
-
+`--json` provides machine-readable output, `--force` deliberately replaces a foreign
+command link, and `--allow-downgrade` permits an older release. Existing tokens and
+Edge configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
+`current` selecting the active one; previous releases are retained. Running the
+installer again with a newer version is the upgrade. Downtime-free blue/green
+updates remain [planned](../../architecture/updates/).
 
 
 ## Named system instances
@@ -170,9 +144,9 @@ With no `--instance`, every entry installs or repairs `default`. To create a
 second Linux/systemd instance, choose a name and a distinct port:
 
 ```bash
-sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100 --dry-run
-sudo zelavis install --from-release /absolute/path/to/release --instance preview --port 3100
-# Or: npm create zelavis@latest -- --system --instance preview --port 3100 --yes
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha --instance preview --port 3100 --dry-run
+curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha --instance preview --port 3100
+# Or: npm create zelavis@alpha -- --system --instance preview --port 3100 --yes
 sudo zelavis doctor --instance preview --json
 ```
 
@@ -185,7 +159,7 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Resource | Default | Named `preview` |
 |---|---|---|
 | Data and System Store | `/var/lib/zelavis` | `/var/lib/zelavis-preview` |
-| Config, trust and token | `/etc/zelavis` | `/etc/zelavis-preview` |
+| Config and token | `/etc/zelavis` | `/etc/zelavis-preview` |
 | User/group | `zelavis` | `zelavis-preview` |
 | Platform unit | `zelavis.service` | `zelavis@preview.service` |
 | Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
@@ -232,7 +206,7 @@ Removal stops only its own units and deletes its data, configuration/token,
 installer-owned account, receipt, descriptor and release link. Removing default
 also releases its Edge record/lock. While any other instance receipt remains,
 the shared releases, incoming Debian payload, management `current`, command
-links, unit templates, APT source/key and Debian package records are retained. Removing the last instance
+links, unit templates and Debian package records are retained. Removing the last instance
 removes that shared inventory too. `--all` means all data of the selected
 instance, including its Projects; it does not remove every instance on the host.
 The instance directories, incoming Debian payload, descriptors, template units
@@ -269,37 +243,6 @@ locks, downloads nothing and never reads the bootstrap environment. An error
 returns exit status 1. Agent host features do not prove production containment;
 real-server qualification remains pending.
 
-## Manual release archive (.tar.gz)
-
-The standalone `.tar.gz` and `.zip` archives are self-contained and suitable for
-manual download, SFTP upload, or air-gapped environments:
-
-Fetch an exact `zelavis@<version>` GitHub Release archive and its
-`SHA256SUMS`, verify the archive, then extract it:
-
-```bash
-VERSION=<exact-version>
-TARGET=linux-x64 # linux-arm64, darwin-x64 or darwin-arm64
-NAME="zelavis-$VERSION-$TARGET"
-BASE="https://github.com/zelavis/zelavis/releases/download/zelavis@$VERSION"
-curl -fsSLO "$BASE/$NAME.tar.gz"
-curl -fsSLO "$BASE/SHA256SUMS"
-grep "  $NAME.tar.gz$" SHA256SUMS | sha256sum -c - # macOS: shasum -a 256 -c -
-tar -xzf "$NAME.tar.gz"
-cd "$NAME"
-sudo ./install.sh # macOS or unprivileged use: ./install.sh --user
-```
-
-Versioned downloads and `alpha/` / `latest/` aliases with checksum sidecars are
-prepared for `downloads.zelavis.com`; hosting still needs owner deployment.
-Alpha aliases are separate from stable latest. Prefer exact versions when
-copying archives to an offline server.
-
-The installer places versioned releases under `/opt/zelavis/releases/<version>`,
-symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis`,
-creates the dedicated `zelavis` system user, and enables the Platform unit.
-The Agent is opt-in and Traefik remains disabled until Edge activates routes.
-
 ## Direct npm library and CLI use
 
 `npm install zelavis` remains available for embedding. A deliberate global
@@ -317,7 +260,7 @@ shadows it on PATH.
 
 A system installation starts its HTTP service listener at
 `http://127.0.0.1:3000` (port 3000 on loopback). Use the SSH tunnel below for
-remote browser access. Passing `--public` to the archive installer deliberately
+remote browser access. Passing `--public` to the installer deliberately
 writes a unit that binds to all interfaces; rerunning without it restores loopback.
 
 Public web ports (`80` and `443`) intentionally remain dormant during first install:
@@ -334,7 +277,7 @@ interactive terminal option:
 
 ### Option A: Direct Browser Access (Without SSH Tunnel)
 
-If you deliberately installed with `sudo ./install.sh --public` and your
+If you deliberately installed with `--public` and your
 firewall permits inbound traffic on port 3000:
 
 1. Open your browser and navigate directly to:
@@ -435,9 +378,9 @@ For the default instance, when it is the last installation on the host, this:
 
 - Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
 - Removes `/opt/zelavis`, including the receipt, `runtime.json`, `.install.lock`, instance directories and host Edge ownership files, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
-- Removes configuration, signed host operations, and certificates.
+- Removes configuration, host operations, and certificates.
 - Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock` and `.platform-owner.json`.
-- Removes the Zelavis APT source/key and Debian package records when present.
+- Removes Debian package records when the installation came from a package.
 - Removes the `zelavis` user/group only when the receipt records installer ownership and their current properties are safe.
 
 Shared host packages, journal history, external archives/backups and
@@ -449,5 +392,5 @@ originating package manager or development lifecycle.
 For a **user installation**, run those two uninstall commands without sudo.
 Its inventory is the complete `~/.local/share/zelavis` prefix (including releases,
 data and ownership lock/record, configuration/token, installer lock, receipt and runtime descriptor) and the owned `~/.local/bin/zelavis` link.
-It does not touch systemd units, APT sources/keys, system commands or accounts.
+It does not touch systemd units, system commands or accounts.
 Stop the user-run Platform before removing it.

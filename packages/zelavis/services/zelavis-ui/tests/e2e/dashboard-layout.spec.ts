@@ -898,10 +898,10 @@ test('@smoke the marketplace lists WordPress and Zelavis as apps', async ({
   await expect(apps.getByRole('heading', { name: 'Zelavis App' })).toBeVisible()
   await expect(apps.getByRole('heading', { name: 'WordPress' })).toBeVisible()
 
-  // Everything here installs only if the signed allow-list vouches for it, so
+  // Everything here installs only if the allow-list vouches for it, so
   // how current that list is sits on the page.
   const strip = page.getByLabel('Allow-list')
-  await expect(strip).toContainText('Installs are limited to the signed allow-list')
+  await expect(strip).toContainText('Installs are limited to the allow-list')
   await expect(strip).toContainText(/List \d+/)
 })
 

@@ -48,8 +48,8 @@ command tree.
 - `bootstrap` creates the first Platform owner account non-interactively.
 - `bootstrap status` reports whether an owner still has to be created.
 - `agent` runs the separately supervised Agent that executes Project processes.
-  With `--operations-root <dir> --operation-trust <file> --platform-authority <file>`
-  it also runs installed, release-signed host operations the Platform requests
+  With `--operations-root <dir> --platform-authority <file>`
+  it also runs installed host operations the Platform requests
   over its local socket with Ed25519-signed, request-bound authority. `--operation-cgroup delegated` (Linux, cgroup v2,
   systemd `Delegate=yes`) contains each operation in its own cgroup, optionally
   limited by `--operation-pids-max` and `--operation-memory-max`; it refuses to
@@ -57,10 +57,10 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
-- `host-operations catalog|submit|get|audit` requests release-signed host operations
+- `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,
   `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>
-  --arg name=value` needs the permission the operation's signed manifest names
+  --arg name=value` needs the permission the operation's installed manifest names
   for that Project (or system scope). An operation that declares a JSON result
   returns it in `get`. `audit [--project <id>] [--limit N]` lists issuance
   records (never argument values) with the audit permission. Submissions are

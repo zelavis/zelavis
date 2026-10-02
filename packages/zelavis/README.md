@@ -205,8 +205,8 @@ a missing or malformed one instead of assuming native. The
 `zelavis/agent` surface provides stable Agent identity, operation-bound signed
 authority, and a durable lease-based operation journal. Agent records can be
 read through `/zelavis/api/v1/runtime/agent`. There is no general
-command-submission endpoint: only installed, release-signed operations can be
-requested, under the policy their signed manifest declares (see below). Host-operation validation returns an
+command-submission endpoint: only installed operations can be
+requested, under the policy their manifest declares (see below). Host-operation validation returns an
 immutable request/argument snapshot retained by the journal and executor.
 Arguments require own manifest declarations, at most 64 entries, names up to
 64 characters, values up to 16,384 characters without NUL bytes, and a JSON
@@ -217,12 +217,12 @@ the operation root, every parent and the artifact are still the registered
 inodes with the same owner and safe modes, reads the bytes through a no-follow
 handle, and spawns a private 0500 copy of those verified bytes from a 0700
 staging directory (`stagingDirectory`, default the OS temp directory) rather
-than the registered path. Operations must be installed with a release-signed
-manifest (`<root>/<id>/<version>/manifest.json` beside `artifact`,
-`loadInstalledHostOperations`): Ed25519 over canonical JSON, verified against
-the operator's trust store (`trust`: keys with validity windows; rotation by
-overlapping windows; `revokedKeyIds` invalidates everything a key signed).
-Scripts must name their interpreter in the signed manifest; a shebang without
+than the registered path. Operations are installed as a plain manifest
+(`<root>/<id>/<version>/manifest.json` beside `artifact`,
+`loadInstalledHostOperations`) in a tree only root can change: there is no
+signature, so the manifest file is held to the artifact's standard (a regular
+file, not group- or world-writable, root-owned when `requireRootOwned` is set).
+Scripts must name their interpreter in the manifest; a shebang without
 one is refused, and the interpreter and its directories are identity-proven
 like the artifact. Each operation runs in its own process group, which
 is killed at the deadline (`timedOut: true`) and when the operation's leader
@@ -238,8 +238,8 @@ not Linux, the hierarchy is not cgroup v2, `cgroup.kill` is missing, or the
 subtree is not delegated. Shared libraries of an interpreter are not pinned,
 and destination ownership is not enforced.
 
-`zelavis agent --operations-root <dir> --operation-trust <file> --platform-authority <file>`
-assembles them in the separately supervised Agent: installed signed operations,
+`zelavis agent --operations-root <dir> --platform-authority <file>`
+assembles them in the separately supervised Agent: installed operations,
 the executor and a durable SQLite journal under `<data>/agent-operations`. The
 Agent socket accepts `operation.catalog`, `operation.submit` and
 `operation.get`. Each request carries a short-lived envelope signed with the
@@ -288,7 +288,7 @@ are limited per actor (default 30 per minute, burst 10; `rateLimit` on
 records newest first and needs `server.host-operations.audit`, or
 `project.host-operations.audit` for a Project; it reads the whole audit
 namespace, so pagination is a known gap. Custom route `authorize` hooks do not
-apply to host operations: their policy is the signed manifest plus core grants.
+apply to host operations: their policy is the installed manifest plus core grants.
 
 The release ships one operation, `zelavis.host-report` v1: a read-only `/bin/sh`
 report (OS, kernel, architecture, CPUs, memory, root filesystem free space,

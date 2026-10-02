@@ -225,7 +225,7 @@ export async function createAgentOperationManager(options: {
                 exitCode: result.exitCode,
                 startedAt: result.startedAt,
                 finishedAt: result.finishedAt,
-                // Only a result the signed manifest declared reaches this;
+                // Only a result the manifest declared reaches this;
                 // raw stdout and stderr are still never journaled.
                 ...(result.result ? { result: result.result } : {}),
                 ...(result.resultError ? { resultError: result.resultError } : {}),

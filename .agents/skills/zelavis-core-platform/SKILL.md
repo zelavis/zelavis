@@ -123,15 +123,17 @@ before editing.
   and current links belong to the installer so upgrades preserve other instances.
   When an installer starts owning a new resource, update the uninstall inventory,
   staged script, destructive-path tests, and docs together.
-- Native release installation has the same host-local boundary. Archive
-  installers and Debian `postinst` call `zelavis install --from-release` with
-  the release's private Node. Keep planning in core runtime, host effects in
+- Native release installation has the same host-local boundary. The shell
+  installer and create bootstrap call `zelavis install --from-npm`, and a Debian
+  `postinst` calls `zelavis install --from-release`, with the release's private
+  Node. Distribution has no signatures, keys, CI secrets or GitHub releases: trust
+  is npm, nodejs.org and zelavis.com (AGENTS.md "Distribution Trust Model"). Keep planning in core runtime, host effects in
   adapters, unit/configuration templates in the release tree, and pins/checksums
   in distribution staging. Default native units to `127.0.0.1`; `--public` is
-  the explicit all-interface opt-in. Package acquisition and create use the
-  matching verified prebuilt release and the same plan. Create takes no folder
-  argument. Its sudo bootstrap fetches and verifies a private root-owned release;
-  never execute user package-cache files as root. User mode owns only its
+  the explicit all-interface opt-in. Create uses the same bootstrap and plan.
+  Create takes no folder argument. Its sudo bootstrap fetches its own Node and
+  package into a private root-owned directory; never execute user package-cache
+  files as root. User mode owns only its
   `~/.local/share/zelavis` prefix and command link. Runtime checksum helpers
   have one distribution source; shipped copies are generated at build time.
   Install/removal take an exclusive prefix lock and share the Node/Bun Platform
@@ -141,7 +143,7 @@ before editing.
   separate current/receipt/runtime descriptors, data/config/accounts/ports/units.
   Only default may own host Edge, enforced by a persistent record and kernel
   reservation; secondary instances run with Edge off. Removing an instance retains
-  shared releases/commands/templates/package/APT state until the last receipt is
+  shared releases/commands/templates/package state until the last receipt is
   removed. Doctor remains read-only and host-local.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
@@ -342,8 +344,9 @@ revalidate the deadline immediately before execution. The Node executor must
 re-prove artifact/parent inode identity at execution, spawn a private copy of
 the verified bytes rather than the registered path, and kill the operation's
 process group at the deadline and when its leader exits. Host operations are
-installed only with Ed25519 release-signed manifests verified against the
-operator trust store; scripts name their interpreter inside the signature.
+installed as plain manifests in a root-owned tree (the Agent refuses a manifest
+that is not a root-owned regular file when root ownership is required); scripts
+name their interpreter in the manifest.
 On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
 and never fall back from it silently. This does not substitute for pinned
 shared libraries or destination fencing.
@@ -351,10 +354,10 @@ shared libraries or destination fencing.
 Agent authority is Ed25519: only the Platform holds the private key, Agents
 trust its public file, and envelopes bind the exact arguments
 (`argumentsDigest`). The Platform issues authority only through the host
-operation broker, for installed operations whose release-signed manifest names
+operation broker, for installed operations whose manifest names
 the permission and scope, after recording an audit entry; there is no general
 command runner. Agents reach operations only over their local socket.
-Operation output is journaled only when the signed manifest declares a bounded
+Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
 Service setup hooks have a deadline; an abandoned setup cannot add services.

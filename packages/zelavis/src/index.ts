@@ -3189,7 +3189,7 @@ function hostOperationRoutes(
       id: "runtime.host-operations.submit",
       spec: {
         operationId: "submitHostOperation",
-        summary: "Request a release-signed host operation",
+        summary: "Request a host operation",
         tags: ["host-operations"],
         responses: {
           202: { description: "Accepted by the Agent" },

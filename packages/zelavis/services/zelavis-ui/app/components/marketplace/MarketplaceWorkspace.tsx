@@ -167,7 +167,7 @@ function AllowlistStatus({
     >
       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
         <ShieldCheck className="size-4" />
-        {allowlist.gated ? "Installs are limited to the signed allow-list" : "Allow-list gate is off"}
+        {allowlist.gated ? "Installs are limited to the allow-list" : "Allow-list gate is off"}
       </span>
       {list ? (
         <>
