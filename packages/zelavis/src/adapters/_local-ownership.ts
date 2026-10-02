@@ -20,7 +20,17 @@ async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
   const sqlite = await import(moduleName) as { DatabaseSync?: new (path: string) => { exec(sql: string): void; close(): void }; Database?: new (path: string, options: { create: boolean }) => { exec(sql: string): void; close(): void } };
   const db = sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
   try { db.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); }
-  catch (error) { db.close(); throw new Error(`Local ownership is already reserved at ${path}. Stop the owning Platform or wait for installation maintenance to finish.`, { cause: error }); }
+  catch (error) {
+    db.close();
+    // SQLite refuses for more than one reason (held by another process, an
+    // unreadable or read-only file), so say which rather than always "reserved".
+    const failure = error as { errcode?: number; errstr?: string; message?: string };
+    const reason = failure.errstr ?? failure.message ?? "unknown";
+    if (failure.errcode === 5 || /locked|busy/i.test(reason)) {
+      throw new Error(`Local ownership is already reserved at ${path}. Stop the owning Platform or wait for installation maintenance to finish.`, { cause: error });
+    }
+    throw new Error(`Local ownership could not be reserved at ${path} (${reason}). Check that this user can read and write the file.`, { cause: error });
+  }
   let released = false;
   return { async release() { if (!released) { released = true; db.close(); } } };
 }
