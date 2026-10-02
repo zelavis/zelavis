@@ -1,8 +1,8 @@
 /**
  * Host operations inside the supervised Agent process.
  *
- * Assembles the pieces that were only libraries until now: the operator's
- * release trust store, the installed signed operations, the executor, the
+ * Assembles the pieces that were only libraries until now: the installed
+ * operations, the executor, the
  * Agent's own durable journal, and the authority check that binds every run to
  * a short-lived, audience-bound, request-bound signed envelope. The Platform
  * reaches it only through the Agent socket; there is still no HTTP route.
@@ -38,8 +38,6 @@ export interface AgentHostOperationServiceOptions {
   readonly directory: string;
   /** Installed operations: `<root>/<id>/<version>/{manifest.json, artifact}`. */
   readonly operationsRoot: string;
-  /** Operator trust store JSON (`ZelavisHostOperationTrustStore`). */
-  readonly trustFile: string;
   /**
    * Platform authority keys (same trust-store format) whose signed envelopes
    * this Agent accepts. The Platform writes its public key file; an Agent on
@@ -48,7 +46,7 @@ export interface AgentHostOperationServiceOptions {
    */
   readonly platformAuthorityFile: string;
   /**
-   * Require the trust file, operation tree and interpreters to be root-owned.
+   * Require the operation tree, its manifests and interpreters to be root-owned.
    * Production installs set this; a development Agent run by a user cannot.
    */
   readonly requireRootOwned?: boolean;
@@ -59,7 +57,7 @@ export interface AgentHostOperationServiceOptions {
 
 export interface AgentHostOperationCatalog {
   readonly agentId: string;
-  /** Verified manifests of the installed operations. */
+  /** Manifests of the installed operations. */
   readonly operations: readonly ZelavisHostOperationManifest[];
 }
 
@@ -74,10 +72,11 @@ export interface AgentHostOperationService {
 }
 
 /**
- * Reads the trust store the executor verifies signatures against.
+ * Reads the Platform authority trust store: the keys whose signed envelopes
+ * this Agent accepts.
  *
- * Whoever can edit this file can make the Agent run anything they sign, so it
- * gets the same treatment as an artifact: a regular file, never a symlink,
+ * Whoever can edit this file can authorize anything, so it gets the same
+ * treatment as an artifact: a regular file, never a symlink,
  * not group- or world-writable, root-owned when required, bounded, and
  * structurally valid. Keys are not trusted merely for parsing.
  */
@@ -165,10 +164,9 @@ export async function createAgentHostOperationService(
   const directory = resolve(options.directory);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(directory, 0o700).catch(() => undefined);
-  const trust = await readHostOperationTrustStore(options.trustFile, {
+  const operations = await loadInstalledHostOperations(resolve(options.operationsRoot), {
     requireRootOwned: options.requireRootOwned === true,
   });
-  const operations = await loadInstalledHostOperations(resolve(options.operationsRoot));
   const consumeNonce = createAgentNonceTracker();
   // The journal resolves the durable Agent identity; the executor's authority
   // check reads it once the journal exists, before any operation can run.
@@ -176,7 +174,6 @@ export async function createAgentHostOperationService(
   const executor = await createNodeHostOperationExecutor({
     rootDirectory: options.operationsRoot,
     operations,
-    trust,
     requireRootOwnedArtifacts: options.requireRootOwned === true,
     ...(options.stagingDirectory ? { stagingDirectory: options.stagingDirectory } : {}),
     ...(options.supervision ? { supervision: options.supervision } : {}),
@@ -215,11 +212,11 @@ export async function createAgentHostOperationService(
     agentId,
     registered: Object.freeze(
       operations.map((operation) =>
-        `${operation.signed.manifest.id}@${operation.signed.manifest.version}`),
+        `${operation.manifest.id}@${operation.manifest.version}`),
     ),
     catalog: () => ({
       agentId: agentId!,
-      operations: Object.freeze(operations.map((operation) => operation.signed.manifest)),
+      operations: Object.freeze(operations.map((operation) => operation.manifest)),
     }),
     submit: (request) => manager.submit(request),
     get: (operationId) => manager.get(operationId),

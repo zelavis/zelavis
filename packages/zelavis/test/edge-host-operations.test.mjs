@@ -9,7 +9,7 @@ import test from "node:test";
 import { runAgentCommand } from "../dist/cli/agent.js";
 import { createAgentProcessClient } from "../dist/adapters/_agent-ipc.js";
 import { hostOperationArgumentsDigest, signAgentAuthority } from "../dist/index.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+import { createAuthorityKey } from "./fixtures/authority-keys.mjs";
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 
@@ -26,7 +26,6 @@ async function setupEdgeOperationsInstallation(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-edge-ops-"));
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  const release = await createReleaseSigner();
   const operationsRoot = join(root, "operations");
   await mkdir(operationsRoot, { recursive: true, mode: 0o700 });
 
@@ -57,21 +56,16 @@ async function setupEdgeOperationsInstallation(t) {
       sha256: artifactSha,
     };
 
-    const signedEnvelope = await release.sign(manifest);
-
     await writeFile(join(targetDir, "artifact"), artifact, { mode: 0o700 });
     await writeFile(
       join(targetDir, "manifest.json"),
-      JSON.stringify(signedEnvelope, null, 2),
+      JSON.stringify(manifest, null, 2),
     );
 
     manifests.set(opId, manifest);
   }
 
-  const trustFile = join(root, "operation-trust.json");
-  await writeFile(trustFile, JSON.stringify(release.trust), { mode: 0o644 });
-
-  const platform = await createReleaseSigner({ keyId: "platform-edge-test" });
+  const platform = await createAuthorityKey({ keyId: "platform-edge-test" });
   const platformAuthority = join(root, "platform-authority.json");
   await writeFile(platformAuthority, JSON.stringify(platform.trust), { mode: 0o644 });
 
@@ -81,7 +75,6 @@ async function setupEdgeOperationsInstallation(t) {
   return {
     root,
     operationsRoot,
-    trustFile,
     manifests,
     platform,
     platformAuthority,
@@ -125,11 +118,10 @@ async function waitForOperation(client, operationId) {
   throw new Error(`operation ${operationId} did not finish in time`);
 }
 
-test("Signed Edge Host Operations: lifecycle, envelope authorization, and execution", async (t) => {
+test("Edge Host Operations: lifecycle, envelope authorization, and execution", async (t) => {
   const {
     root,
     operationsRoot,
-    trustFile,
     manifests,
     platform,
     platformAuthority,
@@ -139,7 +131,6 @@ test("Signed Edge Host Operations: lifecycle, envelope authorization, and execut
   const agent = await startTestAgent(t, {
     dataDirectory: join(root, "data"),
     operationsRoot,
-    operationTrust: trustFile,
     platformAuthority,
   });
 
@@ -358,7 +349,7 @@ test("Signed Edge Host Operations: lifecycle, envelope authorization, and execut
   assert.equal(unitResult.result.action, "status");
 
   // 8. Test forged / untrusted envelope is rejected
-  const stranger = await createReleaseSigner({ keyId: "stranger" });
+  const stranger = await createAuthorityKey({ keyId: "stranger" });
   const forgedResult = await submitOperation(
     "zelavis.edge-stage",
     { generation: "rev-forged", "base-dir": edgeBaseDir },

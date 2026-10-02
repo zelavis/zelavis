@@ -8,9 +8,7 @@ import test from "node:test";
 
 import { createNodeHostOperationExecutor } from "../dist/adapters/_node-host-operation-executor.js";
 import { createAgentOperationManager, createMemorySystemStore } from "../dist/index.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
 
-const signer = await createReleaseSigner();
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 let sequence = 0;
@@ -31,8 +29,7 @@ async function fixture(t, body, { nested = false, declared = {} } = {}) {
   const executor = await createNodeHostOperationExecutor({
     rootDirectory: root,
     stagingDirectory: staging,
-    trust: signer.trust,
-    operations: [{ file: relative, signed: await signer.sign(manifest) }],
+    operations: [{ file: relative, manifest: (manifest) }],
     authorize: async () => true,
   });
   const request = (overrides = {}) => ({
@@ -112,7 +109,6 @@ test("execution runs a private verified copy, not the registered path", async (t
         return open;
       })(),
       operations: [],
-      trust: signer.trust,
       authorize: async () => true,
     }),
     /staging directory must not be group- or world-writable/,

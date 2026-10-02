@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, link, lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,8 +18,7 @@ import {
   createNodeHostOperationExecutor,
   loadInstalledHostOperations,
 } from "../dist/adapters/_node-host-operation-executor.js";
-import { verifySignedHostOperationManifest } from "../dist/core/deployment/index.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+import { validateHostOperationManifest } from "../dist/core/deployment/index.js";
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 const manifest = (overrides = {}) => ({
@@ -31,66 +30,15 @@ const manifest = (overrides = {}) => ({
   ...overrides,
 });
 
-test("a manifest verifies only unaltered, under a trusted unrevoked key inside its window", async () => {
-  const release = await createReleaseSigner();
-  const signed = await release.sign(manifest());
-  assert.deepEqual(await verifySignedHostOperationManifest(signed, release.trust), manifest());
-
-  for (const altered of [
-    { ...signed, manifest: { ...signed.manifest, sha256: "b".repeat(64) } },
-    { ...signed, manifest: { ...signed.manifest, interpreter: "/bin/bash" } },
-    { ...signed, manifest: { ...signed.manifest, arguments: { extra: {} } } },
-    { ...signed, signedAt: new Date(Date.parse(signed.signedAt) - 1).toISOString() },
-    { ...signed, signature: Buffer.alloc(64).toString("base64") },
-    { ...signed, signature: "not base64!" },
-  ]) {
-    await assert.rejects(verifySignedHostOperationManifest(altered, release.trust), /signature is invalid|Invalid base64/);
-  }
-
-  const stranger = await createReleaseSigner();
-  await assert.rejects(verifySignedHostOperationManifest(signed, stranger.trust), /signature is invalid/);
-  const otherKeyId = await createReleaseSigner({ keyId: "someone-else" });
-  await assert.rejects(verifySignedHostOperationManifest(signed, otherKeyId.trust), /untrusted key "test-release-2026"/);
-  await assert.rejects(
-    verifySignedHostOperationManifest(signed, { ...release.trust, revokedKeyIds: ["test-release-2026"] }),
-    /revoked key/,
-  );
-  // Ambiguous trust (the same key id twice) is refused, not resolved.
-  await assert.rejects(
-    verifySignedHostOperationManifest(signed, { keys: [release.key, release.key] }),
-    /untrusted key/,
-  );
-  await assert.rejects(release.sign(manifest({ unexpected: true })), /unknown fields/);
-  await assert.rejects(
-    verifySignedHostOperationManifest({ ...signed, manifest: { ...signed.manifest, unexpected: true } }, release.trust),
-    /unknown fields/,
-  );
-  await assert.rejects(release.sign(manifest({ interpreter: "bin/sh" })), /absolute path/);
-});
-
-test("rotation: a closed key window keeps old releases valid and refuses new or future signatures", async () => {
-  const now = Date.now();
-  const old = await createReleaseSigner({
-    keyId: "release-2025",
-    notBefore: new Date(now - 400 * 86_400_000).toISOString(),
-    notAfter: new Date(now - 30 * 86_400_000).toISOString(),
-  });
-  const inside = await old.sign(manifest(), { signedAt: new Date(now - 60 * 86_400_000).toISOString() });
-  assert.equal((await verifySignedHostOperationManifest(inside, old.trust)).id, "native.preflight");
-  const after = await old.sign(manifest(), { signedAt: new Date(now - 86_400_000).toISOString() });
-  await assert.rejects(verifySignedHostOperationManifest(after, old.trust), /validity window/);
-
-  const current = await createReleaseSigner({ keyId: "release-2026" });
-  const future = await current.sign(manifest(), { signedAt: new Date(now + 3_600_000).toISOString() });
-  await assert.rejects(verifySignedHostOperationManifest(future, current.trust), /validity window/);
-  // Both keys trusted at once during the overlap.
-  const both = { keys: [old.key, current.key] };
-  assert.ok(await verifySignedHostOperationManifest(inside, both));
-  assert.ok(await verifySignedHostOperationManifest(await current.sign(manifest()), both));
+test("a manifest is validated strictly: unknown fields and relative interpreters are refused", () => {
+  assert.deepEqual(validateHostOperationManifest(manifest()), manifest());
+  assert.throws(() => validateHostOperationManifest(manifest({ unexpected: true })), /unknown fields/);
+  assert.throws(() => validateHostOperationManifest(manifest({ interpreter: "bin/sh" })), /absolute path/);
+  assert.throws(() => validateHostOperationManifest(manifest({ sha256: "nope" })), /sha256|digest/i);
 });
 
 async function operationRoot(t) {
-  const directory = await mkdtemp(join(tmpdir(), "zelavis-signed-ops-"));
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-host-ops-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const root = join(directory, "operations");
   await mkdir(root, { mode: 0o700 });
@@ -101,47 +49,38 @@ async function operationRoot(t) {
 // see the comment on localScratchRoot above.
 async function localOperationRoot(t) {
   await mkdir(localScratchRoot, { recursive: true, mode: 0o755 });
-  const directory = await mkdtemp(join(localScratchRoot, "signed-ops-"));
+  const directory = await mkdtemp(join(localScratchRoot, "host-ops-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const root = join(directory, "operations");
   await mkdir(root, { mode: 0o700 });
   return { directory, root };
 }
 
-test("the executor refuses unsigned, untrusted and shebang-without-interpreter operations", async (t) => {
-  const release = await createReleaseSigner();
+test("the executor refuses an invalid manifest and a shebang script without an interpreter", async (t) => {
   const { root } = await operationRoot(t);
   const body = "#!/bin/sh\nprintf ok\n";
   await writeFile(join(root, "op"), body, { mode: 0o700 });
-  const options = (operations, trust = release.trust) => ({
-    rootDirectory: root, trust, operations, authorize: async () => true,
-  });
+  const options = (operations) => ({ rootDirectory: root, operations, authorize: async () => true });
 
   await assert.rejects(
-    createNodeHostOperationExecutor(options([{ file: "op", signed: { manifest: manifest() } }])),
-    /invalid key id/,
-  );
-  const stranger = await createReleaseSigner({ keyId: "stranger" });
-  await assert.rejects(
-    createNodeHostOperationExecutor(options([{ file: "op", signed: await stranger.sign(manifest()) }])),
-    /untrusted key "stranger"/,
+    createNodeHostOperationExecutor(options([{ file: "op", manifest: manifest({ unexpected: true }) }])),
+    /unknown fields/,
   );
   const { interpreter: _interpreter, ...native } = manifest();
   await assert.rejects(
-    createNodeHostOperationExecutor(options([{ file: "op", signed: await release.sign(native) }])),
+    createNodeHostOperationExecutor(options([{ file: "op", manifest: native }])),
     /must declare an interpreter/,
   );
 });
 
 test("the interpreter is part of the proven identity and re-proven before every run", async (t) => {
-  const release = await createReleaseSigner();
   const { directory, root } = await localOperationRoot(t);
   const tools = join(directory, "tools");
   await mkdir(tools, { mode: 0o755 });
-  // A working interpreter in a directory the test controls. Copies of signed
-  // system binaries are killed on macOS, so hard-link Node where possible.
+  // A working interpreter in a directory the test controls. Copies of system
+  // binaries are killed on macOS, so hard-link Node where possible.
   const interpreter = join(tools, "node");
-  // Hard-link where possible: a copy of a signed system Node binary is
+  // Hard-link where possible: a copy of a system Node binary is
   // rejected by macOS Gatekeeper the moment it's touched from a new path.
   // Never chmod a hard link in place, though -- it shares the real binary's
   // inode, so a chmod would mutate that binary everywhere else it's used.
@@ -160,11 +99,11 @@ test("the interpreter is part of the proven identity and re-proven before every 
   }
   const body = "process.stdout.write(\"interpreted\")\n";
   await writeFile(join(root, "op"), body, { mode: 0o700 });
-  const signed = await release.sign(manifest({ sha256: sha(body), interpreter }));
+  const installed = manifest({ sha256: sha(body), interpreter });
   const executor = await createNodeHostOperationExecutor({
-    rootDirectory: root, trust: release.trust, authorize: async () => true,
+    rootDirectory: root, authorize: async () => true,
     stagingDirectory: directory,
-    operations: [{ file: "op", signed }],
+    operations: [{ file: "op", manifest: installed }],
   });
   const request = (operationId) => ({
     operationId, operation: "native.preflight", version: "v1", artifactDigest: sha(body),
@@ -183,8 +122,8 @@ test("the interpreter is part of the proven identity and re-proven before every 
   await chmod(tools, 0o777);
   await assert.rejects(
     createNodeHostOperationExecutor({
-      rootDirectory: root, trust: release.trust, authorize: async () => true,
-      stagingDirectory: directory, operations: [{ file: "op", signed }],
+      rootDirectory: root, authorize: async () => true,
+      stagingDirectory: directory, operations: [{ file: "op", manifest: installed }],
     }),
     /not an immutable executable path/,
   );
@@ -192,18 +131,17 @@ test("the interpreter is part of the proven identity and re-proven before every 
 });
 
 test("installed operations load from <root>/<id>/<version> and must match their manifest", async (t) => {
-  const release = await createReleaseSigner();
   const { directory, root } = await operationRoot(t);
   const body = "printf installed\n";
   const version = join(root, "native.preflight", "v1");
   await mkdir(version, { recursive: true, mode: 0o700 });
   await writeFile(join(version, "artifact"), body, { mode: 0o700 });
-  await writeFile(join(version, "manifest.json"), JSON.stringify(await release.sign(manifest({ sha256: sha(body) }))));
+  await writeFile(join(version, "manifest.json"), JSON.stringify(manifest({ sha256: sha(body) })));
 
   const operations = await loadInstalledHostOperations(root);
   assert.deepEqual(operations.map((operation) => operation.file), [join("native.preflight", "v1", "artifact")]);
   const executor = await createNodeHostOperationExecutor({
-    rootDirectory: root, trust: release.trust, authorize: async () => true, stagingDirectory: directory, operations,
+    rootDirectory: root, authorize: async () => true, stagingDirectory: directory, operations,
   });
   const result = await executor.execute({
     operationId: "operation_installed_000001", operation: "native.preflight", version: "v1",
@@ -213,6 +151,31 @@ test("installed operations load from <root>/<id>/<version> and must match their 
 
   const misplaced = join(root, "native.other", "v1");
   await mkdir(misplaced, { recursive: true, mode: 0o700 });
-  await writeFile(join(misplaced, "manifest.json"), JSON.stringify(await release.sign(manifest({ sha256: sha(body) }))));
+  await writeFile(join(misplaced, "manifest.json"), JSON.stringify(manifest({ sha256: sha(body) })));
   await assert.rejects(loadInstalledHostOperations(root), /does not match its manifest identity/);
+});
+
+test("an installed manifest must be a regular file only its owner can change", async (t) => {
+  const { root } = await operationRoot(t);
+  const body = "printf installed\n";
+  const version = join(root, "native.preflight", "v1");
+  await mkdir(version, { recursive: true, mode: 0o700 });
+  await writeFile(join(version, "artifact"), body, { mode: 0o700 });
+  const file = join(version, "manifest.json");
+  await writeFile(file, JSON.stringify(manifest({ sha256: sha(body) })), { mode: 0o644 });
+  assert.equal((await loadInstalledHostOperations(root)).length, 1);
+
+  await chmod(file, 0o666);
+  await assert.rejects(loadInstalledHostOperations(root), /regular file that is not group- or world-writable/);
+  await chmod(file, 0o644);
+
+  await rm(file);
+  await symlink(join(root, "elsewhere.json"), file);
+  await assert.rejects(loadInstalledHostOperations(root), /regular file that is not group- or world-writable/);
+
+  if (process.getuid?.() !== 0) {
+    await rm(file, { force: true });
+    await writeFile(file, JSON.stringify(manifest({ sha256: sha(body) })), { mode: 0o644 });
+    await assert.rejects(loadInstalledHostOperations(root, { requireRootOwned: true }), /regular root-owned file/);
+  }
 });

@@ -19,7 +19,7 @@ import { createAgentProcessClient } from "../dist/adapters/_agent-ipc.js";
 import { runAgentCommand } from "../dist/cli/agent.js";
 import { runCli } from "../dist/cli/commands.js";
 import { createZelavisClient, ZelavisClientHttpError } from "../dist/sdk/fetch.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+import { createAuthorityKey } from "./fixtures/authority-keys.mjs";
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 const DIGEST = "c".repeat(64);
@@ -28,7 +28,7 @@ const MANIFESTS = [
     authorization: { permission: "project.hosting.reload", scope: "project" } },
   { id: "native.host-report", version: "v1", sha256: DIGEST, arguments: {},
     authorization: { permission: "server.hosting.report", scope: "system" } },
-  // Installed but never requestable: no signed authorization policy.
+  // Installed but never requestable: no authorization policy.
   { id: "native.unlisted", version: "v1", sha256: DIGEST, arguments: {} },
 ];
 
@@ -56,14 +56,14 @@ function fakeAgent() {
 const user = (id, extra = {}) => ({ id, type: "user", ...extra });
 
 async function brokerWith() {
-  const platform = await createReleaseSigner({ keyId: "platform-unit" });
+  const platform = await createAuthorityKey({ keyId: "platform-unit" });
   const store = createMemorySystemStore();
   const { agent, submitted } = fakeAgent();
   const broker = createHostOperationBroker({ agent, store, signer: { keyId: "platform-unit", privateKey: platform.privateKey } });
   return { broker, store, submitted, platform };
 }
 
-test("authority is issued only for the permission and scope the signed manifest names", async () => {
+test("authority is issued only for the permission and scope the installed manifest names", async () => {
   const { broker, store, submitted, platform } = await brokerWith();
   const projectOperator = user("alice", { grants: [{ permission: "project.hosting.reload", scope: { type: "project", projectId: "site-a" } }] });
 
@@ -225,25 +225,22 @@ test("catalog, submit and status are equivalent over HTTP, SDK and CLI", async (
 test("a Platform broker drives a real Agent end to end with its own authority key", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "zelavis-broker-e2e-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const release = await createReleaseSigner();
   const body = "printf '%s' \"$4\" > \"$2\"\n"; // argv: --output <path> --value <v>
   const installed = join(root, "operations", "native.mark", "v1");
   await mkdir(installed, { recursive: true, mode: 0o700 });
   await writeFile(join(installed, "artifact"), body, { mode: 0o700 });
-  await writeFile(join(installed, "manifest.json"), JSON.stringify(await release.sign({
+  await writeFile(join(installed, "manifest.json"), JSON.stringify({
     id: "native.mark", version: "v1", sha256: sha(body), interpreter: "/bin/sh",
     arguments: { value: { required: true, pattern: "^[a-z]+$" }, output: { required: true, maxLength: 1024 } },
     authorization: { permission: "project.hosting.mark", scope: "project" },
-  })));
-  const trust = join(root, "operation-trust.json");
-  await writeFile(trust, JSON.stringify(release.trust), { mode: 0o644 });
+  }));
   const authority = await readOrCreatePlatformAuthorityKey(join(root, "platform", "system", "agent-authority"));
 
   const controller = new AbortController();
   let ready;
   const readyPromise = new Promise((resolve) => { ready = resolve; });
   const running = runAgentCommand({
-    dataDirectory: join(root, "agent-data"), operationsRoot: join(root, "operations"), operationTrust: trust,
+    dataDirectory: join(root, "agent-data"), operationsRoot: join(root, "operations"),
     platformAuthority: authority.trustFile, signal: controller.signal, onReady: ready,
   });
   t.after(async () => { controller.abort(); await running.catch(() => undefined); });
@@ -265,7 +262,7 @@ test("a Platform broker drives a real Agent end to end with its own authority ke
 });
 
 test("submissions are rate limited per actor after authorization, and refill over time", async () => {
-  const platform = await createReleaseSigner({ keyId: "platform-rate" });
+  const platform = await createAuthorityKey({ keyId: "platform-rate" });
   const { agent, submitted } = fakeAgent();
   let clock = 1_000_000;
   const broker = createHostOperationBroker({
@@ -331,7 +328,7 @@ test("audit reads need the audit permission for their scope and never include ar
   // 429 carries Retry-After over HTTP.
   const limited = createHostOperationBroker({
     agent: fakeAgent().agent, store: createMemorySystemStore(),
-    signer: { keyId: "platform-unit", privateKey: (await createReleaseSigner({ keyId: "platform-unit" })).privateKey },
+    signer: { keyId: "platform-unit", privateKey: (await createAuthorityKey({ keyId: "platform-unit" })).privateKey },
     rateLimit: { submissionsPerMinute: 1, burst: 1 },
   });
   const limitedZv = await zelavis({ systemStore: createMemorySystemStore(), hostOperations: limited });

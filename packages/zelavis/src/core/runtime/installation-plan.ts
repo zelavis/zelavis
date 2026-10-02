@@ -274,9 +274,6 @@ export async function planZelavisReleaseInstall(input: {
       addStep(steps, "edge-config", "Keep existing Traefik configuration", { kind: "write", path: `${paths.configDirectory}/edge/traefik/traefik.yml`, content: config.replaceAll("/var/lib/zelavis", paths.dataDirectory), mode: 0o644, ifAbsent: true });
     }
     addStep(steps, "config-directory", "Create configuration directory", { kind: "mkdir", path: paths.configDirectory, mode: 0o755 });
-    const trust = await host.read(`${source}/share/operation-trust.json`);
-    if (trust === undefined) throw new Error("Release is missing share/operation-trust.json.");
-    addStep(steps, "trust", "Install trust store only when absent", { kind: "write", path: `${paths.configDirectory}/operation-trust.json`, content: trust, mode: 0o644, ifAbsent: true });
     addStep(steps, "bootstrap", "Generate first-owner token only when the environment file is absent (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env` });
     if (input.enableAgent) {
       // Do not expose the existing first-owner token in a plan or dry-run.

@@ -11,14 +11,14 @@ export interface ZelavisHostOperationManifest {
   readonly arguments: Readonly<Record<string, ZelavisHostOperationArgumentDefinition>>;
   /**
    * Absolute path of the interpreter a script artifact runs with. Named here,
-   * inside the signature, rather than in a shebang the host resolves: an
+   * in the manifest, rather than in a shebang the host resolves: an
    * artifact starting with `#!` and no interpreter is refused. Absent for a
    * native executable.
    */
   readonly interpreter?: string;
   /**
-   * Who may request this operation, part of the release signature so an
-   * installation cannot loosen it. The Platform issues authority only when the
+   * Who may request this operation. It is part of the installed manifest, which
+   * lives in the root-owned operations tree, so a Project cannot loosen it. The Platform issues authority only when the
    * caller holds `permission` for the scope: `project` requires a Project id
    * and a grant for that Project (or the top-level permission); `system`
    * refuses a Project id. An operation without it cannot be requested.
@@ -29,7 +29,7 @@ export interface ZelavisHostOperationManifest {
   };
   /**
    * A structured result the operation returns. Output is otherwise never
-   * kept; declaring this in the signed manifest states that stdout is a JSON
+   * kept; declaring this in the manifest states that stdout is a JSON
    * object of at most `maxBytes` that is safe to journal and return to
    * whoever may read the operation. Anything else fails the operation.
    */
@@ -42,28 +42,8 @@ export interface ZelavisHostOperationManifest {
 export const MAX_HOST_OPERATION_RESULT_BYTES = 65_536;
 
 /**
- * A manifest as installed: the release signature travels with it.
- *
- * The signature covers `HOST_OPERATION_MANIFEST_SIGNATURE_CONTEXT` followed by
- * the canonical JSON of `manifest` and `signedAt`, so neither a field nor the
- * signing time can be changed or reordered without invalidating it.
- */
-export interface ZelavisSignedHostOperationManifest {
-  readonly manifest: ZelavisHostOperationManifest;
-  readonly keyId: string;
-  /** When the release was signed; must fall inside the key's validity window. */
-  readonly signedAt: string;
-  /** Base64 Ed25519 signature. */
-  readonly signature: string;
-}
-
-/**
- * A release signing key the operator trusts.
- *
- * Rotation is overlapping windows: publish the next key before the current
- * one's `notAfter`, sign new releases with it, and let the old window close.
- * Manifests signed inside a closed window stay valid; revoking a key
- * invalidates every manifest it ever signed.
+ * An Ed25519 key a trust store vouches for. Used for Platform authority keys:
+ * the key an Agent trusts to sign the envelopes that authorize a request.
  */
 export interface ZelavisHostOperationTrustKey {
   readonly keyId: string;
@@ -124,44 +104,14 @@ const VERSION_PATTERN = /^v?[1-9][0-9]*(?:\.[0-9]+){0,2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const OPERATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{15,127}$/;
 
-export const HOST_OPERATION_MANIFEST_SIGNATURE_CONTEXT =
-  "zelavis-host-operation-manifest-v1\n";
-/** Allowed clock skew for a `signedAt` slightly ahead of the verifier. */
-const SIGNING_CLOCK_SKEW_MS = 5 * 60_000;
 const KEY_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const PERMISSION_PATTERN = /^[a-z][a-z0-9]*(?:[.:-][a-z0-9]+){0,15}$/;
-
-/** JSON with object keys sorted at every depth; arrays keep their order. */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  return `{${Object.keys(value as Record<string, unknown>)
-    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
-    .join(",")}}`;
-}
-
-function hostOperationSigningPayload(
-  manifest: ZelavisHostOperationManifest,
-  signedAt: string,
-): Uint8Array {
-  return new TextEncoder().encode(
-    `${HOST_OPERATION_MANIFEST_SIGNATURE_CONTEXT}${canonicalJson({ manifest, signedAt })}`,
-  );
-}
 
 function fromBase64(value: string): Uint8Array {
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw new ZelavisHostOperationValidationError("Invalid base64 value.");
   }
   return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }
 
 /**
@@ -190,81 +140,6 @@ export async function resolveTrustedEd25519Key(
   } catch {
     return undefined;
   }
-}
-
-/** Release tooling: signs a validated manifest with an Ed25519 private key. */
-export async function signHostOperationManifest(input: {
-  readonly manifest: ZelavisHostOperationManifest;
-  readonly keyId: string;
-  readonly privateKey: CryptoKey;
-  readonly signedAt?: string;
-}): Promise<ZelavisSignedHostOperationManifest> {
-  const manifest = validateHostOperationManifest(input.manifest);
-  const signedAt = input.signedAt ?? new Date().toISOString();
-  const signature = await crypto.subtle.sign(
-    "Ed25519",
-    input.privateKey,
-    hostOperationSigningPayload(manifest, signedAt) as BufferSource,
-  );
-  return Object.freeze({
-    manifest,
-    keyId: input.keyId,
-    signedAt,
-    signature: toBase64(new Uint8Array(signature)),
-  });
-}
-
-/**
- * Verifies an installed manifest against the operator's trust store and
- * returns the validated manifest. Refuses unknown or revoked keys, a signing
- * time outside the key's window or in the future, and any altered field.
- */
-export async function verifySignedHostOperationManifest(
-  signed: ZelavisSignedHostOperationManifest,
-  trust: ZelavisHostOperationTrustStore,
-  now = Date.now(),
-): Promise<ZelavisHostOperationManifest> {
-  if (!signed || typeof signed !== "object" || typeof signed.keyId !== "string" || !KEY_ID_PATTERN.test(signed.keyId)) {
-    throw new ZelavisHostOperationValidationError("Signed host operation manifest has an invalid key id.");
-  }
-  if (trust.revokedKeyIds?.includes(signed.keyId)) {
-    throw new ZelavisHostOperationValidationError(
-      `Host operation manifest was signed by revoked key "${signed.keyId}".`,
-    );
-  }
-  if (trust.keys.filter((key) => key.keyId === signed.keyId).length !== 1) {
-    throw new ZelavisHostOperationValidationError(
-      `Host operation manifest was signed by untrusted key "${signed.keyId}".`,
-    );
-  }
-  const signedAt = Date.parse(signed.signedAt);
-  const publicKey = typeof signed.signedAt === "string" && signedAt <= now + SIGNING_CLOCK_SKEW_MS
-    ? await resolveTrustedEd25519Key(trust, signed.keyId, signedAt)
-    : undefined;
-  if (!publicKey) {
-    throw new ZelavisHostOperationValidationError(
-      `Host operation manifest signing time is outside key "${signed.keyId}"'s validity window.`,
-    );
-  }
-  const manifest = validateHostOperationManifest(signed.manifest);
-  let valid = false;
-  try {
-    const signature = fromBase64(signed.signature);
-    valid = signature.byteLength === 64 && await crypto.subtle.verify(
-      "Ed25519",
-      publicKey,
-      signature as BufferSource,
-      hostOperationSigningPayload(manifest, signed.signedAt) as BufferSource,
-    );
-  } catch {
-    valid = false;
-  }
-  if (!valid) {
-    throw new ZelavisHostOperationValidationError(
-      `Host operation manifest signature is invalid for "${manifest.id}" ${manifest.version}.`,
-    );
-  }
-  return manifest;
 }
 
 export function validateHostOperationRequestShape(

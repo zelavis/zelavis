@@ -21,7 +21,6 @@ class FakeHost {
   release(version) {
     this.files.set("/stage/manifest.json", JSON.stringify({ version }));
     for (const [file, content] of Object.entries(templates)) this.files.set(`/stage/share/${file}`, content);
-    this.files.set("/stage/share/operation-trust.json", '{"keys":[]}');
   }
   resolve(path) {
     for (const [link, target] of this.links) if (path === link || path.startsWith(`${link}/`)) return this.resolve(target + path.slice(link.length));
@@ -82,13 +81,11 @@ test("fresh install plans the existing inventory, without mutations or secret ma
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {
   const host = new FakeHost();
   await executeZelavisInstallationPlan(host, await install(host));
-  host.files.set("/etc/zelavis/operation-trust.json", "operator trust");
   host.files.set("/etc/zelavis/edge/traefik/traefik.yml", "operator config");
   const plan = await install(host);
   assert.ok(!plan.steps.some((step) => ["release", "user", "group"].includes(step.id)));
   await executeZelavisInstallationPlan(host, plan);
   assert.equal(host.tokens, 1);
-  assert.equal(await host.read("/etc/zelavis/operation-trust.json"), "operator trust");
   assert.equal(await host.read("/etc/zelavis/edge/traefik/traefik.yml"), "operator config");
   assert.equal(JSON.parse(await host.read("/opt/zelavis/installation.json")).ownsUser, true);
 });

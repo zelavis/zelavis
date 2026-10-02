@@ -558,7 +558,7 @@ export interface ZelavisServerOptions {
   deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
   /** Read-only connection to a separately supervised Agent operation journal. */
   agentOperations?: ZelavisAgentOperationReader;
-  /** Issues authority for release-signed host operations on a supervised Agent. */
+  /** Issues authority for host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
   /** Provider-neutral remote environment boundary for agent execution. */
   remoteEnvironment?: ZelavisRemoteEnvironment;
@@ -709,7 +709,7 @@ export interface ZelavisPlatformResources {
   projectRuntime?: ZelavisProjectRuntimeDriver;
   deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
   agentOperations?: ZelavisAgentOperationReader;
-  /** Issues authority for release-signed host operations on a supervised Agent. */
+  /** Issues authority for host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
   remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. */
@@ -3147,8 +3147,8 @@ function hostOperationErrorResponse(error: unknown) {
 }
 
 /**
- * Release-signed host operations: catalog, request, status. Authentication is
- * the route requirement; the permission comes from each operation's signed
+ * Host operations: catalog, request, status. Authentication is
+ * the route requirement; the permission comes from each operation's installed
  * manifest and is checked by the broker for the requested scope.
  */
 function hostOperationRoutes(

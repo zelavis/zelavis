@@ -677,7 +677,7 @@ function hasPermission(
 
 /**
  * The default scoped permission check routes use, for authority decided
- * inside a handler (for example by a signed operation manifest) rather than
+ * inside a handler (for example by an installed operation manifest) rather than
  * by a static route requirement.
  */
 export function principalHasPermission(

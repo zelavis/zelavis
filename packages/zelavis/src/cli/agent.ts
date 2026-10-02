@@ -35,15 +35,13 @@ export interface RunAgentCommandOptions {
   /** Injected by tests; production waits for a signal. */
   readonly signal?: AbortSignal;
   /**
-   * Installed signed host operations. Without it the Agent runs Project
+   * Installed host operations. Without it the Agent runs Project
    * processes only and refuses operation requests.
    */
   readonly operationsRoot?: string;
-  /** Trust store verifying operation signatures; required with `operationsRoot`. */
-  readonly operationTrust?: string;
   /** Platform authority public keys; required with `operationsRoot`. */
   readonly platformAuthority?: string;
-  /** Require root-owned trust store, operation tree and interpreters. */
+  /** Require a root-owned operation tree, manifests and interpreters. */
   readonly requireRootOwnedOperations?: boolean;
   /**
    * cgroup v2 containment for operations: `delegated` lays out the cgroup
@@ -70,7 +68,7 @@ export async function runAgentCommand(
 ): Promise<void> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   if (options.remoteProjectConfig) {
-    if (options.operationsRoot || options.operationTrust || options.platformAuthority ||
+    if (options.operationsRoot || options.platformAuthority ||
         options.placementStore) {
       throw new Error("Remote Project Agent config cannot be combined with local Agent options.");
     }
@@ -134,9 +132,6 @@ export async function runAgentCommand(
 
   let operations: AgentHostOperationService | undefined;
   if (options.operationsRoot) {
-    if (!options.operationTrust) {
-      throw new Error("--operations-root requires --operation-trust.");
-    }
     if (!options.platformAuthority) {
       throw new Error("--operations-root requires --platform-authority.");
     }
@@ -157,7 +152,6 @@ export async function runAgentCommand(
     operations = await createAgentHostOperationService({
       directory: join(dataDirectory, "agent-operations"),
       operationsRoot: resolve(options.operationsRoot),
-      trustFile: resolve(options.operationTrust),
       platformAuthorityFile: resolve(options.platformAuthority),
       requireRootOwned: options.requireRootOwnedOperations === true,
       ...(cgroupRoot
@@ -173,7 +167,7 @@ export async function runAgentCommand(
     console.log(
       `Host operations: ${operations.registered.length} installed (${cgroupRoot ? `cgroup ${cgroupRoot}` : "process-group supervision"}).`,
     );
-  } else if (options.operationCgroup || options.operationTrust || options.platformAuthority) {
+  } else if (options.operationCgroup || options.platformAuthority) {
     throw new Error("Host operation options require --operations-root.");
   }
 

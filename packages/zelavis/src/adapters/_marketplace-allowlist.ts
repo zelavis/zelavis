@@ -1,9 +1,9 @@
 /**
  * The marketplace allow-list, wired into a local host.
  *
- * The allow-list itself (format, signature, sources, replay protection, the
+ * The allow-list itself (format, sources, replay protection, the
  * install gate) is the marketplace's, in `@zelavis/marketplace/allowlist`. This
- * file is the host's part: where the trusted keys and cached list are kept, what
+ * file is the host's part: where the cached list is kept, what
  * gets refreshed when, and how the result is offered to the registry and to the
  * package installer. It loads the marketplace module from where the bundled
  * package lies, the same way the Platform loads its other bundled services.
@@ -21,24 +21,14 @@ import type {
 import type { ZelavisSystemStore } from "../system-store.js";
 import { resolveBundledServiceDirectory } from "./_local-runtime.js";
 
-/** A signing key an installation trusts to issue the allow-list. */
-export interface MarketplaceTrustedKey {
-  readonly keyId: string;
-  /** Ed25519 public key, base64 of its SPKI DER encoding. */
-  readonly publicKey: string;
-}
-
 export interface MarketplaceOptions {
   /**
-   * Where the signed allow-list is fetched from, tried in order. Any one being
-   * reachable is enough, because a signed list is as trustworthy from a mirror
-   * as from the primary. Also read from `ZELAVIS_ALLOWLIST_SOURCES` (comma
-   * separated). Defaults to the official sources; with none, only the list shipped
-   * with the release is used.
+   * Where the allow-list is fetched from, tried in order, each trusted as much
+   * as its https origin. Also read from `ZELAVIS_ALLOWLIST_SOURCES` (comma
+   * separated). Defaults to https://zelavis.com/allowlist.json; with none, only
+   * the list shipped with the release is used.
    */
   readonly sources?: readonly string[];
-  /** Keys trusted to sign the allow-list, in addition to the official ones. */
-  readonly keys?: readonly MarketplaceTrustedKey[];
   /**
    * A checkout of the officially maintained services (`zelavis-services`). When
    * set, an official service that is not installed is offered from this folder
@@ -58,29 +48,17 @@ export interface MarketplaceOptions {
 }
 
 /**
- * Keys the Zelavis project signs the official allow-list with. A list
- * signed by anything else is refused. The private half lives with the release
- * manager, never in the repository (`pnpm allowlist keygen`).
- */
-export const OFFICIAL_ALLOWLIST_KEYS: readonly MarketplaceTrustedKey[] = Object.freeze([
-  { keyId: "zelavis-2026-ob9tdmcx", publicKey: "MCowBQYDK2VwAyEAa+A2zNe05gATIhJiDu3hLTttsockNl4v2YNUob9tdmc=" },
-]);
-
-/**
- * Where the official signed list is published, tried in order. Each holds the
- * same signed file, so any one being up is enough. More can be added per
- * installation through `sources` or `ZELAVIS_ALLOWLIST_SOURCES`.
+ * Where the official list is published. More can be added per installation
+ * through `sources` or `ZELAVIS_ALLOWLIST_SOURCES`.
  */
 export const OFFICIAL_ALLOWLIST_SOURCES: readonly string[] = Object.freeze([
   "https://zelavis.com/allowlist.json",
-  "https://raw.githubusercontent.com/zelavis/marketplace/main/allowlist.json",
 ]);
 
 interface MarketplaceModule {
   parseAllowlist(value: unknown): unknown;
   createAllowlistClient(options: {
     sources: readonly string[];
-    resolveKey: (keyId: string) => CryptoKey | undefined;
     cache?: { read(): Promise<unknown>; write(value: unknown): Promise<void> };
     bundled?: unknown;
     fetch?: typeof fetch;
@@ -136,14 +114,14 @@ export interface LocalMarketplace {
   runtimeTrusted(name: string): Promise<boolean>;
   /**
    * Writes the list this Platform holds into a Project's data folder, where that
-   * Project's own marketplace reads it. The signed envelope is handed over, not a
-   * verdict: the Project verifies it with the keys it was built with, so nothing
-   * about it has to be trusted on the way.
+   * Project's own marketplace reads it. The Platform is the Project's parent
+   * authority and the folder is the Project's own, so the file is the Platform's
+   * word, parsed again on every read.
    */
   handDown(projectDataDirectory: string): Promise<void>;
 }
 
-/** The file a Platform hands its verified allow-list to a Project in. */
+/** The file a Platform hands its allow-list to a Project in. */
 export const HANDED_DOWN_ALLOWLIST_FILE = "allowlist.json";
 
 async function writeHandedDown(directory: string, value: unknown): Promise<void> {
@@ -162,24 +140,6 @@ async function writeHandedDown(directory: string, value: unknown): Promise<void>
 const CACHE_NAMESPACE = "marketplace-allowlist";
 const CACHE_KEY = "cache";
 const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
-
-function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(value);
-  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-async function importKeys(keys: readonly MarketplaceTrustedKey[]): Promise<Map<string, CryptoKey>> {
-  const imported = new Map<string, CryptoKey>();
-  for (const key of keys) {
-    imported.set(
-      key.keyId,
-      await crypto.subtle.importKey("spki", decodeBase64(key.publicKey), "Ed25519", false, ["verify"]),
-    );
-  }
-  return imported;
-}
 
 interface LocalOfficialService {
   /** The package declares the runtime its Projects run under. */
@@ -301,7 +261,6 @@ export async function createLocalMarketplace(input: {
   const sources = options.sources ??
     (input.role === "project" ? [] : process.env.ZELAVIS_ALLOWLIST_SOURCES?.split(",").map((value) => value.trim()).filter(Boolean) ??
       OFFICIAL_ALLOWLIST_SOURCES);
-  const keys = await importKeys([...OFFICIAL_ALLOWLIST_KEYS, ...(options.keys ?? [])]);
   const store = input.systemStore;
   const projectsDirectory = input.projectsDirectory;
 
@@ -314,8 +273,8 @@ export async function createLocalMarketplace(input: {
   }
 
   // A Platform keeps the list in its System Store. A Project keeps none of its
-  // own: it reads what its Platform handed it, and verifies it again every time,
-  // so a file someone edited is refused rather than believed.
+  // own: it reads what its Platform handed it and parses it again every time,
+  // so a malformed file is refused rather than believed.
   const handedDown = join(input.dataDirectory, HANDED_DOWN_ALLOWLIST_FILE);
   const cache = input.role === "project"
     ? {
@@ -342,7 +301,6 @@ export async function createLocalMarketplace(input: {
 
   const client = module.createAllowlistClient({
     sources,
-    resolveKey: (keyId) => keys.get(keyId),
     ...(cache ? { cache } : {}),
     bundled: await readSnapshot(module),
     ...(options.fetch ? { fetch: options.fetch } : {}),

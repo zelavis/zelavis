@@ -4,10 +4,10 @@
  * The marketplace does not host code. Services live on npm and this list is the
  * set of them an installation may install: which packages, at exactly which
  * versions, with the digest each must have. Installing a service executes its
- * code with Platform authority, so "is this on the list" is the trust decision,
- * and everything else in this folder exists to make the answer trustworthy: the
- * list is signed, it can only move forward, and it may be fetched from several
- * places because a signed list is safe to fetch from anywhere.
+ * code with Platform authority, so "is this on the list" is the trust decision.
+ * The list is a plain JSON file served over https from zelavis.com, so that
+ * origin is the trust anchor, as it is for the installer. It can only move
+ * forward, and it expires.
  */
 
 export type AllowlistServiceKind = "app" | "plugin" | "frontend";
@@ -48,8 +48,8 @@ export interface Allowlist {
   readonly schemaVersion: 1;
   /**
    * Strictly increasing with every issued list. A client never accepts a lower
-   * one than it has already seen, which is what stops an old (validly signed)
-   * list from being replayed to re-open a service that was removed.
+   * one than it has already seen, which is what stops an old list from being
+   * replayed to re-open a service that was removed.
    */
   readonly sequence: number;
   readonly issuedAt: string;
@@ -58,15 +58,4 @@ export interface Allowlist {
   readonly services: readonly AllowlistService[];
 }
 
-/** What is published: the list, signed. Static JSON today, an API later. */
-export interface AllowlistEnvelope {
-  /** Identifies the trusted key that signed `payload`. */
-  readonly keyId: string;
-  /** base64url of the UTF-8 JSON of an `Allowlist`. */
-  readonly payload: string;
-  /** base64url Ed25519 signature over `SIGNING_CONTEXT + payload`. */
-  readonly signature: string;
-}
-
-export const ALLOWLIST_SIGNING_CONTEXT = "zelavis-allowlist-v1\n";
 export const ALLOWLIST_MAX_BYTES = 512 * 1024;

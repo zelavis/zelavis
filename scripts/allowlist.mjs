@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // Release tooling for the marketplace allow-list.
 //
-//   pnpm allowlist keygen [--out <file>]        make the release signing key
 //   pnpm allowlist update [--skip-unpublished]  rebuild the list from zelavis-services + npm
-//   pnpm allowlist sign [--key <file>] [--out <file>] [--expires-days <n>]
+//   pnpm allowlist publish [--expires-days <n>] write the list zelavis.com serves
 //
-// `update` rewrites `allowlist.snapshot.json` (the unsigned list every release
-// ships, and the source `sign` signs). `sign` writes the envelope that is
-// uploaded to every source. The private key never lives in the repository.
+// `update` rewrites `allowlist.snapshot.json`, the list every release ships.
+// `publish` writes `website/public/allowlist.json`, a plain JSON copy with a
+// fresh expiry that the next website deploy serves at
+// https://zelavis.com/allowlist.json. There are no keys: https from zelavis.com
+// is the trust anchor, as it is for the installer.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -18,7 +18,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const marketplace = join(root, "packages/zelavis/services/zelavis-marketplace");
 const snapshotFile = join(marketplace, "allowlist.snapshot.json");
 const servicesRoot = join(root, "zelavis-services");
-const defaultKeyFile = join(homedir(), ".zelavis-release", "allowlist-signing-key.json");
+const publishedFile = join(root, "website/public/allowlist.json");
 const DAY = 24 * 60 * 60 * 1000;
 
 const [command, ...rest] = process.argv.slice(2);
@@ -82,20 +82,6 @@ function readSnapshot() {
   return existsSync(snapshotFile) ? JSON.parse(readFileSync(snapshotFile, "utf8")) : undefined;
 }
 
-async function keygen() {
-  const file = resolve(String(flags.get("out") ?? defaultKeyFile));
-  if (existsSync(file)) fail(`${file} already exists; a signing key is never overwritten.`);
-  const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-  const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", pair.publicKey)).toString("base64");
-  const keyId = `zelavis-${new Date().getUTCFullYear()}-${publicKey.slice(-8).replace(/[^A-Za-z0-9]/g, "x").toLowerCase()}`;
-  const privateKey = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(file, `${JSON.stringify({ keyId, publicKey, privateKey }, null, 2)}\n`, { mode: 0o600 });
-  console.log(`Wrote the private key to ${file} (mode 0600). Back it up somewhere safe and offline: losing it means shipping a new key.`);
-  console.log("Put this in OFFICIAL_ALLOWLIST_KEYS (packages/zelavis/src/adapters/_marketplace-allowlist.ts):");
-  console.log(JSON.stringify({ keyId, publicKey }, null, 2));
-}
-
 async function update() {
   const { parseAllowlist } = await library();
   const previous = readSnapshot();
@@ -146,25 +132,20 @@ async function update() {
   if (skipped.length) console.log(`Not listed (unpublished): ${skipped.join(", ")}`);
 }
 
-async function sign() {
-  const { signAllowlist } = await library();
-  const keyFile = resolve(String(flags.get("key") ?? process.env.ZELAVIS_ALLOWLIST_KEY_FILE ?? defaultKeyFile));
-  if (!existsSync(keyFile)) fail(`No signing key at ${keyFile}. Run: pnpm allowlist keygen`);
-  const key = JSON.parse(readFileSync(keyFile, "utf8"));
+async function publish() {
+  const { parseAllowlist } = await library();
   const snapshot = readSnapshot();
-  if (!snapshot) fail("There is no allow-list to sign. Run: pnpm allowlist update");
+  if (!snapshot) fail("There is no allow-list to publish. Run: pnpm allowlist update");
   // A published list is meant to be renewed, so it expires sooner than the shipped one.
   const days = Number(flags.get("expires-days") ?? 90);
   if (!Number.isFinite(days) || days <= 0) fail("--expires-days must be a positive number.");
   const issuedAt = new Date();
-  const allowlist = { ...snapshot, issuedAt: issuedAt.toISOString(), expiresAt: new Date(issuedAt.getTime() + days * DAY).toISOString() };
-  const privateKey = await crypto.subtle.importKey("pkcs8", Buffer.from(key.privateKey, "base64"), "Ed25519", false, ["sign"]);
-  const envelope = await signAllowlist({ privateKey, keyId: key.keyId, allowlist });
-  const out = resolve(String(flags.get("out") ?? "allowlist.json"));
-  writeFileSync(out, `${JSON.stringify(envelope)}\n`);
-  console.log(`Signed sequence ${allowlist.sequence} with ${key.keyId}; expires ${allowlist.expiresAt}. Upload ${out} to every source.`);
+  const allowlist = parseAllowlist({ ...snapshot, issuedAt: issuedAt.toISOString(), expiresAt: new Date(issuedAt.getTime() + days * DAY).toISOString() });
+  mkdirSync(dirname(publishedFile), { recursive: true });
+  writeFileSync(publishedFile, `${JSON.stringify(allowlist)}\n`);
+  console.log(`Wrote sequence ${allowlist.sequence}; expires ${allowlist.expiresAt}. Deploy the website to publish ${publishedFile}.`);
 }
 
-const commands = { keygen, update, sign };
-if (!commands[command]) fail("Usage: pnpm allowlist <keygen|update|sign> [options]");
+const commands = { update, publish };
+if (!commands[command]) fail("Usage: pnpm allowlist <update|publish> [options]");
 await commands[command]();

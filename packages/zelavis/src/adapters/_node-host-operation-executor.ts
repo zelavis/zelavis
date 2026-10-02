@@ -6,14 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   validateHostOperationRequest,
-  verifySignedHostOperationManifest,
+  validateHostOperationManifest,
   ZelavisHostOperationValidationError,
   type ZelavisHostOperationExecutor,
   type ZelavisHostOperationManifest,
   type ZelavisHostOperationRequest,
   type ZelavisHostOperationResult,
-  type ZelavisHostOperationTrustStore,
-  type ZelavisSignedHostOperationManifest,
 } from "../core/deployment/index.js";
 import {
   createCgroupV2OperationSupervisor,
@@ -22,8 +20,8 @@ import {
 } from "./_linux-cgroup-supervisor.js";
 
 export interface NodeHostOperationRegistration {
-  /** The release-signed manifest; verified against `trust` before anything else. */
-  readonly signed: ZelavisSignedHostOperationManifest;
+  /** The installed manifest; validated before anything else. */
+  readonly manifest: ZelavisHostOperationManifest;
   /** Artifact path relative to the operation root. */
   readonly file: string;
 }
@@ -35,8 +33,6 @@ export const HOST_OPERATION_ARTIFACT_FILE = "artifact";
 export interface NodeHostOperationExecutorOptions {
   readonly rootDirectory: string;
   readonly operations: readonly NodeHostOperationRegistration[];
-  /** Release keys the operator trusts. Unsigned or untrusted manifests are refused. */
-  readonly trust: ZelavisHostOperationTrustStore;
   readonly authorize: (request: Readonly<ZelavisHostOperationRequest>) => Promise<boolean>;
   readonly requireRootOwnedArtifacts?: boolean;
   readonly maxOutputBytes?: number;
@@ -123,32 +119,43 @@ async function proveInterpreter(
 
 /**
  * Reads installed operations from `<root>/<id>/<version>/`. Directory names
- * must match the manifest they hold; the signature is verified by the
- * executor, not here.
+ * must match the manifest they hold. Authority is the tree itself: the Agent
+ * requires it root-owned, and the executor re-proves every artifact's digest.
  */
 export async function loadInstalledHostOperations(
   rootDirectory: string,
+  options: { readonly requireRootOwned?: boolean } = {},
 ): Promise<readonly NodeHostOperationRegistration[]> {
   const registrations: NodeHostOperationRegistration[] = [];
   for (const id of (await readdir(rootDirectory, { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
     for (const version of (await readdir(join(rootDirectory, id.name), { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
       const relativeDirectory = join(id.name, version.name);
-      let signed: ZelavisSignedHostOperationManifest;
+      let manifest: ZelavisHostOperationManifest;
+      const manifestPath = join(rootDirectory, relativeDirectory, HOST_OPERATION_MANIFEST_FILE);
+      // The manifest names the digest and who may request the operation, so it
+      // is held to the artifact's standard: a regular file only root can change.
+      const manifestStats = await lstat(manifestPath).catch(() => undefined);
+      if (manifestStats && (
+        !manifestStats.isFile() || (manifestStats.mode & 0o022) !== 0 ||
+        options.requireRootOwned === true && manifestStats.uid !== 0
+      )) {
+        throw new ZelavisHostOperationValidationError(
+          `Installed host operation "${relativeDirectory}" manifest must be a regular${options.requireRootOwned ? " root-owned" : ""} file that is not group- or world-writable.`,
+        );
+      }
       try {
-        signed = JSON.parse(
-          await readFile(join(rootDirectory, relativeDirectory, HOST_OPERATION_MANIFEST_FILE), "utf8"),
-        ) as ZelavisSignedHostOperationManifest;
+        manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ZelavisHostOperationManifest;
       } catch {
         throw new ZelavisHostOperationValidationError(
           `Installed host operation "${relativeDirectory}" has no readable ${HOST_OPERATION_MANIFEST_FILE}.`,
         );
       }
-      if (signed?.manifest?.id !== id.name || signed.manifest.version !== version.name) {
+      if (manifest?.id !== id.name || manifest.version !== version.name) {
         throw new ZelavisHostOperationValidationError(
           `Installed host operation "${relativeDirectory}" does not match its manifest identity.`,
         );
       }
-      registrations.push({ signed, file: join(relativeDirectory, HOST_OPERATION_ARTIFACT_FILE) });
+      registrations.push({ manifest, file: join(relativeDirectory, HOST_OPERATION_ARTIFACT_FILE) });
     }
   }
   return registrations;
@@ -230,7 +237,7 @@ export async function createNodeHostOperationExecutor(
     );
   }
   for (const registration of options.operations) {
-    const manifest = await verifySignedHostOperationManifest(registration.signed, options.trust);
+    const manifest = validateHostOperationManifest(registration.manifest);
     const requestedFile = resolve(rootDirectory, registration.file);
     const relativeRequestedFile = relative(rootDirectory, requestedFile);
     if (
@@ -317,7 +324,7 @@ export async function createNodeHostOperationExecutor(
       );
     }
     // A shebang would let the host pick the interpreter by a path outside
-    // the signature; a script must name it in the signed manifest instead.
+    // the manifest; a script must name it there instead.
     if (!manifest.interpreter && body[0] === 0x23 && body[1] === 0x21) {
       throw new ZelavisHostOperationValidationError(
         `Host operation "${manifest.id}" is a script; its manifest must declare an interpreter.`,
@@ -490,7 +497,7 @@ export async function createNodeHostOperationExecutor(
             .sort(([left], [right]) => left.localeCompare(right))
             .flatMap(([name, value]) => [`--${name}`, value]);
           const running = new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolveRun, rejectRun) => {
-            // A script runs under the interpreter its signed manifest names,
+            // A script runs under the interpreter its manifest names,
             // never one resolved from a shebang.
             const direct = registration.interpreter
               ? { command: registration.interpreter.path, args: [staged, ...args] }

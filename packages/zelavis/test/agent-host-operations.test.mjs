@@ -9,7 +9,7 @@ import { runAgentCommand } from "../dist/cli/agent.js";
 import { createAgentProcessClient } from "../dist/adapters/_agent-ipc.js";
 import { readHostOperationTrustStore } from "../dist/adapters/_agent-host-operations.js";
 import { hostOperationArgumentsDigest, signAgentAuthority } from "../dist/index.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+import { createAuthorityKey } from "./fixtures/authority-keys.mjs";
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 const BODY = "printf '%s' \"$4\" > \"$2\"\n"; // argv: --output <path> --value <v>
@@ -17,7 +17,6 @@ const BODY = "printf '%s' \"$4\" > \"$2\"\n"; // argv: --output <path> --value <
 async function installation(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-agent-ops-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const release = await createReleaseSigner();
   const operations = join(root, "operations");
   const installed = join(operations, "native.mark", "v1");
   await mkdir(installed, { recursive: true, mode: 0o700 });
@@ -29,15 +28,13 @@ async function installation(t) {
       output: { required: true, maxLength: 1024 },
     },
   };
-  await writeFile(join(installed, "manifest.json"), JSON.stringify(await release.sign(manifest)));
-  const trust = join(root, "operation-trust.json");
-  await writeFile(trust, JSON.stringify(release.trust), { mode: 0o644 });
+  await writeFile(join(installed, "manifest.json"), JSON.stringify(manifest));
   // The Platform's authority key: private half stays in the test, public half
   // is the trust file the Agent reads.
-  const platform = await createReleaseSigner({ keyId: "platform-test" });
+  const platform = await createAuthorityKey({ keyId: "platform-test" });
   const platformAuthority = join(root, "platform-authority.json");
   await writeFile(platformAuthority, JSON.stringify(platform.trust), { mode: 0o644 });
-  return { root, operations, trust, manifest, platform, platformAuthority };
+  return { root, operations, manifest, platform, platformAuthority };
 }
 
 async function startAgent(t, options) {
@@ -61,12 +58,12 @@ async function waitForStatus(client, operationId) {
 }
 
 test("the Agent executes an installed signed operation only with authority bound to its exact request", async (t) => {
-  const { root, operations, trust, manifest, platform, platformAuthority } = await installation(t);
-  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, operationTrust: trust, platformAuthority });
+  const { root, operations, manifest, platform, platformAuthority } = await installation(t);
+  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, platformAuthority });
   assert.deepEqual(agent.operations.registered, ["native.mark@v1"]);
   const client = await createAgentProcessClient({ directory: join(root, "data", "agent") });
   t.after(() => client.close());
-  const stranger = await createReleaseSigner({ keyId: "platform-test" });
+  const stranger = await createAuthorityKey({ keyId: "platform-test" });
 
   const request = async (value, { signWith = platform.privateKey, signedArguments } = {}) => {
     const output = join(root, `out-${value}`);
@@ -115,22 +112,30 @@ test("an Agent without installed operations refuses operation requests", async (
 });
 
 test("operation options are validated before the Agent listens", async (t) => {
-  const { root, operations, trust, platformAuthority } = await installation(t);
+  const { root, operations, platformAuthority } = await installation(t);
   const data = join(root, "data");
-  await assert.rejects(runAgentCommand({ dataDirectory: data, operationsRoot: operations }), /requires --operation-trust/);
-  await assert.rejects(runAgentCommand({ dataDirectory: data, operationsRoot: operations, operationTrust: trust }), /requires --platform-authority/);
+
   await assert.rejects(runAgentCommand({ dataDirectory: data, operationCgroup: "delegated" }), /require --operations-root/);
   if (process.platform !== "linux") {
     await assert.rejects(
-      runAgentCommand({ dataDirectory: data, operationsRoot: operations, operationTrust: trust, platformAuthority, operationCgroup: "delegated" }),
+      runAgentCommand({ dataDirectory: data, operationsRoot: operations, platformAuthority, operationCgroup: "delegated" }),
       /requires Linux/,
     );
   }
-  await chmod(trust, 0o666);
+  // The manifest names the digest and who may request, so only its owner may change it.
+  const manifestFile = join(operations, "native.mark", "v1", "manifest.json");
+  await chmod(manifestFile, 0o666);
   await assert.rejects(
-    runAgentCommand({ dataDirectory: data, operationsRoot: operations, operationTrust: trust, platformAuthority }),
-    /must not be group- or world-writable/,
+    runAgentCommand({ dataDirectory: data, operationsRoot: operations, platformAuthority }),
+    /manifest must be a regular file that is not group- or world-writable/,
   );
+  await chmod(manifestFile, 0o644);
+  if (process.getuid?.() !== 0) {
+    await assert.rejects(
+      runAgentCommand({ dataDirectory: data, operationsRoot: operations, platformAuthority, requireRootOwnedOperations: true }),
+      /manifest must be a regular root-owned file/,
+    );
+  }
 });
 
 test("the trust store file is structurally validated", async (t) => {
@@ -159,11 +164,11 @@ test("the trust store file is structurally validated", async (t) => {
 });
 
 test("a missing Platform authority file refuses every request until it appears", async (t) => {
-  const { root, operations, trust, manifest, platform, platformAuthority } = await installation(t);
+  const { root, operations, manifest, platform, platformAuthority } = await installation(t);
   const { rename } = await import("node:fs/promises");
   const hidden = `${platformAuthority}.hidden`;
   await rename(platformAuthority, hidden);
-  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, operationTrust: trust, platformAuthority });
+  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, platformAuthority });
   const client = await createAgentProcessClient({ directory: join(root, "data", "agent") });
   t.after(() => client.close());
   const submit = async (value) => {
