@@ -141,8 +141,8 @@ and none may be reintroduced without the owner asking for them explicitly.
   when `--require-root-owned-operations` is set. The Platform-to-Agent authority key
   (Ed25519, generated per installation) is a runtime mechanism, not a release
   secret, and stays.
-- A server installation updates itself from the dashboard (see "Platform And App Service
-  Boundary" and `website/.../architecture/updates.md`). That adds no new trust: the updater
+- A server installation updates itself from the dashboard (see
+  `website/.../architecture/updates.md`). That adds no new trust: the updater
   fetches only what the installer already does (nodejs.org and npm), by the same script.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.

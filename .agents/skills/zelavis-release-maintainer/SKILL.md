@@ -35,6 +35,11 @@ Use this skill for:
    new version on a real host and run `zelavis doctor`; refresh
    `pnpm allowlist update` / `pnpm allowlist publish` and deploy `website/` when
    services changed.
+8. Installed servers update themselves from the dashboard (`zelavis update`), picking the
+   newest version on their channel from npm, so a published version is what they will
+   install. A release that cannot start is rolled back by the updater, but never publish
+   one on purpose; the first release that carries the updater still has to be installed
+   by running the installer, because older versions have no updater.
 
 ## Useful commands
 

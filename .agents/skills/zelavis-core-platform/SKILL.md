@@ -130,7 +130,9 @@ before editing.
   is npm, nodejs.org and zelavis.com (AGENTS.md "Distribution Trust Model"). Keep planning in core runtime, host effects in
   adapters, unit/configuration templates in the release tree, and pins/checksums
   in distribution staging. A server's default instance listens on all interfaces and prints its URL (the first-owner token gates the claim); user installs and named instances stay on `127.0.0.1`; `--public` is the explicit
-  all-interface opt-in for those. There is no loopback-only server mode. Create uses the same bootstrap and plan.
+  all-interface opt-in for those. There is no loopback-only server mode. Updating is a request the unprivileged
+  Platform drops for a root-owned `zelavis-update` path/service pair; the updater trusts
+  nothing in the request and rolls back a release that does not answer (AGENTS.md). Create uses the same bootstrap and plan.
   Create takes no folder argument. Its sudo bootstrap fetches its own Node and
   package into a private root-owned directory; never execute user package-cache
   files as root. User mode owns only its
