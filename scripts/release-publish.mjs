@@ -93,9 +93,20 @@ try {
   // exactly that version. Nothing else is built, signed or uploaded.
   const platform = JSON.parse(readFileSync(join(process.cwd(), "packages/zelavis/package.json"), "utf8"));
   const capture = (command, args) => execFileSync(command, args, { encoding: "utf8", env }).trim();
-  const published = JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", "--registry=https://registry.npmjs.org"]));
-  if (published.name !== "zelavis" || published.version !== platform.version || !/^sha512-/.test(published["dist.integrity"] ?? "")) {
-    throw new Error("The exact Platform package is not available from npm.");
+  // npm lists a new version 10-15 minutes after publish, so wait rather than fail.
+  const view = () => {
+    try {
+      return JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", "--registry=https://registry.npmjs.org"]));
+    } catch { return undefined; }
+  };
+  let published = view();
+  for (let attempt = 0; !published && attempt < 60; attempt += 1) {
+    if (attempt === 0) console.log(`Published. Waiting for npm to list zelavis@${platform.version} (usually 10-15 minutes)...`);
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    published = view();
+  }
+  if (published?.name !== "zelavis" || published.version !== platform.version || !/^sha512-/.test(published["dist.integrity"] ?? "")) {
+    throw new Error("The exact Platform package is not listed on npm yet; check again with `npm view zelavis@" + platform.version + "`.");
   }
   console.log(`zelavis@${platform.version} is published; install.sh and npm create zelavis can install it now.`);
 } catch (error) {
