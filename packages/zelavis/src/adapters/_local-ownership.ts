@@ -13,12 +13,30 @@ export interface LocalDataOwner {
   readonly purpose: "platform" | "maintenance";
 }
 
-/** Kernel-released reservation; no PID-only stale-lock takeover. */
-async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
+async function openSqlite(path: string): Promise<{ exec(sql: string): void; close(): void }> {
   // Node and Bun use the same on-disk lock and SQLite's process-death semantics.
   const moduleName = "Bun" in globalThis ? "bun:sqlite" : "node:sqlite";
   const sqlite = await import(moduleName) as { DatabaseSync?: new (path: string) => { exec(sql: string): void; close(): void }; Database?: new (path: string, options: { create: boolean }) => { exec(sql: string): void; close(): void } };
-  const db = sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
+  return sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
+}
+
+/**
+ * Gives a reservation file its database header once, by whoever may write beside it.
+ *
+ * Taking a lock on an empty SQLite file writes that header, which needs a journal
+ * file in the file's directory. The Edge reservation lives in the root-owned
+ * installation prefix, which the service user cannot write, so the installer
+ * (root) initializes it and the service then only ever takes the lock.
+ */
+async function initializeReservationFile(path: string): Promise<void> {
+  const db = await openSqlite(path);
+  try { db.exec("CREATE TABLE IF NOT EXISTS zelavis_reservation (id INTEGER)"); }
+  finally { db.close(); }
+}
+
+/** Kernel-released reservation; no PID-only stale-lock takeover. */
+async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
+  const db = await openSqlite(path);
   try { db.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); }
   catch (error) {
     db.close();
@@ -103,6 +121,7 @@ export async function claimLocalEdgeOwner(selection: LocalEdgeSelection): Promis
   if (current && (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory)) throw new Error(`Host Edge belongs to instance ${current.instance} at ${current.dataDirectory}.`);
   const lock = join(selection.prefix, ".edge-owner.lock");
   await refuseEdgeSymlink(lock);
+  await initializeReservationFile(lock);
   const lease = await sqliteReservation(lock);
   try {
     // The default service can reserve the existing inode, but cannot alter its

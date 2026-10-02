@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -112,6 +112,23 @@ test("host Edge has one owner and live reservation, refusing secondary/foreign c
   await releaseLocalEdgeOwner(selection);
   await assert.rejects(readFile(join(prefix, "edge-owner.json")), {code: "ENOENT"});
   await assert.rejects(readFile(join(prefix, ".edge-owner.lock")), {code: "ENOENT"});
+});
+test("the service user can reserve Edge ownership with the root-owned prefix read-only", { skip: process.getuid?.() === 0 && "root ignores directory permissions" }, async (t) => {
+  // A real host: root's installer claims it, then a user that cannot write the
+  // prefix (the service) must still take the lock. SQLite writes a database
+  // header on the first lock of an empty file, which needs a journal in the
+  // directory, so the installer has to initialize the file itself.
+  const prefix = await root(t);
+  const selection = { prefix, instance: "default", dataDirectory: join(prefix, "data") };
+  await claimLocalEdgeOwner(selection);
+  assert.ok((await stat(join(prefix, ".edge-owner.lock"))).size > 0, "the lock file is initialized by the installer");
+  await chmod(prefix, 0o555);
+  t.after(() => chmod(prefix, 0o755).catch(() => undefined));
+  const lease = await acquireLocalEdgeOwnership(selection);
+  await assert.rejects(acquireLocalEdgeOwnership(selection), /already reserved/);
+  await lease.release();
+  await chmod(prefix, 0o755);
+  await releaseLocalEdgeOwner(selection);
 });
 test("Edge kernel reservation excludes another process and recovers after SIGKILL", async (t) => {
   const prefix = await root(t);
