@@ -94,7 +94,7 @@ function describe(status: ZelavisUpdateStatus): string {
   if (status.latest) lines.push(status.available ? `Version ${status.latest} is available.` : "This is the newest version.");
   else if (status.checkError) lines.push(`The newest version could not be looked up: ${status.checkError}`);
   if (!status.managed && status.unmanagedReason) lines.push(`Cannot update itself: ${status.unmanagedReason}`);
-  if (status.state !== "idle") lines.push(`Update: ${status.run?.message ?? status.state}.`);
+  if (status.state !== "idle") lines.push(`Update: ${status.run?.message ?? status.state}`);
   return lines.join("\n");
 }
 
@@ -114,6 +114,7 @@ async function runHostUpdate(json: boolean): Promise<void> {
   const result = await runUpdate({
     prefix,
     dataDirectory,
+    socketUnitFile: process.env.ZELAVIS_SOCKET_UNIT ?? "/etc/systemd/system/zelavis.socket",
     run: execute,
     channelVersion: (channel) => fetchChannelVersion(channel),
     healthy: async (port) => {

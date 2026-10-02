@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { takeInheritedSocket } from "./adapters/_systemd-socket.js";
 import { readNodeInstallationRuntime } from "./adapters/_installation-runtime.js";
 import { spawn } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
@@ -130,10 +131,15 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   try { await new Promise<void>((resolveListening, reject) => {
     const onError = (error: Error) => reject(error);
     server.once("error", onError);
-    server.listen(options.port, options.host, () => {
+    // Under socket activation systemd already holds the port, so a restart queues connections
+    // rather than refusing them. Otherwise bind as usual (a laptop, or the unit started by hand).
+    const inherited = takeInheritedSocket();
+    const listening = () => {
       server.off("error", onError);
       resolveListening();
-    });
+    };
+    if (inherited) server.listen({ fd: inherited.fd }, listening);
+    else server.listen(options.port, options.host, listening);
   }); } catch (error) { shutdown.dispose(); await zv.close(); throw error; }
 
   process.title = "zelavis";

@@ -122,7 +122,7 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   return value;
 }
 
-const UNITS = ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
+const UNITS = ["zelavis.service", "zelavis.socket", "zelavis-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
 export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
   "nginx, PHP, MariaDB and other shared host packages",
   "systemd journal history",
@@ -133,6 +133,13 @@ export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
 function addStep(steps: ZelavisInstallStep[], id: string, description: string, action: ZelavisInstallAction): void {
   const idempotent = !(action.kind === "command" && ["groupadd", "useradd"].includes(action.command));
   steps.push({ id, description, idempotent, action });
+}
+
+/** The socket unit for an instance: where it listens, and which service it hands connections to. */
+function renderSocket(template: string, input: { host: string; port: number; instance?: string }): string {
+  const listening = template.replace("ListenStream=127.0.0.1:3000", `ListenStream=${input.host}:${input.port}`);
+  // A named instance's service is the template instance, not the socket's own name.
+  return input.instance ? listening.replace("[Socket]\n", `[Socket]\nService=zelavis@${input.instance}.service\n`) : listening;
 }
 
 function compareInstallationVersions(left: string, right: string): number {
@@ -170,6 +177,13 @@ export async function planZelavisReleaseInstall(input: {
   readonly sourceKind?: "release" | "package";
   readonly installedBy?: ZelavisNativeInstallationReceipt["installedBy"];
   readonly stopPlatform?: boolean;
+  /**
+   * Swap a running installation to another release without stopping it first: the
+   * Platform keeps its data lock and serves from the old release until one restart,
+   * and systemd's held socket queues connections across it. For an update only; a
+   * first install or a repair uses the full plan.
+   */
+  readonly live?: boolean;
   readonly port?: number;
 }): Promise<ZelavisHostInstallationPlan> {
   const { host, paths, source } = input;
@@ -212,7 +226,7 @@ export async function planZelavisReleaseInstall(input: {
     const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 2, port, edge: input.system && !scope.named, mode: input.user ? "user" : "system", source: input.sourceKind ?? "release", instance: scope.instance, installedBy: input.installedBy ?? "cli", version, prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
     addStep(steps, id, "Record installer paths and preserve account ownership (0600)", { kind: "write", path: scope.receipt, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600, atomic: true });
   };
-  if (input.stopPlatform) addStep(steps, "platform-stop", "Stop this installation's Platform before taking data ownership", { kind: "command", command: "systemctl", args: ["stop", scope.units[0]] });
+  if (input.stopPlatform && !input.live) addStep(steps, "platform-stop", "Stop this installation's Platform before taking data ownership", { kind: "command", command: "systemctl", args: ["stop", scope.units[0]] });
   if (!input.user) addStep(steps, "system-prefix", "Keep the shared system prefix traversable by instance accounts", { kind: "mkdir", path: paths.prefix, mode: 0o755 });
   if (scope.named) {
     addStep(steps, "instances-directory", "Keep the shared instance directory traversable", { kind: "mkdir", path: `${paths.prefix}/instances`, mode: 0o755 });
@@ -227,7 +241,7 @@ export async function planZelavisReleaseInstall(input: {
     addStep(steps, `directory:${path}`, `Create ${path}`, { kind: "mkdir", path, ...(path === paths.dataDirectory || input.user && path === `${paths.prefix}/releases` ? { mode: 0o700 } : path === `${paths.prefix}/releases` ? { mode: 0o755 } : {}) });
   }
   if (!input.user) recordOwnership("initial-receipt");
-  addStep(steps, "data-reservation", "Reserve the shared Platform data ownership lock for maintenance", { kind: "reserve-data", path: paths.dataDirectory });
+  if (!input.live) addStep(steps, "data-reservation", "Reserve the shared Platform data ownership lock for maintenance", { kind: "reserve-data", path: paths.dataDirectory });
   if (!await host.exists(release)) {
     addStep(steps, "release", `Copy staged release ${version} to ${release}`, { kind: "copy", source, path: release });
   }
@@ -248,7 +262,7 @@ export async function planZelavisReleaseInstall(input: {
       recordOwnership("user-receipt");
     }
     if (!scope.named) addStep(steps, "update-directory", "Create the folder the Platform leaves update requests in", { kind: "mkdir", path: `${paths.dataDirectory}/update`, mode: 0o750 });
-    command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
+    if (!input.live) command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
     const dataBase = scope.named ? paths.dataDirectory.slice(0, -scope.instance.length - 1) : paths.dataDirectory;
     const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
     const render = (text: string) => text.replaceAll("/opt/zelavis", paths.prefix).replaceAll("/var/lib/zelavis", dataBase).replaceAll("/etc/zelavis", configBase);
@@ -260,6 +274,10 @@ export async function planZelavisReleaseInstall(input: {
       const content = index === 0 && !scope.named ? template.replace("--host 127.0.0.1", `--host ${input.public ? "0.0.0.0" : "127.0.0.1"}`).replace("--port 3000", `--port ${port}`) : template;
       addStep(steps, unit, `Install ${unit} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${unit}`, content: render(content), mode: 0o644 });
     }
+    // systemd holds the listening port across Platform restarts, so an update queues connections instead of refusing them.
+    const socketTemplate = await host.read(`${source}/share/zelavis.socket`);
+    if (socketTemplate === undefined) throw new Error("Release is missing share/zelavis.socket.");
+    addStep(steps, scope.socket, `Install ${scope.socket} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${scope.socket}`, content: renderSocket(socketTemplate, { host: input.public ? "0.0.0.0" : "127.0.0.1", port, instance: scope.named ? scope.instance : undefined }), mode: 0o644 });
     if (!scope.named && await host.exists(`${source}/share/zelavis-traefik.service`)) {
       for (const path of [`${paths.dataDirectory}/edge/traefik/active`, `${paths.dataDirectory}/agent`]) {
         addStep(steps, `edge:${path}`, `Create owned directory ${path}`, { kind: "mkdir", path, mode: 0o750 });
@@ -276,13 +294,14 @@ export async function planZelavisReleaseInstall(input: {
       // Do not expose the existing first-owner token in a plan or dry-run.
       addStep(steps, "agent-environment", "Add Agent endpoint without changing existing environment values", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${paths.dataDirectory}/agent` });
     }
-    if (!scope.named) {
+    if (!scope.named && !input.live) {
       addStep(steps, "edge-owner", "Reserve host Edge ownership for the default instance", { kind: "claim-edge", prefix: paths.prefix, instance: scope.instance, dataDirectory: paths.dataDirectory });
       command("edge-lock-owner", "Grant the default service group the existing host Edge lock inode", "chown", ["root:zelavis", `${paths.prefix}/.edge-owner.lock`]);
     }
     recordOwnership("receipt");
-    addStep(steps, "data-handover", "Release data ownership before starting the Platform", { kind: "release-data" });
+    if (!input.live) addStep(steps, "data-handover", "Release data ownership before starting the Platform", { kind: "release-data" });
     command("reload", "Reload systemd units", "systemctl", ["daemon-reload"]);
+    command("socket-enable", "Hold the dashboard port in systemd", "systemctl", ["enable", "--now", scope.socket]);
     if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", scope.units[1]]);
     // The path unit watches for the Platform's update request and starts the root updater.
     if (!scope.named) command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", "zelavis-update.path"]);
@@ -321,8 +340,8 @@ export function planZelavisUninstall(input: {
   const command = (id: string, args: readonly string[]) => addStep(steps, id, `systemctl ${args.join(" ")}`, { kind: "command", command: "systemctl", args, ignoreFailure: true });
   if (input.user && input.hostCommands) throw new Error("User uninstall must not execute system maintenance commands.");
   if (input.hostCommands) {
-    command("stop", ["stop", ...scope.units]);
-    command("disable", ["disable", ...scope.units]);
+    command("stop", ["stop", scope.socket, ...scope.units]);
+    command("disable", ["disable", scope.socket, ...scope.units]);
     addStep(steps, "data-reservation", "Reserve Platform data after stopping the owned units", { kind: "reserve-data", path: paths.dataDirectory });
   }
   if (!input.hostCommands) addStep(steps, "data-reservation", "Refuse removal while a Platform owns these data", { kind: "reserve-data", path: paths.dataDirectory });
@@ -335,9 +354,10 @@ export function planZelavisUninstall(input: {
   const removalPaths = new Set<string>();
   const remove = (path: string, recursive = false) => { if (!removalPaths.has(path)) { removalPaths.add(path); addStep(steps, `remove:${path}`, `Remove ${path}`, { kind: "remove", path, recursive }); } };
   if (!input.user) {
-    for (const unit of scope.units) {
+    for (const unit of [...scope.units, scope.socket]) {
       for (const directory of paths.systemdDirectories) remove(`${directory}/${unit}`);
       remove(`${paths.systemdDirectories[0]}/multi-user.target.wants/${unit}`);
+      remove(`${paths.systemdDirectories[0]}/sockets.target.wants/${unit}`);
       remove(`${paths.systemdDirectories[0]}/${unit}.d`, true);
     }
     if (!input.retainShared) {

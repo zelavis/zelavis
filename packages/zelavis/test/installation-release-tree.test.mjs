@@ -30,7 +30,7 @@ test("a prepared Node and package become a release tree built from the package's
   assert.deepEqual(traefik[0].target, { platform: "linux", architecture: "x64" });
   assert.equal((await stat(join(root, "bin/zelavis"))).mode & 0o111, 0o111);
   const share = await readdir(join(root, "share"));
-  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "traefik.yml", "uninstall.sh"]) assert.ok(share.includes(file), file);
+  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml", "uninstall.sh"]) assert.ok(share.includes(file), file);
   // Operations are plain manifests beside their artifacts: no signature, no key.
   const operations = await readdir(join(root, "operations"));
   assert.ok(operations.includes("zelavis.host-report"));

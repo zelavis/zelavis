@@ -10,7 +10,7 @@ for (const file of ["scripts/runtime-assets.mjs", "scripts/stage-operations.mjs"
   await copyFile(new URL(file, distribution), new URL(file.split("/").at(-1), output));
 }
 await mkdir(new URL("share/", output), { recursive: true });
-for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) {
   await copyFile(new URL(`runtime/${file}`, distribution), new URL(`share/${file}`, output));
 }
 await copyFile(new URL("runtime/zelavis", distribution), new URL("zelavis-launcher", output));

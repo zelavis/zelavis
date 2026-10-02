@@ -19,7 +19,8 @@ class Probe {
   async dataOwnership() { return this.owner; }
   async portAvailable(port) { return !this.busy.has(port); }
   async portOwnedBy() { return this.matchesPort; }
-  async unitState() { return this.units; }
+  socketUnit = { present: false, active: false, enabled: false };
+  async unitState(name) { return name.endsWith(".socket") ? this.socketUnit : this.units; }
   async dataOwner() { return this.uid; }
   async agentSupport() { return this.support; }
   async execute(action) { this.mutations.push(action); throw new Error("inspection must never mutate"); }
@@ -63,6 +64,25 @@ test("maintenance stops only its own service, with matching live data and listen
   host.owner = { ...host.owner, purpose: "platform", installationRoot: "/foreign" };
   await assert.rejects(preflight(host, { force: true }), /data ownership/);
   assert.equal(host.mutations.length, 0);
+});
+
+test("a port held by this installation's own socket is not a conflict, and doctor says so", async () => {
+  const host = new Probe();
+  host.busy.add(3000); host.socketUnit = { present: true, active: true, enabled: true };
+  assert.deepEqual(await preflight(host), { stopPlatform: true });
+  const report = await doctor(host);
+  assert.equal(report.checks.find((item) => item.id === "port:3000").status, "ok");
+  assert.match(report.checks.find((item) => item.id === "port:3000").detail, /held by systemd/);
+  assert.equal(report.checks.find((item) => item.id === "socket").status, "ok");
+  host.socketUnit = { present: false, active: false, enabled: false };
+  assert.equal((await doctor(host)).checks.find((item) => item.id === "socket").status, "warning");
+});
+
+test("a live swap leaves the running Platform and its own lock alone", async () => {
+  const host = new Probe();
+  host.owner = { active: true, pid: 42, installationRoot: paths.prefix, purpose: "platform" };
+  host.busy.add(3000); host.matchesPort = true;
+  assert.deepEqual(await preflight(host, { live: true }), { stopPlatform: false });
 });
 
 test("user Platforms must stop before maintenance and units with competing layouts are refused", async () => {

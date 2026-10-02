@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { compareVersions, isExactVersion, updateChannel, type ZelavisUpdateRun } from "../updates.js";
@@ -18,6 +18,8 @@ export interface UpdateRunnerOptions {
   healthy(port: number): Promise<boolean>;
   sleep(milliseconds: number): Promise<void>;
   now?: () => Date;
+  /** The systemd socket unit that holds the dashboard port; when it exists the swap is live. */
+  readonly socketUnitFile: string;
   /** How long a new release gets to answer before it is rolled back. */
   healthTimeoutMs?: number;
 }
@@ -119,15 +121,29 @@ export async function runUpdate(options: UpdateRunnerOptions): Promise<ZelavisUp
 
   const previous = await release(options.prefix);
   const script = join(previous, "platform", "dist", "installation-assets", "install.sh");
-  run = { ...run, to: target, message: `Installing ${target}.` };
+  run = { ...run, to: target, message: `Preparing ${target} while ${receipt.version} keeps serving.` };
   await writeStatus(directory, run);
 
-  // The installer shipped inside the installed release does the whole job: it
-  // fetches the pinned Node and the exact package, installs it beside the
-  // current release, switches over and restarts the service.
-  const installed = await options.run("sh", [script, "--version", target]);
-  const log = tail(installed.output);
-  let failure: string | undefined = installed.code === 0 ? undefined : `The installer stopped with an error (exit ${installed.code}).`;
+  // Phase 1, prepare: the installer shipped inside the installed release fetches the pinned Node
+  // and the exact package and lays the new release beside the current one. The running Platform
+  // is not touched, so a failure here costs nothing and nobody notices the download.
+  const prepared = await options.run("sh", [script, "--version", target, "--stage-only"]);
+  const log = tail(prepared.output);
+  if (prepared.code !== 0) {
+    return finish("failed", `Could not prepare ${target}, so nothing was changed and ${receipt.version} is still running.`, { log });
+  }
+
+  // Phase 2, swap: the new release's own installer selects it and restarts once. With the
+  // socket held by systemd that restart queues connections instead of refusing them; before
+  // the socket exists (the first update after it was introduced) the full installer is used.
+  const newRelease = join(options.prefix, "releases", target);
+  const live = await exists(options.socketUnitFile);
+  run = { ...run, message: live ? `Switching to ${target}.` : `Installing ${target}; this update restarts the service for a few seconds.` };
+  await writeStatus(directory, run);
+  const node = join(newRelease, "runtime", "node", "bin", "node");
+  const swapped = await options.run(node, [join(newRelease, "platform", "dist", "cli.js"), "install", "--from-release", newRelease, "--installed-by", "script", ...live ? ["--live"] : []]);
+  log.push(...tail(swapped.output));
+  let failure: string | undefined = swapped.code === 0 ? undefined : `The installer stopped with an error (exit ${swapped.code}).`;
 
   if (!failure) {
     const deadline = Date.now() + (options.healthTimeoutMs ?? 90_000);
@@ -141,24 +157,26 @@ export async function runUpdate(options: UpdateRunnerOptions): Promise<ZelavisUp
 
   if (!failure) {
     await pruneReleases(options.prefix, previous).catch(() => undefined);
-    return finish("succeeded", `Updated from ${receipt.version} to ${target}.`, { log });
+    return finish("succeeded", `Updated from ${receipt.version} to ${target}.`, { log: log.slice(-LOG_LINES) });
   }
 
-  // Put the previous release back. It is kept on disk and complete, so the same
-  // installer can select it again from where it lies.
-  run = { ...run, message: `${failure} Going back to ${receipt.version}.`, log };
+  // Put the previous release back. It is kept on disk and complete, so its own installer can
+  // select it again from where it lies.
+  run = { ...run, message: `${failure} Going back to ${receipt.version}.`, log: log.slice(-LOG_LINES) };
   await writeStatus(directory, run);
   const selected = await release(options.prefix).catch(() => previous);
   if (selected !== previous) {
-    const node = join(previous, "runtime", "node", "bin", "node");
-    const back = await options.run(node, [join(previous, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script"]);
+    const back = await options.run(join(previous, "runtime", "node", "bin", "node"), [join(previous, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script", ...await exists(options.socketUnitFile) ? ["--live"] : []]);
     log.push(...tail(back.output));
   }
-  await options.run("systemctl", ["restart", "zelavis"]);
-  let restored = false;
-  for (let attempt = 0; attempt < 20 && !restored; attempt += 1) {
-    restored = await options.healthy(receipt.port);
-    if (!restored) await options.sleep(2000);
+  // Only restart what is not already answering: a swap that failed before it began changed nothing.
+  let restored = await options.healthy(receipt.port);
+  if (!restored) {
+    await options.run("systemctl", ["restart", "zelavis"]);
+    for (let attempt = 0; attempt < 20 && !restored; attempt += 1) {
+      restored = await options.healthy(receipt.port);
+      if (!restored) await options.sleep(2000);
+    }
   }
   // The release that did not work is no use to anyone; keep it only when the rollback itself failed.
   if (restored) await pruneReleases(options.prefix, previous).catch(() => undefined);
@@ -168,3 +186,6 @@ export async function runUpdate(options: UpdateRunnerOptions): Promise<ZelavisUp
   { log: log.slice(-LOG_LINES) });
 }
 
+async function exists(path: string): Promise<boolean> {
+  return access(path).then(() => true, () => false);
+}

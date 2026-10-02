@@ -1,7 +1,8 @@
 [Unit]
 Description=Zelavis Platform OS
-After=network-online.target
+After=network-online.target zelavis-%i.socket
 Wants=network-online.target
+Requires=zelavis-%i.socket
 
 [Service]
 Type=simple

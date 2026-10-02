@@ -1,4 +1,4 @@
-import { assertInstallationInstance, assertInstallationPort } from "../../core/runtime/installation-instance.js";
+import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "../../core/runtime/installation-instance.js";
 import { acquireNodeInstallerLock } from "../../adapters/_local-ownership.js";
 import { preflightZelavisInstall } from "../../core/runtime/installation-health.js";
 import { createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths, assertNodeInstallationPrivilege } from "../../adapters/_install-host.js";
@@ -11,7 +11,7 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   let invokingPath: string | undefined, invokingHome: string | undefined;
   let instance = "default", port: number | undefined;
   let source: string | undefined, npmPrepared: string | undefined;
-  let dryRun = false, json = false, allowDowngrade = false, user = false;
+  let dryRun = false, json = false, allowDowngrade = false, user = false, live = false, stageOnly = false;
   // Unset means the default: a server's default instance is reachable, anything else stays local.
   let publicBind: boolean | undefined;
   let installedBy: ZelavisNativeInstallationReceipt["installedBy"] = "cli";
@@ -39,11 +39,15 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     else if (arg === "--json") json = true;
     else if (arg === "--force") force = true;
     else if (arg === "--public") publicBind = true;
+    else if (arg === "--live") live = true;
+    else if (arg === "--stage-only") stageOnly = true;
     else if (arg === "--enable-agent") enableAgent = true;
     else if (arg === "--allow-downgrade") allowDowngrade = true;
     else throw new Error(`Unknown install option: ${arg}`);
   }
   if (source && npmPrepared) throw new Error("Choose either --from-release <path> or --from-npm <path>.");
+  if (stageOnly && !npmPrepared) throw new Error("--stage-only prepares a release from --from-npm; there is nothing to prepare from a staged tree.");
+  if (stageOnly && live) throw new Error("Choose either --stage-only or --live.");
   if (!source && !npmPrepared) throw new Error("zelavis install requires --from-release <absolute staged-release path> or --from-npm <absolute prepared path>.");
   if (user && enableAgent) throw new Error("User installations do not support the Agent.");
   assertInstallationInstance(instance);
@@ -68,11 +72,26 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
   const otherPrefixes = paths.prefix === "/opt/zelavis" || user ? [nodeInstallationPaths().prefix, nodeUserInstallationPaths().prefix, ...invokingUserPrefix ? [invokingUserPrefix] : []] : [];
   const lock = dryRun ? undefined : await acquireNodeInstallerLock(paths.prefix);
   try {
-    const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port });
+    // Preparing a release changes nothing about the running installation, so it checks nothing
+    // about it: the Platform is expected to be running and to hold its data and port.
+    if (stageOnly) {
+      const prepared = await assembleNpmReleaseTree(npmPrepared!);
+      const release = `${paths.prefix}/releases/${prepared.version}`;
+      if (!await host.exists(release)) {
+        await host.execute({ kind: "mkdir", path: `${paths.prefix}/releases`, mode: user ? 0o700 : 0o755 });
+        await host.execute({ kind: "copy", source: npmPrepared!, path: release });
+      }
+      console.log(json ? JSON.stringify({ prepared: prepared.version, release }) : `Prepared Zelavis ${prepared.version} at ${release}. Nothing was switched or restarted.`);
+      return;
+    }
+    if (live && (user || !system)) throw new Error("--live swaps a running systemd installation; there is nothing to swap here.");
+    const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port, live });
     // The bootstrap fetched the private Node and the package; this completes the tree.
     if (npmPrepared) await assembleNpmReleaseTree(npmPrepared);
     port ??= (await readNativeInstallationReceipt(host, paths.prefix, instance))?.port ?? 3000;
-    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: bindPublic, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : await releaseSourceKind(host, paths, instance, source!), installedBy });
+    // An update keeps the bind the installation already has: moving it would restart the held socket.
+    const keptHost = live ? (JSON.parse(await host.read(installationInstanceScope(paths.prefix, instance).runtime) ?? "{}") as { host?: unknown }).host : undefined;
+    const plan = await planZelavisReleaseInstall({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: keptHost === undefined ? bindPublic : keptHost === "0.0.0.0", live, allowDowngrade, enableAgent, stopPlatform, sourceKind: npmPrepared ? "package" : await releaseSourceKind(host, paths, instance, source!), installedBy });
     if (dryRun) {
       console.log(json ? JSON.stringify(plan, null, 2) : ["Zelavis install plan", ...plan.steps.map((step) => `  ${step.id}: ${step.description} (idempotent: ${step.idempotent})`), ...plan.warnings, "No changes were made."].join("\n"));
       return;

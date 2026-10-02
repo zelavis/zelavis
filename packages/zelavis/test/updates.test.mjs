@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -166,21 +166,20 @@ function updater(t, state, overrides = {}) {
   const options = {
     prefix: state.prefix,
     dataDirectory: state.dataDirectory,
+    socketUnitFile: join(state.root, "zelavis.socket"),
     channelVersion: async () => "2.0.0-alpha.9",
     sleep: async () => undefined,
     healthy: async () => true,
     healthTimeoutMs: 50,
     async run(command, args) {
       commands.push([command, ...args]);
-      // The installer's one visible effect here: it selects the new release.
+      // Phase 1: the embedded installer prepares the release beside the running one.
       if (command === "sh") {
         const target = args[args.indexOf("--version") + 1];
         await mkdir(join(state.prefix, "releases", target, "platform", "dist", "installation-assets"), { recursive: true });
-        await rm(join(state.prefix, "current"), { force: true });
-        await symlink(join(state.prefix, "releases", target), join(state.prefix, "current"));
-        return { code: 0, output: `Installing Zelavis ${target}\nFirst-run bootstrap token: SECRET\nZelavis instance default installed.\n` };
+        return { code: 0, output: `Installing Zelavis ${target}\nFirst-run bootstrap token: SECRET\nPrepared Zelavis ${target}.\n` };
       }
-      // A rollback: the previous release's own installer selects that release again.
+      // Phase 2 (and a rollback): a release's own installer selects that release.
       if (args.includes("--from-release")) {
         await rm(join(state.prefix, "current"), { force: true });
         await symlink(args[args.indexOf("--from-release") + 1], join(state.prefix, "current"));
@@ -200,7 +199,11 @@ test("the root updater installs the newest version with the installer shipped in
 
   assert.equal(result.state, "succeeded");
   assert.equal(result.to, "2.0.0-alpha.9", "the version comes from the registry, never from the request");
-  assert.deepEqual(commands[0], ["sh", join(state.prefix, "releases", state.version, "platform", "dist", "installation-assets", "install.sh"), "--version", "2.0.0-alpha.9"]);
+  // Prepare first, with the installer that shipped in the release that is running...
+  assert.deepEqual(commands[0], ["sh", join(state.prefix, "releases", state.version, "platform", "dist", "installation-assets", "install.sh"), "--version", "2.0.0-alpha.9", "--stage-only"]);
+  // ...then swap with the new release's own installer and its own Node.
+  const target = join(state.prefix, "releases", "2.0.0-alpha.9");
+  assert.deepEqual(commands[1], [join(target, "runtime", "node", "bin", "node"), join(target, "platform", "dist", "cli.js"), "install", "--from-release", target, "--installed-by", "script"]);
   assert.equal(await exists(join(state.dataDirectory, "update", "request.json")), false, "the request is consumed first");
   assert.deepEqual(await status(state.dataDirectory), result);
   assert.ok(!JSON.stringify(result).includes("SECRET"), "the installer's token never reaches the status file");
@@ -242,13 +245,10 @@ test("a failed lookup, a build off any channel and a non-system installation are
 test("a release that never answers is rolled back to the previous one, which is running again", async (t) => {
   const state = await installation(t);
   await request(state.dataDirectory);
-  let answers = 0;
   const { options, commands } = updater(t, state, {
-    // Silent while the new release is selected; answers once the old one is back.
-    healthy: async () => {
-      answers += 1;
-      return commands.some((command) => command.includes("--allow-downgrade")) && answers > 1;
-    },
+    // Silent while the new release is selected; answers once the old one is selected again and
+    // restarted (the updater's own restart is the fallback when the installer's did not bring it back).
+    healthy: async () => commands.some((command) => command.includes("--allow-downgrade")) && commands.some((command) => command[0] === "systemctl"),
   });
   const result = await runUpdate(options);
 
@@ -264,20 +264,63 @@ test("a release that never answers is rolled back to the previous one, which is 
   assert.deepEqual(await readdir(join(state.prefix, "releases")), [state.version], "the release that did not work is removed");
 });
 
-test("an installer that fails is rolled back too, and a rollback that does not recover says so", async (t) => {
+test("a release that cannot be prepared changes nothing: the running one is never touched", async (t) => {
   const state = await installation(t);
   await request(state.dataDirectory);
-  const failing = updater(t, state, { async run(command, args) { return command === "sh" ? { code: 1, output: "npm error\n" } : { code: 0, output: "" }; } });
+  const { options, commands } = updater(t, state, { async run(command) { commands.push([command]); return { code: 1, output: "npm error 404\n" }; } });
+  const result = await runUpdate(options);
+  assert.equal(result.state, "failed");
+  assert.match(result.message, /Could not prepare 2\.0\.0-alpha\.9, so nothing was changed/);
+  assert.match(result.log.join("\n"), /npm error/);
+  assert.equal(commands.length, 1, "no swap and no restart were attempted");
+  assert.equal((await readlink(join(state.prefix, "current"))), join(state.prefix, "releases", state.version));
+});
+
+test("a swap that fails is rolled back, and a rollback that does not recover says so", async (t) => {
+  const state = await installation(t);
+  await request(state.dataDirectory);
+  const failing = updater(t, state, {
+    async run(command, args) {
+      if (command === "sh") { await mkdir(join(state.prefix, "releases", "2.0.0-alpha.9"), { recursive: true }); return { code: 0, output: "" }; }
+      return args.includes("--allow-downgrade") ? { code: 0, output: "" } : { code: 1, output: "install error\n" };
+    },
+  });
   const result = await runUpdate(failing.options);
   assert.equal(result.state, "rolled-back");
   assert.match(result.message, /stopped with an error/);
-  assert.match(result.log.join("\n"), /npm error/);
+  assert.match(result.log.join("\n"), /install error/);
 
   const hopeless = await installation(t);
   await request(hopeless.dataDirectory);
-  const stuck = await runUpdate(updater(t, hopeless, { healthy: async () => false, async run() { return { code: 1, output: "" }; } }).options);
+  const stuck = await runUpdate(updater(t, hopeless, { healthy: async () => false, async run(command) { return command === "sh" ? { code: 0, output: "" } : { code: 1, output: "" }; } }).options);
   assert.equal(stuck.state, "rolled-back");
   assert.match(stuck.message, /did not bring it back/);
+});
+
+test("the swap is live only once systemd holds the port, and a running release is not restarted for nothing", async (t) => {
+  const first = await installation(t);
+  await request(first.dataDirectory);
+  const before = updater(t, first);
+  await runUpdate(before.options);
+  assert.ok(!before.commands[1].includes("--live"), "before the socket exists the full installer runs");
+
+  const held = await installation(t);
+  await writeFile(join(held.root, "zelavis.socket"), "[Socket]\n");
+  await request(held.dataDirectory);
+  const after = updater(t, held);
+  const done = await runUpdate(after.options);
+  assert.equal(done.state, "succeeded");
+  assert.ok(after.commands[1].includes("--live"), "with the socket held the swap needs no stop");
+  assert.ok(!after.commands.some((command) => command[0] === "systemctl"), "the updater does not restart a healthy Platform itself");
+
+  // A swap that failed before it began leaves the old release answering, so nothing is restarted.
+  const calm = await installation(t);
+  await writeFile(join(calm.root, "zelavis.socket"), "[Socket]\n");
+  await request(calm.dataDirectory);
+  const early = updater(t, calm, { async run(command) { return command === "sh" ? { code: 0, output: "" } : { code: 1, output: "preflight refused\n" }; } });
+  const refused = await runUpdate(early.options);
+  assert.equal(refused.state, "rolled-back");
+  assert.match(refused.message, /Rolled back to 2\.0\.0-alpha\.8, which is running again/);
 });
 
 test("after a good update only the new release, the one just replaced and instance selections are kept", async (t) => {

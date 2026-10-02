@@ -54,7 +54,7 @@ export async function assembleNpmReleaseTree(prepared: string, options: {
   await chmod(join(prepared, "bin", "zelavis"), 0o755);
   await mkdir(join(prepared, "share"), { recursive: true });
   const linux = platform === "linux";
-  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-update.service", "zelavis-update.path", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
+  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
     await copyFile(assetPath(`share/${file}`), join(prepared, "share", file));
   }
   await chmod(join(prepared, "share", "uninstall.sh"), 0o755);

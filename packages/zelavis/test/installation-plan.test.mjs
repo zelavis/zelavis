@@ -9,7 +9,7 @@ const paths = {
   systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"],
 };
 const templates = {};
-for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) {
   templates[file] = await readFile(new URL(`../../../distribution/runtime/${file}`, import.meta.url), "utf8");
 }
 
@@ -143,6 +143,20 @@ test("public exposure changes only the template's bind address", async () => {
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 0\.0\.0\.0/);
 });
 
+test("the dashboard port is held by a socket unit, and a live update leaves the running Platform alone", async () => {
+  const host = new FakeHost();
+  await executeZelavisInstallationPlan(host, await install(host, { public: true }));
+  assert.match(await host.read("/etc/systemd/system/zelavis.socket"), /ListenStream=0\.0\.0\.0:3000/);
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis.socket"));
+  host.release("1.0.1"); host.actions.length = 0;
+  const plan = await install(host, { live: true, stopPlatform: true });
+  assert.ok(!plan.steps.some((step) => ["platform-stop", "data-reservation", "data-handover", "data-owner"].includes(step.id)));
+  await executeZelavisInstallationPlan(host, plan);
+  assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.1");
+  assert.ok(!host.actions.some((a) => a.command === "systemctl" && a.args[0] === "stop"));
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "restart zelavis.service"));
+});
+
 test("interrupted install rerun preserves recorded account ownership and repairs later steps", async () => {
   const host = new FakeHost(); host.fail = (a) => a.kind === "bootstrap";
   await assert.rejects(executeZelavisInstallationPlan(host, await install(host)), /simulated host failure/);
@@ -203,6 +217,8 @@ test("named instances select independent releases, accounts, units and tokens wi
   assert.equal(await host.read("/etc/zelavis/zelavis.env"), defaultToken);
   assert.ok(host.accounts.has("user:zelavis-preview"));
   assert.match(await host.read("/etc/systemd/system/zelavis@.service"), /User=zelavis-%i[\s\S]*serve --instance %i/);
+  const socket = await host.read("/etc/systemd/system/zelavis-preview.socket");
+  assert.match(socket, /Service=zelavis@preview\.service/); assert.match(socket, /ListenStream=127\.0\.0\.1:3100/);
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis@preview.service"));
   const runtime = JSON.parse(await host.read("/opt/zelavis/instances/preview/runtime.json"));
   assert.equal(runtime.edge, false); assert.equal(runtime.port, 3100);
