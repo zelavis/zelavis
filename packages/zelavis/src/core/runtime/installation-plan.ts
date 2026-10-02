@@ -261,7 +261,7 @@ export async function planZelavisReleaseInstall(input: {
       ownsUser = true;
       recordOwnership("user-receipt");
     }
-    if (!scope.named) addStep(steps, "update-directory", "Create the folder the Platform leaves update requests in", { kind: "mkdir", path: `${paths.dataDirectory}/update`, mode: 0o750 });
+    addStep(steps, "update-directory", "Create the folder the Platform leaves update requests in", { kind: "mkdir", path: `${paths.dataDirectory}/update`, mode: 0o750 });
     if (!input.live) command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
     const dataBase = scope.named ? paths.dataDirectory.slice(0, -scope.instance.length - 1) : paths.dataDirectory;
     const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
@@ -278,6 +278,17 @@ export async function planZelavisReleaseInstall(input: {
     const socketTemplate = await host.read(`${source}/share/zelavis.socket`);
     if (socketTemplate === undefined) throw new Error("Release is missing share/zelavis.socket.");
     addStep(steps, scope.socket, `Install ${scope.socket} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${scope.socket}`, content: renderSocket(socketTemplate, { host: input.public ? "0.0.0.0" : "127.0.0.1", port, instance: scope.named ? scope.instance : undefined }), mode: 0o644 });
+    if (scope.named) {
+      // A named instance's update units are the default's, aimed at this instance's request file and name.
+      // The updater's ZELAVIS_DATA_DIR stays the base: the installer it runs appends the instance's suffix itself.
+      for (const unit of ["zelavis-update.path", "zelavis-update.service"]) {
+        const template = await host.read(`${source}/share/${unit}`);
+        if (template === undefined) throw new Error(`Release is missing share/${unit}.`);
+        const target = unit.endsWith(".path") ? scope.updatePath : scope.updateService;
+        const content = template.replaceAll("/opt/zelavis/current", `${paths.prefix}/instances/${scope.instance}/current`).replaceAll("/opt/zelavis", paths.prefix).replace("PathExists=/var/lib/zelavis/", `PathExists=${paths.dataDirectory}/`).replaceAll("zelavis-update.service", scope.updateService).replace("update --run", `update --run --instance ${scope.instance}`).replace("Update the Zelavis Platform", `Update the Zelavis Platform instance ${scope.instance}`);
+        addStep(steps, target, `Install ${target} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${target}`, content, mode: 0o644 });
+      }
+    }
     if (!scope.named && await host.exists(`${source}/share/zelavis-traefik.service`)) {
       for (const path of [`${paths.dataDirectory}/edge/traefik/active`, `${paths.dataDirectory}/agent`]) {
         addStep(steps, `edge:${path}`, `Create owned directory ${path}`, { kind: "mkdir", path, mode: 0o750 });
@@ -304,7 +315,7 @@ export async function planZelavisReleaseInstall(input: {
     command("socket-enable", "Hold the dashboard port in systemd", "systemctl", ["enable", "--now", scope.socket]);
     if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", scope.units[1]]);
     // The path unit watches for the Platform's update request and starts the root updater.
-    if (!scope.named) command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", "zelavis-update.path"]);
+    command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", scope.updatePath]);
     command("platform-enable", "Enable and start the Platform", "systemctl", ["enable", "--now", scope.units[0]]);
     if (previous || installedManifest && JSON.parse(installedManifest).version !== version) {
       command("platform-restart", "Restart the Platform on the newly selected release", "systemctl", ["restart", scope.units[0]]);

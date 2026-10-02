@@ -239,7 +239,7 @@ test("a failed lookup, a build off any channel and a non-system installation are
   const user = await installation(t);
   await writeFile(join(user.prefix, "installation.json"), JSON.stringify({ mode: "user", instance: "default", version: user.version, port: 3000 }));
   await request(user.dataDirectory);
-  await assert.rejects(runUpdate(updater(t, user).options), /default system installation/);
+  await assert.rejects(runUpdate(updater(t, user).options), /not a system installation/);
 });
 
 test("a release that never answers is rolled back to the previous one, which is running again", async (t) => {
@@ -332,4 +332,77 @@ test("after a good update only the new release, the one just replaced and instan
   await request(state.dataDirectory);
   assert.equal((await runUpdate(updater(t, state).options)).state, "succeeded");
   assert.deepEqual((await readdir(join(state.prefix, "releases"))).sort(), ["2.0.0-alpha.5", "2.0.0-alpha.8", "2.0.0-alpha.9"]);
+});
+
+test("a named instance updates its own release, keeps the default's, and is installed under its own name", async (t) => {
+  const state = await installation(t);
+  const version = "2.0.0-alpha.8";
+  const home = join(state.prefix, "instances", "preview");
+  await mkdir(home, { recursive: true });
+  await symlink(join(state.prefix, "releases", version), join(home, "current"));
+  await writeFile(join(home, "installation.json"), JSON.stringify({ mode: "system", instance: "preview", version, port: 3100 }));
+  await request(state.dataDirectory);
+  let swapped;
+  const { options, commands } = updater(t, state, {
+    instance: "preview",
+    async run(command, args) {
+      commands.push([command, ...args]);
+      if (command === "sh") {
+        await mkdir(join(state.prefix, "releases", "2.0.0-alpha.9", "platform", "dist", "installation-assets"), { recursive: true });
+        return { code: 0, output: "" };
+      }
+      if (args.includes("--from-release")) {
+        swapped = args;
+        await rm(join(home, "current"), { force: true });
+        await symlink(args[args.indexOf("--from-release") + 1], join(home, "current"));
+      }
+      return { code: 0, output: "" };
+    },
+  });
+  const result = await runUpdate(options);
+  assert.equal(result.state, "succeeded");
+  assert.deepEqual(swapped.slice(swapped.indexOf("--instance"), swapped.indexOf("--instance") + 2), ["--instance", "preview"]);
+  assert.equal(await realpath(join(state.prefix, "current")), join(state.prefix, "releases", version), "the default instance stays where it was");
+  assert.ok(await exists(join(state.prefix, "releases", version)), "the default instance's release is kept");
+  assert.equal(await realpath(join(home, "current")), join(state.prefix, "releases", "2.0.0-alpha.9"));
+});
+
+test("a user installation updates itself as the same user and asks for a restart instead of restarting", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zelavis-user-update-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const data = join(root, "data");
+  await mkdir(join(root, "releases", "2.0.0-alpha.8"), { recursive: true });
+  await symlink(join(root, "releases", "2.0.0-alpha.8"), join(root, "current"));
+  await mkdir(data);
+  await writeFile(join(root, "installation.json"), JSON.stringify({ mode: "user", instance: "default", version: "2.0.0-alpha.8", port: 3000, dataDirectory: data }));
+  const started = [];
+  const control = createNodeUpdateControl({ dataDirectory: data, currentVersion: "2.0.0-alpha.8", platform: "darwin", schedule: false, fetch: registry({ alpha: "2.0.0-alpha.9" }), startUserUpdater: (input) => started.push(input) });
+  assert.equal((await control.status()).managed, true, "no update folder or systemd is needed");
+  await control.check();
+  const requested = await control.apply("owner@example.com");
+  assert.equal(requested.state, "requested");
+  assert.deepEqual(started, [{ prefix: root, runningRelease: join(root, "releases", "2.0.0-alpha.8") }]);
+
+  const commands = [];
+  const result = await runUpdate({
+    prefix: root, dataDirectory: data, mode: "user", keepRelease: join(root, "releases", "2.0.0-alpha.8"), socketUnitFile: join(root, "none.socket"),
+    channelVersion: async () => "2.0.0-alpha.9", healthy: async () => { throw new Error("a user update never waits on a restart"); }, sleep: async () => undefined,
+    async run(command, args) {
+      commands.push([command, ...args]);
+      if (command === "sh") { await mkdir(join(root, "releases", "2.0.0-alpha.9", "platform", "dist", "installation-assets"), { recursive: true }); return { code: 0, output: "" }; }
+      await rm(join(root, "current"), { force: true });
+      await symlink(args[args.indexOf("--from-release") + 1], join(root, "current"));
+      return { code: 0, output: "" };
+    },
+  });
+  assert.equal(result.state, "succeeded");
+  assert.match(result.message, /Restart Zelavis/);
+  assert.ok(commands[0].includes("--user") && commands[0].includes("--stage-only"));
+  const swap = commands.find((c) => c.includes("--from-release"));
+  assert.ok(swap.includes("--user") && swap.includes("--live"));
+  assert.ok(!commands.some((c) => c[0] === "systemctl"));
+  assert.ok(await exists(join(root, "releases", "2.0.0-alpha.8")), "the release the running process started from is kept");
+  const after = await control.status();
+  assert.equal(after.restartRequired, true);
+  assert.equal(after.available, false, "what was just installed is not offered again");
 });

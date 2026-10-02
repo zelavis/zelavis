@@ -1188,6 +1188,18 @@ running version's channel from npm itself, refuses anything not newer, runs the 
 embedded in the installed release, health-checks the new release and rolls back to the
 previous one on failure. Keep it that way: no version, path or command may come from the
 request file, and anything the updater owns must be in the uninstall inventory.
+An update has two phases: prepare (`install.sh --stage-only` lays the release beside the
+running one, changing nothing) and swap (the new release's own installer with `--live`,
+which leaves the running Platform and its data lock alone and restarts once). systemd
+holds each instance's dashboard port in `zelavis[-<name>].socket` and the Platform takes
+it as an inherited descriptor (`takeInheritedSocket`), so the restart queues connections
+instead of refusing them; the first update from an install without the socket uses the
+full installer. A named instance has its own `zelavis-update-<name>.path`/`.service`,
+rendered from the default's templates like its socket. A user-mode install has no root
+and no supervisor: the Platform starts the same updater as the same user
+(`update --run --user`), which selects the release and reports `restartRequired`; never
+restart a user's process behind their back, and never prune the release the running
+process started from.
 
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in

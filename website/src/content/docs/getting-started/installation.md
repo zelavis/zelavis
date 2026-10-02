@@ -64,21 +64,25 @@ zelavis update status
 zelavis update apply --wait
 ```
 
-The server downloads the new version beside the current one, switches over, restarts
-and checks that it answers; if it does not, it goes back to the previous version by
-itself. Your data, token and configuration are untouched. The dashboard is
-unreachable for about as long as the download and restart take. How it works, and why
-the Platform only asks while a root unit does the work, is in
+The server downloads the new version beside the current one while the old keeps
+serving, then switches over and checks that it answers; if it does not, it goes back
+to the previous version by itself. Your data, token and configuration are untouched.
+On a Linux server, systemd holds the dashboard port during the switch, so visitors see
+a short pause (under half a second in tests) and no failed requests. How it works, and
+why the Platform only asks while a root unit does the work, is in
 [Updating without downtime](../../architecture/updates/).
 
-This arrives with `2.0.0-alpha.10`. An installation older than that has no updater, so
-run the installer once (the command in Quick install) to get it; every update after
-that is a click.
+This arrives with `2.0.0-alpha.10`; the no-downtime switch with the release after it.
+An installation older than that has no updater (or no socket yet), so run the installer
+once (the command in Quick install); every update after that is a click, with no
+downtime.
 
-Only a default system installation can do this. A user-mode install, a named instance
-or a macOS laptop updates by running the installer again, which keeps everything and
-moves to the newest version. `sudo zelavis doctor` shows whether dashboard updates are
-armed.
+It works for every kind of install. A **named instance** updates from its own
+dashboard, to its own release, and never touches another instance. A **user-mode**
+install (macOS, or Linux without systemd) has nothing to restart it, so the update
+selects the new version and the dashboard then asks you to restart Zelavis; the old
+version keeps running until you do. `sudo zelavis doctor` shows whether dashboard
+updates (`update-watch`) and the held port (`socket`) are armed.
 
 ## Install with npm, pnpm or Bun create
 
@@ -156,8 +160,9 @@ tree. It has no HTTP/dashboard route: installation is local host maintenance.
 command link, and `--allow-downgrade` permits an older release. Existing tokens and
 Edge configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
 `current` selecting the active one; previous releases are retained. Running the
-installer again with a newer version is the upgrade. Downtime-free blue/green
-updates remain [planned](../../architecture/updates/).
+installer again with a newer version is the upgrade, and the dashboard's Update button
+does the same without downtime on systemd. Overlapping two Platform versions
+(blue/green) remains [planned](../../architecture/updates/).
 
 
 ## Named system instances

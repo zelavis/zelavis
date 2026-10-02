@@ -74,16 +74,22 @@ with the rest of `/etc/zelavis`.
 
 ## Updating a running installation
 
+Every system installation also gets a socket unit (`zelavis.socket`, or `zelavis-<name>.socket`) that
+holds the dashboard port in systemd, so an update's restart queues connections instead of refusing them.
 The default system installation also gets two units, `zelavis-update.path` (enabled,
 watching `<data>/update/request.json`) and `zelavis-update.service` (a root oneshot, started
 only by the path). The Platform drops the request, the oneshot runs
-`zelavis update --run`, and that runs the `install.sh` embedded in the installed release
-(`dist/installation-assets/install.sh`, generated from `installers/install.sh`), checks the
-new release answers, and rolls back to the previous release if it does not. The request
+`zelavis update --run`, and that runs in two phases: it prepares the new release with the `install.sh`
+embedded in the installed release (`--stage-only`, `dist/installation-assets/install.sh`, generated from
+`installers/install.sh`) while the old one keeps serving, then the new release's own installer selects it
+(`install --live`) and restarts once. It checks the new release answers and rolls back to the previous
+release if it does not. The request
 carries no version: the updater reads the newest one on the running version's channel from npm
 and refuses anything not newer. The units are installed by the same plan as the others,
-listed in the uninstall inventory and checked by `doctor` (`update-watch`). Named instances and
-user installs do not get them.
+listed in the uninstall inventory and checked by `doctor` (`update-watch`). A named instance gets its own
+`zelavis-update-<name>.path`/`.service`, rendered from the same templates. A user install has no units: the
+Platform starts `zelavis update --run --user` itself, which selects the release and reports that a restart is
+needed.
 
 ## Releasing
 

@@ -20,6 +20,9 @@ export function describeUpdate(status: UpdateStatus | undefined, reconnecting = 
   if (status.state === "rolled-back" || status.state === "failed") {
     return { kind: "problem", headline: run?.message ?? "The update did not complete.", ...(run?.log ? { log: run.log } : {}) }
   }
+  if (status.restartRequired && run?.to) {
+    return { kind: "done", headline: `Updated to ${run.to}.`, detail: "Restart Zelavis to start using it. Until then the current version keeps running." }
+  }
   // Something newer than what just finished takes the place of "done".
   if (status.available && status.latest) return { kind: "available", latest: status.latest, current: status.current }
   if (status.state === "succeeded" && run?.to && run.to === status.current) {

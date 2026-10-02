@@ -31,28 +31,45 @@ root. That updater:
 2. looks up the newest version on the channel of the running version from npm itself,
    and refuses anything that is not newer, so a request can at worst trigger the
    update you could have run by hand;
-3. runs the installer that shipped inside the installed release (no new download
-   source: it fetches the pinned Node and the exact package, as the first install did),
-   which installs beside the current release, switches `current` and restarts the
-   service;
-4. waits up to 90 seconds for the dashboard to answer;
-5. if it does not, or the installer fails, selects the previous release again with that
-   release's own installer and restarts, and records a rollback, with the installer's
-   output for diagnosis;
-6. on success keeps the new release and the one it replaced, and removes older ones.
+3. **prepares** the new version while the old keeps serving: the installer that shipped
+   inside the installed release fetches the pinned Node and the exact package (no new
+   download source) and lays it beside the current release. Nothing running is touched,
+   so a failure here changes nothing and nobody notices the download;
+4. **swaps**: the new release's own installer selects it and restarts the service once;
+5. waits up to 90 seconds for the dashboard to answer;
+6. if it does not, or the installer fails, selects the previous release again with that
+   release's own installer, and records a rollback with the installer's output;
+7. on success keeps the new release and the one it replaced, and removes older ones
+   (never one another instance selects).
 
 Progress is a small `status.json` in the same folder, so the dashboard keeps showing
-it across the restart and reloads itself onto the new version when it arrives. The
-update is not instant: expect the dashboard to be unreachable for the time the
-download, install and restart take (about half a minute in tests), which is the
-interruption the plan below sets out to remove.
+it across the restart and reloads itself onto the new version when it arrives.
 
-Only the default system installation updates this way, and only on Linux with
-systemd. User-mode installs, named instances and development runs report that updates
-are manual there; rerunning the installer updates them. `zelavis doctor` reports
-whether the watcher is armed (`update-watch`), and complete uninstall removes the two
-units. A rollback was tested with a release whose Platform cannot start: the server
-returned to the previous version by itself.
+### No downtime (built for systemd installs)
+
+systemd holds the dashboard port in `zelavis.socket` and hands it to the Platform
+(socket activation, `LISTEN_FDS`), so a restart **queues** connections instead of
+refusing them. In a test on Debian 12 with systemd (a request every 50 ms, 500 to 1200
+requests per run) an update produced **no failed request** and the slowest took
+about 0.4 s. The first update from an install that predates the socket uses the full
+installer, with a few seconds of refused connections; every update after that is
+live. A rollback of an unstartable release takes about two minutes and restores service.
+
+### Every kind of installation
+
+- **Default system install:** as above (`zelavis-update.path` and `.service`).
+- **Named instances:** each has its own `zelavis-update-<name>.path` and `.service`
+  (and `zelavis-<name>.socket`), so the dashboard of an instance updates that instance
+  alone, to its own release, and never touches another instance's.
+- **User installs (macOS, or Linux without systemd):** nothing is root and nothing
+  supervises the process. The Platform starts the same updater as the same user. It
+  prepares and selects the new release and then says **Restart Zelavis to use it**;
+  the old version keeps serving until you restart it. Nothing is restarted behind
+  your back, and the release the process runs from is never pruned.
+- **Development runs and npm/source copies:** report that updates are manual.
+
+`zelavis doctor` reports whether the watcher (`update-watch`) and the socket
+(`socket`) are armed, and complete uninstall removes the units.
 
 ## Can an update involve no restart?
 
@@ -70,13 +87,14 @@ until the next restart is the previous module's memory; the response says so
 
 ## What an update interrupts today
 
-Measured on a development machine with an empty Platform: the process is serving
+Project runtimes and visitors are still affected as below; the dashboard row shows what the
+socket changed. Measured on a development machine with an empty Platform: the process is serving
 about **0.33 s** after start and stops in a few milliseconds. With Projects
 running, stopping takes as long as stopping them does.
 
 | Layer | Interrupted by a Platform restart? |
 |---|---|
-| Dashboard and API | Yes, for the restart (well under a second when nothing is running). Connections made during it are refused. |
+| Dashboard and API | Slower for a moment, not refused, on systemd installs (the socket queues connections). Refused for the restart elsewhere. |
 | Project runtimes | Not if a separate Agent supervises them (its own systemd unit; the Platform re-adopts them on start). Yes when the Platform itself runs them, as in development: they stop and are started again. |
 | Visitors to a Project's domain | Yes. The Platform process forwards that traffic to the Project today, so it is down while the Platform is. |
 | Edge (Traefik) | No. It is its own unit, and its configuration is output the Platform compiles. |
@@ -86,11 +104,10 @@ running, stopping takes as long as stopping them does.
 
 Each phase is useful alone and none depends on a later one.
 
-**1. Stop refusing connections.** Hold the listening socket outside the process
-(systemd socket activation: `LISTEN_FDS`), so a restart queues connections for
-half a second instead of refusing them; add `/live` and `/ready`; make the
-dashboard retry an API call that fails with a connection error. A restart becomes
-a latency blip with no errors. Small, and the right first step.
+**1. Stop refusing connections. Built** for systemd installs (see above): systemd
+holds the listening socket, so a restart queues connections for under half a second
+instead of refusing them. Still to do: `/live` and `/ready`, and a dashboard retry
+for an API call that fails with a connection error.
 
 **2. Take visitors off the Platform.** Route public Project traffic from Edge
 straight to the Project (Edge already compiles routes, and has stage, probe,

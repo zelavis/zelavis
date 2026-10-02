@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   compareVersions,
@@ -37,6 +38,31 @@ export interface NodeUpdateControlOptions {
   readonly platform?: string;
   /** `false` disables the periodic check (tests). */
   readonly schedule?: boolean;
+  /** Starts the updater as this same user (user installations only); injected for tests. */
+  readonly startUserUpdater?: (input: { prefix: string; runningRelease: string }) => void;
+}
+
+/** A user installation keeps its data in `<prefix>/data` beside a receipt that says so. */
+function readUserInstallation(dataDirectory: string): { prefix: string; runningRelease: string } | undefined {
+  try {
+    const prefix = dirname(dataDirectory);
+    const receipt = JSON.parse(readFileSync(join(prefix, "installation.json"), "utf8")) as { mode?: unknown; instance?: unknown; dataDirectory?: unknown };
+    if (receipt.mode !== "user" || receipt.instance !== "default" || receipt.dataDirectory !== dataDirectory) return undefined;
+    return { prefix, runningRelease: realpathSync(join(prefix, "current")) };
+  } catch {
+    return undefined;
+  }
+}
+
+function startUpdaterAsUser({ prefix, runningRelease }: { prefix: string; runningRelease: string }): void {
+  // Detached, so it outlives this request and, if the operator restarts Zelavis meanwhile, this process.
+  const child = spawn(process.execPath, [join(prefix, "current", "platform", "dist", "cli.js"), "update", "--run", "--user"], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, ZELAVIS_RUNNING_RELEASE: runningRelease },
+  });
+  child.on("error", () => undefined);
+  child.unref();
 }
 
 export function runningVersion(): string {
@@ -93,9 +119,11 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
 
   // The installer creates this folder for an installation it set up with the
   // updater, so its absence means this install cannot update itself.
+  const user = readUserInstallation(options.dataDirectory);
   const unmanaged = (): string | undefined => {
-    if ((options.platform ?? process.platform) !== "linux") return "Only server installations set up by the installer can update themselves.";
     if (!channel) return "This build is not on a published update channel.";
+    if (user) return undefined;
+    if ((options.platform ?? process.platform) !== "linux") return "Only installations set up by the installer can update themselves.";
     if (!existsSync(directory)) return "This installation was not set up with the updater. Run the installer again to enable it.";
     return undefined;
   };
@@ -117,17 +145,19 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
     const reason = unmanaged();
     const { requested, run } = await readState();
     const state = requested ? "requested" : run?.state ?? "idle";
+    const restartRequired = run?.state === "succeeded" && run.to !== undefined && compareVersions(run.to, current) > 0;
     return {
       current,
       ...(channel ? { channel } : {}),
       ...(latest ? { latest } : {}),
-      available: latest !== undefined && compareVersions(latest, current) > 0,
+      available: latest !== undefined && compareVersions(latest, current) > 0 && !(restartRequired && run?.to === latest),
       ...(checkedAt !== undefined ? { checkedAt: new Date(checkedAt).toISOString() } : {}),
       ...(checkError ? { checkError } : {}),
       managed: reason === undefined,
       ...(reason ? { unmanagedReason: reason } : {}),
       state,
       ...(run ? { run } : {}),
+      ...(restartRequired ? { restartRequired } : {}),
     };
   }
 
@@ -151,7 +181,7 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
   }
 
   // Only an installation set up with the updater checks on its own; tests and dev runs make no calls.
-  if (options.schedule !== false && channel && existsSync(directory)) {
+  if (options.schedule !== false && channel && (user || existsSync(directory))) {
     void check().catch(() => undefined);
     setInterval(() => void check().catch(() => undefined), CHECK_INTERVAL_MS).unref?.();
   }
@@ -176,6 +206,8 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
       // version itself, so nothing here can steer it.
       await writeFile(temporary, `${JSON.stringify({ id: randomUUID(), requestedAt: new Date(now()).toISOString(), requestedBy: requestedBy.slice(0, 200) })}\n`, { mode: 0o600, flag: "wx" });
       try { await rename(temporary, file); } catch (error) { await rm(temporary, { force: true }); throw error; }
+      // A root unit watches for the request on a server; a user installation has no unit, so start the updater here.
+      if (user) (options.startUserUpdater ?? startUpdaterAsUser)(user);
       return status();
     },
   };

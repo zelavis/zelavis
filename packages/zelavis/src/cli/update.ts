@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process";
 
+import { nodeInstallationPaths, nodeUserInstallationPaths } from "../adapters/_install-host.js";
+import { installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 import { fetchChannelVersion } from "../adapters/_node-updates.js";
 import { runUpdate } from "../adapters/_update-runner.js";
 import type { ZelavisUpdateStatus } from "../updates.js";
 
 const usage =
-  "zelavis update <status|check|apply> [--wait] [--url URL] [--token TOKEN] [--json]\n  sudo zelavis update --run   (host-local; run by the zelavis-update unit, not by hand)";
+  "zelavis update <status|check|apply> [--wait] [--url URL] [--token TOKEN] [--json]\n  sudo zelavis update --run [--instance NAME] | zelavis update --run --user   (host-local; run by the zelavis-update unit, not by hand)";
 
 /**
  * `zelavis update` — the update routes through the JS SDK client.
@@ -23,26 +25,29 @@ export async function runUpdateCommand(args: readonly string[]): Promise<void> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
-  let json = false, wait = false, run = false;
+  let json = false, wait = false, run = false, userMode = false;
+  let instance = "default";
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === "--json") { json = true; continue; }
     if (arg === "--wait") { wait = true; continue; }
     if (arg === "--run") { run = true; continue; }
+    if (arg === "--user") { userMode = true; continue; }
     if (arg === "--help" || arg === "-h") { console.log(usage); return; }
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token"].includes(flag)) throw new Error(`Unknown update option "${arg}".`);
+    if (!["--url", "--token", "--instance"].includes(flag)) throw new Error(`Unknown update option "${arg}".`);
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
     if (!value) throw new Error(`${flag} requires a value.`);
     if (flag === "--url") url = value;
     if (flag === "--token") token = value;
+    if (flag === "--instance") instance = value;
   }
 
   if (run) {
-    await runHostUpdate(json);
+    await runHostUpdate(json, instance, userMode);
     return;
   }
 
@@ -94,6 +99,7 @@ function describe(status: ZelavisUpdateStatus): string {
   if (status.latest) lines.push(status.available ? `Version ${status.latest} is available.` : "This is the newest version.");
   else if (status.checkError) lines.push(`The newest version could not be looked up: ${status.checkError}`);
   if (!status.managed && status.unmanagedReason) lines.push(`Cannot update itself: ${status.unmanagedReason}`);
+  if (status.restartRequired) lines.push("Restart Zelavis to use the new version.");
   if (status.state !== "idle") lines.push(`Update: ${status.run?.message ?? status.state}`);
   return lines.join("\n");
 }
@@ -107,14 +113,16 @@ function execute(command: string, args: readonly string[]): Promise<{ code: numb
   });
 }
 
-async function runHostUpdate(json: boolean): Promise<void> {
-  if (process.getuid?.() !== 0) throw new Error("zelavis update --run replaces the installed release and must run as root. Use the Update button, or: zelavis update apply");
-  const prefix = process.env.ZELAVIS_PREFIX ?? "/opt/zelavis";
-  const dataDirectory = process.env.ZELAVIS_DATA_DIR ?? "/var/lib/zelavis";
+async function runHostUpdate(json: boolean, instance: string, userMode: boolean): Promise<void> {
+  if (!userMode && process.getuid?.() !== 0) throw new Error("zelavis update --run replaces the installed release and must run as root. Use the Update button, or: zelavis update apply");
+  const { prefix, dataDirectory } = userMode ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, instance);
   const result = await runUpdate({
     prefix,
     dataDirectory,
-    socketUnitFile: process.env.ZELAVIS_SOCKET_UNIT ?? "/etc/systemd/system/zelavis.socket",
+    instance,
+    mode: userMode ? "user" : "system",
+    ...process.env.ZELAVIS_RUNNING_RELEASE ? { keepRelease: process.env.ZELAVIS_RUNNING_RELEASE } : {},
+    socketUnitFile: process.env.ZELAVIS_SOCKET_UNIT ?? `/etc/systemd/system/${installationInstanceScope(prefix, instance).socket}`,
     run: execute,
     channelVersion: (channel) => fetchChannelVersion(channel),
     healthy: async (port) => {

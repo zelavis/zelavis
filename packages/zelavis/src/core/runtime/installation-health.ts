@@ -29,8 +29,10 @@ export async function preflightZelavisDataMaintenance(input: { host: ZelavisInst
   const owner = await host.dataOwnership(paths.dataDirectory);
   // A live swap leaves the running Platform alone, so its own lock is expected; a stop is only for the full plan.
   const stopPlatform = !!(receipt && unit?.active && ownUnit) && !input.live;
-  const live = !!(input.live && receipt && unit?.active && ownUnit);
-  if (owner.active && !((stopPlatform || live) && owner.pid === unit?.pid && owner.installationRoot === paths.prefix && owner.purpose === "platform")) throw new Error(`Platform data at ${paths.dataDirectory} is owned by running PID ${owner.pid ?? "unknown"}. Stop that Platform before maintenance; --force cannot bypass data ownership.`);
+  // A user installation has no unit: the running Platform is whichever process holds the data lock.
+  const userLive = !!(input.live && !input.system && receipt?.mode === "user");
+  const live = !!(input.live && receipt && unit?.active && ownUnit) || userLive;
+  if (owner.active && !((stopPlatform || live) && (userLive || owner.pid === unit?.pid) && owner.installationRoot === paths.prefix && owner.purpose === "platform")) throw new Error(`Platform data at ${paths.dataDirectory} is owned by running PID ${owner.pid ?? "unknown"}. Stop that Platform before maintenance; --force cannot bypass data ownership.`);
   return { stopPlatform, owner, unit };
 }
 
@@ -63,7 +65,7 @@ export async function preflightZelavisInstall(input: { host: ZelavisInstallation
   // With socket activation systemd holds the port even while the Platform is stopped; that is this installation's own socket.
   const socket = input.system && receipt?.port === port ? await host.unitState(scope.socket, paths) : undefined;
   const heldByOwnSocket = !!socket?.present && socket.active;
-  const platformHoldsPort = (stopPlatform || input.live) && owner.active && owner.pid === unit?.pid && await host.portOwnedBy(owner.pid!, port);
+  const platformHoldsPort = (stopPlatform || input.live) && owner.active && (owner.pid === unit?.pid || !input.system) && await host.portOwnedBy(owner.pid!, port);
   if (!await host.portAvailable(port) && !heldByOwnSocket && !platformHoldsPort) throw new Error(`Port ${port} is occupied by another listener. Stop it before installation; --force cannot bypass a port conflict.`);
   return { stopPlatform };
 }
@@ -133,10 +135,10 @@ export async function inspectZelavisInstallation(input: { host: ZelavisInstallat
       const held = state.present && state.enabled && state.active;
       return { status: held ? "ok" : "warning", detail: held ? `${scope.socket} holds the dashboard port, so a restart or update queues connections instead of refusing them.` : `${scope.socket} is missing or not running, so a restart briefly refuses connections. Run the installer again to enable it.` };
     });
-    if (!scope.named) await check("update-watch", async () => {
-      const state = await host.unitState("zelavis-update.path", paths);
+    await check("update-watch", async () => {
+      const state = await host.unitState(scope.updatePath, paths);
       const armed = state.present && state.enabled && state.active;
-      return { status: armed ? "ok" : "warning", detail: armed ? "Dashboard updates are armed: zelavis-update.path is watching for requests." : "Dashboard updates are off (zelavis-update.path is missing or not running). Run the installer again to enable them." };
+      return { status: armed ? "ok" : "warning", detail: armed ? `Dashboard updates are armed: ${scope.updatePath} is watching for requests.` : `Dashboard updates are off (${scope.updatePath} is missing or not running). Run the installer again to enable them.` };
     });
     await check("agent", async () => {
       const [support, unit] = await Promise.all([host.agentSupport(scope.units[1]), host.unitState(scope.units[1], paths)]);

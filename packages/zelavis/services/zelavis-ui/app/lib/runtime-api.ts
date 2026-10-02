@@ -1811,6 +1811,8 @@ export interface UpdateStatus {
   unmanagedReason?: string;
   state: UpdateState;
   run?: UpdateRun;
+  /** An update finished but the running process is still the old version. */
+  restartRequired?: boolean;
 }
 
 export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStatus> {

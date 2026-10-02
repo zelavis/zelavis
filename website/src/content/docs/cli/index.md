@@ -60,9 +60,11 @@ command tree.
 - `update status|check|apply [--wait]` shows the running version and the newest one on
   its channel, looks again, or asks the installation to update itself and, with
   `--wait`, follows it to the end. It calls the same routes as the dashboard
-  (`client.updates`). `sudo zelavis update --run` is the other half, run by the
-  `zelavis-update` systemd unit and never by hand; it replaces the installed release,
-  so it has no HTTP route and refuses to run unless it is root. See
+  (`client.updates`). `sudo zelavis update --run [--instance NAME]` is the other half, run by the
+  `zelavis-update` systemd unit and never by hand; `zelavis update --run --user` is the
+  same for a user-mode install, started by the Platform as the same user. It replaces
+  the installed release, so it has no HTTP route and a system update refuses to run
+  unless it is root. See
   [Updating without downtime](../architecture/updates/).
 - `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,

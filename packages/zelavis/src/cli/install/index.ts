@@ -84,7 +84,7 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
       console.log(json ? JSON.stringify({ prepared: prepared.version, release }) : `Prepared Zelavis ${prepared.version} at ${release}. Nothing was switched or restarted.`);
       return;
     }
-    if (live && (user || !system)) throw new Error("--live swaps a running systemd installation; there is nothing to swap here.");
+    if (live && !user && !system) throw new Error("--live swaps a running installation; there is nothing to swap here.");
     const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port, live });
     // The bootstrap fetched the private Node and the package; this completes the tree.
     if (npmPrepared) await assembleNpmReleaseTree(npmPrepared);

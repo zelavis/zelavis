@@ -10,6 +10,11 @@
  * release, so the Platform can at worst ask for the update the operator could
  * have run by hand.
  *
+ * An installation in the user's own home (macOS, or Linux without systemd) has
+ * no root and no supervisor. There the Platform starts the same updater as the
+ * same user, which selects the new release and reports that a restart is needed;
+ * nothing is restarted behind the operator's back.
+ *
  * This file is runtime-neutral: types, version ordering and the channel rule.
  * The Node bindings live in `adapters/_node-updates.ts` and the root updater in
  * `adapters/_update-runner.ts`.
@@ -51,6 +56,8 @@ export interface ZelavisUpdateStatus {
   readonly state: ZelavisUpdateState;
   /** The most recent update run, when there has been one. */
   readonly run?: ZelavisUpdateRun;
+  /** An update finished but this process still runs the old version; restart Zelavis to use the new one. */
+  readonly restartRequired?: boolean;
 }
 
 export interface ZelavisUpdateControl {

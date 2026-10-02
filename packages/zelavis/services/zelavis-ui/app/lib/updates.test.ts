@@ -27,6 +27,12 @@ describe("describeUpdate", () => {
     expect(done).toEqual({ kind: "done", headline: "Updated to 2.0.0-alpha.9." })
   })
 
+  it("asks for a restart when the update was selected but the old version still runs", () => {
+    const view = describeUpdate({ ...base, state: "succeeded", restartRequired: true, run: { id: "1", state: "succeeded", from: "2.0.0-alpha.8", to: "2.0.0-alpha.9", startedAt: "2026-10-02T10:00:00Z" } })
+    expect(view).toMatchObject({ kind: "done", headline: "Updated to 2.0.0-alpha.9." })
+    expect(view.kind === "done" && view.detail).toMatch(/Restart Zelavis/)
+  })
+
   it("does not claim success for an old run when something newer is out", () => {
     const view = describeUpdate({ ...base, current: "2.0.0-alpha.9", latest: "2.0.0-alpha.10", available: true, state: "succeeded", run: { id: "1", state: "succeeded", from: "2.0.0-alpha.8", to: "2.0.0-alpha.9", startedAt: "2026-10-02T10:00:00Z" } })
     expect(view.kind).toBe("available")

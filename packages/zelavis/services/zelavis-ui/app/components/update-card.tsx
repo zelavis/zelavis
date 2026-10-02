@@ -58,7 +58,7 @@ export function UpdateCard({ runtime }: { runtime: RuntimeConfig }) {
               </span>
             </div>
           ) : null}
-          {view.kind === "done" ? <ResourceNotice title="Updated" description={view.headline} /> : null}
+          {view.kind === "done" ? <ResourceNotice title="Updated" description={view.detail ? `${view.headline} ${view.detail}` : view.headline} /> : null}
           {view.kind === "problem" ? (
             <>
               <ResourceNotice title="The update did not complete" description={view.headline} />

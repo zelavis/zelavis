@@ -220,6 +220,11 @@ test("named instances select independent releases, accounts, units and tokens wi
   const socket = await host.read("/etc/systemd/system/zelavis-preview.socket");
   assert.match(socket, /Service=zelavis@preview\.service/); assert.match(socket, /ListenStream=127\.0\.0\.1:3100/);
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis@preview.service"));
+  const watch = await host.read("/etc/systemd/system/zelavis-update-preview.path");
+  assert.match(watch, /PathExists=\/var\/lib\/zelavis-preview\/update\/request\.json/); assert.match(watch, /Unit=zelavis-update-preview\.service/);
+  assert.match(await host.read("/etc/systemd/system/zelavis-update-preview.service"), /Environment=ZELAVIS_DATA_DIR=\/var\/lib\/zelavis\n/);
+  assert.match(await host.read("/etc/systemd/system/zelavis-update-preview.service"), /ExecStart=\/opt\/zelavis\/instances\/preview\/current\/bin\/zelavis update --run --instance preview/);
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-update-preview.path"));
   const runtime = JSON.parse(await host.read("/opt/zelavis/instances/preview/runtime.json"));
   assert.equal(runtime.edge, false); assert.equal(runtime.port, 3100);
   assert.equal(runtime.dataDirectory, secondary.dataDirectory);
