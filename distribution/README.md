@@ -94,11 +94,15 @@ needed.
 ## Releasing
 
 A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs root
-verification and docs checks, publishes with Changesets and confirms the exact
+verification and docs checks, publishes Changesets-versioned packages and confirms the exact
 version is on npm. That is all: there is no workflow, tag push, artifact, signing key
 or secret. npm authentication is the release owner's. Tracked version/source changes
 must be committed before publishing. After publishing, run the installer against the
 new version on a real host (`sudo zelavis doctor`).
+
+With the owner's manual npm login, the publisher runs recursive `pnpm publish`
+directly so browser verification can use the terminal. Versions already on npm
+are skipped; the requested `alpha` or `latest` tag is explicit for every package.
 
 The website (`website/`) is deployed separately to Cloudflare Pages and serves
 `/install.sh`, the Install page and `/allowlist.json`. Publish a refreshed allow-list

@@ -87,7 +87,12 @@ try {
   // Tags must represent the files being published, including version changes.
   run("git", ["diff", "--quiet"]);
   run("git", ["diff", "--cached", "--quiet"]);
-  run("pnpm", publishArgs);
+  // Changesets captures its child publisher's output, so pnpm's browser 2FA
+  // flow has no interactive terminal. Keep versioning in Changesets, but let
+  // pnpm publish directly with inherited stdio for the owner's manual login.
+  // Recursive publishing skips versions already present in the registry.
+  if (env.NPM_TOKEN) run("pnpm", publishArgs);
+  else run("pnpm", ["-r", "publish", "--tag", tag, "--access", "public", "--no-git-checks"]);
 
   // The release is the npm package: install.sh and `npm create zelavis` fetch
   // exactly that version. Nothing else is built, signed or uploaded.

@@ -122,7 +122,9 @@ keys, GPG/APT keys, CI secrets or GitHub Actions/Releases in the delivery path,
 and none may be reintroduced without the owner asking for them explicitly.
 
 - A release is the published `zelavis` npm package (`pnpm release:publish:*` is
-  `changeset publish` plus a check that the version is on npm). Nothing is built,
+  Changesets versioning and a publish plus a check that the version is on npm;
+  manual authentication uses direct recursive pnpm publishing so browser 2FA
+  has an interactive terminal). Nothing is built,
   signed, uploaded or hosted per release.
 - Trust anchors are https origins and nothing else: **npm** (package integrity is
   npm's own registry digest), **nodejs.org** (the pinned private Node, checked against

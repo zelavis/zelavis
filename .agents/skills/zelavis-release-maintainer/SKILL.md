@@ -29,6 +29,8 @@ Use this skill for:
    complete-uninstall documentation cover every newly owned host resource.
 5. Run the release validation commands before publishing.
 6. Keep alpha vs stable intent explicit.
+   Manual npm browser verification requires an interactive terminal; the release
+   wrapper uses direct recursive pnpm publishing after Changesets versioning.
 7. A release is `npm publish` and nothing else: no signing keys, secrets, GitHub
    Actions/Releases, archives or APT repository (AGENTS.md "Distribution Trust
    Model"). Do not add them without the owner asking. After publishing, install the
