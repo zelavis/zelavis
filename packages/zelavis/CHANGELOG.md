@@ -1,5 +1,20 @@
 # zelavis
 
+## 2.0.0-alpha.12
+
+### Minor Changes
+
+- Expose the initial `zelavis/recipe` Effect v4 authoring contract with strict immutable manifests, independent software versions, explicit method selection, opaque secret references and validated process dependency plans. Project driver integration remains planned.
+
+  Add `zelavis agent --operations-only` to execute signed installed host operations while refusing all process commands and leaving Project state unopened. The dedicated root endpoint and WordPress provisioning are delivered by the host-stack change in this release.
+- Provision the WordPress host stack through a separately supervised, operation-only root Agent with signed, bounded requests and explicit server.packages.install authorization. System installs and updates configure the broker automatically; Project processes remain unprivileged. Project creation exposes the same package-install opt-in through the dashboard, HTTP, SDK and CLI. Package installation preserves existing host services and suppresses package-triggered starts; uninstall restores only the owned policy.
+
+  Separate WordPress software pins from recipe revisions. The recipe no longer invokes APT or sudo or asks operators to run the Platform as root; its pinned WordPress archive is unchanged.
+
+### Patch Changes
+
+- bbe74e4: A Project created from a marketplace recipe the installation never installed (for example WordPress on a fresh server) no longer fails with "not shipped with this Platform". Preparing the Project fetches the exact locked version through the allow-list gate (authorized before the fetch, digest checked after) and freezes it into the Project.
+
 ## 2.0.0-alpha.11
 
 ### Patch Changes

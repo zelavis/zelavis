@@ -79,35 +79,9 @@ interface NativeWordPressExecutables {
 
 export const WORDPRESS_APP_NAME = "@zelavis/wordpress";
 
-/**
- * The WordPress release a recipe version installs.
- *
- * The package version is semver and WordPress names its `x.y.0` releases `x.y`,
- * so `7.1.0` installs WordPress 7.1 and `6.9.4` installs 6.9.4. Anything else is
- * refused rather than guessed at, because the result names a download.
- */
-export function wordpressRelease(recipeVersion: string): string {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(recipeVersion);
-  if (!match) throw new Error(`Invalid locked WordPress version "${recipeVersion}".`);
-  return match[3] === "0" ? `${match[1]}.${match[2]}` : recipeVersion;
-}
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 const LOG_LIMIT = 500;
 const MAX_WORDPRESS_ARCHIVE_BYTES = 64 * 1024 * 1024;
-const APT_WORDPRESS_PACKAGES = Object.freeze([
-  "nginx",
-  "php-fpm",
-  "php-cli",
-  "php-mysql",
-  "php-curl",
-  "php-gd",
-  "php-intl",
-  "php-mbstring",
-  "php-xml",
-  "php-zip",
-  "mariadb-server-core",
-  "mariadb-client-core",
-]);
 const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
 
 /**
@@ -194,7 +168,7 @@ async function run(
     /**
      * Run with the Platform's own environment.
      *
-     * Only for host package managers. `brew` and `apt` are configured through
+     * Only for host package managers. `brew` are configured through
      * environment variables an operator sets — a prefix, a mirror, a proxy, a
      * non-interactive flag — and stripping those turns "install the packages
      * this host needs" into a failure the operator cannot explain. They also
@@ -266,38 +240,10 @@ async function executableAvailable(executable: string): Promise<boolean> {
 }
 
 async function provisionNativeWordPressPackages(): Promise<void> {
-  if (process.platform === "linux" && await executableAvailable("apt-get")) {
-    const apt = process.getuid?.() === 0
-      ? { executable: "apt-get", prefix: [] as string[] }
-      : await executableAvailable("sudo") &&
-          (await run("sudo", ["-n", "true"], { allowFailure: true, inheritEnvironment: true })).code === 0
-        ? { executable: "sudo", prefix: ["-n", "apt-get"] }
-        : undefined;
-    if (!apt) {
-      throw new ZelavisProjectRuntimeError(
-        "Native WordPress packages are missing and Zelavis cannot invoke apt with host-package authority. Run Zelavis as root for first provisioning, or grant its host Agent passwordless package installation.",
-      );
-    }
-    try {
-      await run(apt.executable, [...apt.prefix, "update"], { inheritEnvironment: true });
-      await run(
-        apt.executable,
-        [
-          ...apt.prefix,
-          "install",
-          "-y",
-          "--no-install-recommends",
-          ...APT_WORDPRESS_PACKAGES,
-        ],
-        { inheritEnvironment: true },
-      );
-    } catch (cause) {
-      throw new ZelavisProjectRuntimeError(
-        "Zelavis could not install the native WordPress dependencies through APT. Check the host package repositories and Agent package-install permissions.",
-        { cause },
-      );
-    }
-    return;
+  if (process.platform === "linux") {
+    throw new ZelavisProjectRuntimeError(
+      "Native WordPress dependencies are missing. Approve host package installation in the create-project form, or run: zelavis host-operations submit zelavis.packages-install --arg set=wordpress-stack",
+    );
   }
 
   if (process.platform === "darwin" && await executableAvailable("brew")) {
@@ -943,7 +889,7 @@ export function createNativeWordPressProjectRuntime(
         await readFile(join(siteDirectory(project.id), "wp-includes", "version.php"));
       } catch (error) {
         if (!isMissingFileError(error)) throw error;
-        const release = wordpressRelease(recipe.version);
+        const release = WORDPRESS_RELEASE;
         const archive = join(runtimeDirectory(project.id), `wordpress-${release}.tar.gz`);
         const response = await fetch(`https://wordpress.org/wordpress-${release}.tar.gz`);
         if (!response.ok || !response.body) throw new Error(`WordPress download failed with HTTP ${response.status}.`);
@@ -957,9 +903,6 @@ export function createNativeWordPressProjectRuntime(
         }
         // Nothing is written or unpacked until the bytes are the ones this
         // package was released with.
-        if (release !== WORDPRESS_RELEASE) {
-          throw new Error(`This recipe pins WordPress ${WORDPRESS_RELEASE}, not ${release}.`);
-        }
         const digest = Buffer.from(await crypto.subtle.digest("SHA-256", archiveBody)).toString("hex");
         if (digest !== WORDPRESS_ARCHIVE_SHA256) {
           throw new Error(`The WordPress ${release} archive does not match the digest this recipe pins.`);

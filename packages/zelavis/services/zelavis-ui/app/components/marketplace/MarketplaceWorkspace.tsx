@@ -266,6 +266,15 @@ export function MarketplaceWorkspace({
       // A recipe that is not installed yet is installed first, so the one click
       // is the whole job.
       if (service.status === "available") await installService(controlRuntime!, service);
+      if (service.project?.hostPackages?.length) {
+        // Host changes need an explicit approval in the ordinary creation form.
+        const query = new URLSearchParams({ new: "1", recipe: service.name, name });
+        setCreating(undefined);
+        setProjectName("");
+        revalidator.revalidate();
+        navigate(`/zelavis?${query}`);
+        return;
+      }
       const project = await createProject(controlRuntime!, {
         name,
         recipeName: service.name,

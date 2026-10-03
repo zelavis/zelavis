@@ -1,6 +1,6 @@
 {
   "name": "zelavis",
-  "version": "2.0.0-alpha.11",
+  "version": "2.0.0-alpha.12",
   "private": false,
   "description": "Open, self-hostable App Platform and embeddable backend framework.",
   "license": "MIT",
@@ -159,6 +159,10 @@
     "./db/spatial": {
       "types": "./dist/db/spatial.d.ts",
       "import": "./dist/db/spatial.js"
+    },
+    "./recipe": {
+      "types": "./dist/core/recipe/index.d.ts",
+      "import": "./dist/core/recipe/index.js"
     }
   },
   "scripts": {

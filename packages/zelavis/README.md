@@ -120,12 +120,21 @@ The `@zelavis/wordpress` recipe (an officially maintained service in
 provisions a native, Dockerless WordPress Project. It downloads the exact WordPress release locked in the
 Project, generates private database credentials and `wp-config.php` salts, and
 runs dedicated Nginx, PHP-FPM, and MariaDB instances with Project-owned
-configuration, sockets, ports, logs, site files, and database data. The Zelavis
-Debian package installs the native stack as package dependencies. Archive and
-npm installations provision it through APT or Homebrew on first use when the
+configuration, sockets, ports, logs, site files, and database data. A base Zelavis
+installation includes no Nginx, PHP or MariaDB. The current recipe
+provisions them through APT or Homebrew on first use when the
 Zelavis process has host-package authority; otherwise preparation fails with an
 actionable dependency error instead of silently falling back to SQLite or a
 shared database.
+
+`zelavis/recipe` exposes the initial Effect v4 authoring contract for the next
+recipe driver: `parseRecipeManifest`, `defineRecipe`, `RecipeHost`, and
+`parseProcessPlan`. It validates contract 1 metadata, independent software
+versions, digest-pinned OCI declarations and supervised process plans.
+`selectRecipeMethod` selects an available named method at creation and refuses
+an unavailable explicit choice. Driver integration, persisting that choice in
+Project locks, and OCI execution remain planned; existing Projects still use
+`zelavis/adapters/project-runtime`.
 WordPress remains a managed app with hosting-style controls; it does not mount
 Zelavis App database/auth/content services. Maintainers can refresh the recipe
 pin from the official WordPress version API with:

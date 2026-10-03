@@ -6,8 +6,9 @@ Zelavis: it reaches an installation through the marketplace allow-list.
 
 A WordPress Project runs dedicated Nginx, PHP-FPM and MariaDB processes with
 Project-owned configuration, sockets, ports, logs, site files and database data.
-The exact WordPress release is locked in the Project. The package version is the
-release it installs (`7.1.0` installs WordPress 7.1, `6.9.4` installs 6.9.4).
+The exact recipe revision is locked in the Project. Its WordPress software version
+and archive digest are pinned independently, so provisioning fixes can ship without
+changing the WordPress release.
 
 ## How it plugs in
 
@@ -18,7 +19,7 @@ this package into the Project (content digest recorded in its lock), verifies th
 digest on every load, and runs the runtime from the frozen copy, so updating the
 package never changes an existing Project.
 
-A recipe runtime is host code that provisions packages and starts processes with
+A recipe runtime is host code that prepares Project files and starts processes with
 the Platform's authority, so a host only loads one from a recipe it trusts: the
 marketplace allow-list entry must say `projectRuntime: true`, the package must be
 in the operator's development checkout, or the operator names it in
@@ -28,8 +29,21 @@ The authoring API is `zelavis/adapters/project-runtime`.
 
 ## Provisioning
 
-`scripts/check-wordpress-provisioning.mjs` proves the runtime installs what it
-needs on a host that has nothing (run in a container by
-`scripts/wordpress-provisioning-container.sh`, which CI does for both a
-privileged and an unprivileged Platform). `pnpm update:wordpress` moves the
-package to the current WordPress release.
+On Debian/Ubuntu, check **Install required host packages** in the create-project
+form, or use `zelavis projects create Blog --recipe @zelavis/wordpress
+--install-host-packages`. This requires `server.packages.install`, independently
+of `projects.create`. The Platform submits the fixed `wordpress-stack` set to its
+signed host-operation broker before preparing the Project. System installations
+and updates configure a separate root operation Agent; the Platform and Project
+processes remain unprivileged. The recipe never runs APT or sudo.
+
+Package-triggered service starts are suppressed only for that APT process tree.
+An existing `policy-rc.d` is preserved and delegated to for ordinary invocations;
+only newly introduced systemd units are disabled. Complete uninstall restores the
+owned policy and retains shared packages. macOS development uses the Homebrew
+owner's account.
+
+`scripts/wordpress-provisioning-container.sh` qualifies a clean packaged Debian
+systemd installation, the root broker, denied package authority, cancellation,
+WordPress startup and idempotent retry. `pnpm update:wordpress` refreshes software
+pins; add a recipe changeset to release them.

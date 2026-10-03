@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConnection } from "node:net";
 import test from "node:test";
 
 import { runAgentCommand } from "../dist/cli/agent.js";
@@ -57,9 +58,9 @@ async function waitForStatus(client, operationId) {
   throw new Error(`operation ${operationId} did not finish`);
 }
 
-test("the Agent executes an installed signed operation only with authority bound to its exact request", async (t) => {
+for (const operationsOnly of [false, true]) test(`the ${operationsOnly ? "operation-only" : "process"} Agent executes an installed signed operation only with authority bound to its exact request`, async (t) => {
   const { root, operations, manifest, platform, platformAuthority } = await installation(t);
-  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, platformAuthority });
+  const agent = await startAgent(t, { dataDirectory: join(root, "data"), operationsRoot: operations, platformAuthority, operationsOnly });
   assert.deepEqual(agent.operations.registered, ["native.mark@v1"]);
   const client = await createAgentProcessClient({ directory: join(root, "data", "agent") });
   t.after(() => client.close());
@@ -100,6 +101,49 @@ test("the Agent executes an installed signed operation only with authority bound
   for (const path of [forged.output, swapped.output, join(root, "out-other")]) {
     await assert.rejects(readFile(path), { code: "ENOENT" });
   }
+});
+
+test("operation-only Agents reject every process protocol message and never open Project state", async (t) => {
+  const { root, operations, platformAuthority } = await installation(t);
+  const data = join(root, "data");
+  const agent = await startAgent(t, { dataDirectory: data, operationsRoot: operations, platformAuthority, operationsOnly: true });
+  const token = (await readFile(join(data, "agent", "token"), "utf8")).trim();
+  const socket = createConnection(agent.socketPath);
+  t.after(() => socket.destroy());
+  socket.setEncoding("utf8");
+  let buffered = "";
+  const replies = [];
+  const pending = [];
+  socket.on("data", (chunk) => {
+    buffered += chunk;
+    let end;
+    while ((end = buffered.indexOf("\n")) >= 0) {
+      const message = JSON.parse(buffered.slice(0, end));
+      buffered = buffered.slice(end + 1);
+      const resolve = pending.shift();
+      if (resolve) resolve(message); else replies.push(message);
+    }
+  });
+  const exchange = async (message) => {
+    const next = replies.length ? Promise.resolve(replies.shift()) : new Promise((resolve) => pending.push(resolve));
+    socket.write(`${JSON.stringify(message)}\n`);
+    return next;
+  };
+  assert.equal((await exchange({ type: "hello", token })).type, "hello");
+  for (const type of ["start", "attach", "stop", "fence", "write", "signal", "reclaim", "operation.unknown"]) {
+    const reply = await exchange({ id: type, type, command: { workloadId: "project", executable: process.execPath, args: [] } });
+    assert.equal(reply.type, "failed");
+    assert.match(reply.error, /host operations only/);
+  }
+  assert.equal((await exchange({ id: "catalog", type: "operation.catalog" })).type, "catalog");
+  await assert.rejects(readFile(join(data, "system", "zelavis.sqlite")), { code: "ENOENT" });
+  await assert.rejects(readFile(join(data, "projects", ".agent-processes")), { code: "ENOENT" });
+});
+
+test("an operation-only Agent refuses missing operation configuration and Project options", async () => {
+  await assert.rejects(runAgentCommand({ operationsOnly: true }), /requires --operations-root/);
+  await assert.rejects(runAgentCommand({ operationsOnly: true, operationsRoot: "/unused", platformAuthority: "/unused", placementStore: "/unused" }), /cannot be combined/);
+  await assert.rejects(runAgentCommand({ operationsOnly: true, operationsRoot: "/unused", platformAuthority: "/unused", remoteProjectConfig: "/unused" }), /cannot be combined/);
 });
 
 test("an Agent without installed operations refuses operation requests", async (t) => {
@@ -194,4 +238,10 @@ test("a missing Platform authority file refuses every request until it appears",
   const after = await submit("after");
   assert.equal(after.status, "succeeded");
   assert.equal(await readFile(after.output, "utf8"), "after");
+});
+
+
+test("group-access endpoints require the restricted root operation mode before filesystem mutation", async () => {
+  await assert.rejects(runAgentCommand({ endpointGroupAccess: true }), /root --operations-only Agent/);
+  await assert.rejects(runAgentCommand({ endpointGroupAccess: true, operationsOnly: true, operationsRoot: "/unused", platformAuthority: "/unused" }), /root --operations-only Agent/);
 });

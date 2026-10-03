@@ -98,6 +98,8 @@ interface ParsedArgs {
   operationMemoryMaxBytes?: number;
   operationPidsMax?: number;
   requireRootOwnedOperations: boolean;
+  operationsOnly: boolean;
+  endpointGroupAccess: boolean;
   passwordStdin: boolean;
   install: boolean;
   all: boolean;
@@ -139,7 +141,7 @@ Usage:
                 [--placement-store <system-sqlite-file>]
                 [--remote-project-config <file>]
                 [--operation-cgroup delegated|<path>] [--operation-memory-max <bytes>]
-                [--operation-pids-max <n>] [--require-root-owned-operations]
+                [--operation-pids-max <n>] [--require-root-owned-operations] [--operations-only] [--endpoint-group-access]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
@@ -227,6 +229,8 @@ function parseOrder(value: string): number {
 function parseArgs(args: readonly string[]): ParsedArgs {
   const parsed: ParsedArgs = {
     requireRootOwnedOperations: false,
+    operationsOnly: false,
+    endpointGroupAccess: false,
     passwordStdin: false,
     install: false,
     all: false,
@@ -313,6 +317,10 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--for=")) {
       parsed.forService = arg.slice("--for=".length);
+    } else if (arg === "--endpoint-group-access") {
+      parsed.endpointGroupAccess = true;
+    } else if (arg === "--operations-only") {
+      parsed.operationsOnly = true;
     } else if (arg === "--require-root-owned-operations") {
       parsed.requireRootOwnedOperations = true;
     } else if (
@@ -697,6 +705,8 @@ export async function runCli(
       const placementStore = parsed.placementStore ?? env.ZELAVIS_AGENT_PLACEMENT_STORE;
       const remoteProjectConfig = parsed.remoteProjectConfig ?? env.ZELAVIS_AGENT_REMOTE_PROJECT_CONFIG;
       await runAgentCommand({
+        operationsOnly: parsed.operationsOnly,
+        endpointGroupAccess: parsed.endpointGroupAccess,
         ...(parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR
           ? {
               dataDirectory: (parsed.dataDirectory ??

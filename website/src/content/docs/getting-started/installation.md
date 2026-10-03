@@ -49,10 +49,12 @@ remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`
 
 The runtime does not depend on the host's Node. On a server the dashboard listens on
 all interfaces at port 3000 and the installer prints the URL to open; the one-time
-first-owner token decides who may claim the account. The Agent is opt-in
-with `--enable-agent` on system installations and requires a qualified cgroup v2
-host. Traefik stays disabled at installation. Production Agent qualification and
-automated ACME/cutover reconciliation remain pending.
+first-owner token decides who may claim the account. Project process supervision
+through the separate Agent is opt-in with `--enable-agent`. System installations
+also enable the restricted root host-operation Agent for signed package and Edge
+operations, with cgroup v2 containment; the Platform and Project processes remain
+unprivileged. Traefik stays disabled at installation. Automated ACME/cutover
+reconciliation remains pending.
 
 ## Updating
 
@@ -189,7 +191,8 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Config and token | `/etc/zelavis` | `/etc/zelavis-preview` |
 | User/group | `zelavis` | `zelavis-preview` |
 | Platform unit | `zelavis.service` | `zelavis@preview.service` |
-| Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Project process Agent (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Restricted host operation Agent | `zelavis-host-agent.service` | `zelavis-host-agent@preview.service` |
 | Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
 | Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
 
@@ -204,7 +207,7 @@ instance is installed first, `/opt/zelavis/current` selects the initial manageme
 CLI without creating a default Platform. `zelavis serve --instance preview`
 reads that instance's secret-free `runtime.json` descriptor and executes its
 selected release's private Node. Systemd uses the release-shipped templates
-`zelavis@.service` and `zelavis-agent@.service`. Prefer systemd for system instances.
+`zelavis@.service`, `zelavis-agent@.service`, and `zelavis-host-agent@.service`. Prefer systemd for system instances.
 
 Only `default` may own host Edge. The installer serializes its persistent
 `/opt/zelavis/edge-owner.json` claim with the prefix installer lock. The default
@@ -404,9 +407,10 @@ sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 
 For the default instance, when it is the last installation on the host, this:
 
-- Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
+- Stops and disables the Platform, Project process Agent, restricted root host Agent, Traefik, socket and update units.
 - Removes `/opt/zelavis`, including the receipt, `runtime.json`, `.install.lock`, instance directories and host Edge ownership files, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
-- Removes configuration, host operations, and certificates.
+- Removes configuration, host operations, certificates, the instance's root Agent state and the final shared host-package inventory.
+- Restores the recorded original `/usr/sbin/policy-rc.d`, or removes a wrapper created by Zelavis, only while its ownership and digest still match. Operator modifications and their original-policy backup are retained. Pending owned atomic-write files are included in this inventory.
 - Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock` and `.platform-owner.json`.
 - Removes Debian package records when the installation came from a package.
 - Removes the `zelavis` user/group only when the receipt records installer ownership and their current properties are safe.

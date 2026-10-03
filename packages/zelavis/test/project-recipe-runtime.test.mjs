@@ -157,3 +157,33 @@ test("the official WordPress package loads from its frozen copy, through the Pla
   await access(join(projects, "blog", ".zelavis", "recipe", "package", "dist", "runtime.js"));
   assert.match(driver.capabilities(p).description, /WordPress/);
 });
+
+
+test("an acquired runtime recipe is prepared by its own driver before start", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root);
+  const projects = join(root, "projects");
+  const requested = [];
+  const driver = createLocalProjectRuntime({
+    directory: projects,
+    recipeRuntimes: { trusted: () => true },
+    recipePackageDirectory: (name, version) => { requested.push([name, version]); return source; },
+  });
+  t.after(() => driver.close());
+  const p = project();
+  await driver.prepare(p, p.recipe);
+  assert.deepEqual(requested, [["@acme/site", "1.0.0"]]);
+  assert.match(await readFile(join(projects, "site", "prepared-by.txt"), "utf8"), /^v1:sha256:/);
+  assert.equal((await driver.start(p)).status, "running");
+});
+
+test("a recipe source with another version cannot execute or be frozen", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root);
+  const projects = join(root, "projects");
+  const driver = createLocalProjectRuntime({ directory: projects, recipeRuntimes: { trusted: () => true }, recipePackageDirectory: () => source });
+  t.after(() => driver.close());
+  const p = project(); p.recipe.version = "2.0.0";
+  await assert.rejects(driver.prepare(p, p.recipe), /does not match its locked name and version/);
+  await assert.rejects(access(join(projects, "site", ".zelavis", "recipe")), { code: "ENOENT" });
+});

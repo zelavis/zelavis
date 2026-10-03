@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, realpath, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const assets = new URL("../installation-assets/", import.meta.url);
@@ -54,11 +54,19 @@ export async function assembleNpmReleaseTree(prepared: string, options: {
   await chmod(join(prepared, "bin", "zelavis"), 0o755);
   await mkdir(join(prepared, "share"), { recursive: true });
   const linux = platform === "linux";
-  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
+  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
     await copyFile(assetPath(`share/${file}`), join(prepared, "share", file));
   }
   await chmod(join(prepared, "share", "uninstall.sh"), 0o755);
   await cp(assetPath("operations"), join(prepared, "operations"), { recursive: true });
+  // npm transports normalize ordinary files to 0644. Restore the Agent's
+  // executable-artifact contract when assembling the root-owned installed tree.
+  for (const operation of await readdir(join(prepared, "operations"), { withFileTypes: true })) {
+    if (!operation.isDirectory()) continue;
+    for (const version of await readdir(join(prepared, "operations", operation.name), { withFileTypes: true })) {
+      if (version.isDirectory()) await chmod(join(prepared, "operations", operation.name, version.name, "artifact"), 0o755);
+    }
+  }
 
   let traefikBundled = false;
   if (linux) {

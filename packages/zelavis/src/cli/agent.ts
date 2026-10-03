@@ -12,7 +12,7 @@
  * a supervisor that exits leaving unsupervised children behind is the leak
  * this whole line of work exists to close.
  */
-import { access, readFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { resolveCliDataDirectory } from "./data-directory.js";
@@ -23,6 +23,7 @@ import { REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "../adapters/_agent-remote-en
 import { readLocalProjectPlacementLease } from "../platform/project-placement-authority.js";
 import { createRemoteProjectAgent } from "../adapters/_remote-project-agent.js";
 import type { ZelavisHostOperationTrustStore } from "../core/deployment/index.js";
+import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import {
   createAgentHostOperationService,
   type AgentHostOperationService,
@@ -39,6 +40,9 @@ export interface RunAgentCommandOptions {
    * processes only and refuses operation requests.
    */
   readonly operationsRoot?: string;
+  /** Dedicated host operation Agent; never starts or reclaims Project processes. */
+  readonly operationsOnly?: boolean;
+  readonly endpointGroupAccess?: boolean;
   /** Platform authority public keys; required with `operationsRoot`. */
   readonly platformAuthority?: string;
   /** Require a root-owned operation tree, manifests and interpreters. */
@@ -67,6 +71,25 @@ export async function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
+  if (options.operationsOnly && (!options.operationsRoot || !options.platformAuthority)) {
+    throw new Error("--operations-only requires --operations-root and --platform-authority.");
+  }
+  if (options.operationsOnly && (options.remoteProjectConfig || options.placementStore)) {
+    throw new Error("--operations-only cannot be combined with Project Agent options.");
+  }
+  if (options.endpointGroupAccess) {
+    if (!options.operationsOnly || !options.requireRootOwnedOperations || process.getuid?.() !== 0) {
+      throw new Error("--endpoint-group-access requires a root --operations-only Agent with --require-root-owned-operations.");
+    }
+    await mkdir(dataDirectory, { recursive: true, mode: 0o750 });
+    for (let path = dataDirectory; ; path = dirname(path)) {
+      const stats = await lstat(path);
+      if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== 0 || (stats.mode & 0o022) !== 0) {
+        throw new Error("Privileged Agent state and its ancestors must be root-owned and not group/world-writable.");
+      }
+      if (path === dirname(path)) break;
+    }
+  }
   if (options.remoteProjectConfig) {
     if (options.operationsRoot || options.platformAuthority ||
         options.placementStore) {
@@ -115,7 +138,11 @@ export async function runAgentCommand(
   }
   const endpointDirectory = join(dataDirectory, "agent");
 
-  const runner = createLocalAgentProcessRunner({
+  const runner: ZelavisAgentProcessRunner = options.operationsOnly ? {
+    name: "host-operations-only",
+    start: async () => { throw new Error("This Agent executes installed host operations only."); },
+    close: async () => {},
+  } : createLocalAgentProcessRunner({
     // The same records the in-process runner keeps, in the same place, so an
     // installation that switches between the two does not lose track of what
     // the other started.
@@ -154,6 +181,8 @@ export async function runAgentCommand(
       operationsRoot: resolve(options.operationsRoot),
       platformAuthorityFile: resolve(options.platformAuthority),
       requireRootOwned: options.requireRootOwnedOperations === true,
+      ...(options.operationsOnly && process.env.ZELAVIS_HOST_PACKAGES_DIR
+        ? { environment: { ZELAVIS_HOST_PACKAGES_DIR: process.env.ZELAVIS_HOST_PACKAGES_DIR } } : {}),
       ...(cgroupRoot
         ? { supervision: { kind: "cgroup-v2" as const, root: cgroupRoot, limits } }
         : {}),
@@ -171,17 +200,19 @@ export async function runAgentCommand(
     throw new Error("Host operation options require --operations-root.");
   }
 
-  const placementStore = createLocalSqliteSystemStore({
+  const placementStore = options.operationsOnly ? undefined : createLocalSqliteSystemStore({
     filename: resolve(options.placementStore ?? join(dataDirectory, "system", "zelavis.sqlite")),
   });
   const server = await createAgentProcessServer({
     directory: endpointDirectory,
     runner,
+    operationsOnly: options.operationsOnly,
+    endpointGroupAccess: options.endpointGroupAccess,
     ...(operations ? { operations } : {}),
-    placement: {
+    ...(placementStore ? { placement: {
       isProjectWorkload: (id: string) => !id.startsWith(REMOTE_ENVIRONMENT_WORKLOAD_PREFIX),
       read: (projectId: string) => readLocalProjectPlacementLease(placementStore, projectId),
-    },
+    } } : {}),
   });
 
   console.log(`Zelavis Agent listening on ${server.socketPath}`);

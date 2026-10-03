@@ -10,7 +10,7 @@ class Probe {
   links = new Map([[paths.commandPath, "/opt/zelavis/current/bin/zelavis"], ["/opt/zelavis/current", "releases/1.2.3"]]);
   owner = { active: false }; command = paths.commandPath; busy = new Set(); matchesPort = false; uid = { uid: 10, expectedUid: 10 };
   units = { present: true, active: true, enabled: true, pid: 42, delegates: true }; support = { cgroupV2: true, cgroupKill: true };
-  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
+  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service", "zelavis-host-agent.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
   reads = []; mutations = [];
   async read(path) { this.reads.push(path); return this.files.get(path); }
   async exists(path) { return path.endsWith("runtime/node/bin/node") || this.files.has(path); }
@@ -159,7 +159,7 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
   host.files.set(`${scope}/installation.json`, JSON.stringify({ ...receipt, ...named, instance: "preview", port: 3100, edge: false }));
   host.files.set(`${scope}/current/manifest.json`, '{"version":"1.2.3"}');
   host.links.set(`${scope}/current`, "/opt/zelavis/releases/1.2.3");
-  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) host.files.set(`/etc/systemd/system/${unit}`, "ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i");
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent@.service"]) host.files.set(`/etc/systemd/system/${unit}`, "ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i");
   const report = await inspectZelavisInstallation({ host, paths: named, installation });
   assert.equal(report.healthy, true, JSON.stringify(report));
   assert.ok(report.checks.some((item) => item.id === "port:3100"));

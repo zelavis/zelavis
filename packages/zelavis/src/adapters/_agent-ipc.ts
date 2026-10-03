@@ -32,7 +32,7 @@
  * rather than a threat model of its own.
  */
 import { createServer, connect, type Server, type Socket } from "node:net";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 
@@ -95,16 +95,30 @@ export function agentTokenPath(directory: string): string {
  * socket: a window where either is readable is a window where the Agent can be
  * driven by whoever noticed.
  */
-async function ensureEndpoint(directory: string): Promise<string> {
+async function ensureEndpoint(directory: string, groupAccess = false): Promise<string> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700).catch(() => undefined);
+  const directoryStats = await lstat(directory);
+  if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink() ||
+      groupAccess && (directoryStats.uid !== 0 || directoryStats.gid !== process.getgid?.())) {
+    throw new Error("Privileged Agent endpoint must be a root-owned directory in the Agent's group.");
+  }
+  await chmod(directory, groupAccess ? 0o750 : 0o700);
 
   const tokenPath = agentTokenPath(directory);
-  const existing = await readFile(tokenPath, "utf8").catch(() => undefined);
+  const stats = await lstat(tokenPath).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return undefined;
+  });
+  if (stats && (!stats.isFile() || stats.isSymbolicLink() || groupAccess &&
+      (stats.uid !== 0 || stats.gid !== process.getgid?.() || (stats.mode & 0o027) !== 0))) {
+    throw new Error("Agent token must be a regular file owned by its Agent.");
+  }
+  const existing = stats ? await readFile(tokenPath, "utf8") : undefined;
+  if (stats) await chmod(tokenPath, groupAccess ? 0o640 : 0o600);
   if (existing && existing.trim()) return existing.trim();
 
   const token = randomBytes(32).toString("base64url");
-  await writeFile(tokenPath, `${token}\n`, { mode: 0o600 });
+  await writeFile(tokenPath, `${token}\n`, { mode: groupAccess ? 0o640 : 0o600, flag: stats ? "w" : "wx" });
   return token;
 }
 
@@ -195,6 +209,10 @@ export interface AgentProcessServerOptions {
   readonly directory: string;
   /** What actually runs processes. The local runner, in the shipped Agent. */
   readonly runner: ZelavisAgentProcessRunner;
+  /** Refuse all process messages. Used by a separately privileged operation Agent. */
+  readonly operationsOnly?: boolean;
+  /** Root operation Agent socket readable/connectable by its configured service group. */
+  readonly endpointGroupAccess?: boolean;
   /** When present, Project processes require current Platform placement. */
   readonly placement?: {
     readonly isProjectWorkload: (workloadId: string) => boolean;
@@ -225,7 +243,14 @@ export interface AgentProcessServerOptions {
 export async function createAgentProcessServer(
   options: AgentProcessServerOptions,
 ): Promise<AgentProcessServer> {
-  const token = await ensureEndpoint(options.directory);
+  const operationsOnly = options.operationsOnly === true;
+  if (operationsOnly && !options.operations) {
+    throw new Error("An operation-only Agent requires installed host operations.");
+  }
+  if (options.endpointGroupAccess && (!operationsOnly || process.getuid?.() !== 0)) {
+    throw new Error("Group-access endpoints require a root operation-only Agent.");
+  }
+  const token = await ensureEndpoint(options.directory, options.endpointGroupAccess);
   const socketPath = agentSocketPath(options.directory);
 
   // A socket file left by a crashed Agent is not a listener; removing it is
@@ -284,6 +309,13 @@ export async function createAgentProcessServer(
       }
 
       const id = typeof message.id === "string" ? message.id : undefined;
+
+      if (operationsOnly && ![
+        "operation.catalog", "operation.submit", "operation.get",
+      ].includes(String(message.type))) {
+        send(socket, { id, type: "failed", error: "This Agent executes installed host operations only; process commands are refused." });
+        return;
+      }
 
       try {
         if (message.type === "start") {
@@ -523,7 +555,7 @@ export async function createAgentProcessServer(
   // Only after it exists. Creating the socket and then narrowing it leaves a
   // window, which is why the directory is 0700 first — this is the second lock,
   // not the only one.
-  await chmod(socketPath, 0o600).catch(() => undefined);
+  await chmod(socketPath, options.endpointGroupAccess ? 0o660 : 0o600);
 
   return {
     socketPath,

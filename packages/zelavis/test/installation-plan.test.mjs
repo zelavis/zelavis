@@ -9,7 +9,7 @@ const paths = {
   systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"],
 };
 const templates = {};
-for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) {
   templates[file] = await readFile(new URL(`../../../distribution/runtime/${file}`, import.meta.url), "utf8");
 }
 
@@ -44,7 +44,8 @@ class FakeHost {
       case "bootstrap": if (!await this.exists(a.path)) { this.tokens++; this.files.set(a.path, "ZELAVIS_BOOTSTRAP_TOKEN=secret\n"); return "new token"; } break;
       case "agent-environment": {
         const content = await this.read(a.path);
-        if (!/^ZELAVIS_AGENT_ENDPOINT=/m.test(content)) this.files.set(a.path, content + `ZELAVIS_AGENT_ENDPOINT=${a.endpoint}\n`);
+        const variable = a.variable ?? "ZELAVIS_AGENT_ENDPOINT";
+        if (!new RegExp(`^${variable}=`, "m").test(content)) this.files.set(a.path, content + `${variable}=${a.endpoint}\n`);
         break;
       }
       case "command":
@@ -259,4 +260,24 @@ test("removal retains shared releases/templates/command/packages while another i
     assert.equal(account.account, selected.instance ? "zelavis-preview" : "zelavis");
     if (selected.instance) assert.ok(!plan.steps.some((step) => step.action.kind === "release-edge"));
   }
+});
+
+
+test("system updates wire a distinct root operation Agent and uninstall owns its inventory", async () => {
+  const host = new FakeHost();
+  const plan = await planZelavisReleaseInstall({ host, source: "/stage", paths, system: true });
+  const operationUnit = plan.steps.find((step) => step.id === "zelavis-host-agent.service").action.content;
+  assert.match(operationUnit, /^User=root$/m);
+  assert.match(operationUnit, /--operations-only --endpoint-group-access/);
+  assert.match(operationUnit, /--require-root-owned-operations --operation-cgroup delegated/);
+  assert.match(operationUnit, /^Group=zelavis$/m);
+  assert.deepEqual(plan.steps.find((step) => step.id === "host-agent-environment").action, { kind: "agent-environment", path: "/etc/zelavis/zelavis.env", endpoint: "/opt/zelavis/host-agent/agent", variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
+  assert.ok(plan.steps.findIndex((step) => step.id === "host-agent-enable") < plan.steps.findIndex((step) => step.id === "platform-enable"));
+  assert.equal(plan.steps.some((step) => step.action.command === "apt-get"), false);
+  const uninstall = planZelavisUninstall({ paths, hostCommands: true, ownsUser: true, ownsGroup: true });
+  assert.ok(uninstall.steps.find((step) => step.id === "package-policy"));
+  assert.ok(uninstall.steps.find((step) => step.action.path === "/etc/systemd/system/zelavis-host-agent@.service"));
+  const retained = planZelavisUninstall({ paths, hostCommands: true, ownsUser: true, ownsGroup: true, retainShared: true });
+  assert.equal(retained.steps.some((step) => step.id === "package-policy"), false, "another instance still owns the shared package policy");
+  assert.ok(retained.steps.find((step) => step.action.path === "/opt/zelavis/host-agent"));
 });

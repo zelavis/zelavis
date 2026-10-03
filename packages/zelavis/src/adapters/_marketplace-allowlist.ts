@@ -1,3 +1,4 @@
+import { normalizeProjectHostPackages } from "../project-host-packages.js";
 /**
  * The marketplace allow-list, wired into a local host.
  *
@@ -152,6 +153,7 @@ interface LocalOfficialService {
   categories?: readonly string[];
   tags?: readonly string[];
   runtimeKinds?: readonly string[];
+  hostPackages?: readonly string[];
   directory: string;
 }
 
@@ -164,7 +166,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     zelavis?: {
       kind?: unknown;
       marketplace?: { title?: unknown; summary?: unknown; categories?: unknown; tags?: unknown };
-      project?: { runtimeKinds?: unknown; runtime?: unknown };
+      project?: { runtimeKinds?: unknown; runtime?: unknown; hostPackages?: unknown };
     };
   };
   try {
@@ -183,6 +185,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
   const categories = strings(marketplace?.categories);
   const tags = strings(marketplace?.tags);
   const runtimeKinds = strings(manifest.zelavis?.project?.runtimeKinds);
+  const hostPackages = normalizeProjectHostPackages(manifest.zelavis?.project?.hostPackages);
   return {
     name: manifest.name,
     kind,
@@ -192,6 +195,7 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     ...(categories ? { categories } : {}),
     ...(tags ? { tags } : {}),
     ...(runtimeKinds ? { runtimeKinds } : {}),
+    ...(hostPackages ? { hostPackages } : {}),
     ...(typeof manifest.zelavis?.project?.runtime === "string" ? { providesRuntime: true } : {}),
     directory: resolve(directory),
   };
@@ -338,7 +342,7 @@ export async function createLocalMarketplace(input: {
           ...(entry.categories ? { categories: entry.categories } : {}),
           ...(entry.tags ? { tags: entry.tags } : {}),
         },
-        ...(entry.kind === "app" && entry.runtimeKinds ? { project: { runtimeKinds: entry.runtimeKinds } } : {}),
+        ...(entry.kind === "app" && entry.runtimeKinds ? { project: { runtimeKinds: entry.runtimeKinds, ...(entry.hostPackages ? { hostPackages: entry.hostPackages } : {}) } } : {}),
       },
       specifier: entry.directory,
       status: "available" as const,

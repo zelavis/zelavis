@@ -146,6 +146,8 @@ export interface NodeAdapterOptions {
   database?: false | NodeAdapterDatabaseOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
+  /** Dedicated operation-only Agent. Never used to execute Project processes. */
+  hostOperationsEndpoint?: string;
   /**
    * Services: the registry, and the folder they are dropped into.
    *
@@ -281,6 +283,21 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       let projectDispatcher: ZelavisProjectDispatcher | undefined;
+      let hostAgentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
+      if (options.hostOperationsEndpoint) {
+        if (isProjectRuntime || !systemStore) throw new Error("A host operation endpoint requires a Platform System Store.");
+        platformAuthority = await readOrCreatePlatformAuthorityKey(join(dataDirectory, "system", "agent-authority"));
+        // systemd starts the restricted Agent first; its journal/socket may still be opening.
+        for (let attempt = 0; ; attempt++) {
+          try { hostAgentClient = await createAgentProcessClient({ directory: resolve(options.hostOperationsEndpoint) }); break; }
+          catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (attempt >= 39 || !["ENOENT", "ECONNREFUSED", "ECONNRESET"].includes(code ?? "")) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        }
+        stores.add(hostAgentClient);
+      }
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
           directory: projectOptions?.directory
@@ -336,7 +353,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // constructor is not.
         // The authority key exists before the Agent is contacted, so an Agent
         // started first finds the trust file as soon as the Platform starts.
-        if ((projectOptions?.agentEndpoint || projectOptions?.remoteDispatch) &&
+        if (!platformAuthority && (projectOptions?.agentEndpoint || projectOptions?.remoteDispatch) &&
             systemStore && !isProjectRuntime) {
           platformAuthority = await readOrCreatePlatformAuthorityKey(
             join(dataDirectory, "system", "agent-authority"),
@@ -427,9 +444,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       // Host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
       let hostOperations: ZelavisHostOperationBroker | undefined;
-      if (agentClient && platformAuthority && systemStore) {
+      const operationAgent = hostAgentClient ?? agentClient;
+      if (operationAgent && platformAuthority && systemStore) {
         hostOperations = createHostOperationBroker({
-          agent: agentClient,
+          agent: operationAgent,
           signer: platformAuthority.signer,
           store: systemStore,
         });
@@ -446,10 +464,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           masterSecret,
         });
 
-        if (hostOperations && agentClient) {
+        if (hostOperations && operationAgent) {
           const invoker = createAgentHostOperationInvoker({
             broker: hostOperations,
-            agent: agentClient,
+            agent: operationAgent,
           });
           const traefikAdapter = createTraefikEdgeAdapter({
             invoker,

@@ -4,7 +4,7 @@
 // computed here. Manifests are plain: the installed tree is root-owned and the
 // Agent refuses it otherwise, so there is nothing to sign.
 // Published as a generated installation asset; never maintain another copy.
-import { chmod, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -33,8 +33,8 @@ export async function stageOperations({ source, output, validate }) {
     const target = join(output, entry.id, entry.version);
     await mkdir(target, { recursive: true, mode: 0o755 });
     await copyFile(join(entry.directory, "artifact"), join(target, "artifact"));
-    const mode = (await stat(join(entry.directory, "artifact"))).mode & 0o111 ? 0o755 : 0o644;
-    await chmod(join(target, "artifact"), mode);
+    // The Agent requires every artifact to be executable, including interpreter-backed scripts.
+    await chmod(join(target, "artifact"), 0o755);
     await writeFile(join(target, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
     staged.push(`${entry.id}@${entry.version}`);
   }

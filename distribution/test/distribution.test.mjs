@@ -152,7 +152,7 @@ test("staging writes plain manifests with the artifact digest, and refuses a tem
 test("shipped host operation sources are valid and produce their declared result", {
   skip: !builtRuntime && "build packages/zelavis first (pnpm --filter zelavis build)",
 }, async (t) => {
-  const { mkdtemp, readdir, readFile: read, rm } = await import("node:fs/promises");
+  const { mkdtemp, readdir, readFile: read, rm, stat } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { stageOperations } = await import("../scripts/stage-operations.mjs");
@@ -182,6 +182,11 @@ test("shipped host operation sources are valid and produce their declared result
   t.after(() => rm(directory, { recursive: true, force: true }));
   const staged = await stageOperations({ source, output: directory, validate: validateHostOperationManifest });
   assert.ok(staged.includes("zelavis.host-report@v1"));
+  assert.ok(staged.includes("zelavis.packages-install@v1"));
+  for (const operation of staged) {
+    const [id, version] = operation.split("@");
+    assert.equal((await stat(join(directory, id, version, "artifact"))).mode & 0o777, 0o755);
+  }
 });
 
 test("named templates use the instance's private Node launcher, account, config and data, without Edge", async () => {

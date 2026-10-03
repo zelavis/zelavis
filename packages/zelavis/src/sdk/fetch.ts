@@ -514,6 +514,8 @@ export type ZelavisDataWritten =
   | { readonly _tag: "Deleted"; readonly collection: string; readonly id: string };
 
 export interface ZelavisProjectCreateInput {
+  /** Explicitly approve the recipe's fixed host package sets; requires server.packages.install. */
+  readonly installHostPackages?: boolean;
   readonly name: string;
   readonly id?: string;
   readonly recipeName?: string;
@@ -526,6 +528,7 @@ export interface ZelavisProjectUpdateInput {
 }
 
 export interface ZelavisProjectRecipeSummary {
+  readonly hostPackages?: readonly string[];
   readonly name: string;
   readonly title: string;
   readonly summary?: string;

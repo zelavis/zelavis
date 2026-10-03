@@ -1,5 +1,14 @@
 # @zelavis/app
 
+## 1.0.1-alpha.12
+
+### Patch Changes
+
+- Updated dependencies [bbe74e4]
+- Updated dependencies
+- Updated dependencies
+  - zelavis@2.0.0-alpha.12
+
 ## 1.0.1-alpha.11
 
 ### Patch Changes

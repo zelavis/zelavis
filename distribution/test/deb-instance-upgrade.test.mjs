@@ -30,7 +30,7 @@ test("Debian payload replacement leaves independently selected persistent releas
     await writeFile(join(stage, "manifest.json"), JSON.stringify({version, platform: "linux", architecture: "x64"}));
     await writeFile(join(stage, "bin/zelavis"), "#!/bin/sh\n", {mode: 0o755});
     await symlink(process.execPath, join(stage, "runtime/node/bin/node"));
-    for (const unit of ["zelavis.service", "zelavis-agent.service", "zelavis-traefik.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) await cp(join(distribution, "runtime", unit), join(stage, "share", unit));
+    for (const unit of ["zelavis.service", "zelavis-agent.service", "zelavis-host-agent.service", "zelavis-traefik.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) await cp(join(distribution, "runtime", unit), join(stage, "share", unit));
     execFileSync(process.execPath, [join(distribution, "scripts/build-deb.mjs"), "--stage", stage, "--prepare-only"], {stdio: "pipe"});
     // The actual prepared package must contain no dpkg-owned releases/current.
     const owned = join(packageRoot, "opt/zelavis");

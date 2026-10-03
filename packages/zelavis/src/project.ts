@@ -1,3 +1,4 @@
+import { normalizeProjectHostPackages } from "./project-host-packages.js";
 import type {
   FabricPlacementPlan,
   FabricProjectPlacementRequest,
@@ -63,6 +64,7 @@ export interface ZelavisProjectDeletionState {
 export type ZelavisProjectKind = string;
 
 export interface ZelavisProjectRecipeLock {
+  hostPackages?: readonly string[];
   name: string;
   title: string;
   /** Exact recipe/runtime version. Platform upgrades must never rewrite this lock. */
@@ -560,6 +562,7 @@ function recipeLockFromRegistryEntry(
     version: entry.service.version,
     specifier: entry.specifier ?? entry.service.name,
     runtimeKinds: normalizeRecipeRuntimeKinds(entry.service.project?.runtimeKinds),
+    ...(entry.service.project?.hostPackages ? { hostPackages: normalizeProjectHostPackages(entry.service.project.hostPackages) } : {}),
     ...isolationIntentField(
       entry.service.project?.isolation,
       `Project recipe "${entry.service.name}"`,
@@ -650,6 +653,7 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
     ),
     ...isolationIntentField(rawRecipe.isolation, "Stored Project recipe lock"),
     ...managedField(rawRecipe.managed, "Stored Project recipe lock"),
+    ...(rawRecipe.hostPackages !== undefined ? { hostPackages: normalizeProjectHostPackages(rawRecipe.hostPackages) } : {}),
   };
 }
 

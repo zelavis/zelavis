@@ -27,7 +27,7 @@ import {
  */
 export interface RecipeRuntimeSources {
   /** Where an installed or checked-out recipe package lies. Bundled ones are found without it. */
-  packageDirectory?(name: string): Promise<string | undefined> | string | undefined;
+  packageDirectory?(name: string, version?: string): Promise<string | undefined> | string | undefined;
   /**
    * Whether a recipe may provide the runtime its Projects run under. A recipe
    * runtime is host code with the Platform's authority, so this is a decision
@@ -147,7 +147,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   /** Loads a recipe's runtime from the frozen copy, once per digest. */
   async function loadRecipeDriver(
     projectId: string,
-    recipe: Pick<ZelavisProjectRecipeLock, "name">,
+    recipe: Pick<ZelavisProjectRecipeLock, "name"> & { version?: string },
     digest: string,
     entry: string,
   ): Promise<ZelavisProjectRuntimeDriver> {
@@ -158,6 +158,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
       return cached;
     }
     const frozen = frozenRecipeDirectory(directory, projectId);
+    const manifest = JSON.parse(await readFile(join(frozen, "package.json"), "utf8"));
+    if (manifest.name !== recipe.name || recipe.version && manifest.version !== recipe.version) {
+      throw new ZelavisProjectRuntimeError(`Project recipe artifact does not match its locked name and version.`);
+    }
     const key = `${projectId}:${digest}`;
     if (!verified.has(key) && (await digestArtifactDirectory(frozen)) !== digest) {
       throw new ZelavisProjectRuntimeError(
@@ -193,7 +197,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
    */
   async function recipeDriver(
     projectId: string,
-    recipe: Pick<ZelavisProjectRecipeLock, "name"> & { artifact?: { digest: string } },
+    recipe: Pick<ZelavisProjectRecipeLock, "name"> & { version?: string; artifact?: { digest: string } },
     mode: "prepare" | "use",
   ): Promise<{ driver: ZelavisProjectRuntimeDriver; digest: string } | undefined> {
     const frozen = frozenRecipeDirectory(directory, projectId);
@@ -204,10 +208,22 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
       return { driver: await loadRecipeDriver(projectId, recipe, digest, entry), digest };
     }
     if (mode === "use") return undefined;
-    const source =
+    let source =
       (await options.recipeRuntimes?.packageDirectory?.(recipe.name)) ??
       resolveBundledServiceDirectory(recipe.name);
+    // Recipes without a custom runtime belong to the native Zelavis runner,
+    // which owns freezing and its explicit unavailable-version/upgrade refusal.
+    if (source && !(await declaredRuntimeEntry(source))) return undefined;
+    if (source && recipe.version) {
+      const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+      if (manifest.name !== recipe.name || manifest.version !== recipe.version) source = undefined;
+    }
+    source ??= recipe.version ? await options.recipePackageDirectory?.(recipe.name, recipe.version) : undefined;
     if (!source) return undefined;
+    const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    if (manifest.name !== recipe.name || recipe.version && manifest.version !== recipe.version) {
+      throw new ZelavisProjectRuntimeError("Project recipe source does not match its locked name and version.");
+    }
     const entry = await declaredRuntimeEntry(source);
     if (!entry) return undefined;
     await assertTrusted(recipe.name);
@@ -224,7 +240,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   };
   const forProjectId = async (projectId: string) => {
     const record = JSON.parse(await readFile(join(directory, projectId, "project.json"), "utf8")) as {
-      recipe?: { name?: unknown; artifact?: { digest?: unknown } };
+      recipe?: { name?: unknown; version?: unknown; artifact?: { digest?: unknown } };
       kind?: unknown;
       runtimeKind?: unknown;
     };
@@ -235,7 +251,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
       const digest = record.recipe?.artifact?.digest;
       const chosen = await recipeDriver(
         projectId,
-        { name, ...(typeof digest === "string" ? { artifact: { digest } } : {}) },
+        { name, ...(typeof record.recipe?.version === "string" ? { version: record.recipe.version } : {}), ...(typeof digest === "string" ? { artifact: { digest } } : {}) },
         "use",
       );
       if (chosen) return chosen.driver;

@@ -100,6 +100,8 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
     ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
       dataDirectory,
+      ...(process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT
+        ? { hostOperationsEndpoint: process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT } : {}),
       ...(installed ? { installation: { prefix: installed.prefix, instance: installed.instance, edge: installed.edge }, ...(!installed.edge ? { edge: false as const } : {}) } : {}),
       ...(options.servicesDirectory
         ? { services: { directory: resolve(options.servicesDirectory) } }

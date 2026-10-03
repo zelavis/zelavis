@@ -365,6 +365,15 @@ command runner. Agents reach operations only over their local socket.
 Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
+`zelavis agent --operations-only` refuses every process protocol message and
+does not open/reclaim Project state. It prepares a separate privileged operation
+Agent; root endpoint ownership and installer wiring remain planned. Never turn
+the combined process Agent into a root package installer.
+`zelavis/recipe` is the initial Effect authoring contract, not yet connected to
+package admission or Project execution. Recipe revisions and software versions
+are separate. Select a named method at creation, persist it in the Project,
+and never reselect automatically at start. JS/OCI driver integration remains
+planned; RecipeHost is not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 
 Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
@@ -406,3 +415,13 @@ pnpm --filter @zelavis/ui test
 pnpm --filter @zelavis/ecommerce test
 pnpm run docs:check
 ```
+
+
+System installations use a separate root `zelavis-host-agent` in operation-only
+mode for signed, fixed host operations. Its group-limited endpoint is configured
+through `ZELAVIS_HOST_OPERATIONS_ENDPOINT`, separate from Project supervision.
+Recipes declare bounded named `hostPackages` sets; create-project package approval
+requires `server.packages.install` independently of `projects.create`. Never add
+APT/sudo or root escalation to a Project recipe. The package operation preserves
+existing host service policy, suppresses only its APT process tree, and uninstall
+restores only its recorded policy; shared dependencies remain installed.

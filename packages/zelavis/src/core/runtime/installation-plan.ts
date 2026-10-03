@@ -11,12 +11,13 @@ export type ZelavisInstallAction =
   | { readonly kind: "link"; readonly target: string; readonly path: string; readonly atomic?: boolean }
   | { readonly kind: "write"; readonly path: string; readonly content: string; readonly mode: number; readonly ifAbsent?: boolean; readonly atomic?: boolean }
   | { readonly kind: "bootstrap"; readonly path: string; readonly dataDirectory?: string; readonly public?: boolean }
-  | { readonly kind: "agent-environment"; readonly path: string; readonly endpoint: string }
+  | { readonly kind: "agent-environment"; readonly path: string; readonly endpoint: string; readonly variable?: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" }
   | { readonly kind: "command"; readonly command: string; readonly args: readonly string[]; readonly ignoreFailure?: boolean }
   | { readonly kind: "remove"; readonly path: string; readonly recursive?: boolean }
   | { readonly kind: "remove-link"; readonly path: string; readonly prefix: string }
   | { readonly kind: "reserve-data"; readonly path: string }
   | { readonly kind: "release-data" }
+  | { readonly kind: "restore-package-policy"; readonly stateDirectory: string; readonly policy: string }
   | { readonly kind: "purge-packages" }
   | { readonly kind: "claim-edge"; readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
   | { readonly kind: "release-edge"; readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
@@ -122,9 +123,9 @@ export async function readNativeInstallationReceipt(host: ZelavisInstallHost, pr
   return value;
 }
 
-const UNITS = ["zelavis.service", "zelavis.socket", "zelavis-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
+const UNITS = ["zelavis.service", "zelavis.socket", "zelavis-agent.service", "zelavis-host-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
 export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
-  "packages Zelavis did not install itself (the installer adds none; a web server, PHP or database you set up yourself stays)",
+  "host packages, including shared WordPress dependencies installed with operator approval",
   "systemd journal history",
   "downloaded archives and backups outside the data directory",
   "operator-managed reverse-proxy, firewall, DNS and TLS configuration",
@@ -261,15 +262,17 @@ export async function planZelavisReleaseInstall(input: {
       ownsUser = true;
       recordOwnership("user-receipt");
     }
+    addStep(steps, "host-agent-directory", "Create the restricted root Agent directory", { kind: "mkdir", path: `${scope.directory}/host-agent`, mode: 0o750 });
+    command("host-agent-owner", "Allow only the dedicated Platform group to connect to the root Agent", "chown", [`root:${scope.account}`, `${scope.directory}/host-agent`]);
+    addStep(steps, "host-packages-directory", "Create shared root-owned host package inventory", { kind: "mkdir", path: `${paths.prefix}/host-packages`, mode: 0o700 });
     addStep(steps, "update-directory", "Create the folder the Platform leaves update requests in", { kind: "mkdir", path: `${paths.dataDirectory}/update`, mode: 0o750 });
     if (!input.live) command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
     const dataBase = scope.named ? paths.dataDirectory.slice(0, -scope.instance.length - 1) : paths.dataDirectory;
     const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
     const render = (text: string) => text.replaceAll("/opt/zelavis", paths.prefix).replaceAll("/var/lib/zelavis", dataBase).replaceAll("/etc/zelavis", configBase);
     for (const [index, unit] of scope.templates.entries()) {
-      if (scope.named && index === 2) continue;
       const template = await host.read(`${source}/share/${unit}`);
-      if (template === undefined && index === 2) continue;
+      if (template === undefined && unit === "zelavis-traefik.service") continue;
       if (template === undefined) throw new Error(`Release is missing share/${unit}.`);
       const content = index === 0 && !scope.named ? template.replace("--host 127.0.0.1", `--host ${input.public ? "0.0.0.0" : "127.0.0.1"}`).replace("--port 3000", `--port ${port}`) : template;
       addStep(steps, unit, `Install ${unit} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${unit}`, content: render(content), mode: 0o644 });
@@ -301,6 +304,7 @@ export async function planZelavisReleaseInstall(input: {
     }
     addStep(steps, "config-directory", "Create configuration directory", { kind: "mkdir", path: paths.configDirectory, mode: 0o755 });
     addStep(steps, "bootstrap", "Generate first-owner token only when the environment file is absent (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env` });
+    addStep(steps, "host-agent-environment", "Configure the separate privileged operation broker", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${scope.directory}/host-agent/agent`, variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
     if (input.enableAgent) {
       // Do not expose the existing first-owner token in a plan or dry-run.
       addStep(steps, "agent-environment", "Add Agent endpoint without changing existing environment values", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${paths.dataDirectory}/agent` });
@@ -316,6 +320,8 @@ export async function planZelavisReleaseInstall(input: {
     if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", scope.units[1]]);
     // The path unit watches for the Platform's update request and starts the root updater.
     command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", scope.updatePath]);
+    command("host-agent-enable", "Enable the restricted root operation Agent", "systemctl", ["enable", "--now", scope.units[scope.units.length - 1]]);
+    if (previous || installedManifest) command("host-agent-restart", "Load the updated operation manifests", "systemctl", ["restart", scope.units[scope.units.length - 1]]);
     command("platform-enable", "Enable and start the Platform", "systemctl", ["enable", "--now", scope.units[0]]);
     if (previous || installedManifest && JSON.parse(installedManifest).version !== version) {
       command("platform-restart", "Restart the Platform on the newly selected release", "systemctl", ["restart", scope.units[0]]);
@@ -357,6 +363,7 @@ export function planZelavisUninstall(input: {
   }
   if (!input.hostCommands) addStep(steps, "data-reservation", "Refuse removal while a Platform owns these data", { kind: "reserve-data", path: paths.dataDirectory });
   if (!input.user && !scope.named) addStep(steps, "edge-release", `Release ${paths.prefix}/edge-owner.json and ${paths.prefix}/.edge-owner.lock only when owned by this instance`, { kind: "release-edge", prefix: paths.prefix, instance: scope.instance, dataDirectory: paths.dataDirectory });
+  if (input.hostCommands && !input.retainShared) addStep(steps, "package-policy", "Restore only the recorded host package policy; preserve operator changes", { kind: "restore-package-policy", stateDirectory: `${paths.prefix}/host-packages`, policy: "/usr/sbin/policy-rc.d" });
   if (input.hostCommands && !input.retainShared) addStep(steps, "packages", "Purge zelavis when installed through dpkg", { kind: "purge-packages" });
   for (const path of new Set(input.retainShared ? [] : input.user ? [paths.commandPath] : [paths.commandPath, paths.systemCommandPath, ...input.additionalCommandPaths ?? []])) {
     assertInstallationPath(path, "command", "zelavis");
@@ -372,7 +379,7 @@ export function planZelavisUninstall(input: {
       remove(`${paths.systemdDirectories[0]}/${unit}.d`, true);
     }
     if (!input.retainShared) {
-      for (const template of ["zelavis@.service", "zelavis-agent@.service", ...UNITS]) for (const directory of paths.systemdDirectories) remove(`${directory}/${template}`);
+      for (const template of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent@.service", ...UNITS]) for (const directory of paths.systemdDirectories) remove(`${directory}/${template}`);
     }
   }
   remove(paths.configDirectory, true);
@@ -385,7 +392,7 @@ export function planZelavisUninstall(input: {
   addStep(steps, `remove:${paths.dataDirectory}`, `Remove ${paths.dataDirectory}, including Platform ownership lock/record and every Project`, { kind: "remove", path: paths.dataDirectory, recursive: true });
   if (input.retainShared) {
     if (scope.named) remove(scope.directory, true);
-    else { remove(scope.receipt); remove(scope.runtime); }
+    else { remove(scope.receipt); remove(scope.runtime); remove(`${scope.directory}/host-agent`, true); }
   } else addStep(steps, `remove:${paths.prefix}`, `Remove ${paths.prefix}, including installer lock, receipt and all releases`, { kind: "remove", path: paths.prefix, recursive: true });
   return { operation: "uninstall", installation: { kind: "packaged", path: `${paths.prefix}/current/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings: [], retained: [...ZELAVIS_INSTALLATION_RETAINED_STATE, ...(input.retainShared ? ["Shared release tree, management command, package records and unit templates required by other instances"] : [])] };
 }

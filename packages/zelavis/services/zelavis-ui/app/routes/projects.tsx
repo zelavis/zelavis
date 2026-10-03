@@ -137,6 +137,7 @@ function ProjectsRoute() {
           service.menu?.title ??
           service.name,
         summary: service.marketplace?.summary,
+        hostPackages: service.project?.hostPackages,
         runtimeKinds: service.project?.runtimeKinds ?? ["native"],
       })) ?? [];
   const selectedRecipe =
@@ -183,6 +184,7 @@ function ProjectsRoute() {
     }
     setMessage(undefined);
     setError(undefined);
+    const installHostPackages = new FormData(event.currentTarget).get("installHostPackages") === "on";
     setCreating(true);
 
     try {
@@ -190,6 +192,7 @@ function ProjectsRoute() {
         name: requestedName,
         recipeName: selectedRecipe?.name ?? recipeName,
         start: true,
+        ...(installHostPackages ? { installHostPackages: true } : {}),
       });
       setParams({ name: null, new: null, recipe: null });
       setMessage(`${project.name} is running in its own project runtime.`);
@@ -344,6 +347,14 @@ function ProjectsRoute() {
                   Cancel
                 </Button>
               </div>
+              {selectedRecipe?.hostPackages?.length ? (
+                <label key={selectedRecipe.name} className="flex items-start gap-2 text-sm md:col-span-3">
+                  <input type="checkbox" name="installHostPackages" className="mt-1" disabled={creating} />
+                  <span>Install required host packages ({selectedRecipe.hostPackages.join(", ")}) if missing.
+                    <span className="block text-muted-foreground">This changes the server and requires host package installation permission. Existing host services keep their configuration.</span>
+                  </span>
+                </label>
+              ) : null}
             </form>
             {error ? (
               <div className="mt-4">

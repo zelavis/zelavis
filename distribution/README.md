@@ -153,6 +153,28 @@ The Agent refuses to start rather than falling back if the host lacks cgroup v2,
 `cgroup.kill` (Linux 5.14+) or delegation. This path is not yet qualified on a
 production Linux host.
 
+`zelavis agent --operations-only` accepts only installed-operation catalog,
+submission and status messages. It requires `--operations-root` and
+`--platform-authority`, rejects Project listener/placement options, and opens
+neither the Project process registry nor the Platform System Store. This is a
+separately privileged provisioning endpoint. System installs and updates also enable
+`zelavis-host-agent.service` (or `zelavis-host-agent@<instance>.service`), running
+only installed signed operations as root with systemd-delegated cgroup containment.
+Its root-owned `<instance-prefix>/host-agent` directory and endpoint are limited to
+the Platform service group. Shared package policy/locking state lives at
+`<prefix>/host-packages` (root, 0700). `ZELAVIS_HOST_OPERATIONS_ENDPOINT` selects this
+broker separately from the optional Project process Agent.
+
+The fixed `zelavis.packages-install` operation provisions `wordpress-stack` only
+after explicit `server.packages.install` authorization. The base installation
+adds no Nginx, PHP or MariaDB. Package-triggered starts are suppressed for the APT
+process tree; existing host units and policy are preserved. The persistent
+`/usr/sbin/policy-rc.d` wrapper delegates normal calls to
+`policy-rc.d.zelavis-original`; `policy-rc.d.zelavis-owner` and the root package
+inventory prove ownership for uninstall; owned `.new` atomic-write files are included. Cancellation leaves normal host policy
+active. The last system uninstall restores only an owned wrapper, retains
+operator modifications/backups, and retains shared packages.
+
 ## Debian package and APT (planned)
 
 `pnpm distribution:deb` builds a `.deb` from a staged Linux tree. Its `postinst`
@@ -220,7 +242,8 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Config and token | `/etc/zelavis` | `/etc/zelavis-preview` |
 | User/group | `zelavis` | `zelavis-preview` |
 | Platform unit | `zelavis.service` | `zelavis@preview.service` |
-| Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Project process Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Host operation Agent | `zelavis-host-agent.service` | `zelavis-host-agent@preview.service` |
 | Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
 | Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
 
@@ -336,7 +359,7 @@ The native installer records customized data and command locations in an
 owner-only installation receipt under the installation prefix, so the later
 uninstall does not depend on recreating the original shell environment.
 
-The removal inventory includes the Platform, Agent, and Zelavis-owned Traefik
+The removal inventory includes the Platform, Project process Agent, restricted root host Agent, and Zelavis-owned Traefik
 units and files, Debian package
 records when present, recorded command links and the default shell-installer/Debian links
 when they still point into this installation, the complete release tree, Platform and

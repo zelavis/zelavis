@@ -234,7 +234,7 @@ test("in development, an official service in the local checkout stands in for it
   await mkdir(join(checkout, "wordpress"), { recursive: true });
   await writeFile(join(checkout, "wordpress", "package.json"), JSON.stringify({
     name: "@zelavis/wordpress", version: "7.1.0",
-    zelavis: { kind: "app", marketplace: { title: "WordPress", summary: "A site." }, project: { runtimeKinds: ["native"] } },
+    zelavis: { kind: "app", marketplace: { title: "WordPress", summary: "A site." }, project: { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] } },
   }));
   await mkdir(join(checkout, "not-a-service"), { recursive: true });
   await writeFile(join(checkout, "not-a-service", "package.json"), JSON.stringify({ name: "plain", version: "1.0.0" }));
@@ -245,7 +245,7 @@ test("in development, an official service in the local checkout stands in for it
   assert.equal(local.maintainer, "zelavis", "what is in the operator's zelavis-services checkout is ours");
   assert.equal(local.specifier, join(checkout, "wordpress"));
   assert.equal(local.service.version, "7.1.0");
-  assert.deepEqual(local.service.project, { runtimeKinds: ["native"] });
+  assert.deepEqual(local.service.project, { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] });
   assert.equal(serviceRegistry.catalog.some((c) => c.service.name === "plain"), false);
   assert.deepEqual(marketplace.managedDirectories, [checkout]);
 });

@@ -39,6 +39,7 @@ export interface AllowlistService {
    * installation only lets a recipe do that when its allow-list entry says so.
    */
   readonly projectRuntime?: boolean;
+  readonly hostPackages?: readonly string[];
   readonly versions: readonly AllowlistVersion[];
   /** The version the marketplace offers by default; always one of `versions`. */
   readonly latest: string;

@@ -1,3 +1,4 @@
+import { restoreHostPackagePolicy } from "./_host-package-policy.js";
 import { assertInstallationInstance, installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { claimLocalEdgeOwner, releaseLocalEdgeOwner, acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
 import { isAlive, processAgeMs } from "./_agent-process-runner.js";
@@ -208,7 +209,8 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
         }
         case "agent-environment": {
           const content = await host.read(action.path) ?? "";
-          if (!/^ZELAVIS_AGENT_ENDPOINT=/mu.test(content)) await appendFile(action.path, `${content && !content.endsWith("\n") ? "\n" : ""}ZELAVIS_AGENT_ENDPOINT=${action.endpoint}\n`);
+          const variable = action.variable ?? "ZELAVIS_AGENT_ENDPOINT";
+          if (!new RegExp(`^${variable}=`, "mu").test(content)) await appendFile(action.path, `${content && !content.endsWith("\n") ? "\n" : ""}${variable}=${action.endpoint}\n`);
           break;
         }
         case "command":
@@ -222,6 +224,7 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
           else if (target || await host.exists(action.path)) return `Retaining foreign command at ${action.path}${target ? ` -> ${target}` : ""}`;
           break;
         }
+        case "restore-package-policy": return restoreHostPackagePolicy(action.stateDirectory, action.policy);
         case "purge-packages": {
           if (!await host.which("dpkg-query") || !await host.which("apt-get")) break;
           const packages: string[] = [];

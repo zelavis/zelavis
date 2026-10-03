@@ -66,7 +66,7 @@ await cp(
   join(stageDirectory, "share", "zelavis-traefik.service"),
   join(packageRoot, "lib", "systemd", "system", "zelavis-traefik.service"),
 );
-for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) {
+for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service"]) {
   await cp(join(stageDirectory, "share", unit), join(packageRoot, "lib", "systemd", "system", unit));
 }
 await mkdir(join(packageRoot, "etc", "zelavis"), { recursive: true });

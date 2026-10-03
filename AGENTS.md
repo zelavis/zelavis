@@ -148,6 +148,16 @@ and none may be reintroduced without the owner asking for them explicitly.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.
 
+
+System installations use a separate root `zelavis-host-agent` in operation-only
+mode for signed, fixed host operations. Its group-limited endpoint is configured
+through `ZELAVIS_HOST_OPERATIONS_ENDPOINT`, separate from Project supervision.
+Recipes declare bounded named `hostPackages` sets; create-project package approval
+requires `server.packages.install` independently of `projects.create`. Never add
+APT/sudo or root escalation to a Project recipe. The package operation preserves
+existing host service policy, suppresses only its APT process tree, and uninstall
+restores only its recorded policy; shared dependencies remain installed.
+
 ## Marketplace Allow-List
 
 `@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
@@ -632,6 +642,17 @@ command runner. Agents reach operations only over their local socket.
 Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
+`zelavis agent --operations-only` is the protocol boundary for a dedicated
+host-operation Agent: it accepts only installed-operation catalog, submit and
+status messages, and never opens or reclaims Project process state. Root
+provisioning endpoint ownership and installation wiring remain planned; the
+combined Project process Agent must not become the root package installer.
+The initial `zelavis/recipe` Effect authoring contract is available, but its
+manifest is not yet integrated into package admission or Project execution.
+Keep recipe revisions distinct from software versions, lock a named method at
+creation, and never use method selection as an automatic start-time fallback.
+Do not claim the JS recipe driver or OCI recipe execution ships until integrated
+and qualified. RecipeHost is a convention for trusted code, not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 
 Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`

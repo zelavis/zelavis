@@ -30,7 +30,7 @@ test("a prepared Node and package become a release tree built from the package's
   assert.deepEqual(traefik[0].target, { platform: "linux", architecture: "x64" });
   assert.equal((await stat(join(root, "bin/zelavis"))).mode & 0o111, 0o111);
   const share = await readdir(join(root, "share"));
-  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml", "uninstall.sh"]) assert.ok(share.includes(file), file);
+  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml", "uninstall.sh"]) assert.ok(share.includes(file), file);
   // Operations are plain manifests beside their artifacts: no signature, no key.
   const operations = await readdir(join(root, "operations"));
   assert.ok(operations.includes("zelavis.host-report"));
@@ -39,6 +39,7 @@ test("a prepared Node and package become a release tree built from the package's
   assert.equal(operation.signature, undefined);
   assert.equal(operation.keyId, undefined);
   assert.ok((await lstat(join(root, "operations/zelavis.host-report/v1/artifact"))).isFile());
+  assert.equal((await stat(join(root, "operations/zelavis.packages-install/v1/artifact"))).mode & 0o777, 0o755, "npm transport modes are repaired during installed-tree assembly");
 });
 
 test("macOS trees carry no Traefik files and download nothing", async (t) => {

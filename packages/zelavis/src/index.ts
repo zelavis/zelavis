@@ -1,3 +1,4 @@
+import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
 import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
 import {
@@ -3197,6 +3198,7 @@ function resolveFabricCoreService(
 }
 
 function hostOperationErrorResponse(error: unknown) {
+  if (error instanceof ZelavisHostPackageProvisioningError) return { status: 502, body: { error: error.message, code: "HOST_PACKAGES_FAILED", operationId: error.operationId } };
   if (error instanceof ZelavisHostOperationRateLimitedError) {
     return {
       status: 429,
@@ -4714,6 +4716,7 @@ async function resolvePlatformEndpointGroup(
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
+                  ...(entry.service.project?.hostPackages ? { hostPackages: entry.service.project.hostPackages } : {}),
                   ...(entry.service.project?.isolation
                     ? { isolation: entry.service.project.isolation }
                     : {}),
@@ -5432,7 +5435,7 @@ async function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/projects",
           access: { permissions: ["projects.create"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: async ({ body, principal }: { body: unknown; principal?: HostOperationPrincipal }) => {
             if (!projects) {
               return unavailableProjectsResponse();
             }
@@ -5442,6 +5445,22 @@ async function resolvePlatformEndpointGroup(
                 throw new ZelavisProjectValidationError(
                   "New Project deployment backends are selected by server policy. Change the server default or use an explicit migration workflow for an existing Project.",
                 );
+              }
+              if (input.installHostPackages !== undefined && typeof input.installHostPackages !== "boolean") {
+                throw new ZelavisProjectValidationError("installHostPackages must be true or false.");
+              }
+              if (input.installHostPackages === true) {
+                if (typeof input.name !== "string" || !input.name.trim()) throw new ZelavisProjectValidationError("Project name is required.");
+                const recipeName = typeof input.recipeName === "string" && input.recipeName.trim() ? input.recipeName.trim() : "@zelavis/app";
+                const recipe = projectRecipes.find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
+                if (!recipe) throw new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`);
+                const sets = recipe.service.project?.hostPackages ?? [];
+                if (sets.length) {
+                  if (!hostOperations) return { status: 503, body: { error: "Host package installation requires the system installation's operation Agent. Update or repair the system installation, then retry." } };
+                  try {
+                    await provisionProjectHostPackages(hostOperations, sets, principal);
+                  } catch (error) { return hostOperationErrorResponse(error); }
+                }
               }
               const project = await projects.create({
                 name: typeof input.name === "string" ? input.name : "",

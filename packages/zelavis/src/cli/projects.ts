@@ -2,7 +2,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|get|create|rename|start|stop|restart|upgrade|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--no-start] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|get|create|rename|start|stop|restart|upgrade|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--no-start] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -18,11 +18,13 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
   let id: string | undefined;
   let recipe: string | undefined;
   let start = true;
+  let installHostPackages = false;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === "--json") { json = true; continue; }
+    if (arg === "--install-host-packages") { installHostPackages = true; continue; }
     if (arg === "--no-start") { start = false; continue; }
     if (arg === "--help" || arg === "-h") {
       console.log(usage);
@@ -48,6 +50,7 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
     return;
   }
   if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
+  if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   const base = new URL(url);
   const client = createZelavisClient({
     baseUrl: base.origin,
@@ -98,6 +101,7 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
         ...(id ? { id } : {}),
         ...(recipe ? { recipeName: recipe } : {}),
         start,
+        ...(installHostPackages ? { installHostPackages: true } : {}),
       });
       print({ project }, () => `Created ${line(project)}`);
       return;

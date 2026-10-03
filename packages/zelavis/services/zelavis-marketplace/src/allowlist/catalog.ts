@@ -19,7 +19,7 @@ export interface AllowlistCatalogEntry {
       readonly categories?: readonly string[];
       readonly tags?: readonly string[];
     };
-    readonly project?: { readonly runtimeKinds: readonly string[] };
+    readonly project?: { readonly runtimeKinds: readonly string[]; readonly hostPackages?: readonly string[] };
   };
   /** The exact source to install; never a range or a tag. */
   readonly specifier: string;
@@ -54,7 +54,7 @@ export function allowlistCatalogEntries(
         ...(entry.tags ? { tags: entry.tags } : {}),
       },
       ...(entry.kind === "app" && entry.runtimeKinds
-        ? { project: { runtimeKinds: entry.runtimeKinds } }
+        ? { project: { runtimeKinds: entry.runtimeKinds, ...(entry.hostPackages ? { hostPackages: entry.hostPackages } : {}) } }
         : {}),
     },
     specifier: `npm:${entry.name}@${entry.latest}`,

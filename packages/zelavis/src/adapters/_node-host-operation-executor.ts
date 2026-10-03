@@ -42,6 +42,8 @@ export interface NodeHostOperationExecutorOptions {
    * Defaults to the OS temporary directory.
    */
   readonly stagingDirectory?: string;
+  /** Trusted Agent configuration, copied at registration. Request arguments cannot override it. */
+  readonly environment?: Readonly<Record<string, string>>;
   /**
    * How an operation's processes are contained. `process-group` (default) is
    * portable but a descendant starting a new session escapes it. `cgroup-v2`
@@ -198,6 +200,7 @@ function requestFingerprint(request: ZelavisHostOperationRequest): string {
 export async function createNodeHostOperationExecutor(
   options: NodeHostOperationExecutorOptions,
 ): Promise<ZelavisHostOperationExecutor> {
+  const environment = Object.freeze({ ...options.environment });
   const requestedRoot = resolve(options.rootDirectory);
   const rootStats = await lstat(requestedRoot);
   if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
@@ -487,6 +490,7 @@ export async function createNodeHostOperationExecutor(
             detached: true,
             stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
             env: {
+              ...environment,
               PATH: "/usr/sbin:/usr/bin:/sbin:/bin",
               LANG: "C.UTF-8",
               LC_ALL: "C.UTF-8",

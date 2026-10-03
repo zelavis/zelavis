@@ -19,7 +19,7 @@ export async function preflightZelavisDataMaintenance(input: { host: ZelavisInst
   const receipt = await readNativeInstallationReceipt(host, paths.prefix, paths.instance);
   const unit = input.system ? await host.unitState(scope.units[0], paths) : undefined;
   let ownUnit = false;
-  if (input.system) for (const name of scope.units.slice(0, scope.named ? 2 : 3)) {
+  if (input.system) for (const name of [...scope.units.slice(0, scope.named ? 2 : 3), scope.units[scope.units.length - 1]]) {
     const contents = await readUnitContents(host, paths, name);
     const actual = contents.filter((text): text is string => text !== undefined);
     const matches = actual.length > 0 && actual.every((text) => text.includes(`${scope.current}/`) && text.includes(paths.dataDirectory));
@@ -123,12 +123,12 @@ export async function inspectZelavisInstallation(input: { host: ZelavisInstallat
     return { status: available || ours || heldBySocket ? "ok" : "error", detail: `Port ${port}: ${available ? "available" : ours ? `owned by this Platform (PID ${owner.pid})` : heldBySocket ? `held by systemd (${scope.socket}); the Platform serves it` : "occupied or unavailable to probe; no matching Platform listener proved"}.` };
   });
   if (receipt?.mode === "system") {
-    for (const unit of scope.units.slice(0, scope.named ? 2 : 3)) await check(`unit:${unit}`, async () => {
+    for (const unit of [...scope.units.slice(0, scope.named ? 2 : 3), scope.units[scope.units.length - 1]]) await check(`unit:${unit}`, async () => {
       const state = await host.unitState(unit, paths);
       const contents = await readUnitContents(host, paths, unit);
       const actual = contents.filter((text): text is string => text !== undefined);
       const matches = actual.length > 0 && actual.every((text) => text.includes(`${scope.current}/`) && text.includes(paths.dataDirectory));
-      return { status: !state.present || !matches || unit === scope.units[0] && !state.active ? "error" : "ok", detail: `${unit}: layout ${matches ? "matches" : "differs or is missing"}, ${state.present ? "present" : "absent"}, ${state.enabled ? "enabled" : "disabled"}, ${state.active ? "active" : "inactive"}${state.pid ? `, PID ${state.pid}` : ""}.` };
+      return { status: !state.present || !matches || (unit === scope.units[0] || unit === scope.units[scope.units.length - 1]) && !state.active ? "error" : "ok", detail: `${unit}: layout ${matches ? "matches" : "differs or is missing"}, ${state.present ? "present" : "absent"}, ${state.enabled ? "enabled" : "disabled"}, ${state.active ? "active" : "inactive"}${state.pid ? `, PID ${state.pid}` : ""}.` };
     });
     await check("socket", async () => {
       const state = await host.unitState(scope.socket, paths);
@@ -145,6 +145,12 @@ export async function inspectZelavisInstallation(input: { host: ZelavisInstallat
       const qualified = support.cgroupV2 && support.cgroupKill && !!unit.delegates;
       return { status: qualified ? "ok" : "warning", detail: `Agent: cgroup v2 ${support.cgroupV2}, cgroup.kill ${support.cgroupKill}, Delegate ${!!unit.delegates}. ${qualified ? "Required host features present; operation conformance still requires execution." : "Agent containment is not qualified on this host."}` };
     });
+    await check("host-agent", async () => {
+      const name = scope.units[scope.units.length - 1];
+      const [support, unit] = await Promise.all([host.agentSupport(name), host.unitState(name, paths)]);
+      const qualified = unit.active && unit.delegates && support.cgroupV2 && support.cgroupKill;
+      return { status: qualified ? "ok" : "error", detail: `Host operation Agent: active ${unit.active}, cgroup v2 ${support.cgroupV2}, cgroup.kill ${support.cgroupKill}, Delegate ${!!unit.delegates}.` };
+    });
     await check("edge-owner", async () => {
       const content = await host.read(`${paths.prefix}/edge-owner.json`);
       const owner = content ? JSON.parse(content) : undefined;
@@ -160,7 +166,7 @@ export async function inspectZelavisInstallation(input: { host: ZelavisInstallat
 
 async function readUnitContents(host: ZelavisInstallHost, paths: ZelavisInstallPaths, unit: string): Promise<(string | undefined)[]> {
   const scope = installationInstanceScope(paths.prefix, paths.instance);
-  const template = scope.templates[scope.units.indexOf(unit)];
+  const template = unit === scope.units[scope.units.length - 1] ? scope.templates[scope.templates.length - 1] : scope.templates[scope.units.indexOf(unit)];
   const result: (string | undefined)[] = [];
   for (const directory of paths.systemdDirectories) {
     const concrete = await host.read(`${directory}/${unit}`);

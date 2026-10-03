@@ -53,6 +53,8 @@ export interface AgentHostOperationServiceOptions {
   readonly supervision?: NodeHostOperationExecutorOptions["supervision"];
   readonly stagingDirectory?: string;
   readonly concurrency?: number;
+  /** Host-selected environment only; never supplied by an operation request. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export interface AgentHostOperationCatalog {
@@ -175,6 +177,7 @@ export async function createAgentHostOperationService(
     rootDirectory: options.operationsRoot,
     operations,
     requireRootOwnedArtifacts: options.requireRootOwned === true,
+    environment: options.environment,
     ...(options.stagingDirectory ? { stagingDirectory: options.stagingDirectory } : {}),
     ...(options.supervision ? { supervision: options.supervision } : {}),
     authorize: async (request) => {

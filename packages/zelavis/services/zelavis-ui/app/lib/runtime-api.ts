@@ -94,6 +94,7 @@ export interface RuntimeServiceRegistryEntry {
     tags?: readonly string[];
   };
   project?: {
+    hostPackages?: readonly string[];
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
   };
   menu?: RuntimeServiceRegistryMenuDefinition;
@@ -387,6 +388,7 @@ export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject
 }
 
 export interface RuntimeProjectRecipe {
+  hostPackages?: readonly string[];
   name: string;
   title: string;
   version?: string;
@@ -1699,6 +1701,7 @@ export async function createProject(
     id?: string;
     recipeName?: string;
     start?: boolean;
+    installHostPackages?: boolean;
   },
 ): Promise<RuntimeProject> {
   const result = await readJson<{ project: RuntimeProject }>(

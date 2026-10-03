@@ -1264,11 +1264,13 @@ export function resolveBundledServiceDirectory(
 async function installedPackageDirectory(
   store: ZelavisSystemStore,
   name: string,
+  version?: string,
 ): Promise<string | undefined> {
   const entries = await createSystemStoreServiceRegistryStore(store).read();
   const specifier = entries.find((entry) => entry.name === name)?.specifier;
   if (!specifier || !isAbsolute(specifier)) return undefined;
-  return packageDirectoryOf(specifier, name);
+  const directory = packageDirectoryOf(specifier, name);
+  return directory && (!version || JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).version === version) ? directory : undefined;
 }
 
 /** Walks up from a package's entry file to the folder whose package.json names it. */
@@ -1937,9 +1939,9 @@ export async function createLocalServiceSources(
       ? {}
       : {
           recipePackageDirectory: async (name: string, version?: string) =>
-            marketplace?.localPackages.get(name) ??
+            (marketplace?.localPackages.get(name) && (!version || JSON.parse(readFileSync(join(marketplace.localPackages.get(name)!, "package.json"), "utf8")).version === version) ? marketplace.localPackages.get(name) : undefined) ??
             (input.systemStore
-              ? await installedPackageDirectory(input.systemStore, name)
+              ? await installedPackageDirectory(input.systemStore, name, version)
               : undefined) ??
             // Offered by the allow-list but never installed: fetch exactly the locked version.
             (version && marketplace?.gate

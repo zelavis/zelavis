@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { createHostOperationBroker, createMemorySystemStore, zelavis } from "../dist/index.js";
 import { createZelavisClient, ZelavisClientHttpError } from "../dist/sdk/fetch.js";
 import { runCli } from "../dist/cli/commands.js";
 
@@ -63,10 +63,11 @@ function projectRuntime() {
   };
 }
 
-async function boot(t) {
+async function boot(t, options = {}) {
   const runtime = projectRuntime();
   const zv = await zelavis({
     systemStore: createMemorySystemStore(),
+    ...(options.broker ? { hostOperations: options.broker } : {}),
     projectRuntime: runtime,
     deploymentBackends: [{
       id: "native",
@@ -77,6 +78,7 @@ async function boot(t) {
     }],
     serviceRegistry: {
       catalog: [
+        { ...recipe("acme/packages"), service: { ...recipe("acme/packages").service, project: { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] } } },
         recipe("acme/plain"),
         recipe("acme/advised", { network: "advisory" }),
         recipe("acme/vm-only", { boundary: { minimum: "microvm", enforcement: "required" } }),
@@ -260,4 +262,38 @@ test("validation, not-found and authorization failures are equivalent", async (t
   const usage = await cli(fetcher, ["start"]);
   assert.equal(usage.exitCode, 1);
   assert.match(usage.stderr.error, /requires a Project id/);
+});
+
+
+test("package approval has HTTP, SDK and CLI parity and independent system authorization", async (t) => {
+  const { createAuthorityKey } = await import("./fixtures/authority-keys.mjs");
+  const key = await createAuthorityKey({ keyId: "package-test" });
+  const submitted = [];
+  const manifest = { id: "zelavis.packages-install", version: "v1", sha256: "a".repeat(64), interpreter: "/bin/sh", arguments: { set: { required: true, pattern: "^wordpress-stack$" } }, authorization: { permission: "server.packages.install", scope: "system" } };
+  let fail = false;
+  const agent = {
+    hostOperationCatalog: async () => ({ agentId: "agent", operations: [manifest] }),
+    submitHostOperation: async (request) => { submitted.push(request); return { ...request, agentId: "agent", status: fail ? "failed" : "succeeded", attempts: 1, events: [], createdAt: "", updatedAt: "" }; },
+    getHostOperation: async () => undefined,
+  };
+  const broker = createHostOperationBroker({ agent, signer: { keyId: "package-test", privateKey: key.privateKey }, store: createMemorySystemStore() });
+  const { zv, client, fetcher } = await boot(t, { broker });
+  const denied = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "denied-packages", recipeName: "acme/packages", installHostPackages: true }) }), { principal: { id: "builder", type: "user", permissions: ["projects.create"] } });
+  assert.equal(denied.status, 403);
+  assert.match((await denied.json()).error, /server.packages.install/);
+  assert.equal(submitted.length, 0);
+  await assert.rejects(client.projects.get("denied-packages"), (e) => e.status === 404);
+  await client.projects.create({ name: "existing-packages", recipeName: "acme/packages" });
+  assert.equal(submitted.length, 0, "approval is never inferred from recipe metadata or create permission");
+  const created = await client.projects.create({ name: "sdk-packages", recipeName: "acme/packages", installHostPackages: true });
+  assert.deepEqual(created.recipe.hostPackages, ["wordpress-stack"]);
+  assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0].arguments, { set: "wordpress-stack" });
+  assert.equal((await cli(fetcher, ["create", "cli-packages", "--recipe", "acme/packages", "--install-host-packages"])).exitCode, 0);
+  assert.equal(submitted.length, 2);
+  await assert.rejects(client.projects.create({ name: "invalid", recipeName: "acme/packages", installHostPackages: "yes" }), (e) => e.status === 400);
+  assert.equal(submitted.length, 2);
+  fail = true;
+  await assert.rejects(client.projects.create({ name: "failed-packages", recipeName: "acme/packages", installHostPackages: true }), (e) => e.status === 502 && e.body.code === "HOST_PACKAGES_FAILED" && /^hostop_/.test(e.body.operationId));
+  await assert.rejects(client.projects.get("failed-packages"), (e) => e.status === 404);
 });
