@@ -7,6 +7,7 @@ import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { getManagedProject } from "#/lib/routing";
+import { projectSiteUrl } from "#/lib/project-site-url";
 import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
@@ -56,6 +57,7 @@ export default function ManagedProjectSectionRoute() {
   const { projects } = useRouteLoaderData<typeof rootClientLoader>("root")!;
   const project = projects.find((candidate) => candidate.id === params.projectId);
   const managed = getManagedProject(project);
+  const siteUrl = project ? projectSiteUrl(project) : undefined;
 
   // This route's pattern swallows every single-segment path under a project,
   // which is also where a service's project-surface pages live. A Zelavis-native
@@ -93,11 +95,11 @@ export default function ManagedProjectSectionRoute() {
         title="Managed app boundary"
         description="This project does not expose Zelavis-native sections like Auth, Content, and Plugins. It gets hosting controls similar to managed WordPress or generic app hosting."
       />
-      {managed.adminPath && params.managedSection === "admin" && project?.runtime.url ? (
+      {managed.adminPath && params.managedSection === "admin" && siteUrl ? (
         <Button
           className="w-fit"
           render={<a
-            href={`${project.runtime.url.replace(/\/$/, "")}${managed.adminPath}`}
+            href={`${siteUrl.replace(/\/$/, "")}${managed.adminPath}`}
             target="_blank"
             rel="noreferrer"
           />}

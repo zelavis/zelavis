@@ -50,12 +50,58 @@ if (phase === "claim") {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
-    const project = await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    let project = phase === "verify-preview" ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    if (phase === "verify-preview") {
+      for(let attempt=0; attempt<120 && project.runtime.status !== "running"; attempt++) {
+        await new Promise(resolve=>setTimeout(resolve,500));
+        project=await client.projects.get(project.id);
+      }
+    }
     assert.equal(project.runtime.status, "running", JSON.stringify(project));
     const response = await fetch(project.runtime.url, { redirect: "manual" });
-    assert.equal(response.status, 302);
-    assert.match(response.headers.get("location"), /install.php/);
-    console.log(`PASS: unprivileged WordPress Project answers ${response.status} with the installer redirect.`);
+    if (phase !== "verify-preview") {
+      assert.equal(response.status, 302);
+      assert.match(response.headers.get("location"), /install.php/);
+    }
+    assert.equal(project.preview.status, "ready", JSON.stringify(project.preview));
+    const previewUrl = `http://127.0.0.1:${project.preview.port}`;
+    const { writeFile } = await import("node:fs/promises");
+    if (phase !== "verify-preview") {
+      const address = execFileSync("hostname",["-I"],{encoding:"utf8"}).trim().split(/\s+/)[0];
+      const externalOrigin = `http://${address}:${project.preview.port}`;
+      const external = await fetch(externalOrigin,{redirect:"manual"});
+      assert.equal(external.status,302,"preview must listen on the server network interface");
+      assert.equal(new URL(external.headers.get("location")).origin,externalOrigin);
+      const installer = await fetch(previewUrl, {redirect:"manual"});
+      assert.equal(installer.status,302);
+      assert.equal(new URL(installer.headers.get("location")).origin,previewUrl);
+      const install = await fetch(`${previewUrl}/wp-admin/install.php?step=2`, {
+        method:"POST",body:new URLSearchParams({weblog_title:"Preview qualification",user_name:"preview_owner",admin_password:"Disposable Preview Password 2026!",admin_password2:"Disposable Preview Password 2026!",admin_email:"preview@example.test",blog_public:"0",pw_weak:"1",Submit:"Install WordPress"}),
+      });
+      assert.match(await install.text(),/Success!|WordPress has been installed/i);
+      await writeFile("/var/lib/zelavis/qualification-preview",String(project.preview.port));
+    } else {
+      assert.equal(String(project.preview.port),await readFile("/var/lib/zelavis/qualification-preview","utf8"));
+    }
+    const loginPage = await fetch(`${previewUrl}/wp-login.php`);
+    const testCookies = loginPage.headers.getSetCookie().map(value=>value.split(";")[0]).join("; ");
+    const login = await fetch(`${previewUrl}/wp-login.php`, {
+      method:"POST",redirect:"manual",headers:{cookie:testCookies},
+      body:new URLSearchParams({log:"preview_owner",pwd:"Disposable Preview Password 2026!",testcookie:"1",redirect_to:`${previewUrl}/wp-admin/`}),
+    });
+    assert.equal(login.status,302);
+    assert.equal(new URL(login.headers.get("location")).origin,previewUrl);
+    const loginCookies=login.headers.getSetCookie().map(value=>value.split(";")[0]).join("; ");
+    assert.match(loginCookies,/wordpress_logged_in_/);
+    let admin=await fetch(`${previewUrl}/wp-admin/`,{headers:{cookie:loginCookies},redirect:"manual"});
+    for(let hop=0; hop<5 && [301,302,303,307,308].includes(admin.status);hop++) {
+      const target = new URL(admin.headers.get("location"),previewUrl);
+      assert.equal(target.origin,previewUrl,`Admin redirected to ${target}`);
+      admin=await fetch(target,{headers:{cookie:loginCookies},redirect:"manual"});
+    }
+    assert.equal(admin.status,200,`Admin ${admin.status}: ${admin.headers.get("location")}`);
+    assert.match(await admin.text(),/Dashboard/);
+    console.log(`PASS: public preview installation, redirects, login and wp-admin${phase === "verify-preview" ? " after Platform restart with the same port" : ""}.`);
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
@@ -67,7 +113,10 @@ if (phase === "claim") {
     }
     assert.equal(record.agent.status, "succeeded");
     assert.equal(record.agent.result.changed, false);
-    await client.projects.remove(project.id);
-    console.log("PASS: package installation is idempotent and Project deletion completes.");
+    if (phase === "verify-preview") {
+      await client.projects.remove(project.id);
+      await assert.rejects(fetch(previewUrl));
+      console.log("PASS: package installation is idempotent and Project deletion closes preview ingress.");
+    }
   }
 }

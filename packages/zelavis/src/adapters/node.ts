@@ -2,6 +2,9 @@ import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnersh
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { readFile } from "node:fs/promises";
+import { createZelavisEdgePreviews } from "../edge/previews.js";
+import { fetchNodeSite } from "./_node-site-fetch.js";
+import { createNodeEdgePreviewHost } from "./_node-edge-previews.js";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -105,6 +108,8 @@ export interface NodeAdapterSystemStoreOptions {
 }
 
 export interface NodeAdapterProjectOptions {
+  /** Public preview ingress. Defaults to the installation's exposure; false disables previews. */
+  previewHost?: string | false;
   directory?: string;
   startupTimeoutMs?: number;
   startupConcurrency?: number;
@@ -498,6 +503,13 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const remoteEnvironment = !isProjectRuntime && agentRunner
         ? createAgentRemoteEnvironment({ runner: agentRunner })
         : undefined;
+      const edgePreviews = !isProjectRuntime && projectsEnabled && systemStore && projectOptions?.previewHost !== false
+        ? createZelavisEdgePreviews({
+            store: systemStore,
+            host: createNodeEdgePreviewHost(projectOptions?.previewHost ?? (options.installation?.edge ? "0.0.0.0" : "127.0.0.1")),
+          })
+        : undefined;
+      if (edgePreviews) stores.add(edgePreviews);
 
       return {
         subsystems: nextSubsystems,
@@ -507,6 +519,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         ...(projectDispatcher ? { projectDispatcher } : {}),
         resources: {
           systemStore,
+          publicSiteFetch: fetchNodeSite,
           projectRuntime: projectsEnabled ? projectRuntime : undefined,
           deploymentBackends: isProjectRuntime
             ? undefined
@@ -518,6 +531,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),
+          ...(edgePreviews ? { edgePreviews } : {}),
           ...(edgeCertificates ? { edgeCertificates } : {}),
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,

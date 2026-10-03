@@ -38,6 +38,7 @@ import {
   type RuntimeProject,
 } from "#/lib/runtime-api";
 import { toDashboardPath, toProjectPath } from "#/lib/routing";
+import { projectSiteUrl } from "#/lib/project-site-url";
 import {
   parseAsString,
   useTypedSearchParams,
@@ -400,6 +401,7 @@ function ProjectsRoute() {
       {filteredProjects.length > 0 ? (
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredProjects.map((project) => {
+            const siteUrl = projectSiteUrl(project);
             const isRunning = project.runtime.status === "running";
             const isPending = pendingProjectId === project.id;
             return (
@@ -435,18 +437,23 @@ function ProjectsRoute() {
                       <dt className="text-muted-foreground">Runtime</dt>
                       <dd className="truncate font-medium">
                         <span className="capitalize">{project.runtimeKind}</span>
-                        {" · "}
-                        {project.runtime.url ? (
+                        {" · "}{project.runtime.driver}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Site</dt>
+                      <dd className="truncate font-medium">
+                        {siteUrl ? (
                           <a
-                            href={project.runtime.url}
+                            href={siteUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
                           >
-                            {project.runtime.url}
+                            {siteUrl}
                           </a>
                         ) : (
-                          project.runtime.driver
+                          project.preview?.status === "unavailable" ? "Preview unavailable" : "Not published"
                         )}
                       </dd>
                     </div>
@@ -460,6 +467,7 @@ function ProjectsRoute() {
                   {project.runtime.error ? (
                     <p className="text-sm text-destructive">{project.runtime.error}</p>
                   ) : null}
+                  {project.preview?.error ? <p className="text-sm text-destructive">{project.preview.error}</p> : null}
                   {project.recipeStatus && project.recipeStatus.state !== "current" ? (
                     <RecipeUpgradeNotice
                       project={project}

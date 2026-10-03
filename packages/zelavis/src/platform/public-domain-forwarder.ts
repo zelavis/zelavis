@@ -42,6 +42,8 @@ const PUBLIC_RESPONSE_HOP_BY_HOP = Object.freeze([
 
 export interface PublicDomainForwarderOptions {
   readonly domainBindings?: DomainBindingStore;
+  readonly protectedCookieNames?: readonly string[];
+  readonly fetchSite?: (url: URL, init: RequestInit) => Promise<Response>;
   /**
    * Resolved per request rather than captured.
    *
@@ -73,6 +75,29 @@ export async function resolveVerifiedBinding(
   return binding;
 }
 
+async function boundedBody(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
+  if (!body) return new Uint8Array();
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const item = await reader.read();
+      if (item.done) break;
+      bytes += item.value.byteLength;
+      if (bytes > MAX_PUBLIC_BODY_BYTES) {
+        await reader.cancel();
+        throw new RangeError("Site body exceeds its ingress limit.");
+      }
+      chunks.push(item.value);
+    }
+  } finally { reader.releaseLock(); }
+  const result = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+  return result;
+}
+
 function publicResponseHeaders(source: Headers): Headers {
   const headers = new Headers(source);
   for (const header of PUBLIC_RESPONSE_HOP_BY_HOP) headers.delete(header);
@@ -98,6 +123,22 @@ export async function forwardPublicRequest(
   const project = await projects.get(binding.projectId).catch(() => undefined);
   if (!project) return undefined;
 
+  return forwardProjectSiteRequest({ projects, project, protectedCookieNames: options.protectedCookieNames, fetchSite: options.fetchSite }, request);
+}
+
+/** Shared anonymous site ingress for verified hostnames and per-Project previews. */
+export async function forwardProjectSiteRequest(
+  options: {
+    readonly projects: Pick<ZelavisProjectManager, "listOwned">;
+    readonly project: { readonly id: string; readonly runtime: { readonly status: string; readonly url?: string } };
+    readonly protectedCookieNames?: readonly string[];
+  readonly fetchSite?: (url: URL, init: RequestInit) => Promise<Response>;
+  },
+  request: Request,
+): Promise<ZelavisRouteResponse> {
+  const { projects, project } = options;
+  const url = new URL(request.url);
+  const protectedCookies = new Set(["zelavis_session", ...(options.protectedCookieNames ?? [])]);
   if (project.runtime.status !== "running" || !project.runtime.url) {
     return {
       status: 503,
@@ -109,29 +150,48 @@ export async function forwardPublicRequest(
   // A visitor reaches the Project's public surface. Its control plane is not
   // published on a bound domain: it is reached through the dashboard, where the
   // caller has a Platform identity.
-  const path = url.pathname.replace(/^\/+/, "");
+  let path: string;
+  try { path = decodeURIComponent(url.pathname).replace(/^\/+/, ""); }
+  catch { return { status: 400, body: { error: "Invalid path." } }; }
   if (path === "zelavis" || path.startsWith("zelavis/")) {
     return { status: 404, body: { error: "Not found" } };
   }
 
   const frontend = await findRunningFrontend(projects, project.id);
   const target = resolveProxyTarget(
-    frontend?.url ?? project.runtime.url,
-    path,
+    new URL(frontend?.url ?? project.runtime.url).origin,
+    url.pathname.replace(/^\/+/, ""),
   );
   if (!target) return { status: 400, body: { error: "Invalid path." } };
+  // Directory URLs must retain their slash: Nginx redirects /wp-admin to
+  // /wp-admin/, and removing it on every hop creates an endless redirect.
+  if (url.pathname.endsWith("/") && !target.pathname.endsWith("/")) target.pathname += "/";
   target.search = url.search.replace(/^\?/, "");
 
   // No authority envelope: a visitor has no Platform identity, and the target
   // may be third-party frontend code.
   const headers = gatewayRequestHeaders(request.headers);
+  // Site cookies must return to the site for login to work. Platform cookies
+  // never travel into Project code, even when previews share its IP address.
+  const cookies = (request.headers.get("cookie") ?? "").split(";")
+    .map((cookie) => cookie.trim()).filter((cookie) => {
+      const name = cookie.split("=", 1)[0]?.trim();
+      return name && !protectedCookies.has(name);
+    }).join("; ");
+  if (cookies) headers.set("cookie", cookies);
+  for (const name of [...headers.keys()]) {
+    if (name.startsWith("x-forwarded-") || name === "forwarded") headers.delete(name);
+  }
+  headers.set("host", url.host);
+  headers.set("x-forwarded-host", url.host);
+  headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
 
-  const body =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.clone().arrayBuffer();
-  if (body && body.byteLength > MAX_PUBLIC_BODY_BYTES) {
-    return { status: 413, body: { error: "Request body is too large." } };
+  let body: Uint8Array | undefined;
+  try {
+    if (request.method !== "GET" && request.method !== "HEAD") body = await boundedBody(request.body);
+  } catch (error) {
+    if (error instanceof RangeError) return { status: 413, body: { error: "Request body is too large." } };
+    throw error;
   }
 
   const timeout = AbortSignal.timeout(PUBLIC_FORWARD_TIMEOUT_MS);
@@ -141,12 +201,12 @@ export async function forwardPublicRequest(
 
   let response: Response;
   try {
-    response = await fetch(target, {
+    response = await (options.fetchSite ?? fetch)(target, {
       method: request.method,
       headers,
       redirect: "manual",
       signal,
-      ...(body && body.byteLength > 0 ? { body } : {}),
+      ...(body && body.byteLength > 0 ? { body: body as BodyInit } : {}),
     });
   } catch (cause) {
     if (
@@ -162,16 +222,31 @@ export async function forwardPublicRequest(
     throw cause;
   }
 
-  const responseBody = await response.arrayBuffer();
-  if (responseBody.byteLength > MAX_PUBLIC_BODY_BYTES) {
-    return { status: 502, body: { error: "This site returned too much data." } };
+  let responseBody: Uint8Array;
+  try { responseBody = await boundedBody(response.body); }
+  catch (error) {
+    if (error instanceof RangeError) return { status: 502, body: { error: "This site returned too much data." } };
+    throw error;
   }
 
+  const responseHeaders = publicResponseHeaders(response.headers);
+  responseHeaders.delete("set-cookie");
+  for (const cookie of response.headers.getSetCookie()) {
+    const name = cookie.split("=", 1)[0]?.trim();
+    if (name && !protectedCookies.has(name)) responseHeaders.append("set-cookie", cookie);
+  }
+  const location = responseHeaders.get("location");
+  if (location) {
+    try {
+      const redirect = new URL(location, target);
+      if (redirect.origin === target.origin) {
+        responseHeaders.set("location", `${url.origin}${redirect.pathname}${redirect.search}${redirect.hash}`);
+      }
+    } catch { /* Preserve a site's non-URL response rather than guessing. */ }
+  }
   return {
     status: response.status,
-    // `set-cookie` is deliberately preserved: this response is served from the
-    // Project's own domain, so its cookies are its own.
-    headers: publicResponseHeaders(response.headers),
+    headers: responseHeaders,
     body: new Uint8Array(responseBody),
   };
 }

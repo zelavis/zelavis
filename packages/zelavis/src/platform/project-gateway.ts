@@ -356,7 +356,7 @@ export function isRuntimeControlPlanePath(wildcardPath: string): boolean {
  * than failing, so a half-finished replacement cannot take the site down.
  */
 export async function findRunningFrontend(
-  projects: ZelavisProjectManager,
+  projects: Pick<ZelavisProjectManager, "listOwned">,
   projectId: string,
 ): Promise<{ readonly url: string } | undefined> {
   const owned = await projects.listOwned(projectId).catch(() => []);

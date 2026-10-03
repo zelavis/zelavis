@@ -425,3 +425,12 @@ requires `server.packages.install` independently of `projects.create`. Never add
 APT/sudo or root escalation to a Project recipe. The package operation preserves
 existing host service policy, suppresses only its APT process tree, and uninstall
 restores only its recorded policy; shared dependencies remain installed.
+
+Project preview ingress belongs to Zelavis Edge (`edge.previews` in the System
+Store), never the runtime driver's private URL. Node previews bind one stable
+HTTP port per local top-level Project, following the Platform's listen host.
+Stop closes the listener; deletion removes its durable intent. Preserve the
+visitor Host, redirects and site cookies through host transport while stripping
+Platform cookies and authority headers. Cookie-authenticated mutations require
+the same browser origin; ports do not isolate cookies. Remote placements must
+not publish a local listener pointing at another Node's loopback address.

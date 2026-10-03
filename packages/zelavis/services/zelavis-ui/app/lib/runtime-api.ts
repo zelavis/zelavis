@@ -244,6 +244,7 @@ export interface RuntimeDeploymentBackendPolicy {
 }
 
 export interface RuntimeProject {
+  preview?: { status: "ready" | "stopped" | "unavailable"; port?: number; error?: string };
   id: string;
   name: string;
   kind: string;

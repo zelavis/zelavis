@@ -1495,3 +1495,13 @@ Required architecture rule:
 - host/framework/provider-specific behavior must live only in `adapters/*` or equivalent adapter boundaries
 - core packages must remain portable and runtime-neutral
 - Zelavis must never require a specific JS runtime, hosting provider, or framework as its architectural base
+
+Project preview ingress belongs to Zelavis Edge (`edge.previews` in the System
+Store), not a Project runtime URL. The Node host binds a stable HTTP port per
+local top-level Project using the Platform's listen host; a stop closes it and
+Project deletion removes its intent. Site links combine that port with the
+browser's dashboard hostname. Preserve visitor Host, site cookies and redirects
+through native host transport, withhold Platform cookies and authority, and
+require the same browser origin for cookie-authenticated changes. Ports do not
+isolate cookies. Remote placements cannot publish a local preview of another
+Node's loopback target.

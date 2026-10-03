@@ -1051,3 +1051,5 @@ export * from "./onboarding.js";
 export * from "./acme-crypto.js";
 export * from "./acme-client.js";
 export * from "./certificates.js";
+export { createZelavisEdgePreviews } from "./previews.js";
+export type { ZelavisEdgePreviews, ZelavisEdgePreviewHost, ZelavisProjectPreview } from "./previews.js";

@@ -121,6 +121,15 @@ export function createSessionAuthenticator(
           challenge: { scheme: "Bearer" },
         });
       }
+      if (!bearer && cookie && !["GET", "HEAD", "OPTIONS"].includes(context.request.method)) {
+        const origin = context.request.headers.get("origin");
+        const site = context.request.headers.get("sec-fetch-site");
+        if (origin ? origin !== new URL(context.request.url).origin : site && site !== "same-origin") {
+          throw new ZelavisAuthenticationError("Cookie-authenticated changes require the Platform's own origin.", {
+            challenge: { scheme: "Bearer" },
+          });
+        }
+      }
       return toPrincipal(
         account,
         session.id,

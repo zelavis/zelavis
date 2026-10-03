@@ -44,6 +44,12 @@ printf 'deb [trusted=yes] http://127.0.0.1:9 unavailable main\n' > /etc/apt/sour
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" cancel
 rm /etc/apt/sources.list.d/zelavis-cancel.list
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" create
+systemctl restart zelavis.service
+for attempt in $(seq 1 60); do
+  if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+  sleep 1
+done
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" verify-preview
 /opt/zelavis/current/bin/zelavis doctor --json
 # Prove complete removal restores a policy that normal host maintenance can use.
 /opt/zelavis/current/bin/zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA

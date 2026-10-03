@@ -173,3 +173,9 @@ After substantial UI changes, verify the mounted dashboard flow still works at:
 
 - `http://127.0.0.1:3000/zelavis`
 - `http://127.0.0.1:3001/zelavis/`
+
+Site and managed Admin links use the Project's derived `preview` descriptor
+and the dashboard browser hostname, through `projectSiteUrl`. `runtime.url`
+is an Agent's private target and cannot be offered to a remote browser. An
+unavailable preview must be visible without mislabeling the running app as
+failed. Previews terminate HTTP; do not infer HTTPS from the dashboard URL.

@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { createHostOperationBroker, createMemorySystemStore, zelavis } from "../dist/index.js";
 import { createZelavisClient, ZelavisClientHttpError } from "../dist/sdk/fetch.js";
+import { createZelavisEdgePreviews } from "../dist/edge/previews.js";
+import { createNodeEdgePreviewHost } from "../dist/adapters/_node-edge-previews.js";
 import { runCli } from "../dist/cli/commands.js";
 
 const OWNER = { principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] } };
@@ -67,6 +69,7 @@ async function boot(t, options = {}) {
   const runtime = projectRuntime();
   const zv = await zelavis({
     systemStore: createMemorySystemStore(),
+    ...(options.edgePreviews ? { edgePreviews: options.edgePreviews } : {}),
     ...(options.broker ? { hostOperations: options.broker } : {}),
     projectRuntime: runtime,
     deploymentBackends: [{
@@ -296,4 +299,22 @@ test("package approval has HTTP, SDK and CLI parity and independent system autho
   fail = true;
   await assert.rejects(client.projects.create({ name: "failed-packages", recipeName: "acme/packages", installHostPackages: true }), (e) => e.status === 502 && e.body.code === "HOST_PACKAGES_FAILED" && /^hostop_/.test(e.body.operationId));
   await assert.rejects(client.projects.get("failed-packages"), (e) => e.status === 404);
+});
+
+
+test("the same preview descriptor is read through HTTP, SDK and CLI", async (t) => {
+  const edge = createZelavisEdgePreviews({ store: createMemorySystemStore(), host: createNodeEdgePreviewHost("127.0.0.1") });
+  const { fetcher, client } = await boot(t, { edgePreviews: edge });
+  const project = await client.projects.create({ id: "preview-site", name: "Preview", recipeName: "acme/plain" });
+  assert.equal(project.preview.status, "ready");
+  const httpRecord = await http(fetcher, "GET", "/projects/preview-site");
+  const cliRecord = await cli(fetcher, ["get", "preview-site"]);
+  assert.equal(cliRecord.exitCode, 0);
+  assert.deepEqual(httpRecord.body.project.preview, project.preview);
+  assert.deepEqual(cliRecord.stdout.project.preview, project.preview);
+  await client.projects.stop(project.id);
+  await assert.rejects(fetch(`http://127.0.0.1:${project.preview.port}`));
+  assert.equal((await client.projects.start(project.id)).preview.port, project.preview.port);
+  await client.projects.remove(project.id);
+  await assert.rejects(fetch(`http://127.0.0.1:${project.preview.port}`));
 });

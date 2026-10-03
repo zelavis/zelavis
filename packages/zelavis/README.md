@@ -1088,3 +1088,11 @@ generated routes, and the existing SDK and CLI discover those operations.
 Use `{ routes: false }` for local authoring helpers and `operations.create`
 for explicit schemas, response codes, and route contracts. See the
 [plugin API guide](../../website/src/content/docs/guides/plugin-api.md).
+
+Running local Projects receive a separate HTTP preview port from Zelavis Edge.
+The dashboard's Site and managed Admin links use its browser hostname and that
+port, so an installed VPS shows a reachable server address rather than the
+Project's private loopback target. The port survives Project and Platform
+restarts, closes while stopped, and is removed on deletion. Previews follow the
+Platform's listen host; remote Node previews are unavailable. Preview HTTP is
+separate from hostname and HTTPS configuration.

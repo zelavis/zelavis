@@ -109,13 +109,12 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
       // Projects run through a separately supervised Agent when the host
       // names its endpoint (the packaged zelavis-agent unit); otherwise they
       // run in this process.
-      ...(process.env.ZELAVIS_AGENT_ENDPOINT || remoteDispatch
-        ? { projects: {
-            ...(process.env.ZELAVIS_AGENT_ENDPOINT
-              ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
-            ...(remoteDispatch ? { remoteDispatch } : {}),
-          } }
-        : {}),
+      projects: {
+        previewHost: options.host,
+        ...(process.env.ZELAVIS_AGENT_ENDPOINT
+          ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
+        ...(remoteDispatch ? { remoteDispatch } : {}),
+      },
     }),
     onError: ({ error }) => ({
       status: 400,

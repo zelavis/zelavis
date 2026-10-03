@@ -72,6 +72,9 @@ import {
   createProjectGatewayRoutes,
 } from "./platform/project-gateway.js";
 import { createAssistantProjectReader } from "./platform/assistant-project-reader.js";
+import type { ZelavisEdgePreviews } from "./edge/previews.js";
+import { forwardProjectSiteRequest } from "./platform/public-domain-forwarder.js";
+import { toResponse } from "./core/runtime/request-dispatcher.js";
 import { deleteAppShardPlacementReservations } from "./platform/app-data-placement.js";
 import {
   createProjectPlacementAuthority,
@@ -569,6 +572,9 @@ export interface ZelavisServerOptions {
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. Defaults to System Store backing. */
   edgeRoutes?: ZelavisEdgeRouteStore;
+  /** Platform-owned public per-Project preview ingress, supplied by the host. */
+  edgePreviews?: ZelavisEdgePreviews;
+  publicSiteFetch?: (url: URL, init: RequestInit) => Promise<Response>;
   /** Edge certificate authority and ACME controller. */
   edgeCertificates?: ZelavisCertificateController;
   assistant?: false | ZelavisAssistantResponder | AssistantModelOption;
@@ -716,6 +722,8 @@ export interface ZelavisMarketplaceRefreshReport extends ZelavisMarketplaceAllow
 }
 
 export interface ZelavisPlatformResources {
+  edgePreviews?: ZelavisEdgePreviews;
+  publicSiteFetch?: (url: URL, init: RequestInit) => Promise<Response>;
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
   deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
@@ -6157,12 +6165,18 @@ export async function zelavis(
   // Filled in once mounting resolves them, and read at request time.
   let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
 
+  const configuredAuth = options.subsystems?.auth;
+  const configuredSessionCookie = typeof configuredAuth === "object" ? configuredAuth.definition?.sessionCookie : undefined;
+  const protectedCookieNames = configuredSessionCookie && configuredSessionCookie.name ? [configuredSessionCookie.name] : [];
+
   const websiteService = !siteEnabled || projectSiteFrontend
       ? undefined
       : createProjectFrontendPlaceholderService({
           reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
           ...(options.role === "project" ? {} : { redirectTo: rootPath }),
           publicDomains: {
+            protectedCookieNames,
+            fetchSite: options.publicSiteFetch,
             ...(options.domainBindings ? { domainBindings: options.domainBindings } : {}),
             // Late-bound: the Project manager is composed after this service.
             projects: () => projects,
@@ -6234,6 +6248,7 @@ export async function zelavis(
           projectRecipes: serviceRegistry,
           store: systemStore,
           runtime: projectRuntime,
+          ...(options.edgePreviews ? { synchronizeIngress: (project) => options.edgePreviews!.synchronize(project) } : {}),
           // Resolved lazily: Fabric is composed further down, after the
           // Project manager it plans for. Reconciliation is deferred to match,
           // because it runs once and a pass before Fabric exists would enforce
@@ -6292,6 +6307,10 @@ export async function zelavis(
               }
             : {}),
           cleanupParticipants: [
+            ...(options.edgePreviews ? [{
+              id: "edge-preview",
+              cleanup: (project: Readonly<ZelavisProjectRecord>) => options.edgePreviews!.remove(project.id),
+            }] : []),
             {
               id: "project-placement-authority",
               cleanup: (project: Readonly<ZelavisProjectRecord>) =>
@@ -6439,6 +6458,20 @@ export async function zelavis(
   // Composition is far enough along for placement to resolve, so the startup
   // reconcile can run with the group rule in force. Fire-and-forget, as before:
   // Platform readiness does not wait for every Project runtime.
+  options.edgePreviews?.configure(async (projectId, request) => {
+    const project = await projects?.get(projectId);
+    if (!project || project.deletion) return new Response("Site not found.", { status: 404 });
+    const placement = await fabricCoreService?.context.getProjectPlacement(projectId);
+    const node = placement ? await fabricCoreService?.context.getNode(placement.runtimeNodeId) : undefined;
+    if (!placement || placement.identity.type !== "project" || placement.identity.workloadId !== projectId || placement.state !== "active" || !node || node.status === "unavailable") {
+      return new Response("Site placement is unavailable.", { status: 503 });
+    }
+    // Preview requests are visitors, never Platform principals. The site's
+    // native control-plane paths and Platform credentials are withheld.
+    return toResponse(await forwardProjectSiteRequest({ projects: projects!, project,
+      protectedCookieNames, fetchSite: options.publicSiteFetch,
+    }, request));
+  });
   void projects?.reconcile();
   const platformEndpointGroup = await resolvePlatformEndpointGroup(
     serviceRegistry,
@@ -6553,6 +6586,7 @@ export async function zelavis(
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closePromise ??= (async () => {
+      await options.edgePreviews?.close();
       await projects?.close();
       // The shards are a scoped resource this runtime acquired, so closing it
       // has to release them. Closing twice is already safe.
@@ -6977,6 +7011,8 @@ function applyPlatformResourceDefaults(
     remoteEnvironment: options.remoteEnvironment ?? resources.remoteEnvironment,
     edge: options.edge ?? resources.edge,
     edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,
+    edgePreviews: options.edgePreviews ?? resources.edgePreviews,
+    publicSiteFetch: options.publicSiteFetch ?? resources.publicSiteFetch,
     edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,
   };
 }

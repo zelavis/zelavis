@@ -1,4 +1,5 @@
 import { normalizeProjectHostPackages } from "./project-host-packages.js";
+import type { ZelavisProjectPreview } from "./edge/previews.js";
 import type {
   FabricPlacementPlan,
   FabricProjectPlacementRequest,
@@ -138,6 +139,8 @@ export interface ZelavisProjectRecipeUpgrade {
 }
 
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
+  /** Derived Edge ingress state, never the Agent's private runtime target. */
+  preview?: ZelavisProjectPreview;
   capabilities: ZelavisProjectDriverCapabilities;
   /** Whether a newer recipe is available for this Project. Derived on every read. */
   recipeStatus?: ZelavisProjectRecipeStatus;
@@ -749,6 +752,8 @@ export async function createProjectManager(options: {
     runtimeKind: ZelavisProjectRuntimeKind,
   ) => ZelavisDeploymentBackendCapabilities | undefined;
   cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
+  /** Platform ingress follows durable lifecycle changes without altering recipe locks. */
+  synchronizeIngress?: (project: Readonly<ZelavisProjectRecord>) => Promise<ZelavisProjectPreview | undefined>;
   /**
    * Resolved lazily because Fabric is composed after the Project manager, and
    * absent on a host with no Fabric — which reconciles exactly as it did
@@ -1087,8 +1092,19 @@ export async function createProjectManager(options: {
   }
 
   async function write(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
-    await store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(project));
-    return project;
+    const { preview: _preview, ...record } = project;
+    await store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(record));
+    return ingressView(record);
+  }
+
+  async function ingressView(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
+    try {
+      const preview = await options.synchronizeIngress?.(project);
+      return preview ? { ...project, preview } : project;
+    } catch {
+      // Ingress failure is independent of the runtime's durable lifecycle.
+      return { ...project, preview: { status: "unavailable", error: "Site preview ingress is unavailable." } };
+    }
   }
 
   async function requireProject(id: string): Promise<ZelavisProjectRecord> {
@@ -1132,7 +1148,7 @@ export async function createProjectManager(options: {
       snapshot.status === project.runtime.status &&
       snapshot.url === project.runtime.url &&
       snapshot.error === project.runtime.error;
-    return unchanged ? project : write(applySnapshot(project, snapshot));
+    return unchanged ? ingressView(project) : write(applySnapshot(project, snapshot));
   }
 
   async function deleteProject(id: string): Promise<boolean> {
