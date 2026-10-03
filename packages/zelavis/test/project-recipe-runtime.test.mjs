@@ -16,11 +16,11 @@ async function scratch(t) {
 }
 
 /** A recipe package that provides its own runtime, recording what it is asked to do. */
-async function recipePackage(root, { marker = "v1", runtime = "./dist/runtime.js", exportsFactory = true } = {}) {
+async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepare = false, failDestroy = false, runtime = "./dist/runtime.js", exportsFactory = true } = {}) {
   const directory = join(root, "pkg");
   await mkdir(join(directory, "dist"), { recursive: true });
   await writeFile(join(directory, "package.json"), JSON.stringify({
-    name: "@acme/site", version: "1.0.0", type: "module",
+    name: "@acme/site", version, type: "module",
     exports: { ".": { import: "./dist/index.js" } },
     zelavis: { kind: "app", project: { runtimeKinds: ["native"], runtime } },
   }));
@@ -36,6 +36,7 @@ export function createProjectRuntime({ directory, options }) {
     runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 1,
     capabilities: () => ({ description: "acme " + MARKER + " " + (options.flavour ?? "plain") }),
     async prepare(project, recipe) {
+      if (${JSON.stringify(failPrepare)}) throw new Error("candidate preparation failed");
       await mkdir(join(directory, project.id), { recursive: true });
       await writeFile(join(directory, project.id, "project.json"), JSON.stringify({ ...project, recipe }));
       await writeFile(join(directory, project.id, "prepared-by.txt"), MARKER + ":" + (recipe.artifact?.digest ?? "none"));
@@ -44,7 +45,7 @@ export function createProjectRuntime({ directory, options }) {
     async stop(id) { running.delete(id); return { status: "stopped" }; },
     async status(id) { return running.has(id) ? { status: "running" } : { status: "stopped" }; },
     async logs() { return []; },
-    async destroy(id) { running.delete(id); },
+    async destroy(id) { if (${JSON.stringify(failDestroy)}) throw new Error("recipe cleanup failed"); running.delete(id); },
     async close() {},
   };
 }
@@ -186,4 +187,139 @@ test("a recipe source with another version cannot execute or be frozen", async (
   const p = project(); p.recipe.version = "2.0.0";
   await assert.rejects(driver.prepare(p, p.recipe), /does not match its locked name and version/);
   await assert.rejects(access(join(projects, "site", ".zelavis", "recipe")), { code: "ENOENT" });
+});
+
+
+test("a custom recipe upgrades its frozen code in the same process and after restart", async (t) => {
+  const root=await scratch(t);
+  const source=await recipePackage(root);
+  const projects=join(root,"projects");
+  const nest = async () => {
+    await writeFile(join(source,"dist","driver.js"),await readFile(join(source,"dist","runtime.js")));
+    await writeFile(join(source,"dist","runtime.js"),"export { createProjectRuntime } from './driver.js';");
+  };
+  await nest();
+  const driver=router(projects,source); t.after(()=>driver.close());
+  const p=project(); await driver.prepare(p,p.recipe);
+  const old=JSON.parse(await readFile(join(projects,p.id,"project.json"),"utf8"));
+  await writeFile(join(projects,p.id,"keep-data.txt"),"user data");
+  await recipePackage(root,{marker:"v2",version:"2.0.0"});
+  await nest();
+  const next={...p,recipe:{...p.recipe,version:"2.0.0"}};
+  await driver.prepare(next,next.recipe);
+  assert.match(driver.capabilities(next).description,/acme v2/);
+  const upgraded=JSON.parse(await readFile(join(projects,p.id,"project.json"),"utf8"));
+  assert.equal(upgraded.recipe.version,"2.0.0");
+  assert.notEqual(upgraded.recipe.artifact.digest,old.recipe.artifact.digest);
+  await driver.close();
+  const restarted=router(projects,source); t.after(()=>restarted.close());
+  await restarted.adopt();
+  assert.match(restarted.capabilities(next).description,/acme v2/);
+  assert.equal((await restarted.start(next)).status,"running");
+  assert.equal(await readFile(join(projects,p.id,"keep-data.txt"),"utf8"),"user data");
+});
+
+test("a failed custom recipe upgrade retains its original descriptor, artifact and data", async (t) => {
+  const root=await scratch(t); const source=await recipePackage(root); const projects=join(root,"projects");
+  const driver=router(projects,source); t.after(()=>driver.close()); const p=project();
+  await driver.prepare(p,p.recipe);
+  const descriptor=await readFile(join(projects,p.id,"project.json"),"utf8");
+  const manifest=await readFile(join(projects,p.id,".zelavis","recipe","package","package.json"),"utf8");
+  await recipePackage(root,{marker:"broken",version:"2.0.0",failPrepare:true});
+  const next={...p,recipe:{...p.recipe,version:"2.0.0"}};
+  await assert.rejects(driver.prepare(next,next.recipe),/candidate preparation failed/);
+  assert.equal(await readFile(join(projects,p.id,"project.json"),"utf8"),descriptor);
+  assert.equal(await readFile(join(projects,p.id,".zelavis","recipe","package","package.json"),"utf8"),manifest);
+  assert.match(driver.capabilities(p).description,/acme v1/);
+  await driver.close();
+  const restarted=router(projects,source); t.after(()=>restarted.close());
+  assert.equal((await restarted.start(p)).status,"running");
+});
+
+test("a recipe that failed before writing a descriptor can be cleaned up before and after restart", async (t) => {
+  const root=await scratch(t); const source=await recipePackage(root,{failPrepare:true}); const projects=join(root,"projects");
+  const driver=router(projects,source); const p=project();
+  await assert.rejects(driver.prepare(p,p.recipe),/candidate preparation failed/);
+  await rm(join(projects, p.id, "project.json")); // Historical early failure with no host descriptor.
+  assert.equal((await driver.stop(p.id)).status,"stopped");
+  await driver.close();
+  const restarted=router(projects,source); t.after(()=>restarted.close());
+  assert.equal((await restarted.stop(p.id)).status,"stopped");
+  await restarted.destroy(p.id);
+  await assert.rejects(access(join(projects,p.id)),{code:"ENOENT"});
+});
+
+
+test("custom cleanup failures remain retryable instead of deleting the Project directory", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root, { failDestroy: true });
+  const projects = join(root, "projects");
+  const driver = router(projects, source);
+  t.after(() => driver.close());
+  const p = project();
+  await driver.prepare(p, p.recipe);
+  await assert.rejects(driver.destroy(p.id), /recipe cleanup failed/);
+  await access(join(projects, p.id, "project.json"));
+});
+
+test("an unreadable descriptor is refused during cleanup, preserving Project files", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root);
+  const projects = join(root, "projects");
+  const driver = router(projects, source);
+  t.after(() => driver.close());
+  const p = project();
+  await driver.prepare(p, p.recipe);
+  await writeFile(join(projects, p.id, "project.json"), "invalid JSON");
+  await assert.rejects(driver.stop(p.id), SyntaxError);
+  await assert.rejects(driver.destroy(p.id), SyntaxError);
+  await access(join(projects, p.id));
+});
+
+test("missing-descriptor cleanup stops only the Agent's exact Project workload before removing files", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root, { failPrepare: true });
+  const projects = join(root, "projects");
+  const first = router(projects, source);
+  const p = project();
+  await assert.rejects(first.prepare(p, p.recipe), /candidate preparation failed/);
+  await rm(join(projects, p.id, "project.json"));
+  await first.close();
+  let wrongWorkload = true;
+  let stopped = false;
+  const reclaimed = [];
+  const driver = createLocalProjectRuntime({
+    directory: projects,
+    agent: {
+      survivesControlPlaneRestart: true,
+      attach: async id => [{ process: { workloadId: wrongWorkload ? "another-project" : id, stop: async () => { stopped = true; } } }],
+      reclaim: async id => { reclaimed.push(id); },
+      close: async () => {},
+    },
+  });
+  t.after(() => driver.close());
+  await assert.rejects(driver.destroy(p.id), /another Project's process/);
+  assert.equal(stopped, false);
+  assert.deepEqual(reclaimed, []);
+  await access(join(projects, p.id));
+  wrongWorkload = false;
+  await driver.destroy(p.id);
+  assert.equal(stopped, true);
+  assert.deepEqual(reclaimed, [p.id]);
+  await assert.rejects(access(join(projects, p.id)), { code: "ENOENT" });
+});
+
+
+test("failed provisioning records its trusted driver so custom cleanup still runs after restart", async (t) => {
+  const root = await scratch(t);
+  const source = await recipePackage(root, { failPrepare: true, failDestroy: true });
+  const projects = join(root, "projects");
+  const first = router(projects, source);
+  const p = project();
+  await assert.rejects(first.prepare(p, p.recipe), /candidate preparation failed/);
+  await first.close();
+  const restarted = router(projects, source);
+  t.after(() => restarted.close());
+  await assert.rejects(restarted.destroy(p.id), /recipe cleanup failed/);
+  await access(join(projects, p.id));
 });

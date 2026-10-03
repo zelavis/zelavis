@@ -52,7 +52,10 @@ import type { clientLoader as rootClientLoader } from '../root';
 const { runtime, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
 ```
 
-After mutations, trigger a loader rerun with `useRevalidator().revalidate()` — do not manually refetch.
+After mutations, trigger a loader rerun with `useRevalidator().revalidate()` — do not manually refetch. Revalidate failed mutations too: a failed deletion can
+have persisted its tombstone. Project cards with a deletion tombstone disable
+start/restart/upgrade, show the cleanup error, and offer confirmed Retry deletion.
+Never clear a tombstone to make a Project startable.
 
 For sub-component data not tied to a URL (e.g. loading related documents for a field editor), use `useFetcher` pointing at a resource route under `app/routes/api.*.tsx`.
 

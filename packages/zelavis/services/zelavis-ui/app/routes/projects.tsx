@@ -80,7 +80,7 @@ function RecipeUpgradeNotice({
   const [target, setTarget] = useState(recipes[0]?.name ?? "");
   const status = project.recipeStatus;
   const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
-  if (!status || status.state === "current") return null;
+  if (project.deletion || !status || status.state === "current") return null;
   return (
     <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Recipe upgrade">
       <p>
@@ -197,10 +197,10 @@ function ProjectsRoute() {
       });
       setParams({ name: null, new: null, recipe: null });
       setMessage(`${project.name} is running in its own project runtime.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setCreating(false);
     }
   }
@@ -215,10 +215,10 @@ function ProjectsRoute() {
     try {
       await setProjectRunning(rootData.runtime, project.id, running);
       setMessage(`${project.name} ${running ? "started" : "stopped"}.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -233,10 +233,10 @@ function ProjectsRoute() {
     try {
       await restartProject(rootData.runtime, project.id);
       setMessage(`${project.name} restarted.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -253,10 +253,10 @@ function ProjectsRoute() {
       setMessage(
         `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged; start it when you are ready.`,
       );
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -266,7 +266,9 @@ function ProjectsRoute() {
       return;
     }
     const confirmed = window.confirm(
-      `Delete ${project.name}? This permanently removes the project runtime, database, files, and metadata.`,
+      project.deletion
+        ? `Retry deletion of ${project.name}? This permanently removes the remaining project runtime, database, files, and metadata.`
+        : `Delete ${project.name}? This permanently removes the project runtime, database, files, and metadata.`,
     );
     if (!confirmed) {
       return;
@@ -278,10 +280,10 @@ function ProjectsRoute() {
     try {
       await deleteProject(rootData.runtime, project.id);
       setMessage(`${project.name} was deleted.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -402,7 +404,7 @@ function ProjectsRoute() {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredProjects.map((project) => {
             const siteUrl = projectSiteUrl(project);
-            const isRunning = project.runtime.status === "running";
+            const isRunning = project.runtime.status === "running" && !project.deletion;
             const isPending = pendingProjectId === project.id;
             return (
               <Card key={project.id} className="overflow-hidden">
@@ -464,6 +466,14 @@ function ProjectsRoute() {
                       </dd>
                     </div>
                   </dl>
+                  {project.deletion ? (
+                    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Project deletion">
+                      <p className="font-medium">{project.deletion.status === "failed" ? "Deletion failed" : "Deletion in progress"}</p>
+                      <p>This Project is pending deletion. Starting and recipe upgrades are unavailable. Retry deletion to finish removing its remaining resources.</p>
+                      {project.deletion.currentParticipant ? <p>Cleanup step: {project.deletion.currentParticipant}</p> : null}
+                      {project.deletion.error ? <p className="text-destructive">{project.deletion.error}</p> : null}
+                    </div>
+                  ) : null}
                   {project.runtime.error ? (
                     <p className="text-sm text-destructive">{project.runtime.error}</p>
                   ) : null}
@@ -501,7 +511,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending}
+                      disabled={isPending || !!project.deletion}
                       onClick={() => changeProjectState(project, !isRunning)}
                       aria-label={isRunning ? "Stop" : "Start"}
                     >
@@ -510,7 +520,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending || project.runtime.status === "provisioning"}
+                      disabled={isPending || !!project.deletion || project.runtime.status === "provisioning"}
                       onClick={() => handleRestartProject(project)}
                       aria-label="Restart"
                     >
@@ -521,9 +531,10 @@ function ProjectsRoute() {
                       variant="destructive"
                       disabled={isPending}
                       onClick={() => handleDeleteProject(project)}
-                      aria-label="Delete"
+                      aria-label={project.deletion ? "Retry deletion" : "Delete"}
                     >
                       <Trash2 className="size-4" />
+                      {project.deletion ? "Retry deletion" : null}
                     </Button>
                     <AssistantButton
                       label={`Ask Assistant about ${project.name}`}

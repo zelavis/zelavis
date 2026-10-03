@@ -27,7 +27,30 @@ if (phase === "claim") {
   assert.equal(execFileSync("systemctl", ["show", "zelavis.service", "-p", "User", "--value"], { encoding: "utf8" }).trim(), "zelavis");
   const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
   const client = createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl } });
-  if (phase === "cancel") {
+  if (phase === "seed-upgrade") {
+    // Controlled historical-lock fixture on a stopped disposable installation.
+    // No live System Store is edited, and this is not a released recipe version.
+    assert.notEqual(execFileSync("sh", ["-c", "systemctl is-active zelavis.service 2>/dev/null || true"], { encoding: "utf8" }).trim(), "active");
+    const { writeFile } = await import("node:fs/promises");
+    const { createLocalSqliteSystemStore } = await import(pathToFileURL(`${platform}/dist/adapters/_sqlite-system-store.js`).href);
+    const { digestArtifactDirectory } = await import(pathToFileURL(`${platform}/dist/adapters/_recipe-artifact.js`).href);
+    const id = "qualification-wordpress";
+    const directory = `/var/lib/zelavis/projects/${id}`;
+    const frozen = `${directory}/.zelavis/recipe/package`;
+    const manifest = JSON.parse(await readFile(`${frozen}/package.json`, "utf8"));
+    manifest.version = "0.0.0-qualification";
+    await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
+    const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
+    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, artifact: { digest: await digestArtifactDirectory(frozen) } };
+    await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
+    const store = createLocalSqliteSystemStore({ filename: "/var/lib/zelavis/system/zelavis.sqlite" });
+    try {
+      const record = await store.get("projects", id);
+      assert.equal(record.value.desiredState, "stopped");
+      await store.set("projects", id, { ...record.value, recipe: descriptor.recipe });
+    } finally { await store.close(); }
+    console.log("PASS: stopped WordPress historical recipe lock fixture prepared.");
+  } else if (phase === "cancel") {
     await assert.rejects(access("/usr/sbin/nginx"), { code: "ENOENT" });
     const operation = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set: "wordpress-stack" }, deadlineMs: 1000 });
     let record = operation;
@@ -50,7 +73,15 @@ if (phase === "claim") {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
-    let project = phase === "verify-preview" ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    let project = ["verify-preview", "upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    if (phase === "upgrade") {
+      assert.equal(project.recipeStatus.state, "upgradeAvailable");
+      project = await client.projects.upgrade(project.id, {});
+      assert.equal(project.recipe.version, recipes.find(recipe => recipe.name === "@zelavis/wordpress").version);
+      assert.equal(project.runtime.status, "stopped");
+      project = await client.projects.start(project.id);
+      console.log("PASS: authenticated recipe upgrade freezes the current WordPress recipe and starts it.");
+    }
     if (phase === "verify-preview") {
       for(let attempt=0; attempt<120 && project.runtime.status !== "running"; attempt++) {
         await new Promise(resolve=>setTimeout(resolve,500));
@@ -59,14 +90,14 @@ if (phase === "claim") {
     }
     assert.equal(project.runtime.status, "running", JSON.stringify(project));
     const response = await fetch(project.runtime.url, { redirect: "manual" });
-    if (phase !== "verify-preview") {
+    if (phase === "create") {
       assert.equal(response.status, 302);
       assert.match(response.headers.get("location"), /install.php/);
     }
     assert.equal(project.preview.status, "ready", JSON.stringify(project.preview));
     const previewUrl = `http://127.0.0.1:${project.preview.port}`;
     const { writeFile } = await import("node:fs/promises");
-    if (phase !== "verify-preview") {
+    if (phase === "create") {
       const address = execFileSync("hostname",["-I"],{encoding:"utf8"}).trim().split(/\s+/)[0];
       const externalOrigin = `http://${address}:${project.preview.port}`;
       const external = await fetch(externalOrigin,{redirect:"manual"});
@@ -80,6 +111,7 @@ if (phase === "claim") {
       });
       assert.match(await install.text(),/Success!|WordPress has been installed/i);
       await writeFile("/var/lib/zelavis/qualification-preview",String(project.preview.port));
+
     } else {
       assert.equal(String(project.preview.port),await readFile("/var/lib/zelavis/qualification-preview","utf8"));
     }
@@ -101,7 +133,7 @@ if (phase === "claim") {
     }
     assert.equal(admin.status,200,`Admin ${admin.status}: ${admin.headers.get("location")}`);
     assert.match(await admin.text(),/Dashboard/);
-    console.log(`PASS: public preview installation, redirects, login and wp-admin${phase === "verify-preview" ? " after Platform restart with the same port" : ""}.`);
+    console.log(`PASS: public preview installation, redirects, login and wp-admin${phase === "verify-preview" ? " after Platform restart with the same port" : phase === "upgrade" ? " after recipe upgrade with the same account and port" : ""}.`);
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
@@ -113,6 +145,7 @@ if (phase === "claim") {
     }
     assert.equal(record.agent.status, "succeeded");
     assert.equal(record.agent.result.changed, false);
+    if (phase === "create") await client.projects.stop(project.id);
     if (phase === "verify-preview") {
       await client.projects.remove(project.id);
       await assert.rejects(fetch(previewUrl));

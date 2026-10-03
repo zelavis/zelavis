@@ -45,7 +45,20 @@ refuses code that was modified or does not match.
 So updating the recipe package on the Platform never changes what an existing
 Project runs. Moving a stopped Project to a newer recipe is an explicit
 **recipe upgrade**, and the new copy is frozen and swapped in only when complete.
-A failed upgrade leaves the Project as it was. The Project's data is untouched.
+A failed upgrade restores the previous frozen recipe and host descriptor.
+Custom runtime modules load from verified digest-specific copies under
+`<project>/.zelavis/recipe-modules`, including their relative imports, so a
+Platform process cannot reuse the old runtime when upgrading. The Project's
+data is untouched.
+
+The host records the locked recipe before provisioning begins, so custom
+cleanup can still run after a failed preparation and a Platform restart.
+
+A Project pending deletion cannot be started or upgraded: cleanup may already
+have removed resources. Its card shows the failed cleanup step and offers
+**Retry deletion** to finish removal. Early provisioning failure before a
+host descriptor exists can still be deleted; genuine cleanup failures remain
+visible and retryable.
 
 ## Who may load a recipe's runtime
 

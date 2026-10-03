@@ -374,12 +374,24 @@ Platform dashboard must communicate with project runtimes through the Project
 Gateway boundary. The current proxy route is the first local implementation of
 that boundary.
 
+Custom recipe runtimes execute from verified digest-specific module paths below
+`<project>/.zelavis/recipe-modules` so ESM caching cannot reuse relative imports
+from a previous recipe during an explicit upgrade. These are derived copies,
+not a second lock or authority. Failed preparation restores the previous frozen
+recipe and host descriptor. Record the locked driver before provisioning so
+its custom cleanup can still run after failure and restart. A missing descriptor after early preparation failure
+must still allow cleanup of that exact Project through its trusted driver or
+Agent; malformed descriptors and genuine cleanup failures must remain visible.
+
 Project deletion is a durable Platform lifecycle operation, not a direct
 filesystem shortcut. Persist a deletion tombstone before cleanup, stop the
 runtime, run stable idempotent cleanup participants, remove runtime/project data
 last, and delete the Project registry record only after every participant has
 completed. Failed deletion remains visible and retryable, and reconciliation
 must resume it after restart without rerunning durably completed participants.
+Dashboard cards refresh persisted lifecycle state after failed mutations; a
+deletion tombstone disables start/restart/upgrade and offers explicit Retry
+deletion with its cleanup error. Never clear a tombstone to resurrect a Project.
 Any new Platform resource keyed by Project identity must register a cleanup
 participant; deleting a Project must not leave Assistant threads and their
 approval requests, its own Assistant provider key, domain bindings, bundle

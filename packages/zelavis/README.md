@@ -180,9 +180,16 @@ enforcement proof; no shipped backend currently advertises hardened isolation,
 so required intent is refused everywhere today. The refusal body carries
 `code: "project.isolation.unsatisfied"` and the `isolation` assessment.
 
+A stopped or failed Project can explicitly upgrade its recipe through the
+dashboard, SDK, HTTP or CLI. Custom runtimes load the new artifact and its
+relative imports from a verified digest-specific directory; failed preparation
+restores the previous recipe and host descriptor. Projects pending deletion
+show **Retry deletion** instead of offering an upgrade, because cleanup may
+already have removed resources.
+
 Projects are reachable through all three surfaces with the same routes:
 `GET|POST /zelavis/api/v1/runtime/projects`, `GET|DELETE .../projects/:id`,
-`POST .../projects/:id/start|stop|restart`, `GET .../projects/:id/logs` and
+`POST .../projects/:id/start|stop|restart|upgrade`, `GET .../projects/:id/logs` and
 `GET .../runtime/project-recipes`; `createZelavisClient().projects.*` from
 `zelavis/sdk`; and `zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [--json]`.
 

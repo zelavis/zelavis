@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZelavisProjectDescriptor, ZelavisProjectRecipeLock, ZelavisProjectRuntimeDriver } from "../project.js";
@@ -152,11 +152,6 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     entry: string,
   ): Promise<ZelavisProjectRuntimeDriver> {
     await assertTrusted(recipe.name);
-    const cached = recipeDrivers.get(digest);
-    if (cached) {
-      driverOfProject.set(projectId, cached);
-      return cached;
-    }
     const frozen = frozenRecipeDirectory(directory, projectId);
     const manifest = JSON.parse(await readFile(join(frozen, "package.json"), "utf8"));
     if (manifest.name !== recipe.name || recipe.version && manifest.version !== recipe.version) {
@@ -169,9 +164,22 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
       );
     }
     verified.add(key);
+    const cached = recipeDrivers.get(digest);
+    if (cached) {
+      driverOfProject.set(projectId, cached);
+      return cached;
+    }
+    // ESM caches relative imports by file URL. A version query on the entry
+    // alone leaves its dependencies cached, so each digest needs its own path.
+    const modules = join(directory, projectId, ".zelavis", "recipe-modules", digest.replace(":", "-"));
+    const modulePackage = join(modules, RECIPE_ARTIFACT_DIRECTORY, "package");
+    if (!existsSync(modulePackage)) await materializeRecipeArtifact(frozen, modules);
+    if (await digestArtifactDirectory(modulePackage) !== digest) {
+      throw new ZelavisProjectRuntimeError("Recipe module copy does not match its locked digest.");
+    }
     // Lets the frozen package resolve `zelavis/*` against the Platform running it.
-    await linkPlatformPackage(join(directory, projectId, ".zelavis", RECIPE_ARTIFACT_DIRECTORY));
-    const module = (await import(pathToFileURL(join(frozen, entry)).href)) as {
+    await linkPlatformPackage(join(modules, RECIPE_ARTIFACT_DIRECTORY));
+    const module = (await import(pathToFileURL(join(modulePackage, entry)).href)) as {
       createProjectRuntime?: (context: unknown) => ZelavisProjectRuntimeDriver;
     };
     if (typeof module.createProjectRuntime !== "function") {
@@ -202,10 +210,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   ): Promise<{ driver: ZelavisProjectRuntimeDriver; digest: string } | undefined> {
     const frozen = frozenRecipeDirectory(directory, projectId);
     if (existsSync(frozen)) {
-      const entry = await declaredRuntimeEntry(frozen);
-      if (!entry) return undefined;
-      const digest = recipe.artifact?.digest ?? (await digestArtifactDirectory(frozen));
-      return { driver: await loadRecipeDriver(projectId, recipe, digest, entry), digest };
+      const manifest = JSON.parse(await readFile(join(frozen, "package.json"), "utf8"));
+      if (mode === "use" || manifest.name === recipe.name && (!recipe.version || manifest.version === recipe.version)) {
+        const entry = await declaredRuntimeEntry(frozen);
+        if (!entry) return undefined;
+        const digest = recipe.artifact?.digest ?? (await digestArtifactDirectory(frozen));
+        return { driver: await loadRecipeDriver(projectId, recipe, digest, entry), digest };
+      }
     }
     if (mode === "use") return undefined;
     let source =
@@ -259,6 +270,30 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     return node;
   };
 
+  const missingDescriptor = (error: unknown, id: string) => error instanceof Error &&
+    "code" in error && error.code === "ENOENT" && "path" in error &&
+    error.path === join(directory, id, "project.json");
+
+  async function stopProject(id: string) {
+    try { return await (await forProjectId(id)).stop(id); }
+    catch (error) {
+      if (!missingDescriptor(error, id)) throw error;
+      const known = driverOfProject.get(id);
+      if (known) return known.stop(id);
+      // Preparation can fail before project.json exists. Stop only this exact
+      // native workload through the Agent, without importing an unknown recipe.
+      for (const attached of await agent.attach?.(id) ?? []) {
+        if (attached.process.workloadId !== id) throw new ZelavisProjectRuntimeError("Agent returned another Project's process.");
+        await attached.process.stop();
+      }
+      if (agent.survivesControlPlaneRestart && !agent.attach) {
+        throw new ZelavisProjectRuntimeError("Cannot confirm this Project stopped: its Agent does not support reattachment.");
+      }
+      await agent.reclaim?.(id);
+      return node.stop(id);
+    }
+  }
+
   const loaded = () => [...new Set([...recipeDrivers.values()])];
 
   return {
@@ -291,26 +326,73 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     async prepare(project, recipe) {
       assertNative(project.runtimeKind);
       if (project.kind === SERVER_FRONTEND_KIND) return selectFrontend().prepare(project, recipe);
-      const provided = await recipeDriver(project.id, recipe, "prepare");
-      if (provided) {
-        // The frozen digest goes into the lock the driver records.
-        return provided.driver.prepare(project, { ...recipe, artifact: { digest: provided.digest } });
+      const data = join(directory, project.id, ".zelavis");
+      const frozen = join(data, RECIPE_ARTIFACT_DIRECTORY);
+      let changing = false;
+      if (existsSync(join(frozen, "package", "package.json"))) {
+        const manifest = JSON.parse(await readFile(join(frozen, "package", "package.json"), "utf8"));
+        changing = manifest.name !== recipe.name || manifest.version !== recipe.version;
       }
-      return node.prepare(project, recipe);
+      const previousDriver = driverOfProject.get(project.id);
+      const backup = join(data, `recipe-backup-${crypto.randomUUID()}`);
+      let descriptor: Buffer | undefined;
+      if (changing) {
+        try { descriptor = await readFile(join(directory, project.id, "project.json")); }
+        catch (error) { if (!missingDescriptor(error, project.id)) throw error; }
+        await mkdir(backup, { recursive: true, mode: 0o700 });
+        try { await cp(frozen, join(backup, "recipe"), { recursive: true }); }
+        catch (error) {
+          await rm(backup, { recursive: true, force: true });
+          throw error;
+        }
+      }
+      let discardBackup = true;
+      try {
+        const provided = await recipeDriver(project.id, recipe, "prepare");
+        if (provided) {
+          const lockedRecipe = { ...recipe, artifact: { digest: provided.digest } };
+          // Record the trusted driver before provisioning acquires resources.
+          // Failed preparation must still be cleanable after a Platform restart.
+          await writeFile(join(directory, project.id, "project.json"),
+            JSON.stringify({ ...project, recipe: lockedRecipe }), { mode: 0o600 });
+          await provided.driver.prepare(project, lockedRecipe);
+        } else {
+          driverOfProject.delete(project.id);
+          await node.prepare(project, recipe);
+        }
+      } catch (error) {
+        if (changing) {
+          discardBackup = false;
+          await rm(frozen, { recursive: true, force: true });
+          await cp(join(backup, "recipe"), frozen, { recursive: true });
+          if (descriptor) await writeFile(join(directory, project.id, "project.json"), descriptor, { mode: 0o600 });
+          else await rm(join(directory, project.id, "project.json"), { force: true });
+          if (previousDriver) driverOfProject.set(project.id, previousDriver);
+          else driverOfProject.delete(project.id);
+          discardBackup = true;
+        }
+        throw error;
+      } finally { if (changing && discardBackup) await rm(backup, { recursive: true, force: true }); }
     },
     start: async (project, placement) => (await forProjectId(project.id)).start(project, placement),
     ...(agent.fencePlacement ? {
       fencePrevious: (placement) => agent.fencePlacement!(placement),
     } : {}),
-    stop: async (id) => (await forProjectId(id)).stop(id),
+    stop: stopProject,
     status: async (id) => {
       try { return await (await forProjectId(id)).status(id); }
       catch { return { status: "stopped" }; }
     },
     logs: async (id) => (await forProjectId(id)).logs(id),
     destroy: async (id) => {
-      try { await (await forProjectId(id)).destroy(id); }
-      catch { await node.destroy(id); }
+      let selected: ZelavisProjectRuntimeDriver;
+      try { selected = await forProjectId(id); }
+      catch (error) {
+        if (!missingDescriptor(error, id)) throw error;
+        await stopProject(id);
+        selected = driverOfProject.get(id) ?? node;
+      }
+      await selected.destroy(id);
       driverOfProject.delete(id);
     },
     close: async () => {

@@ -163,6 +163,13 @@ before editing.
   Updating the parent Platform must not silently upgrade or rewrite child
   Project locks. A driver may claim independent-version execution only after
   it can materialize and run the locked artifact.
+- Custom recipe runtimes use verified digest-specific module paths under the
+  Project root so ESM caches cannot retain relative imports from a previous
+  recipe. These copies are derived from the locked artifact. Failed upgrade
+  preparation restores the previous artifact and host descriptor. Record the
+  locked driver before provisioning so cleanup survives failure and restart. Early failure
+  without a descriptor still permits exact-Project cleanup through the trusted
+  driver or Agent; malformed descriptors and cleanup errors remain refused.
 - Keep one root Platform Fabric. It owns physical Nodes, provider authority,
   Project allocation, placement, routing, generation/fencing, and fleet policy.
   Authenticated Zelavis Agents execute its decisions; runtime drivers are

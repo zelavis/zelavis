@@ -244,6 +244,7 @@ export interface RuntimeDeploymentBackendPolicy {
 }
 
 export interface RuntimeProject {
+  deletion?: { status: "running" | "failed"; startedAt: string; updatedAt: string; participants: readonly string[]; completedParticipants: readonly string[]; currentParticipant?: string; error?: string };
   preview?: { status: "ready" | "stopped" | "unavailable"; port?: number; error?: string };
   id: string;
   name: string;

@@ -78,3 +78,45 @@ test("@smoke a Project that is not running cannot be opened from its card, and i
   await page.getByRole("button", { name: "Back to Projects" }).click()
   await expect(page).toHaveURL(/\/projects$/)
 })
+
+test("@smoke a failed deletion refreshes its card and offers only deletion recovery", async ({page}) => {
+  test.skip(!projectId,"needs the e2e Project")
+  let pendingDeletion = false
+  let removed = false
+  let deletes = 0
+  let forbiddenActions = 0
+  const deletion = {status:"failed",startedAt:"2026-10-03T12:00:00Z",updatedAt:"2026-10-03T12:00:00Z",participants:["runtime-stop"],completedParticipants:[],currentParticipant:"runtime-stop",error:"Descriptor was never written"}
+  await page.route(/\/runtime\/projects$/,async route=>{
+    if(route.request().method()!=="GET") return route.continue()
+    const response=await route.fetch()
+    const body=await response.json()
+    body.projects=body.projects.filter((p:{id:string})=>!(removed&&p.id===projectId)).map((p:{id:string})=>p.id===projectId?{...p,recipeStatus:{state:"upgradeAvailable",version:"9.9.9"},runtime:{driver:"node-process",status:"failed"},...(pendingDeletion?{deletion}:{})}:p)
+    await route.fulfill({response,json:body})
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}$`),async route=>{
+    if(route.request().method()!=="DELETE") return route.continue()
+    deletes++
+    pendingDeletion=true
+    if(deletes===1) await route.fulfill({status:500,json:{error:"Deletion failed during runtime-stop"}})
+    else {removed=true;await route.fulfill({json:{deleted:true}})}
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/(start|restart|upgrade)$`),async route=>{
+    forbiddenActions++
+    await route.fulfill({status:409,json:{error:"pending deletion"}})
+  })
+  page.on("dialog",dialog=>dialog.accept())
+  await page.goto(`${basePath}/projects`)
+  await expect(page.getByLabel("Recipe upgrade")).toBeVisible()
+  await page.getByRole("button",{name:"Delete",exact:true}).first().click()
+  const notice=page.getByLabel("Project deletion")
+  await expect(notice).toContainText("Deletion failed")
+  await expect(notice).toContainText("Descriptor was never written")
+  await expect(page.getByLabel("Recipe upgrade")).toHaveCount(0)
+  await expect(page.getByRole("button",{name:"Start",exact:true}).first()).toBeDisabled()
+  await expect(page.getByRole("button",{name:"Restart",exact:true}).first()).toBeDisabled()
+  await expect(page.getByRole("button",{name:"Open",exact:true}).first()).toBeDisabled()
+  await page.getByRole("button",{name:"Retry deletion",exact:true}).click()
+  await expect(notice).toHaveCount(0)
+  expect(deletes).toBe(2)
+  expect(forbiddenActions).toBe(0)
+})
