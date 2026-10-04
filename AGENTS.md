@@ -1300,6 +1300,16 @@ installs run the same updater as the same user and use the same handover.
 A full installer run is maintenance and may restart the Platform. An installation
 without the handover protocol requires that one-time conversion; live updates
 refuse unsupported protocols instead of retaining a compatibility execution path.
+Product requirement: every future release, including major runtime, protocol or
+installation-layout changes, must be installable through the dashboard's
+**Update now** action. Requiring terminal commands or an installer rerun for a
+normal update is an update UX defect, not an acceptable release procedure. Plan
+the installed updater's evolution before shipping architectural changes, perform
+required host changes through its existing trusted authority, and qualify the
+complete update from the previously installed release through the ordinary
+update action. Preserve data, Project locks, access URLs and rollback guarantees.
+The current pre-handover manual conversion is a known gap to eliminate; do not
+use it as precedent for future releases or add permanent legacy runtime paths.
 New system installations always enable their separate Project Agent. No optional
 Agent flag remains. Never prune qualified engines needed for Project selection,
 Agent execution or another instance.

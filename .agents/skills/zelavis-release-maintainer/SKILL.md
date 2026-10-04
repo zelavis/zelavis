@@ -48,6 +48,14 @@ Use this skill for:
    install. A release that cannot start is rolled back by the updater, but never publish
    one on purpose; the first release that carries the updater still has to be installed
    by running the installer, because older versions have no updater.
+9. Every future release must be installable through dashboard **Update now**,
+   including major runtime, protocol and installation-layout changes. Requiring
+   terminal commands or an installer rerun for a normal update is a product defect.
+   Qualify the ordinary update action from the previously installed release before
+   publishing; fresh-install and synthetic-version checks alone do not prove this.
+   The current pre-handover manual conversion is a known gap to eliminate, not a
+   precedent. Preserve data, Project locks, access URLs and rollback guarantees
+   through the existing trusted updater authority, without permanent legacy paths.
 
 ## Useful commands
 

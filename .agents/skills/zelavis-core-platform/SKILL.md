@@ -186,7 +186,14 @@ before editing.
   Named instances own their update units and custody; user installs use the same
   handover as their own user. System installs always enable the Project Agent.
   An older installation without the protocol needs one full local installer
-  conversion. Root artifacts must remain root-owned; archive extraction must not
+  conversion; this is a known update UX gap, not a future release procedure.
+  Every future release must work through dashboard **Update now**, even when
+  runtime protocols or installation layouts change. Plan and qualify the updater
+  transition from the previous installed release before shipping; required host
+  changes use the existing trusted updater authority. Never require terminal
+  commands for a normal update or introduce permanent legacy runtime paths.
+  Preserve data, Project locks, access URLs and rollback guarantees.
+  Root artifacts must remain root-owned; archive extraction must not
   preserve foreign archive UIDs. Create uses the same bootstrap and plan.
   Create takes no folder argument. Its sudo bootstrap fetches its own Node and
   package into a private root-owned directory; never execute user package-cache
