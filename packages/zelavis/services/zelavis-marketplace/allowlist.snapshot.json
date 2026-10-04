@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "sequence": 8,
-  "issuedAt": "2026-10-04T08:54:38.980Z",
-  "expiresAt": "2027-10-04T08:54:38.980Z",
+  "sequence": 9,
+  "issuedAt": "2026-10-04T17:57:04.088Z",
+  "expiresAt": "2027-10-04T17:57:04.088Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
@@ -149,9 +149,13 @@
         {
           "version": "7.1.3-alpha.1",
           "integrity": "sha512-TSWMHgPCAPLw9S5FCW7pBgYXJ4ukW2som/6WTp4RCHFTI3Gh3efWxix7aTHk/vurNM2XzD9bfobqwdPBj7QXkw=="
+        },
+        {
+          "version": "7.1.3-alpha.2",
+          "integrity": "sha512-NAqLF5iDHN0tuIDVDmphXz0DDhbN5XGBgNUe3SFnlxWM7HwQrNmHh48xIWkFpErx2O5y3aqF4wLubxQeanj9mg=="
         }
       ],
-      "latest": "7.1.3-alpha.1"
+      "latest": "7.1.3-alpha.2"
     }
   ]
 }
