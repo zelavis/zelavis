@@ -10,7 +10,7 @@ class Probe {
   links = new Map([[paths.commandPath, "/opt/zelavis/current/bin/zelavis"], ["/opt/zelavis/current", "releases/1.2.3"]]);
   owner = { active: false }; command = paths.commandPath; busy = new Set(); matchesPort = false; uid = { uid: 10, expectedUid: 10 };
   units = { present: true, active: true, enabled: true, pid: 42, delegates: true }; support = { cgroupV2: true, cgroupKill: true };
-  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service", "zelavis-host-agent.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
+  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service", "zelavis-host-agent.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
   reads = []; mutations = [];
   async read(path) { this.reads.push(path); return this.files.get(path); }
   async exists(path) { return path.endsWith("runtime/node/bin/node") || this.files.has(path); }
@@ -155,7 +155,7 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
   const host = new Probe();
   const named = { ...paths, instance: "preview", dataDirectory: "/var/lib/zelavis-preview", configDirectory: "/etc/zelavis-preview" };
   const scope = "/opt/zelavis/instances/preview";
-  host.files.set(`${scope}/runtime.json`, JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "preview", dataDirectory: named.dataDirectory, configDirectory: named.configDirectory, port: 3100, host: "127.0.0.1", edge: false}));
+  host.files.set(`${scope}/runtime.json`, JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "preview", dataDirectory: named.dataDirectory, configDirectory: named.configDirectory, port: 3100, host: "127.0.0.1", edge: false}));
   host.files.set(`${scope}/installation.json`, JSON.stringify({ ...receipt, ...named, instance: "preview", port: 3100, edge: false }));
   host.files.set(`${scope}/current/manifest.json`, '{"version":"1.2.3"}');
   host.links.set(`${scope}/current`, "/opt/zelavis/releases/1.2.3");
@@ -168,7 +168,7 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
   assert.equal(host.mutations.length, 0);
 });
 test("a foreign host Edge owner blocks default repair before any changes", async () => {
-  const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
+  const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
   await assert.rejects(preflight(host, { force: true }), /Host Edge belongs/);
   assert.equal(host.mutations.length, 0);
 });

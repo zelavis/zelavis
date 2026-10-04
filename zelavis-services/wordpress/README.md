@@ -10,6 +10,13 @@ The exact recipe revision is locked in the Project. Its WordPress software versi
 and archive digest are pinned independently, so provisioning fixes can ship without
 changing the WordPress release.
 
+This recipe requires Zelavis 2.0.0-alpha.16 or newer. Its runtime adopts all three
+daemon handles from the separately supervised Project Agent during a Platform
+engine handover, verifying their execution identities before admitting traffic.
+Linux sockets live in shared installation data so separately supervised systemd
+units can reach them. Frozen older recipes require an explicit recipe upgrade;
+updating the Platform never rewrites their code.
+
 ## How it plugs in
 
 The Platform hard-codes nothing about WordPress. This package's `package.json`
@@ -45,5 +52,7 @@ owner's account.
 
 `scripts/wordpress-provisioning-container.sh` qualifies a clean packaged Debian
 systemd installation, the root broker, denied package authority, cancellation,
-WordPress startup and idempotent retry. `pnpm update:wordpress` refreshes software
+WordPress startup, idempotent retry, Platform handover and rollback, live App
+engine upgrades, stable preview traffic, doctor and complete uninstall.
+`pnpm update:wordpress` refreshes software
 pins; add a recipe changeset to release them.

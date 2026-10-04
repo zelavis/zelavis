@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "./installation-instance.js";
 import {
   assertCompleteUninstallConfirmation,
@@ -105,23 +107,24 @@ export interface ZelavisNativeInstallationReceipt {
   readonly ownsGroup: boolean;
 }
 
-export async function readNativeInstallationReceipt(host: ZelavisInstallHost, prefix: string, instance = "default"): Promise<ZelavisNativeInstallationReceipt | undefined> {
+export const readNativeInstallationReceiptProgram = Effect.fn("Installation.readNativeInstallationReceipt")(function* (host: ZelavisInstallHost, prefix: string, instance = "default"): Effect.fn.Return<ZelavisNativeInstallationReceipt | undefined, TaggedFailure> {
   const scope = installationInstanceScope(prefix, instance);
-  const content = await host.read(scope.receipt);
+  const content = (yield* integration(() => host.read(scope.receipt)));
   if (content === undefined) return undefined;
-  const value = JSON.parse(content) as ZelavisNativeInstallationReceipt;
+  const value = yield* evaluate(() => JSON.parse(content) as ZelavisNativeInstallationReceipt);
   if (!value || value.schemaVersion !== 2 || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
       !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
       value.instance !== instance || !["script", "deb", "create", "cli"].includes(value.installedBy) ||
       typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(value.version) || typeof value.prefix !== "string" || typeof value.configDirectory !== "string" || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
-    throw new Error(`Native installation receipt at ${scope.receipt} is malformed.`);
+    return yield* new IntegrationFailure(new Error(`Native installation receipt at ${scope.receipt} is malformed.`));
   }
-  assertInstallationInstance(value.instance);
-  if (value.mode === "user" && value.edge || value.instance !== "default" && (value.mode === "user" || value.edge)) throw new Error("Installation receipt requires user mode with Edge off, or a system instance; secondary instances must keep Edge off.");
-  validateInstallationPaths({ prefix: value.prefix, instance: value.instance, dataDirectory: value.dataDirectory, configDirectory: value.configDirectory, commandPath: value.commandPath, systemCommandPath: value.commandPath, systemdDirectories: [] });
-  if (value.prefix !== prefix) throw new Error("Installation receipt names another prefix.");
+  yield* evaluate(() => assertInstallationInstance(value.instance));
+  if (value.mode === "user" && value.edge || value.instance !== "default" && (value.mode === "user" || value.edge)) return yield* new IntegrationFailure(new Error("Installation receipt requires user mode with Edge off, or a system instance; secondary instances must keep Edge off."));
+  yield* evaluate(() => validateInstallationPaths({ prefix: value.prefix, instance: value.instance, dataDirectory: value.dataDirectory, configDirectory: value.configDirectory, commandPath: value.commandPath, systemCommandPath: value.commandPath, systemdDirectories: [] }));
+  if (value.prefix !== prefix) return yield* new IntegrationFailure(new Error("Installation receipt names another prefix."));
   return value;
-}
+});
+export function readNativeInstallationReceipt(host: ZelavisInstallHost, prefix: string, instance = "default"): Promise<ZelavisNativeInstallationReceipt | undefined> { return present(readNativeInstallationReceiptProgram(host, prefix, instance)); }
 
 const UNITS = ["zelavis.service", "zelavis.socket", "zelavis-agent.service", "zelavis-host-agent.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path"] as const;
 export const ZELAVIS_INSTALLATION_RETAINED_STATE = [
@@ -165,62 +168,69 @@ function compareInstallationVersions(left: string, right: string): number {
   return 0;
 }
 
-export async function planZelavisReleaseInstall(input: {
+export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZelavisReleaseInstall")(function* (input: {
   readonly host: ZelavisInstallHost;
   readonly source: string;
   readonly paths: ZelavisInstallPaths;
   readonly system: boolean;
   readonly user?: boolean;
   readonly force?: boolean;
-  readonly enableAgent?: boolean;
   readonly public?: boolean;
   readonly allowDowngrade?: boolean;
   readonly sourceKind?: "release" | "package";
   readonly installedBy?: ZelavisNativeInstallationReceipt["installedBy"];
   readonly stopPlatform?: boolean;
-  /**
-   * Swap a running installation to another release without stopping it first: the
-   * Platform keeps its data lock and serves from the old release until one restart,
-   * and systemd's held socket queues connections across it. For an update only; a
-   * first install or a repair uses the full plan.
-   */
+  /** Select through the persistent host, with an inventory acknowledgement. */
   readonly live?: boolean;
   readonly port?: number;
-}): Promise<ZelavisHostInstallationPlan> {
+}): Effect.fn.Return<ZelavisHostInstallationPlan, TaggedFailure> {
   const { host, paths, source } = input;
   const scope = installationInstanceScope(paths.prefix, paths.instance);
-  const previous = await readNativeInstallationReceipt(host, paths.prefix, scope.instance);
-  if (scope.named && !previous && input.port === undefined) throw new Error("A new named instance requires an explicit --port.");
+  const previous = (yield* readNativeInstallationReceiptProgram(host, paths.prefix, scope.instance));
+  if (scope.named && !previous && input.port === undefined) return yield* new IntegrationFailure(new Error("A new named instance requires an explicit --port."));
   const port = input.port ?? previous?.port ?? 3000;
   assertInstallationPort(port);
-  if (scope.named && input.user) throw new Error("Named instances require system mode.");
+  if (scope.named && input.user) return yield* new IntegrationFailure(new Error("Named instances require system mode."));
   validateInstallationPaths(paths);
-  if (input.user && (input.system || input.enableAgent)) throw new Error("User installations do not support systemd or the Agent.");
+  if (input.user && input.system) return yield* new IntegrationFailure(new Error("User installations do not support systemd."));
   assertInstallationPath(source, "release source");
-  const manifest = JSON.parse(await host.read(`${source}/manifest.json`) ?? "null") as { version?: unknown } | null;
+  const manifest = JSON.parse((yield* integration(() => host.read(`${source}/manifest.json`))) ?? "null") as { version?: unknown } | null;
   if (!manifest || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(manifest.version)) {
-    throw new Error("Release manifest must contain a valid version.");
+    return yield* new IntegrationFailure(new Error("Release manifest must contain a valid version."));
   }
   const version = manifest.version;
-  const installedManifest = await host.read(`${scope.current}/manifest.json`);
+  const installedManifest = (yield* integration(() => host.read(`${scope.current}/manifest.json`)));
   if (installedManifest && !input.allowDowngrade) {
     const installed = JSON.parse(installedManifest) as { version: string };
     if (compareInstallationVersions(version, installed.version) < 0) {
-      throw new Error(`Refusing downgrade from ${installed.version} to ${version}; use --allow-downgrade deliberately.`);
+      return yield* new IntegrationFailure(new Error(`Refusing downgrade from ${installed.version} to ${version}; use --allow-downgrade deliberately.`));
     }
   }
   const release = `${paths.prefix}/releases/${version}`;
   const warnings: string[] = [];
-  const target = await host.readlink(paths.commandPath);
-  if ((target !== undefined || await host.exists(paths.commandPath)) && !target?.startsWith(`${paths.prefix}/`)) {
-    if (!input.force) throw new Error(`Refusing to replace ${paths.commandPath}, which this installer did not create.\nIt currently resolves to: ${target ?? paths.commandPath}\nRemove it with npm uninstall --global zelavis, or use --force (ZELAVIS_FORCE_BIN=1).`);
+  const target = (yield* integration(() => host.readlink(paths.commandPath)));
+  if ((target !== undefined || (yield* integration(() => host.exists(paths.commandPath)))) && !target?.startsWith(`${paths.prefix}/`)) {
+    if (!input.force) return yield* new IntegrationFailure(new Error(`Refusing to replace ${paths.commandPath}, which this installer did not create.\nIt currently resolves to: ${target ?? paths.commandPath}\nRemove it with npm uninstall --global zelavis, or use --force (ZELAVIS_FORCE_BIN=1).`));
     warnings.push(`Replacing ${paths.commandPath} deliberately (--force / ZELAVIS_FORCE_BIN=1).`);
   }
-  const resolved = await host.which("zelavis", paths.commandPath);
+  const resolved = (yield* integration(() => host.which("zelavis", paths.commandPath)));
   if (resolved && resolved !== paths.commandPath) {
     warnings.push(`Warning: 'zelavis' on PATH resolves to ${resolved}, not ${paths.commandPath}. That installation will answer instead of this one. Run 'zelavis --version' to see which one is in use.`);
   }
   const steps: ZelavisInstallStep[] = [];
+  if (input.live) {
+    if (!previous) return yield* new IntegrationFailure(new Error("Live handover requires an installed persistent Platform host."));
+    if (!(yield* integration(() => host.exists(release)))) {
+      addStep(steps, "release-directory", "Create the immutable engine catalog directory", { kind: "mkdir", path: `${paths.prefix}/releases`, mode: input.user ? 0o700 : 0o755 });
+      addStep(steps, "release", `Copy immutable engine ${version}`, { kind: "copy", source, path: release });
+    }
+    if (input.system) addStep(steps, "release-owner", "Keep executable engine artifacts owned by root", { kind: "command", command: "chown", args: ["-R", "root:root", release] });
+    addStep(steps, "runtime-handover", "Transfer engine ownership and acknowledge root inventory before admitting traffic", {
+      kind: "command", command: `${release}/runtime/node/bin/node`,
+      args: [`${release}/platform/dist/adapters/_node-runtime-select-cli.js`, paths.prefix, scope.instance, paths.dataDirectory, version],
+    });
+    return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
+  }
   let ownsUser = previous?.ownsUser ?? false;
   let ownsGroup = previous?.ownsGroup ?? false;
   const recordOwnership = (id: string) => {
@@ -243,21 +253,22 @@ export async function planZelavisReleaseInstall(input: {
   }
   if (!input.user) recordOwnership("initial-receipt");
   if (!input.live) addStep(steps, "data-reservation", "Reserve the shared Platform data ownership lock for maintenance", { kind: "reserve-data", path: paths.dataDirectory });
-  if (!await host.exists(release)) {
+  if (!(yield* integration(() => host.exists(release)))) {
     addStep(steps, "release", `Copy staged release ${version} to ${release}`, { kind: "copy", source, path: release });
   }
+  if (input.system) addStep(steps, "release-owner", "Keep executable engine artifacts owned by root", { kind: "command", command: "chown", args: ["-R", "root:root", release] });
   addStep(steps, "current", "Select the versioned release", { kind: "link", target: release, path: scope.current, atomic: true });
-  if (!scope.named || !await host.exists(paths.commandPath)) addStep(steps, "command", "Link the shared Zelavis command", { kind: "link", target: `${paths.prefix}/current/bin/zelavis`, path: paths.commandPath });
-  if (scope.named && !await host.exists(`${paths.prefix}/current`)) addStep(steps, "management-current", "Select initial shared management CLI without altering another instance", { kind: "link", target: release, path: `${paths.prefix}/current`, atomic: true });
+  if (!scope.named || !(yield* integration(() => host.exists(paths.commandPath)))) addStep(steps, "command", "Link the shared Zelavis command", { kind: "link", target: `${paths.prefix}/current/bin/zelavis`, path: paths.commandPath });
+  if (scope.named && !(yield* integration(() => host.exists(`${paths.prefix}/current`)))) addStep(steps, "management-current", "Select initial shared management CLI without altering another instance", { kind: "link", target: release, path: `${paths.prefix}/current`, atomic: true });
   const command = (id: string, description: string, executable: string, args: readonly string[], ignoreFailure = false) =>
     addStep(steps, id, description, { kind: "command", command: executable, args, ignoreFailure });
   if (input.system) {
-    if (!await host.accountExists("group", scope.account)) {
+    if (!(yield* integration(() => host.accountExists("group", scope.account)))) {
       command("group", "Create the dedicated system group", "groupadd", ["--system", scope.account]);
       ownsGroup = true;
       recordOwnership("group-receipt");
     }
-    if (!await host.accountExists("user", scope.account)) {
+    if (!(yield* integration(() => host.accountExists("user", scope.account)))) {
       command("user", "Create the dedicated system user", "useradd", ["--system", "--gid", scope.account, "--home-dir", paths.dataDirectory, "--shell", "/usr/sbin/nologin", scope.account]);
       ownsUser = true;
       recordOwnership("user-receipt");
@@ -271,41 +282,41 @@ export async function planZelavisReleaseInstall(input: {
     const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
     const render = (text: string) => text.replaceAll("/opt/zelavis", paths.prefix).replaceAll("/var/lib/zelavis", dataBase).replaceAll("/etc/zelavis", configBase);
     for (const [index, unit] of scope.templates.entries()) {
-      const template = await host.read(`${source}/share/${unit}`);
+      const template = (yield* integration(() => host.read(`${source}/share/${unit}`)));
       if (template === undefined && unit === "zelavis-traefik.service") continue;
-      if (template === undefined) throw new Error(`Release is missing share/${unit}.`);
+      if (template === undefined) return yield* new IntegrationFailure(new Error(`Release is missing share/${unit}.`));
       const content = index === 0 && !scope.named ? template.replace("--host 127.0.0.1", `--host ${input.public ? "0.0.0.0" : "127.0.0.1"}`).replace("--port 3000", `--port ${port}`) : template;
       addStep(steps, unit, `Install ${unit} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${unit}`, content: render(content), mode: 0o644 });
     }
     // systemd holds the listening port across Platform restarts, so an update queues connections instead of refusing them.
-    const socketTemplate = await host.read(`${source}/share/zelavis.socket`);
-    if (socketTemplate === undefined) throw new Error("Release is missing share/zelavis.socket.");
+    const socketTemplate = (yield* integration(() => host.read(`${source}/share/zelavis.socket`)));
+    if (socketTemplate === undefined) return yield* new IntegrationFailure(new Error("Release is missing share/zelavis.socket."));
     addStep(steps, scope.socket, `Install ${scope.socket} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${scope.socket}`, content: renderSocket(socketTemplate, { host: input.public ? "0.0.0.0" : "127.0.0.1", port, instance: scope.named ? scope.instance : undefined }), mode: 0o644 });
     if (scope.named) {
       // A named instance's update units are the default's, aimed at this instance's request file and name.
       // The updater's ZELAVIS_DATA_DIR stays the base: the installer it runs appends the instance's suffix itself.
       for (const unit of ["zelavis-update.path", "zelavis-update.service"]) {
-        const template = await host.read(`${source}/share/${unit}`);
-        if (template === undefined) throw new Error(`Release is missing share/${unit}.`);
+        const template = (yield* integration(() => host.read(`${source}/share/${unit}`)));
+        if (template === undefined) return yield* new IntegrationFailure(new Error(`Release is missing share/${unit}.`));
         const target = unit.endsWith(".path") ? scope.updatePath : scope.updateService;
         const content = template.replaceAll("/opt/zelavis/current", `${paths.prefix}/instances/${scope.instance}/current`).replaceAll("/opt/zelavis", paths.prefix).replace("PathExists=/var/lib/zelavis/", `PathExists=${paths.dataDirectory}/`).replaceAll("zelavis-update.service", scope.updateService).replace("update --run", `update --run --instance ${scope.instance}`).replace("Update the Zelavis Platform", `Update the Zelavis Platform instance ${scope.instance}`);
         addStep(steps, target, `Install ${target} from the release template`, { kind: "write", path: `${paths.systemdDirectories[0]}/${target}`, content, mode: 0o644 });
       }
     }
-    if (!scope.named && await host.exists(`${source}/share/zelavis-traefik.service`)) {
+    if (!scope.named && (yield* integration(() => host.exists(`${source}/share/zelavis-traefik.service`)))) {
       for (const path of [`${paths.dataDirectory}/edge/traefik/active`, `${paths.dataDirectory}/agent`]) {
         addStep(steps, `edge:${path}`, `Create owned directory ${path}`, { kind: "mkdir", path, mode: 0o750 });
         command(`owner:${path}`, `Set ownership of ${path}`, "chown", [`${scope.account}:${scope.account}`, path]);
       }
       addStep(steps, "edge-config-directory", "Create Edge configuration directory", { kind: "mkdir", path: `${paths.configDirectory}/edge/traefik`, mode: 0o755 });
-      const config = await host.read(`${source}/share/traefik.yml`);
-      if (config === undefined) throw new Error("Release is missing share/traefik.yml.");
+      const config = (yield* integration(() => host.read(`${source}/share/traefik.yml`)));
+      if (config === undefined) return yield* new IntegrationFailure(new Error("Release is missing share/traefik.yml."));
       addStep(steps, "edge-config", "Keep existing Traefik configuration", { kind: "write", path: `${paths.configDirectory}/edge/traefik/traefik.yml`, content: config.replaceAll("/var/lib/zelavis", paths.dataDirectory), mode: 0o644, ifAbsent: true });
     }
     addStep(steps, "config-directory", "Create configuration directory", { kind: "mkdir", path: paths.configDirectory, mode: 0o755 });
     addStep(steps, "bootstrap", "Generate first-owner token only when the environment file is absent (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env` });
     addStep(steps, "host-agent-environment", "Configure the separate privileged operation broker", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${scope.directory}/host-agent/agent`, variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
-    if (input.enableAgent) {
+    {
       // Do not expose the existing first-owner token in a plan or dry-run.
       addStep(steps, "agent-environment", "Add Agent endpoint without changing existing environment values", { kind: "agent-environment", path: `${paths.configDirectory}/zelavis.env`, endpoint: `${paths.dataDirectory}/agent` });
     }
@@ -317,7 +328,7 @@ export async function planZelavisReleaseInstall(input: {
     if (!input.live) addStep(steps, "data-handover", "Release data ownership before starting the Platform", { kind: "release-data" });
     command("reload", "Reload systemd units", "systemctl", ["daemon-reload"]);
     command("socket-enable", "Hold the dashboard port in systemd", "systemctl", ["enable", "--now", scope.socket]);
-    if (input.enableAgent) command("agent-enable", "Enable and start the opted-in Agent", "systemctl", ["enable", "--now", scope.units[1]]);
+    command("agent-enable", "Supervise Project custody separately from the Platform engine", "systemctl", ["enable", "--now", scope.units[1]]);
     // The path unit watches for the Platform's update request and starts the root updater.
     command("update-enable", "Watch for dashboard update requests", "systemctl", ["enable", "--now", scope.updatePath]);
     command("host-agent-enable", "Enable the restricted root operation Agent", "systemctl", ["enable", "--now", scope.units[scope.units.length - 1]]);
@@ -333,13 +344,14 @@ export async function planZelavisReleaseInstall(input: {
     addStep(steps, "bootstrap", "Generate first-owner token and record user data location (0600)", { kind: "bootstrap", path: `${paths.configDirectory}/zelavis.env`, dataDirectory: paths.dataDirectory, public: input.public });
   }
   if (!input.system) recordOwnership("receipt");
-  const runtime = { schemaVersion: 1, instance: scope.instance, prefix: paths.prefix, dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port, host: input.public ? "0.0.0.0" : "127.0.0.1", edge: input.system && !scope.named };
+  const runtime = { schemaVersion: 1, version, instance: scope.instance, prefix: paths.prefix, dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port, host: input.public ? "0.0.0.0" : "127.0.0.1", edge: input.system && !scope.named };
   // This descriptor contains no token and must exist before systemd startup.
   const runtimeStep: ZelavisInstallStep = { id: "runtime-descriptor", description: "Record public runtime selection without bootstrap secrets", idempotent: true, action: { kind: "write", path: scope.runtime, content: `${JSON.stringify(runtime)}\n`, mode: input.user ? 0o600 : 0o644, atomic: true } };
   const handover = steps.findIndex((step) => step.id === "data-handover");
   steps.splice(handover < 0 ? steps.length : handover, 0, runtimeStep);
   return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
-}
+});
+export function planZelavisReleaseInstall(input: Parameters<typeof planZelavisReleaseInstallProgram>[0]): Promise<ZelavisHostInstallationPlan> { return present(planZelavisReleaseInstallProgram(input)); }
 
 export function planZelavisUninstall(input: {
   readonly paths: ZelavisInstallPaths;
@@ -389,7 +401,7 @@ export function planZelavisUninstall(input: {
     command("reload", ["daemon-reload"]);
     command("reset", ["reset-failed", ...scope.units]);
   }
-  addStep(steps, `remove:${paths.dataDirectory}`, `Remove ${paths.dataDirectory}, including Platform ownership lock/record and every Project`, { kind: "remove", path: paths.dataDirectory, recursive: true });
+  addStep(steps, `remove:${paths.dataDirectory}`, `Remove ${paths.dataDirectory}, including runtime custody, control socket, engine journals/ownership locks, Agent state and every Project`, { kind: "remove", path: paths.dataDirectory, recursive: true });
   if (input.retainShared) {
     if (scope.named) remove(scope.directory, true);
     else { remove(scope.receipt); remove(scope.runtime); remove(`${scope.directory}/host-agent`, true); }
@@ -397,14 +409,15 @@ export function planZelavisUninstall(input: {
   return { operation: "uninstall", installation: { kind: "packaged", path: `${paths.prefix}/current/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings: [], retained: [...ZELAVIS_INSTALLATION_RETAINED_STATE, ...(input.retainShared ? ["Shared release tree, management command, package records and unit templates required by other instances"] : [])] };
 }
 
-export async function executeZelavisInstallationPlan(host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Promise<readonly string[]> {
-  if (plan.operation === "uninstall") assertCompleteUninstallConfirmation(confirmation ?? "");
+export const executeZelavisInstallationPlanProgram = Effect.fn("Installation.executeZelavisInstallationPlan")(function* (host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Effect.fn.Return<readonly string[], TaggedFailure> {
+  if (plan.operation === "uninstall") yield* evaluate(() => assertCompleteUninstallConfirmation(confirmation ?? ""));
   const output: string[] = [];
-  try {
+  return yield* Effect.gen(function* () {
     for (const step of plan.steps) {
-      const result = await host.execute(step.action);
+      const result = (yield* integration(() => host.execute(step.action)));
       if (result) output.push(result);
     }
     return output;
-  } finally { await host.releaseMaintenance?.(); }
-}
+  }).pipe(Effect.ensuring(integration(() => host.releaseMaintenance?.()).pipe(Effect.orDie)));
+});
+export function executeZelavisInstallationPlan(host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Promise<readonly string[]> { return present(executeZelavisInstallationPlanProgram(host, plan, confirmation)); }

@@ -116,102 +116,6 @@
       "fingerprint": "73ecd31f5f93581ad08f8c4513073efdd757e97f472a8b3a5629016109e81d82"
     },
     {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient",
-      "fingerprint": "79079e3c0e883b37ff638c739bd0a8506e2b01313833b4f5ba38bc98b5b747d5"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "promise-constructor",
-      "owner": "module/createAgentProcessClient",
-      "fingerprint": "9bb322e6cc9c374a69d3b7312311867756b550d4cda93faef1d8ceec281c0030"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "promise-constructor",
-      "owner": "module/createAgentProcessClient/request",
-      "fingerprint": "0bdf0b7045fbb9c7693dd2a55960d97f9174eadbdf037fc4a35fa356da0f4b77"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "promise-constructor",
-      "owner": "module/createAgentProcessClient",
-      "fingerprint": "b122859ab8e8f89bae3688edede5c802f53cb44a3085653b7b5c1675a3d85e1f"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "promise-constructor",
-      "owner": "module/createAgentProcessClient/track/exit",
-      "fingerprint": "9ba0ffa2f8a7db1ca2ef39cd3107f061ec9ae04ffdf24f69959f10fbc3033036"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/track/stop",
-      "fingerprint": "7fb0202f9b1f81e0191741c49e74a95e2d2d2e8cb88f7412e3d87c4c879e9a4a"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/track/write",
-      "fingerprint": "2ea1709202b4c3d50c2546b14f65993c0a8315e87194e88299dba975d454c3c8"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/track/signal",
-      "fingerprint": "31116a745c2570df5fc6be162b1920018aaa14c0f4614e7088ad14af0ef44052"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/start",
-      "fingerprint": "b4409fd60a31423f681c89375d8bfde3b5b7d14e9a1c8c8d4748c9392f51b411"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/attach",
-      "fingerprint": "7194276be7c4111873488921c4b75f1703c7af242e87fa1c8355c24ab918a37a"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/hostOperationCatalog",
-      "fingerprint": "24685d66f31661475536794ab9b729ed860b9831b896c76bfd69a674dc4785d0"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/submitHostOperation",
-      "fingerprint": "086c6605adf1dca2e2c16935ee0ce7f84411688dc2f868b5cd62f92e694df809"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/getHostOperation",
-      "fingerprint": "26a7c6230f30b58dc3db338aee7674af7fd682eb34be1b2c90a97e76e5f6a909"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/reclaim",
-      "fingerprint": "a0ebd47caaa1c7474f7b68878038b8fe3a3a551cc54e2d5230f2e775cea20e5b"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/fencePlacement",
-      "fingerprint": "aa5bb1dd2e7d5c2d64083ce155b60e467e3f85e519b8129a380eb0c3fe7c5b61"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_agent-ipc.ts",
-      "kind": "async-function",
-      "owner": "module/createAgentProcessClient/close",
-      "fingerprint": "96c78ab87d71eba84c5bacf6dbcf6a02ec07e46a019af84f52e3265718a5c28b"
-    },
-    {
       "file": "packages/zelavis/src/adapters/_agent-process-runner.ts",
       "kind": "async-function",
       "owner": "module/processAgeMs",
@@ -406,12 +310,6 @@
     {
       "file": "packages/zelavis/src/adapters/_install-host.ts",
       "kind": "async-function",
-      "owner": "module/createNodeInstallHost/host/dataOwnership",
-      "fingerprint": "9499f97fee89fc7bb70197a93ce812273360a3dafc8c87fcdcbe1d24130124a1"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_install-host.ts",
-      "kind": "async-function",
       "owner": "module/createNodeInstallHost/host/portAvailable",
       "fingerprint": "334863e4263f21c2a78d2fe9010cae08d3a3638844c7b79776a67332ad409c9d"
     },
@@ -498,12 +396,6 @@
       "kind": "async-function",
       "owner": "module/createNodeInstallHost/host/execute",
       "fingerprint": "b988d2f48d42b3b0a9c02a00fd2b07b603736708a9622a758bb9ac1d051b7d0b"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_installation-runtime.ts",
-      "kind": "async-function",
-      "owner": "module/readNodeInstallationRuntime",
-      "fingerprint": "aaa6c0bf70f0838aadffb3f1a219f583912c7260058733b9c80cbbd4035399b7"
     },
     {
       "file": "packages/zelavis/src/adapters/_linux-cgroup-supervisor.ts",
@@ -600,18 +492,6 @@
       "kind": "async-function",
       "owner": "module/acquireNodeInstallerLock/release",
       "fingerprint": "81bcf9e6ac1f9bc459c3ce7485bdbba0ed1133fe8956e01974f1c7a85b994318"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_local-ownership.ts",
-      "kind": "async-function",
-      "owner": "module/acquireLocalDataOwnership",
-      "fingerprint": "029f1c10203bbb1d82b8785ab28a5920e61d32453dbfcdb4390811cc57bf0e22"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_local-ownership.ts",
-      "kind": "async-function",
-      "owner": "module/acquireLocalDataOwnership/release",
-      "fingerprint": "1793debabd7a499595bae83b2c9f91e3f1400d50d1d4568f87255b5501e2d927"
     },
     {
       "file": "packages/zelavis/src/adapters/_local-ownership.ts",
@@ -926,24 +806,6 @@
       "fingerprint": "6cd1d0e3923a90200ef953d72b07f13a7184ff4b3ea1fea5eb6224ff5c44f53d"
     },
     {
-      "file": "packages/zelavis/src/adapters/_node-edge-previews.ts",
-      "kind": "async-function",
-      "owner": "module/createNodeEdgePreviewHost/open",
-      "fingerprint": "e5e7a34b9a864e88ecbe777fe02ad919435c9b0b0f325bec51de9ed926e0880f"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-edge-previews.ts",
-      "kind": "async-function",
-      "owner": "module/createNodeEdgePreviewHost/open/server/fetch/callback",
-      "fingerprint": "49cf80c839fc09e83ca36a2254a3b94804cd63240f1377873638aec2a35c228b"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-edge-previews.ts",
-      "kind": "promise-constructor",
-      "owner": "module/createNodeEdgePreviewHost/open",
-      "fingerprint": "db6f63ce4f8fae5e30c6169c56150c09329bfcca5affdf6a6f5074335c5a68ff"
-    },
-    {
       "file": "packages/zelavis/src/adapters/_node-host-operation-executor.ts",
       "kind": "async-function",
       "owner": "module/proveInterpreter",
@@ -1020,48 +882,6 @@
       "kind": "async-function",
       "owner": "module/createNodeInstallationUninstaller/uninstall",
       "fingerprint": "0872341c8025d61b97e002afdbd22119ea706ca94c24d8d9b566914848768c02"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "await",
-      "owner": "module/projectRecord",
-      "fingerprint": "e40f437d45cfd1a31b97979267eff1fb72282a2a76b3278431b1cc2f2c0f2661"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "await",
-      "owner": "module/lockedRecipe",
-      "fingerprint": "a7e29f105d3b05c11e272755eeb5f58f708d3b3d821e0875a836fb9d51b62bfe"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "async-function",
-      "owner": "module/zv/adapter/resolve",
-      "fingerprint": "4cde6e73ff299ad8284e26f0a1cdf02205163e01cc07693a111d5affceed0ee7"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "async-function",
-      "owner": "module/zv/adapter/resolve/resolvePrincipal/callback",
-      "fingerprint": "9f41074b9d1bb3a8b244b6fcefdf3a54a1dc211b5e5648c252c25c029649d77b"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "await",
-      "owner": "module/server",
-      "fingerprint": "3aa671218fcb59ebe1859ac19516b89b7d49bfcd050e68dc65046a745d1cd3c1"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "async-function",
-      "owner": "module/callback",
-      "fingerprint": "3f1190244cd5de020dde7d7b1bf42f2f9d270f0a2f61b877a0e0d453f3a43997"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_node-project-runner.ts",
-      "kind": "promise-coordination",
-      "owner": "module/callback",
-      "fingerprint": "b991c34964d2c85d09d304fb1fcfa54d129c1f17ed85a4dda0d2588b9d6cd78b"
     },
     {
       "file": "packages/zelavis/src/adapters/_node-site-fetch.ts",
@@ -1254,12 +1074,6 @@
       "kind": "async-function",
       "owner": "module/ensureRecipeArtifact",
       "fingerprint": "01d48c2eb6535b63304dc7d5b114b2a63e725ba52bdc2688aa2491582142c498"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_release-tree.ts",
-      "kind": "async-function",
-      "owner": "module/assembleNpmReleaseTree",
-      "fingerprint": "55468b7e61df93f1bc1087a275e85230996b9e7ecdc4d81c61d610cb6ae79398"
     },
     {
       "file": "packages/zelavis/src/adapters/_remote-project-agent.ts",
@@ -3020,66 +2834,6 @@
       "fingerprint": "718c1251d13c685a5503e067855a7b7d716f17fba3a7ea2a4fca5f40a79ff104"
     },
     {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/forProjectId/callback",
-      "fingerprint": "ccf052017af1f295f16831f4adaa04e295770569d5c341610456addcfb185071"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/fencePrevious/callback",
-      "fingerprint": "9a569e0dca9c43d9b208dc4c4d61b6e28246d3115fb479584da92c28e4be716f"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/adopt/callback",
-      "fingerprint": "9a2d34c0224980f8f79302a8a34a5122e9fbb80d917fc03805e4ef4a2dc9be10"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/stop/callback",
-      "fingerprint": "932633cf1fef3adcce74db359e78253ebdb2d9a807f34860846b0ce56cc123dd"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/status/callback",
-      "fingerprint": "8ca580e609479f5efa039f2b6c8e9ae0da0126ad10a899eba145a2158791b991"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/logs/callback",
-      "fingerprint": "5e5dda1127ffa7b8bf3b359c6f02a69f82fe5ff464d865c4049da54f80a7ce63"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/destroy/callback",
-      "fingerprint": "f3ee5364e2f3add3b53e8abbffa6713b9002306a481609c13bedb6e5c2383511"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/close/callback",
-      "fingerprint": "218671882a06d35e06b84cf2c990e1a5d997648174fc3b4e624d2e5bbaaad2c1"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "promise-coordination",
-      "owner": "module/createDeploymentBackendProjectRuntime/close/callback",
-      "fingerprint": "83a0623eedd86086971f3a77e5e10d510cd804849253a8c4073958ef0309cf7b"
-    },
-    {
-      "file": "packages/zelavis/src/backends/registry.ts",
-      "kind": "async-function",
-      "owner": "module/createDeploymentBackendProjectRuntime/signGatewayAuthority/callback",
-      "fingerprint": "09a970ce7983a3616219ea8dfbf339ff621c1c5732d72d45bdb2a057ff728e1c"
-    },
-    {
       "file": "packages/zelavis/src/bundle-store.ts",
       "kind": "async-function",
       "owner": "module/createSharedBundleStore/read",
@@ -3120,36 +2874,6 @@
       "kind": "async-function",
       "owner": "module/readVersion",
       "fingerprint": "8dbecc3fbc417b15a29f070b35da5b76a84faf6e30c700f439e9aa2a231559bf"
-    },
-    {
-      "file": "packages/zelavis/src/cli.ts",
-      "kind": "async-function",
-      "owner": "module/serve",
-      "fingerprint": "053ab2ed946df08e36a69127cbd82b9898d030df23c24593e8117f239b2cb947"
-    },
-    {
-      "file": "packages/zelavis/src/cli.ts",
-      "kind": "promise-constructor",
-      "owner": "module/serve",
-      "fingerprint": "1b9e5792cc06a72aaf719d2190ae8ce661842dbce21aa75098aab12635826da3"
-    },
-    {
-      "file": "packages/zelavis/src/cli.ts",
-      "kind": "async-function",
-      "owner": "module/serve/shutdown/callback",
-      "fingerprint": "7681916c37cc9b84ea0c2af75282d80c0d790e0d292864c02a7796f656a39d04"
-    },
-    {
-      "file": "packages/zelavis/src/cli.ts",
-      "kind": "promise-coordination",
-      "owner": "module/serve/shutdown/callback",
-      "fingerprint": "8b7a99883edfd8743b224cfb0a23ddbace4ff96aa29befb0ef923b81fe70e77c"
-    },
-    {
-      "file": "packages/zelavis/src/cli.ts",
-      "kind": "promise-constructor",
-      "owner": "module/serve",
-      "fingerprint": "f3e9a23229ae3b094289515e2a468d7480ca2ffec5f193d13a6e27070c3b8ba6"
     },
     {
       "file": "packages/zelavis/src/cli.ts",
@@ -3278,12 +3002,6 @@
       "fingerprint": "96d3298a9695db350ce5ba104a3ed9ebc637499596da69b3aabdc6f39cdb4a57"
     },
     {
-      "file": "packages/zelavis/src/cli/commands.ts",
-      "kind": "async-function",
-      "owner": "module/runCli",
-      "fingerprint": "c64c674f895145ad359e737fdec52227018de11a47b3a415b131842076f5534a"
-    },
-    {
       "file": "packages/zelavis/src/cli/data.ts",
       "kind": "async-function",
       "owner": "module/runDataCommand",
@@ -3306,18 +3024,6 @@
       "kind": "async-function",
       "owner": "module/runInstallationDoctor",
       "fingerprint": "9986de16a468cefc24d46257dadaa985cd4dbaa29dd81eb4ef660c05aec98120"
-    },
-    {
-      "file": "packages/zelavis/src/cli/install/index.ts",
-      "kind": "async-function",
-      "owner": "module/runReleaseInstall",
-      "fingerprint": "7b2048fa0f86dbeafa2c6200f4d047685e96a3e7f0e6d74af259d053b24fa59e"
-    },
-    {
-      "file": "packages/zelavis/src/cli/install/index.ts",
-      "kind": "async-function",
-      "owner": "module/releaseSourceKind",
-      "fingerprint": "51d46f0b76355f7aba9eb97c1d2a08459210b5202f3948dc86bbe170477f5e27"
     },
     {
       "file": "packages/zelavis/src/cli/marketplace.ts",
@@ -3402,42 +3108,6 @@
       "kind": "async-function",
       "owner": "module/runSetupWizard",
       "fingerprint": "37a9f8e77c3fe3c026377c55caf6a22b5cbd2efd52421d0ab9c155fab656d152"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "async-function",
-      "owner": "module/runUpdateCommand",
-      "fingerprint": "edbfecdcf8d8fbcb35d2898830ae12c2591fada8f19368ddbda3b06093bdc5ba"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "promise-constructor",
-      "owner": "module/runUpdateCommand",
-      "fingerprint": "74e632c6a1b36c36a450cde33fc1968c2135f189bb99c3dc780a898f26cdc04e"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "promise-constructor",
-      "owner": "module/execute",
-      "fingerprint": "3656cc689b3d7eac4389a1f8012db21cd65d6e97dd41e81308023f39b78bdb70"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "async-function",
-      "owner": "module/runHostUpdate",
-      "fingerprint": "dd1706e3453c8de59a3e30529af922e7fd71b091a3408efb3c797bf0b2e67a33"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "async-function",
-      "owner": "module/runHostUpdate/result/healthy/callback",
-      "fingerprint": "9b29d51dd264312ed9f2ff3b8894a521d63ce79d12cfcd0836f07661668856b8"
-    },
-    {
-      "file": "packages/zelavis/src/cli/update.ts",
-      "kind": "promise-constructor",
-      "owner": "module/runHostUpdate/result/sleep/callback",
-      "fingerprint": "6327fc7569db25ce5ecf4c208a1a67c75b29336860fb97cedbd81ecdc309d606"
     },
     {
       "file": "packages/zelavis/src/core/agent/index.ts",
@@ -3738,150 +3408,6 @@
       "kind": "async-function",
       "owner": "module/createServiceRuntime/close/callback",
       "fingerprint": "28a351a57919b5ad273f0866987b752e1af564c5b490f0746917920144c1dcfe"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/preflightZelavisDataMaintenance",
-      "fingerprint": "47c8b96028baa4a2c22ed2462e7193821f8bd301b64722654b2019b498a8ba56"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/preflightZelavisInstall",
-      "fingerprint": "3ffc7c2787c774c7e550bf15d452f64abad3036504402ff0354d967ace9fbceb"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation",
-      "fingerprint": "e64eefdd3b557565c482151a9ded3d67e079bb9df9f811bbd460f7cafb005363"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/check/callback",
-      "fingerprint": "7c5dd51e47744be4e98f606a8f3a2d301a94c01b8af2cee4ad6a474ba505e434"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "ce93994b1bd98031010173058657cd4262569de4dd80c0170e1864317cdf6513"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "58eb31cd68390d04549875a9ee660914a6a215e641db2173861053ffce4c8395"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "3deabfb857f0696a4889eb06dc301f140b4861dffa56c839f3c464620bd86045"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "d09deeeb93692432890add66d9cddfc740d5b981a904014c50749d89aa9ac1c9"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "99d1acfafb4ba847682e1f1c85ed66a9062ac05b65389fe764c4e4e026b7faf3"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "promise-coordination",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "343ee3c739ec7d71accc1b61f1fd61ab602279b943bb525c1a7c5b5310f99958"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "b64123dfac0498483bc3585faffb13779cba32a3929e536a26464348df74bcd3"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "6773cc4918996b3f2359ca9628779eabc070be57cb4f06f954601c08e8416c8c"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "1316fdfa3fb83fd462ea8cb148215b7e6e924343194e68f526576dba441fad56"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "3c26d1719fd6f521e3e8f63dddf850d4af62b52fa39644c8b7b9db0af07deb58"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "52f941c1cc3f9968aabd10840e20a9d72b104e81e7984a17ce4d4391efcf96c8"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "promise-coordination",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "33c0c21499e5ceb28f1ff04e6b15d9a6ae28d9ba1f1cabf600497c72ea2bd530"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "8e5d7a271599db0eb5d15ba6adef9a7b4aed4cecce81a8a85e614f8239d9e402"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "promise-coordination",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "e21a7fba1e648d93e2f3aac8bd00299d7966ed45728b90dbbc6e20c288623a2b"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "c060bcb2ff26697efc68f299d7f9c3db20e80bd0798f663e7a6382634c8f3dcd"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/inspectZelavisInstallation/callback",
-      "fingerprint": "e83f3b7df82350ed0c20639e7033543e5ee9dd21ba1c21d027ed508478d40aae"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-health.ts",
-      "kind": "async-function",
-      "owner": "module/readUnitContents",
-      "fingerprint": "bb46b3c268232f6e8512a961248fdb874fc5a33373b17a315f98ceb67b2419d1"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-plan.ts",
-      "kind": "async-function",
-      "owner": "module/readNativeInstallationReceipt",
-      "fingerprint": "c8b11214ed4f42f5dde5a3a3b1a92df97539c299f3cb26b25a06d463cfd6c635"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-plan.ts",
-      "kind": "async-function",
-      "owner": "module/planZelavisReleaseInstall",
-      "fingerprint": "9dc738dc00bb23cfdf1776e65850eccd5dcbbb8cea9643ed24366a963e677eac"
-    },
-    {
-      "file": "packages/zelavis/src/core/runtime/installation-plan.ts",
-      "kind": "async-function",
-      "owner": "module/executeZelavisInstallationPlan",
-      "fingerprint": "e69cfa3b6d7fe68a382c78663725dbedc639d1bce42f0743c421e27cded60b43"
     },
     {
       "file": "packages/zelavis/src/core/runtime/jwt-authentication.ts",
@@ -4746,36 +4272,6 @@
       "kind": "async-function",
       "owner": "module/performEdgeOnboarding",
       "fingerprint": "4dedc5e67ee7d7040e9cdb7867744ef81b82b4823bc09f6ab3f25644f3c5e097"
-    },
-    {
-      "file": "packages/zelavis/src/edge/previews.ts",
-      "kind": "async-function",
-      "owner": "module/createZelavisEdgePreviews/stop",
-      "fingerprint": "3034f36a831d7ea05bff39949813c75d887e1401eca4d7ce7eb2f8a8c9847e59"
-    },
-    {
-      "file": "packages/zelavis/src/edge/previews.ts",
-      "kind": "async-function",
-      "owner": "module/createZelavisEdgePreviews/synchronize/callback",
-      "fingerprint": "ee5a1bdd2bc3eea93fbd414b55b5ff07e2b8223da7be95a3442228b9a1d18a67"
-    },
-    {
-      "file": "packages/zelavis/src/edge/previews.ts",
-      "kind": "async-function",
-      "owner": "module/createZelavisEdgePreviews/remove/callback",
-      "fingerprint": "86238f2572246020f2d26f812ab2cc17f0133c7c5d3e828220b0ef7a1c3e63a1"
-    },
-    {
-      "file": "packages/zelavis/src/edge/previews.ts",
-      "kind": "async-function",
-      "owner": "module/createZelavisEdgePreviews/close",
-      "fingerprint": "36e3da3b6eac06ffd82ef49bcb60bddb06eda49dc757cecf86be5215f547e976"
-    },
-    {
-      "file": "packages/zelavis/src/edge/previews.ts",
-      "kind": "promise-coordination",
-      "owner": "module/createZelavisEdgePreviews/close",
-      "fingerprint": "ef18d315a57e618ab8e51faa9a1d5cbad4e4caa2d3befd96b709de6e1b25987e"
     },
     {
       "file": "packages/zelavis/src/edge/routes.ts",

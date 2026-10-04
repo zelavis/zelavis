@@ -65,6 +65,10 @@ async function installation(t) {
   await writeFile(join(paths.prefix, ".edge-owner.lock"), "");
   await writeFile(join(paths.prefix, "edge-owner.json"), JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.data}));
   await writeFile(join(paths.data, ".platform.lock"), "");
+  for (const name of ["runtime-control.sock", "runtime-custody.json", "runtime-handover.json", "runtime-handover.json.guard.sqlite", ".runtime-owner.sqlite"]) await writeFile(join(paths.data, name), "abandoned host state");
+  for (const name of ["runtime-engines", "runtime-agent"]) {
+    await mkdir(join(paths.data, name)); await writeFile(join(paths.data, name, "owned-state"), "host state");
+  }
   await writeFile(join(paths.data, ".platform-owner.json"), JSON.stringify({ pid: 2147483647, startedAt: "1970-01-01T00:00:00.000Z", session: "crashed-platform", purpose: "platform", installationRoot: paths.prefix }));
   for (const directory of [paths.systemdEtc, paths.systemdLib]) {
     await writeFile(join(directory, "zelavis.service"), "unit");
@@ -163,6 +167,7 @@ test("complete uninstall removes every installer-owned custom-path artifact", as
   );
   assert.equal(result.status, 0, result.stderr);
   for (const path of [
+    ...["runtime-control.sock", "runtime-custody.json", "runtime-handover.json", "runtime-handover.json.guard.sqlite", ".runtime-owner.sqlite", "runtime-engines", "runtime-agent"].map(name => join(fixture.paths.data, name)),
     join(fixture.paths.prefix, ".install.lock"),
     join(fixture.paths.prefix, "installation.json"),
     join(fixture.paths.prefix, "runtime.json"),

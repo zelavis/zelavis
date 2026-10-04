@@ -150,14 +150,13 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
     const reason = unmanaged();
     const { requested, run } = yield* readState();
     const state = requested ? "requested" : run?.state ?? "idle";
-    const restartRequired = run?.state === "succeeded" && run.to !== undefined && compareVersions(run.to, current) > 0;
     return {
       current, ...(channel ? { channel } : {}), ...(latest ? { latest } : {}),
-      available: latest !== undefined && compareVersions(latest, current) > 0 && !(restartRequired && run?.to === latest),
+      available: latest !== undefined && compareVersions(latest, current) > 0,
       ...(checkedAt !== undefined ? { checkedAt: new Date(checkedAt).toISOString() } : {}),
       ...(checkError ? { checkError } : {}), managed: reason === undefined,
       ...(reason ? { unmanagedReason: reason } : {}), state,
-      ...(run ? { run } : {}), ...(restartRequired ? { restartRequired } : {}),
+      ...(run ? { run } : {}),
     };
   });
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber } from "effect";
@@ -46,4 +46,48 @@ test("a WordPress process stop failure remains visible and can be retried", { ti
     assert.equal(process.running, false);
     assert.equal(stops, 3);
   } finally { fail = false; await driver.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+for (const unrelated of [false, true]) test(`WordPress adoption ${unrelated ? "refuses unrelated Agent execution" : "retains all three daemon handles without starting replacements"}`, async () => {
+  const root = await mkdtemp(join(tmpdir(), "zv-wp-adopt-"));
+  const runtime = join(root, "one", ".zelavis");
+  const site = join(runtime, "wordpress"), database = join(runtime, "mariadb");
+  const config = { mariadbd: "/test/mariadbd", phpFpm: "/test/php-fpm", nginx: "/test/nginx", httpPort: 34567, socketId: "adoption-test" };
+  let starts = 0;
+  const children = [
+    { executable: config.mariadbd, cwd: runtime, args: [`--datadir=${database}`] },
+    { executable: config.phpFpm, cwd: site, args: [join(runtime, "php-fpm.conf")] },
+    { executable: unrelated ? "/test/unrelated" : config.nginx, cwd: runtime, args: [join(runtime, "nginx.conf")] },
+  ].map(command => {
+    const process = { workloadId: "one", running: true, listen() {}, stop: async () => { process.running = false; } };
+    return { process, command: { ...command, workloadId: "one" }, replay: [] };
+  });
+  const driver = createNativeWordPressProjectRuntime({ directory: root,
+    agent: { survivesControlPlaneRestart: true, attach: async () => children, start: async () => { starts++; throw new Error("Adoption must not spawn"); } },
+  });
+  try {
+    await mkdir(join(root, "one", ".zelavis"), { recursive: true });
+    await writeFile(join(root, "one", ".zelavis", "wordpress-native.json"), JSON.stringify(config));
+    if (unrelated) await assert.rejects(driver.adopt(), /unrelated process/);
+    else {
+      await driver.adopt();
+      assert.equal((await driver.status("one")).status, "running");
+      children[1].process.running = false;
+      assert.equal((await driver.status("one")).status, "stopped", "nginx alone does not prove a healthy WordPress stack");
+    }
+    assert.equal(starts, 0);
+  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("malformed WordPress socket identities refuse cleanup and preserve Project data", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zv-wp-socket-"));
+  const driver = createNativeWordPressProjectRuntime({ directory: root });
+  try {
+    const runtime = join(root, "one", ".zelavis");
+    await mkdir(runtime, { recursive: true });
+    await writeFile(join(runtime, "wordpress-native.json"), JSON.stringify({ socketId: "../../unrelated" }));
+    await writeFile(join(root, "one", "keep.txt"), "Project data");
+    await assert.rejects(driver.destroy("one"), /socket identity is malformed/);
+    assert.equal(await readFile(join(root, "one", "keep.txt"), "utf8"), "Project data");
+  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });

@@ -18,7 +18,7 @@ async function fixture(t) {
   await symlink(process.execPath, join(source, "runtime/node/bin/node"));
   await copyFile(new URL("../runtime/zelavis", import.meta.url), join(source, "bin/zelavis"));
   await stageCli(source);
-  const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home, ZELAVIS_ENABLE_AGENT: "0" };
+  const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home };
   const run = (args) => spawnSync(process.execPath, [join(source, "platform/dist/cli.js"), ...args], { encoding: "utf8", env });
   const prefix = join(home, ".local/share/zelavis");
   return { source, home, prefix, env, run, port: String(await freePort()), command: join(home, ".local/bin/zelavis") };

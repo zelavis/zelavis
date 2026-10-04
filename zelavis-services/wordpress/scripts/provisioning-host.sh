@@ -12,7 +12,7 @@ curl -fsSL "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o SHASUMS256
 sed -n "/ $archive\$/p" SHASUMS256.txt > node.sha256
 test -s node.sha256
 sha256sum -c node.sha256
-tar -xzf "$archive" -C /opt/prepared/runtime
+tar --no-same-owner -xzf "$archive" -C /opt/prepared/runtime
 mv "/opt/prepared/runtime/node-v$node_version-linux-$architecture" /opt/prepared/runtime/node
 NODE=/opt/prepared/runtime/node/bin/node
 NPM=/opt/prepared/runtime/node/lib/node_modules/npm/bin/npm-cli.js
@@ -52,6 +52,9 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" upgrade
+if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
+  "$NODE" /workspace/zelavis-services/wordpress/scripts/check-runtime-handover.mjs
+fi
 systemctl restart zelavis.service
 for attempt in $(seq 1 60); do
   if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi

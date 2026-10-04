@@ -49,7 +49,7 @@ await mkdir(artifactsDirectory, { recursive: true });
 // survive package upgrades while another instance still selects an older version.
 const releaseDirectory = join(packageRoot, "opt", "zelavis", "package");
 await mkdir(dirname(releaseDirectory), { recursive: true });
-await cp(stageDirectory, releaseDirectory, { recursive: true });
+await cp(stageDirectory, releaseDirectory, { recursive: true, verbatimSymlinks: true });
 await symlink("/opt/zelavis/current/bin/zelavis", join(packageRoot, "usr", "bin", "zelavis"));
 await cp(
   join(stageDirectory, "share", "zelavis.service"),

@@ -12,6 +12,22 @@ export const migratedFiles = new Set([
   "packages/zelavis/src/adapters/_local-project-runtime.ts", "packages/zelavis/src/adapters/_node-project-runtime.ts",
   "packages/zelavis/src/adapters/_server-frontend-project-runtime.ts", "packages/zelavis/src/adapters/_node-updates.ts",
   "packages/zelavis/src/adapters/_update-runner.ts", "zelavis-services/wordpress/src/runtime.ts",
+  "packages/zelavis/src/core/runtime/admission.ts", "packages/zelavis/src/core/runtime/handover.ts",
+  "packages/zelavis/src/adapters/_node-runtime-ingress.ts", "packages/zelavis/src/adapters/_node-runtime-supervisor.ts",
+  "packages/zelavis/src/adapters/_node-runtime-worker.ts", "packages/zelavis/src/adapters/_node-project-runner.ts",
+  "packages/zelavis/src/adapters/_node-project-engine.ts", "packages/zelavis/src/adapters/_node-platform-engine.ts",
+  "packages/zelavis/src/adapters/_node-runtime-gateway.ts", "packages/zelavis/src/adapters/_node-runtime-journal.ts",
+  "packages/zelavis/src/adapters/_node-project-release.ts",
+  "packages/zelavis/src/adapters/_node-runtime-artifact.ts", "packages/zelavis/src/adapters/_node-runtime-catalog.ts",
+  "packages/zelavis/src/adapters/_release-tree.ts",
+  "packages/zelavis/src/adapters/_node-project-host.ts", "packages/zelavis/src/adapters/_node-runtime-ownership.ts",
+  "packages/zelavis/src/adapters/_node-runtime-commands.ts",
+  "packages/zelavis/src/adapters/_node-runtime-client.ts",
+  "packages/zelavis/src/adapters/_installation-runtime.ts",
+  "packages/zelavis/src/adapters/_node-platform-host.ts", "packages/zelavis/src/adapters/_node-runtime-control.ts",
+  "packages/zelavis/src/adapters/_node-runtime-selection.ts", "packages/zelavis/src/adapters/_node-runtime-select-cli.ts",
+  "packages/zelavis/src/core/runtime/installation-plan.ts", "packages/zelavis/src/core/runtime/installation-health.ts",
+  "packages/zelavis/src/cli/install/index.ts", "packages/zelavis/src/cli/update.ts",
 ]);
 
 /** Fingerprints ignore formatting and comments, but bind the containing function and actual syntax. */

@@ -1,3 +1,6 @@
+import { Effect } from "effect";
+import { integration, present } from "../core/runtime/effect-boundary.js";
+import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 import { restoreHostPackagePolicy } from "./_host-package-policy.js";
 import { assertInstallationInstance, installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { claimLocalEdgeOwner, releaseLocalEdgeOwner, acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
@@ -56,14 +59,24 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
   };
   const host: ZelavisInstallationProbeHost = {
     async releaseMaintenance() { const lease = maintenance; maintenance = undefined; await lease?.release(); },
-    async dataOwnership(path) {
-      const owner = await readLocalDataOwner(path);
+    dataOwnership: path => present(Effect.gen(function* () {
+      const owner = yield* integration(() => readLocalDataOwner(path));
       if (!owner || !isAlive(owner.pid)) return { active: false };
-      const age = await processAgeMs(owner.pid);
-      // Unknown process identity is conservatively treated as an occupied directory.
+      const age = yield* integration(() => processAgeMs(owner.pid));
       const active = age === undefined || Math.abs(age - (Date.now() - Date.parse(owner.startedAt))) <= 30_000;
-      return { active, pid: owner.pid, installationRoot: owner.installationRoot, purpose: owner.purpose };
-    },
+      let supervisorPid: number | undefined;
+      if (active && owner.purpose === "platform") {
+        const status = yield* requestNodeRuntimeControl(join(path, "runtime-control.sock"), { action: "status" }).pipe(Effect.timeoutOrElse({ duration: 5_000, orElse: () => Effect.void }), Effect.orElseSucceed(() => undefined));
+        if (status?.protocol === "zelavis-runtime/1" && status.ready && Number.isSafeInteger(status.supervisorPid)) {
+          const parent = yield* (process.platform === "linux"
+            ? integration(() => readFile(`/proc/${owner.pid}/status`, "utf8")).pipe(Effect.map(source => Number(/^PPid:\s+(\d+)$/m.exec(source)?.[1])))
+            : integration(() => exec("ps", ["-p", String(owner.pid), "-o", "ppid="])).pipe(Effect.map(result => Number(result.stdout.trim()))))
+            .pipe(Effect.orElseSucceed(() => undefined));
+          if (parent === status.supervisorPid) supervisorPid = parent;
+        }
+      }
+      return { active, pid: owner.pid, ...(supervisorPid ? { supervisorPid } : {}), installationRoot: owner.installationRoot, purpose: owner.purpose };
+    })),
     async portAvailable(port) {
       // Read-only inspection: a temporary bind would itself look like a
       // foreign listener to another installer or doctor running concurrently.

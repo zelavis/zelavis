@@ -56,12 +56,32 @@ test("@smoke a Project on a retired recipe must be pointed at one, and a running
   await pretendStale(page, {
     recipeStatus: { state: "unavailable", reason: 'This Platform ships no recipe named "zelavis/app".' },
     runtime: { driver: "node-process", status: "running", url: "http://127.0.0.1:1" },
+    capabilities: { zeroDowntimeUpdates: false },
   })
   await page.goto(`${basePath}/projects`)
   const notice = page.getByLabel("Recipe upgrade")
   await expect(notice).toContainText('ships no recipe named "zelavis/app"')
   await expect(notice.getByRole("button", { name: "Upgrade recipe" })).toBeDisabled()
   await expect(notice).toContainText("Stop the Project first.")
+})
+
+test("@smoke a qualified running App can upgrade at the same address", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, {
+    recipeStatus: { state: "upgradeAvailable", version: "9.9.9" },
+    runtime: { driver: "node-process", status: "running", url: "http://127.0.0.1:1" },
+    capabilities: { zeroDowntimeUpdates: true },
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/upgrade$`), async route => {
+    await route.fulfill({ json: { project: { id: projectId, name: "Zelavis Runtime", recipe: { name: "@zelavis/app", version: "9.9.9" },
+      runtime: { status: "running", url: "http://127.0.0.1:1" } } } })
+  })
+  await page.goto(`${basePath}/projects`)
+  const notice = page.getByLabel("Recipe upgrade")
+  await expect(notice.getByRole("button", { name: "Upgrade recipe" })).toBeEnabled()
+  await expect(notice).not.toContainText("Stop the Project first.")
+  await notice.getByRole("button", { name: "Upgrade recipe" }).click()
+  await expect(page.getByText(/It is running at the same address/)).toBeVisible()
 })
 
 test("@smoke a Project that is not running cannot be opened from its card, and its pages explain themselves", async ({ page }) => {

@@ -3,11 +3,19 @@ import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { defineEffectProjectRuntime } from "./project-runtime.js";
 import { Cause, Deferred, Effect } from "effect";
 import { integration, singleFlight, type EffectOperations } from "../core/runtime/effect-boundary.js";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureRecipeArtifact } from "./_recipe-artifact.js";
 import { ZELAVIS_VERSION } from "../version.js";
+import { describeInstallation } from "../cli/installation.js";
+import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
+import { freezeNodeProjectRelease, restoreNodeProjectRelease } from "./_node-project-release.js";
+import { randomUUID } from "node:crypto";
+import { evaluate } from "../core/runtime/effect-boundary.js";
+import type { RuntimeRelease } from "../core/runtime/handover.js";
+import { createNodeRuntimeClient } from "./_node-runtime-client.js";
+import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
 import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcess, ZelavisAgentProcessRunner, } from "../core/agent/process-command.js";
@@ -30,9 +38,12 @@ export interface NodeProcessProjectRuntimeOptions {
     recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined> | string | undefined;
     /** Gives a starting Project the allow-list this Platform holds (see `LocalMarketplace.handDown`). */
     handDownAllowlist?: (projectDataDirectory: string) => Promise<void>;
+    /** Installer-acquired exact engines. No package acquisition occurs here. */
+    runtimeCatalog?: { readonly directory: string; readonly rootOwned: boolean };
 }
 interface NodeProjectProcess {
     process?: ZelavisAgentProcess;
+    control?: ReturnType<typeof createNodeRuntimeClient>;
     logs: ZelavisProjectLogEntry[];
     snapshot: ZelavisProjectRuntimeSnapshot;
     stopping: boolean;
@@ -119,9 +130,10 @@ function readyUrl(line: string): string | undefined {
             type?: unknown;
             url?: unknown;
         };
-        return event.type === "ready" && typeof event.url === "string"
-            ? event.url
-            : undefined;
+        if (event.type !== "ready" || typeof event.url !== "string") return undefined;
+        const url = new URL(event.url);
+        if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.pathname !== "/" || url.username || url.password || url.search || url.hash) return undefined;
+        return url.origin;
     }
     catch {
         return undefined;
@@ -144,6 +156,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     const shutdownConcurrency = positiveInteger(options.shutdownConcurrency, DEFAULT_SHUTDOWN_CONCURRENCY);
     const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
     const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
+    const installation = describeInstallation(fileURLToPath(new URL("../cli.js", import.meta.url)));
+    const catalogConfiguration = Effect.fn("NodeProjects.catalogConfiguration")(function* () {
+        if (options.runtimeCatalog) return options.runtimeCatalog;
+        if (installation.kind !== "packaged" || !installation.root) return undefined;
+        const directory = join(installation.root, "releases");
+        const stats = yield* integration(() => lstat(directory));
+        return { directory, rootOwned: stats.uid === 0 };
+    });
     const agent = options.agent ??
         createLocalAgentProcessRunner({
             // Beside the Projects it runs, so a Platform restarted against the same
@@ -190,7 +210,8 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         };
     }
     const capabilities = {
-        independentRuntimeVersion: false,
+        independentRuntimeVersion: Boolean(options.runtimeCatalog || installation.kind === "packaged"),
+        zeroDowntimeUpdates: true,
         movable: false,
         liveMigration: false,
         secureIsolation: false,
@@ -211,7 +232,79 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         runtimeKinds: Object.freeze(["native"]),
         defaultRuntimeKind: "native",
         startupConcurrency,
+        supportsLiveUpdate: () => true,
         capabilities: () => capabilities,
+        prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate) {
+            const state = processes.get(previous.id);
+            if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project has no running handover host."));
+            const before = yield* state.control.request({ action: "status" });
+            if (before.requiresRecovery === true) return yield* new IntegrationFailure(new Error("Project host requires fenced recovery before another update."));
+            const selected = yield* evaluate(() => {
+                const value = before.release as RuntimeRelease;
+                if (!value || typeof value.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value.digest)) throw new Error("Project host returned an invalid release selection.");
+                return value;
+            });
+            const directory = projectDirectory(previous.id);
+            const engine = yield* readCreationEngine(directory);
+            const installedCatalog = yield* catalogConfiguration();
+            // A deliberate App upgrade selects the latest qualified engine as
+            // well as its recipe. Parent replacement alone never changes this pin.
+            if (installedCatalog) engine.runtime = yield* createNodeRuntimeCatalog(installedCatalog).latest();
+            const staging = join(directory, ".zelavis", "update-preparation", randomUUID());
+            yield* integration(() => mkdir(staging, { recursive: true, mode: 0o700 }));
+            return yield* Effect.gen(function* () {
+                const artifact = yield* integration(() => ensureRecipeArtifact(candidate.recipe, staging, join(staging, ".zelavis"), options.recipePackageDirectory));
+                const manifest = yield* integration(() => readFile(join(staging, ".zelavis", "recipe", "package", "package.json"), "utf8"));
+                if (yield* evaluate(() => JSON.parse(manifest).zelavis?.project?.runtime !== undefined)) return yield* new IntegrationFailure(new Error("A live App update cannot switch to a recipe with another runtime contract."));
+                const recipe = { ...candidate.recipe, artifact };
+                yield* integration(() => writeFile(join(staging, "project.json"), JSON.stringify({ ...candidate, recipe, engine,
+                    runtime: { driver: driver.name, capabilities: driver.capabilities(candidate) } }), { mode: 0o600 }));
+                const target = yield* freezeNodeProjectRelease(directory, staging, engine.runtime?.version ?? ZELAVIS_VERSION);
+                return { previous: selected, target, recipe };
+            }).pipe(Effect.ensuring(integration(() => rm(staging, { recursive: true, force: true })).pipe(Effect.orDie)));
+        }),
+        applyUpdate: Effect.fn("NodeProjects.applyUpdate")(function* (projectId, update, commit) {
+            const state = processes.get(projectId);
+            if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project handover host is not running."));
+            const same = (a: RuntimeRelease, b: RuntimeRelease) => a.version === b.version && a.digest === b.digest;
+            const current = yield* state.control.request({ action: "status" });
+            if (!same(current.release as RuntimeRelease, update.previous)) return yield* new IntegrationFailure(new Error("Project update no longer names the selected previous runtime."));
+            const outcome = yield* state.control.request({ action: "replace", release: update.target, commit: true }, {
+                timeoutMs: 150_000,
+                commit: Effect.fn("NodeProjects.commitUpdate")(function* (selected, generation) {
+                    if (!Number.isSafeInteger(generation) || generation < 1) return yield* new IntegrationFailure(new Error("Invalid Project handover generation."));
+                    if (!same(selected, update.previous) && !same(selected, update.target)) return yield* new IntegrationFailure(new Error("Project host requested a lock outside this update."));
+                    yield* restoreNodeProjectRelease(projectDirectory(projectId), projectId, selected);
+                    yield* integration(() => commit(same(selected, update.target) ? "target" : "previous"));
+                }),
+            });
+            if (outcome.type !== "replaced") return yield* new IntegrationFailure(new Error("Project host did not acknowledge handover completion."));
+            return state.snapshot;
+        }),
+        recoverUpdate: Effect.fn("NodeProjects.recoverUpdate")(function* (projectId, update) {
+            const state = processes.get(projectId);
+            let selected: RuntimeRelease;
+            if (state?.process?.running && state.control) {
+                const status = yield* state.control.request({ action: "status" });
+                if (status.requiresRecovery === true) return yield* new IntegrationFailure(new Error("Project runtime ownership requires fenced recovery."));
+                selected = status.release as RuntimeRelease;
+            } else {
+                yield* proveNodeRuntimeUnowned(join(projectDirectory(projectId), ".zelavis"));
+                const source = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "runtime-handover.json"), "utf8"));
+                selected = yield* evaluate(() => {
+                    const journal = JSON.parse(source);
+                    if (journal.format !== "zelavis-runtime/1" || !Number.isSafeInteger(journal.generation) || journal.generation < 1) throw new Error("Invalid Project runtime recovery journal.");
+                    return journal.selected as RuntimeRelease;
+                });
+            }
+            const choice = yield* evaluate(() => {
+                if (selected?.version === update.target.version && selected.digest === update.target.digest) return "target" as const;
+                if (selected?.version === update.previous.version && selected.digest === update.previous.digest) return "previous" as const;
+                throw new Error("Project runtime selection does not belong to its persisted update.");
+            });
+            yield* restoreNodeProjectRelease(projectDirectory(projectId), projectId, selected);
+            return choice;
+        }),
         prepare: Effect.fn("NodeProjects.prepare")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepare"]>>[0], recipe: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepare"]>>[1]) {
             const directory = projectDirectory(project.id);
             const dataDirectory = join(directory, ".zelavis");
@@ -225,11 +318,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             // Freeze the recipe into the Project so a Platform upgrade cannot change
             // what it runs. Preparing fails, with the reason, when it cannot be frozen.
             const artifact = yield* integration(() => ensureRecipeArtifact(recipe, directory, dataDirectory, options.recipePackageDirectory));
-            // Which engine created this Project. The engine that hosts it is still
-            // the Platform's own code, so this is recorded, not enforced: it makes
-            // drift between the Project's origin and what runs it visible, and is the
-            // field a locked-engine runner would key on.
             const engine = yield* readCreationEngine(directory);
+            const catalogOptions = yield* catalogConfiguration();
+            if (catalogOptions) {
+                const catalog = createNodeRuntimeCatalog(catalogOptions);
+                const selected = engine.runtime ? yield* catalog.select(engine.runtime.version) : yield* catalog.latest();
+                if (engine.runtime && engine.runtime.digest !== selected.digest) return yield* new IntegrationFailure(new Error("The installed engine differs from this Project's exact runtime lock."));
+                engine.runtime = selected;
+            }
             yield* integration(() => writeFile(join(directory, "project.json"), `${JSON.stringify({
                 ...project,
                 recipe: {
@@ -250,14 +346,23 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
                 .map(entry => entry.name);
             for (const projectId of directories) {
+                const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
+                if (!frozenManifest) continue;
+                const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
+                if (customRuntime) continue;
+                const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
+                if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
                 const attached = yield* Effect.catch(integration(() => agent.attach!(projectId)), Effect.fn("NodeProjects.recover")(function* () { return []; }));
                 for (const { process: child, replay } of attached) {
+                    if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
+                    if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
                     const state: NodeProjectProcess = {
                         process: child,
                         logs: [],
                         snapshot: { status: "running" },
                         stopping: false,
                     };
+                    state.control = createNodeRuntimeClient(child, startupTimeoutMs);
                     processes.set(projectId, state);
                     for (const { stream, line } of replay) {
                         const url = readyUrl(line);
@@ -271,6 +376,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                         ? `Re-attached to a running Project at ${state.snapshot.url}.`
                         : "Re-attached to a running Project whose address is no longer in the Agent's buffer.");
                     child.listen?.(({ stream, line }) => {
+                        if (stream === "stdout" && state.control?.accept(line)) return;
                         const url = readyUrl(line);
                         if (url) {
                             state.snapshot = { status: "running", url };
@@ -280,6 +386,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                         appendLog(state, stream, line);
                     });
                     void child.exit.then(({ code, signal, requested }) => {
+                        state.control?.exited();
                         const stoppedAt = new Date().toISOString();
                         state.snapshot =
                             requested || state.stopping || code === 0
@@ -294,6 +401,13 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                                     }),
                                 };
                     });
+                    const secret = createGatewayAuthoritySecret();
+                    const reply = yield* state.control.request({ action: "rotate-key", secret });
+                    if (reply.type !== "key-rotated") return yield* new IntegrationFailure(new Error("Project host did not acknowledge Gateway re-keying."));
+                    const url = readyUrl(JSON.stringify({ type: "ready", url: reply.url }));
+                    if (!url) return yield* new IntegrationFailure(new Error("Project host did not report its persistent ingress address."));
+                    state.snapshot = { ...state.snapshot, status: "running", url };
+                    gatewaySecrets.set(projectId, secret);
                 }
             }
         }),
@@ -313,6 +427,16 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 }
                 return (yield* error);
             }));
+            const engine = yield* readCreationEngine(directory);
+            const catalogOptions = yield* catalogConfiguration();
+            let executable = process.execPath, selectedRunner = runnerPath;
+            if (catalogOptions) {
+                if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
+                const execution = yield* createNodeRuntimeCatalog(catalogOptions).resolve(engine.runtime, "project", {}, {});
+                executable = execution.executable;
+                selectedRunner = join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
+            }
+            const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
             const state: NodeProjectProcess = {
                 logs: current?.logs ?? [],
                 snapshot: { status: "starting" },
@@ -333,15 +457,18 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const child = yield* integration(() => agent.start({
                 workloadId: project.id,
                 ...(placement ? { placement } : {}),
-                executable: process.execPath,
-                args: [runnerPath],
+                executable,
+                args: [selectedRunner],
                 cwd: directory,
+                stdin: "pipe",
                 env: {
                     ...projectProcessEnvironment(),
                     PORT: "0",
                     ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
                     ZELAVIS_PROJECT_ID: project.id,
                     ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
+                    ZELAVIS_PROJECT_INITIAL_RELEASE: JSON.stringify(initial),
+                    ...(catalogOptions ? { ZELAVIS_RUNTIME_RELEASES_DIR: catalogOptions.directory, ZELAVIS_RUNTIME_ROOT_OWNED: String(catalogOptions.rootOwned) } : {}),
                     ZELAVIS_UI_DEV_SERVER: "",
                 },
             }, {
@@ -350,6 +477,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                         appendLog(state, "stderr", line);
                         return;
                     }
+                    if (state.control?.accept(line)) return;
                     // The readiness handshake: the child announces the address it
                     // actually bound, because it was started on port 0 and the
                     // Platform cannot know the port until it says so.
@@ -368,6 +496,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     appendLog(state, "stdout", line);
                 },
                 onExit: ({ code, signal, requested }) => {
+                    state.control?.exited();
                     const stoppedAt = new Date().toISOString();
                     if (requested || state.stopping || code === 0) {
                         state.snapshot = { status: "stopped", stoppedAt };
@@ -390,6 +519,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 },
             }));
             state.process = child;
+            state.control = createNodeRuntimeClient(child, startupTimeoutMs);
             return yield* restore(Deferred.await(ready).pipe(
                 Effect.timeoutOrElse({ duration: startupTimeoutMs,
                     orElse: () => Effect.fail(new IntegrationFailure(new Error(`Project "${project.id}" did not become ready within ${startupTimeoutMs}ms.`))) }),
@@ -453,25 +583,17 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
 }
 const readCreationEngine = Effect.fn("NodeProjects.readCreationEngine")(function* (projectDirectory: string): Effect.fn.Return<{
     createdWith: string;
+    runtime?: RuntimeRelease;
 }, TaggedFailure> {
-    const raw = yield* Effect.catch(integration(() => readFile(join(projectDirectory, "project.json"), "utf8")), Effect.fn("NodeProjects.recover")(function* () { return undefined; }));
+    const raw = yield* integration(() => readFile(join(projectDirectory, "project.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
     if (raw) {
-        const existing = safeCreationEngine(raw);
-        if (existing)
-            return { createdWith: existing };
+        return yield* evaluate(() => {
+            const record = JSON.parse(raw);
+            const engine = record.engine;
+            if (!engine || typeof engine.createdWith !== "string") throw new Error("Project descriptor has no engine creation identity.");
+            if (engine.runtime && (typeof engine.runtime.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(engine.runtime.digest))) throw new Error("Malformed exact Project runtime engine lock.");
+            return { createdWith: engine.createdWith, ...(engine.runtime ? { runtime: engine.runtime as RuntimeRelease } : {}) };
+        });
     }
     return { createdWith: ZELAVIS_VERSION };
 });
-function safeCreationEngine(raw: string): string | undefined {
-    try {
-        const existing = JSON.parse(raw) as {
-            engine?: {
-                createdWith?: unknown;
-            };
-        };
-        return typeof existing.engine?.createdWith === "string" ? existing.engine.createdWith : undefined;
-    }
-    catch {
-        return undefined;
-    }
-}

@@ -273,6 +273,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     const loaded = () => [...new Set([...recipeDrivers.values()])];
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "local-project",
+        detach: Effect.fn("LocalProjects.detach")(function* () {
+            if (!agent.survivesControlPlaneRestart || !agent.attach) return yield* Effect.fail(new ZelavisProjectRuntimeError("This Agent cannot retain Project custody."));
+            yield* integration(() => agent.close());
+        }),
         adopt: Effect.fn("LocalProjects.adopt")(function* () {
             yield* Effect.catch(Effect.gen(function* () {
                 for (const entry of (yield* integration(() => readdir(directory, { withFileTypes: true })))) {
@@ -295,6 +299,22 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         defaultRuntimeKind: "native",
         startupConcurrency: 1,
         capabilities: (project) => forDescriptor(project).capabilities(project),
+        supportsLiveUpdate: project => forDescriptor(project).supportsLiveUpdate?.(project) === true,
+        prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate) {
+            const selected = effectOperations(forDescriptor(previous));
+            if (!selected.prepareUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));
+            return yield* selected.prepareUpdate(previous, candidate);
+        }),
+        applyUpdate: Effect.fn("LocalProjects.applyUpdate")(function* (id, update, commit) {
+            const selected = effectOperations(yield* forProjectId(id));
+            if (!selected.applyUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));
+            return yield* selected.applyUpdate(id, update, commit);
+        }),
+        recoverUpdate: Effect.fn("LocalProjects.recoverUpdate")(function* (id, update) {
+            const selected = effectOperations(yield* forProjectId(id));
+            if (!selected.recoverUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime cannot recover a live update."));
+            return yield* selected.recoverUpdate(id, update);
+        }),
         prepare: Effect.fn("LocalProjects.prepare")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepare"]>>[0], recipe: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepare"]>>[1]) {
             yield* evaluate(() => assertNative(project.runtimeKind));
             if (project.kind === SERVER_FRONTEND_KIND)

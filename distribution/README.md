@@ -74,22 +74,25 @@ with the rest of `/etc/zelavis`.
 
 ## Updating a running installation
 
-Every system installation also gets a socket unit (`zelavis.socket`, or `zelavis-<name>.socket`) that
-holds the dashboard port in systemd, so an update's restart queues connections instead of refusing them.
-The default system installation also gets two units, `zelavis-update.path` (enabled,
-watching `<data>/update/request.json`) and `zelavis-update.service` (a root oneshot, started
-only by the path). The Platform drops the request, the oneshot runs
-`zelavis update --run`, and that runs in two phases: it prepares the new release with the `install.sh`
-embedded in the installed release (`--stage-only`, `dist/installation-assets/install.sh`, generated from
-`installers/install.sh`) while the old one keeps serving, then the new release's own installer selects it
-(`install --live`) and restarts once. It checks the new release answers and rolls back to the previous
-release if it does not. The request
-carries no version: the updater reads the newest one on the running version's channel from npm
-and refuses anything not newer. The units are installed by the same plan as the others,
-listed in the uninstall inventory and checked by `doctor` (`update-watch`). A named instance gets its own
-`zelavis-update-<name>.path`/`.service`, rendered from the same templates. A user install has no units: the
-Platform starts `zelavis update --run --user` itself, which selects the release and reports that a restart is
-needed.
+Packaged Node installations use a persistent host for the dashboard and Project
+preview ports. The updater prepares the new immutable release while the selected
+engine serves traffic, then uses `install --live` to drain accepted requests,
+transfer exclusive store ownership and probe the candidate. Root acknowledges
+the current link, private receipt and public version descriptor before admission
+resumes. Failed candidates are fenced before rollback. The host and separate
+Project Agent remain running; installed App engine pins remain unchanged.
+
+System installations have a dashboard socket unit and an enabled update path,
+which starts the root update helper when the Platform writes a request. A named
+instance has its own units and selection. User installations invoke the same
+live handover under their own user. The request carries no version: the helper
+selects a newer release on the current channel from npm. `doctor` checks the
+installation inventory and update watcher.
+
+Installations without this host/protocol need one full local installer run with
+a restart. Unsupported live handovers are refused; no compatibility restart
+fallback is retained. Public older-version controls and multi-host handover remain
+planned. See [the update architecture](../website/src/content/docs/architecture/updates.md).
 
 ## Releasing
 
@@ -136,26 +139,18 @@ release secret.
 
 ## Running Projects and host operations through the Agent
 
-`zelavis-agent.service` is installed but not enabled. It runs `zelavis agent` as
-`zelavis` with `Delegate=yes`, installed operations, root-owned tree
-enforcement, and cgroup v2 containment (256 PIDs, 512 MiB per operation). To
-opt in:
-
-```bash
-sudo systemctl enable --now zelavis-agent.service
-sudo systemctl edit zelavis.service   # add: [Service] Environment=ZELAVIS_AGENT_ENDPOINT=/var/lib/zelavis/agent
-sudo systemctl restart zelavis.service
-```
+System installations enable `zelavis-agent.service` (or the named-instance
+unit) as a separately supervised unprivileged Project process Agent. The
+installer configures `ZELAVIS_AGENT_ENDPOINT`; this custody lets running Projects
+survive a Platform engine handover. The Agent delegates cgroups and refuses a
+host without required cgroup v2 containment rather than silently falling back.
+The packaged Debian/systemd qualification exercises this path, including
+WordPress daemon adoption, Platform handover and rollback.
 
 The Platform creates its Agent authority key under
-`/var/lib/zelavis/system/agent-authority/` on first start with
-`ZELAVIS_AGENT_ENDPOINT`; the Agent reads the public `platform-authority.json`
-there and refuses every operation request until it exists. Once both run,
-`zelavis host-operations catalog` lists what the caller may request.
-
-The Agent refuses to start rather than falling back if the host lacks cgroup v2,
-`cgroup.kill` (Linux 5.14+) or delegation. This path is not yet qualified on a
-production Linux host.
+`/var/lib/zelavis/system/agent-authority/`; the Agent reads only its public
+`platform-authority.json`. Root provisioning uses the separate operation-only
+Agent below.
 
 `zelavis agent --operations-only` accepts only installed-operation catalog,
 submission and status messages. It requires `--operations-root` and
@@ -167,7 +162,7 @@ only installed signed operations as root with systemd-delegated cgroup containme
 Its root-owned `<instance-prefix>/host-agent` directory and endpoint are limited to
 the Platform service group. Shared package policy/locking state lives at
 `<prefix>/host-packages` (root, 0700). `ZELAVIS_HOST_OPERATIONS_ENDPOINT` selects this
-broker separately from the optional Project process Agent.
+broker separately from the unprivileged Project process Agent.
 
 The fixed `zelavis.packages-install` operation provisions `wordpress-stack` only
 after explicit `server.packages.install` authorization. The base installation
@@ -212,8 +207,8 @@ may claim the account, and the setup wizard's hostname step adds HTTPS). There i
 loopback-only server mode; a cloud firewall or an SSH tunnel is how an operator keeps
 it off the internet. `--public` is the opt-in for a named instance or a user-mode
 install, which stay on `127.0.0.1` otherwise. Rerunning the installer applies the flag
-it is given. Agent opt-in is
-`--enable-agent`; Traefik remains disabled until Edge activates routes. Releases
+it is given. The Project Agent is enabled for every system installation;
+Traefik remains disabled until Edge activates routes. Releases
 stay in `releases/<version>` with a `current` link. Older versions are refused
 unless `--allow-downgrade` is given; previous releases are kept.
 
@@ -246,7 +241,7 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Config and token | `/etc/zelavis` | `/etc/zelavis-preview` |
 | User/group | `zelavis` | `zelavis-preview` |
 | Platform unit | `zelavis.service` | `zelavis@preview.service` |
-| Project process Agent unit (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Project process Agent unit | `zelavis-agent.service` | `zelavis-agent@preview.service` |
 | Host operation Agent | `zelavis-host-agent.service` | `zelavis-host-agent@preview.service` |
 | Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
 | Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
@@ -334,7 +329,8 @@ System Store and record PID/start/session metadata in `.platform-owner.json`.
 construction releases it too. Installer maintenance uses this same guard. For
 repair/upgrade, the installer can stop a matching owned systemd Platform, reserve
 data, then hand it back before service startup. Stop user-run Platforms yourself.
-This is a restart upgrade; blue/green updates remain planned.
+Full installation repair restarts the Platform. Qualified dashboard updates use
+the live host handover above and do not use this maintenance path.
 
 ```bash
 sudo zelavis doctor --json     # system; receipt is root-readable

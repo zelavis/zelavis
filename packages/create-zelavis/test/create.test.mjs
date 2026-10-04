@@ -42,7 +42,7 @@ test("sudo executes literal bootstrap code, never a user cache file or invoking 
   assert.doesNotMatch(assets.script, /npx|process\.execPath|\.cache\/|~\/\.npm|\$HOME/);
   assert.match(command.display, /^'sudo' '--' '\/bin\/sh'/);
   assert.throws(() => installationCommand({ ...assets, version: "latest", mode: "user", root: false }), /exact/);
-  assert.throws(() => installationCommand({ ...assets, mode: "user", root: false, flags: ["--enable-agent"] }), /requires system/);
+  assert.throws(() => installationCommand({ ...assets, mode: "user", root: false, flags: ["--enable-agent"] }), /Invalid installer flag/);
   assert.equal(installationCommand({ ...assets, mode: "user", root: false }).command, "/bin/sh");
 });
 
@@ -65,6 +65,7 @@ test("dry-run and help create no state or subprocess bootstrap; no unattended in
 
 test("overview shows fixed system paths and isolated user paths", () => {
   assert.match(installationOverview("system", "1.2.3"), /\/opt\/zelavis[\s\S]*\/var\/lib\/zelavis[\s\S]*\/etc\/zelavis/);
+  assert.match(installationOverview("system", "1.2.3"), /separately supervised Project Agent/);
   assert.match(installationOverview("user", "1.2.3", "/home/operator"), /\/home\/operator\/\.local\/share\/zelavis\/data/);
 });
 

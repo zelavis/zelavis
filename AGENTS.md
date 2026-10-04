@@ -220,7 +220,8 @@ Rules that hold for every change:
   holding no frozen copy of it fails to prepare with that reason. The way out is
   an explicit **recipe upgrade** (`POST /projects/:id/upgrade`,
   `client.projects.upgrade`, `zelavis projects upgrade`): a stopped or failed
-  Project is re-locked to a recipe this Platform ships (naming it when the locked
+  Project, or a running App whose driver advertises `zeroDowntimeUpdates`, is
+  re-locked to a recipe this Platform ships (naming it when the locked
   name is no longer shipped) and its new artifact is frozen first, swapped in
   only when complete, so a failed upgrade leaves the Project as it was. Data is
   untouched, because the recipe carries identity, menu and defaults while the
@@ -362,10 +363,13 @@ lock (`recipe.artifact.digest`); the runner loads that artifact, verifies the
 digest, name and version, and refuses modified or mismatched code. A Platform
 upgrade therefore cannot change or break the recipe an existing Project runs.
 Preparation runs on every start and keeps a verified artifact rather than
-re-taking it from the Platform's copy. This locks the recipe only: the runtime
-engine hosting it is still the Platform's own code, so the local Node driver
-does not yet advertise independent runtime versions. A lock that is neither
-frozen nor the bundled version is refused, never run with the parent's code.
+re-taking it from the Platform's copy. Installed native Apps also pin the
+complete engine artifact in their host descriptor and execute its private Node
+through the verified installed release catalog; parent updates never rewrite
+that selection. Checkout execution supports only its current development
+engine. Public older-version selection/switch controls remain planned. A recipe
+lock that is neither frozen nor the bundled version is refused, never run with
+the parent's recipe.
 This is operational isolation for trusted Project code, not a hostile-code
 security sandbox. Project lifecycle code must stay behind the runtime-driver
 contract so rootless OCI containers and stronger isolation can replace it later.
@@ -432,6 +436,41 @@ its children, reconciles desired state with bounded concurrency, and stops them
 when `Zelavis.close()` runs. Production worker Agents must be supervised
 separately so customer runtimes survive control-plane restarts while remaining
 subject to the one logical Platform authority.
+
+Platform and Zelavis App engine updates use one shared handover design:
+`core/runtime/admission.ts` and `handover.ts`, with concrete Node execution under
+`adapters/_node-runtime-*`. Prepare code without opening live stores, drain
+accepted traffic, prove the previous writable owner released its resources,
+then activate and probe the candidate. A drain timeout resumes the previous
+owner without disconnecting streams. Failed activation fences the candidate
+before rollback; unproven rollback requires explicit recovery. The internal Node
+supervisor journal holds a kernel lock, flushes selection/checkpoints atomically,
+and grants a recovered generation only after prior engines are fenced. Candidate
+generations are never reused after failed preparation or drain. Immutable recipe
+snapshots preserve both candidates and rollback artifacts. A stable Gateway
+broker consumes parent envelopes before queuing and signs private worker
+envelopes after admission; worker replacement must not reset external replay
+protection or expire an already accepted caller's authority. The normal Node
+entrypoints share the engine factories. The App entrypoint is a persistent host:
+qualified running App recipe upgrades persist an update intent, freeze a candidate
+without changing canonical files, and commit both the host journal and Project
+lock before resuming admission. Reconciliation settles unfinished updates from
+the host's proved selection; a deletion tombstone takes precedence over recovery.
+An explicit stop may fence a failed handover, but never clears its intent without
+ownership proof. Gateway re-keying uses only the authenticated Agent pipe.
+Installed Apps execute their locked artifact with its private Node; the updater
+retains all qualified engines. The main Platform uses that same persistent host.
+Root inventory selection acknowledges its current link, private receipt and public
+version descriptor before admission resumes. Preview listeners share admission
+and remain bound through handover and rollback. Separately supervised Agents keep
+running Projects under a persisted Fabric custody session; adoption must prove
+stable addresses before releasing the old engine. New Apps and explicit App recipe
+upgrades select the latest qualified installed engine. Public independent-version
+controls remain planned. Unsupported running drivers refuse a handover before
+writer transfer. Installations without the protocol need one full local installer
+conversion, which restarts their old process; there is no restart fallback in live
+updates.
+Never add a separate App update algorithm or compatibility shim.
 
 Never restore all desired-running projects with an unbounded `Promise.all` or
 make control-plane readiness wait for an entire fleet to start. Reconciliation
@@ -1243,18 +1282,21 @@ running version's channel from npm itself, refuses anything not newer, runs the 
 embedded in the installed release, health-checks the new release and rolls back to the
 previous one on failure. Keep it that way: no version, path or command may come from the
 request file, and anything the updater owns must be in the uninstall inventory.
-An update has two phases: prepare (`install.sh --stage-only` lays the release beside the
-running one, changing nothing) and swap (the new release's own installer with `--live`,
-which leaves the running Platform and its data lock alone and restarts once). systemd
-holds each instance's dashboard port in `zelavis[-<name>].socket` and the Platform takes
-it as an inherited descriptor (`takeInheritedSocket`), so the restart queues connections
-instead of refusing them; the first update from an install without the socket uses the
-full installer. A named instance has its own `zelavis-update-<name>.path`/`.service`,
-rendered from the default's templates like its socket. A user-mode install has no root
-and no supervisor: the Platform starts the same updater as the same user
-(`update --run --user`), which selects the release and reports `restartRequired`; never
-restart a user's process behind their back, and never prune the release the running
-process started from.
+An update has two phases: prepare (`install.sh --stage-only` acquires an immutable
+engine beside the running one) and handover (the new release's installer with
+`--live` invokes the persistent host and acknowledges root-owned inventory).
+Admission drains accepted requests before exclusive store ownership moves, and
+queued requests resume only after readiness, Project adoption and inventory commit.
+The Platform host, separately supervised Project Agent and preview listeners stay
+running. systemd also holds the dashboard socket across host crashes. Named
+instances own their update units, runtime hosts, custody and inventory. User-mode
+installs run the same updater as the same user and use the same handover.
+A full installer run is maintenance and may restart the Platform. An installation
+without the handover protocol requires that one-time conversion; live updates
+refuse unsupported protocols instead of retaining a compatibility execution path.
+New system installations always enable their separate Project Agent. No optional
+Agent flag remains. Never prune qualified engines needed for Project selection,
+Agent execution or another instance.
 
 Complete native installation removal is a host-local lifecycle capability, not
 a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in
@@ -1271,7 +1313,9 @@ authorize it. Plain npm/source copies without a current installer receipt use th
 lifecycle. Receipted package/create installs use the shared removal inventory,
 including prefix `.install.lock`, public runtime descriptors, named instance
 directories/templates, incoming Debian payload, host `edge-owner.json`/`.edge-owner.lock`, and data
-`.platform.lock`/`.platform-owner.json`. Whenever
+`.platform.lock`/`.platform-owner.json`, `runtime-control.sock`, `runtime-custody.json`,
+`runtime-handover.json` and its kernel guard, `.runtime-owner.sqlite`, runtime engine
+and development Agent state, and Linux Project `runtime-sockets`. Whenever
 an installer starts owning another resource, update the complete-uninstall
 inventory, staged program, isolated destructive-path tests, and public docs in
 the same change.

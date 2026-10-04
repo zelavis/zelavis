@@ -1,5 +1,12 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.16
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.16
+
 ## 1.1.0-alpha.15
 
 ### Patch Changes
@@ -70,7 +77,7 @@
 ### Minor Changes
 
 - 57ba50a: Distribute through npm alone. A release is the published `zelavis` package: `install.sh` and `npm create zelavis` fetch the Node version the release pins from nodejs.org (checked against its published SHA-256) and the exact package from npm, run `npm install` with install scripts off and rebuild only `better-sqlite3`, then run `zelavis install --from-npm`, which assembles the release tree from the package's own installation assets. There are no release archives, GitHub release workflow, APT repository build, GPG keys, signing keys or CI secrets, and `zelavis install --from package` and `--source` are replaced by `--from-npm`.
-  
+
   Host operations are plain manifests in the root-owned operations tree (the Agent refuses a manifest that is not a regular root-owned file that is not group- or world-writable when root ownership is required) and the Agent no longer takes `--operation-trust`. The marketplace allow-list is plain JSON served over https from `https://zelavis.com/allowlist.json`: the signed envelope, trusted keys and mirror sources are gone, while the sequence floor, expiry, https-only, no-redirect and size bounds stay. Release is `npm publish`; `pnpm allowlist publish` writes the list the website serves. The Platform-to-Agent authority key is unchanged. Receipts record entry `script` instead of `archive`, and the complete-uninstall inventory no longer covers an APT source or keyring.
 
 ### Patch Changes
@@ -102,19 +109,19 @@
 
 - 28bde9d: Collapse the service kind taxonomy to `app`, `frontend`, and `plugin`, and
   enforce it at manifest validation.
-  
+
   `frontend` was missing from `ZelavisServiceKind` despite being the kind the
   Platform branches on most — it has its own load path, a `zelavis.frontend`
   manifest block, and Gateway routing. Meanwhile `core`, `web-app`, `website`,
   `dashboard-extension`, `provider`, and `template` were declared, documented,
   and never read by anything.
-  
+
   `core` is removed rather than kept: it described who shipped a service rather
   than what it is, which `scope` (`system` versus `extension`) already carries
   and which the dashboard now enforces. Every service the Platform composes is a
   `plugin`. A provider is discovered by its capability (`provider:auth`), never
   by a kind.
-  
+
   An unrecognised kind is now refused. It previously loaded fine and produced a
   service that silently never participated in anything, which is also how the
   union drifted out of date in the first place.

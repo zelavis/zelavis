@@ -6,16 +6,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { stageEngineFixture } from "./fixtures/stage-engine.mjs";
 import { readNodeInstallationRuntime } from "../dist/adapters/_installation-runtime.js";
 import { runCli } from "../dist/cli/index.js";
 
 async function fixture(t) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "zelavis-instance-runtime-")));
+  const root = await realpath(await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "zv-instance-")));
   t.after(() => rm(root, {recursive: true, force: true}));
   const prefix = join(root, "installation");
   const scope = join(prefix, "instances/preview");
   await mkdir(scope, {recursive: true});
-  const descriptor = {schemaVersion: 1, prefix, instance: "preview", dataDirectory: join(root, "data-preview"), configDirectory: join(root, "config-preview"), port: 3100, host: "127.0.0.1", edge: false};
+  const descriptor = {schemaVersion: 1, version: "1.2.3", prefix, instance: "preview", dataDirectory: join(root, "data-preview"), configDirectory: join(root, "config-preview"), port: 3100, host: "127.0.0.1", edge: false};
   await writeFile(join(scope, "runtime.json"), JSON.stringify(descriptor), {mode: 0o644});
   return {root, prefix, scope, descriptor};
 }
@@ -24,7 +25,7 @@ test("runtime selection is secret-free and refuses malformed inventory or second
   const selected = await readNodeInstallationRuntime(f.prefix, "preview");
   assert.equal(selected.port, 3100); assert.equal(selected.dataDirectory, f.descriptor.dataDirectory);
   assert.equal(selected.node, `${f.scope}/current/runtime/node/bin/node`);
-  for (const patch of [{edge: true}, {instance: "default"}, {prefix: "/elsewhere"}, {port: 80}, {dataDirectory: "/"}]) {
+  for (const patch of [{version: "latest"}, {version: undefined}, {edge: true}, {instance: "default"}, {prefix: "/elsewhere"}, {port: 80}, {dataDirectory: "/"}]) {
     await writeFile(`${f.scope}/runtime.json`, JSON.stringify({...f.descriptor, ...patch}));
     await assert.rejects(readNodeInstallationRuntime(f.prefix, "preview"), /Malformed|port must|unsafe/);
   }
@@ -50,22 +51,11 @@ test("shared management CLI re-executes the selected immutable release and serve
   await new Promise((resolve, reject) => {server.once("error", reject); server.listen(0, "127.0.0.1", resolve);});
   const port = server.address().port;
   await new Promise((resolve) => server.close(resolve));
-  await writeFile(`${f.scope}/runtime.json`, JSON.stringify({...f.descriptor, port}));
+  await writeFile(`${f.scope}/runtime.json`, JSON.stringify({...f.descriptor, version: "2.0.0", port}));
   const pkg = fileURLToPath(new URL("../", import.meta.url));
   for (const version of ["1.0.0", "2.0.0"]) {
     const release = `${f.prefix}/releases/${version}`;
-    await mkdir(`${release}/platform`, {recursive: true});
-    await cp(`${pkg}/dist`, `${release}/platform/dist`, {recursive: true});
-    await writeFile(`${release}/platform/package.json`, JSON.stringify({...JSON.parse(await readFile(`${pkg}/package.json`, "utf8")), version}));
-    await cp(`${pkg}/services`, `${release}/platform/services`, {recursive: true});
-    await mkdir(`${release}/platform/node_modules`);
-    for (const dependency of await readdir(`${pkg}/node_modules`)) {
-      if (dependency.startsWith(".") || ["@zelavis", "zelavis"].includes(dependency)) continue;
-      await symlink(`${pkg}/node_modules/${dependency}`, `${release}/platform/node_modules/${dependency}`);
-    }
-    await mkdir(`${release}/runtime/node/bin`, {recursive: true});
-    // The test process stands in for the private, already verified Node.
-    await symlink(process.execPath, `${release}/runtime/node/bin/node`);
+    await stageEngineFixture(pkg, release, version);
   }
   await symlink(`${f.prefix}/releases/1.0.0`, `${f.prefix}/current`);
   await symlink(`${f.prefix}/releases/2.0.0`, `${f.scope}/current`);
@@ -74,7 +64,7 @@ test("shared management CLI re-executes the selected immutable release and serve
   const exited = new Promise((resolve) => child.once("exit", resolve));
   t.after(async () => {if (child.exitCode === null) child.kill("SIGTERM"); await exited;});
   let status;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 500; i++) {
     if (child.exitCode !== null) throw new Error(output);
     try { const response = await fetch(`http://127.0.0.1:${port}/zelavis/api/v1/auth/bootstrap`, {signal: AbortSignal.timeout(500)}); if (response.ok) {status = await response.json(); break;} } catch {}
     await new Promise((resolve) => setTimeout(resolve, 30));

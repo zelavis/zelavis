@@ -244,6 +244,7 @@ export interface RuntimeDeploymentBackendPolicy {
 }
 
 export interface RuntimeProject {
+  runtimeUpdate?: { id: string; error?: string };
   deletion?: { status: "running" | "failed"; startedAt: string; updatedAt: string; participants: readonly string[]; completedParticipants: readonly string[]; currentParticipant?: string; error?: string };
   preview?: { status: "ready" | "stopped" | "unavailable"; port?: number; error?: string };
   id: string;
@@ -284,6 +285,7 @@ export interface RuntimeProjectDriverInfo {
 }
 
 export interface RuntimeProjectDriverCapabilities {
+  zeroDowntimeUpdates?: boolean;
   movable: boolean;
   liveMigration: boolean;
   secureIsolation: boolean;
@@ -1817,7 +1819,6 @@ export interface UpdateStatus {
   state: UpdateState;
   run?: UpdateRun;
   /** An update finished but the running process is still the old version. */
-  restartRequired?: boolean;
 }
 
 export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStatus> {

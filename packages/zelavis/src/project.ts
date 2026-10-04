@@ -1,4 +1,5 @@
 import type { TaggedFailure } from "./core/runtime/effect-boundary.js";
+import type { RuntimeRelease } from "./core/runtime/handover.js";
 import { Cause, Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { IntegrationFailure, effectOperations, unwrapFailure, evaluate, integration, lifecycleGate, present, presentOperations, singleFlight, type EffectOperations } from "./core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreRecord } from "./system-store.js";
@@ -161,6 +162,8 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   /** Set only while the Project belongs to a node this host is not. */
   placement?: ZelavisProjectPlacementState;
   deletion?: ZelavisProjectDeletionState;
+  /** Durable unfinished handover, recovered before another lifecycle action. */
+  runtimeUpdate?: ZelavisProjectRuntimeUpdateIntent;
   createdAt: string;
   updatedAt: string;
 }
@@ -179,6 +182,22 @@ export interface ZelavisProjectRuntimeSnapshot {
   error?: string;
 }
 
+/** Prepared immutable identities, separate from the persisted Project lock. */
+export interface ZelavisProjectRuntimeUpdate {
+  readonly previous: RuntimeRelease;
+  readonly target: RuntimeRelease;
+  readonly recipe: ZelavisProjectRecipeLock;
+}
+
+export interface ZelavisProjectRuntimeUpdateIntent {
+  readonly id: string;
+  readonly startedAt: string;
+  readonly execution: ZelavisProjectRuntimeUpdate;
+  readonly previous: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory">;
+  readonly target: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory">;
+  readonly error?: string;
+}
+
 export interface ZelavisProjectLogEntry {
   timestamp: string;
   stream: "stdout" | "stderr" | "system";
@@ -191,6 +210,14 @@ export interface ZelavisProjectRuntimeDriver {
   readonly runtimeKinds?: readonly ZelavisProjectRuntimeKind[];
   readonly defaultRuntimeKind?: ZelavisProjectRuntimeKind;
   readonly startupConcurrency?: number;
+  /** Trusted persistent host custody; never supplied by a Project or HTTP caller. */
+  readonly custody?: { readonly ownerSession: string; readonly preserveOnClose: () => boolean };
+  /** A qualified local handover for this exact Project, never a stop/start alias. */
+  supportsLiveUpdate?(project: Readonly<ZelavisProjectDescriptor>): boolean;
+  prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeUpdate>;
+  applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
+    commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
+  recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
   capabilities(
     project: Readonly<ZelavisProjectDescriptor>,
   ): ZelavisProjectDriverCapabilities;
@@ -218,6 +245,8 @@ export interface ZelavisProjectRuntimeDriver {
    * collides with the copy that is still listening.
    */
   adopt?(): Promise<void>;
+  /** Relinquish Agent handles while independently supervised workloads keep serving. */
+  detach?(): Promise<void>;
   status(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   destroy(projectId: string): Promise<void>;
@@ -646,6 +675,10 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
     ...isolationIntentField(rawRecipe.isolation, "Stored Project recipe lock"),
     ...managedField(rawRecipe.managed, "Stored Project recipe lock"),
     ...(rawRecipe.hostPackages !== undefined ? { hostPackages: normalizeProjectHostPackages(rawRecipe.hostPackages) } : {}),
+    ...(rawRecipe.artifact !== undefined ? { artifact: (() => {
+      if (!isObjectRecord(rawRecipe.artifact) || typeof rawRecipe.artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(rawRecipe.artifact.digest)) throw new ZelavisProjectValidationError("Stored recipe artifact requires its exact content digest.");
+      return { digest: rawRecipe.artifact.digest };
+    })() } : {}),
   };
 }
 
@@ -772,14 +805,14 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
     const lifecycleScope = Scope.makeUnsafe("parallel");
     const { projectRecipes, runtime } = options;
     const store = effectOperations(options.store);
-    const runtimeEffects = effectOperations(runtime, ["capabilities"]);
+    const runtimeEffects = effectOperations(runtime, ["capabilities", "supportsLiveUpdate"]);
     const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
     const defaultRuntimeKind = yield* evaluate(() => normalizeRuntimeKind(runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND));
     if (!availableRuntimeKinds.includes(defaultRuntimeKind)) {
         return yield* Effect.fail(new ZelavisProjectValidationError(`Default Project runtime kind "${defaultRuntimeKind}" is not available from driver "${runtime.name}".`));
     }
     const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
-    const placementSession = crypto.randomUUID();
+    const placementSession = runtime.custody?.ownerSession ?? crypto.randomUUID();
     const placementLeaseMs = 60000;
     const localPlacementNodeId = options.dispatch?.()?.localNodeId ?? "local";
     const ownedPlacements = new Map<string, ProjectPlacementToken>();
@@ -832,7 +865,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         {
             id: OWNED_PROJECTS_CLEANUP_PARTICIPANT,
             cleanup: Effect.fn("Projects.transition")(function* (project: Readonly<ZelavisProjectRecord>) {
-                const owned = yield* manager.listOwned(project.id);
+                // The owner's lifecycle permit is already held. Inspect the
+                // child identities without refreshing (and relocking) the owner.
+                const records = yield* store.list(PROJECTS_NAMESPACE);
+                const owned = yield* evaluate(() => records.map(record => normalizeStoredProject(record.value).project)
+                    .filter(child => child.ownerProjectId === project.id));
                 // Sequential, not concurrent: each removal is itself a durable,
                 // resumable lifecycle, and a partial failure must leave a state the
                 // next reconciliation can continue from.
@@ -910,6 +947,26 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 : [];
         }).slice(-10);
     }
+    function readStoredRuntimeUpdate(raw: Record<string, unknown>): ZelavisProjectRuntimeUpdateIntent | undefined {
+        if (raw.runtimeUpdate === undefined) return undefined;
+        const update = raw.runtimeUpdate;
+        if (!isObjectRecord(update) || typeof update.id !== "string" || update.id.length > 128 || typeof update.startedAt !== "string" ||
+            !isObjectRecord(update.execution) || !isObjectRecord(update.previous) || !isObjectRecord(update.target)) throw new ZelavisProjectValidationError("Malformed persisted Project handover.");
+        const identity = (value: unknown): RuntimeRelease => {
+            if (!isObjectRecord(value) || typeof value.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(String(value.digest))) throw new ZelavisProjectValidationError("Project handover requires immutable execution identities.");
+            return { version: value.version, digest: String(value.digest) };
+        };
+        const state = (value: Record<string, unknown>) => {
+            if (typeof value.kind !== "string") throw new ZelavisProjectValidationError("Project handover requires an explicit recipe kind.");
+            return { kind: value.kind, recipe: readStoredRecipeLock(value), recipeHistory: readStoredRecipeHistory(value) };
+        };
+        const previous = state(update.previous), target = state(update.target);
+        const recipe = readStoredRecipeLock({ recipe: update.execution.recipe });
+        if (recipe.name !== target.recipe.name || recipe.version !== target.recipe.version || recipe.artifact?.digest !== target.recipe.artifact?.digest) throw new ZelavisProjectValidationError("Project handover target differs from its persisted recipe lock.");
+        return { id: update.id, startedAt: update.startedAt, previous, target,
+            execution: { previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
+            ...(typeof update.error === "string" ? { error: update.error.slice(0, 4000) } : {}) };
+    }
     function normalizeStoredProject(value: ZelavisSystemStoreValue): {
         project: ZelavisProjectRecord;
         repaired: boolean;
@@ -955,6 +1012,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     status: "stopped",
                 },
             ...(deletion ? { deletion } : {}),
+            ...(rawRecord.runtimeUpdate !== undefined ? { runtimeUpdate: readStoredRuntimeUpdate(rawRecord) } : {}),
             ...(rawProject.placement ? { placement: rawProject.placement } : {}),
             createdAt: rawProject.createdAt,
             updatedAt: rawProject.updatedAt,
@@ -976,10 +1034,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (!record) {
             return undefined;
         }
-        const { project, repaired } = yield* evaluate(() => normalizeStoredProject(record.value));
-        if (repaired) {
-            yield* write(project);
-        }
+        const { project } = yield* evaluate(() => normalizeStoredProject(record.value));
         return project;
     });
     /**
@@ -1016,13 +1071,28 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }
         return project;
     });
+    const recoverProjectUpdate = Effect.fn("Projects.recoverUpdate")(function* (project: ZelavisProjectRecord) {
+        const intent = project.runtimeUpdate;
+        if (!intent) return project;
+        if (!runtimeEffects.recoverUpdate) return yield* new IntegrationFailure(new Error("Project driver cannot recover its persisted runtime update."));
+        const choice = yield* runtimeEffects.recoverUpdate(project.id, intent.execution);
+        const { runtimeUpdate: _intent, ...settled } = project;
+        return yield* write({ ...settled, ...intent[choice], updatedAt: new Date().toISOString() });
+    });
     function assertProjectIsOperable(project: ZelavisProjectRecord, operation: string): void {
         if (project.deletion) {
             throw new ZelavisProjectConflictError(`Project "${project.id}" is pending deletion and cannot be ${operation}. Retry deletion instead.`);
         }
+        if (project.runtimeUpdate) throw new ZelavisProjectConflictError(`Project "${project.id}" has an unfinished runtime update. Reconciliation must recover it before it can be ${operation}.`);
     }
-    const refresh = Effect.fn("Projects.refresh")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
-        if (project.runtime.status === "provisioning" || project.deletion) {
+    // Persisted refreshes hold the lifecycle permit. Fleet reads are a pure
+    // view: Fabric may read them while a Project transition holds its permit.
+    const refresh = Effect.fn("Projects.refresh")(function* (id: string, persist: boolean): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
+        const record = yield* store.get(PROJECTS_NAMESPACE, id);
+        if (!record) return undefined;
+        const { project, repaired } = yield* evaluate(() => normalizeStoredProject(record.value));
+        if (repaired && persist) yield* write(project);
+        if (project.runtime.status === "provisioning" || project.deletion || project.runtimeUpdate) {
             return project;
         }
         const snapshot = yield* runtimeEffects.status(project.id);
@@ -1039,7 +1109,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const unchanged = snapshot.status === project.runtime.status &&
             snapshot.url === project.runtime.url &&
             snapshot.error === project.runtime.error;
-        return yield* (unchanged ? ingressView(project) : write(applySnapshot(project, snapshot)));
+        const current = unchanged ? project : applySnapshot(project, snapshot);
+        return yield* (unchanged || !persist ? ingressView(current) : write(current));
     });
     const deleteProject = Effect.fn("Projects.deleteProject")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
         const existingProject = yield* read(id);
@@ -1475,13 +1546,29 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     if (closing) {
                         return;
                     }
-                    const { project, repaired } = (yield* evaluate(() => normalizeStoredProject(record.value)));
+                    const normalized = (yield* evaluate(() => normalizeStoredProject(record.value)));
+                    let project = normalized.project;
+                    const repaired = normalized.repaired;
                     if (repaired) {
-                        (yield* write(project));
+                        const latest = yield* withProjectLifecycle(project.id, () => Effect.gen(function* () {
+                            const current = yield* read(project.id);
+                            return current ? yield* write(current) : undefined;
+                        }));
+                        if (!latest) return;
+                        project = latest;
                     }
                     if (project.deletion) {
                         (yield* Effect.catch(manager.remove(project.id), Effect.fn("Projects.recover")(function* () { return undefined; })));
                         return;
+                    }
+                    if (project.runtimeUpdate) {
+                        const recovery = yield* Effect.result(withProjectLifecycle(project.id, Effect.fn("Projects.reconcileUpdate")(function* () {
+                            const latest = yield* requireProject(project.id);
+                            if (latest.deletion) return latest;
+                            return yield* recoverProjectUpdate(latest);
+                        })));
+                        if (recovery._tag === "Failure") return;
+                        project = recovery.success;
                     }
                     if (project.desiredState !== "running") {
                         // Adoption can hand back a Project the operator has since
@@ -1565,15 +1652,13 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         list: Effect.fn("Projects.list")(function* (options?: Parameters<ZelavisProjectManager["list"]>[0]) {
             const records = yield* store.list(PROJECTS_NAMESPACE);
             const projects = yield* mapWithConcurrency(records, startupConcurrency, Effect.fn("Projects.transition")(function* (record: ZelavisSystemStoreRecord) {
-                const { project, repaired } = (yield* evaluate(() => normalizeStoredProject(record.value)));
-                if (repaired) {
-                    (yield* write(project));
-                }
-                return (yield* refresh(project));
+                const { project } = yield* evaluate(() => normalizeStoredProject(record.value));
+                return yield* refresh(project.id, false);
             }));
+            const presentProjects = projects.filter((project): project is ZelavisProjectRecord => project !== undefined);
             const visible = options?.includeOwned
-                ? projects
-                : projects.filter((project) => project.ownerProjectId === undefined);
+                ? presentProjects
+                : presentProjects.filter((project) => project.ownerProjectId === undefined);
             return visible.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
         }),
         listOwned: Effect.fn("Projects.listOwned")(function* (ownerProjectId: Parameters<ZelavisProjectManager["listOwned"]>[0]) {
@@ -1582,9 +1667,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             return all.filter((project) => project.ownerProjectId === owner);
         }),
         get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
-            const project = yield* read(id);
-            if (!project) return undefined;
-            return yield* refresh(project);
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
         }),
         create: Effect.fn("Projects.create")(function* (input: Parameters<ZelavisProjectManager["create"]>[0]) {
             const name = yield* evaluate(() => normalizeProjectName(input.name));
@@ -1694,6 +1778,13 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 let project = (yield* requireProject(id));
                 // Stopping a Project that is already being deleted would restart the
                 // cleanup lifecycle's work behind it.
+                if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "stopped"));
+                if (project.runtimeUpdate) {
+                    project = yield* write({ ...project, desiredState: "stopped", updatedAt: new Date().toISOString() });
+                    const stopped = yield* stopPlacedRuntime(project.id);
+                    project = yield* recoverProjectUpdate(project);
+                    return yield* write(applySnapshot(project, stopped));
+                }
                 (yield* evaluate(() => assertProjectIsOperable(project, "stopped")));
                 project = (yield* write({
                     ...project,
@@ -1756,9 +1847,16 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
-                const project = (yield* requireProject(id));
+                let project = yield* requireProject(id);
+                // A deletion tombstone always wins over recovery of an update.
+                if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
+                const interrupted = project.runtimeUpdate;
+                project = yield* recoverProjectUpdate(project);
                 (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
-                if (!["stopped", "failed"].includes(project.runtime.status)) {
+                if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version) return project;
+                const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true &&
+                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                if (!live && !["stopped", "failed"].includes(project.runtime.status)) {
                     return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`)));
                 }
                 const targetName = input?.recipeName?.trim() || project.recipe.name;
@@ -1794,10 +1892,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 // Freeze the new recipe first. The driver replaces the old artifact only
                 // once the new one is complete, so a failure here leaves the Project
                 // exactly as it was.
-                (yield* runtimeEffects.prepare(candidate, next));
                 const now = new Date().toISOString();
                 const isolation = assessIsolation(candidate);
-                return (yield* write({
+                const upgraded: ZelavisProjectRecord = {
                     ...candidate,
                     capabilities: runtime.capabilities(candidate),
                     ...(isolation ? { isolation } : {}),
@@ -1812,7 +1909,28 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     // The reason it could not start belonged to the old lock.
                     runtime: { driver: runtime.name, status: "stopped" },
                     updatedAt: now,
-                }));
+                };
+                if (!live) {
+                    yield* runtimeEffects.prepare(candidate, next);
+                    return yield* write(upgraded);
+                }
+                const execution = yield* runtimeEffects.prepareUpdate!(project, candidate);
+                upgraded.recipe = execution.recipe;
+                upgraded.runtime = project.runtime;
+                const intent: ZelavisProjectRuntimeUpdateIntent = { id: crypto.randomUUID(), startedAt: now, execution,
+                    previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory },
+                    target: { kind: upgraded.kind, recipe: upgraded.recipe, recipeHistory: upgraded.recipeHistory } };
+                yield* write({ ...project, runtimeUpdate: intent });
+                return yield* Effect.gen(function* () {
+                    const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
+                        ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
+                    }).pipe(Effect.asVoid)));
+                    return yield* write(applySnapshot(upgraded, snapshot));
+                }).pipe(Effect.onError(cause => Effect.gen(function* () {
+                    const latest = yield* requireProject(project.id);
+                    const recovery = yield* Effect.result(recoverProjectUpdate(latest));
+                    if (recovery._tag === "Failure") yield* write({ ...latest, runtimeUpdate: { ...intent, error: String(Cause.squash(cause)).slice(0, 4000) } });
+                }).pipe(Effect.orDie)));
             }));
         }),
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
@@ -1848,7 +1966,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 if (active)
                     (yield* Deferred.await(active).pipe(Effect.ignoreCause));
                 (yield* runtimeEffects.close());
-                for (const token of ownedPlacements.values()) {
+                for (const token of runtime.custody?.preserveOnClose() ? [] : ownedPlacements.values()) {
                     if (token.nodeId === localPlacementNodeId) {
                         (yield* Effect.catch(integration(() => options.authoritativePlacement?.release(token)), Effect.fn("Projects.recover")(function* () { return undefined; })));
                     }

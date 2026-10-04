@@ -39,6 +39,34 @@ before editing.
   frozen recipe rollback, and leave durable deletion checkpoints retryable.
   Effect coordination does not replace persisted checkpoints, Fabric fencing,
   authorization, or separately supervised production Agents.
+- Platform and App engines use the same Effect admission and handover primitives
+  under `core/runtime` and the Node host under `adapters/_node-runtime-*`.
+  Preparation must not acquire writable state. Drain before releasing the previous
+  owner, fence a failed candidate before rollback, and retain paused admission when
+  recovery cannot be proven. Flush durable journal checkpoints, hold its kernel
+  lock, and fence previous engines before granting a recovered generation. Never
+  reuse a candidate generation after an aborted attempt. Preserve immutable
+  recipe snapshots for rollback and external Gateway nonce history across engine
+  replacement; queued accepted callers receive fresh private worker authority.
+  The ordinary Node entrypoints share engine factories. Apps run through a
+  persistent host and qualified running recipe upgrades use a durable Project
+  update intent plus a host/Platform lock acknowledgement before traffic resumes.
+  Prepare an immutable candidate without replacing canonical files. Recover an
+  unfinished intent from proved host selection; deletion takes precedence. Stop
+  may fence failed ownership, but never erase the intent without proof. Re-key
+  surviving App hosts only over the authenticated Agent process pipe. Installed
+  Apps execute their exact engine/private Node and the updater retains qualified
+  engines. The main Platform uses the same persistent host, retains preview
+  listeners through its shared admission gate, and requires root acknowledgement
+  of the current link, private receipt and public version descriptor. Preserve
+  Fabric custody and separately supervised Project processes; qualify adoption
+  before releasing the old writer. New Apps and explicit App upgrades use the
+  latest qualified installed engine. Public version controls remain planned. Ordinary startup restores the fleet
+  asynchronously and must remain ready despite an unavailable Project. Persist
+  status refreshes under the Project lifecycle permit; Fabric fleet views remain
+  read-only so scheduling cannot re-enter its own Project permit.
+  Unsupported protocols require a full local installer conversion with a restart,
+  not a compatibility fallback in the live update path.
 
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw
@@ -153,9 +181,13 @@ before editing.
   all-interface opt-in for those. There is no loopback-only server mode. Updating is a request the unprivileged
   Platform drops for a root-owned `zelavis-update` path/service pair; the updater trusts
   nothing in the request and rolls back a release that does not answer (AGENTS.md). Updates prepare then swap
-  (`--stage-only`, `--live`), systemd holds each instance's port in a `.socket` unit so a restart queues
-  connections, named instances have their own update units, and a user install reports `restartRequired`
-  rather than restarting. Create uses the same bootstrap and plan.
+  (`--stage-only`, `--live`), acknowledge root inventory before resuming queued
+  traffic, and keep the host, preview listeners and separate Project Agent running.
+  Named instances own their update units and custody; user installs use the same
+  handover as their own user. System installs always enable the Project Agent.
+  An older installation without the protocol needs one full local installer
+  conversion. Root artifacts must remain root-owned; archive extraction must not
+  preserve foreign archive UIDs. Create uses the same bootstrap and plan.
   Create takes no folder argument. Its sudo bootstrap fetches its own Node and
   package into a private root-owned directory; never execute user package-cache
   files as root. User mode owns only its

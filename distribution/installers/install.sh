@@ -20,7 +20,7 @@ ENTRY=script
 case "${1:-}" in
   --help|-h)
     echo 'Usage: install.sh [--version <exact> | --channel alpha|latest] [installer flags]'
-    echo 'Installer flags: --user --instance <name> --port <port> --dry-run --public --enable-agent --force --allow-downgrade --json'
+    echo 'Installer flags: --user --instance <name> --port <port> --dry-run --public --force --allow-downgrade --json'
     echo 'Linux system mode requires root and systemd. macOS defaults to --user.'
     exit 0 ;;
   [0-9]*) VERSION=$1; ENTRY=create; shift ;;
@@ -50,7 +50,7 @@ printf '%s\n' "$VERSION" | LC_ALL=C grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-
 set -- "$@" --installed-by "$ENTRY"
 [ "$ENTRY" = create ] || set -- "$@" --invoking-path "$INVOKING_PATH"
 # Root acquires its own tree; create passes this as literal shell code to sudo.
-unset ZELAVIS_PREFIX ZELAVIS_BIN_DIR ZELAVIS_DATA_DIR ZELAVIS_UNINSTALL_ETC_DIR ZELAVIS_FORCE_BIN ZELAVIS_ENABLE_AGENT
+unset ZELAVIS_PREFIX ZELAVIS_BIN_DIR ZELAVIS_DATA_DIR ZELAVIS_UNINSTALL_ETC_DIR ZELAVIS_FORCE_BIN
 case "$(uname -s)" in Linux) OS=linux ;; Darwin) OS=darwin ;; esac
 case "$(uname -m)" in x86_64|amd64) ARCH=x64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo 'Unsupported architecture.' >&2; exit 1 ;; esac
 echo "Installing Zelavis $VERSION with private Node $NODE_VERSION."

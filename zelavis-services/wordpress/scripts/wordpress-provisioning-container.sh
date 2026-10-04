@@ -26,6 +26,6 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 if ! docker exec "$CONTAINER" sh /workspace/zelavis-services/wordpress/scripts/provisioning-host.sh; then
-  docker exec "$CONTAINER" journalctl -u zelavis-host-agent.service -n 30 --no-pager || true
+  docker exec "$CONTAINER" journalctl -u zelavis.service -u zelavis-agent.service -u zelavis-host-agent.service -n 60 --no-pager || true
   exit 1
 fi

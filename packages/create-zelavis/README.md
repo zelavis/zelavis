@@ -15,7 +15,7 @@ contains versioned releases, `/var/lib/zelavis` contains data, and `/etc/zelavis
 contains configuration. The Platform starts through systemd using the release's
 private Node. On a server the dashboard listens on all interfaces at port 3000 and the
 installer prints the URL to open; the first-owner token gates who can claim the account.
-Agent enablement is opt-in (`--enable-agent`).
+System mode enables the separately supervised Project Agent.
 
 macOS and Linux without sudo default to user mode. Select it explicitly with:
 
@@ -31,7 +31,7 @@ not register systemd, Agent or Edge. The launcher loads the private token and
 data location from `config/zelavis.env` regardless of the working directory.
 
 Options: `--user`, `--system`, `-y/--yes`, `--dry-run`, `--public`, `--force`,
-`--instance <name>`, `--port <port>`, `--allow-downgrade`, `--enable-agent`, `--help`, `--version`. A non-interactive
+`--instance <name>`, `--port <port>`, `--allow-downgrade`, `--help`, `--version`. A non-interactive
 installation requires `--yes`. Dry-run prints the layout and exact bootstrap
 command without downloads, elevation or changes.
 
@@ -57,7 +57,9 @@ serialize maintenance; live data and instance port conflicts cannot be forced.
 Foreign PATH commands are checked using the invoking user's PATH, passed only as
 diagnostic data; privileged command execution still uses a fixed trusted PATH.
 Stop a user-run Platform before maintenance. A matching systemd Platform can be
-stopped and restarted during repair/upgrade. Named system instances share immutable releases and have their own data, config,
+stopped and restarted during full repair. Qualified dashboard updates use live
+engine handover for both system and user installations. Installations without
+the persistent host need one installer conversion with a restart. Named system instances share immutable releases and have their own data, config,
 account, units, token, System Store and release selection.
 
 Run `zelavis doctor --user --json` for user mode or `sudo zelavis doctor --json`
@@ -94,7 +96,7 @@ Names use at most 24 lowercase letters, digits and hyphens, starting with a
 letter. A new named instance requires a distinct port (1024–65535). User mode
 supports only default. `preview` owns `/var/lib/zelavis-preview`,
 `/etc/zelavis-preview`, the `zelavis-preview` account, `zelavis@preview.service`
-and the opt-in `zelavis-agent@preview.service`. Its `current`, receipt and public
+and `zelavis-agent@preview.service`. Its `current`, receipt and public
 `runtime.json` live under `/opt/zelavis/instances/preview`. Only default may own
 host Edge, enforced by the persistent Edge record and kernel reservation;
 secondary instances run with Edge off. Use explicit `--url` for their setup/API.

@@ -14,6 +14,42 @@ const signal = () => Deferred.makeUnsafe();
 const notify = latch => Effect.runSync(Deferred.succeed(latch, undefined));
 const wait = latch => Effect.runPromise(Deferred.await(latch));
 
+test("a status refresh cannot overwrite a concurrent recipe upgrade", { timeout: 5000 }, async () => {
+  const entered = signal(), release = signal(), store = createMemorySystemStore();
+  let block = false, prepared = false;
+  const runtime = {
+    name: "test", runtimeKinds: ["native"], capabilities: () => ({}),
+    ...presentOperations({
+      prepare: () => Effect.sync(() => { prepared = true; }),
+      start: () => Effect.succeed({ status: "running" }), stop: () => Effect.succeed({ status: "stopped" }),
+      status: () => Effect.gen(function* () {
+        if (block) { yield* Deferred.succeed(entered, undefined); yield* Deferred.await(release); }
+        return { status: "failed", error: "reported failure" };
+      }),
+      logs: () => Effect.succeed([]), destroy: () => Effect.void, close: () => Effect.void,
+    }),
+  };
+  const manager = await createProjectManager({ autoReconcile: false, runtime, store,
+    projectRecipes: [{ service: { name: "@zelavis/app", kind: "app", version: "2.0.0", api: {}, service: {} }, specifier: "@zelavis/app", status: "available" }],
+  });
+  try {
+    await manager.create({ id: "one", name: "One", start: false });
+    const stored = await store.get("projects", "one");
+    await store.set("projects", "one", { ...stored.value, recipe: { ...stored.value.recipe, version: "1.0.0" } });
+    prepared = false; block = true;
+    const read = manager.get("one");
+    await wait(entered);
+    const upgrade = manager.upgrade("one");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(prepared, false, "the upgrade waits for the status read's lifecycle permit");
+    block = false; notify(release);
+    await read;
+    assert.equal((await upgrade).recipe.version, "2.0.0");
+    assert.equal((await manager.get("one")).recipe.version, "2.0.0");
+    assert.equal((await store.get("projects", "one")).value.recipe.version, "2.0.0");
+  } finally { block = false; notify(release); await manager.close(); }
+});
+
 test("integration leaves are lazy and preserve thrown error identity", async () => {
   const error = new Error("host failure");
   let calls = 0;
@@ -145,8 +181,10 @@ for (const kind of ["node", "frontend"]) test(`${kind} startup interruption stop
   let driver;
   try {
     if (kind === "node") {
-      await mkdir(join(root, "one")); await writeFile(join(root, "one", "project.json"), "{}");
       driver = createNodeProcessProjectRuntime({ directory: root, agent });
+      const manifest = JSON.parse(await (await import("node:fs/promises")).readFile(new URL("../services/zelavis-app/package.json", import.meta.url), "utf8"));
+      Object.assign(project, { kind: "zelavis", recipe: { name: manifest.name, version: manifest.version, specifier: manifest.name, runtimeKinds: ["native"] } });
+      await driver.prepare(project, project.recipe);
     } else {
       const frontend = join(root, "frontend"); await mkdir(frontend);
       await writeFile(join(frontend, "package.json"), JSON.stringify({ name: "@acme/frontend", version: "1.0.0", zelavis: { kind: "frontend", frontend: { runtime: "server", start: ["node", "server.mjs"] } } }));

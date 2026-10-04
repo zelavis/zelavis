@@ -1,175 +1,125 @@
 ---
 title: Updating Without Downtime
-description: What an update interrupts today, and the plan to make a Platform update invisible to visitors and operators.
+description: One persistent runtime host and engine handover for the Zelavis Platform and its Apps.
 ---
 
-The first section describes what is built: updating a server from its own
-dashboard, CLI or API. The rest is a plan for making an update invisible to
-visitors; where it says "today" it describes what the code does now, and
-everything else is not built.
+The Platform and Zelavis Apps use the same Zelavis engine and the same Effect v4
+handover. A persistent host owns their HTTP listener while replaceable engine
+processes own their stores. The Platform retains Fabric and server authority;
+an App receives only its Project authority.
 
-## Updating from the dashboard (built)
+## Updating the Platform
 
-A server installation set up by the installer can update itself (from `2.0.0-alpha.10`;
-older installs have no updater, so run the installer once to get it). The Platform
-checks npm for a newer version on its own channel (`alpha` for an alpha, `latest`
-for a stable release) when it starts and every six hours. When one exists, a banner
-shows on every page and Settings has an Updates card with an **Update now** button.
-The same operations exist as `zelavis update status|check|apply [--wait]`, the SDK
-(`client.updates`) and HTTP (`GET /runtime/updates`, `POST /runtime/updates/check`,
-`POST /runtime/updates/apply`). Looking needs `system.updates.view`; checking and
-applying need `system.updates.manage` (an owner has both).
+Installer-managed installations check npm for newer versions on their channel:
+`alpha` for an alpha release, `latest` for a stable release. Checks happen on
+startup and every six hours. Use **Update now** in the dashboard, or the matching
+operations:
 
-The Platform runs as an unprivileged user, so it cannot replace its own release or
-restart itself. It only **asks**: it writes a request file into its own
-`<data>/update/` folder. A root-owned systemd path unit, `zelavis-update.path`, sees
-the file and starts `zelavis-update.service`, which runs `zelavis update --run` as
-root. That updater:
+- CLI: `zelavis update status|check|apply [--wait]`.
+- SDK: `client.updates.status()`, `.check()` and `.apply()`.
+- HTTP: `GET /runtime/updates`, `POST /runtime/updates/check` and
+  `POST /runtime/updates/apply`.
 
-1. consumes the request first, so a failure cannot repeat it, and ignores everything
-   in it except that it exists;
-2. looks up the newest version on the channel of the running version from npm itself,
-   and refuses anything that is not newer, so a request can at worst trigger the
-   update you could have run by hand;
-3. **prepares** the new version while the old keeps serving: the installer that shipped
-   inside the installed release fetches the pinned Node and the exact package (no new
-   download source) and lays it beside the current release. Nothing running is touched,
-   so a failure here changes nothing and nobody notices the download;
-4. **swaps**: the new release's own installer selects it and restarts the service once;
-5. waits up to 90 seconds for the dashboard to answer;
-6. if it does not, or the installer fails, selects the previous release again with that
-   release's own installer, and records a rollback with the installer's output;
-7. on success keeps the new release and the one it replaced, and removes older ones
-   (never one another instance selects).
+Viewing requires `system.updates.view`; checking and applying require
+`system.updates.manage`.
 
-Progress is a small `status.json` in the same folder, so the dashboard keeps showing
-it across the restart and reloads itself onto the new version when it arrives.
+The unprivileged Platform writes an update request. On system installations,
+the root-owned `zelavis-update.path` and `.service` consume it. User installations
+start the same updater as the installation's user. The updater ignores request
+contents, resolves the newest channel version itself, and uses the same npm and
+nodejs.org HTTPS sources as the installer.
 
-### No downtime (built for systemd installs)
+An update prepares the immutable release and its private Node while the old
+engine serves. The host then pauses new admission, drains accepted requests,
+qualifies running Project custody, and releases the old engine's writable state.
+Only after that release may the candidate open the System Store. Its readiness
+probe must also prove that running Projects were adopted at their existing
+addresses. The root installer acknowledges the `current` link, private receipt
+and public version descriptor before traffic resumes. The host and its public
+listeners keep running throughout.
 
-systemd holds the dashboard port in `zelavis.socket` and hands it to the Platform
-(socket activation, `LISTEN_FDS`), so a restart **queues** connections instead of
-refusing them. In a test on Debian 12 with systemd (a request every 50 ms, 500 to 1200
-requests per run) an update produced **no failed request** and the slowest took
-about 0.4 s. The first update from an install that predates the socket uses the full
-installer, with a few seconds of refused connections; every update after that is
-live. A rollback of an unstartable release takes about two minutes and restores service.
+A failed preparation or drain leaves the previous engine serving. A failed
+activation or inventory commit fences the candidate before restoring the old
+engine at a fresh generation. A rollback which cannot prove exclusive ownership
+keeps admission paused and reports that recovery is required. A stream or
+WebSocket that cannot drain within the deadline aborts the update and stays
+connected to the previous engine. Admission has a bounded queue; overload is
+reported rather than retained indefinitely.
 
-### Every kind of installation
+Progress lives in `<data>/update/status.json`. The dashboard follows it and
+reloads once the new version is active. The updater retains qualified engine
+releases and versions selected by other installation instances. Root updates do
+not rewrite Project engine or recipe locks.
 
-- **Default system install:** as above (`zelavis-update.path` and `.service`).
-- **Named instances:** each has its own `zelavis-update-<name>.path` and `.service`
-  (and `zelavis-<name>.socket`), so the dashboard of an instance updates that instance
-  alone, to its own release, and never touches another instance's.
-- **User installs (macOS, or Linux without systemd):** nothing is root and nothing
-  supervises the process. The Platform starts the same updater as the same user. It
-  prepares and selects the new release and then says **Restart Zelavis to use it**;
-  the old version keeps serving until you restart it. Nothing is restarted behind
-  your back, and the release the process runs from is never pruned.
-- **Development runs and npm/source copies:** report that updates are manual.
+### Converting an installation without the persistent host
 
-`zelavis doctor` reports whether the watcher (`update-watch`) and the socket
-(`socket`) are armed, and complete uninstall removes the units.
+An installation that predates this handover protocol needs one full local
+installer run. That conversion restarts its old process: an already running
+older process cannot retroactively preserve accepted connections. The live
+installer refuses unsupported protocols and inconsistent inventory. It does
+not retain an older execution path or silently fall back to a restart.
 
-## Can an update involve no restart?
+After conversion, ordinary dashboard updates use the persistent host. A full
+installer rerun remains a maintenance/repair operation and may stop the
+Platform. Plain npm/source copies report that updates are manual.
 
-Not of the process. Node loads an ES module once and cannot unload or replace it,
-and a Platform that swapped its own core code in place would be running a mix of
-two versions. What can be made invisible is the **interruption**: start the new
-version beside the old one, move traffic over, and let the old one finish. So the
-goal is "no downtime", reached by overlap, not "no restart".
+## Updating a Zelavis App
 
-Services are different, and already work this way: installing one needs no
-restart, and an update runs the new version immediately (an acquired package lives
-in a folder named by its digest, so the update is a different module). What stays
-until the next restart is the previous module's memory; the response says so
-(`restartRecommended`).
+**Upgrade recipe** updates a running native App when its reported
+`zeroDowntimeUpdates` capability is true. The same operation is
+`client.projects.upgrade(id)`, `POST /runtime/projects/:id/upgrade`, or
+`zelavis projects upgrade <id>`.
 
-## What an update interrupts today
+Installed Apps lock both their recipe artifact and their complete Zelavis engine
+artifact, including its private Node. An explicit App upgrade selects the latest
+qualified installed engine along with the chosen recipe. New Apps use that same
+engine default, even if their parent runs an older version. Parent updates and
+rollbacks preserve existing App locks. Public controls for selecting another
+exact engine version, including an older one, remain planned.
 
-Project runtimes and visitors are still affected as below; the dashboard row shows what the
-socket changed. Measured on a development machine with an empty Platform: the process is serving
-about **0.33 s** after start and stops in a few milliseconds. With Projects
-running, stopping takes as long as stopping them does.
+The candidate is frozen separately while the previous engine serves. The host
+journal and the Platform's durable Project update must agree before queued
+requests resume. Reconciliation settles interrupted updates from proved host
+selection. A deletion tombstone takes precedence; an explicit stop can fence a
+failed update but cannot erase its intent without ownership proof.
 
-| Layer | Interrupted by a Platform restart? |
-|---|---|
-| Dashboard and API | Slower for a moment, not refused, on systemd installs (the socket queues connections). Refused for the restart elsewhere. |
-| Project runtimes | Not if a separate Agent supervises them (its own systemd unit; the Platform re-adopts them on start). Yes when the Platform itself runs them, as in development: they stop and are started again. |
-| Visitors to a Project's domain | Yes. The Platform process forwards that traffic to the Project today, so it is down while the Platform is. |
-| Edge (Traefik) | No. It is its own unit, and its configuration is output the Platform compiles. |
-| The System Store | Persistent across restarts. The current Platform data ownership guard refuses a second Platform on the same System Store. Safe overlap needs the leadership/follower coordination below. |
+The App host keeps Gateway replay history across engine replacement. It accepts
+parent authority before queuing and creates fresh private worker authority after
+admission. Re-keying a surviving App host uses the authenticated Agent process
+pipe, not a public control endpoint.
 
-## The plan, in order
+## Project and visitor continuity
 
-Each phase is useful alone and none depends on a later one.
+System installations run the Project Agent in its own systemd unit. A Platform
+engine transfers its Agent handles without stopping supervised Projects or
+releasing their placement custody. Local development keeps equivalent custody
+in the persistent host. Running native Apps and the qualified WordPress recipe
+can be adopted; a driver that cannot prove continuity refuses the handover
+before releasing the old engine.
 
-**1. Stop refusing connections. Built** for systemd installs (see above): systemd
-holds the listening socket, so a restart queues connections for under half a second
-instead of refusing them. Still to do: `/live` and `/ready`, and a dashboard retry
-for an API call that fails with a connection error.
+Project preview listeners belong to the persistent host and share its admission
+queue. Their ports, visitor Host headers, redirects and site cookies survive
+Platform handover. Linux WordPress Unix sockets live in shared installation data,
+so the Platform and Agent can use them despite their separate private `/tmp`
+mounts. Traefik remains independently supervised.
 
-**2. Take visitors off the Platform.** Route public Project traffic from Edge
-straight to the Project (Edge already compiles routes, and has stage, probe,
-activate, drain and rollback operations). Then updating the Platform cannot
-touch a visitor, and the Project-forwarding code in the Platform becomes the
-development fallback.
+## Integrity and recovery
 
-**3. Make overlap safe.** Two Platforms must be able to run together for a few
-seconds:
-- *One leader for background work.* Reconciliation, schedules, ACME renewals and
-  allow-list refresh run only in the instance holding a lease in the System Store
-  (the same compare-and-set, epoch and fencing pattern Project placement already
-  uses). The new instance starts as a follower and takes the lease when the old
-  one releases it.
-- *Compatible storage.* Version N and N+1 share the System Store while they
-  overlap, so a change to a stored shape ships in two steps (add, then remove).
-  Pre-release this is waived (existing development data is recreated); the rule
-  starts with the first released design.
-- *Draining.* The old instance stops accepting new work, finishes in-flight
-  requests, and tells long-lived clients (the Assistant's streams) to reconnect;
-  their state is stored, so reconnecting loses nothing.
+An installed engine must match its exact version, complete file digest and
+contained dependency-link graph. Tags, ranges, redirected release directories,
+unqualified protocols and altered artifacts are refused. This is integrity
+within the existing HTTPS distribution trust model, not a release signature.
 
-**4. Blue/green.** Releases live in versioned folders with a `current` link (the
-shared installer already lays them out this way), so the new version starts from
-its own files while the old keeps running from its own. Named installations
-also retain independent `instances/<name>/current` links over the shared release
-tree. Their separate System Stores are not an implementation of blue/green
-overlap on one Store; that still needs phase 3 above. A `zelavis upgrade`
-command (and the Agent, as a host operation like the Edge ones) does:
-start the new release on another port, wait for `/ready`, move Edge to it, drain
-the old, and roll back by moving Edge back if the new one fails its probe. A
-failed update never takes the old version down.
+Each host holds a kernel journal lock and each writable engine holds an exclusive
+kernel ownership lock. Journals and inventory writes flush files and directories.
+Recovery proves previous engines are fenced before granting a new generation;
+an aborted attempt never reuses its generation. An unexpected selected-engine
+exit pauses admission and wakes its supervising host for restart.
 
-**5. More than one host.** A System Store several machines can write, and a
-Platform per machine. This is high availability, not update strategy, and is
-separate from the above.
+`zelavis doctor` checks installation inventory, paths, processes, ports and units
+without opening Project databases. Complete uninstall removes the persistent
+host state along with the selected installation's Projects and data.
 
-## By how you installed it
-
-- **Debian package or archive:** phases 1 and 4 apply fully. The package script
-  today restarts the unit; it would start the new release instead.
-- **`npm|pnpm|bun create zelavis`:** the same versioned release layout and private
-  Node as an archive. Rerunning installs or repairs the selected exact release;
-  system mode restarts the unit today. User mode requires stopping and restarting
-  `zelavis serve` yourself. `npm update` does not manage this installation.
-  Blue/green orchestration remains planned for both modes.
-- **Development:** a restart is fine, and `Ctrl-C` now waits for Projects to stop
-  and releases their placements.
-
-## What is not decided
-
-- Whether the leader lease lives in the System Store or in a separate coordination
-  file; the System Store is simpler and is already the authority for placement.
-- `zelavis upgrade` as an Agent host operation is no longer needed for the first
-  version: the root updater above covers it. It would still matter for updating a
-  fleet of servers from a Fabric.
-
-## Orchestration and interruption
-
-The update control and host-local runner use Effect v4. Registry checks share
-one in-flight lookup, apply requests serialize, and temporary request/status
-files and registry readers have cleanup finalizers. Public update APIs keep
-their Promise contracts. Channel checks, the privileged installer boundary,
-instance ownership, health checks and rollback remain the update authority;
-Effect coordination does not make an update durable by itself.
+Multi-host availability, public independent-version selectors and stronger
+isolation backends remain separate planned work. Native process execution is
+operational isolation for trusted code, not a hostile-code sandbox.

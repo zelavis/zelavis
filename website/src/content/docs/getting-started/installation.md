@@ -50,7 +50,7 @@ remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`
 The runtime does not depend on the host's Node. On a server the dashboard listens on
 all interfaces at port 3000 and the installer prints the URL to open; the one-time
 first-owner token decides who may claim the account. Project process supervision
-through the separate Agent is opt-in with `--enable-agent`. System installations
+runs through a separately supervised Agent. System installations
 also enable the restricted root host-operation Agent for signed package and Edge
 operations, with cgroup v2 containment; the Platform and Project processes remain
 unprivileged. Traefik stays disabled at installation. Automated ACME/cutover
@@ -74,17 +74,17 @@ a short pause (under half a second in tests) and no failed requests. How it work
 why the Platform only asks while a root unit does the work, is in
 [Updating without downtime](../../architecture/updates/).
 
-This arrives with `2.0.0-alpha.10`; the no-downtime switch with the release after it.
-An installation older than that has no updater (or no socket yet), so run the installer
-once (the command in Quick install); every update after that is a click, with no
-downtime.
+Packaged Node installations use the same live engine handover for system,
+named-instance and user installations. The host keeps dashboard and preview
+ports bound while requests drain, database ownership transfers, and the new
+engine is qualified. Running Projects remain in separately supervised Agent
+custody. Failed candidates are fenced before rollback.
 
-It works for every kind of install. A **named instance** updates from its own
-dashboard, to its own release, and never touches another instance. A **user-mode**
-install (macOS, or Linux without systemd) has nothing to restart it, so the update
-selects the new version and the dashboard then asks you to restart Zelavis; the old
-version keeps running until you do. `sudo zelavis doctor` shows whether dashboard
-updates (`update-watch`) and the held port (`socket`) are armed.
+An installation without the persistent host and versioned runtime inventory
+needs one full installer run (Quick install) with a restart. Later dashboard
+updates use live handover. `sudo zelavis doctor` checks the installation inventory,
+held socket and dashboard update watcher. Named instances retain their own
+release selection and never update another instance.
 
 ## Install with npm, pnpm or Bun create
 
@@ -134,7 +134,7 @@ claim the first owner. Rerunning preserves it. User mode starts no systemd,
 Agent or Edge, and offers no automatic login service yet.
 
 Options: `--user`, `--system`, `--yes`, `--dry-run`, `--public`, `--force`,
-`--allow-downgrade`, `--enable-agent` (system mode only). Services acquired by
+`--allow-downgrade`. Services acquired by
 the operator live in `<data>/services`; default services ship inside the Platform
 and cannot be shadowed there. For embedding the runtime in an application,
 use `npm install zelavis` as a library dependency.
@@ -163,8 +163,9 @@ command link, and `--allow-downgrade` permits an older release. Existing tokens 
 Edge configuration are kept. Releases live in `/opt/zelavis/releases/<version>` with
 `current` selecting the active one; previous releases are retained. Running the
 installer again with a newer version is the upgrade, and the dashboard's Update button
-does the same without downtime on systemd. Overlapping two Platform versions
-(blue/green) remains [planned](../../architecture/updates/).
+uses [live engine handover](../../architecture/updates/) on qualified Node
+installations. Candidate preparation holds no writable store; activation follows
+exclusive ownership transfer and durable selection acknowledgement.
 
 
 ## Named system instances
@@ -191,7 +192,7 @@ Rerunning a named install retains its port unless `--port` changes it.
 | Config and token | `/etc/zelavis` | `/etc/zelavis-preview` |
 | User/group | `zelavis` | `zelavis-preview` |
 | Platform unit | `zelavis.service` | `zelavis@preview.service` |
-| Project process Agent (opt-in) | `zelavis-agent.service` | `zelavis-agent@preview.service` |
+| Project process Agent | `zelavis-agent.service` | `zelavis-agent@preview.service` |
 | Restricted host operation Agent | `zelavis-host-agent.service` | `zelavis-host-agent@preview.service` |
 | Release selection | `/opt/zelavis/current` | `/opt/zelavis/instances/preview/current` |
 | Receipt | `/opt/zelavis/installation.json` | `/opt/zelavis/instances/preview/installation.json` |
@@ -257,8 +258,8 @@ maintenance share `<data>/.platform.lock`, with PID/start/session metadata in
 `.platform-owner.json`. Two Platforms cannot open the same default System Store.
 Normal close and process death release ownership; the lock file remains for reuse.
 Stop user-run Platforms before maintenance. A matching owned systemd Platform
-can be stopped and restarted by the installer for repair/upgrade; this involves
-downtime. Old pre-release receipts/layouts are not migrated.
+can be stopped and restarted by the installer for full repair; this involves
+downtime. Qualified dashboard updates use the persistent host handover instead. Old pre-release receipts/layouts are not migrated.
 
 Inspect the installation locally:
 
@@ -411,7 +412,7 @@ For the default instance, when it is the last installation on the host, this:
 - Removes `/opt/zelavis`, including the receipt, `runtime.json`, `.install.lock`, instance directories and host Edge ownership files, recorded command links, and systemd unit files. The default `/usr/local/bin/zelavis` and `/usr/bin/zelavis` links are removed only when they point into this installation.
 - Removes configuration, host operations, certificates, the instance's root Agent state and the final shared host-package inventory.
 - Restores the recorded original `/usr/sbin/policy-rc.d`, or removes a wrapper created by Zelavis, only while its ownership and digest still match. Operator modifications and their original-policy backup are retained. Pending owned atomic-write files are included in this inventory.
-- Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock` and `.platform-owner.json`.
+- Completely deletes `/var/lib/zelavis`, including all project databases and runtimes, `.platform.lock`, `.platform-owner.json`, and the persistent runtime host’s custody, control socket, engine journal, kernel ownership files and development Agent state.
 - Removes Debian package records when the installation came from a package.
 - Removes the `zelavis` user/group only when the receipt records installer ownership and their current properties are safe.
 

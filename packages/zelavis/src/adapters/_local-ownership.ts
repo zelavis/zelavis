@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Effect } from "effect";
 import { describeInstallation } from "../cli/installation.js";
+import { evaluate, integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 
 export interface LocalOwnershipLease { release(): Promise<void> }
 export interface LocalDataOwner {
@@ -78,28 +81,33 @@ export async function acquireNodeInstallerLock(prefix: string): Promise<LocalOwn
 }
 
 /** One guard for runtime startup and installer maintenance of the same data. */
-export async function acquireLocalDataOwnership(directory: string, purpose: LocalDataOwner["purpose"] = "platform"): Promise<LocalOwnershipLease> {
-  await mkdir(directory, { recursive: true });
-  const root = await realpath(directory);
+const acquireDataOwnership = Effect.fn("LocalOwnership.acquireData")(function* (directory: string, purpose: LocalDataOwner["purpose"]) {
+  yield* integration(() => mkdir(directory, { recursive: true }));
+  const root = yield* integration(() => realpath(directory));
   const path = join(root, ".platform.lock");
-  try { if ((await lstat(path)).isSymbolicLink()) throw new Error("Refusing a symlinked Platform ownership lock."); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const lease = await sqliteReservation(path);
+  const stat = yield* integration(() => lstat(path)).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException).code === "ENOENT", () => Effect.void));
+  if (stat?.isSymbolicLink()) return yield* new IntegrationFailure(new Error("Refusing a symlinked Platform ownership lock."));
+  const lease = yield* integration(() => sqliteReservation(path));
   const ownerFile = join(root, ".platform-owner.json");
   const temporary = `${ownerFile}.${randomUUID()}`;
-  let installationRoot: string | undefined;
-  try { if (process.argv[1]) installationRoot = describeInstallation(await realpath(process.argv[1])).root; } catch {}
+  // The binding belongs to the selected engine; argv may name its private worker.
+  const installationRoot = yield* integration(() => realpath(fileURLToPath(new URL("../cli.js", import.meta.url)))).pipe(
+    Effect.flatMap((cli) => evaluate(() => describeInstallation(cli).root)),
+    Effect.catch(() => Effect.void),
+  );
   const owner: LocalDataOwner = { pid: process.pid, startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(), session: randomUUID(), purpose, ...(installationRoot ? { installationRoot } : {}) };
-  try {
-    await writeFile(temporary, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: "wx" });
-    await rename(temporary, ownerFile);
-  } catch (error) { await rm(temporary, { force: true }); await lease.release(); throw error; }
-  return { async release() {
-    try {
-      const current = await readLocalDataOwner(root);
-      if (current?.session === owner.session) await rm(ownerFile, { force: true });
-    } finally { await lease.release(); }
-  } };
+  yield* integration(() => writeFile(temporary, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: "wx" })).pipe(
+    Effect.andThen(integration(() => rename(temporary, ownerFile))),
+    Effect.onError(() => integration(() => rm(temporary, { force: true })).pipe(Effect.ensuring(integration(() => lease.release()).pipe(Effect.orDie)), Effect.orDie)),
+  );
+  const release = Effect.gen(function* () {
+    const current = yield* integration(() => readLocalDataOwner(root));
+    if (current?.session === owner.session) yield* integration(() => rm(ownerFile, { force: true }));
+  }).pipe(Effect.ensuring(integration(() => lease.release()).pipe(Effect.orDie)), Effect.uninterruptible);
+  return { release: () => present(release) };
+});
+export function acquireLocalDataOwnership(directory: string, purpose: LocalDataOwner["purpose"] = "platform"): Promise<LocalOwnershipLease> {
+  return present(acquireDataOwnership(directory, purpose).pipe(Effect.uninterruptible));
 }
 
 export async function readLocalDataOwner(directory: string): Promise<LocalDataOwner | undefined> {

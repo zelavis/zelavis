@@ -1083,6 +1083,19 @@ in this package under `src/app` and is exported as `zelavis/app`. Each created
 Project locks its exact recipe/runtime version so parent Platform upgrades do
 not silently upgrade child Apps.
 
+Packaged Node installations run both Platform and App engines behind persistent
+hosts. Qualified updates keep ingress and preview ports bound, drain requests,
+transfer exclusive database ownership, and resume traffic after readiness and
+durable selection acknowledgement. A failed candidate is fenced before rollback.
+System installations use a separately supervised Project Agent so running Apps
+and qualified recipe processes survive a Platform engine handover.
+
+New Apps and explicit native App recipe upgrades use the latest qualified
+installed engine. Parent updates and rollbacks preserve existing App engine pins.
+Public older-version selection controls remain planned. An installation without
+the persistent host needs one full installer run with a restart before it can use
+live updates. See the [update architecture](../../website/src/content/docs/architecture/updates.md).
+
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside
 created Project runtimes.

@@ -80,7 +80,17 @@ function RecipeUpgradeNotice({
   const [target, setTarget] = useState(recipes[0]?.name ?? "");
   const status = project.recipeStatus;
   const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
-  if (project.deletion || !status || status.state === "current") return null;
+  const live = project.runtime.status === "running" && project.capabilities.zeroDowntimeUpdates === true;
+  const canUpgrade = idle || live;
+  if (project.deletion) return null;
+  if (project.runtimeUpdate) return (
+    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Project update">
+      <p>{project.runtimeUpdate.error ? "Update recovery required" : "Update in progress"}</p>
+      {project.runtimeUpdate.error ? <p className="text-destructive">{project.runtimeUpdate.error}</p> : null}
+      {project.runtimeUpdate.error ? <Button type="button" variant="outline" disabled={disabled} onClick={() => onUpgrade()}>Retry update</Button> : null}
+    </div>
+  );
+  if (!status || status.state === "current") return null;
   return (
     <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Recipe upgrade">
       <p>
@@ -93,7 +103,7 @@ function RecipeUpgradeNotice({
           aria-label="Recipe to move to"
           value={target}
           onChange={(event) => setTarget(event.target.value)}
-          disabled={disabled || !idle}
+          disabled={disabled || !canUpgrade}
           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         >
           {recipes.map((recipe) => (
@@ -107,12 +117,12 @@ function RecipeUpgradeNotice({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || !idle || (status.state === "unavailable" && !target)}
+          disabled={disabled || !canUpgrade || (status.state === "unavailable" && !target)}
           onClick={() => onUpgrade(status.state === "unavailable" ? target : undefined)}
         >
           Upgrade recipe
         </Button>
-        {!idle ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
+        {!canUpgrade ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
       </div>
     </div>
   );
@@ -251,7 +261,7 @@ function ProjectsRoute() {
     try {
       const upgraded = await upgradeProject(rootData.runtime, project.id, targetRecipe);
       setMessage(
-        `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged; start it when you are ready.`,
+        `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged. ${upgraded.runtime.status === "running" ? "It is running at the same address." : "Start it when you are ready."}`,
       );
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -478,7 +488,7 @@ function ProjectsRoute() {
                     <p className="text-sm text-destructive">{project.runtime.error}</p>
                   ) : null}
                   {project.preview?.error ? <p className="text-sm text-destructive">{project.preview.error}</p> : null}
-                  {project.recipeStatus && project.recipeStatus.state !== "current" ? (
+                  {project.runtimeUpdate || project.recipeStatus && project.recipeStatus.state !== "current" ? (
                     <RecipeUpgradeNotice
                       project={project}
                       recipes={projectRecipes}
@@ -511,7 +521,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending || !!project.deletion}
+                      disabled={isPending || !!project.deletion || !!project.runtimeUpdate && !isRunning}
                       onClick={() => changeProjectState(project, !isRunning)}
                       aria-label={isRunning ? "Stop" : "Start"}
                     >
@@ -520,7 +530,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending || !!project.deletion || project.runtime.status === "provisioning"}
+                      disabled={isPending || !!project.deletion || !!project.runtimeUpdate || project.runtime.status === "provisioning"}
                       onClick={() => handleRestartProject(project)}
                       aria-label="Restart"
                     >

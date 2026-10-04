@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { defineEffectProjectRuntime, evaluate, integration, type EffectOperations } from "zelavis/adapters/project-runtime";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -586,9 +586,18 @@ export function createNativeWordPressProjectRuntime(options: NativeWordPressProj
     const configPath = (id: string) => join(runtimeDirectory(id), "wordpress-native.json");
     const siteDirectory = (id: string) => join(runtimeDirectory(id), "wordpress");
     const databaseDirectory = (id: string) => join(runtimeDirectory(id), "mariadb");
-    const socketDirectory = (config: NativeWordPressConfig) => join("/tmp", `zv-wp-${config.socketId}`);
+    const socketDirectory = (config: NativeWordPressConfig) => {
+        // Separate systemd units have separate PrivateTmp mounts. Persistent
+        // Project sockets must be visible to both the Platform and its Agent.
+        const root = process.platform === "linux" ? resolve(projectsDirectory, "..", "runtime-sockets") : "/tmp";
+        return join(root, `zv-wp-${config.socketId}`);
+    };
     const readConfig = Effect.fn("WordPress.readConfig")(function* (projectId: string): Effect.fn.Return<NativeWordPressConfig, TaggedFailure> {
-        return (yield* Effect.flatMap(integration(() => readFile(configPath(projectId), "utf8")), value => evaluate(() => JSON.parse(value)))) as NativeWordPressConfig;
+        const config = yield* Effect.flatMap(integration(() => readFile(configPath(projectId), "utf8")), value => evaluate(() => JSON.parse(value) as NativeWordPressConfig));
+        yield* evaluate(() => {
+            if (!config || typeof config.socketId !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(config.socketId)) throw new Error("WordPress socket identity is malformed.");
+        });
+        return config;
     });
     function appendLog(projectId: string, stream: ZelavisProjectLogEntry["stream"], message: string) {
         const state = processes.get(projectId) ?? { logs: [] };
@@ -620,7 +629,7 @@ export function createNativeWordPressProjectRuntime(options: NativeWordPressProj
         tenantPlacement: false,
         databaseSharding: false,
         runtimeOwnership: "platform-process" as const,
-        survivesControlPlaneRestart: false,
+        survivesControlPlaneRestart: agent.survivesControlPlaneRestart === true && typeof agent.attach === "function",
         description: "Runs a version-pinned WordPress release with dedicated native Nginx, PHP-FPM, and MariaDB processes, configuration, sockets, logs, and data directories.",
     });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
@@ -629,6 +638,34 @@ export function createNativeWordPressProjectRuntime(options: NativeWordPressProj
         defaultRuntimeKind: "native",
         startupConcurrency: 1,
         capabilities: () => capabilities,
+        adopt: Effect.fn("WordPress.adopt")(function* () {
+            if (!agent.survivesControlPlaneRestart || !agent.attach) return;
+            const entries = yield* integration(() => readdir(projectsDirectory, { withFileTypes: true }));
+            if (entries.length > 4096) return yield* new IntegrationFailure(new Error("WordPress adoption exceeds its discovery bound."));
+            yield* Effect.forEach(entries.filter(entry => entry.isDirectory() && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(entry.name)), entry => Effect.gen(function* () {
+                const projectId = entry.name;
+                const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.void));
+                if (!config) return;
+                const attached = yield* integration(() => agent.attach!(projectId));
+                if (attached.length === 0) return;
+                const state: NativeWordPressProcesses = { logs: [] };
+                for (const { process: child, command, replay } of attached) {
+                    const role = yield* evaluate(() => {
+                        if (child.workloadId !== projectId || command.workloadId !== projectId || !child.listen) throw new Error("WordPress Agent adoption has no exact Project authority.");
+                        const args = command.args ?? [];
+                        if (command.executable === config.mariadbd && command.cwd === runtimeDirectory(projectId) && args.includes(`--datadir=${databaseDirectory(projectId)}`)) return "database" as const;
+                        if (command.executable === config.phpFpm && command.cwd === siteDirectory(projectId) && args.includes(join(runtimeDirectory(projectId), "php-fpm.conf"))) return "phpFpm" as const;
+                        if (command.executable === config.nginx && command.cwd === runtimeDirectory(projectId) && args.includes(join(runtimeDirectory(projectId), "nginx.conf"))) return "nginx" as const;
+                        throw new Error("Agent returned an unrelated process for WordPress adoption.");
+                    });
+                    if (state[role]) return yield* new IntegrationFailure(new Error(`WordPress has duplicate live ${role} owners.`));
+                    state[role] = child;
+                    child.listen!(capture(projectId, role));
+                    for (const output of replay) capture(projectId, role)(output);
+                }
+                processes.set(projectId, state);
+            }), { concurrency: 4, discard: true });
+        }),
         prepare: Effect.fn("WordPress.prepare")(function* (project: ZelavisProjectRecord, recipe: ZelavisProjectRecipeLock) {
             if (recipe.name !== WORDPRESS_APP_NAME)
                 return yield* new IntegrationFailure(new Error(`Unsupported native WordPress recipe "${recipe.name}".`));
@@ -871,14 +908,14 @@ export function createNativeWordPressProjectRuntime(options: NativeWordPressProj
         }),
         status: Effect.fn("WordPress.status")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["status"]>>[0]) {
             const state = processes.get(projectId);
-            const config = yield* Effect.catch(readConfig(projectId), Effect.fn("WordPress.recover")(function* () { return undefined; }));
-            return state?.nginx?.running && config
+            const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(undefined)));
+            return state?.nginx?.running && state.phpFpm?.running && state.database?.running && config
                 ? { status: "running", url: `http://127.0.0.1:${config.httpPort}` }
                 : { status: "stopped" };
         }),
         logs: Effect.fn("WordPress.logs")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["logs"]>>[0]) { return [...(processes.get(projectId)?.logs ?? [])]; }),
         destroy: Effect.fn("WordPress.destroy")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["destroy"]>>[0]) {
-            const config = yield* Effect.catch(readConfig(projectId), Effect.fn("WordPress.recover")(function* () { return undefined; }));
+            const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(undefined)));
             yield* driver.stop(projectId);
             if (config) {
                 yield* integration(() => rm(socketDirectory(config), { recursive: true, force: true }));

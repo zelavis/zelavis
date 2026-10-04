@@ -3,11 +3,12 @@ import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { evaluate, integration, present } from "../core/runtime/effect-boundary.js";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { compareVersions, isExactVersion, updateChannel, type ZelavisUpdateRun } from "../updates.js";
 import { UPDATE_REQUEST_FILE, UPDATE_STATUS_FILE } from "./_node-updates.js";
+import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 const LOG_LINES = 40;
 export interface UpdateRunnerOptions {
     readonly prefix: string;
@@ -23,14 +24,9 @@ export interface UpdateRunnerOptions {
     healthy(port: number): Promise<boolean>;
     sleep(milliseconds: number): Promise<void>;
     now?: () => Date;
-    /** The systemd socket unit that holds the dashboard port; when it exists the swap is live. */
-    readonly socketUnitFile: string;
     /** The instance this updater serves; the default instance when omitted. */
     readonly instance?: string;
-    /**
-     * `user` is an installation in the user's own home: no systemd and no one to restart it, so the update
-     * selects the new release and the running Platform keeps serving until it is restarted.
-     */
+    /** Both modes select through the persistent runtime host; only system inventory requires root. */
     readonly mode?: "system" | "user";
     /** A release a running process was started from; never pruned. */
     readonly keepRelease?: string;
@@ -85,6 +81,23 @@ const pruneReleases = Effect.fn("PlatformUpdate.pruneReleases")(function* (prefi
     const releases = join(prefix, "releases");
     for (const name of (yield* Effect.orElseSucceed(integration(() => readdir(releases)), () => [] as string[]))) {
         const path = join(releases, name);
+        // Qualified engines are deliberately available versions, including
+        // engines pinned by Projects. A Platform update has no authority to
+        // remove those selections. This check only retains bytes; selection
+        // still verifies the complete artifact through the runtime catalog.
+        if (isExactVersion(name)) {
+            const artifact = join(path, "runtime-artifact.json");
+            const retained = yield* Effect.gen(function* () {
+                const stats = yield* integration(() => lstat(artifact));
+                if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 16 * 1024 * 1024) return false;
+                const source = yield* integration(() => readFile(artifact, "utf8"));
+                return yield* evaluate(() => {
+                    const value = JSON.parse(source);
+                    return value.version === name && value.metadata?.protocol === NODE_RUNTIME_PROTOCOL;
+                });
+            }).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(false)));
+            if (retained) continue;
+        }
         if (!keep.has((yield* Effect.orElseSucceed(integration(() => realpath(path)), () => path))))
             yield* integration(() => rm(path, { recursive: true, force: true }));
     }
@@ -98,7 +111,7 @@ const pruneReleases = Effect.fn("PlatformUpdate.pruneReleases")(function* (prefi
  * registry, and anything not newer is refused, so a request can only ever ask
  * for the update the operator could have run by hand.
  */
-const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* (options: UpdateRunnerOptions): Effect.fn.Return<ZelavisUpdateRun | undefined, TaggedFailure> {
+export const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* (options: UpdateRunnerOptions): Effect.fn.Return<ZelavisUpdateRun | undefined, TaggedFailure> {
     const directory = join(options.dataDirectory, "update");
     const requestFile = join(directory, UPDATE_REQUEST_FILE);
     const now = options.now ?? (() => new Date());
@@ -142,17 +155,14 @@ const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* (option
     if (prepared.code !== 0) {
         return yield* finish("failed", `Could not prepare ${target}, so nothing was changed and ${receipt.version} is still running.`, { log });
     }
-    // Phase 2, swap: the new release's own installer selects it and restarts once. With the
-    // socket held by systemd that restart queues connections instead of refusing them; before
-    // the socket exists (the first update after it was introduced) the full installer is used.
+    // The persistent host retains listeners, drains accepted traffic and transfers
+    // one writable owner. The installer acknowledges receipt/current selection
+    // before admission resumes, including during rollback.
     const newRelease = join(options.prefix, "releases", target);
-    if (mode === "user")
-        return yield* swapUser(options, { directory, run, finish, log, newRelease, previous, target, from: receipt.version });
-    const live = yield* exists(options.socketUnitFile);
-    run = { ...run, message: live ? `Switching to ${target}.` : `Installing ${target}; this update restarts the service for a few seconds.` };
+    run = { ...run, message: `Transferring engine ownership to ${target}.` };
     yield* writeStatus(directory, run);
     const node = join(newRelease, "runtime", "node", "bin", "node");
-    const swapped = yield* integration(() => options.run(node, [join(newRelease, "platform", "dist", "cli.js"), "install", "--from-release", newRelease, "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...live ? ["--live"] : []]));
+    const swapped = yield* integration(() => options.run(node, [join(newRelease, "platform", "dist", "cli.js"), "install", "--from-release", newRelease, "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...mode === "user" ? ["--user"] : [], "--live"]));
     log.push(...tail(swapped.output));
     let failure: string | undefined = swapped.code === 0 ? undefined : `The installer stopped with an error (exit ${swapped.code}).`;
     if (!failure) {
@@ -178,13 +188,12 @@ const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* (option
     yield* writeStatus(directory, run);
     const selected = yield* Effect.catch(release(options.prefix, instance), Effect.fn("PlatformUpdate.recover")(function* () { return previous; }));
     if (selected !== previous) {
-        const socketAvailable = yield* exists(options.socketUnitFile);
-        const back = yield* integration(() => options.run(join(previous, "runtime", "node", "bin", "node"), [join(previous, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...socketAvailable ? ["--live"] : []]));
+        const back = yield* integration(() => options.run(join(previous, "runtime", "node", "bin", "node"), [join(previous, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...mode === "user" ? ["--user"] : [], "--live"]));
         log.push(...tail(back.output));
     }
     // Only restart what is not already answering: a swap that failed before it began changed nothing.
     let restored = yield* integration(() => options.healthy(receipt.port));
-    if (!restored) {
+    if (!restored && mode === "system") {
         yield* integration(() => options.run("systemctl", ["restart", scope.units[0]]));
         for (let attempt = 0; attempt < 20 && !restored; attempt += 1) {
             restored = (yield* integration(() => options.healthy(receipt.port)));
@@ -198,34 +207,6 @@ const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* (option
     return yield* finish("rolled-back", restored
         ? `${failure} Rolled back to ${receipt.version}, which is running again.`
         : `${failure} Rolling back to ${receipt.version} did not bring it back; check the server with: journalctl -u ${scope.units[0]}`, { log: log.slice(-LOG_LINES) });
-});
-const exists = Effect.fn("PlatformUpdate.exists")(function* (path: string): Effect.fn.Return<boolean, TaggedFailure> {
-    return yield* Effect.catch(Effect.map(integration(() => access(path)), () => true), Effect.fn("PlatformUpdate.recover")(function* () { return false; }));
-});
-const swapUser = Effect.fn("PlatformUpdate.swapUser")(function* (options: UpdateRunnerOptions, context: {
-    directory: string;
-    run: ZelavisUpdateRun;
-    finish: (state: ZelavisUpdateRun["state"], message: string, extra?: Partial<ZelavisUpdateRun>) => Effect.Effect<ZelavisUpdateRun, TaggedFailure>;
-    log: string[];
-    newRelease: string;
-    previous: string;
-    target: string;
-    from: string;
-}): Effect.fn.Return<ZelavisUpdateRun, TaggedFailure> {
-    const { finish, log, newRelease, previous, target, from } = context;
-    const instance = options.instance ?? "default";
-    yield* writeStatus(context.directory, { ...context.run, message: `Selecting ${target}.` });
-    const install = (release: string, extra: readonly string[]) => integration(() => options.run(join(release, "runtime", "node", "bin", "node"), [join(release, "platform", "dist", "cli.js"), "install", "--from-release", release, "--user", "--live", "--installed-by", "script", ...extra]));
-    const swapped = yield* install(newRelease, []);
-    log.push(...tail(swapped.output));
-    if (swapped.code === 0) {
-        yield* Effect.catch(pruneReleases(options.prefix, instance, previous, options.keepRelease), Effect.fn("PlatformUpdate.recover")(function* () { return undefined; }));
-        return yield* finish("succeeded", `Updated to ${target}. Restart Zelavis to start using it; ${from} keeps running until then.`, { log: log.slice(-LOG_LINES) });
-    }
-    // The installer failed part-way; put the release that was selected back so the next start is the known one.
-    if ((yield* Effect.orElseSucceed(release(options.prefix, instance), () => previous)) !== previous)
-        yield* Effect.map(install(previous, ["--allow-downgrade"]), (back) => log.push(...tail(back.output)));
-    return yield* finish("rolled-back", `The installer stopped with an error (exit ${swapped.code}); ${from} is still selected and still running.`, { log: log.slice(-LOG_LINES) });
 });
 function requestId(text: string): string {
     try {

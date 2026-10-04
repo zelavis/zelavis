@@ -8,6 +8,8 @@ import type {
   ZelavisProjectRuntimeKind,
 } from "../project.js";
 import { ZelavisProjectRuntimeError } from "../project.js";
+import { Effect } from "effect";
+import { effectOperations, evaluate, presentOperations } from "../core/runtime/effect-boundary.js";
 
 export type ZelavisDeploymentBackendFeatureState =
   | "available"
@@ -412,7 +414,12 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   runtimeKinds: "wrapper",
   defaultRuntimeKind: "wrapper",
   startupConcurrency: "wrapper",
+  custody: "wrapper",
   capabilities: "descriptor",
+  supportsLiveUpdate: "descriptor",
+  prepareUpdate: "descriptor",
+  applyUpdate: "project-id",
+  recoverUpdate: "project-id",
   prepare: "descriptor",
   start: "descriptor",
   stop: "project-id",
@@ -422,6 +429,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   signGatewayAuthority: "project-id",
   fencePrevious: "placement",
   adopt: "every-driver",
+  detach: "every-driver",
   close: "every-driver",
 } as const satisfies Record<
   keyof ZelavisProjectRuntimeDriver,
@@ -471,34 +479,82 @@ export function createDeploymentBackendProjectRuntime(options: {
   // manager repairs stored records explicitly and writes them before it calls
   // any lifecycle method, so an unreadable assignment here is an error, never
   // an implicit backend choice.
-  const forProjectId = async (projectId: string) => {
-    const record = await options.store.get("projects", projectId);
+  const forProjectId = Effect.fn("BackendProjects.forProjectId")(function* (projectId: string) {
+    const record = yield* effectOperations(options.store).get("projects", projectId);
     const value = record?.value;
     if (!isRecord(value) || typeof value.runtimeKind !== "string") {
-      throw new ZelavisProjectRuntimeError(
+      return yield* Effect.fail(new ZelavisProjectRuntimeError(
         `Project "${projectId}" has no stored deployment backend assignment.`,
-      );
+      ));
     }
     const runtimeKind = value.runtimeKind;
-    let backendId: string;
-    try {
-      backendId = normalizeBackendId(runtimeKind);
-    } catch {
-      throw new ZelavisProjectRuntimeError(
-        `Project "${projectId}" has an invalid stored deployment backend assignment.`,
-      );
-    }
+    const backendId = yield* evaluate(() => normalizeBackendId(runtimeKind)).pipe(Effect.mapError(() =>
+      new ZelavisProjectRuntimeError(`Project "${projectId}" has an invalid stored deployment backend assignment.`)));
     const runtime = runtimes.get(backendId);
     if (!runtime) {
-      throw new ZelavisProjectRuntimeError(
+      return yield* Effect.fail(new ZelavisProjectRuntimeError(
         `No Project driver is registered for deployment backend "${runtimeKind}".`,
-      );
+      ));
     }
     return runtime;
-  };
+  });
   const uniqueRuntimes = [...new Set(runtimes.values())];
 
-  return {
+  const programs = {
+    prepare: Effect.fn("BackendProjects.prepare")(function* (project: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[0], recipe: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[1]) {
+      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).prepare(project, recipe);
+    }),
+    start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1]) {
+      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement);
+    }),
+    prepareUpdate: Effect.fn("BackendProjects.prepareUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[1]) {
+      const prepare = effectOperations(yield* evaluate(() => forDescriptor(previous))).prepareUpdate;
+      if (!prepare) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
+      return yield* prepare(previous, candidate);
+    }),
+    applyUpdate: Effect.fn("BackendProjects.applyUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[1], commit: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[2]) {
+      const apply = effectOperations(yield* forProjectId(id)).applyUpdate;
+      if (!apply) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
+      return yield* apply(id, update, commit);
+    }),
+    recoverUpdate: Effect.fn("BackendProjects.recoverUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[1]) {
+      const recover = effectOperations(yield* forProjectId(id)).recoverUpdate;
+      if (!recover) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot recover a Project update."));
+      return yield* recover(id, update);
+    }),
+    ...(uniqueRuntimes.some(runtime => runtime.fencePrevious) ? {
+      fencePrevious: Effect.fn("BackendProjects.fencePrevious")(function* (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) {
+        return yield* Effect.gen(function* () {
+          const driver = effectOperations(yield* forProjectId(placement.projectId));
+          return yield* (driver.fencePrevious?.(placement) ?? Effect.succeed(false));
+        }).pipe(Effect.orElseSucceed(() => false));
+      }),
+    } : {}),
+    ...(uniqueRuntimes.some(runtime => runtime.adopt) ? {
+      adopt: Effect.fn("BackendProjects.adopt")(function* () {
+        yield* Effect.forEach(uniqueRuntimes, runtime => effectOperations(runtime).adopt?.() ?? Effect.void, { concurrency: 1, discard: true });
+      }),
+    } : {}),
+    stop: Effect.fn("BackendProjects.stop")(function* (id: string) { return yield* effectOperations(yield* forProjectId(id)).stop(id); }),
+    status: Effect.fn("BackendProjects.status")(function* (id: string) { return yield* effectOperations(yield* forProjectId(id)).status(id); }),
+    logs: Effect.fn("BackendProjects.logs")(function* (id: string) { return yield* effectOperations(yield* forProjectId(id)).logs(id); }),
+    destroy: Effect.fn("BackendProjects.destroy")(function* (id: string) { return yield* effectOperations(yield* forProjectId(id)).destroy(id); }),
+    close: Effect.fn("BackendProjects.close")(function* () {
+      yield* Effect.forEach(uniqueRuntimes, runtime => effectOperations(runtime).close(), { concurrency: 4, discard: true });
+    }),
+    detach: Effect.fn("BackendProjects.detach")(function* () {
+      yield* Effect.forEach(uniqueRuntimes, runtime => {
+        const detach = effectOperations(runtime).detach;
+        return detach ? detach() : Effect.fail(new ZelavisProjectRuntimeError("Backend has no qualified custody transfer."));
+      }, { concurrency: 1, discard: true });
+    }),
+    signGatewayAuthority: Effect.fn("BackendProjects.signGatewayAuthority")(function* (id: string, claims: Parameters<NonNullable<ZelavisProjectRuntimeDriver["signGatewayAuthority"]>>[1]) {
+      const sign = effectOperations(yield* forProjectId(id)).signGatewayAuthority;
+      if (!sign) return undefined;
+      return yield* sign(id, claims);
+    }),
+  };
+  return Object.assign(presentOperations(programs), {
     name: "deployment-backends",
     runtimeKinds: Object.freeze([...runtimes.keys()]),
     defaultRuntimeKind: runtimes.has(NATIVE_BACKEND)
@@ -508,39 +564,8 @@ export function createDeploymentBackendProjectRuntime(options: {
       ...uniqueRuntimes.map((runtime) => runtime.startupConcurrency ?? 4),
     ),
     capabilities: (project) => forDescriptor(project).capabilities(project),
-    prepare: (project, app) => forDescriptor(project).prepare(project, app),
-    // The placement token travels with the start: it is what the Agent records
-    // against the process, and what a later fence is checked against.
-    start: (project, placement) => forDescriptor(project).start(project, placement),
-    // Fencing a previous owner is the driver's to prove, so it is offered only
-    // when some driver can, and routed to the one that ran that Project. A
-    // wrapper that dropped it left a Platform that had not shut down cleanly
-    // unable to take its own Projects back.
-    ...(uniqueRuntimes.some((runtime) => runtime.fencePrevious)
-      ? {
-          fencePrevious: async (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) => {
-            let runtime: ZelavisProjectRuntimeDriver;
-            try { runtime = await forProjectId(placement.projectId); }
-            catch { return false; }
-            return (await runtime.fencePrevious?.(placement)) ?? false;
-          },
-        }
-      : {}),
-    ...(uniqueRuntimes.some((runtime) => runtime.adopt)
-      ? {
-          adopt: async () => {
-            for (const runtime of uniqueRuntimes) await runtime.adopt?.();
-          },
-        }
-      : {}),
-    stop: async (projectId) => (await forProjectId(projectId)).stop(projectId),
-    status: async (projectId) => (await forProjectId(projectId)).status(projectId),
-    logs: async (projectId) => (await forProjectId(projectId)).logs(projectId),
-    destroy: async (projectId) => (await forProjectId(projectId)).destroy(projectId),
-    close: async () => {
-      await Promise.all(uniqueRuntimes.map((runtime) => runtime.close()));
-    },
-    signGatewayAuthority: async (projectId, claims) =>
-      (await forProjectId(projectId)).signGatewayAuthority?.(projectId, claims),
-  };
+    supportsLiveUpdate: (project: Readonly<ZelavisProjectDescriptor>) => forDescriptor(project).supportsLiveUpdate?.(project) === true,
+    ...(uniqueRuntimes[0]?.custody && uniqueRuntimes.every(runtime => runtime.custody === uniqueRuntimes[0]!.custody)
+      ? { custody: uniqueRuntimes[0].custody } : {}),
+  } satisfies Pick<ZelavisProjectRuntimeDriver, "name" | "runtimeKinds" | "defaultRuntimeKind" | "startupConcurrency" | "capabilities" | "supportsLiveUpdate">);
 }

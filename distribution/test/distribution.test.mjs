@@ -95,8 +95,11 @@ test("the Platform service reads installer-generated first-run configuration", a
 
 test("release staging bounds file hashing and includes complete uninstall", async () => {
   const builder = await readFile(new URL("scripts/build-stage.mjs", distribution), "utf8");
-  assert.match(builder, /digestConcurrency = 32/u);
-  assert.doesNotMatch(builder, /Promise\.all\(files\.map/u);
+  assert.match(builder, /sealNodeRuntimeArtifact\(options\.output\)/u);
+  const artifact = await readFile(new URL("../../packages/zelavis/src/adapters/_node-runtime-artifact.ts", import.meta.url), "utf8");
+  assert.match(artifact, /concurrency: 8/u);
+  assert.doesNotMatch(artifact, /Promise\.all\(files\.map/u);
+  for (const flag of ["--ignore-scripts", "--omit=dev", "--omit=optional"]) assert.ok(builder.includes(flag));
   assert.match(builder, /share", "uninstall\.sh/u);
 });
 

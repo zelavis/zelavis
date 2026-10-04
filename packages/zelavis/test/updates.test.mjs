@@ -203,7 +203,7 @@ test("the root updater installs the newest version with the installer shipped in
   assert.deepEqual(commands[0], ["sh", join(state.prefix, "releases", state.version, "platform", "dist", "installation-assets", "install.sh"), "--version", "2.0.0-alpha.9", "--stage-only"]);
   // ...then swap with the new release's own installer and its own Node.
   const target = join(state.prefix, "releases", "2.0.0-alpha.9");
-  assert.deepEqual(commands[1], [join(target, "runtime", "node", "bin", "node"), join(target, "platform", "dist", "cli.js"), "install", "--from-release", target, "--installed-by", "script"]);
+  assert.deepEqual(commands[1], [join(target, "runtime", "node", "bin", "node"), join(target, "platform", "dist", "cli.js"), "install", "--from-release", target, "--installed-by", "script", "--live"]);
   assert.equal(await exists(join(state.dataDirectory, "update", "request.json")), false, "the request is consumed first");
   assert.deepEqual(await status(state.dataDirectory), result);
   assert.ok(!JSON.stringify(result).includes("SECRET"), "the installer's token never reaches the status file");
@@ -297,12 +297,12 @@ test("a swap that fails is rolled back, and a rollback that does not recover say
   assert.match(stuck.message, /did not bring it back/);
 });
 
-test("the swap is live only once systemd holds the port, and a running release is not restarted for nothing", async (t) => {
+test("updates always use the persistent host without restarting a healthy Platform", async (t) => {
   const first = await installation(t);
   await request(first.dataDirectory);
   const before = updater(t, first);
   await runUpdate(before.options);
-  assert.ok(!before.commands[1].includes("--live"), "before the socket exists the full installer runs");
+  assert.ok(before.commands[1].includes("--live"), "the persistent host owns the listener even without systemd socket activation");
 
   const held = await installation(t);
   await writeFile(join(held.root, "zelavis.socket"), "[Socket]\n");
@@ -332,6 +332,18 @@ test("after a good update only the new release, the one just replaced and instan
   await request(state.dataDirectory);
   assert.equal((await runUpdate(updater(t, state).options)).state, "succeeded");
   assert.deepEqual((await readdir(join(state.prefix, "releases"))).sort(), ["2.0.0-alpha.5", "2.0.0-alpha.8", "2.0.0-alpha.9"]);
+});
+
+test("Platform updates retain every qualified engine offered for independent Project selection", async t => {
+  const state = await installation(t);
+  const qualified = "1.0.0";
+  await mkdir(join(state.prefix, "releases", qualified), { recursive: true });
+  await writeFile(join(state.prefix, "releases", qualified, "runtime-artifact.json"), JSON.stringify({ version: qualified, metadata: { protocol: "zelavis-runtime/1" } }));
+  await mkdir(join(state.prefix, "releases", "2.0.0-alpha.1"), { recursive: true });
+  await request(state.dataDirectory);
+  assert.equal((await runUpdate(updater(t, state).options)).state, "succeeded");
+  assert.equal(await exists(join(state.prefix, "releases", qualified)), true);
+  assert.equal(await exists(join(state.prefix, "releases", "2.0.0-alpha.1")), false);
 });
 
 test("a named instance updates its own release, keeps the default's, and is installed under its own name", async (t) => {
@@ -367,7 +379,7 @@ test("a named instance updates its own release, keeps the default's, and is inst
   assert.equal(await realpath(join(home, "current")), join(state.prefix, "releases", "2.0.0-alpha.9"));
 });
 
-test("a user installation updates itself as the same user and asks for a restart instead of restarting", async (t) => {
+test("a user installation hands over its engine as the same user", async (t) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "zelavis-user-update-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const data = join(root, "data");
@@ -386,7 +398,7 @@ test("a user installation updates itself as the same user and asks for a restart
   const commands = [];
   const result = await runUpdate({
     prefix: root, dataDirectory: data, mode: "user", keepRelease: join(root, "releases", "2.0.0-alpha.8"), socketUnitFile: join(root, "none.socket"),
-    channelVersion: async () => "2.0.0-alpha.9", healthy: async () => { throw new Error("a user update never waits on a restart"); }, sleep: async () => undefined,
+    channelVersion: async () => "2.0.0-alpha.9", healthy: async () => true, sleep: async () => undefined,
     async run(command, args) {
       commands.push([command, ...args]);
       if (command === "sh") { await mkdir(join(root, "releases", "2.0.0-alpha.9", "platform", "dist", "installation-assets"), { recursive: true }); return { code: 0, output: "" }; }
@@ -396,15 +408,16 @@ test("a user installation updates itself as the same user and asks for a restart
     },
   });
   assert.equal(result.state, "succeeded");
-  assert.match(result.message, /Restart Zelavis/);
+  assert.match(result.message, /Updated from/);
   assert.ok(commands[0].includes("--user") && commands[0].includes("--stage-only"));
   const swap = commands.find((c) => c.includes("--from-release"));
   assert.ok(swap.includes("--user") && swap.includes("--live"));
   assert.ok(!commands.some((c) => c[0] === "systemctl"));
   assert.ok(await exists(join(root, "releases", "2.0.0-alpha.8")), "the release the running process started from is kept");
   const after = await control.status();
-  assert.equal(after.restartRequired, true);
-  assert.equal(after.available, false, "what was just installed is not offered again");
+  assert.equal("restartRequired" in after, false);
+  const active = createNodeUpdateControl({ dataDirectory: data, currentVersion: "2.0.0-alpha.9", platform: "darwin", schedule: false, fetch: registry({ alpha: "2.0.0-alpha.9" }) });
+  assert.equal((await active.check()).available, false, "the active engine does not offer its version again");
 });
 
 test("concurrent checks share a registry lookup and concurrent apply requests publish one request", async t => {

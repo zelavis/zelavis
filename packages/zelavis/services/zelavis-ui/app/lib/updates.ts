@@ -9,19 +9,16 @@ export type UpdateView =
   | { kind: "problem"; headline: string; detail?: string; log?: readonly string[] }
 
 export function describeUpdate(status: UpdateStatus | undefined, reconnecting = false): UpdateView {
-  if (!status) return reconnecting ? { kind: "working", headline: "Restarting Zelavis…", detail: "The dashboard will reconnect by itself." } : { kind: "hidden" }
+  if (!status) return reconnecting ? { kind: "working", headline: "Updating Zelavis…", detail: "The dashboard will reconnect by itself." } : { kind: "hidden" }
   const run = status.run
   if (status.state === "requested") {
     return { kind: "working", headline: `Starting the update${status.latest ? ` to ${status.latest}` : ""}…`, detail: "The server picks it up in a moment." }
   }
   if (status.state === "running") {
-    return { kind: "working", headline: run?.message ?? "Updating…", detail: "This page reconnects by itself when the new version is running." }
+    return { kind: "working", headline: run?.message ?? "Updating…", detail: "Running projects keep serving while the engine is replaced." }
   }
   if (status.state === "rolled-back" || status.state === "failed") {
     return { kind: "problem", headline: run?.message ?? "The update did not complete.", ...(run?.log ? { log: run.log } : {}) }
-  }
-  if (status.restartRequired && run?.to) {
-    return { kind: "done", headline: `Updated to ${run.to}.`, detail: "Restart Zelavis to start using it. Until then the current version keeps running." }
   }
   // Something newer than what just finished takes the place of "done".
   if (status.available && status.latest) return { kind: "available", latest: status.latest, current: status.current }
