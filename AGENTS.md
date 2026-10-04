@@ -185,6 +185,10 @@ Rules that hold for every change:
 - Releases run `pnpm allowlist update` (rebuild the list from `zelavis-services/*`
   and npm's digests, bump `sequence`) and `pnpm allowlist publish` (a plain copy with
   a fresh expiry at `website/public/allowlist.json`, served by the next website deploy).
+  Publish changed official services first, update the snapshot, then build and
+  publish the Platform. `pnpm allowlist check` refuses stale defaults during release
+  validation. A runtime composes its catalogue from the shipped snapshot; a
+  background website refresh applies on the next start, not to that initial catalogue.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
 

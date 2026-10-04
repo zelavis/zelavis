@@ -72,11 +72,15 @@ Until that file is published, only the list shipped with the release counts.
 
 ## Publishing the list
 
-Releases run `pnpm allowlist update`, which rebuilds the list from the packages in
+Publish changed official services before building the Platform. Then run
+`pnpm allowlist update`, which rebuilds the list from the packages in
 `zelavis-services/*` and the digests npm serves for them, raises `sequence` and
 rewrites the list shipped with the release. `pnpm allowlist publish` then writes
 a plain copy with a fresh expiry to `website/public/allowlist.json`, which the next
 website deploy serves at `https://zelavis.com/allowlist.json`.
+`pnpm allowlist check` is part of release validation and refuses defaults that
+differ from the qualified service versions. A fresh runtime uses the shipped
+snapshot to compose its catalogue; background refreshes apply on its next start.
 
 ## Projects
 

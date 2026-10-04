@@ -28,6 +28,12 @@ Use this skill for:
    `share/uninstall.sh` inventory, isolated destructive-path test, and public
    complete-uninstall documentation cover every newly owned host resource.
 5. Run the release validation commands before publishing.
+   When an official service changes, publish that service first, run
+   `pnpm allowlist update`, and only then build and publish the Platform.
+   `pnpm allowlist check` refuses defaults that differ from the qualified checkout
+   versions. A fresh runtime composes its catalogue from the shipped snapshot;
+   a website refresh applies on its next start and cannot repair the initial
+   catalogue of a release that shipped an outdated default.
 6. Keep alpha vs stable intent explicit.
    Manual npm browser verification requires an interactive terminal; the release
    wrapper uses direct recursive pnpm publishing after Changesets versioning.

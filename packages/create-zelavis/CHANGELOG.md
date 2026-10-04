@@ -1,5 +1,11 @@
 # create-zelavis
 
+## 0.1.0-alpha.9
+
+### Patch Changes
+
+- Pin generated installations to the Platform release that already ships the published WordPress 7.1.3-alpha.2 allow-list default.
+
 ## 0.1.0-alpha.8
 
 ### Patch Changes

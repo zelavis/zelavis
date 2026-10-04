@@ -147,7 +147,12 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   });
   assert.equal(created.status, 201);
 
-  // What a Project created before recipes were frozen looks like.
+  // Stop before editing this fixture outside the lifecycle API. Otherwise
+  // reconciliation can legitimately persist the still-running recipe lock.
+  const stopped = await call("/legacy/stop", { method: "POST" });
+  assert.equal(stopped.status, 200, await stopped.clone().text());
+
+  // An unavailable recipe lock without a frozen artifact must be refused.
   const directory = join(data, "projects", "legacy");
   const projectFile = join(directory, "project.json");
   const record = JSON.parse(await readFile(projectFile, "utf8"));

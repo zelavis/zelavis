@@ -1950,7 +1950,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             return yield* singleFlight(reconciliationRuns, "fleet", () => Effect.acquireUseRelease(
                 Effect.forkIn(reconcileFleet(), lifecycleScope),
                 fiber => Fiber.join(fiber).pipe(Effect.catchCause(cause =>
-                    closing && Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause))),
+                    // A non-cancellable preparation may fail as shutdown
+                    // interrupts its owner, producing a combined failure cause.
+                    // Reconciliation is cancelled; resource cleanup still runs
+                    // separately and retains its own failures.
+                    closing ? Effect.void : Effect.failCause(cause))),
                 Fiber.interrupt,
             ));
         }),

@@ -1,5 +1,13 @@
 # zelavis
 
+## 2.0.0-alpha.17
+
+### Patch Changes
+
+- Settle cancelled Project reconciliation when preparation fails during shutdown, preventing an unhandled Promise rejection while keeping resource cleanup failures visible.
+
+- Ship the published WordPress 7.1.3-alpha.2 recipe as the fresh-install default in the bundled allow-list. Refuse Platform releases whose shipped allow-list defaults differ from the qualified official service versions; publish changed services and refresh the snapshot before building the Platform.
+
 ## 2.0.0-alpha.16
 
 ### Patch Changes

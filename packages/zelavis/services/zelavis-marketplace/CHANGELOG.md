@@ -1,5 +1,13 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.17
+
+### Patch Changes
+
+- Ship the published WordPress 7.1.3-alpha.2 recipe as the fresh-install default in the bundled allow-list. Refuse Platform releases whose shipped allow-list defaults differ from the qualified official service versions; publish changed services and refresh the snapshot before building the Platform.
+- Updated dependencies
+  - zelavis@2.0.0-alpha.17
+
 ## 1.1.0-alpha.16
 
 ### Patch Changes

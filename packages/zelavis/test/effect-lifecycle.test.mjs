@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber } from "effect";
 import { effectOperations, integration, IntegrationFailure, lifecycleGate, present, presentOperations, singleFlight } from "../dist/core/runtime/effect-boundary.js";
 import { createProjectManager } from "../dist/project.js";
+import { zelavis } from "../dist/index.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 import { createNodeProcessProjectRuntime } from "../dist/adapters/_node-project-runtime.js";
 import { createServerFrontendProjectRuntime } from "../dist/adapters/_server-frontend-project-runtime.js";
@@ -223,6 +224,35 @@ test("manager close interrupts its in-flight reconciliation and still closes the
   assert.equal(released, true);
   assert.equal(closed, true);
   await manager.reconcile();
+});
+
+test("composition observes a restoration failure that completes during shutdown", { timeout: 5000 }, async () => {
+  const entered = signal(), release = signal(), store = createMemorySystemStore();
+  let closed = false;
+  const driver = Object.assign(presentOperations({
+    prepare: () => Effect.uninterruptible(Effect.gen(function* () {
+      yield* Deferred.succeed(entered, undefined);
+      yield* Deferred.await(release);
+      return yield* Effect.fail(new IntegrationFailure(new Error("recipe unavailable")));
+    })),
+    start: () => Effect.succeed({ status: "running" }), stop: () => Effect.succeed({ status: "stopped" }),
+    status: () => Effect.succeed({ status: "stopped" }), logs: () => Effect.succeed([]),
+    destroy: () => Effect.void, close: () => Effect.sync(() => { closed = true; }),
+  }), { name: "test", runtimeKinds: ["native"], capabilities: () => ({}) });
+  const now = new Date().toISOString();
+  await store.set("projects", "broken", { id: "broken", name: "Broken", kind: "zelavis", runtimeKind: "native",
+    recipe: { name: "@zelavis/app", title: "Zelavis App", version: "0.0.1", specifier: "@zelavis/app", runtimeKinds: ["native"] },
+    desiredState: "running", runtime: { status: "stopped" }, createdAt: now, updatedAt: now });
+  const runtime = await zelavis({ systemStore: store, projectRuntime: driver, subsystems: { auth: false, database: false, fabric: false } });
+  try {
+    await wait(entered);
+    const closing = runtime.close();
+    await new Promise(resolve => setImmediate(resolve));
+    notify(release);
+    await closing;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closed, true);
+  } finally { notify(release); await runtime.close(); }
 });
 
 test("reconciliation cannot provision or start a Project concurrently with its creation", { timeout: 5000 }, async () => {

@@ -3,6 +3,7 @@
 //
 //   pnpm allowlist update [--skip-unpublished]  rebuild the list from zelavis-services + npm
 //   pnpm allowlist publish [--expires-days <n>] write the list zelavis.com serves
+//   pnpm allowlist check                    refuse stale defaults before a Platform release
 //
 // `update` rewrites `allowlist.snapshot.json`, the list every release ships.
 // `publish` writes `website/public/allowlist.json`, a plain JSON copy with a
@@ -13,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertReleaseAllowlist } from "./release-allowlist.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const marketplace = join(root, "packages/zelavis/services/zelavis-marketplace");
@@ -147,6 +149,12 @@ async function publish() {
   console.log(`Wrote sequence ${allowlist.sequence}; expires ${allowlist.expiresAt}. Deploy the website to publish ${publishedFile}.`);
 }
 
-const commands = { update, publish };
-if (!commands[command]) fail("Usage: pnpm allowlist <update|publish> [options]");
+async function check() {
+  const { parseAllowlist } = await library();
+  assertReleaseAllowlist(parseAllowlist(readSnapshot()), localServices());
+  console.log("Shipped allow-list defaults match the qualified service versions.");
+}
+
+const commands = { update, publish, check };
+if (!commands[command]) fail("Usage: pnpm allowlist <update|publish|check> [options]");
 await commands[command]();
