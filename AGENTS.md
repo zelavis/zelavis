@@ -111,8 +111,10 @@ current automatically.
 - Acquired packages live in content-addressed folders, so an update is a new
   module with no restart; unreferenced folders are pruned at start. Activation
   of an update or uninstall reports `restartRecommended`.
-- Update plan (zero downtime): `website/.../architecture/updates.md`. Mark it
-  planned until built.
+- Platform and native App engine handover is implemented; its contract and
+  qualification limits are in `website/.../architecture/updates.md`. Public
+  version-selection controls remain planned. Loadable service activation keeps
+  the registry's `restartRecommended` behavior.
 
 ## Distribution Trust Model
 
