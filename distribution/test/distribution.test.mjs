@@ -54,7 +54,7 @@ test("the bootstrap acquires only Node and the npm package, and trusts nothing e
   const release = JSON.parse(await readFile(new URL("release.json", distribution), "utf8"));
   const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
   assert.match(installer, new RegExp(`^NODE_VERSION=${release.nodeVersion.replaceAll(".", "\\.")}$`, "m"), "install.sh pins the release's Node");
-  assert.match(installer, /https:\/\/nodejs\.org\/dist\/v\$NODE_VERSION\/SHASUMS256\.txt/);
+  assert.match(installer, /https:\/\/nodejs\.org\/dist\/v\$1\/SHASUMS256\.txt/);
   assert.match(installer, /Node checksum verification failed/);
   assert.match(installer, /registry=https:\/\/registry\.npmjs\.org/);
   assert.match(installer, /--omit=dev --ignore-scripts/, "dependency install scripts never run, possibly as root");

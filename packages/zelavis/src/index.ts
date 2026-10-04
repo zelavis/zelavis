@@ -1,3 +1,4 @@
+import { evaluate, integration, present, unwrapFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
 import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
@@ -109,7 +110,7 @@ import {
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
-import { ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
+import { isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
   assertListableFrontend,
@@ -3938,7 +3939,7 @@ function remoteEnvironmentRoutes(
   ];
 }
 
-async function resolvePlatformEndpointGroup(
+function resolvePlatformEndpointGroup(
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
   fabric?: FabricApi,
@@ -3954,6 +3955,7 @@ async function resolvePlatformEndpointGroup(
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
 ): Promise<ZelavisEndpointGroup<any>> {
+  return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
   // carrying only the database read authority the caller already holds.
   const assistantProjectReader = createAssistantProjectReader(
@@ -3984,7 +3986,7 @@ async function resolvePlatformEndpointGroup(
   const assistantProvider = systemStore && assistantOption === undefined
     ? createAssistantProviderConfig({
         store: systemStore,
-        masterSecret: await loadPlatformMasterSecret(systemStore),
+        masterSecret: yield* integration(() => loadPlatformMasterSecret(systemStore!)),
       })
     : undefined;
   const assistantResponder = !assistantOption
@@ -5430,6 +5432,45 @@ async function resolvePlatformEndpointGroup(
               : unavailableProjectsResponse(),
         },
         {
+          id: "runtime.projects.versions.catalog",
+          spec: { operationId: "listProjectVersions", summary: "List installed App engine versions", tags: ["projects"], responses: { 200: { description: "Versions" } } },
+          method: "GET", path: "/project-versions",
+          access: { permissions: ["projects.list"] },
+          handler: ({ params, body }: { params: Record<string, string>; body: unknown }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              return { status: 200, body: yield* integration(() => projects!.versions()) };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.versions.list",
+          spec: { operationId: "getProjectVersions", summary: "List installed App engine versions", tags: ["projects"], responses: { 200: { description: "Versions" } } },
+          method: "GET", path: "/projects/:projectId/versions",
+          access: { permissions: ["project.view"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params, body }: { params: Record<string, string>; body: unknown }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              return { status: 200, body: yield* integration(() => projects!.versions(params.projectId ?? "")) };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.versions.select",
+          spec: {
+            operationId: "switchProjectVersion", summary: "Select an exact installed App engine and its recipe", tags: ["projects"],
+            requestBody: { required: true, schema: { type: "object", required: ["version"], properties: {
+              version: { type: "string", description: "An exact qualified installed engine version; tags and ranges are refused." },
+            } } },
+            responses: { 200: { description: "Project" }, 400: { description: "Invalid or unavailable engine" },
+              404: { description: "No such Project" }, 409: { description: "Project cannot switch in its current lifecycle state" } },
+          },
+          method: "POST", path: "/projects/:projectId/version",
+          access: { permissions: ["project.runtime.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params, body }: { params: Record<string, string>; body: unknown }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              const input = yield* evaluate(() => readBodyObject(body));
+              if (typeof input.version !== "string") return yield* Effect.fail(new ZelavisProjectValidationError("An exact engine version is required."));
+              return { status: 200, body: { project: yield* integration(() => projects!.switchVersion(params.projectId ?? "", input.version as string)) } };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
           id: "runtime.projects.create",
           spec: {
             operationId: "createProject",
@@ -5443,46 +5484,45 @@ async function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/projects",
           access: { permissions: ["projects.create"] },
-          handler: async ({ body, principal }: { body: unknown; principal?: HostOperationPrincipal }) => {
+          handler: ({ body, principal }: { body: unknown; principal?: HostOperationPrincipal }) => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
-              const input = readBodyObject(body);
+              const input = yield* evaluate(() => readBodyObject(body));
               if (input.runtimeKind !== undefined) {
-                throw new ZelavisProjectValidationError(
+                return yield* Effect.fail(new ZelavisProjectValidationError(
                   "New Project deployment backends are selected by server policy. Change the server default or use an explicit migration workflow for an existing Project.",
-                );
+                ));
+              }
+              if (input.engineVersion !== undefined && (!isExactVersion(input.engineVersion) || (input.recipeName !== undefined && input.recipeName !== "@zelavis/app"))) {
+                return yield* Effect.fail(new ZelavisProjectValidationError("An exact engine version can only be selected for a native Zelavis App."));
               }
               if (input.installHostPackages !== undefined && typeof input.installHostPackages !== "boolean") {
-                throw new ZelavisProjectValidationError("installHostPackages must be true or false.");
+                return yield* Effect.fail(new ZelavisProjectValidationError("installHostPackages must be true or false."));
               }
               if (input.installHostPackages === true) {
-                if (typeof input.name !== "string" || !input.name.trim()) throw new ZelavisProjectValidationError("Project name is required.");
+                if (typeof input.name !== "string" || !input.name.trim()) return yield* Effect.fail(new ZelavisProjectValidationError("Project name is required."));
                 const recipeName = typeof input.recipeName === "string" && input.recipeName.trim() ? input.recipeName.trim() : "@zelavis/app";
                 const recipe = projectRecipes.find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
-                if (!recipe) throw new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`);
+                if (!recipe) return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
                 const sets = recipe.service.project?.hostPackages ?? [];
                 if (sets.length) {
                   if (!hostOperations) return { status: 503, body: { error: "Host package installation requires the system installation's operation Agent. Update or repair the system installation, then retry." } };
-                  try {
-                    await provisionProjectHostPackages(hostOperations, sets, principal);
-                  } catch (error) { return hostOperationErrorResponse(error); }
+                  const provisioned = yield* Effect.result(integration(() => provisionProjectHostPackages(hostOperations!, sets, principal)));
+                  if (provisioned._tag === "Failure") return hostOperationErrorResponse(unwrapFailure(provisioned.failure));
                 }
               }
-              const project = await projects.create({
+              const project = yield* integration(() => projects!.create({
+                ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
                 name: typeof input.name === "string" ? input.name : "",
                 ...(typeof input.id === "string" ? { id: input.id } : {}),
                 ...(typeof input.recipeName === "string"
                   ? { recipeName: input.recipeName }
                   : {}),
                 ...(typeof input.start === "boolean" ? { start: input.start } : {}),
-              });
+              }));
               return { status: 201, body: { project } };
-            } catch (error) {
-              return projectErrorResponse(error);
-            }
-          },
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {
           id: "runtime.projects.get",
@@ -5652,7 +5692,7 @@ async function resolvePlatformEndpointGroup(
           id: "runtime.projects.upgrade",
           spec: {
             operationId: "upgradeProject",
-            summary: "Re-lock a stopped Project to a recipe this Platform ships",
+            summary: "Upgrade an App engine and recipe, with live handover when supported",
             tags: ["projects"],
             requestBody: {
               required: false,
@@ -5663,14 +5703,15 @@ async function resolvePlatformEndpointGroup(
                     type: "string",
                     description: "The recipe to move to. Defaults to the Project's own recipe.",
                   },
+                  engineVersion: { type: "string", description: "Exact installed native App engine; defaults to the latest qualified engine." },
                 },
               },
             },
             responses: {
-              200: { description: "Project upgraded and stopped" },
+              200: { description: "Project upgraded" },
               400: { description: "Recipe not shipped, or not usable for this Project" },
               404: { description: "No such Project" },
-              409: { description: "Project is running, or already on that recipe" },
+              409: { description: "Project cannot upgrade in its current lifecycle state, or already uses that selection" },
             },
           },
           method: "POST",
@@ -5679,31 +5720,28 @@ async function resolvePlatformEndpointGroup(
             permissions: ["project.runtime.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({
+          handler: ({
             body,
             params,
           }: {
             body: unknown;
             params: Record<string, string>;
-          }) => {
+          }) => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
-              const input = body === undefined || body === null || body === "" ? {} : readBodyObject(body);
+              const input = yield* evaluate(() => body === undefined || body === null || body === "" ? {} : readBodyObject(body));
               const recipeName = typeof input.recipeName === "string" ? input.recipeName : undefined;
               return {
                 status: 200,
                 body: {
-                  project: await projects.upgrade(params.projectId ?? "", {
+                  project: yield* integration(() => projects!.upgrade(params.projectId ?? "", {
                     ...(recipeName ? { recipeName } : {}),
-                  }),
+                    ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
+                  })),
                 },
               };
-            } catch (error) {
-              return projectErrorResponse(error);
-            }
-          },
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {
           id: "runtime.projects.logs",
@@ -5778,6 +5816,8 @@ async function resolvePlatformEndpointGroup(
         },
     ],
   });
+
+  }));
 }
 
 async function synthesizeFrontendAppService(

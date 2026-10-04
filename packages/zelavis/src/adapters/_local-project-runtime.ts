@@ -300,6 +300,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         startupConcurrency: 1,
         capabilities: (project) => forDescriptor(project).capabilities(project),
         supportsLiveUpdate: project => forDescriptor(project).supportsLiveUpdate?.(project) === true,
+        versions: Effect.fn("LocalProjects.versions")(function* (project) {
+            if (project && forDescriptor(project) !== node) return { selectable: false, reason: "This recipe manages its own runtime version.", versions: [] };
+            return yield* effectOperations(node).versions!(project);
+        }),
+        resolveVersion: Effect.fn("LocalProjects.resolveVersion")(function* (project, version) {
+            return yield* effectOperations(node).resolveVersion!(project, version);
+        }),
         prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate) {
             const selected = effectOperations(forDescriptor(previous));
             if (!selected.prepareUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));

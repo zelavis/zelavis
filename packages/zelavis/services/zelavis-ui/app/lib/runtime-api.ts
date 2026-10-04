@@ -244,6 +244,7 @@ export interface RuntimeDeploymentBackendPolicy {
 }
 
 export interface RuntimeProject {
+  engineVersion?: string;
   runtimeUpdate?: { id: string; error?: string };
   deletion?: { status: "running" | "failed"; startedAt: string; updatedAt: string; participants: readonly string[]; completedParticipants: readonly string[]; currentParticipant?: string; error?: string };
   preview?: { status: "ready" | "stopped" | "unavailable"; port?: number; error?: string };
@@ -285,6 +286,7 @@ export interface RuntimeProjectDriverInfo {
 }
 
 export interface RuntimeProjectDriverCapabilities {
+  independentRuntimeVersion?: boolean;
   zeroDowntimeUpdates?: boolean;
   movable: boolean;
   liveMigration: boolean;
@@ -1704,6 +1706,7 @@ export async function createProject(
     name: string;
     id?: string;
     recipeName?: string;
+    engineVersion?: string;
     start?: boolean;
     installHostPackages?: boolean;
   },
@@ -1725,6 +1728,24 @@ export async function setProjectRunning(
     { method: "POST", body: JSON.stringify({}) },
   );
   return normalizeRuntimeProject(result.project);
+}
+
+export interface RuntimeProjectVersions {
+  current?: string;
+  latest?: string;
+  selectable: boolean;
+  reason?: string;
+  versions: readonly { version: string; status: "available" | "unavailable"; error?: string; nodeVersion?: string }[];
+}
+
+export function getProjectVersions(config: RuntimeConfig, projectId?: string): Promise<RuntimeProjectVersions> {
+  const path = projectId ? `/runtime/projects/${encodeURIComponent(projectId)}/versions` : "/runtime/project-versions";
+  return readJson(`${config.api.basePath}${path}`);
+}
+
+export function switchProjectVersion(config: RuntimeConfig, projectId: string, version: string): Promise<RuntimeProject> {
+  return readJson<{ project: RuntimeProject }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/version`,
+    { method: "POST", body: JSON.stringify({ version }) }).then(result => normalizeRuntimeProject(result.project));
 }
 
 /** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */

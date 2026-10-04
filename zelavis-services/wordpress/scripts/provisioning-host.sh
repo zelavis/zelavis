@@ -52,7 +52,9 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" upgrade
-if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
+if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
+  "$NODE" /workspace/distribution/scripts/qualify-installed-update.mjs
+elif [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
   "$NODE" /workspace/zelavis-services/wordpress/scripts/check-runtime-handover.mjs
 fi
 systemctl restart zelavis.service

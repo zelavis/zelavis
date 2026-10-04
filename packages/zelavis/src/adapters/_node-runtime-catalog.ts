@@ -6,6 +6,9 @@ import { compareVersions, isExactVersion } from "../updates.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import type { NodeRuntimeExecution } from "./_node-runtime-supervisor.js";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
+import { validatePluginPackageManifest } from "../core/service/manifest.js";
+import type { ZelavisProjectRecipeLock } from "../project.js";
+import { normalizeProjectIsolationIntent } from "../project-isolation.js";
 import { verifyNodeRuntimeArtifact } from "./_node-runtime-artifact.js";
 
 /** The installation's already acquired immutable releases. Acquisition and
@@ -54,6 +57,22 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
       const advertised = yield* entry(version);
       const selected = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(version), advertised, options.rootOwned);
       return selected.release;
+    }),
+    app: Effect.fn("RuntimeCatalog.app")(function* (version: string): Effect.fn.Return<{ engine: RuntimeRelease; recipe: ZelavisProjectRecipeLock; packageDirectory: string }, IntegrationFailure> {
+      const engine = yield* catalog.select(version);
+      const packageDirectory = join(yield* exactDirectory(version), "platform", "services", "zelavis-app");
+      const source = yield* integration(() => readFile(join(packageDirectory, "package.json"), "utf8"));
+      const recipe = yield* evaluate((): ZelavisProjectRecipeLock => {
+        const manifest = validatePluginPackageManifest(JSON.parse(source));
+        const definition = manifest.zelavis?.project as { runtimeKinds?: readonly string[]; runtime?: unknown; isolation?: unknown } | undefined;
+        if (manifest.name !== "@zelavis/app" || !isExactVersion(manifest.version) || manifest.zelavis?.kind !== "app" ||
+          definition?.runtime !== undefined || definition?.runtimeKinds?.length !== 1 || definition.runtimeKinds[0] !== "native")
+          throw new Error("Installed engine does not contain the official native App recipe.");
+        const isolation = normalizeProjectIsolationIntent(definition.isolation);
+        return { name: manifest.name, version: manifest.version, title: "Zelavis App", specifier: manifest.name,
+          runtimeKinds: ["native"], ...(isolation ? { isolation } : {}) };
+      });
+      return { engine, recipe, packageDirectory };
     }),
     resolve: Effect.fn("RuntimeCatalog.resolve")(function* (selected: RuntimeRelease, role: "platform" | "project", configuration: Readonly<Record<string, unknown>>, environment: Readonly<Record<string, string>>): Effect.fn.Return<NodeRuntimeExecution, IntegrationFailure> {
       yield* evaluate(() => { if (role !== "platform" && role !== "project") throw new Error("Runtime engine role requires explicit Platform or Project authority."); });

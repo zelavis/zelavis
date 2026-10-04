@@ -1092,7 +1092,13 @@ and qualified recipe processes survive a Platform engine handover.
 
 New Apps and explicit native App recipe upgrades use the latest qualified
 installed engine. Parent updates and rollbacks preserve existing App engine pins.
-Public older-version selection controls remain planned. An installation without
+The dashboard offers **Zelavis version** at creation and **Manage version** on
+native App cards. SDK `client.projects.versions(id?)` and
+`client.projects.switchVersion(id, exactVersion)` match
+`zelavis projects versions [id]` and
+`zelavis projects switch-version <id> --engine-version <exact-version>`.
+Choices are qualified installed engines; each uses its matching bundled recipe.
+The default for new Apps is the latest available engine. An installation without
 the persistent host needs one full installer run with a restart before it can use
 live updates. See the [update architecture](../../website/src/content/docs/architecture/updates.md).
 

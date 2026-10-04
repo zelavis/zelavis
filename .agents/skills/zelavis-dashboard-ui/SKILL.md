@@ -182,3 +182,9 @@ and the dashboard browser hostname, through `projectSiteUrl`. `runtime.url`
 is an Agent's private target and cannot be offered to a remote browser. An
 unavailable preview must be visible without mislabeling the running app as
 failed. Previews terminate HTTP; do not infer HTTPS from the dashboard URL.
+
+Native App creation exposes **Zelavis version** and App cards expose **Manage
+version** over the runtime's installed engine catalogue. Keep the selected exact
+version and open Project panel in URL search state. Use matching public SDK/HTTP
+operations with Project grants; disable unavailable versions and explain source
+or unsupported driver restrictions. Failed switches revalidate persisted state.

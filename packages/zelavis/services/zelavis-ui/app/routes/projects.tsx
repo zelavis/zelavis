@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useRevalidator, useRouteLoaderData } from "react-router";
+import { Link, useLoaderData, useRevalidator, useRouteLoaderData, type ClientLoaderFunctionArgs } from "react-router";
 
 import { ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { AssistantButton } from "#/components/assistant/AssistantButton";
@@ -31,6 +31,9 @@ import {
 } from "#/lib/dashboard-data";
 import {
   createProject,
+  getActiveRuntimeConfig,
+  getProjectVersions,
+  switchProjectVersion,
   deleteProject,
   restartProject,
   upgradeProject,
@@ -54,7 +57,17 @@ const projectSearchSchema = {
   new: parseAsString.withDefault(""),
   name: parseAsString.withDefault(""),
   recipe: parseAsString.withDefault("zelavis/app"),
+  versionProject: parseAsString.withDefault(""),
+  engineVersion: parseAsString.withDefault(""),
 } as const;
+
+export async function clientLoader({ request }: ClientLoaderFunctionArgs) {
+  const query = new URL(request.url).searchParams;
+  if (query.get("new") !== "1" && !query.get("versionProject")) return { versions: undefined };
+  const runtime = await getActiveRuntimeConfig(request);
+  try { return { versions: await getProjectVersions(runtime, query.get("versionProject") || undefined) }; }
+  catch (error) { return { versions: { selectable: false, versions: [], reason: error instanceof Error ? error.message : "Installed versions could not be loaded." } }; }
+}
 
 function formatUpdatedAt(value: string) {
   const date = new Date(value);
@@ -129,9 +142,10 @@ function RecipeUpgradeNotice({
 }
 
 function ProjectsRoute() {
+  const { versions } = useLoaderData<typeof clientLoader>();
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const revalidator = useRevalidator();
-  const [{ q, new: createMode, name: requestedName, recipe: recipeName }, setParams] =
+  const [{ q, new: createMode, name: requestedName, recipe: recipeName, versionProject, engineVersion }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -203,9 +217,10 @@ function ProjectsRoute() {
         name: requestedName,
         recipeName: selectedRecipe?.name ?? recipeName,
         start: true,
+        ...(selectedRecipe?.name === "@zelavis/app" && engineVersion ? { engineVersion } : {}),
         ...(installHostPackages ? { installHostPackages: true } : {}),
       });
-      setParams({ name: null, new: null, recipe: null });
+      setParams({ name: null, new: null, recipe: null, engineVersion: null });
       setMessage(`${project.name} is running in its own project runtime.`);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -271,6 +286,17 @@ function ProjectsRoute() {
     }
   }
 
+  async function handleSwitchVersion(project: RuntimeProject) {
+    if (!rootData || !engineVersion) return;
+    setMessage(undefined); setError(undefined); setPendingProjectId(project.id);
+    try {
+      const selected = await switchProjectVersion(rootData.controlRuntime, project.id, engineVersion);
+      setMessage(`${project.name} now uses Zelavis ${selected.engineVersion}.`);
+      setParams({ versionProject: null, engineVersion: null });
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { revalidator.revalidate(); setPendingProjectId(undefined); }
+  }
+
   async function handleDeleteProject(project: RuntimeProject) {
     if (!rootData) {
       return;
@@ -334,7 +360,7 @@ function ProjectsRoute() {
                     id="project-recipe"
                     value={selectedRecipe?.name ?? recipeName}
                     onChange={(event) =>
-                      setParams({ recipe: event.target.value || null })
+                      setParams({ recipe: event.target.value || null, engineVersion: null })
                     }
                     className="flex h-9 w-full rounded-md border bg-background px-9 text-sm outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={creating || projectRecipes.length === 0}
@@ -347,6 +373,17 @@ function ProjectsRoute() {
                   </select>
                 </div>
               </div>
+              {selectedRecipe?.name === "@zelavis/app" ? (
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium" htmlFor="create-engine-version">Zelavis version</label>
+                  <select id="create-engine-version" value={engineVersion} onChange={event => setParams({ engineVersion: event.target.value || null })}
+                    disabled={creating || !versions?.selectable} className="h-9 rounded-md border bg-background px-3 text-sm">
+                    <option value="">Latest available{versions?.latest ? ` (${versions.latest})` : ""}</option>
+                    {versions?.versions.map(entry => <option key={entry.version} value={entry.version} disabled={entry.status !== "available"}>{entry.version}{entry.status !== "available" ? " (unavailable)" : ""}</option>)}
+                  </select>
+                  {versions?.reason ? <p className="text-sm text-muted-foreground">{versions.reason}</p> : null}
+                </div>
+              ) : null}
               <div className="flex items-end gap-2">
                 <Button type="submit" disabled={creating || projectRecipes.length === 0}>
                   {creating ? "Creating..." : "Create"}
@@ -496,7 +533,30 @@ function ProjectsRoute() {
                       onUpgrade={(target) => handleUpgradeProject(project, target)}
                     />
                   ) : null}
+                  {versionProject === project.id ? (
+                    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="App version">
+                      <p>Current Zelavis version: {versions?.current ?? project.engineVersion ?? "Unavailable"}</p>
+                      <p className="text-muted-foreground">Select an installed version and its matching App recipe. Project data is preserved.</p>
+                      {versions?.reason ? <p>{versions.reason}</p> : null}
+                      <select aria-label="Zelavis version" value={engineVersion || versions?.current || ""}
+                        onChange={event => setParams({ engineVersion: event.target.value })}
+                        disabled={isPending || !!project.deletion || !!project.runtimeUpdate || !versions?.selectable}
+                        className="h-9 rounded-md border bg-background px-3 text-sm">
+                        {!versions?.current ? <option value="">Choose a version</option> : null}
+                        {versions?.versions.map(entry => <option key={entry.version} value={entry.version} disabled={entry.status !== "available"}>{entry.version}{entry.status !== "available" ? " (unavailable)" : ""}</option>)}
+                      </select>
+                      <div className="flex gap-2">
+                        <Button type="button" disabled={isPending || !!project.deletion || !!project.runtimeUpdate || !versions?.selectable || !engineVersion || engineVersion === versions.current}
+                          onClick={() => handleSwitchVersion(project)}>{isPending ? "Switching…" : "Switch version"}</Button>
+                        <Button type="button" variant="outline" onClick={() => setParams({ versionProject: null, engineVersion: null })}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {project.recipe.name === "@zelavis/app" && project.capabilities.independentRuntimeVersion ? (
+                      <Button type="button" variant="outline" disabled={isPending || !!project.deletion || !!project.runtimeUpdate}
+                        onClick={() => setParams({ versionProject: project.id, engineVersion: null, new: null })}>Manage version</Button>
+                    ) : null}
                     {isRunning ? (
                       <Button
                         nativeButton={false}

@@ -12,7 +12,8 @@ import { sealNodeRuntimeArtifact, verifyNodeRuntimeArtifact } from "../dist/adap
 async function release(directory, version) {
   const root = join(directory, version);
   const files = { "manifest.json": JSON.stringify({ name: "zelavis", version, platform: process.platform, architecture: process.arch, nodeVersion: process.versions.node }),
-    "platform/package.json": JSON.stringify({ name: "zelavis", version }), "bin/zelavis": "launcher", "runtime/node/bin/node": "private Node fixture",
+    "platform/package.json": JSON.stringify({ name: "zelavis", version }),
+    "platform/services/zelavis-app/package.json": JSON.stringify({ name: "@zelavis/app", version, type: "module", exports: "./dist/index.js", zelavis: { kind: "app", namespace: "app", project: { runtimeKinds: ["native"] } } }), "bin/zelavis": "launcher", "runtime/node/bin/node": "private Node fixture",
     "platform/node_modules/v1/index.js": "dependency one", "platform/node_modules/v2/index.js": "dependency two" };
   for (const name of ["_node-runtime-worker", "_node-runtime-protocol", "_node-platform-engine", "_node-project-engine"]) files[`platform/dist/adapters/${name}.js`] = `// ${version} ${name}`;
   for (const [path, bytes] of Object.entries(files)) {
@@ -76,5 +77,18 @@ test("unqualified protocols, redirected release directories and escaping depende
     const link = join(value.root, "platform/node_modules/effect");
     await unlink(link); await symlink(process.execPath, link);
     await assert.rejects(Effect.runPromise(sealNodeRuntimeArtifact(value.root)), /escapes its immutable tree/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("an exact engine selects its own verified App recipe and refuses altered recipe bytes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-recipe-"));
+  try {
+    const old = await release(directory, "1.0.0"); await release(directory, "2.0.0");
+    const catalog = createNodeRuntimeCatalog({ directory, rootOwned: false });
+    const app = await Effect.runPromise(catalog.app("1.0.0"));
+    assert.equal(app.engine.version, "1.0.0"); assert.equal(app.recipe.version, "1.0.0");
+    assert.equal(app.packageDirectory, join(old.root, "platform/services/zelavis-app"));
+    await writeFile(join(app.packageDirectory, "package.json"), "{}");
+    await assert.rejects(Effect.runPromise(catalog.app("1.0.0")), /file digest mismatch/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

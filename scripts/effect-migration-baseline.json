@@ -3038,12 +3038,6 @@
       "fingerprint": "e6a326469aa26b17b74b33fc70ca6df412ce026362f07fec741b29976347278d"
     },
     {
-      "file": "packages/zelavis/src/cli/projects.ts",
-      "kind": "async-function",
-      "owner": "module/runProjectsCommand",
-      "fingerprint": "7b55976f71609eca3531e5313eb6baca9e2b581cc510ddf8528c42183206d1a3"
-    },
-    {
       "file": "packages/zelavis/src/cli/prompt.ts",
       "kind": "async-function",
       "owner": "module/readAllStdin",
@@ -4762,12 +4756,6 @@
     {
       "file": "packages/zelavis/src/index.ts",
       "kind": "async-function",
-      "owner": "module/resolvePlatformEndpointGroup",
-      "fingerprint": "6cd831d5aa453620cb6bbec4a303ab778a7794245f665e119113441d7b992923"
-    },
-    {
-      "file": "packages/zelavis/src/index.ts",
-      "kind": "async-function",
       "owner": "module/resolvePlatformEndpointGroup/routes/handler/callback",
       "fingerprint": "c67553b6a7db4477a4f4af8cf5bda640f6d0561bbeec8ea40d587bb862b51216"
     },
@@ -4967,12 +4955,6 @@
       "file": "packages/zelavis/src/index.ts",
       "kind": "async-function",
       "owner": "module/resolvePlatformEndpointGroup/routes/handler/callback",
-      "fingerprint": "a5332cb414a4072c2667388598ada15e32296bbe97b2209757ab09981ddf8317"
-    },
-    {
-      "file": "packages/zelavis/src/index.ts",
-      "kind": "async-function",
-      "owner": "module/resolvePlatformEndpointGroup/routes/handler/callback",
       "fingerprint": "f49ae0d273d222abc50b00b50f1142567fba11e72dabe0912df8496390796846"
     },
     {
@@ -4998,12 +4980,6 @@
       "kind": "async-function",
       "owner": "module/resolvePlatformEndpointGroup/routes/handler/callback",
       "fingerprint": "693488f5029e88e6709f2315cbc2196e87668405c2ea77082222aa271daa838b"
-    },
-    {
-      "file": "packages/zelavis/src/index.ts",
-      "kind": "async-function",
-      "owner": "module/resolvePlatformEndpointGroup/routes/handler/callback",
-      "fingerprint": "1fb29dc50f890427cebb96e0b8710831fd9b98a10a525b751598034fbebad3c5"
     },
     {
       "file": "packages/zelavis/src/index.ts",

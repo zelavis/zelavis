@@ -283,3 +283,22 @@ test("system updates wire a distinct root operation Agent and uninstall owns its
   assert.equal(retained.steps.some((step) => step.id === "package-policy"), false, "another instance still owns the shared package policy");
   assert.ok(retained.steps.find((step) => step.action.path === "/opt/zelavis/host-agent"));
 });
+
+test("live host assets share fresh-install rendering without restarting services or changing data", async () => {
+  const { planZelavisRuntimeHostAssetsProgram } = await import("../dist/core/runtime/installation-plan.js");
+  const { Effect } = await import("effect");
+  const files = new Map();
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent@.service", "zelavis-update.path", "zelavis-update.service", "zelavis.socket"]) {
+    files.set(`/candidate/share/${unit}`, unit.endsWith(".socket") ? "[Socket]\nListenStream=127.0.0.1:3000\nService=zelavis.service\n" : "[Service]\nExecStart=/opt/zelavis/current/bin/zelavis\nPathExists=/var/lib/zelavis/update/request.json\nupdate --run\n");
+  }
+  const selected = namedPaths("blue");
+  const steps = await Effect.runPromise(planZelavisRuntimeHostAssetsProgram({ host: { read: async path => files.get(path) }, paths: selected, source: "/candidate", port: 3100, public: true }));
+  assert.ok(steps.every(step => step.action.kind === "write"));
+  const socket = steps.find(step => step.id === "zelavis-blue.socket");
+  assert.match(socket.action.content, /ListenStream=0\.0\.0\.0:3100/);
+  assert.match(socket.action.content, /Service=zelavis@blue\.service/);
+  const update = steps.find(step => step.id === "zelavis-update-blue.service");
+  assert.match(update.action.content, /instances\/blue\/current/);
+  assert.match(update.action.content, /update --run --instance blue/);
+  assert.ok(steps.every(step => step.action.path.startsWith("/etc/systemd/system/")));
+});

@@ -33,3 +33,14 @@ test("migrated lifecycle files reject all debt even if someone adds baseline ent
     assert.equal(violations(findings, findings).length, 1);
   }
 });
+
+test("an Effect Promise boundary preserves unchanged nested callback identity without permitting new orchestration", () => {
+  const original = 'async function compose() { const handlers = [async () => await leaf("old")]; await load(); return handlers; }';
+  const migrated = 'function compose() { return present(Effect.gen(function* () { const handlers = [async () => await leaf("old")]; yield* integration(() => load()); return handlers; })); }';
+  const baseline = scanEffectUsage(original, "existing.ts");
+  assert.equal(violations(scanEffectUsage(migrated, "existing.ts"), baseline).length, 0);
+  assert.equal(violations(scanEffectUsage(migrated.replace('leaf("old")', 'leaf("new")'), "existing.ts"), baseline).length, 1);
+  assert.throws(() => scanEffectUsage(migrated.replace('yield* integration(() => load())', 'await load()'), "existing.ts"), /reserved word/);
+  assert.equal(violations(scanEffectUsage(migrated.replace('return handlers', 'return new Promise(resolve => resolve(handlers))'), "existing.ts"), baseline).length, 1);
+  assert.equal(violations(scanEffectUsage(migrated.replace(']; yield*', ', async () => await leaf("old")]; yield*'), "existing.ts"), baseline).length, 1);
+});

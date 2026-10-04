@@ -61,26 +61,33 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 fetch() { curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --max-time 600 --max-filesize "$3" "$1" -o "$2"; }
 
-# 1. The private Node, verified against nodejs.org's published checksums.
-NODE_NAME="node-v$NODE_VERSION-$OS-$ARCH"
-fetch "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt" "$TEMPORARY/SHASUMS256.txt" 1048576
-fetch "https://nodejs.org/dist/v$NODE_VERSION/$NODE_NAME.tar.gz" "$TEMPORARY/node.tar.gz" 268435456
-EXPECTED=$(awk -v name="$NODE_NAME.tar.gz" '$2 == name { print $1 }' "$TEMPORARY/SHASUMS256.txt")
-case "$EXPECTED" in ''|*[!0-9a-fA-F]*) echo 'Missing or invalid Node SHA-256.' >&2; exit 1 ;; esac
-[ "${#EXPECTED}" -eq 64 ] || { echo 'Invalid Node SHA-256 length.' >&2; exit 1; }
-if command -v sha256sum >/dev/null 2>&1; then ACTUAL=$(sha256sum "$TEMPORARY/node.tar.gz" | awk '{print $1}');
-else ACTUAL=$(shasum -a 256 "$TEMPORARY/node.tar.gz" | awk '{print $1}'); fi
-[ "$EXPECTED" = "$ACTUAL" ] || { echo 'Node checksum verification failed.' >&2; exit 1; }
-tar -tzf "$TEMPORARY/node.tar.gz" > "$TEMPORARY/files"
-# Bound every extracted member to the versioned archive root.
-while IFS= read -r member; do
-  case "$member" in "$NODE_NAME"|"$NODE_NAME/"*) ;; *) echo 'Unsafe Node archive member.' >&2; exit 1 ;; esac
-  case "$member" in */../*|*/..|*/./*|*/.) echo 'Unsafe Node archive member.' >&2; exit 1 ;; esac
-done < "$TEMPORARY/files"
+# The bootstrap Node only acquires npm bytes. The package chooses the Node that
+# executes its installer, so changing a release pin never requires a manual rerun.
+install_node() {
+  printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    echo 'Invalid release Node version.' >&2; exit 1;
+  }
+  NODE_NAME="node-v$1-$OS-$ARCH"
+  fetch "https://nodejs.org/dist/v$1/SHASUMS256.txt" "$TEMPORARY/SHASUMS256.txt" 1048576
+  fetch "https://nodejs.org/dist/v$1/$NODE_NAME.tar.gz" "$TEMPORARY/node.tar.gz" 268435456
+  EXPECTED=$(awk -v name="$NODE_NAME.tar.gz" '$2 == name { print $1 }' "$TEMPORARY/SHASUMS256.txt")
+  case "$EXPECTED" in ''|*[!0-9a-fA-F]*) echo 'Missing or invalid Node SHA-256.' >&2; exit 1 ;; esac
+  [ "${#EXPECTED}" -eq 64 ] || { echo 'Invalid Node SHA-256 length.' >&2; exit 1; }
+  if command -v sha256sum >/dev/null 2>&1; then ACTUAL=$(sha256sum "$TEMPORARY/node.tar.gz" | awk '{print $1}');
+  else ACTUAL=$(shasum -a 256 "$TEMPORARY/node.tar.gz" | awk '{print $1}'); fi
+  [ "$EXPECTED" = "$ACTUAL" ] || { echo 'Node checksum verification failed.' >&2; exit 1; }
+  tar -tzf "$TEMPORARY/node.tar.gz" > "$TEMPORARY/files"
+  # Bound every extracted member to the versioned archive root.
+  while IFS= read -r member; do
+    case "$member" in "$NODE_NAME"|"$NODE_NAME/"*) ;; *) echo 'Unsafe Node archive member.' >&2; exit 1 ;; esac
+    case "$member" in */../*|*/..|*/./*|*/.) echo 'Unsafe Node archive member.' >&2; exit 1 ;; esac
+  done < "$TEMPORARY/files"
+  mkdir -p "$2/runtime" "$TEMPORARY/extract"
+  tar --no-same-owner -xzf "$TEMPORARY/node.tar.gz" -C "$TEMPORARY/extract"
+  mv "$TEMPORARY/extract/$NODE_NAME" "$2/runtime/node"
+}
 TREE="$TEMPORARY/tree"
-mkdir -p "$TREE/runtime" "$TEMPORARY/extract"
-tar --no-same-owner -xzf "$TEMPORARY/node.tar.gz" -C "$TEMPORARY/extract"
-mv "$TEMPORARY/extract/$NODE_NAME" "$TREE/runtime/node"
+install_node "$NODE_VERSION" "$TREE"
 NODE="$TREE/runtime/node/bin/node"
 NPM="$TREE/runtime/node/lib/node_modules/npm/bin/npm-cli.js"
 [ -f "$NODE" ] && [ ! -L "$NODE" ] && [ -f "$NPM" ] || { echo 'The Node archive lacks node or npm.' >&2; exit 1; }
@@ -107,6 +114,21 @@ PATH="$TREE/runtime/node/bin:$PATH" "$NODE" "$NPM" install $NPM_OPTIONS --omit=d
 mv "$PROJECT/node_modules/zelavis" "$TREE/platform"
 mv "$PROJECT/node_modules" "$TREE/platform/node_modules"
 ln -s .. "$TREE/platform/node_modules/zelavis"
+
+# Read only JSON from the scripts-disabled npm tree using the bootstrap Node.
+# No candidate JavaScript runs until its own private Node has been verified.
+RELEASE_NODE_VERSION=$("$NODE" -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (typeof config.nodeVersion !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(config.nodeVersion)) throw Error("Invalid release Node pin.");
+  process.stdout.write(config.nodeVersion);
+' "$TREE/platform/dist/installation-assets/release.json")
+if [ "$RELEASE_NODE_VERSION" != "$NODE_VERSION" ]; then
+  CANDIDATE_RUNTIME="$TEMPORARY/candidate-runtime"
+  install_node "$RELEASE_NODE_VERSION" "$CANDIDATE_RUNTIME"
+  rm -rf "$TREE/runtime/node"
+  mv "$CANDIDATE_RUNTIME/runtime/node" "$TREE/runtime/node"
+fi
 
 # 3. Everything else is the shared installer, run by the private Node.
 "$NODE" --disable-warning=ExperimentalWarning "$TREE/platform/dist/cli.js" install --from-npm "$TREE" "$@"

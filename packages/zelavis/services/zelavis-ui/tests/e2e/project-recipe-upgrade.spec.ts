@@ -140,3 +140,53 @@ test("@smoke a failed deletion refreshes its card and offers only deletion recov
   expect(deletes).toBe(2)
   expect(forbiddenActions).toBe(0)
 })
+
+test("@smoke App engine selection survives reload and sends the exact version", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, { engineVersion: "2.0.0-alpha.18", capabilities: { zeroDowntimeUpdates: true, independentRuntimeVersion: true } })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/versions$`), route => route.fulfill({ json: {
+    selectable: true, current: "2.0.0-alpha.18", latest: "2.0.0-alpha.18", versions: [
+      { version: "2.0.0-alpha.18", status: "available" }, { version: "2.0.0-alpha.17", status: "available" },
+      { version: "2.0.0-alpha.16", status: "unavailable" },
+    ],
+  } }))
+  let posted: unknown
+  await page.route(new RegExp(`/runtime/projects/${projectId}/version$`), async route => {
+    posted = route.request().postDataJSON()
+    await route.fulfill({ json: { project: { id: projectId, engineVersion: "2.0.0-alpha.17", runtime: { status: "running" } } } })
+  })
+  await page.goto(`${basePath}/projects`)
+  await page.getByRole("button", { name: "Manage version" }).first().click()
+  const picker = page.getByRole("combobox", { name: "Zelavis version" })
+  await expect(picker).toBeVisible()
+  await picker.selectOption("2.0.0-alpha.17")
+  await expect(page).toHaveURL(/engineVersion=2\.0\.0-alpha\.17/)
+  await page.reload()
+  await expect(picker).toHaveValue("2.0.0-alpha.17")
+  await expect(picker.locator('option[value="2.0.0-alpha.16"]')).toBeDisabled()
+  await page.getByRole("button", { name: "Switch version", exact: true }).click()
+  await expect.poll(() => posted).toEqual({ version: "2.0.0-alpha.17" })
+  await expect(page.getByRole("button", { name: "Manage version" }).first()).toBeVisible()
+})
+
+test("@smoke App creation defaults to latest and can select an older installed engine", async ({ page }) => {
+  await page.route(/\/runtime\/project-versions$/, route => route.fulfill({ json: {
+    selectable: true, latest: "2.0.0-alpha.18", versions: [
+      { version: "2.0.0-alpha.18", status: "available" }, { version: "2.0.0-alpha.17", status: "available" },
+    ],
+  } }))
+  let posted: unknown
+  await page.route(/\/runtime\/projects$/, async route => {
+    if (route.request().method() !== "POST") return route.continue()
+    posted = route.request().postDataJSON()
+    await route.fulfill({ status: 201, json: { project: { id: "historical-ui", name: "Historical UI", runtime: { status: "running" } } } })
+  })
+  await page.goto(`${basePath}/projects?new=1&recipe=%40zelavis%2Fapp`)
+  const picker = page.getByRole("combobox", { name: "Zelavis version" })
+  await expect(picker).toHaveValue("")
+  await expect(picker.locator('option[value=""]')).toContainText("Latest available (2.0.0-alpha.18)")
+  await picker.selectOption("2.0.0-alpha.17")
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Historical UI")
+  await page.getByRole("button", { name: "Create", exact: true }).click()
+  await expect.poll(() => posted).toEqual({ name: "Historical UI", recipeName: "@zelavis/app", start: true, engineVersion: "2.0.0-alpha.17" })
+})

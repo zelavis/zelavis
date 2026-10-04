@@ -75,14 +75,20 @@ command tree.
   records (never argument values) with the audit permission. Submissions are
   rate limited per caller (HTTP 429 with `Retry-After`). Available when the
   Platform runs with an Agent.
-- `projects list|get|create|start|stop|restart|logs|remove` manages Projects,
+- `projects list|get|create|rename|start|stop|restart|upgrade|logs|remove` manages Projects,
   and `projects recipes` lists Project recipes. Each command calls the same
   route as the JavaScript client (`client.projects.*`) and
   `/zelavis/api/v1/runtime/projects`. With `--json` the output is the SDK
   result and failures are JSON with the HTTP status; a recipe whose required
   isolation the server cannot provide fails with
   `code: "project.isolation.unsatisfied"`. The backend is chosen by server
-  policy; there is no backend option.
+  policy; there is no backend option. `projects versions [id]` lists qualified
+  installed native App engines. `projects switch-version <id> --engine-version
+  <exact-version>` selects one with its matching App recipe. `create <name>` and
+  `upgrade <id>` also accept `--engine-version`; their default is the latest
+  qualified installed engine. Running qualified Apps switch through the shared
+  handover at their existing address. Source installations and unsupported
+  drivers report why independent selection is unavailable.
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;

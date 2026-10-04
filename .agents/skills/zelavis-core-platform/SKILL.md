@@ -61,12 +61,16 @@ before editing.
   of the current link, private receipt and public version descriptor. Preserve
   Fabric custody and separately supervised Project processes; qualify adoption
   before releasing the old writer. New Apps and explicit App upgrades use the
-  latest qualified installed engine. Public version controls remain planned. Ordinary startup restores the fleet
+  latest qualified installed engine by default. Exact installed App engine selection
+  is public in dashboard, SDK, HTTP and CLI, including older qualified engines.
+  Freeze the selected engine's matching bundled App recipe; never couple it to
+  the parent's bundled version. Ordinary startup restores the fleet
   asynchronously and must remain ready despite an unavailable Project. Persist
   status refreshes under the Project lifecycle permit; Fabric fleet views remain
   read-only so scheduling cannot re-enter its own Project permit.
-  Unsupported protocols require a full local installer conversion with a restart,
-  not a compatibility fallback in the live update path.
+  Live updates refuse unsupported protocols. Future protocol evolution must ship
+  through Update now and pass the real previous-release update gate; do not
+  use a manual installer conversion as a release procedure.
 
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw

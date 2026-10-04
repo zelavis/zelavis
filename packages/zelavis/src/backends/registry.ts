@@ -418,6 +418,8 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   capabilities: "descriptor",
   supportsLiveUpdate: "descriptor",
   prepareUpdate: "descriptor",
+  versions: "wrapper",
+  resolveVersion: "descriptor",
   applyUpdate: "project-id",
   recoverUpdate: "project-id",
   prepare: "descriptor",
@@ -501,6 +503,15 @@ export function createDeploymentBackendProjectRuntime(options: {
   const uniqueRuntimes = [...new Set(runtimes.values())];
 
   const programs = {
+    versions: Effect.fn("BackendProjects.versions")(function* (project?: Readonly<ZelavisProjectDescriptor>) {
+      const runtime = project ? yield* evaluate(() => forDescriptor(project)) : runtimes.get(NATIVE_BACKEND);
+      return yield* (runtime ? effectOperations(runtime).versions?.(project) ?? Effect.succeed({ selectable: false, versions: [] })
+        : Effect.succeed({ selectable: false, reason: "No native runtime catalog is configured.", versions: [] }));
+    }),
+    resolveVersion: Effect.fn("BackendProjects.resolveVersion")(function* (project: Readonly<ZelavisProjectDescriptor>, version?: string) {
+      const resolve = effectOperations(yield* evaluate(() => forDescriptor(project))).resolveVersion;
+      return yield* (resolve?.(project, version) ?? Effect.succeed(undefined));
+    }),
     prepare: Effect.fn("BackendProjects.prepare")(function* (project: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[0], recipe: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[1]) {
       return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).prepare(project, recipe);
     }),

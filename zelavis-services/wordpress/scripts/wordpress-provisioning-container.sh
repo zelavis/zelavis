@@ -10,7 +10,7 @@ trap cleanup EXIT
 if [[ -z "${ZELAVIS_PROVISIONING_IMAGE:-}" ]]; then
   docker build -t "$IMAGE" -f "$REPO_ROOT/zelavis-services/wordpress/scripts/Dockerfile.provisioning" "$REPO_ROOT/zelavis-services/wordpress/scripts"
 fi
-if [[ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]]; then
+if [[ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" || "${ZELAVIS_QUALIFY_UPDATE:-}" == local ]]; then
   (cd "$REPO_ROOT" && pnpm --filter zelavis pack --pack-destination "$STAGE")
   mv "$STAGE"/zelavis-*.tgz "$STAGE/zelavis.tgz"
 fi
@@ -18,6 +18,7 @@ docker run -d --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run -
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_PROVISIONING_FROM_NPM=${ZELAVIS_PROVISIONING_FROM_NPM:-}" \
+  -e "ZELAVIS_QUALIFY_UPDATE=${ZELAVIS_QUALIFY_UPDATE:-}" \
   "$IMAGE" /sbin/init >/dev/null
 # Init needs a moment to establish its cgroup hierarchy. Bounded readiness, no host service changes.
 for attempt in $(seq 1 60); do
@@ -28,4 +29,7 @@ done
 if ! docker exec "$CONTAINER" sh /workspace/zelavis-services/wordpress/scripts/provisioning-host.sh; then
   docker exec "$CONTAINER" journalctl -u zelavis.service -u zelavis-agent.service -u zelavis-host-agent.service -n 60 --no-pager || true
   exit 1
+fi
+if [[ -n "${ZELAVIS_UPDATE_PROOF:-}" ]]; then
+  docker cp "$CONTAINER:/tmp/zelavis-update-proof.json" "$ZELAVIS_UPDATE_PROOF"
 fi

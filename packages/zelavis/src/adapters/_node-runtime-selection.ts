@@ -5,17 +5,19 @@ import { Deferred, Effect } from "effect";
 import { installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
+import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
+import { planZelavisRuntimeHostAssetsProgram } from "../core/runtime/installation-plan.js";
 import { assertInstallationPath } from "../core/runtime/installation-plan.js";
 import { isExactVersion } from "../updates.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 
 const flushDirectory = (path: string) => process.platform === "win32" ? Effect.void : Effect.acquireUseRelease(
   integration(() => open(path, "r")), handle => integration(() => handle.sync()), handle => integration(() => handle.close()).pipe(Effect.orDie));
-const writeReceipt = Effect.fn("RuntimeSelection.writeInventory")(function* (path: string, value: Readonly<Record<string, unknown>>, mode = 0o600) {
+const writeReceipt = Effect.fn("RuntimeSelection.writeInventory")(function* (path: string, value: Readonly<Record<string, unknown>> | string, mode = 0o600) {
   const temporary = `${path}.${randomUUID()}`;
   yield* Effect.gen(function* () {
     yield* Effect.acquireUseRelease(integration(() => open(temporary, "wx", mode)), handle => Effect.gen(function* () {
-      yield* integration(() => handle.writeFile(`${JSON.stringify(value, null, 2)}\n`)); yield* integration(() => handle.sync());
+      yield* integration(() => handle.writeFile(typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`)); yield* integration(() => handle.sync());
     }), handle => integration(() => handle.close()).pipe(Effect.orDie));
     yield* integration(() => rename(temporary, path)); yield* flushDirectory(dirname(path));
   }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
@@ -72,6 +74,18 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
           const target = join(options.prefix, "releases", pending.release.version);
           const canonical = yield* integration(() => realpath(target));
           yield* evaluate(() => { if (canonical !== join(releases, pending.release.version)) throw new Error("Runtime inventory cannot select a linked or external release."); });
+          if (receipt.mode === "system") {
+            const host = createNodeInstallHost();
+            const paths = { ...nodeInstallationPaths(process.env, options.instance), prefix: options.prefix,
+              dataDirectory: options.dataDirectory, configDirectory: String(receipt.configDirectory), commandPath: String(receipt.commandPath) };
+            const assets = yield* planZelavisRuntimeHostAssetsProgram({ host, paths, source: canonical,
+              port: Number(receipt.port), public: runtime.host === "0.0.0.0" });
+            for (const step of assets) {
+              if (step.action.kind !== "write") return yield* new IntegrationFailure(new Error("Runtime host asset plan contains an unsupported action."));
+              yield* writeReceipt(step.action.path, step.action.content, step.action.mode);
+            }
+            yield* integration(() => host.execute({ kind: "command", command: "systemctl", args: ["daemon-reload"] }));
+          }
           const temporary = `${scope.current}.${randomUUID()}`;
           yield* Effect.gen(function* () {
             yield* integration(() => symlink(target, temporary));

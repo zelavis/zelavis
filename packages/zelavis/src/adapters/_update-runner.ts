@@ -182,13 +182,14 @@ export const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* 
         yield* Effect.catch(pruneReleases(options.prefix, instance, previous, options.keepRelease), Effect.fn("PlatformUpdate.recover")(function* () { return undefined; }));
         return yield* finish("succeeded", `Updated from ${receipt.version} to ${target}.`, { log: log.slice(-LOG_LINES) });
     }
-    // Put the previous release back. It is kept on disk and complete, so its own installer can
-    // select it again from where it lies.
+    // The candidate installer owns the inventory transition in both directions.
+    // Selecting the retained previous engine through it also restores that
+    // engine's authored host assets before admission resumes.
     run = { ...run, message: `${failure} Going back to ${receipt.version}.`, log: log.slice(-LOG_LINES) };
     yield* writeStatus(directory, run);
     const selected = yield* Effect.catch(release(options.prefix, instance), Effect.fn("PlatformUpdate.recover")(function* () { return previous; }));
     if (selected !== previous) {
-        const back = yield* integration(() => options.run(join(previous, "runtime", "node", "bin", "node"), [join(previous, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...mode === "user" ? ["--user"] : [], "--live"]));
+        const back = yield* integration(() => options.run(node, [join(newRelease, "platform", "dist", "cli.js"), "install", "--from-release", previous, "--allow-downgrade", "--installed-by", "script", ...scope.named ? ["--instance", instance] : [], ...mode === "user" ? ["--user"] : [], "--live"]));
         log.push(...tail(back.output));
     }
     // Only restart what is not already answering: a swap that failed before it began changed nothing.

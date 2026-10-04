@@ -257,7 +257,7 @@ test("a release that never answers is rolled back to the previous one, which is 
   assert.match(result.message, /Rolled back to 2\.0\.0-alpha\.8, which is running again/);
   const back = commands.find((command) => command.includes("--allow-downgrade"));
   assert.ok(back, "the previous release is selected again");
-  assert.equal(back[0], join(state.prefix, "releases", state.version, "runtime", "node", "bin", "node"), "by the previous release's own Node");
+  assert.equal(back[0], join(state.prefix, "releases", "2.0.0-alpha.9", "runtime", "node", "bin", "node"), "the candidate inventory authority restores previous host assets too");
   assert.deepEqual(back.slice(2, 5), ["install", "--from-release", join(state.prefix, "releases", state.version)]);
   assert.ok(commands.some((command) => command[0] === "systemctl" && command.includes("restart")));
   assert.equal((await status(state.dataDirectory)).state, "rolled-back");

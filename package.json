@@ -32,7 +32,7 @@
     "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
     "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
-    "release:check": "pnpm run verify && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs",
+    "release:check": "pnpm run verify && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs && pnpm run distribution:test && pnpm run release:qualify:update",
     "release:status": "changeset status --verbose",
     "release:version": "node scripts/release-version.mjs stable",
     "release:version:alpha": "node scripts/release-version.mjs alpha",
@@ -47,7 +47,8 @@
     "website:typecheck": "pnpm --filter @zelavis/website build",
     "test": "pnpm -r --if-present --workspace-concurrency=1 test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "check:effect-usage": "node scripts/check-effect-usage.mjs"
+    "check:effect-usage": "node scripts/check-effect-usage.mjs",
+    "release:qualify:update": "bash distribution/scripts/qualify-update.sh"
   },
   "keywords": [],
   "author": "Ivan Jeremic",

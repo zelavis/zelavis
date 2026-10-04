@@ -250,6 +250,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     async fencePrevious() { return true; }, async adopt() {}, async detach() {},
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },
+    async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },
     async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; },
   };
   const runtime = createDeploymentBackendProjectRuntime({

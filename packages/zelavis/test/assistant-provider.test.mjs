@@ -205,7 +205,10 @@ test("a Project's owner sets its provider over HTTP, and nobody else's Project",
 
   // Deleting the Project takes its key with it.
   const removed = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/site-a", { method: "DELETE" }), { principal: root });
-  assert.equal(removed.status, 200);
+  if (removed.status !== 200) {
+    const pending = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/site-a"), { principal: root });
+    assert.fail(`Project deletion failed: ${JSON.stringify((await pending.json()).project?.deletion)}`);
+  }
   assert.equal((await (await call(root, "site-a", "GET")).json()).source, "none");
 });
 

@@ -1,4 +1,5 @@
 import type { TaggedFailure } from "./core/runtime/effect-boundary.js";
+import { isExactVersion } from "./updates.js";
 import type { RuntimeRelease } from "./core/runtime/handover.js";
 import { Cause, Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { IntegrationFailure, effectOperations, unwrapFailure, evaluate, integration, lifecycleGate, present, presentOperations, singleFlight, type EffectOperations } from "./core/runtime/effect-boundary.js";
@@ -94,6 +95,8 @@ export interface ZelavisProjectDescriptor {
   name: string;
   kind: ZelavisProjectKind;
   recipe: ZelavisProjectRecipeLock;
+  /** Explicit engine selection. The driver locks and verifies its complete artifact. */
+  engineVersion?: string;
   /** Explicit host runtime assignment. Never infer this from live processes. */
   runtimeKind: ZelavisProjectRuntimeKind;
   /**
@@ -193,8 +196,8 @@ export interface ZelavisProjectRuntimeUpdateIntent {
   readonly id: string;
   readonly startedAt: string;
   readonly execution: ZelavisProjectRuntimeUpdate;
-  readonly previous: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory">;
-  readonly target: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory">;
+  readonly previous: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory" | "engineVersion">;
+  readonly target: Pick<ZelavisProjectRecord, "kind" | "recipe" | "recipeHistory" | "engineVersion">;
   readonly error?: string;
 }
 
@@ -202,6 +205,14 @@ export interface ZelavisProjectLogEntry {
   timestamp: string;
   stream: "stdout" | "stderr" | "system";
   message: string;
+}
+
+export interface ZelavisProjectVersions {
+  readonly current?: string;
+  readonly latest?: string;
+  readonly selectable: boolean;
+  readonly reason?: string;
+  readonly versions: readonly { readonly version: string; readonly status: "available" | "unavailable"; readonly error?: string; readonly nodeVersion?: string }[];
 }
 
 export interface ZelavisProjectRuntimeDriver {
@@ -214,6 +225,9 @@ export interface ZelavisProjectRuntimeDriver {
   readonly custody?: { readonly ownerSession: string; readonly preserveOnClose: () => boolean };
   /** A qualified local handover for this exact Project, never a stop/start alias. */
   supportsLiveUpdate?(project: Readonly<ZelavisProjectDescriptor>): boolean;
+  versions?(project?: Readonly<ZelavisProjectDescriptor>): Promise<ZelavisProjectVersions>;
+  /** Resolves only a verified installed engine and its bundled App recipe. */
+  resolveVersion?(project: Readonly<ZelavisProjectDescriptor>, version?: string): Promise<{ engineVersion: string; recipe: ZelavisProjectRecipeLock } | undefined>;
   prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeUpdate>;
   applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
@@ -279,6 +293,7 @@ export interface ZelavisProjectGatewayAuthorityInput {
 }
 
 export interface ZelavisProjectCreateInput {
+  engineVersion?: string;
   name: string;
   id?: string;
   recipeName?: string;
@@ -314,17 +329,19 @@ export interface ZelavisProjectManager {
   /** Projects owned by one Project. */
   listOwned(ownerProjectId: string): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
+  versions(id?: string): Promise<ZelavisProjectVersions>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   update(id: string, input: ZelavisProjectUpdateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
   stop(id: string): Promise<ZelavisProjectRecord>;
   restart(id: string): Promise<ZelavisProjectRecord>;
   /**
-   * Re-locks a stopped (or failed) Project to a recipe this Platform ships and
-   * freezes it. The Project keeps its data: the recipe carries identity, menu and
-   * defaults, and the engine that reads the data is the Platform's own.
+   * Selects a qualified App engine and its matching recipe, or upgrades another
+   * Project recipe. Qualified running Apps hand over without changing their
+   * ingress address; other Projects must be stopped or failed. Data stays in place.
    */
-  upgrade(id: string, input?: { recipeName?: string }): Promise<ZelavisProjectRecord>;
+  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string }): Promise<ZelavisProjectRecord>;
+  switchVersion(id: string, version: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
   /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
@@ -947,6 +964,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 : [];
         }).slice(-10);
     }
+    function readEngineVersion(value: Record<string, unknown>): { engineVersion?: string } {
+        if (value.engineVersion === undefined) return {};
+        if (!isExactVersion(value.engineVersion)) throw new ZelavisProjectValidationError("Engine selection requires an exact version.");
+        return { engineVersion: value.engineVersion };
+    }
     function readStoredRuntimeUpdate(raw: Record<string, unknown>): ZelavisProjectRuntimeUpdateIntent | undefined {
         if (raw.runtimeUpdate === undefined) return undefined;
         const update = raw.runtimeUpdate;
@@ -958,7 +980,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         };
         const state = (value: Record<string, unknown>) => {
             if (typeof value.kind !== "string") throw new ZelavisProjectValidationError("Project handover requires an explicit recipe kind.");
-            return { kind: value.kind, recipe: readStoredRecipeLock(value), recipeHistory: readStoredRecipeHistory(value) };
+            return { kind: value.kind, recipe: readStoredRecipeLock(value), recipeHistory: readStoredRecipeHistory(value), engineVersion: readEngineVersion(value).engineVersion };
         };
         const previous = state(update.previous), target = state(update.target);
         const recipe = readStoredRecipeLock({ recipe: update.execution.recipe });
@@ -988,6 +1010,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             name: rawProject.name,
             kind: rawProject.kind || projectKindForRecipe(recipe.name),
             recipe,
+            ...readEngineVersion(rawRecord),
             // Ownership must survive a restart. Dropping it here would orphan every
             // owned runtime, because deletion reaches them through their owner.
             ...(storedOwner ? { ownerProjectId: storedOwner } : {}),
@@ -1670,6 +1693,20 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             const projectId = yield* evaluate(() => normalizeProjectId(id));
             return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
         }),
+        versions: Effect.fn("Projects.versions")(function* (id?: string) {
+            const unavailable = { selectable: false, reason: "This runtime cannot select independent engine versions.", versions: [] };
+            if (id === undefined) return yield* (runtimeEffects.versions?.() ?? Effect.succeed(unavailable));
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            return yield* withProjectLifecycle(projectId, () => Effect.gen(function* () {
+                const project = yield* requireProject(projectId);
+                if (project.placement) return { selectable: false, reason: "Version selection requires the Project's local runtime catalog.", versions: [] };
+                return yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(unavailable));
+            }));
+        }),
+        switchVersion: Effect.fn("Projects.switchVersion")(function* (id: string, version: string) {
+            yield* evaluate(() => { if (!isExactVersion(version)) throw new ZelavisProjectValidationError("Engine selection requires an exact version."); });
+            return yield* manager.upgrade(id, { engineVersion: version });
+        }),
         create: Effect.fn("Projects.create")(function* (input: Parameters<ZelavisProjectManager["create"]>[0]) {
             const name = yield* evaluate(() => normalizeProjectName(input.name));
             const id = yield* evaluate(() => normalizeProjectId(input.id ?? name));
@@ -1678,7 +1715,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             if (!projectRecipe) {
                 return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
             }
-            const recipe = yield* evaluate(() => recipeLockFromRegistryEntry(projectRecipe));
+            let recipe = yield* evaluate(() => recipeLockFromRegistryEntry(projectRecipe));
             const defaultKind = normalizeRuntimeKind(options.resolveDefaultRuntimeKind
                 ? (yield* integration(() => options.resolveDefaultRuntimeKind!())) : defaultRuntimeKind);
             const runtimeKind = yield* selectRuntimeKind(recipe, defaultKind);
@@ -1702,6 +1739,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 }
             }
             const descriptor: ZelavisProjectDescriptor = {
+                ...readEngineVersion(input as unknown as Record<string, unknown>),
                 id,
                 ...(ownerProjectId ? { ownerProjectId } : {}),
                 name,
@@ -1709,6 +1747,12 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 recipe,
                 runtimeKind,
             };
+            if (input.engineVersion !== undefined && !runtimeEffects.resolveVersion)
+                return yield* Effect.fail(new ZelavisProjectValidationError("This runtime cannot select an independent engine version."));
+            const selection = yield* (runtimeEffects.resolveVersion?.(descriptor, input.engineVersion) ?? Effect.succeed(undefined));
+            if (input.engineVersion !== undefined && !selection)
+                return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installed native Zelavis App."));
+            if (selection) { recipe = selection.recipe; descriptor.recipe = recipe; descriptor.engineVersion = selection.engineVersion; }
             // Refused before the identifier is claimed: nothing is provisioned for a
             // Project this server cannot run with the isolation its recipe requires.
             const isolation = assessIsolation(descriptor);
@@ -1853,7 +1897,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 const interrupted = project.runtimeUpdate;
                 project = yield* recoverProjectUpdate(project);
                 (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
-                if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version) return project;
+                if (input?.engineVersion !== undefined && project.placement)
+                    return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
+                if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
+                    (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
                 const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true &&
                     runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
                 if (!live && !["stopped", "failed"].includes(project.runtime.status)) {
@@ -1870,19 +1917,25 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
                     return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
                 }
-                const next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                let next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                if (input?.engineVersion !== undefined) yield* evaluate(() => readEngineVersion(input as unknown as Record<string, unknown>));
+                const selection = yield* (runtimeEffects.resolveVersion?.({ ...project, recipe: next }, input?.engineVersion) ?? Effect.succeed(undefined));
+                if (input?.engineVersion !== undefined && !selection)
+                    return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installed native Zelavis App."));
+                if (selection) next = selection.recipe;
                 if (!next.runtimeKinds.includes(project.runtimeKind)) {
                     return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`)));
                 }
                 if (next.name === project.recipe.name &&
                     next.version === project.recipe.version &&
-                    project.recipe.artifact) {
+                    project.recipe.artifact && (!selection || project.engineVersion === selection.engineVersion)) {
                     return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" already runs ${next.name}@${next.version}.`)));
                 }
                 const candidate: ZelavisProjectRecord = {
                     ...project,
                     kind: projectKindForRecipe(next.name),
                     recipe: next,
+                    ...(selection ? { engineVersion: selection.engineVersion } : {}),
                 };
                 // Refused before anything changes: an upgrade that would leave the
                 // Project unable to start under its isolation intent is not an upgrade.
@@ -1911,15 +1964,18 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     updatedAt: now,
                 };
                 if (!live) {
+                    const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
-                    return yield* write(upgraded);
+                    return yield* write(upgraded).pipe(Effect.onError(() => previousEngine
+                        ? runtimeEffects.prepare({ ...project, engineVersion: previousEngine }, project.recipe).pipe(Effect.orDie)
+                        : Effect.void));
                 }
                 const execution = yield* runtimeEffects.prepareUpdate!(project, candidate);
                 upgraded.recipe = execution.recipe;
                 upgraded.runtime = project.runtime;
                 const intent: ZelavisProjectRuntimeUpdateIntent = { id: crypto.randomUUID(), startedAt: now, execution,
-                    previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory },
-                    target: { kind: upgraded.kind, recipe: upgraded.recipe, recipeHistory: upgraded.recipeHistory } };
+                    previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory, engineVersion: project.engineVersion },
+                    target: { kind: upgraded.kind, recipe: upgraded.recipe, recipeHistory: upgraded.recipeHistory, engineVersion: upgraded.engineVersion } };
                 yield* write({ ...project, runtimeUpdate: intent });
                 return yield* Effect.gen(function* () {
                     const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({

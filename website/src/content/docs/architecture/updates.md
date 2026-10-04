@@ -35,7 +35,10 @@ qualifies running Project custody, and releases the old engine's writable state.
 Only after that release may the candidate open the System Store. Its readiness
 probe must also prove that running Projects were adopted at their existing
 addresses. The root installer acknowledges the `current` link, private receipt
-and public version descriptor before traffic resumes. The host and its public
+and public version descriptor before traffic resumes. System installations also
+refresh the selected release's authored systemd templates and reload the unit
+catalogue at that acknowledgement; they do not restart the host or Project Agent.
+Rollback restores the previous release's templates. The host and its public
 listeners keep running throughout.
 
 A failed preparation or drain leaves the previous engine serving. A failed
@@ -74,8 +77,34 @@ Installed Apps lock both their recipe artifact and their complete Zelavis engine
 artifact, including its private Node. An explicit App upgrade selects the latest
 qualified installed engine along with the chosen recipe. New Apps use that same
 engine default, even if their parent runs an older version. Parent updates and
-rollbacks preserve existing App locks. Public controls for selecting another
-exact engine version, including an older one, remain planned.
+rollbacks preserve existing App locks.
+
+The create form offers **Zelavis version**, defaulting to the latest available
+engine. An existing native App offers **Manage version** on its Project card.
+These controls select exact, already installed and qualified engine versions;
+they do not download arbitrary npm versions. Every selection uses that engine's
+bundled App recipe. Source installations and unsupported drivers explain why
+independent version selection is unavailable.
+
+The same controls are available through:
+
+- SDK: `client.projects.versions(id?)`, `.switchVersion(id, version)` and
+  `.create({ name, engineVersion })`.
+- HTTP: `GET /runtime/project-versions`,
+  `GET /runtime/projects/:id/versions`, and
+  `POST /runtime/projects/:id/version` with `{ "version": "2.0.0-alpha.17" }`.
+- CLI: `zelavis projects versions [id]`,
+  `zelavis projects switch-version <id> --engine-version <exact-version>`, and
+  `zelavis projects create <name> --engine-version <exact-version>`.
+
+Reading Project choices requires `project.view`; switching requires
+`project.runtime.manage` for that Project. Listing choices for creation requires
+`projects.list`. Engine selection remains an explicit lifecycle operation:
+parent updates do not change it, deletion blocks it, and interrupted switches
+retain their durable recovery state. Qualification of an engine artifact proves
+its integrity and protocol. It does not promise that arbitrarily old software
+can read data written by every future release; incompatible data formats must
+be refused before writable ownership is granted.
 
 The candidate is frozen separately while the previous engine serves. The host
 journal and the Platform's durable Project update must agree before queued
@@ -120,6 +149,27 @@ exit pauses admission and wakes its supervising host for restart.
 without opening Project databases. Complete uninstall removes the persistent
 host state along with the selected installation's Projects and data.
 
-Multi-host availability, public independent-version selectors and stronger
-isolation backends remain separate planned work. Native process execution is
+Multi-host availability and stronger isolation backends remain separate planned
+work. Native process execution is
 operational isolation for trusted code, not a hostile-code sandbox.
+
+## Release requirement: Update now always works
+
+Every future architectural change must remain installable through **Update now**.
+A terminal command or installer rerun for a normal release is a product defect.
+The bootstrap first acquires the npm package with scripts disabled, then reads
+its installation assets as JSON. If the candidate changes the pinned private
+Node, it fetches that pin from nodejs.org and checks its published SHA-256 before
+executing candidate code. Installed unit changes use the existing root commit
+authority. No new distribution trust source is introduced.
+
+`pnpm release:check` includes `release:qualify:update`: a disposable Linux/systemd
+installation starts with the actual previous npm release, runs the installed
+updater against the packed candidate, and checks continuous dashboard, App and
+WordPress traffic, data, addresses, process custody and App engine selection in
+both directions. Before publication only candidate acquisition is substituted;
+this is distinct from claiming an npm end-to-end check. After publication, run
+the same qualification with `ZELAVIS_QUALIFY_UPDATE=npm` and
+`ZELAVIS_PROVISIONING_FROM_NPM` set to that previous exact release. This uses the
+authenticated update API and the installed systemd watcher, exactly as the
+dashboard does. Fresh-install and synthetic-version tests alone are insufficient.

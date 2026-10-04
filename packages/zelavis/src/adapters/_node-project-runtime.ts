@@ -19,6 +19,7 @@ import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
 import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcess, ZelavisAgentProcessRunner, } from "../core/agent/process-command.js";
+import { ZelavisProjectValidationError } from "../project.js";
 import type { ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, } from "../project.js";
 export interface NodeProcessProjectRuntimeOptions {
     directory: string;
@@ -234,6 +235,25 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         startupConcurrency,
         supportsLiveUpdate: () => true,
         capabilities: () => capabilities,
+        versions: Effect.fn("NodeProjects.versions")(function* (project) {
+            const configuration = yield* catalogConfiguration();
+            if (!configuration || project && (project.recipe.name !== "@zelavis/app" || project.runtimeKind !== "native"))
+                return { selectable: false, reason: "Engine version selection requires an installer-managed native Zelavis App.", versions: [] };
+            const versions = yield* createNodeRuntimeCatalog(configuration).list();
+            const current = project ? (yield* readCreationEngine(projectDirectory(project.id))).runtime?.version : undefined;
+            return { selectable: true, current, latest: versions.find(value => value.status === "available")?.version, versions };
+        }),
+        resolveVersion: Effect.fn("NodeProjects.resolveVersion")(function* (project, version) {
+            const configuration = yield* catalogConfiguration();
+            if (!configuration || project.recipe.name !== "@zelavis/app" || project.runtimeKind !== "native") {
+                if (version !== undefined) return yield* Effect.fail(new ZelavisProjectValidationError("Engine version selection requires an installer-managed native Zelavis App."));
+                return undefined;
+            }
+            const catalog = createNodeRuntimeCatalog(configuration);
+            const selected = yield* (version === undefined ? catalog.latest() : catalog.select(version)).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
+            const app = yield* catalog.app(selected.version).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
+            return { engineVersion: selected.version, recipe: app.recipe };
+        }),
         prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate) {
             const state = processes.get(previous.id);
             if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project has no running handover host."));
@@ -249,11 +269,18 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const installedCatalog = yield* catalogConfiguration();
             // A deliberate App upgrade selects the latest qualified engine as
             // well as its recipe. Parent replacement alone never changes this pin.
-            if (installedCatalog) engine.runtime = yield* createNodeRuntimeCatalog(installedCatalog).latest();
+            if (installedCatalog) {
+                const catalog = createNodeRuntimeCatalog(installedCatalog);
+                engine.runtime = yield* (candidate.engineVersion ? catalog.select(candidate.engineVersion) : catalog.latest());
+            }
             const staging = join(directory, ".zelavis", "update-preparation", randomUUID());
             yield* integration(() => mkdir(staging, { recursive: true, mode: 0o700 }));
             return yield* Effect.gen(function* () {
-                const artifact = yield* integration(() => ensureRecipeArtifact(candidate.recipe, staging, join(staging, ".zelavis"), options.recipePackageDirectory));
+                const app = installedCatalog && candidate.recipe.name === "@zelavis/app" && engine.runtime
+                    ? yield* createNodeRuntimeCatalog(installedCatalog).app(engine.runtime.version) : undefined;
+                if (app && app.recipe.version !== candidate.recipe.version) return yield* new IntegrationFailure(new Error("Selected engine and App recipe do not match."));
+                const artifact = yield* integration(() => ensureRecipeArtifact(candidate.recipe, staging, join(staging, ".zelavis"),
+                    app ? () => app.packageDirectory : options.recipePackageDirectory));
                 const manifest = yield* integration(() => readFile(join(staging, ".zelavis", "recipe", "package", "package.json"), "utf8"));
                 if (yield* evaluate(() => JSON.parse(manifest).zelavis?.project?.runtime !== undefined)) return yield* new IntegrationFailure(new Error("A live App update cannot switch to a recipe with another runtime contract."));
                 const recipe = { ...candidate.recipe, artifact };
@@ -317,15 +344,24 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             yield* integration(() => options.handDownAllowlist?.(dataDirectory));
             // Freeze the recipe into the Project so a Platform upgrade cannot change
             // what it runs. Preparing fails, with the reason, when it cannot be frozen.
-            const artifact = yield* integration(() => ensureRecipeArtifact(recipe, directory, dataDirectory, options.recipePackageDirectory));
             const engine = yield* readCreationEngine(directory);
             const catalogOptions = yield* catalogConfiguration();
+            let app: { packageDirectory: string; recipe: ZelavisProjectRecipeLock } | undefined;
             if (catalogOptions) {
                 const catalog = createNodeRuntimeCatalog(catalogOptions);
-                const selected = engine.runtime ? yield* catalog.select(engine.runtime.version) : yield* catalog.latest();
-                if (engine.runtime && engine.runtime.digest !== selected.digest) return yield* new IntegrationFailure(new Error("The installed engine differs from this Project's exact runtime lock."));
+                const selected = project.engineVersion ? yield* catalog.select(project.engineVersion)
+                    : engine.runtime ? yield* catalog.select(engine.runtime.version) : yield* catalog.latest();
+                if (engine.runtime && (!project.engineVersion || project.engineVersion === engine.runtime.version) && engine.runtime.digest !== selected.digest)
+                    return yield* new IntegrationFailure(new Error("The installed engine differs from this Project's exact runtime lock."));
                 engine.runtime = selected;
+                if (recipe.name === "@zelavis/app") {
+                    const selectedApp = yield* catalog.app(selected.version);
+                    app = selectedApp;
+                    if (selectedApp.recipe.version !== recipe.version) return yield* new IntegrationFailure(new Error("Selected engine and App recipe do not match."));
+                }
             }
+            const artifact = yield* integration(() => ensureRecipeArtifact(recipe, directory, dataDirectory,
+                app ? () => app!.packageDirectory : options.recipePackageDirectory));
             yield* integration(() => writeFile(join(directory, "project.json"), `${JSON.stringify({
                 ...project,
                 recipe: {

@@ -112,8 +112,8 @@ current automatically.
   module with no restart; unreferenced folders are pruned at start. Activation
   of an update or uninstall reports `restartRecommended`.
 - Platform and native App engine handover is implemented; its contract and
-  qualification limits are in `website/.../architecture/updates.md`. Public
-  version-selection controls remain planned. Loadable service activation keeps
+  qualification limits are in `website/.../architecture/updates.md`. Exact installed native App engine
+  version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation keeps
   the registry's `restartRecommended` behavior.
 
 ## Distribution Trust Model
@@ -221,17 +221,17 @@ Rules that hold for every change:
   with the current `@zelavis/app` version built-in under `packages/zelavis/services/zelavis-app`,
   operators and projects can install and lock alternative recipe versions via
   marketplaces. Runtime drivers execute the exact version locked in the
-  Project's runtime database. Today only the version this Platform bundles can
-  be prepared: a Project locked to a version the Platform no longer ships and
-  holding no frozen copy of it fails to prepare with that reason. The way out is
+  Project's runtime database. Preparation keeps a verified frozen recipe, or
+  takes the exact recipe from its selected installed engine or trusted catalogue.
+  A lock with no exact source fails to prepare with that reason. The way out is
   an explicit **recipe upgrade** (`POST /projects/:id/upgrade`,
   `client.projects.upgrade`, `zelavis projects upgrade`): a stopped or failed
   Project, or a running App whose driver advertises `zeroDowntimeUpdates`, is
-  re-locked to a recipe this Platform ships (naming it when the locked
-  name is no longer shipped) and its new artifact is frozen first, swapped in
+  re-locked to a qualified engine's matching App recipe, or another available
+  Project recipe (naming it when the locked name is no longer shipped) and its new artifact is frozen first, swapped in
   only when complete, so a failed upgrade leaves the Project as it was. Data is
   untouched, because the recipe carries identity, menu and defaults while the
-  Platform's engine reads the data. Each read reports `recipeStatus` (`current`,
+  Project's selected engine reads its own data. Each read reports `recipeStatus` (`current`,
   `upgradeAvailable`, `unavailable`); the Platform never upgrades a Project on its
   own.
 - **Frontends (The WordPress Theme Analogy)**: Services with `kind: "frontend"`
@@ -373,9 +373,10 @@ re-taking it from the Platform's copy. Installed native Apps also pin the
 complete engine artifact in their host descriptor and execute its private Node
 through the verified installed release catalog; parent updates never rewrite
 that selection. Checkout execution supports only its current development
-engine. Public older-version selection/switch controls remain planned. A recipe
-lock that is neither frozen nor the bundled version is refused, never run with
-the parent's recipe.
+engine. Public controls select exact qualified installed engines and freeze
+that engine's matching App recipe, including older versions. A recipe lock with
+no verified frozen copy or exact trusted source is refused, never run with the
+parent's recipe.
 This is operational isolation for trusted Project code, not a hostile-code
 security sandbox. Project lifecycle code must stay behind the runtime-driver
 contract so rootless OCI containers and stronger isolation can replace it later.
@@ -471,8 +472,8 @@ version descriptor before admission resumes. Preview listeners share admission
 and remain bound through handover and rollback. Separately supervised Agents keep
 running Projects under a persisted Fabric custody session; adoption must prove
 stable addresses before releasing the old engine. New Apps and explicit App recipe
-upgrades select the latest qualified installed engine. Public independent-version
-controls remain planned. Unsupported running drivers refuse a handover before
+upgrades select the latest qualified installed engine by default. Explicit
+independent-version controls can select another qualified installed engine. Unsupported running drivers refuse a handover before
 writer transfer. Installations without the protocol need one full local installer
 conversion, which restarts their old process; there is no restart fallback in live
 updates.
@@ -1310,6 +1311,15 @@ complete update from the previously installed release through the ordinary
 update action. Preserve data, Project locks, access URLs and rollback guarantees.
 The current pre-handover manual conversion is a known gap to eliminate; do not
 use it as precedent for future releases or add permanent legacy runtime paths.
+The release gate `pnpm release:qualify:update` starts from the actual previous npm
+release in disposable Linux/systemd and qualifies the packed candidate with
+continuous dashboard/App/WordPress traffic. Before publication only acquisition
+is substituted; after publication qualify the ordinary authenticated update API
+with real npm acquisition. Candidate Node pins are read from JSON before its code
+runs. Live root commit refreshes the selected release's authored unit templates
+and daemon-reloads without restarting the host or Project Agent; rollback
+restores the previous templates.
+
 New system installations always enable their separate Project Agent. No optional
 Agent flag remains. Never prune qualified engines needed for Project selection,
 Agent execution or another instance.
@@ -1596,3 +1606,14 @@ through native host transport, withhold Platform cookies and authority, and
 require the same browser origin for cookie-authenticated changes. Ports do not
 isolate cookies. Remote placements cannot publish a local preview of another
 Node's loopback target.
+
+Exact native App engine selection is available through dashboard **Zelavis
+version** / **Manage version**, `client.projects.versions(id?)` /
+`switchVersion(id, version)`, `/runtime/project-versions` /
+`/runtime/projects/:id/versions` / POST `/runtime/projects/:id/version`, and
+`zelavis projects versions` / `switch-version --engine-version`. Select only
+qualified installed exact versions and freeze that engine's matching bundled
+App recipe. Parent updates preserve App selections. Source copies and drivers
+without independent engines report why selection is unavailable. Preserve
+Project grants, durable update recovery, deletion precedence and data-format
+checks before writable ownership.
