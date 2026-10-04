@@ -179,7 +179,10 @@ test("@smoke App creation defaults to latest and can select an older installed e
   await page.route(/\/runtime\/projects$/, async route => {
     if (route.request().method() !== "POST") return route.continue()
     posted = route.request().postDataJSON()
-    await route.fulfill({ status: 201, json: { project: { id: "historical-ui", name: "Historical UI", runtime: { status: "running" } } } })
+    await route.fulfill({ status: 201, json: { project: {
+      id: "historical-ui", name: "Historical UI", runtime: { status: "running" },
+      recipe: { name: "@zelavis/app", title: "Zelavis App", version: "1.0.1-alpha.17" },
+    } } })
   })
   await page.goto(`${basePath}/projects?new=1&recipe=%40zelavis%2Fapp`)
   const picker = page.getByRole("combobox", { name: "Zelavis version" })
@@ -189,4 +192,6 @@ test("@smoke App creation defaults to latest and can select an older installed e
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Historical UI")
   await page.getByRole("button", { name: "Create", exact: true }).click()
   await expect.poll(() => posted).toEqual({ name: "Historical UI", recipeName: "@zelavis/app", start: true, engineVersion: "2.0.0-alpha.17" })
+  await expect(page.getByText("Historical UI is running in its own project runtime.")).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "Zelavis version" })).toHaveCount(0)
 })
