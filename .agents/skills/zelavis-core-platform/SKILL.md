@@ -20,6 +20,26 @@ before editing.
 
 ## Working rules
 
+- Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
+  package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
+  failure channels, scoped finalizers, and bounded Effect concurrency. Pure
+  synchronous calculations stay ordinary TypeScript. Public SDK/HTTP/CLI and
+  host integration contracts may present Promises; adapt individual external
+  calls at those boundaries, never wrap an entire async workflow in `tryPromise`.
+- `pnpm check:effect-usage` is part of `pnpm verify`. Its AST check rejects new or
+  changed async functions, Promise constructors and Promise coordination in
+  Platform code. `scripts/effect-migration-baseline.json` records unchanged
+  legacy occurrences outside the migrated lifecycle modules; this debt is not
+  permission to introduce or copy Promise orchestration. Its only maintenance
+  command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
+  entries. Never expand it to make a change pass. Migrate touched orchestration.
+- Project lifecycle, local/native runtime drivers, WordPress provisioning and
+  update orchestration are fully checked with no legacy allowances. Interruptions
+  must release coordination permits, stop partially acquired processes, preserve
+  frozen recipe rollback, and leave durable deletion checkpoints retryable.
+  Effect coordination does not replace persisted checkpoints, Fabric fencing,
+  authorization, or separately supervised production Agents.
+
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw
   `api` objects are rejected. Host options supply scope and package location.
@@ -373,8 +393,9 @@ Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
 `zelavis agent --operations-only` refuses every process protocol message and
-does not open/reclaim Project state. It prepares a separate privileged operation
-Agent; root endpoint ownership and installer wiring remain planned. Never turn
+does not open/reclaim Project state. System installations ship a separate
+root-owned operation Agent with a group-limited endpoint; Project supervision
+remains unprivileged. Never turn
 the combined process Agent into a root package installer.
 `zelavis/recipe` is the initial Effect authoring contract, not yet connected to
 package admission or Project execution. Recipe revisions and software versions

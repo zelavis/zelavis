@@ -1,5 +1,13 @@
 # @zelavis/wordpress
 
+## 7.1.3-alpha.1
+
+### Patch Changes
+
+- Use Effect v4 for Project lifecycle, native runtime drivers, recipe rollback and update orchestration; preserve durable deletion progress on interruption and enforce mandatory Effect usage.
+- Updated dependencies
+  - zelavis@2.0.0-alpha.15
+
 ## 7.1.3-alpha.0
 
 ### Patch Changes

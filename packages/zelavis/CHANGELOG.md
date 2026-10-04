@@ -1,5 +1,11 @@
 # zelavis
 
+## 2.0.0-alpha.15
+
+### Patch Changes
+
+- Use Effect v4 for Project lifecycle, native runtime drivers, recipe rollback and update orchestration; preserve durable deletion progress on interruption and enforce mandatory Effect usage.
+
 ## 2.0.0-alpha.14
 
 ### Patch Changes

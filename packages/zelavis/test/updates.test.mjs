@@ -406,3 +406,22 @@ test("a user installation updates itself as the same user and asks for a restart
   assert.equal(after.restartRequired, true);
   assert.equal(after.available, false, "what was just installed is not offered again");
 });
+
+test("concurrent checks share a registry lookup and concurrent apply requests publish one request", async t => {
+  const data = await scratch(t);
+  await mkdir(join(data, "update"));
+  let lookups = 0, release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const control = createNodeUpdateControl({ dataDirectory: data, currentVersion: "2.0.0-alpha.8", platform: "linux", schedule: false,
+    fetch: async () => { lookups++; await pending; return new Response(JSON.stringify({ alpha: "2.0.0-alpha.9" })); },
+  });
+  const checks = [control.check(), control.check()];
+  release();
+  await Promise.all(checks);
+  assert.equal(lookups, 1);
+  const results = await Promise.allSettled([control.apply("first"), control.apply("second")]);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(results.find(result => result.status === "rejected").reason.code, "busy");
+  const files = await readdir(join(data, "update"));
+  assert.deepEqual(files, ["request.json"]);
+});

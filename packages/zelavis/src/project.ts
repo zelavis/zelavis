@@ -1,3 +1,7 @@
+import type { TaggedFailure } from "./core/runtime/effect-boundary.js";
+import { Cause, Deferred, Effect, Exit, Fiber, Scope } from "effect";
+import { IntegrationFailure, effectOperations, unwrapFailure, evaluate, integration, lifecycleGate, present, presentOperations, singleFlight, type EffectOperations } from "./core/runtime/effect-boundary.js";
+import type { ZelavisSystemStoreRecord } from "./system-store.js";
 import { normalizeProjectHostPackages } from "./project-host-packages.js";
 import type { ZelavisProjectPreview } from "./edge/previews.js";
 import type {
@@ -304,6 +308,7 @@ export interface ZelavisProjectManager {
 }
 
 export class ZelavisProjectValidationError extends Error {
+  readonly _tag = "ZelavisProjectValidationError" as const;
   constructor(message: string) {
     super(message);
     this.name = "ZelavisProjectValidationError";
@@ -311,6 +316,7 @@ export class ZelavisProjectValidationError extends Error {
 }
 
 export class ZelavisProjectConflictError extends Error {
+  readonly _tag = "ZelavisProjectConflictError" as const;
   constructor(message: string) {
     super(message);
     this.name = "ZelavisProjectConflictError";
@@ -318,6 +324,7 @@ export class ZelavisProjectConflictError extends Error {
 }
 
 export class ZelavisProjectNotFoundError extends Error {
+  readonly _tag = "ZelavisProjectNotFoundError" as const;
   constructor(message: string) {
     super(message);
     this.name = "ZelavisProjectNotFoundError";
@@ -347,6 +354,7 @@ export class ZelavisProjectIsolationError extends ZelavisProjectConflictError {
 
 /** A caller-actionable failure while preparing or running a Project runtime. */
 export class ZelavisProjectRuntimeError extends Error {
+  readonly _tag = "ZelavisProjectRuntimeError" as const;
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ZelavisProjectRuntimeError";
@@ -354,6 +362,7 @@ export class ZelavisProjectRuntimeError extends Error {
 }
 
 export class ZelavisProjectDeletionError extends Error {
+  readonly _tag = "ZelavisProjectDeletionError" as const;
   readonly projectId: string;
   readonly participantId: string;
 
@@ -389,28 +398,8 @@ function normalizeConcurrency(value: number | undefined): number {
   return Math.max(1, Math.floor(value));
 }
 
-async function mapWithConcurrency<TValue, TResult>(
-  values: readonly TValue[],
-  concurrency: number,
-  map: (value: TValue, index: number) => Promise<TResult>,
-): Promise<TResult[]> {
-  const results = new Array<TResult>(values.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < values.length) {
-      const index = nextIndex++;
-      results[index] = await map(values[index]!, index);
-    }
-  }
-
-  await Promise.all(
-    Array.from(
-      { length: Math.min(concurrency, values.length) },
-      () => worker(),
-    ),
-  );
-  return results;
+function mapWithConcurrency<TValue, TResult>(values: readonly TValue[], concurrency: number, map: (value: TValue, index: number) => Effect.Effect<TResult, TaggedFailure>): Effect.Effect<TResult[], TaggedFailure> {
+    return Effect.forEach(values, map, { concurrency });
 }
 
 /** Longest accepted raw Project identifier before normalization. */
@@ -731,1392 +720,1171 @@ export interface ZelavisProjectDispatcher {
  */
 const BLOCKING_PLACEMENT_REASONS = new Set(["owner-unplaced", "owner-cycle"]);
 
-export async function createProjectManager(options: {
-  store: ZelavisSystemStore;
-  projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
-  runtime: ZelavisProjectRuntimeDriver;
-  resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
-  /**
-   * Other backends policy lets a new Project use, in administrator order:
-   * enabled, healthy and executable. Consulted only when the default cannot
-   * satisfy a recipe's required isolation, and only at creation — an existing
-   * Project's assignment is never changed by it.
-   */
-  resolveAlternativeRuntimeKinds?: () => Promise<readonly ZelavisProjectRuntimeKind[]>;
-  /**
-   * What a deployment backend advertises, for comparing with a recipe's locked
-   * isolation intent. Absent on a host with no backend registry, where any
-   * required intent is refused because nothing can prove it.
-   */
-  backendCapabilities?: (
-    runtimeKind: ZelavisProjectRuntimeKind,
-  ) => ZelavisDeploymentBackendCapabilities | undefined;
-  cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
-  /** Platform ingress follows durable lifecycle changes without altering recipe locks. */
-  synchronizeIngress?: (project: Readonly<ZelavisProjectRecord>) => Promise<ZelavisProjectPreview | undefined>;
-  /**
-   * Resolved lazily because Fabric is composed after the Project manager, and
-   * absent on a host with no Fabric — which reconciles exactly as it did
-   * before.
-   */
-  placement?: () => ZelavisProjectPlacementAuthority | undefined;
-  /** Durable Platform ownership. When set, plans alone never authorize start. */
-  authoritativePlacement?: ProjectPlacementAuthority;
-  /**
-   * Which node this host is, and how to reach the others.
-   *
-   * Resolved lazily for the same reason as `placement`. Absent on a host that
-   * models no nodes at all, which starts everything locally exactly as before.
-   */
-  dispatch?: () => ZelavisProjectDispatcher | undefined;
-  /**
-   * Whether to reconcile as soon as the manager exists.
-   *
-   * A host that supplies `placement` must set this false and reconcile once
-   * composition finishes. Reconciliation runs once per manager, so a startup
-   * pass that fires before Fabric exists is not a late arrival — it is the only
-   * pass, and it would enforce nothing.
-   */
-  autoReconcile?: boolean;
-}): Promise<ZelavisProjectManager> {
-  const { store, projectRecipes, runtime } = options;
-  const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
-  const defaultRuntimeKind = normalizeRuntimeKind(
-    runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND,
-  );
-  if (!availableRuntimeKinds.includes(defaultRuntimeKind)) {
-    throw new ZelavisProjectValidationError(
-      `Default Project runtime kind "${defaultRuntimeKind}" is not available from driver "${runtime.name}".`,
-    );
-  }
-  const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
-  const placementSession = crypto.randomUUID();
-  const placementLeaseMs = 60_000;
-  const localPlacementNodeId = options.dispatch?.()?.localNodeId ?? "local";
-  const ownedPlacements = new Map<string, ProjectPlacementToken>();
-  const placementRenewal = options.authoritativePlacement
-    ? setInterval(() => {
-        void mapWithConcurrency(
-          [...ownedPlacements.values()],
-          startupConcurrency,
-          async (token) => {
-            const renewed = await options.authoritativePlacement!.renew(token, placementLeaseMs);
-            if (!renewed.granted) {
-              ownedPlacements.delete(token.projectId);
-              if (token.nodeId === localPlacementNodeId) {
-                await runtime.stop(token.projectId).catch(() => undefined);
-              }
-            } else if (token.nodeId !== localPlacementNodeId) {
-              await options.dispatch?.()?.dispatchLeaseFenced?.(renewed.placement);
+export interface ZelavisProjectManagerOptions {
+    store: ZelavisSystemStore;
+    projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+    runtime: ZelavisProjectRuntimeDriver;
+    resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
+    /**
+     * Other backends policy lets a new Project use, in administrator order:
+     * enabled, healthy and executable. Consulted only when the default cannot
+     * satisfy a recipe's required isolation, and only at creation — an existing
+     * Project's assignment is never changed by it.
+     */
+    resolveAlternativeRuntimeKinds?: () => Promise<readonly ZelavisProjectRuntimeKind[]>;
+    /**
+     * What a deployment backend advertises, for comparing with a recipe's locked
+     * isolation intent. Absent on a host with no backend registry, where any
+     * required intent is refused because nothing can prove it.
+     */
+    backendCapabilities?: (runtimeKind: ZelavisProjectRuntimeKind) => ZelavisDeploymentBackendCapabilities | undefined;
+    cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
+    /** Platform ingress follows durable lifecycle changes without altering recipe locks. */
+    synchronizeIngress?: (project: Readonly<ZelavisProjectRecord>) => Promise<ZelavisProjectPreview | undefined>;
+    /**
+     * Resolved lazily because Fabric is composed after the Project manager, and
+     * absent on a host with no Fabric — which reconciles exactly as it did
+     * before.
+     */
+    placement?: () => ZelavisProjectPlacementAuthority | undefined;
+    /** Durable Platform ownership. When set, plans alone never authorize start. */
+    authoritativePlacement?: ProjectPlacementAuthority;
+    /**
+     * Which node this host is, and how to reach the others.
+     *
+     * Resolved lazily for the same reason as `placement`. Absent on a host that
+     * models no nodes at all, which starts everything locally exactly as before.
+     */
+    dispatch?: () => ZelavisProjectDispatcher | undefined;
+    /**
+     * Whether to reconcile as soon as the manager exists.
+     *
+     * A host that supplies `placement` must set this false and reconcile once
+     * composition finishes. Reconciliation runs once per manager, so a startup
+     * pass that fires before Fabric exists is not a late arrival — it is the only
+     * pass, and it would enforce nothing.
+     */
+    autoReconcile?: boolean;
+}
+
+const makeProjectManager = Effect.fn("Projects.make")(function* (options: ZelavisProjectManagerOptions): Effect.fn.Return<ZelavisProjectManager, TaggedFailure> {
+    let closing = false;
+    const lifecycleScope = Scope.makeUnsafe("parallel");
+    const { projectRecipes, runtime } = options;
+    const store = effectOperations(options.store);
+    const runtimeEffects = effectOperations(runtime, ["capabilities"]);
+    const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
+    const defaultRuntimeKind = yield* evaluate(() => normalizeRuntimeKind(runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND));
+    if (!availableRuntimeKinds.includes(defaultRuntimeKind)) {
+        return yield* Effect.fail(new ZelavisProjectValidationError(`Default Project runtime kind "${defaultRuntimeKind}" is not available from driver "${runtime.name}".`));
+    }
+    const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
+    const placementSession = crypto.randomUUID();
+    const placementLeaseMs = 60000;
+    const localPlacementNodeId = options.dispatch?.()?.localNodeId ?? "local";
+    const ownedPlacements = new Map<string, ProjectPlacementToken>();
+    function assessIsolation(descriptor: Readonly<ZelavisProjectDescriptor>): ZelavisProjectIsolationAssessment | undefined {
+        const intent = descriptor.recipe.isolation;
+        return intent
+            ? assessProjectIsolation(intent, descriptor.runtimeKind, options.backendCapabilities?.(descriptor.runtimeKind))
+            : undefined;
+    }
+    const selectRuntimeKind = Effect.fn("Projects.selectRuntimeKind")(function* (recipe: ZelavisProjectRecipeLock, defaultKind: ZelavisProjectRuntimeKind): Effect.fn.Return<ZelavisProjectRuntimeKind, TaggedFailure> {
+        const usable = (kind: ZelavisProjectRuntimeKind) => recipe.runtimeKinds.includes(kind) && availableRuntimeKinds.includes(kind);
+        const assess = (kind: ZelavisProjectRuntimeKind) => recipe.isolation
+            ? assessProjectIsolation(recipe.isolation, kind, options.backendCapabilities?.(kind))
+            : undefined;
+        const defaultAssessment = assess(defaultKind);
+        if (usable(defaultKind) && (!defaultAssessment || defaultAssessment.satisfied)) {
+            return defaultKind;
+        }
+        if (defaultAssessment && !defaultAssessment.satisfied && options.resolveAlternativeRuntimeKinds) {
+            for (const candidate of (yield* integration(() => options.resolveAlternativeRuntimeKinds!()))) {
+                const kind = yield* evaluate(() => normalizeRuntimeKind(candidate));
+                if (kind !== defaultKind && usable(kind) && assess(kind)?.satisfied) {
+                    return kind;
+                }
             }
-          },
-        ).catch(() => undefined);
-      }, placementLeaseMs / 3)
-    : undefined;
-  placementRenewal?.unref?.();
-
-  function assessIsolation(
-    descriptor: Readonly<ZelavisProjectDescriptor>,
-  ): ZelavisProjectIsolationAssessment | undefined {
-    const intent = descriptor.recipe.isolation;
-    return intent
-      ? assessProjectIsolation(
-          intent,
-          descriptor.runtimeKind,
-          options.backendCapabilities?.(descriptor.runtimeKind),
-        )
-      : undefined;
-  }
-
-  /**
-   * Chooses the backend for a new Project.
-   *
-   * The administrator's default, unless the recipe requires isolation it cannot
-   * provide; then the first alternative policy allows that satisfies every
-   * required item. Never a backend policy has not enabled, never a weaker one,
-   * and with no satisfying backend the default's shortfall is the refusal.
-   */
-  async function selectRuntimeKind(
-    recipe: ZelavisProjectRecipeLock,
-    defaultKind: ZelavisProjectRuntimeKind,
-  ): Promise<ZelavisProjectRuntimeKind> {
-    const usable = (kind: ZelavisProjectRuntimeKind) =>
-      recipe.runtimeKinds.includes(kind) && availableRuntimeKinds.includes(kind);
-    const assess = (kind: ZelavisProjectRuntimeKind) =>
-      recipe.isolation
-        ? assessProjectIsolation(recipe.isolation, kind, options.backendCapabilities?.(kind))
-        : undefined;
-    const defaultAssessment = assess(defaultKind);
-    if (usable(defaultKind) && (!defaultAssessment || defaultAssessment.satisfied)) {
-      return defaultKind;
-    }
-    if (defaultAssessment && !defaultAssessment.satisfied && options.resolveAlternativeRuntimeKinds) {
-      for (const candidate of await options.resolveAlternativeRuntimeKinds()) {
-        const kind = normalizeRuntimeKind(candidate);
-        if (kind !== defaultKind && usable(kind) && assess(kind)?.satisfied) {
-          return kind;
         }
-      }
-    }
-    if (!recipe.runtimeKinds.includes(defaultKind)) {
-      throw new ZelavisProjectValidationError(
-        `Project recipe "${recipe.name}" does not support the "${defaultKind}" runtime. Supported runtimes: ${recipe.runtimeKinds.join(", ")}.`,
-      );
-    }
-    if (!availableRuntimeKinds.includes(defaultKind)) {
-      throw new ZelavisProjectValidationError(
-        `Project runtime "${defaultKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`,
-      );
-    }
-    throw new ZelavisProjectIsolationError(
-      `Project recipe "${recipe.name}"`,
-      defaultAssessment!,
-    );
-  }
-
-  /** The refusal for a Project whose required isolation is not proven. */
-  function isolationRefusal(
-    project: Readonly<ZelavisProjectDescriptor>,
-  ): ZelavisProjectIsolationError | undefined {
-    const assessment = assessIsolation(project);
-    return assessment && !assessment.satisfied
-      ? new ZelavisProjectIsolationError(`Project "${project.id}"`, assessment)
-      : undefined;
-  }
-  let closing = false;
-  let reconciliationPromise: Promise<void> | undefined;
-  let closePromise: Promise<void> | undefined;
-  const deletionPromises = new Map<string, Promise<boolean>>();
-  const cleanupParticipants = [
-    // Owned Projects go before the host-supplied participants: a Project's own
-    // runtime data must outlive the things that depend on it until they are
-    // gone, and an owned runtime is only removable while its owner still
-    // exists to describe it.
-    {
-      id: OWNED_PROJECTS_CLEANUP_PARTICIPANT,
-      cleanup: async (project: Readonly<ZelavisProjectRecord>) => {
-        const owned = await manager.listOwned(project.id);
-        // Sequential, not concurrent: each removal is itself a durable,
-        // resumable lifecycle, and a partial failure must leave a state the
-        // next reconciliation can continue from.
-        for (const child of owned) {
-          await manager.remove(child.id);
+        if (!recipe.runtimeKinds.includes(defaultKind)) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipe.name}" does not support the "${defaultKind}" runtime. Supported runtimes: ${recipe.runtimeKinds.join(", ")}.`));
         }
-      },
-    },
-    ...(options.cleanupParticipants ?? []),
-    {
-      id: RUNTIME_DATA_CLEANUP_PARTICIPANT,
-      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-        runtime.destroy(project.id),
-    },
-  ].map((participant) => ({
-    ...participant,
-    id: normalizeCleanupParticipantId(participant.id),
-  }));
-  const cleanupParticipantIds = new Set<string>();
-  for (const participant of cleanupParticipants) {
-    if (cleanupParticipantIds.has(participant.id)) {
-      throw new ZelavisProjectValidationError(
-        `Duplicate Project cleanup participant "${participant.id}".`,
-      );
+        if (!availableRuntimeKinds.includes(defaultKind)) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Project runtime "${defaultKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`));
+        }
+        return yield* Effect.fail(new ZelavisProjectIsolationError(`Project recipe "${recipe.name}"`, defaultAssessment!));
+    });
+    /** The refusal for a Project whose required isolation is not proven. */
+    function isolationRefusal(project: Readonly<ZelavisProjectDescriptor>): ZelavisProjectIsolationError | undefined {
+        const assessment = assessIsolation(project);
+        return assessment && !assessment.satisfied
+            ? new ZelavisProjectIsolationError(`Project "${project.id}"`, assessment)
+            : undefined;
     }
-    cleanupParticipantIds.add(participant.id);
-  }
-
-  // Frontends are recipes too. A frontend is a Project like any other — it
-  // gets a directory, a lifecycle, logs, and a routed target — and differs only
-  // in what it runs and in being owned by the Project it fronts. Excluding it
-  // here is what made an installed frontend package unselectable.
-  const projectRecipeMap = new Map(
-    projectRecipes
-      .filter(
-        (entry) =>
-          entry.service.kind === "app" || entry.service.kind === "frontend",
-      )
-      .flatMap((entry) => [
+    const reconciliationRuns = new Map<string, Deferred.Deferred<void, TaggedFailure>>();
+    const closeRuns = new Map<string, Deferred.Deferred<void, TaggedFailure>>();
+    const deletionRuns = new Map<string, Deferred.Deferred<boolean, TaggedFailure>>();
+    const cleanupParticipants = [
+        // Owned Projects go before the host-supplied participants: a Project's own
+        // runtime data must outlive the things that depend on it until they are
+        // gone, and an owned runtime is only removable while its owner still
+        // exists to describe it.
+        {
+            id: OWNED_PROJECTS_CLEANUP_PARTICIPANT,
+            cleanup: Effect.fn("Projects.transition")(function* (project: Readonly<ZelavisProjectRecord>) {
+                const owned = yield* manager.listOwned(project.id);
+                // Sequential, not concurrent: each removal is itself a durable,
+                // resumable lifecycle, and a partial failure must leave a state the
+                // next reconciliation can continue from.
+                for (const child of owned) {
+                    yield* manager.remove(child.id);
+                }
+            }),
+        },
+        ...(options.cleanupParticipants ?? []).map(participant => ({ ...participant, cleanup: effectOperations(participant).cleanup })),
+        {
+            id: RUNTIME_DATA_CLEANUP_PARTICIPANT,
+            cleanup: (project: Readonly<ZelavisProjectRecord>) => runtimeEffects.destroy(project.id),
+        },
+    ].map((participant) => ({
+        ...participant,
+        id: normalizeCleanupParticipantId(participant.id),
+    }));
+    const cleanupParticipantIds = new Set<string>();
+    for (const participant of cleanupParticipants) {
+        if (cleanupParticipantIds.has(participant.id)) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Duplicate Project cleanup participant "${participant.id}".`));
+        }
+        cleanupParticipantIds.add(participant.id);
+    }
+    // Frontends are recipes too. A frontend is a Project like any other — it
+    // gets a directory, a lifecycle, logs, and a routed target — and differs only
+    // in what it runs and in being owned by the Project it fronts. Excluding it
+    // here is what made an installed frontend package unselectable.
+    const projectRecipeMap = new Map(projectRecipes
+        .filter((entry) => entry.service.kind === "app" || entry.service.kind === "frontend")
+        .flatMap((entry) => [
         [entry.service.name, entry] as const,
         ...(entry.specifier ? [[entry.specifier, entry] as const] : []),
-      ]),
-  );
-
-  /**
-   * The Project kind a recipe produces.
-   *
-   * A frontend recipe always produces a `frontend` Project, whatever the
-   * package is called: the runtime driver routes on that kind to decide whether
-   * to run a frontend process, so deriving it from the package name would send
-   * `@acme/theme` to the Zelavis runner.
-   */
-  function projectKindForRecipe(recipeName: string): ZelavisProjectKind {
-    return projectRecipeMap.get(recipeName)?.service.kind === "frontend"
-      ? "frontend"
-      : projectKindFromRecipe(recipeName);
-  }
-
-  function recipeStatusOf(recipe: ZelavisProjectRecipeLock): ZelavisProjectRecipeStatus {
-    const shipped = projectRecipeMap.get(recipe.name);
-    if (!shipped) {
-      return {
-        state: "unavailable",
-        reason: `This Platform ships no recipe named "${recipe.name}".`,
-      };
+    ]));
+    /**
+     * The Project kind a recipe produces.
+     *
+     * A frontend recipe always produces a `frontend` Project, whatever the
+     * package is called: the runtime driver routes on that kind to decide whether
+     * to run a frontend process, so deriving it from the package name would send
+     * `@acme/theme` to the Zelavis runner.
+     */
+    function projectKindForRecipe(recipeName: string): ZelavisProjectKind {
+        return projectRecipeMap.get(recipeName)?.service.kind === "frontend"
+            ? "frontend"
+            : projectKindFromRecipe(recipeName);
     }
-    const version = shipped.service.version;
-    return version && version !== recipe.version
-      ? { state: "upgradeAvailable", version }
-      : { state: "current" };
-  }
-
-  function readStoredRecipeHistory(raw: Record<string, unknown>): ZelavisProjectRecipeUpgrade[] {
-    if (!Array.isArray(raw.recipeHistory)) return [];
-    return raw.recipeHistory.flatMap((entry): ZelavisProjectRecipeUpgrade[] => {
-      const item = entry as { from?: { name?: unknown; version?: unknown }; upgradedAt?: unknown };
-      return typeof item?.from?.name === "string" && typeof item.from.version === "string" &&
-        typeof item.upgradedAt === "string"
-        ? [{ from: { name: item.from.name, version: item.from.version }, upgradedAt: item.upgradedAt }]
-        : [];
-    }).slice(-10);
-  }
-
-  function normalizeStoredProject(value: ZelavisSystemStoreValue): {
-    project: ZelavisProjectRecord;
-    repaired: boolean;
-  } {
-    const rawProject = parseStoredProject(value);
-    const rawRecord = rawProject as unknown as Record<string, unknown>;
-    const storedRecipe = readStoredRecipeLock(rawRecord);
-    const deletion = readStoredDeletionState(rawRecord);
-    const recipe = storedRecipe;
-    const storedOwner =
-      typeof (rawProject as { ownerProjectId?: unknown }).ownerProjectId === "string"
-        ? ((rawProject as { ownerProjectId: string }).ownerProjectId)
-        : undefined;
-    const descriptor: ZelavisProjectDescriptor = {
-      id: rawProject.id,
-      name: rawProject.name,
-      kind: rawProject.kind || projectKindForRecipe(recipe.name),
-      recipe,
-      // Ownership must survive a restart. Dropping it here would orphan every
-      // owned runtime, because deletion reaches them through their owner.
-      ...(storedOwner ? { ownerProjectId: storedOwner } : {}),
-      runtimeKind: rawRecord.runtimeKind === undefined
-        ? DEFAULT_RUNTIME_KIND
-        : normalizeRuntimeKind(rawRecord.runtimeKind),
-    };
-    const capabilities = runtime.capabilities(descriptor);
-    const isolation = assessIsolation(descriptor);
-    const history = readStoredRecipeHistory(rawRecord);
-    const project: ZelavisProjectRecord = {
-      ...descriptor,
-      recipeStatus: recipeStatusOf(recipe),
-      ...(history.length ? { recipeHistory: history } : {}),
-      capabilities,
-      ...(isolation ? { isolation } : {}),
-      desiredState: rawProject.desiredState,
-      runtime:
-        rawProject.runtime?.driver && rawProject.runtime.status
-          ? rawProject.runtime
-          : {
-              driver: runtime.name,
-              status: "stopped",
+    function recipeStatusOf(recipe: ZelavisProjectRecipeLock): ZelavisProjectRecipeStatus {
+        const shipped = projectRecipeMap.get(recipe.name);
+        if (!shipped) {
+            return {
+                state: "unavailable",
+                reason: `This Platform ships no recipe named "${recipe.name}".`,
+            };
+        }
+        const version = shipped.service.version;
+        return version && version !== recipe.version
+            ? { state: "upgradeAvailable", version }
+            : { state: "current" };
+    }
+    function readStoredRecipeHistory(raw: Record<string, unknown>): ZelavisProjectRecipeUpgrade[] {
+        if (!Array.isArray(raw.recipeHistory))
+            return [];
+        return raw.recipeHistory.flatMap((entry): ZelavisProjectRecipeUpgrade[] => {
+            const item = entry as {
+                from?: {
+                    name?: unknown;
+                    version?: unknown;
+                };
+                upgradedAt?: unknown;
+            };
+            return typeof item?.from?.name === "string" && typeof item.from.version === "string" &&
+                typeof item.upgradedAt === "string"
+                ? [{ from: { name: item.from.name, version: item.from.version }, upgradedAt: item.upgradedAt }]
+                : [];
+        }).slice(-10);
+    }
+    function normalizeStoredProject(value: ZelavisSystemStoreValue): {
+        project: ZelavisProjectRecord;
+        repaired: boolean;
+    } {
+        const rawProject = parseStoredProject(value);
+        const rawRecord = rawProject as unknown as Record<string, unknown>;
+        const storedRecipe = readStoredRecipeLock(rawRecord);
+        const deletion = readStoredDeletionState(rawRecord);
+        const recipe = storedRecipe;
+        const storedOwner = typeof (rawProject as {
+            ownerProjectId?: unknown;
+        }).ownerProjectId === "string"
+            ? ((rawProject as {
+                ownerProjectId: string;
+            }).ownerProjectId)
+            : undefined;
+        const descriptor: ZelavisProjectDescriptor = {
+            id: rawProject.id,
+            name: rawProject.name,
+            kind: rawProject.kind || projectKindForRecipe(recipe.name),
+            recipe,
+            // Ownership must survive a restart. Dropping it here would orphan every
+            // owned runtime, because deletion reaches them through their owner.
+            ...(storedOwner ? { ownerProjectId: storedOwner } : {}),
+            runtimeKind: rawRecord.runtimeKind === undefined
+                ? DEFAULT_RUNTIME_KIND
+                : normalizeRuntimeKind(rawRecord.runtimeKind),
+        };
+        const capabilities = runtime.capabilities(descriptor);
+        const isolation = assessIsolation(descriptor);
+        const history = readStoredRecipeHistory(rawRecord);
+        const project: ZelavisProjectRecord = {
+            ...descriptor,
+            recipeStatus: recipeStatusOf(recipe),
+            ...(history.length ? { recipeHistory: history } : {}),
+            capabilities,
+            ...(isolation ? { isolation } : {}),
+            desiredState: rawProject.desiredState,
+            runtime: rawProject.runtime?.driver && rawProject.runtime.status
+                ? rawProject.runtime
+                : {
+                    driver: runtime.name,
+                    status: "stopped",
+                },
+            ...(deletion ? { deletion } : {}),
+            ...(rawProject.placement ? { placement: rawProject.placement } : {}),
+            createdAt: rawProject.createdAt,
+            updatedAt: rawProject.updatedAt,
+        };
+        return {
+            project,
+            repaired: JSON.stringify(rawRecord.recipe) !== JSON.stringify(recipe) ||
+                rawRecord.app !== undefined ||
+                rawRecord.runtimeKind !== project.runtimeKind ||
+                rawProject.kind !== project.kind ||
+                JSON.stringify(rawRecord.capabilities) !==
+                    JSON.stringify(capabilities) ||
+                JSON.stringify(rawRecord.isolation) !== JSON.stringify(isolation) ||
+                rawProject.runtime !== project.runtime,
+        };
+    }
+    const read = Effect.fn("Projects.read")(function* (id: string): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
+        const record = yield* store.get(PROJECTS_NAMESPACE, (yield* evaluate(() => normalizeProjectId(id))));
+        if (!record) {
+            return undefined;
+        }
+        const { project, repaired } = yield* evaluate(() => normalizeStoredProject(record.value));
+        if (repaired) {
+            yield* write(project);
+        }
+        return project;
+    });
+    /**
+     * Serializes lifecycle transitions per Project.
+     *
+     * Start, stop, restart, and delete each read the record, mutate the child
+     * process, and write the result back. Interleaving two of them lets a stale
+     * write land after a newer one — starting a process during cleanup, or
+     * leaving the System Store disagreeing with the actual child.
+     *
+     * This orders operations within one Platform process. Coordinating multiple
+     * Platform writers additionally needs System Store compare-and-set on a
+     * transition generation, which is tracked in `TODO.md`.
+     */
+    const withProjectLifecycle = lifecycleGate();
+    const write = Effect.fn("Projects.write")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
+        const { preview: _preview, ...record } = project;
+        yield* store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(record));
+        return yield* ingressView(record);
+    });
+    const ingressView = Effect.fn("Projects.ingressView")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
+        return yield* Effect.catch(Effect.gen(function* () {
+            const preview = (yield* integration(() => options.synchronizeIngress?.(project)));
+            return preview ? { ...project, preview } : project;
+        }), Effect.fn("Projects.recover")(function* (_error) {
+            // Ingress failure is independent of the runtime's durable lifecycle.
+            return { ...project, preview: { status: "unavailable" as const, error: "Site preview ingress is unavailable." } };
+        }));
+    });
+    const requireProject = Effect.fn("Projects.requireProject")(function* (id: string): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
+        const project = yield* read(id);
+        if (!project) {
+            return yield* Effect.fail(new ZelavisProjectNotFoundError(`Project "${id}" was not found.`));
+        }
+        return project;
+    });
+    function assertProjectIsOperable(project: ZelavisProjectRecord, operation: string): void {
+        if (project.deletion) {
+            throw new ZelavisProjectConflictError(`Project "${project.id}" is pending deletion and cannot be ${operation}. Retry deletion instead.`);
+        }
+    }
+    const refresh = Effect.fn("Projects.refresh")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
+        if (project.runtime.status === "provisioning" || project.deletion) {
+            return project;
+        }
+        const snapshot = yield* runtimeEffects.status(project.id);
+        // A start that failed before any process existed (a recipe that cannot be
+        // prepared, a refused placement) leaves the driver with nothing to report.
+        // "Nothing running" must not erase the reason: the failure stays until the
+        // next lifecycle action replaces it.
+        if (project.runtime.status === "failed" &&
+            project.runtime.error &&
+            snapshot.status === "stopped" &&
+            !snapshot.error) {
+            return project;
+        }
+        const unchanged = snapshot.status === project.runtime.status &&
+            snapshot.url === project.runtime.url &&
+            snapshot.error === project.runtime.error;
+        return yield* (unchanged ? ingressView(project) : write(applySnapshot(project, snapshot)));
+    });
+    const deleteProject = Effect.fn("Projects.deleteProject")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
+        const existingProject = yield* read(id);
+        if (!existingProject) {
+            return false;
+        }
+        let project: ZelavisProjectRecord = existingProject;
+        const startedAt = project.deletion?.startedAt ?? new Date().toISOString();
+        const completedParticipants = new Set(project.deletion?.completedParticipants ?? []);
+        const plannedParticipants = [
+            ...new Set([
+                ...(project.deletion?.participants ?? []).filter((id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT),
+                ...cleanupParticipants
+                    .map((participant) => participant.id)
+                    .filter((id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT),
+            ]),
+            RUNTIME_DATA_CLEANUP_PARTICIPANT,
+        ];
+        let participantId = "runtime-stop";
+        project = (yield* write({
+            ...project,
+            desiredState: "stopped",
+            runtime: {
+                driver: runtime.name,
+                status: "stopping",
             },
-      ...(deletion ? { deletion } : {}),
-      ...(rawProject.placement ? { placement: rawProject.placement } : {}),
-      createdAt: rawProject.createdAt,
-      updatedAt: rawProject.updatedAt,
-    };
-
-    return {
-      project,
-      repaired:
-        JSON.stringify(rawRecord.recipe) !== JSON.stringify(recipe) ||
-        rawRecord.app !== undefined ||
-        rawRecord.runtimeKind !== project.runtimeKind ||
-        rawProject.kind !== project.kind ||
-        JSON.stringify(rawRecord.capabilities) !==
-          JSON.stringify(capabilities) ||
-        JSON.stringify(rawRecord.isolation) !== JSON.stringify(isolation) ||
-        rawProject.runtime !== project.runtime,
-    };
-  }
-
-  async function read(id: string): Promise<ZelavisProjectRecord | undefined> {
-    const record = await store.get(PROJECTS_NAMESPACE, normalizeProjectId(id));
-    if (!record) {
-      return undefined;
-    }
-
-    const { project, repaired } = normalizeStoredProject(record.value);
-    if (repaired) {
-      await write(project);
-    }
-    return project;
-  }
-
-  /**
-   * Serializes lifecycle transitions per Project.
-   *
-   * Start, stop, restart, and delete each read the record, mutate the child
-   * process, and write the result back. Interleaving two of them lets a stale
-   * write land after a newer one — starting a process during cleanup, or
-   * leaving the System Store disagreeing with the actual child.
-   *
-   * This orders operations within one Platform process. Coordinating multiple
-   * Platform writers additionally needs System Store compare-and-set on a
-   * transition generation, which is tracked in `TODO.md`.
-   */
-  const lifecycleQueues = new Map<string, Promise<unknown>>();
-
-  function withProjectLifecycle<T>(
-    projectId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    const previous = lifecycleQueues.get(projectId) ?? Promise.resolve();
-    // Run regardless of how the previous operation settled: one failure must
-    // not wedge the queue for this Project.
-    const result = previous.then(operation, operation);
-    const tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    lifecycleQueues.set(projectId, tail);
-    void tail.then(() => {
-      // Drop the entry only if nothing queued behind us, so the map does not
-      // grow without bound.
-      if (lifecycleQueues.get(projectId) === tail) {
-        lifecycleQueues.delete(projectId);
-      }
-    });
-    return result;
-  }
-
-  async function write(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
-    const { preview: _preview, ...record } = project;
-    await store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(record));
-    return ingressView(record);
-  }
-
-  async function ingressView(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
-    try {
-      const preview = await options.synchronizeIngress?.(project);
-      return preview ? { ...project, preview } : project;
-    } catch {
-      // Ingress failure is independent of the runtime's durable lifecycle.
-      return { ...project, preview: { status: "unavailable", error: "Site preview ingress is unavailable." } };
-    }
-  }
-
-  async function requireProject(id: string): Promise<ZelavisProjectRecord> {
-    const project = await read(id);
-    if (!project) {
-      throw new ZelavisProjectNotFoundError(`Project "${id}" was not found.`);
-    }
-    return project;
-  }
-
-  function assertProjectIsOperable(
-    project: ZelavisProjectRecord,
-    operation: string,
-  ): void {
-    if (project.deletion) {
-      throw new ZelavisProjectConflictError(
-        `Project "${project.id}" is pending deletion and cannot be ${operation}. Retry deletion instead.`,
-      );
-    }
-  }
-
-  async function refresh(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
-    if (project.runtime.status === "provisioning" || project.deletion) {
-      return project;
-    }
-
-    const snapshot = await runtime.status(project.id);
-    // A start that failed before any process existed (a recipe that cannot be
-    // prepared, a refused placement) leaves the driver with nothing to report.
-    // "Nothing running" must not erase the reason: the failure stays until the
-    // next lifecycle action replaces it.
-    if (
-      project.runtime.status === "failed" &&
-      project.runtime.error &&
-      snapshot.status === "stopped" &&
-      !snapshot.error
-    ) {
-      return project;
-    }
-    const unchanged =
-      snapshot.status === project.runtime.status &&
-      snapshot.url === project.runtime.url &&
-      snapshot.error === project.runtime.error;
-    return unchanged ? ingressView(project) : write(applySnapshot(project, snapshot));
-  }
-
-  async function deleteProject(id: string): Promise<boolean> {
-    const existingProject = await read(id);
-    if (!existingProject) {
-      return false;
-    }
-    let project: ZelavisProjectRecord = existingProject;
-
-    const startedAt = project.deletion?.startedAt ?? new Date().toISOString();
-    const completedParticipants = new Set(
-      project.deletion?.completedParticipants ?? [],
-    );
-    const plannedParticipants = [
-      ...new Set([
-        ...(project.deletion?.participants ?? []).filter(
-          (id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT,
-        ),
-        ...cleanupParticipants
-          .map((participant) => participant.id)
-          .filter((id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT),
-      ]),
-      RUNTIME_DATA_CLEANUP_PARTICIPANT,
-    ];
-    let participantId = "runtime-stop";
-
-    project = await write({
-      ...project,
-      desiredState: "stopped",
-      runtime: {
-        driver: runtime.name,
-        status: "stopping",
-      },
-      deletion: {
-        status: "running",
-        startedAt,
-        updatedAt: new Date().toISOString(),
-        participants: plannedParticipants,
-        completedParticipants: [...completedParticipants],
-        currentParticipant: participantId,
-      },
-      updatedAt: new Date().toISOString(),
-    });
-
-    try {
-      const stopped = await stopPlacedRuntime(project.id);
-      project = await write({
-        ...applySnapshot(project, stopped),
-        deletion: {
-          status: "running",
-          startedAt,
-          updatedAt: new Date().toISOString(),
-          participants: plannedParticipants,
-          completedParticipants: [...completedParticipants],
-        },
-      });
-
-      for (const plannedId of plannedParticipants) {
-        if (
-          !completedParticipants.has(plannedId) &&
-          !cleanupParticipantIds.has(plannedId)
-        ) {
-          participantId = plannedId;
-          throw new Error(
-            `Required Project cleanup participant "${plannedId}" is unavailable.`,
-          );
-        }
-      }
-
-      for (const participant of cleanupParticipants) {
-        if (completedParticipants.has(participant.id)) {
-          continue;
-        }
-        participantId = participant.id;
-        project = await write({
-          ...project,
-          deletion: {
-            status: "running",
-            startedAt,
+            deletion: {
+                status: "running",
+                startedAt,
+                updatedAt: new Date().toISOString(),
+                participants: plannedParticipants,
+                completedParticipants: [...completedParticipants],
+                currentParticipant: participantId,
+            },
             updatedAt: new Date().toISOString(),
-            participants: plannedParticipants,
-            completedParticipants: [...completedParticipants],
-            currentParticipant: participant.id,
-          },
-          updatedAt: new Date().toISOString(),
-        });
-        await participant.cleanup(project);
-        completedParticipants.add(participant.id);
-        project = await write({
-          ...project,
-          deletion: {
-            status: "running",
-            startedAt,
+        }));
+        return yield* Effect.catch(Effect.gen(function* () {
+            const stopped = (yield* stopPlacedRuntime(project.id));
+            project = (yield* write({
+                ...applySnapshot(project, stopped),
+                deletion: {
+                    status: "running",
+                    startedAt,
+                    updatedAt: new Date().toISOString(),
+                    participants: plannedParticipants,
+                    completedParticipants: [...completedParticipants],
+                },
+            }));
+            for (const plannedId of plannedParticipants) {
+                if (!completedParticipants.has(plannedId) &&
+                    !cleanupParticipantIds.has(plannedId)) {
+                    participantId = plannedId;
+                    return (yield* new IntegrationFailure(new Error(`Required Project cleanup participant "${plannedId}" is unavailable.`)));
+                }
+            }
+            for (const participant of cleanupParticipants) {
+                if (completedParticipants.has(participant.id)) {
+                    continue;
+                }
+                participantId = participant.id;
+                project = (yield* write({
+                    ...project,
+                    deletion: {
+                        status: "running",
+                        startedAt,
+                        updatedAt: new Date().toISOString(),
+                        participants: plannedParticipants,
+                        completedParticipants: [...completedParticipants],
+                        currentParticipant: participant.id,
+                    },
+                    updatedAt: new Date().toISOString(),
+                }));
+                yield* participant.cleanup(project);
+                completedParticipants.add(participant.id);
+                project = (yield* write({
+                    ...project,
+                    deletion: {
+                        status: "running",
+                        startedAt,
+                        updatedAt: new Date().toISOString(),
+                        participants: plannedParticipants,
+                        completedParticipants: [...completedParticipants],
+                    },
+                    updatedAt: new Date().toISOString(),
+                }));
+            }
+            participantId = "project-record";
+            const deleted = (yield* store.delete(PROJECTS_NAMESPACE, project.id));
+            if (!deleted && ((yield* read(project.id)))) {
+                return (yield* new IntegrationFailure(new Error("The Platform System Store did not delete the Project record.")));
+            }
+            return true;
+        }), Effect.fn("Projects.recover")(function* (error) {
+            const failedAt = new Date().toISOString();
+            const failureSnapshot = (yield* Effect.catch(runtimeEffects.status(project.id), Effect.fn("Projects.recover")(function* () { return ({
+                status: project.runtime.status === "stopping"
+                    ? ("failed" as const)
+                    : project.runtime.status,
+                ...(project.runtime.url ? { url: project.runtime.url } : {}),
+                ...(project.runtime.startedAt
+                    ? { startedAt: project.runtime.startedAt }
+                    : {}),
+                ...(project.runtime.stoppedAt
+                    ? { stoppedAt: project.runtime.stoppedAt }
+                    : {}),
+            }); })));
+            const failedProject: ZelavisProjectRecord = {
+                ...project,
+                desiredState: "stopped",
+                runtime: {
+                    driver: runtime.name,
+                    ...failureSnapshot,
+                },
+                deletion: {
+                    status: "failed",
+                    startedAt,
+                    updatedAt: failedAt,
+                    participants: plannedParticipants,
+                    completedParticipants: [...completedParticipants],
+                    currentParticipant: participantId,
+                    error: error instanceof Error ? error.message : String(error),
+                },
+                updatedAt: failedAt,
+            };
+            (yield* Effect.catch(write(failedProject), Effect.fn("Projects.recover")(function* () { return undefined; })));
+            return (yield* Effect.fail(new ZelavisProjectDeletionError({
+                projectId: project.id,
+                participantId,
+                cause: unwrapFailure(error),
+            })));
+        })).pipe(Effect.onErrorIf(Cause.hasInterrupts, () => write({
+            ...project,
+            desiredState: "stopped",
+            deletion: { status: "failed", startedAt, updatedAt: new Date().toISOString(),
+                participants: plannedParticipants, completedParticipants: [...completedParticipants],
+                currentParticipant: participantId, error: "Deletion was interrupted. Retry deletion to continue cleanup." },
             updatedAt: new Date().toISOString(),
-            participants: plannedParticipants,
-            completedParticipants: [...completedParticipants],
-          },
-          updatedAt: new Date().toISOString(),
-        });
-      }
-
-      participantId = "project-record";
-      const deleted = await store.delete(PROJECTS_NAMESPACE, project.id);
-      if (!deleted && (await read(project.id))) {
-        throw new Error("The Platform System Store did not delete the Project record.");
-      }
-      return true;
-    } catch (error) {
-      const failedAt = new Date().toISOString();
-      const failureSnapshot = await runtime.status(project.id).catch(() => ({
-        status: project.runtime.status === "stopping"
-          ? ("failed" as const)
-          : project.runtime.status,
-        ...(project.runtime.url ? { url: project.runtime.url } : {}),
-        ...(project.runtime.startedAt
-          ? { startedAt: project.runtime.startedAt }
-          : {}),
-        ...(project.runtime.stoppedAt
-          ? { stoppedAt: project.runtime.stoppedAt }
-          : {}),
-      }));
-      const failedProject: ZelavisProjectRecord = {
-        ...project,
-        desiredState: "stopped",
-        runtime: {
-          driver: runtime.name,
-          ...failureSnapshot,
-        },
-        deletion: {
-          status: "failed",
-          startedAt,
-          updatedAt: failedAt,
-          participants: plannedParticipants,
-          completedParticipants: [...completedParticipants],
-          currentParticipant: participantId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        updatedAt: failedAt,
-      };
-      await write(failedProject).catch(() => undefined);
-      throw new ZelavisProjectDeletionError({
-        projectId: project.id,
-        participantId,
-        cause: error,
-      });
-    }
-  }
-
-  /**
-   * What the planner says about every desired-running Project.
-   *
-   * Every one is planned together, because an owned Project can only be judged
-   * against an owner the planner can see — planning one at a time would report
-   * every owner as absent and refuse everything.
-   *
-   * A host with no placement authority decides nothing here, which is how a
-   * single-node installation behaves today and should keep behaving. So does a
-   * planner that fails: the result is empty, and reconciliation starts what it
-   * would have started anyway. Fabric being down is not a reason to leave an
-   * installation stopped.
-   */
-  async function resolvePlacementDecisions(
-    records: readonly { value: ZelavisSystemStoreValue }[],
-    planOptions: { readonly alsoPlan?: string } = {},
-  ): Promise<{
-    /** Left stopped: no node may run it, whatever this host does. */
-    readonly blocked: ReadonlySet<string>;
-    /** Placed on another node, mapped to the node that owns it. */
-    readonly elsewhere: ReadonlyMap<string, string>;
-  }> {
-    const empty = { blocked: new Set<string>(), elsewhere: new Map<string, string>() };
-    const authority = options.placement?.();
-    if (!authority) {
-      if (options.authoritativePlacement) {
-        throw new ZelavisProjectValidationError("Platform Fabric planning is unavailable.");
-      }
-      return empty;
-    }
-
-    const requests: FabricProjectPlacementRequest[] = [];
-    for (const record of records) {
-      const { project } = normalizeStoredProject(record.value);
-      if (project.deletion) continue;
-      if (
-        project.desiredState !== "running" &&
-        project.id !== planOptions.alsoPlan
-      ) {
-        continue;
-      }
-
-      requests.push({
-        identity: {
-          scopeId: "platform",
-          workloadId: project.id,
-          type: "project",
-        },
-        projectKind: project.kind,
-        capabilities: { statelessRuntimeReplicas: false },
-        ...(project.ownerProjectId
-          ? { ownerProjectId: project.ownerProjectId }
-          : {}),
-      });
-    }
-
-    const localNodeId = options.authoritativePlacement
-      ? localPlacementNodeId
-      : options.dispatch?.()?.localNodeId;
-
-    // Nothing owns anything and this host does not know which node it is, so
-    // there is no group to violate and no assignment to compare against.
-    if (!localNodeId && !requests.some((request) => request.ownerProjectId) &&
-        !options.authoritativePlacement) {
-      return empty;
-    }
-
-    const plan = await authority
-      .planProjectPlacements(requests)
-      .catch(() => undefined);
-    if (!plan) return options.authoritativePlacement
-      ? { blocked: new Set(requests.map((request) => request.identity.workloadId)), elsewhere: new Map() }
-      : empty;
-
-    const blocked = new Set<string>();
-    for (const replica of plan.unplaced) {
-      if (options.authoritativePlacement || BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {
-        blocked.add(replica.identity.workloadId);
-      }
-    }
-
-    const elsewhere = new Map<string, string>();
-    for (const replica of plan.replicas) {
-      const projectId = replica.identity.workloadId;
-      let nodeId = replica.runtimeNodeId;
-      if (options.authoritativePlacement) {
-        const committed = await ensureCommittedPlacement(projectId, nodeId);
-        if (!committed) {
-          blocked.add(projectId);
-          continue;
-        }
-        nodeId = committed.nodeId;
-      }
-      if (localNodeId && nodeId !== localNodeId) {
-        elsewhere.set(projectId, nodeId);
-      }
-    }
-
-    return { blocked, elsewhere };
-  }
-
-  /**
-   * One claim per Project at a time. Startup reconciliation and a person's click
-   * can both ask for the same Project's placement at once; each would read the
-   * same epoch and both would try to take it, and the one that lost was reported
-   * as having no placement at all, though the winner was this very session.
-   * Asking again while a claim is in flight joins it.
-   */
-  const placementClaims = new Map<string, Promise<ProjectPlacementRecord | undefined>>();
-  function ensureCommittedPlacement(
-    projectId: string,
-    plannedNodeId: string,
-  ): Promise<ProjectPlacementRecord | undefined> {
-    const key = `${projectId}\u0000${plannedNodeId}`;
-    let claim = placementClaims.get(key);
-    if (!claim) {
-      claim = commitPlacement(projectId, plannedNodeId)
-        .finally(() => placementClaims.delete(key));
-      placementClaims.set(key, claim);
-    }
-    return claim;
-  }
-
-  async function commitPlacement(
-    projectId: string,
-    plannedNodeId: string,
-  ): Promise<ProjectPlacementRecord | undefined> {
-    const authority = options.authoritativePlacement;
-    if (!authority) return undefined;
-    const current = await authority.current(projectId);
-    if (current?.state === "active" && current.leaseExpiresAt > Date.now()) {
-      // An older Platform session still owns it. Wait for its expiry or an
-      // explicit stop; never start or redispatch a second copy.
-      if (current.ownerSession !== placementSession) return undefined;
-      const claim = {
-        projectId, nodeId: current.nodeId,
-        ownerSession: placementSession, epoch: current.epoch,
-      };
-      const renewed = await authority.renew(claim, placementLeaseMs);
-      if (!renewed.granted) return undefined;
-      ownedPlacements.set(projectId, claim);
-      return renewed.placement;
-    }
-    if (current?.state === "active" && current.ownerSession === placementSession &&
-        current.nodeId === localPlacementNodeId) {
-      await runtime.stop(projectId);
-    }
-    const activated = await authority.acquire({
-      projectId, nodeId: plannedNodeId, ownerSession: placementSession,
-      expectedEpoch: current?.epoch ?? 0, leaseMs: placementLeaseMs,
+        }).pipe(Effect.asVoid, Effect.orDie)));
     });
-    if (!activated.granted) return undefined;
-    ownedPlacements.set(projectId, {
-      projectId, nodeId: activated.placement.nodeId,
-      ownerSession: placementSession, epoch: activated.placement.epoch,
+    const resolvePlacementDecisions = Effect.fn("Projects.resolvePlacementDecisions")(function* (records: readonly {
+        value: ZelavisSystemStoreValue;
+    }[], planOptions: {
+        readonly alsoPlan?: string;
+    } = {}): Effect.fn.Return<{
+        /** Left stopped: no node may run it, whatever this host does. */
+        readonly blocked: ReadonlySet<string>;
+        /** Placed on another node, mapped to the node that owns it. */
+        readonly elsewhere: ReadonlyMap<string, string>;
+    }, TaggedFailure> {
+        const empty = { blocked: new Set<string>(), elsewhere: new Map<string, string>() };
+        const authority = options.placement?.();
+        if (!authority) {
+            if (options.authoritativePlacement) {
+                return yield* Effect.fail(new ZelavisProjectValidationError("Platform Fabric planning is unavailable."));
+            }
+            return empty;
+        }
+        const requests: FabricProjectPlacementRequest[] = [];
+        for (const record of records) {
+            const { project } = yield* evaluate(() => normalizeStoredProject(record.value));
+            if (project.deletion)
+                continue;
+            if (project.desiredState !== "running" &&
+                project.id !== planOptions.alsoPlan) {
+                continue;
+            }
+            requests.push({
+                identity: {
+                    scopeId: "platform",
+                    workloadId: project.id,
+                    type: "project",
+                },
+                projectKind: project.kind,
+                capabilities: { statelessRuntimeReplicas: false },
+                ...(project.ownerProjectId
+                    ? { ownerProjectId: project.ownerProjectId }
+                    : {}),
+            });
+        }
+        const localNodeId = options.authoritativePlacement
+            ? localPlacementNodeId
+            : options.dispatch?.()?.localNodeId;
+        // Nothing owns anything and this host does not know which node it is, so
+        // there is no group to violate and no assignment to compare against.
+        if (!localNodeId && !requests.some((request) => request.ownerProjectId) &&
+            !options.authoritativePlacement) {
+            return empty;
+        }
+        const plan = yield* Effect.catch(integration(() => authority
+            .planProjectPlacements(requests)), Effect.fn("Projects.recover")(function* () { return undefined; }));
+        if (!plan)
+            return options.authoritativePlacement
+                ? { blocked: new Set(requests.map((request) => request.identity.workloadId)), elsewhere: new Map() }
+                : empty;
+        const blocked = new Set<string>();
+        for (const replica of plan.unplaced) {
+            if (options.authoritativePlacement || BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {
+                blocked.add(replica.identity.workloadId);
+            }
+        }
+        const elsewhere = new Map<string, string>();
+        for (const replica of plan.replicas) {
+            const projectId = replica.identity.workloadId;
+            let nodeId = replica.runtimeNodeId;
+            if (options.authoritativePlacement) {
+                const committed = yield* ensureCommittedPlacement(projectId, nodeId);
+                if (!committed) {
+                    blocked.add(projectId);
+                    continue;
+                }
+                nodeId = committed.nodeId;
+            }
+            if (localNodeId && nodeId !== localNodeId) {
+                elsewhere.set(projectId, nodeId);
+            }
+        }
+        return { blocked, elsewhere };
     });
-    return activated.placement;
-  }
-
-  async function localPlacementToken(projectId: string): Promise<ProjectPlacementToken | undefined> {
-    const authority = options.authoritativePlacement;
-    if (!authority) return undefined;
-    const token = ownedPlacements.get(projectId);
-    if (!token || token.nodeId !== localPlacementNodeId ||
-        !(await authority.validate(token))) {
-      throw new ZelavisProjectValidationError(
-        `Project "${projectId}" has no current local Fabric placement.`,
-      );
+    /**
+     * One claim per Project at a time. Startup reconciliation and a person's click
+     * can both ask for the same Project's placement at once; each would read the
+     * same epoch and both would try to take it, and the one that lost was reported
+     * as having no placement at all, though the winner was this very session.
+     * Asking again while a claim is in flight joins it.
+     */
+    const placementClaims = new Map<string, Deferred.Deferred<ProjectPlacementRecord | undefined, TaggedFailure>>();
+    function ensureCommittedPlacement(projectId: string, plannedNodeId: string) {
+        return singleFlight(placementClaims, `${projectId}\u0000${plannedNodeId}`, () => commitPlacement(projectId, plannedNodeId));
     }
-    return token;
-  }
-
-  async function stopPlacedRuntime(projectId: string): Promise<ZelavisProjectRuntimeSnapshot> {
-    const token = ownedPlacements.get(projectId);
-    if (options.authoritativePlacement && !token) {
-      const current = await options.authoritativePlacement.current(projectId);
-      if (current?.state === "active" && current.leaseExpiresAt > Date.now() &&
-          current.nodeId !== localPlacementNodeId) {
-        throw new ZelavisProjectValidationError(
-          `Project "${projectId}" is remotely owned; this host cannot confirm its stop.`,
-        );
-      }
-    }
-    if (options.authoritativePlacement && token && token.nodeId !== localPlacementNodeId) {
-      if (!options.dispatch?.()?.dispatchStopFenced ||
-          !options.dispatch?.()?.authorizeDispatch) {
-        throw new ZelavisProjectValidationError(
-          `Project "${projectId}" has no fenced remote stop path.`,
-        );
-      }
-      const authority = await options.dispatch()!.authorizeDispatch!({ action: "stop", placement: token });
-      await options.dispatch()!.dispatchStopFenced!({
-        projectId, nodeId: token.nodeId, placement: token, authority,
-      });
-      const released = await options.authoritativePlacement.release(token);
-      if (!released.granted) throw new ZelavisProjectValidationError(
-        `Project "${projectId}" lost placement authority during stop.`,
-      );
-      ownedPlacements.delete(projectId);
-      return { status: "stopped" };
-    }
-    const stopped = await runtime.stop(projectId);
-    if (token && options.authoritativePlacement) {
-      const released = await options.authoritativePlacement.release(token);
-      if (!released.granted) throw new ZelavisProjectValidationError(
-        `Project "${projectId}" lost placement authority during stop.`,
-      );
-      ownedPlacements.delete(projectId);
-    }
-    return stopped;
-  }
-
-  /**
-   * Starts a Project on this host.
-   *
-   * Split out from `start` so reconciliation, which has already planned every
-   * Project together, does not re-plan the whole fleet once per Project it
-   * starts.
-   */
-  async function startLocally(id: string): Promise<ZelavisProjectRecord> {
-    let project = await requireProject(id);
-    // Starting it here settles the question the note recorded, so the note
-    // goes rather than lingering as a stale explanation of a state that has
-    // changed.
-    const { placement: _placedElsewhere, ...withoutPlacement } = project;
-    project = await write({
-      ...withoutPlacement,
-      desiredState: "running",
-      runtime: { driver: runtime.name, status: "starting" },
-      updatedAt: new Date().toISOString(),
+    const commitPlacement = Effect.fn("Projects.commitPlacement")(function* (projectId: string, plannedNodeId: string): Effect.fn.Return<ProjectPlacementRecord | undefined, TaggedFailure> {
+        const authority = options.authoritativePlacement;
+        if (!authority)
+            return undefined;
+        const current = yield* integration(() => authority.current(projectId));
+        if (current?.state === "active" && current.leaseExpiresAt > Date.now()) {
+            // An older Platform session still owns it. Wait for its expiry or an
+            // explicit stop; never start or redispatch a second copy.
+            if (current.ownerSession !== placementSession)
+                return undefined;
+            const claim = {
+                projectId, nodeId: current.nodeId,
+                ownerSession: placementSession, epoch: current.epoch,
+            };
+            const renewed = yield* integration(() => authority.renew(claim, placementLeaseMs));
+            if (!renewed.granted)
+                return undefined;
+            ownedPlacements.set(projectId, claim);
+            return renewed.placement;
+        }
+        if (current?.state === "active" && current.ownerSession === placementSession &&
+            current.nodeId === localPlacementNodeId) {
+            yield* runtimeEffects.stop(projectId);
+        }
+        const activated = yield* integration(() => authority.acquire({
+            projectId, nodeId: plannedNodeId, ownerSession: placementSession,
+            expectedEpoch: current?.epoch ?? 0, leaseMs: placementLeaseMs,
+        }));
+        if (!activated.granted)
+            return undefined;
+        ownedPlacements.set(projectId, {
+            projectId, nodeId: activated.placement.nodeId,
+            ownerSession: placementSession, epoch: activated.placement.epoch,
+        });
+        return activated.placement;
     });
-
-    try {
-      // Refused inside the try so it is recorded as a failure with its reason,
-      // and before `prepare`, so the driver never runs for it.
-      const refusal = isolationRefusal(project);
-      if (refusal) throw refusal;
-      const placement = await localPlacementToken(project.id);
-      await runtime.prepare(project, project.recipe);
-      return write(applySnapshot(project, await runtime.start(project, placement)));
-    } catch (error) {
-      const failed = {
-        ...project,
-        runtime: {
-          driver: runtime.name,
-          status: "failed" as const,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        updatedAt: new Date().toISOString(),
-      };
-      await write(failed);
-      throw error;
-    }
-  }
-
-  /**
-   * The node one Project is placed on, when that node is not this host.
-   *
-   * Plans the whole fleet rather than the one Project, because an owned
-   * Project is only placeable against an owner the planner can see.
-   */
-  async function resolveAssignedNodeElsewhere(
-    projectId: string,
-  ): Promise<string | undefined> {
-    if (!options.dispatch?.()?.localNodeId) return undefined;
-    const records = await store.list(PROJECTS_NAMESPACE);
-    // Planned as though it were already desired-running: it is about to be,
-    // and a Project that is currently stopped contributes no request, so
-    // without this the answer would always be "placed here".
-    const placement = await resolvePlacementDecisions(records, {
-      alsoPlan: projectId,
+    const localPlacementToken = Effect.fn("Projects.localPlacementToken")(function* (projectId: string): Effect.fn.Return<ProjectPlacementToken | undefined, TaggedFailure> {
+        const authority = options.authoritativePlacement;
+        if (!authority)
+            return undefined;
+        const token = ownedPlacements.get(projectId);
+        if (!token || token.nodeId !== localPlacementNodeId ||
+            !((yield* integration(() => authority.validate(token))))) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" has no current local Fabric placement.`));
+        }
+        return token;
     });
-    if (placement.blocked.has(projectId)) {
-      throw new ZelavisProjectValidationError(
-        `Project "${projectId}" has no committed Fabric placement.`,
-      );
-    }
-    return placement.elsewhere.get(projectId);
-  }
-
-  /**
-   * Hands a Project to the node its placement names, or records why it could
-   * not be.
-   *
-   * The refusal is the point. Running it here anyway would contradict the
-   * placement the Fabric decided, and on a fleet where every host reconciles,
-   * every host would reach the same conclusion and run its own copy. Leaving
-   * it stopped with the node named is recoverable; two live copies of a
-   * Project's data are not.
-   */
-  async function dispatchElsewhere(
-    project: ZelavisProjectRecord,
-    nodeId: string,
-  ): Promise<void> {
-    const dispatcher = options.dispatch?.();
-    const now = new Date().toISOString();
-    if (project.desiredState !== "running") {
-      project = await write({ ...project, desiredState: "running", updatedAt: now });
-    }
-
-    const placement = ownedPlacements.get(project.id);
-    const fencedDispatch = options.authoritativePlacement !== undefined;
-    if (dispatcher && (fencedDispatch
-      ? dispatcher.dispatchStartFenced && dispatcher.dispatchStopFenced &&
-        dispatcher.dispatchLeaseFenced &&
-        dispatcher.authorizeDispatch && placement
-      : dispatcher.dispatchStart)) {
-      try {
-        if (fencedDispatch) {
-          if (!placement || placement.nodeId !== nodeId ||
-              !(await options.authoritativePlacement!.validate(placement))) {
-            throw new Error("The remote Project placement is no longer current.");
-          }
-          const committed = await options.authoritativePlacement!.current(project.id);
-          if (!committed || committed.epoch !== placement.epoch ||
-              committed.ownerSession !== placement.ownerSession) {
-            throw new Error("The remote Project lease is no longer committed.");
-          }
-          await dispatcher.dispatchLeaseFenced!(committed);
-          const authority = await dispatcher.authorizeDispatch!({ action: "start", placement });
-          await dispatcher.dispatchStartFenced!({ projectId: project.id, nodeId, placement, authority });
-        } else {
-          await dispatcher.dispatchStart!({ projectId: project.id, nodeId });
+    const stopPlacedRuntime = Effect.fn("Projects.stopPlacedRuntime")(function* (projectId: string): Effect.fn.Return<ZelavisProjectRuntimeSnapshot, TaggedFailure> {
+        const token = ownedPlacements.get(projectId);
+        if (options.authoritativePlacement && !token) {
+            const current = yield* integration(() => options.authoritativePlacement!.current(projectId));
+            if (current?.state === "active" && current.leaseExpiresAt > Date.now() &&
+                current.nodeId !== localPlacementNodeId) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" is remotely owned; this host cannot confirm its stop.`));
+            }
         }
-        await write({
-          ...project,
-          placement: { nodeId, dispatchedAt: now },
-          updatedAt: now,
-        }).catch(() => undefined);
-        return;
-      } catch (error) {
-        await write({
-          ...project,
-          placement: {
-            nodeId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          updatedAt: now,
-        }).catch(() => undefined);
-        return;
-      }
-    }
-
-    // `desiredState` stays "running": the Project is not stopped by intent,
-    // it is unstarted by this host, and a later reconcile with a dispatcher
-    // configured — or a placement that names this node — starts it.
-    await write({
-      ...project,
-      placement: {
-        nodeId,
-        error: `This host cannot start Projects on node "${nodeId}".`,
-      },
-      updatedAt: now,
-    }).catch(() => undefined);
-
-    const snapshot = await runtime.status(project.id);
-    if (snapshot.status === "running" || snapshot.status === "starting") {
-      // It is running here and no longer placed here. Stopping it is this
-      // host's half of the move; the node that now owns it starts it. The
-      // driver is asked directly rather than through `stop`, which would clear
-      // `desiredState` and make the move look like an operator stopping it.
-      await runtime.stop(project.id).catch(() => undefined);
-    }
-  }
-
-  const manager: ZelavisProjectManager = {
-    runtime: {
-      driver: runtime.name,
-      availableKinds: availableRuntimeKinds,
-    },
-    async list(options) {
-      const records = await store.list(PROJECTS_NAMESPACE);
-      const projects = await mapWithConcurrency(
-        records,
-        startupConcurrency,
-        async (record) => {
-          const { project, repaired } = normalizeStoredProject(record.value);
-          if (repaired) {
-            await write(project);
-          }
-          return refresh(project);
-        },
-      );
-      const visible = options?.includeOwned
-        ? projects
-        : projects.filter((project) => project.ownerProjectId === undefined);
-      return visible.sort((left, right) =>
-        right.createdAt.localeCompare(left.createdAt),
-      );
-    },
-    async listOwned(ownerProjectId) {
-      const owner = normalizeProjectId(ownerProjectId);
-      const all = await manager.list({ includeOwned: true });
-      return all.filter((project) => project.ownerProjectId === owner);
-    },
-    async get(id) {
-      const project = await read(id);
-      return project ? refresh(project) : undefined;
-    },
-    async create(input) {
-      const name = normalizeProjectName(input.name);
-      const id = normalizeProjectId(input.id ?? name);
-
-      const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
-      const projectRecipe = projectRecipeMap.get(recipeName);
-      if (!projectRecipe) {
-        throw new ZelavisProjectValidationError(
-          `Project recipe "${recipeName}" was not found.`,
-        );
-      }
-      const recipe = recipeLockFromRegistryEntry(projectRecipe);
-      const defaultKind = normalizeRuntimeKind(
-        options.resolveDefaultRuntimeKind
-          ? await options.resolveDefaultRuntimeKind()
-          : defaultRuntimeKind,
-      );
-      const runtimeKind = await selectRuntimeKind(recipe, defaultKind);
-      const now = new Date().toISOString();
-      const ownerProjectId = input.ownerProjectId
-        ? normalizeProjectId(input.ownerProjectId)
-        : undefined;
-      if (ownerProjectId) {
-        if (ownerProjectId === id) {
-          throw new ZelavisProjectValidationError(
-            `Project "${id}" cannot own itself.`,
-          );
+        if (options.authoritativePlacement && token && token.nodeId !== localPlacementNodeId) {
+            if (!options.dispatch?.()?.dispatchStopFenced ||
+                !options.dispatch?.()?.authorizeDispatch) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" has no fenced remote stop path.`));
+            }
+            const authority = yield* integration(() => options.dispatch!()!.authorizeDispatch!({ action: "stop", placement: token }));
+            yield* integration(() => options.dispatch!()!.dispatchStopFenced!({
+                projectId, nodeId: token.nodeId, placement: token, authority,
+            }));
+            const released = yield* integration(() => options.authoritativePlacement!.release(token));
+            if (!released.granted)
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" lost placement authority during stop.`));
+            ownedPlacements.delete(projectId);
+            return { status: "stopped" };
         }
-        const owner = await read(ownerProjectId);
-        if (!owner) {
-          throw new ZelavisProjectValidationError(
-            `Owner Project "${ownerProjectId}" was not found.`,
-          );
+        const stopped = yield* runtimeEffects.stop(projectId);
+        if (token && options.authoritativePlacement) {
+            const released = yield* integration(() => options.authoritativePlacement!.release(token));
+            if (!released.granted)
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" lost placement authority during stop.`));
+            ownedPlacements.delete(projectId);
         }
-        if (owner.ownerProjectId) {
-          // One level only for now. Deeper nesting is the Project Cell model,
-          // which needs placement grouping and resource accounting before it
-          // can be safe.
-          throw new ZelavisProjectValidationError(
-            `Project "${ownerProjectId}" is itself owned, and nested ownership is not supported yet.`,
-          );
-        }
-        if (owner.deletion) {
-          throw new ZelavisProjectValidationError(
-            `Owner Project "${ownerProjectId}" is being deleted.`,
-          );
-        }
-      }
-
-      const descriptor: ZelavisProjectDescriptor = {
-        id,
-        ...(ownerProjectId ? { ownerProjectId } : {}),
-        name,
-        kind: projectKindForRecipe(recipe.name),
-        recipe,
-        runtimeKind,
-      };
-      // Refused before the identifier is claimed: nothing is provisioned for a
-      // Project this server cannot run with the isolation its recipe requires.
-      const isolation = assessIsolation(descriptor);
-      if (isolation && !isolation.satisfied) {
-        throw new ZelavisProjectIsolationError(
-          `Project recipe "${recipe.name}"`,
-          isolation,
-        );
-      }
-      let project: ZelavisProjectRecord = {
-        ...descriptor,
-        capabilities: runtime.capabilities(descriptor),
-        ...(isolation ? { isolation } : {}),
-        desiredState: input.start === false ? "stopped" : "running",
-        runtime: {
-          driver: runtime.name,
-          status: "provisioning",
-        },
-        createdAt: now,
-        updatedAt: now,
-      };
-      // Claim the identifier atomically. A read-then-write check is a
-      // time-of-check/time-of-use race: two concurrent creates both observe an
-      // absent Project and both provision it.
-      const claim = await store.setIfAbsent(
-        PROJECTS_NAMESPACE,
-        id,
-        toStoreValue(project),
-      );
-      if (!claim.created) {
-        throw new ZelavisProjectConflictError(`Project "${id}" already exists.`);
-      }
-
-      try {
-        await runtime.prepare(project, recipe);
-        project = await write({
-          ...project,
-          runtime: { driver: runtime.name, status: "stopped" },
-          updatedAt: new Date().toISOString(),
+        return stopped;
+    });
+    const startLocally = Effect.fn("Projects.startLocally")(function* (id: string): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
+        let project = yield* requireProject(id);
+        // Starting it here settles the question the note recorded, so the note
+        // goes rather than lingering as a stale explanation of a state that has
+        // changed.
+        const { placement: _placedElsewhere, ...withoutPlacement } = project;
+        project = (yield* write({
+            ...withoutPlacement,
+            desiredState: "running",
+            runtime: { driver: runtime.name, status: "starting" },
+            updatedAt: new Date().toISOString(),
+        }));
+        return yield* Effect.catch(Effect.gen(function* () {
+            // Refused inside the try so it is recorded as a failure with its reason,
+            // and before `prepare`, so the driver never runs for it.
+            const refusal = isolationRefusal(project);
+            if (refusal)
+                return (yield* Effect.fail(refusal));
+            const placement = (yield* localPlacementToken(project.id));
+            (yield* runtimeEffects.prepare(project, project.recipe));
+            return (yield* write(applySnapshot(project, (yield* runtimeEffects.start(project, placement)))));
+        }), Effect.fn("Projects.recover")(function* (error) {
+            const failed = {
+                ...project,
+                runtime: {
+                    driver: runtime.name,
+                    status: "failed" as const,
+                    error: error instanceof Error ? error.message : String(error),
+                },
+                updatedAt: new Date().toISOString(),
+            };
+            (yield* write(failed));
+            return (yield* Effect.fail(error));
+        }));
+    });
+    const resolveAssignedNodeElsewhere = Effect.fn("Projects.resolveAssignedNodeElsewhere")(function* (projectId: string): Effect.fn.Return<string | undefined, TaggedFailure> {
+        if (!options.dispatch?.()?.localNodeId)
+            return undefined;
+        const records = yield* store.list(PROJECTS_NAMESPACE);
+        // Planned as though it were already desired-running: it is about to be,
+        // and a Project that is currently stopped contributes no request, so
+        // without this the answer would always be "placed here".
+        const placement = yield* resolvePlacementDecisions(records, {
+            alsoPlan: projectId,
         });
-        return input.start === false ? project : manager.start(id);
-      } catch (error) {
-        project = await write({
-          ...project,
-          desiredState: "stopped",
-          runtime: {
-            driver: runtime.name,
-            status: "failed",
-            error: error instanceof Error ? error.message : String(error),
-          },
-          updatedAt: new Date().toISOString(),
-        });
-        throw error;
-      }
-    },
-    async update(id, input) {
-      return withProjectLifecycle(normalizeProjectId(id), async () => {
-        const project = await requireProject(id);
-        assertProjectIsOperable(project, "updated");
-        return write({
-          ...project,
-          name: normalizeProjectName(input.name),
-          updatedAt: new Date().toISOString(),
-        });
-      });
-    },
-    async start(id) {
-      return withProjectLifecycle(normalizeProjectId(id), async () => {
-      const placed = await requireProject(id);
-      assertProjectIsOperable(placed, "started");
-
-      // An explicit start is still subject to placement. Told to run a Project
-      // this host is not placed to run, saying so is the only answer that does
-      // not quietly contradict the Fabric.
-      const assignedNodeId = await resolveAssignedNodeElsewhere(placed.id);
-      if (assignedNodeId !== undefined) {
-        await dispatchElsewhere(placed, assignedNodeId);
-        const dispatched = options.authoritativePlacement
-          ? options.dispatch?.()?.dispatchStartFenced !== undefined &&
-            options.dispatch?.()?.dispatchStopFenced !== undefined &&
-            options.dispatch?.()?.dispatchLeaseFenced !== undefined &&
-            options.dispatch?.()?.authorizeDispatch !== undefined
-          : options.dispatch?.()?.dispatchStart !== undefined;
-        if (!dispatched) {
-          throw new ZelavisProjectValidationError(
-            `Project "${placed.id}" is placed on node "${assignedNodeId}", which this host cannot start Projects on.`,
-          );
+        if (placement.blocked.has(projectId)) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" has no committed Fabric placement.`));
         }
-        const dispatchedProject = await requireProject(id);
-        if (dispatchedProject.placement?.error) {
-          throw new ZelavisProjectValidationError(dispatchedProject.placement.error);
-        }
-        return dispatchedProject;
-      }
-
-      return startLocally(id);
-      });
-    },
-    async stop(id) {
-      return withProjectLifecycle(normalizeProjectId(id), async () => {
-      let project = await requireProject(id);
-      // Stopping a Project that is already being deleted would restart the
-      // cleanup lifecycle's work behind it.
-      assertProjectIsOperable(project, "stopped");
-      project = await write({
-        ...project,
-        desiredState: "stopped",
-        runtime: { driver: runtime.name, status: "stopping" },
-        updatedAt: new Date().toISOString(),
-      });
-      return write(applySnapshot(project, await stopPlacedRuntime(project.id)));
-      });
-    },
-    async restart(id) {
-      return withProjectLifecycle(normalizeProjectId(id), async () => {
-      let project = await requireProject(id);
-      assertProjectIsOperable(project, "restarted");
-      // Refused before stopping: a running Project is not taken down only to
-      // discover it may not be started again.
-      const refusal = isolationRefusal(project);
-      if (refusal) throw refusal;
-      if (options.authoritativePlacement) {
-        const assigned = await resolveAssignedNodeElsewhere(project.id);
-        if (assigned) {
-          throw new ZelavisProjectValidationError(
-            `Project "${project.id}" is placed on node "${assigned}" and cannot restart here.`,
-          );
-        }
-      }
-      project = await write({
-        ...project,
-        desiredState: "running",
-        runtime: { driver: runtime.name, status: "stopping" },
-        updatedAt: new Date().toISOString(),
-      });
-      await stopPlacedRuntime(project.id);
-      if (options.authoritativePlacement &&
-          !(await ensureCommittedPlacement(project.id, localPlacementNodeId))) {
-        throw new ZelavisProjectValidationError(
-          `Project "${project.id}" could not reacquire its local Fabric placement.`,
-        );
-      }
-      project = await write({
-        ...project,
-        runtime: { driver: runtime.name, status: "starting" },
-        updatedAt: new Date().toISOString(),
-      });
-
-      try {
-        const placement = await localPlacementToken(project.id);
-        await runtime.prepare(project, project.recipe);
-        return write(applySnapshot(project, await runtime.start(project, placement)));
-      } catch (error) {
-        const failed = {
-          ...project,
-          runtime: {
-            driver: runtime.name,
-            status: "failed" as const,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          updatedAt: new Date().toISOString(),
-        };
-        await write(failed);
-        throw error;
-      }
-      });
-    },
-    async upgrade(id, input) {
-      return withProjectLifecycle(normalizeProjectId(id), async () => {
-        const project = await requireProject(id);
-        assertProjectIsOperable(project, "upgraded");
-        if (!["stopped", "failed"].includes(project.runtime.status)) {
-          throw new ZelavisProjectConflictError(
-            `Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`,
-          );
-        }
-        const targetName = input?.recipeName?.trim() || project.recipe.name;
-        const entry = projectRecipeMap.get(targetName);
-        if (!entry) {
-          throw new ZelavisProjectValidationError(
-            `Project recipe "${targetName}" is not shipped with this Platform.` +
-              (input?.recipeName ? "" : " Name the recipe to move this Project to."),
-          );
-        }
-        // A frontend stays a frontend and an app stays an app; a Project's kind
-        // label follows its recipe's name, so it is re-derived below.
-        if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
-          throw new ZelavisProjectValidationError(
-            `Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`,
-          );
-        }
-        const next = recipeLockFromRegistryEntry(entry);
-        if (!next.runtimeKinds.includes(project.runtimeKind)) {
-          throw new ZelavisProjectValidationError(
-            `Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`,
-          );
-        }
-        if (
-          next.name === project.recipe.name &&
-          next.version === project.recipe.version &&
-          project.recipe.artifact
-        ) {
-          throw new ZelavisProjectConflictError(
-            `Project "${project.id}" already runs ${next.name}@${next.version}.`,
-          );
-        }
-        const candidate: ZelavisProjectRecord = {
-          ...project,
-          kind: projectKindForRecipe(next.name),
-          recipe: next,
-        };
-        // Refused before anything changes: an upgrade that would leave the
-        // Project unable to start under its isolation intent is not an upgrade.
-        const refusal = isolationRefusal(candidate);
-        if (refusal) throw refusal;
-
-        // Freeze the new recipe first. The driver replaces the old artifact only
-        // once the new one is complete, so a failure here leaves the Project
-        // exactly as it was.
-        await runtime.prepare(candidate, next);
-
+        return placement.elsewhere.get(projectId);
+    });
+    const dispatchElsewhere = Effect.fn("Projects.dispatchElsewhere")(function* (project: ZelavisProjectRecord, nodeId: string): Effect.fn.Return<void, TaggedFailure> {
+        const dispatcher = options.dispatch?.();
         const now = new Date().toISOString();
-        const isolation = assessIsolation(candidate);
-        return write({
-          ...candidate,
-          capabilities: runtime.capabilities(candidate),
-          ...(isolation ? { isolation } : {}),
-          recipeStatus: recipeStatusOf(next),
-          recipeHistory: [
-            ...(project.recipeHistory ?? []),
-            {
-              from: { name: project.recipe.name, version: project.recipe.version },
-              upgradedAt: now,
-            },
-          ].slice(-10),
-          // The reason it could not start belonged to the old lock.
-          runtime: { driver: runtime.name, status: "stopped" },
-          updatedAt: now,
-        });
-      });
-    },
-    async logs(id) {
-      await requireProject(id);
-      return runtime.logs(normalizeProjectId(id));
-    },
-    async signGatewayAuthority(projectId, claims) {
-      return runtime.signGatewayAuthority?.(
-        normalizeProjectId(projectId),
-        claims,
-      );
-    },
-    async remove(id) {
-      const projectId = normalizeProjectId(id);
-      // Deletion is deduplicated so repeated calls join one cleanup, and it
-      // shares the lifecycle queue so a concurrent start/stop cannot write the
-      // record back after cleanup removed it.
-      const current = deletionPromises.get(projectId);
-      if (current) return current;
-      const deletion = withProjectLifecycle(projectId, () =>
-        deleteProject(projectId),
-      ).finally(() => {
-        deletionPromises.delete(projectId);
-      });
-      deletionPromises.set(projectId, deletion);
-      return deletion;
-    },
-    reconcile() {
-      reconciliationPromise ??= (async () => {
-        const existing = await store.list(PROJECTS_NAMESPACE);
-        const placement = await resolvePlacementDecisions(existing);
-        await mapWithConcurrency(
-          existing,
-          startupConcurrency,
-          async (record) => {
-            if (closing) {
-              return;
-            }
-
-            const { project, repaired } = normalizeStoredProject(record.value);
-            if (repaired) {
-              await write(project);
-            }
-            if (project.deletion) {
-              await manager.remove(project.id).catch(() => undefined);
-              return;
-            }
-            if (project.desiredState !== "running") {
-              // Adoption can hand back a Project the operator has since
-              // stopped: it kept running because nothing was there to stop it,
-              // and the Platform now has the handle it was missing. Leaving it
-              // running would make "stopped" mean "stopped, unless it happened
-              // to survive a crash".
-              const running = await runtime.status(project.id);
-              if (running.status === "running" || running.status === "starting") {
-                // `stop` takes the lifecycle lock itself. Wrapping it here
-                // deadlocks: the queue is per Project, and the outer entry
-                // would wait for an inner one that cannot start until it
-                // returns.
-                await manager.stop(project.id).catch(() => undefined);
-              }
-              return;
-            }
-            if (placement.blocked.has(project.id)) {
-              // Left stopped rather than started somewhere its placement group
-              // does not permit. `desiredState` stays "running", so the next
-              // reconcile starts it as soon as its owner can be placed.
-              return;
-            }
-
-            const assignedNodeId = placement.elsewhere.get(project.id);
-            if (assignedNodeId !== undefined) {
-              await dispatchElsewhere(project, assignedNodeId);
-              return;
-            }
-            const snapshot = await runtime.status(project.id);
-            if (
-              !closing &&
-              snapshot.status !== "running" &&
-              snapshot.status !== "starting"
-            ) {
-              // Placement was decided once for the whole fleet above, so this
-              // starts locally rather than re-planning per Project — but it
-              // still takes the Project's lifecycle lock. Reconciliation runs
-              // concurrently with whatever an operator is doing, and a start
-              // interleaved with another start or a stop leaves the System
-              // Store describing a process that is not what is running.
-              await withProjectLifecycle(project.id, () =>
-                startLocally(project.id),
-              ).catch(() => undefined);
-            }
-          },
-        );
-      })().finally(() => {
-        reconciliationPromise = undefined;
-      });
-      return reconciliationPromise;
-    },
-    close() {
-      closePromise ??= (async () => {
-        closing = true;
-        if (reconciliationTimer) clearInterval(reconciliationTimer);
-        if (placementRenewal) clearInterval(placementRenewal);
-        await reconciliationPromise?.catch(() => undefined);
-        await runtime.close();
-        for (const token of ownedPlacements.values()) {
-          if (token.nodeId === localPlacementNodeId) {
-            await options.authoritativePlacement?.release(token).catch(() => undefined);
-          }
+        if (project.desiredState !== "running") {
+            project = (yield* write({ ...project, desiredState: "running", updatedAt: now }));
         }
-      })();
-      return closePromise;
-    },
-  };
-
-  // An old owner may expire after a control-plane restart. Retry boundedly so
-  // a blocked Project becomes runnable without an operator pressing Start.
-  const reconciliationTimer = options.authoritativePlacement
-    ? setInterval(() => { void manager.reconcile().catch(() => undefined); }, 15_000)
-    : undefined;
-  reconciliationTimer?.unref?.();
-
-  if (options.autoReconcile !== false) {
-    void manager.reconcile();
-  }
-
-  return manager;
+        const placement = ownedPlacements.get(project.id);
+        const fencedDispatch = options.authoritativePlacement !== undefined;
+        if (dispatcher && (fencedDispatch
+            ? dispatcher.dispatchStartFenced && dispatcher.dispatchStopFenced &&
+                dispatcher.dispatchLeaseFenced &&
+                dispatcher.authorizeDispatch && placement
+            : dispatcher.dispatchStart)) {
+            return yield* Effect.catch(Effect.gen(function* () {
+                if (fencedDispatch) {
+                    if (!placement || placement.nodeId !== nodeId ||
+                        !((yield* integration(() => options.authoritativePlacement!.validate(placement))))) {
+                        return (yield* new IntegrationFailure(new Error("The remote Project placement is no longer current.")));
+                    }
+                    const committed = (yield* integration(() => options.authoritativePlacement!.current(project.id)));
+                    if (!committed || committed.epoch !== placement.epoch ||
+                        committed.ownerSession !== placement.ownerSession) {
+                        return (yield* new IntegrationFailure(new Error("The remote Project lease is no longer committed.")));
+                    }
+                    (yield* integration(() => dispatcher.dispatchLeaseFenced!(committed)));
+                    const authority = (yield* integration(() => dispatcher.authorizeDispatch!({ action: "start", placement })));
+                    (yield* integration(() => dispatcher.dispatchStartFenced!({ projectId: project.id, nodeId, placement, authority })));
+                }
+                else {
+                    (yield* integration(() => dispatcher.dispatchStart!({ projectId: project.id, nodeId })));
+                }
+                (yield* Effect.catch(write({
+                    ...project,
+                    placement: { nodeId, dispatchedAt: now },
+                    updatedAt: now,
+                }), Effect.fn("Projects.recover")(function* () { return undefined; })));
+                return;
+            }), Effect.fn("Projects.recover")(function* (error) {
+                (yield* Effect.catch(write({
+                    ...project,
+                    placement: {
+                        nodeId,
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                    updatedAt: now,
+                }), Effect.fn("Projects.recover")(function* () { return undefined; })));
+                return;
+            }));
+        }
+        // `desiredState` stays "running": the Project is not stopped by intent,
+        // it is unstarted by this host, and a later reconcile with a dispatcher
+        // configured — or a placement that names this node — starts it.
+        yield* Effect.catch(write({
+            ...project,
+            placement: {
+                nodeId,
+                error: `This host cannot start Projects on node "${nodeId}".`,
+            },
+            updatedAt: now,
+        }), Effect.fn("Projects.recover")(function* () { return undefined; }));
+        const snapshot = yield* runtimeEffects.status(project.id);
+        if (snapshot.status === "running" || snapshot.status === "starting") {
+            // It is running here and no longer placed here. Stopping it is this
+            // host's half of the move; the node that now owns it starts it. The
+            // driver is asked directly rather than through `stop`, which would clear
+            // `desiredState` and make the move look like an operator stopping it.
+            yield* Effect.catch(runtimeEffects.stop(project.id), Effect.fn("Projects.recover")(function* () { return undefined; }));
+        }
+    });
+    const reconcileFleet = Effect.fn("Projects.reconcileFleet")(function* () {
+                const existing = (yield* store.list(PROJECTS_NAMESPACE));
+                const placement = (yield* resolvePlacementDecisions(existing));
+                (yield* mapWithConcurrency(existing, startupConcurrency, Effect.fn("Projects.transition")(function* (record: ZelavisSystemStoreRecord) {
+                    if (closing) {
+                        return;
+                    }
+                    const { project, repaired } = (yield* evaluate(() => normalizeStoredProject(record.value)));
+                    if (repaired) {
+                        (yield* write(project));
+                    }
+                    if (project.deletion) {
+                        (yield* Effect.catch(manager.remove(project.id), Effect.fn("Projects.recover")(function* () { return undefined; })));
+                        return;
+                    }
+                    if (project.desiredState !== "running") {
+                        // Adoption can hand back a Project the operator has since
+                        // stopped: it kept running because nothing was there to stop it,
+                        // and the Platform now has the handle it was missing. Leaving it
+                        // running would make "stopped" mean "stopped, unless it happened
+                        // to survive a crash".
+                        const running = (yield* runtimeEffects.status(project.id));
+                        if (running.status === "running" || running.status === "starting") {
+                            // `stop` takes the lifecycle lock itself. Wrapping it here
+                            // deadlocks: the queue is per Project, and the outer entry
+                            // would wait for an inner one that cannot start until it
+                            // returns.
+                            (yield* Effect.catch(manager.stop(project.id), Effect.fn("Projects.recover")(function* () { return undefined; })));
+                        }
+                        return;
+                    }
+                    if (placement.blocked.has(project.id)) {
+                        // Left stopped rather than started somewhere its placement group
+                        // does not permit. `desiredState` stays "running", so the next
+                        // reconcile starts it as soon as its owner can be placed.
+                        return;
+                    }
+                    const assignedNodeId = placement.elsewhere.get(project.id);
+                    if (assignedNodeId !== undefined) {
+                        (yield* dispatchElsewhere(project, assignedNodeId));
+                        return;
+                    }
+                    const snapshot = (yield* runtimeEffects.status(project.id));
+                    if (!closing &&
+                        snapshot.status !== "running" &&
+                        snapshot.status !== "starting") {
+                        // Placement was decided once for the whole fleet above, so this
+                        // starts locally rather than re-planning per Project — but it
+                        // still takes the Project's lifecycle lock. Reconciliation runs
+                        // concurrently with whatever an operator is doing, and a start
+                        // interleaved with another start or a stop leaves the System
+                        // Store describing a process that is not what is running.
+                        yield* Effect.catch(withProjectLifecycle(project.id, Effect.fn("Projects.reconcileStart")(function* () {
+                            // Creation or an operator transition may finish while this pass waits for its permit.
+                            const current = yield* read(project.id);
+                            if (closing || !current || current.deletion || current.desiredState !== "running") return;
+                            const latest = yield* runtimeEffects.status(project.id);
+                            if (latest.status === "running" || latest.status === "starting") return;
+                            yield* startLocally(project.id);
+                        })), () => Effect.void);
+                    }
+                })));
+            });
+    const startPlaced = Effect.fn("Projects.startPlaced")(function* (id: string) {
+                const placed = (yield* requireProject(id));
+                (yield* evaluate(() => assertProjectIsOperable(placed, "started")));
+                // An explicit start is still subject to placement. Told to run a Project
+                // this host is not placed to run, saying so is the only answer that does
+                // not quietly contradict the Fabric.
+                const assignedNodeId = (yield* resolveAssignedNodeElsewhere(placed.id));
+                if (assignedNodeId !== undefined) {
+                    (yield* dispatchElsewhere(placed, assignedNodeId));
+                    const dispatched = options.authoritativePlacement
+                        ? options.dispatch?.()?.dispatchStartFenced !== undefined &&
+                            options.dispatch?.()?.dispatchStopFenced !== undefined &&
+                            options.dispatch?.()?.dispatchLeaseFenced !== undefined &&
+                            options.dispatch?.()?.authorizeDispatch !== undefined
+                        : options.dispatch?.()?.dispatchStart !== undefined;
+                    if (!dispatched) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project "${placed.id}" is placed on node "${assignedNodeId}", which this host cannot start Projects on.`)));
+                    }
+                    const dispatchedProject = (yield* requireProject(id));
+                    if (dispatchedProject.placement?.error) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(dispatchedProject.placement.error)));
+                    }
+                    return dispatchedProject;
+                }
+                return (yield* startLocally(id));
+    });
+    const manager: EffectOperations<ZelavisProjectManager> = {
+        runtime: {
+            driver: runtime.name,
+            availableKinds: availableRuntimeKinds,
+        },
+        list: Effect.fn("Projects.list")(function* (options?: Parameters<ZelavisProjectManager["list"]>[0]) {
+            const records = yield* store.list(PROJECTS_NAMESPACE);
+            const projects = yield* mapWithConcurrency(records, startupConcurrency, Effect.fn("Projects.transition")(function* (record: ZelavisSystemStoreRecord) {
+                const { project, repaired } = (yield* evaluate(() => normalizeStoredProject(record.value)));
+                if (repaired) {
+                    (yield* write(project));
+                }
+                return (yield* refresh(project));
+            }));
+            const visible = options?.includeOwned
+                ? projects
+                : projects.filter((project) => project.ownerProjectId === undefined);
+            return visible.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+        }),
+        listOwned: Effect.fn("Projects.listOwned")(function* (ownerProjectId: Parameters<ZelavisProjectManager["listOwned"]>[0]) {
+            const owner = yield* evaluate(() => normalizeProjectId(ownerProjectId));
+            const all = yield* manager.list({ includeOwned: true });
+            return all.filter((project) => project.ownerProjectId === owner);
+        }),
+        get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
+            const project = yield* read(id);
+            if (!project) return undefined;
+            return yield* refresh(project);
+        }),
+        create: Effect.fn("Projects.create")(function* (input: Parameters<ZelavisProjectManager["create"]>[0]) {
+            const name = yield* evaluate(() => normalizeProjectName(input.name));
+            const id = yield* evaluate(() => normalizeProjectId(input.id ?? name));
+            const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
+            const projectRecipe = projectRecipeMap.get(recipeName);
+            if (!projectRecipe) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
+            }
+            const recipe = yield* evaluate(() => recipeLockFromRegistryEntry(projectRecipe));
+            const defaultKind = normalizeRuntimeKind(options.resolveDefaultRuntimeKind
+                ? (yield* integration(() => options.resolveDefaultRuntimeKind!())) : defaultRuntimeKind);
+            const runtimeKind = yield* selectRuntimeKind(recipe, defaultKind);
+            const now = new Date().toISOString();
+            const ownerProjectId = input.ownerProjectId
+                ? (yield* evaluate(() => normalizeProjectId(input.ownerProjectId!)))
+                : undefined;
+            if (ownerProjectId) {
+                if (ownerProjectId === id) {
+                    return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${id}" cannot own itself.`));
+                }
+                const owner = yield* read(ownerProjectId);
+                if (!owner) {
+                    return yield* Effect.fail(new ZelavisProjectValidationError(`Owner Project "${ownerProjectId}" was not found.`));
+                }
+                if (owner.ownerProjectId) {
+                    return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${ownerProjectId}" is itself owned, and nested ownership is not supported yet.`));
+                }
+                if (owner.deletion) {
+                    return yield* Effect.fail(new ZelavisProjectValidationError(`Owner Project "${ownerProjectId}" is being deleted.`));
+                }
+            }
+            const descriptor: ZelavisProjectDescriptor = {
+                id,
+                ...(ownerProjectId ? { ownerProjectId } : {}),
+                name,
+                kind: projectKindForRecipe(recipe.name),
+                recipe,
+                runtimeKind,
+            };
+            // Refused before the identifier is claimed: nothing is provisioned for a
+            // Project this server cannot run with the isolation its recipe requires.
+            const isolation = assessIsolation(descriptor);
+            if (isolation && !isolation.satisfied) {
+                return yield* Effect.fail(new ZelavisProjectIsolationError(`Project recipe "${recipe.name}"`, isolation));
+            }
+            let project: ZelavisProjectRecord = {
+                ...descriptor,
+                capabilities: runtime.capabilities(descriptor),
+                ...(isolation ? { isolation } : {}),
+                desiredState: input.start === false ? "stopped" : "running",
+                runtime: {
+                    driver: runtime.name,
+                    status: "provisioning",
+                },
+                createdAt: now,
+                updatedAt: now,
+            };
+            // Claim the identifier atomically. A read-then-write check is a
+            // time-of-check/time-of-use race: two concurrent creates both observe an
+            // absent Project and both provision it.
+            return yield* withProjectLifecycle(id, Effect.fn("Projects.provision")(function* () {
+            const claim = yield* store.setIfAbsent(PROJECTS_NAMESPACE, id, toStoreValue(project));
+            if (!claim.created) {
+                return yield* Effect.fail(new ZelavisProjectConflictError(`Project "${id}" already exists.`));
+            }
+            return yield* Effect.catch(Effect.gen(function* () {
+                (yield* runtimeEffects.prepare(project, recipe));
+                project = (yield* write({
+                    ...project,
+                    runtime: { driver: runtime.name, status: "stopped" },
+                    updatedAt: new Date().toISOString(),
+                }));
+                if (input.start === false) return project;
+                return yield* startPlaced(id);
+            }), Effect.fn("Projects.recover")(function* (error) {
+                project = (yield* write({
+                    ...project,
+                    desiredState: "stopped",
+                    runtime: {
+                        driver: runtime.name,
+                        status: "failed",
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                    updatedAt: new Date().toISOString(),
+                }));
+                return (yield* Effect.fail(error));
+            }));
+            }));
+        }),
+        update: Effect.fn("Projects.update")(function* (id: Parameters<ZelavisProjectManager["update"]>[0], input: Parameters<ZelavisProjectManager["update"]>[1]) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+                const project = (yield* requireProject(id));
+                (yield* evaluate(() => assertProjectIsOperable(project, "updated")));
+                return (yield* write({
+                    ...project,
+                    name: (yield* evaluate(() => normalizeProjectName(input.name))),
+                    updatedAt: new Date().toISOString(),
+                }));
+            }));
+        }),
+        start: Effect.fn("Projects.start")(function* (id: Parameters<ZelavisProjectManager["start"]>[0]) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => startPlaced(id));
+        }),
+        stop: Effect.fn("Projects.stop")(function* (id: Parameters<ZelavisProjectManager["stop"]>[0]) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+                let project = (yield* requireProject(id));
+                // Stopping a Project that is already being deleted would restart the
+                // cleanup lifecycle's work behind it.
+                (yield* evaluate(() => assertProjectIsOperable(project, "stopped")));
+                project = (yield* write({
+                    ...project,
+                    desiredState: "stopped",
+                    runtime: { driver: runtime.name, status: "stopping" },
+                    updatedAt: new Date().toISOString(),
+                }));
+                return (yield* write(applySnapshot(project, (yield* stopPlacedRuntime(project.id)))));
+            }));
+        }),
+        restart: Effect.fn("Projects.restart")(function* (id: Parameters<ZelavisProjectManager["restart"]>[0]) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+                let project = (yield* requireProject(id));
+                (yield* evaluate(() => assertProjectIsOperable(project, "restarted")));
+                // Refused before stopping: a running Project is not taken down only to
+                // discover it may not be started again.
+                const refusal = isolationRefusal(project);
+                if (refusal)
+                    return (yield* Effect.fail(refusal));
+                if (options.authoritativePlacement) {
+                    const assigned = (yield* resolveAssignedNodeElsewhere(project.id));
+                    if (assigned) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project "${project.id}" is placed on node "${assigned}" and cannot restart here.`)));
+                    }
+                }
+                project = (yield* write({
+                    ...project,
+                    desiredState: "running",
+                    runtime: { driver: runtime.name, status: "stopping" },
+                    updatedAt: new Date().toISOString(),
+                }));
+                (yield* stopPlacedRuntime(project.id));
+                if (options.authoritativePlacement &&
+                    !((yield* ensureCommittedPlacement(project.id, localPlacementNodeId)))) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project "${project.id}" could not reacquire its local Fabric placement.`)));
+                }
+                project = (yield* write({
+                    ...project,
+                    runtime: { driver: runtime.name, status: "starting" },
+                    updatedAt: new Date().toISOString(),
+                }));
+                return (yield* Effect.catch(Effect.gen(function* () {
+                    const placement = (yield* localPlacementToken(project.id));
+                    (yield* runtimeEffects.prepare(project, project.recipe));
+                    return (yield* write(applySnapshot(project, (yield* runtimeEffects.start(project, placement)))));
+                }), Effect.fn("Projects.recover")(function* (error) {
+                    const failed = {
+                        ...project,
+                        runtime: {
+                            driver: runtime.name,
+                            status: "failed" as const,
+                            error: error instanceof Error ? error.message : String(error),
+                        },
+                        updatedAt: new Date().toISOString(),
+                    };
+                    (yield* write(failed));
+                    return (yield* Effect.fail(error));
+                })));
+            }));
+        }),
+        upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+                const project = (yield* requireProject(id));
+                (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
+                if (!["stopped", "failed"].includes(project.runtime.status)) {
+                    return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`)));
+                }
+                const targetName = input?.recipeName?.trim() || project.recipe.name;
+                const entry = projectRecipeMap.get(targetName);
+                if (!entry) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" is not shipped with this Platform.` +
+                        (input?.recipeName ? "" : " Name the recipe to move this Project to."))));
+                }
+                // A frontend stays a frontend and an app stays an app; a Project's kind
+                // label follows its recipe's name, so it is re-derived below.
+                if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
+                }
+                const next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                if (!next.runtimeKinds.includes(project.runtimeKind)) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}" does not support the "${project.runtimeKind}" runtime this Project uses.`)));
+                }
+                if (next.name === project.recipe.name &&
+                    next.version === project.recipe.version &&
+                    project.recipe.artifact) {
+                    return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" already runs ${next.name}@${next.version}.`)));
+                }
+                const candidate: ZelavisProjectRecord = {
+                    ...project,
+                    kind: projectKindForRecipe(next.name),
+                    recipe: next,
+                };
+                // Refused before anything changes: an upgrade that would leave the
+                // Project unable to start under its isolation intent is not an upgrade.
+                const refusal = isolationRefusal(candidate);
+                if (refusal)
+                    return (yield* Effect.fail(refusal));
+                // Freeze the new recipe first. The driver replaces the old artifact only
+                // once the new one is complete, so a failure here leaves the Project
+                // exactly as it was.
+                (yield* runtimeEffects.prepare(candidate, next));
+                const now = new Date().toISOString();
+                const isolation = assessIsolation(candidate);
+                return (yield* write({
+                    ...candidate,
+                    capabilities: runtime.capabilities(candidate),
+                    ...(isolation ? { isolation } : {}),
+                    recipeStatus: recipeStatusOf(next),
+                    recipeHistory: [
+                        ...(project.recipeHistory ?? []),
+                        {
+                            from: { name: project.recipe.name, version: project.recipe.version },
+                            upgradedAt: now,
+                        },
+                    ].slice(-10),
+                    // The reason it could not start belonged to the old lock.
+                    runtime: { driver: runtime.name, status: "stopped" },
+                    updatedAt: now,
+                }));
+            }));
+        }),
+        logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
+            yield* requireProject(id);
+            return yield* runtimeEffects.logs((yield* evaluate(() => normalizeProjectId(id))));
+        }),
+        signGatewayAuthority: Effect.fn("Projects.signGatewayAuthority")(function* (projectId: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[0], claims: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[1]) {
+            if (!runtimeEffects.signGatewayAuthority) return undefined;
+            return yield* runtimeEffects.signGatewayAuthority((yield* evaluate(() => normalizeProjectId(projectId))), claims);
+        }),
+        remove: Effect.fn("Projects.remove")(function* (id: Parameters<ZelavisProjectManager["remove"]>[0]) {
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            return yield* singleFlight(deletionRuns, projectId, () => withProjectLifecycle(projectId, () => deleteProject(projectId)));
+        }),
+        reconcile: Effect.fn("Projects.reconcile")(function* () {
+            if (closing) return;
+            return yield* singleFlight(reconciliationRuns, "fleet", () => Effect.acquireUseRelease(
+                Effect.forkIn(reconcileFleet(), lifecycleScope),
+                fiber => Fiber.join(fiber).pipe(Effect.catchCause(cause =>
+                    closing && Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause))),
+                Fiber.interrupt,
+            ));
+        }),
+        close: Effect.fn("Projects.close")(function* () {
+            return yield* singleFlight(closeRuns, "close", Effect.fn("Projects.transition")(function* () {
+                closing = true;
+                if (reconciliationTimer)
+                    clearInterval(reconciliationTimer);
+                if (placementRenewal)
+                    clearInterval(placementRenewal);
+                yield* Scope.close(lifecycleScope, Exit.void);
+                const active = reconciliationRuns.get("fleet");
+                if (active)
+                    (yield* Deferred.await(active).pipe(Effect.ignoreCause));
+                (yield* runtimeEffects.close());
+                for (const token of ownedPlacements.values()) {
+                    if (token.nodeId === localPlacementNodeId) {
+                        (yield* Effect.catch(integration(() => options.authoritativePlacement?.release(token)), Effect.fn("Projects.recover")(function* () { return undefined; })));
+                    }
+                }
+            }), true);
+        }),
+    };
+    const placementRenewal = options.authoritativePlacement
+        ? setInterval(() => {
+            void present(mapWithConcurrency([...ownedPlacements.values()], startupConcurrency, Effect.fn("Projects.transition")(function* (token: ProjectPlacementToken) {
+                const renewed = yield* integration(() => options.authoritativePlacement!.renew(token, placementLeaseMs));
+                if (!renewed.granted) {
+                    ownedPlacements.delete(token.projectId);
+                    if (token.nodeId === localPlacementNodeId) {
+                        yield* Effect.catch(runtimeEffects.stop(token.projectId), Effect.fn("Projects.recover")(function* () { return undefined; }));
+                    }
+                }
+                else if (token.nodeId !== localPlacementNodeId) {
+                    yield* integration(() => options.dispatch?.()?.dispatchLeaseFenced?.(renewed.placement));
+                }
+            })).pipe(Effect.ignore, Effect.forkIn(lifecycleScope)));
+        }, placementLeaseMs / 3)
+        : undefined;
+    placementRenewal?.unref?.();
+    // An old owner may expire after a control-plane restart. Retry boundedly so
+    // a blocked Project becomes runnable without an operator pressing Start.
+    const reconciliationTimer = options.authoritativePlacement
+        ? setInterval(() => { void present(manager.reconcile()).catch(() => undefined); }, 15000)
+        : undefined;
+    reconciliationTimer?.unref?.();
+    if (options.autoReconcile !== false) {
+        void present(manager.reconcile()).catch(() => undefined);
+    }
+    const { runtime: description, ...operations } = manager;
+    return Object.assign(presentOperations(operations), { runtime: description });
+});
+export function createProjectManager(options: ZelavisProjectManagerOptions): Promise<ZelavisProjectManager> {
+  return present(makeProjectManager(options));
 }

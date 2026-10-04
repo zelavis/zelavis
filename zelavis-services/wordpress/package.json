@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/wordpress",
-  "version": "7.1.3-alpha.0",
+  "version": "7.1.3-alpha.1",
   "private": false,
   "description": "Official Zelavis WordPress Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",
@@ -74,10 +74,12 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.12"
+    "effect": "4.0.0",
+    "zelavis": ">=2.0.0-alpha.15"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "effect": "4.0.0",
     "typescript": "^7.0.2",
     "zelavis": "workspace:*"
   },

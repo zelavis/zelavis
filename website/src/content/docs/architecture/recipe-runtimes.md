@@ -92,6 +92,27 @@ archive digest are pinned independently inside that package. A provisioning fix
 can therefore keep installing the same WordPress release. The runtime verifies
 the digest before unpacking, and each Project keeps its frozen recipe revision.
 
+## Effect runtime drivers
+
+Project lifecycle orchestration, the local driver router, Node/server frontend
+runtimes, and the native WordPress recipe use Effect v4 programs. The public
+runtime driver protocol still presents Promises. `defineEffectProjectRuntime`
+from `zelavis/adapters/project-runtime` presents a native Effect driver through
+that protocol; internal Platform callers retain its Effect implementation, so
+interruption reaches coordination and cleanup finalizers.
+
+A failed or interrupted startup stops the processes it acquired. A failed or
+interrupted recipe preparation restores the previous frozen artifact and host
+descriptor. Deletion persists its tombstone before cleanup, records each
+completed participant, and keeps interrupted cleanup visible and retryable.
+Effect permits and Deferred results coordinate callers within one process;
+persisted checkpoints and Fabric fencing still own restart recovery and
+placement authority.
+
+Frozen runtime modules resolve `effect` and `zelavis` from the Platform. Recipes
+must declare them as host-provided peers rather than installing another copy.
+No Project runtime gains host package authority through Effect.
+
 ## Effect recipe authoring contract
 
 The public `zelavis/recipe` subpath provides an initial runtime-neutral contract

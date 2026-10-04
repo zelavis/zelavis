@@ -323,3 +323,36 @@ test("failed provisioning records its trusted driver so custom cleanup still run
   await assert.rejects(restarted.destroy(p.id), /recipe cleanup failed/);
   await access(join(projects, p.id));
 });
+
+test("a frozen Effect recipe resolves host packages and retains native interruption through the router", async (t) => {
+  const { Deferred, Effect, Fiber } = await import("effect");
+  const { effectOperations } = await import("../dist/core/runtime/effect-boundary.js");
+  const root = await scratch(t), source = await recipePackage(root), projects = join(root, "projects");
+  await writeFile(join(source, "dist", "runtime.js"), `
+import { Effect } from "effect";
+import { defineEffectProjectRuntime } from "zelavis/adapters/project-runtime";
+export function createProjectRuntime({ options }) {
+  return defineEffectProjectRuntime({
+    name: "effect-recipe", runtimeKinds: ["native"], defaultRuntimeKind: "native",
+    capabilities: () => ({ description: Effect.runSync(Effect.succeed("host Effect")) }),
+    prepare: () => Effect.void,
+    start: () => Effect.gen(function* () { options.entered(); yield* Effect.never; }).pipe(Effect.ensuring(Effect.sync(options.released))),
+    stop: () => Effect.succeed({ status: "stopped" }), status: () => Effect.succeed({ status: "stopped" }),
+    logs: () => Effect.succeed([]), destroy: () => Effect.void, close: () => Effect.void,
+  });
+}
+`);
+  const entered = Deferred.makeUnsafe();
+  let released = false;
+  const driver = router(projects, source, { options: { "@acme/site": {
+    entered: () => Effect.runSync(Deferred.succeed(entered, undefined)), released: () => { released = true; },
+  } } });
+  t.after(() => driver.close());
+  const p = project();
+  await driver.prepare(p, p.recipe);
+  assert.equal(driver.capabilities(p).description, "host Effect");
+  const fiber = Effect.runFork(effectOperations(driver).start(p));
+  await Effect.runPromise(Deferred.await(entered));
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.equal(released, true);
+});

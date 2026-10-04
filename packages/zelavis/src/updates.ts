@@ -74,6 +74,7 @@ export interface ZelavisUpdateControl {
 
 /** Raised for a request that cannot be honoured; the route turns it into a 409. */
 export class ZelavisUpdateRefusal extends Error {
+  readonly _tag = "ZelavisUpdateRefusal" as const;
   readonly code: "unmanaged" | "up-to-date" | "busy" | "unchecked";
   constructor(code: ZelavisUpdateRefusal["code"], message: string) {
     super(message);

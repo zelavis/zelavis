@@ -12,6 +12,40 @@ Refresh it with `scripts/update-effect-source.sh effect@<version>` whenever the 
 - `repos/effect/packages/effect/src/`: Actual Effect source code (interfaces, combinators, services).
 - `repos/effect/packages/effect/test/`: Comprehensive real-world usage examples and test patterns.
 
+## Mandatory orchestration and boundaries
+
+- Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
+  package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
+  failure channels, scoped finalizers, and bounded Effect concurrency. Pure
+  synchronous calculations stay ordinary TypeScript. Public SDK/HTTP/CLI and
+  host integration contracts may present Promises; adapt individual external
+  calls at those boundaries, never wrap an entire async workflow in `tryPromise`.
+- `pnpm check:effect-usage` is part of `pnpm verify`. Its AST check rejects new or
+  changed async functions, Promise constructors and Promise coordination in
+  Platform code. `scripts/effect-migration-baseline.json` records unchanged
+  legacy occurrences outside the migrated lifecycle modules; this debt is not
+  permission to introduce or copy Promise orchestration. Its only maintenance
+  command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
+  entries. Never expand it to make a change pass. Migrate touched orchestration.
+- Project lifecycle, local/native runtime drivers, WordPress provisioning and
+  update orchestration are fully checked with no legacy allowances. Interruptions
+  must release coordination permits, stop partially acquired processes, preserve
+  frozen recipe rollback, and leave durable deletion checkpoints retryable.
+  Effect coordination does not replace persisted checkpoints, Fabric fencing,
+  authorization, or separately supervised production Agents.
+
+The native Project runtime programs are presented through the existing Promise
+protocol. Internal callers consume registered Effect programs directly, preserving
+interruption and finalizers. Raw host callbacks are adapted individually. Never
+interrupt a non-cancellable host mutation before it has finished: a copy or write
+that continues after interruption can race its rollback. `integration` waits for
+such calls; use its `interruptible` option only with an abort signal or an owned
+cancellation finalizer. Network requests and one-shot subprocesses release their
+resources on interruption. Never use Promise queues or timers for Effect-internal
+delays; use Deferred, Semaphore
+and Effect.sleep. An interrupted deletion records a failed tombstone and retains
+completed participant IDs; retry resumes only unfinished work.
+
 ## Important Effect v4 Patterns
 
 ### 1. Schema Definition

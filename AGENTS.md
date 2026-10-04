@@ -615,6 +615,25 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Effect Version & Vendored Source (@repos/effect)
 
+- Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
+  package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
+  failure channels, scoped finalizers, and bounded Effect concurrency. Pure
+  synchronous calculations stay ordinary TypeScript. Public SDK/HTTP/CLI and
+  host integration contracts may present Promises; adapt individual external
+  calls at those boundaries, never wrap an entire async workflow in `tryPromise`.
+- `pnpm check:effect-usage` is part of `pnpm verify`. Its AST check rejects new or
+  changed async functions, Promise constructors and Promise coordination in
+  Platform code. `scripts/effect-migration-baseline.json` records unchanged
+  legacy occurrences outside the migrated lifecycle modules; this debt is not
+  permission to introduce or copy Promise orchestration. Its only maintenance
+  command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
+  entries. Never expand it to make a change pass. Migrate touched orchestration.
+- Project lifecycle, local/native runtime drivers, WordPress provisioning and
+  update orchestration are fully checked with no legacy allowances. Interruptions
+  must release coordination permits, stop partially acquired processes, preserve
+  frozen recipe rollback, and leave durable deletion checkpoints retryable.
+  Effect coordination does not replace persisted checkpoints, Fabric fencing,
+  authorization, or separately supervised production Agents.
 - Use **Effect v4** instead of Effect v3. The `effect` dependency is pinned to an
   exact release (stable `4.0.0` since 2026-10-01); every `@effect/*` package that
   is used moves with it.

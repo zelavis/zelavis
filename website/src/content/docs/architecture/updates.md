@@ -164,3 +164,12 @@ separate from the above.
 - `zelavis upgrade` as an Agent host operation is no longer needed for the first
   version: the root updater above covers it. It would still matter for updating a
   fleet of servers from a Fabric.
+
+## Orchestration and interruption
+
+The update control and host-local runner use Effect v4. Registry checks share
+one in-flight lookup, apply requests serialize, and temporary request/status
+files and registry readers have cleanup finalizers. Public update APIs keep
+their Promise contracts. Channel checks, the privileged installer boundary,
+instance ownership, health checks and rollback remain the update authority;
+Effect coordination does not make an update durable by itself.
