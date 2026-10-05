@@ -1307,9 +1307,7 @@ Native release installation is host-local too: the shell installer and create
 bootstrap call `zelavis install --from-npm`, and a Debian `postinst` calls
 `zelavis install --from-release`, using the release's private Node. Keep the ordered plan in core runtime and concrete host operations in
 adapters; unit/configuration templates come from the release tree, and runtime
-pins/checksums remain in distribution staging. Native Platform units bind to
-`127.0.0.1` for user installs and named instances; a server's default instance listens on all
-interfaces (the installer prints the URL; the first-owner token gates the claim). There is no loopback-only server mode.
+pins/checksums remain in distribution staging. Native Platform management listeners bind to `127.0.0.1` by default; `--public` explicitly exposes that listener. A default system installation enables Traefik on ports 80 and 443, publishes a canonical HTTP fallback to the persistent management listener, and prints `http://<server-ip>/zelavis/`. A hostname is optional for HTTP; HTTPS requires hostname/certificate configuration. Refuse foreign owners of public ports. Live updates honor persisted listener configuration and retain the host/proxy processes. Do not add compatibility aliases or version branches.
 npm/pnpm/Bun create use the same bootstrap and plan. Create takes no folder
 argument. Its sudo bootstrap fetches its own Node and package into a private
 root-owned temporary directory; never execute a file from a user package cache as

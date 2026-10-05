@@ -59,9 +59,10 @@ versions used by other applications.
 
 Traefik lives under `/opt/zelavis/current/edge/traefik`; its systemd unit can
 listen on ports 80 and 443 through a narrow capability boundary. The unit is
-installed but disabled, and its watched generated-route directory starts empty,
-so installation alone claims no ports and exposes no hostname. Zelavis Edge
-must stage, probe, and activate a canonical publication before enabling it. The static adapter file is a dpkg conffile at
+enabled on default system installations. Zelavis Edge publishes a canonical
+HTTP fallback to the persistent management listener and starts the proxy, so
+`http://<server-ip>/zelavis/` works without a hostname. Ports owned by another
+service are refused. Hostname-specific routes take precedence over the fallback. The static adapter file is a dpkg conffile at
 `/etc/zelavis/edge/traefik/traefik.yml`; generated output lives under
 `/var/lib/zelavis/edge/traefik`.
 
@@ -201,14 +202,11 @@ curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
 (A dry run still downloads Node and the package into a temporary directory; it
 changes nothing else.)
 
-A server's default instance binds `0.0.0.0:3000` by default and the installer prints
-`http://<server-ip>:3000/zelavis` to open (plain HTTP: the first-owner token gates who
-may claim the account, and the setup wizard's hostname step adds HTTPS). There is no
-loopback-only server mode; a cloud firewall or an SSH tunnel is how an operator keeps
-it off the internet. `--public` is the opt-in for a named instance or a user-mode
-install, which stay on `127.0.0.1` otherwise. Rerunning the installer applies the flag
-it is given. The Project Agent is enabled for every system installation;
-Traefik remains disabled until Edge activates routes. Releases
+A default system installation serves `http://<server-ip>/zelavis/` through Traefik.
+The management listener binds `127.0.0.1:3000`; `--public` explicitly exposes
+that listener. User and named instances have no host Edge and remain local by
+default. The first-owner token gates the claim; HTTPS needs hostname/certificate
+configuration. The Project Agent is enabled for every system installation. Releases
 stay in `releases/<version>` with a `current` link. Older versions are refused
 unless `--allow-downgrade` is given; previous releases are kept.
 
@@ -264,8 +262,7 @@ Only `default` may own host Edge. The installer serializes its persistent
 Platform holds the kernel reservation in `/opt/zelavis/.edge-owner.lock`; a live
 reservation refuses another claimant, and process death releases the lock.
 The service can reserve the existing lock inode but cannot rewrite its
-root-owned ownership record. Installation still leaves Traefik disabled and
-claims no public ports. Secondary instances run with Edge off and receive
+root-owned ownership record. The default installation enables Traefik and owns ports 80 and 443. Secondary instances run with Edge off and receive
 traffic through the primary's Edge or an operator-managed external proxy.
 Configure those routes explicitly; installation does not publish them.
 
@@ -321,7 +318,7 @@ layout, foreign PATH commands, live data owners and an occupied or reserved inst
 only permits deliberate command replacement; it cannot bypass data or ports.
 Create forwards the invoking PATH for inspection, while the privileged bootstrap
 continues executing commands through a fixed trusted PATH. Named instances share the prefix and releases, with their own data/config/port.
-Only default may hold the host Edge reservation; installation claims no ports 80/443.
+Only default may hold the host Edge reservation; its Traefik unit owns ports 80/443.
 
 Node and Bun Platforms reserve `<data>/.platform.lock` before opening their
 System Store and record PID/start/session metadata in `.platform-owner.json`.

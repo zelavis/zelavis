@@ -23,7 +23,11 @@ if [ -n "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then package="zelavis@$ZELAVIS_P
 mv /opt/npm-project/node_modules/zelavis /opt/prepared/platform
 mv /opt/npm-project/node_modules /opt/prepared/platform/node_modules
 ln -s .. /opt/prepared/platform/node_modules/zelavis
-"$NODE" /opt/prepared/platform/dist/cli.js install --from-npm /opt/prepared --public > /opt/installation.log 2>&1 || { sed '/First-run bootstrap token:/d' /opt/installation.log; exit 1; }
+# The previous release is installed with explicitly public management access;
+# the candidate fresh install must qualify the private default.
+management_exposure=
+if [ -n "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then management_exposure=--public; fi
+"$NODE" /opt/prepared/platform/dist/cli.js install --from-npm /opt/prepared $management_exposure > /opt/installation.log 2>&1 || { sed '/First-run bootstrap token:/d' /opt/installation.log; exit 1; }
 NODE=/opt/zelavis/current/runtime/node/bin/node
 CHECK=/workspace/zelavis-services/wordpress/scripts/check-wordpress-provisioning.mjs
 if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
@@ -37,6 +41,20 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 systemctl is-active zelavis-host-agent.service zelavis.service
+if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
+  systemctl is-active zelavis-traefik.service
+  systemctl is-enabled zelavis-traefik.service
+  for attempt in $(seq 1 30); do
+    if curl -fsS --max-time 2 http://127.0.0.1/zelavis/ >/dev/null; then break; fi
+    sleep 1
+  done
+  server_ip=$(hostname -I | awk '{print $1}')
+  curl -fsS --noproxy '*' --max-time 10 "http://$server_ip/zelavis/" >/dev/null
+  if curl -fsS --noproxy '*' --max-time 2 "http://$server_ip:3000/zelavis/" >/dev/null 2>&1; then
+    printf 'FAIL: the default management listener must be private.\n'; exit 1
+  fi
+  printf 'PASS: production IP ingress via Traefik; default management listener stays private.\n'
+fi
 stat -c '%U:%G %a %n' /opt/zelavis/host-agent/agent /opt/zelavis/host-agent/agent/token /opt/zelavis/host-agent/agent/agent.sock
 "$NODE" "$CHECK" claim
 chown zelavis:zelavis /var/lib/zelavis/qualification-session

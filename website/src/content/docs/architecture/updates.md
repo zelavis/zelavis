@@ -192,6 +192,16 @@ Platform handover. Linux WordPress Unix sockets live in shared installation data
 so the Platform and Agent can use them despite their separate private `/tmp`
 mounts. Traefik remains independently supervised.
 
+Default system installations serve production HTTP through Traefik at
+`http://<server-ip>/zelavis/`, using a canonical hostname-independent route to the
+persistent Platform listener. Fresh management listeners stay on loopback;
+`--public` explicitly exposes them, and live updates retain stored listener
+configuration. Update now prepares proxy directory permissions, materializes the
+selected Edge publication in the watched provider format, and enables ingress
+through the same root inventory transaction. Platform engine replacement keeps
+Traefik running. Public-port conflicts are refused; hostname/TLS configuration
+is separate from domain-free HTTP ingress.
+
 ## Integrity and recovery
 
 An installed engine must match its exact version, complete file digest and

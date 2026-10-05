@@ -39,14 +39,14 @@ test("traefik static configuration watches active directory and disables dashboa
   assert.match(config, /address:\s*":443"/);
 });
 
-test("the Debian package manages Traefik unit, conffiles, and leaves it disabled by default", async () => {
+test("the Debian package manages Traefik unit, conffiles, and enables production ingress by default", async () => {
   const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
   assert.match(builder, /zelavis-traefik\.service/);
   assert.match(builder, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
   assert.match(builder, /conffiles.*\/etc\/zelavis\/edge\/traefik\/traefik\.yml/s);
   assert.match(builder, /cli\.js install --from-release/);
   const plan = await readFile(new URL("../../packages/zelavis/src/core/runtime/installation-plan.ts", import.meta.url), "utf8");
-  assert.match(plan, /\["disable", "zelavis-traefik\.service"\]/);
+  assert.match(plan, /\["enable", "zelavis-traefik\.service"\]/);
   assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
 });
 

@@ -7,7 +7,8 @@ import { evaluate, integration, IntegrationFailure, type TaggedFailure } from ".
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
 import { planZelavisRuntimeHostAssetsProgram } from "../core/runtime/installation-plan.js";
-import { assertInstallationPath } from "../core/runtime/installation-plan.js";
+import { assertInstallationPath, planZelavisProductionEdgeDirectories } from "../core/runtime/installation-plan.js";
+import { assertProductionEdgePortsProgram } from "../core/runtime/installation-health.js";
 import { isExactVersion } from "../updates.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 
@@ -56,6 +57,16 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
   yield* evaluate(() => {
     if (before.ready !== true || before.requiresRecovery || (before.release as RuntimeRelease)?.version !== receipt.version) throw new Error("Platform host selection disagrees with installer inventory or requires fenced recovery.");
   });
+  // Directory permissions are installed host inventory, prepared before the
+  // candidate starts Traefik. The file provider must be able to watch its output
+  // when it starts, including before the release-selection acknowledgement.
+  if (receipt.mode === "system" && receipt.edge === true) {
+    const host = createNodeInstallHost();
+    const paths = { ...nodeInstallationPaths(process.env, options.instance), prefix: options.prefix,
+      dataDirectory: options.dataDirectory, configDirectory: String(receipt.configDirectory), commandPath: String(receipt.commandPath) };
+    yield* assertProductionEdgePortsProgram({ host, paths, port: Number(receipt.port), edge: true });
+    for (const step of planZelavisProductionEdgeDirectories(paths)) yield* integration(() => host.execute(step.action));
+  }
   const completed = Deferred.makeUnsafe<Readonly<Record<string, unknown>>, TaggedFailure>();
   return yield* Effect.scoped(Effect.gen(function* () {
     yield* Effect.forkChild(requestNodeRuntimeControl(endpoint, { action: "select", version: options.version, commit: true }).pipe(
@@ -95,6 +106,9 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
             // Write public confirmation last: an interrupted partial inventory
             // update must not allow an unacknowledged engine to boot.
             yield* writeReceipt(scope.runtime, { ...runtime, version: pending.release.version }, receipt.mode === "system" ? 0o644 : 0o600);
+            if (receipt.mode === "system" && receipt.edge === true) {
+              yield* integration(() => createNodeInstallHost().execute({ kind: "command", command: "systemctl", args: ["enable", "zelavis-traefik.service"] }));
+            }
           }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
         }));
         yield* requestNodeRuntimeControl(endpoint, { action: "commit", nonce: pending.nonce, version: pending.release.version,

@@ -139,6 +139,19 @@ function addStep(steps: ZelavisInstallStep[], id: string, description: string, a
   steps.push({ id, description, idempotent, action });
 }
 
+/** Root publishes Edge output; the unprivileged proxy may only traverse/read it. */
+export function planZelavisProductionEdgeDirectories(paths: ZelavisInstallPaths): readonly ZelavisInstallStep[] {
+  validateInstallationPaths(paths);
+  const scope = installationInstanceScope(paths.prefix, paths.instance);
+  if (scope.named) return [];
+  const steps: ZelavisInstallStep[] = [];
+  for (const path of [`${paths.dataDirectory}/edge`, `${paths.dataDirectory}/edge/traefik`, `${paths.dataDirectory}/edge/traefik/active`]) {
+    addStep(steps, `edge:${path}`, `Create the proxy-readable Edge directory ${path}`, { kind: "mkdir", path, mode: 0o750 });
+    addStep(steps, `owner:${path}`, `Keep Edge output root-owned and readable by the proxy group`, { kind: "command", command: "chown", args: [`root:${scope.account}`, path] });
+  }
+  return steps;
+}
+
 /** Host unit changes are part of the trusted update transaction, including
  * rollback. The same authored templates serve fresh installs and live updates;
  * refreshing them never restarts the persistent host or Project Agent. */
@@ -155,6 +168,23 @@ export const planZelavisRuntimeHostAssetsProgram = Effect.fn("Installation.runti
   const dataBase = scope.named ? paths.dataDirectory.slice(0, -scope.instance.length - 1) : paths.dataDirectory;
   const configBase = scope.named ? paths.configDirectory.slice(0, -scope.instance.length - 1) : paths.configDirectory;
   const render = (text: string) => text.replaceAll("/opt/zelavis", paths.prefix).replaceAll("/var/lib/zelavis", dataBase).replaceAll("/etc/zelavis", configBase);
+  if (!scope.named) {
+    // Materialize the selected publication with the selected release's host
+    // assets before inventory acknowledgement. JSON is valid YAML, but the
+    // Traefik file provider only loads .yml/.yaml/.toml extensions.
+    const base = `${paths.dataDirectory}/edge/traefik`;
+    const state = yield* integration(() => host.read(`${base}/active-generation.json`));
+    if (state) {
+      const generation = yield* evaluate(() => JSON.parse(state)?.activeGeneration);
+      if (typeof generation !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/u.test(generation)) return yield* new IntegrationFailure(new Error("Invalid active Edge publication generation."));
+      const configuration = yield* integration(() => host.read(`${base}/generations/${generation}/traefik-dynamic.json`));
+      yield* evaluate(() => {
+        const parsed = configuration ? JSON.parse(configuration) : undefined;
+        if (!parsed?.http || typeof parsed.http !== "object") throw new Error("Active Edge publication has no HTTP configuration.");
+      });
+      addStep(steps, "edge-publication", "Materialize the selected Edge publication for the watched provider", { kind: "write", path: `${base}/active/traefik-dynamic.yml`, content: configuration!, mode: 0o644, atomic: true });
+    }
+  }
   for (const [index, unit] of scope.templates.entries()) {
     const template = (yield* integration(() => host.read(`${source}/share/${unit}`)));
     if (template === undefined && unit === "zelavis-traefik.service") continue;
@@ -321,7 +351,8 @@ export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZela
     if (!input.live) command("data-owner", "Set ownership of Platform data", "chown", ["-R", `${scope.account}:${scope.account}`, paths.dataDirectory]);
     steps.push(...yield* planZelavisRuntimeHostAssetsProgram({ host, paths, source, port, public: input.public }));
     if (!scope.named && (yield* integration(() => host.exists(`${source}/share/zelavis-traefik.service`)))) {
-      for (const path of [`${paths.dataDirectory}/edge/traefik/active`, `${paths.dataDirectory}/agent`]) {
+      steps.push(...planZelavisProductionEdgeDirectories(paths));
+      for (const path of [`${paths.dataDirectory}/agent`]) {
         addStep(steps, `edge:${path}`, `Create owned directory ${path}`, { kind: "mkdir", path, mode: 0o750 });
         command(`owner:${path}`, `Set ownership of ${path}`, "chown", [`${scope.account}:${scope.account}`, path]);
       }
@@ -354,7 +385,7 @@ export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZela
     if (previous || installedManifest && JSON.parse(installedManifest).version !== version) {
       command("platform-restart", "Restart the Platform on the newly selected release", "systemctl", ["restart", scope.units[0]]);
     }
-    if (!scope.named) command("edge-disable", "Leave Traefik disabled until Edge publishes routes", "systemctl", ["disable", "zelavis-traefik.service"], true);
+    if (!scope.named) command("edge-enable", "Enable production ingress; the Platform publishes and activates its default route", "systemctl", ["enable", "zelavis-traefik.service"]);
   }
   if (input.user) {
     addStep(steps, "config-directory", "Create private user configuration", { kind: "mkdir", path: paths.configDirectory, mode: 0o700 });

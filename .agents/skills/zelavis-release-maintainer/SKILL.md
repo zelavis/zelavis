@@ -93,3 +93,5 @@ app and host process identities, recipe lock, files and ownership. Exercise nati
 Auth/Database/Storage/Workloads APIs, usage-based native navigation, private state
 retention across integration handover/restart, and Project cleanup. Opening the
 bound runtime only after the parent update does not qualify existing instances.
+
+Production ingress changes must qualify domain-free HTTP and dashboard assets through real Traefik, a private fresh-install management listener, conflict refusal, and continuous public HTTP during Platform engine rollback/reselection. Update now must activate and enable the proxy through existing root update authority without restarting it or Project processes.

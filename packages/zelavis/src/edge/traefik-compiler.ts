@@ -151,6 +151,7 @@ function sanitizeIdentifier(id: string): string {
 }
 
 function buildTraefikRule(route: ZelavisEdgeRoute): string {
+  if (route.hostname === "*") return "PathPrefix(`/`)";
   const hostRule = `Host(\`${route.hostname}\`)`;
   if (route.pathPrefix === "/") {
     return hostRule;
@@ -210,11 +211,14 @@ export function compileTraefikPublication(
   const middlewares: Record<string, TraefikMiddlewareConfig> = {};
 
   let needsRedirectMiddleware = false;
+  const hasFallback = publication.routes.some(route => route.hostname === "*");
 
   for (const route of publication.routes) {
     const safeId = sanitizeIdentifier(route.id);
     const serviceName = `svc_${route.scope}_${safeId}`;
     const rule = buildTraefikRule(route);
+    // The fallback is below every explicit host route, including priority 1.
+    const priority = route.hostname === "*" ? 1 : hasFallback && route.priority > 0 ? route.priority + 1 : route.priority;
 
     // Build service definition
     const servers: TraefikServiceServer[] = route.targets.map((target) => ({
@@ -261,7 +265,7 @@ export function compileTraefikPublication(
         rule,
         service: serviceName,
         tls: {},
-        ...(route.priority !== 0 ? { priority: route.priority } : {}),
+        ...(priority !== 0 ? { priority } : {}),
         ...(routeMiddlewares.length > 0 ? { middlewares: routeMiddlewares } : {}),
       };
 
@@ -274,7 +278,7 @@ export function compileTraefikPublication(
           rule,
           service: serviceName,
           middlewares: ["middleware_redirect_https"],
-          ...(route.priority !== 0 ? { priority: route.priority } : {}),
+          ...(priority !== 0 ? { priority } : {}),
         };
       }
     } else {
@@ -284,7 +288,7 @@ export function compileTraefikPublication(
         entryPoints: [httpEntryPoint],
         rule,
         service: serviceName,
-        ...(route.priority !== 0 ? { priority: route.priority } : {}),
+        ...(priority !== 0 ? { priority } : {}),
         ...(routeMiddlewares.length > 0 ? { middlewares: routeMiddlewares } : {}),
       };
     }

@@ -87,17 +87,18 @@ await writeFile(unitFile, `# Qualification marker: refresh during live root comm
 const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
 urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`, wpControl);
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
-async function underTraffic(operation) {
-  let finished = false;
+async function underTraffic(operation, label = "live operation") {
+  let finished = false; const started = Date.now();
   const traffic = Promise.all(urls.map(async url => {
     do {
-      const response = await fetch(url, { ...(url.startsWith(`${baseUrl}/zelavis/api/`) ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(30_000) })
+        .catch(error => { throw Error(`${label}: ${url} failed after ${Date.now() - started}ms`, { cause: error }); });
       assert.ok([200, 302].includes(response.status), `${url}: ${response.status}`);
       await response.arrayBuffer(); counts[url]++;
       await new Promise(resolve => setTimeout(resolve, 20));
     } while (!finished);
   }));
-  const action = operation().finally(() => { finished = true; });
+  const action = operation().finally(() => { finished = true; console.log(`TRAFFIC: ${label} completed in ${Date.now() - started}ms`); });
   const outcomes = await Promise.allSettled([action, traffic]);
   for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
   return outcomes[0].value;
@@ -178,6 +179,42 @@ assert.ok(!(await readFile(unitFile, 'utf8')).includes('Qualification marker'), 
 assert.equal((await descriptor(id)).engine.runtime.version, from, 'Parent update preserves App engine');
 assert.equal((await executingVersion()).version, from, 'Parent update must retain the executing child engine');
 assert.equal((await client.projects.get(id)).preview.port, app.preview.port);
+// The ordinary update must activate production ingress even without a domain.
+const ingressUrl = 'http://127.0.0.1/zelavis/';
+for (let attempt = 0; attempt < 60; attempt++) {
+  const response = await fetch(ingressUrl, { signal: AbortSignal.timeout(5_000) });
+  if (response.status === 200) break;
+  assert.ok(attempt < 59, `Production ingress did not converge: ${response.status}`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+}
+assert.equal(execFileSync('systemctl', ['is-active', 'zelavis-traefik.service'], { encoding: 'utf8' }).trim(), 'active');
+assert.equal(execFileSync('systemctl', ['is-enabled', 'zelavis-traefik.service'], { encoding: 'utf8' }).trim(), 'enabled');
+const proxyPid = () => execFileSync('systemctl', ['show', 'zelavis-traefik.service', '-p', 'MainPID', '--value'], { encoding: 'utf8' }).trim();
+const initialProxyPid = proxyPid();
+assert.notEqual(initialProxyPid, '0');
+const html = await (await fetch(ingressUrl)).text();
+const asset = html.match(/(?:src|href)="([^" ]+\.js(?:\?[^" ]*)?)"/);
+assert.ok(asset, 'The public dashboard must include a browser entry asset');
+const assetResponse = await fetch(new URL(asset[1], ingressUrl));
+assert.equal(assetResponse.status, 200);
+assert.match(assetResponse.headers.get('content-type') ?? '', /javascript/);
+await assetResponse.arrayBuffer();
+for (const publicUrl of [ingressUrl, 'http://127.0.0.1/zelavis/api/v1/runtime/config',
+  `http://127.0.0.1/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`]) {
+  urls.push(publicUrl); counts[publicUrl] = 0;
+}
+const candidateRoot = `/opt/zelavis/releases/${to}`;
+for (const version of [from, to]) {
+  await underTraffic(async () => {
+    const selection = await run(join(candidateRoot, 'runtime/node/bin/node'), [join(candidateRoot, 'platform/dist/adapters/_node-runtime-select-cli.js'), '/opt/zelavis', 'default', '/var/lib/zelavis', version]);
+    assert.equal(selection.code, 0, selection.output);
+  });
+  assert.equal(JSON.parse(await readFile('/opt/zelavis/runtime.json', 'utf8')).version, version);
+  assert.equal(hostPid(), initialPid);
+  assert.equal(proxyPid(), initialProxyPid, 'Traefik must stay running through full Platform engine changes');
+}
+console.log('PASS: domain-free production ingress and assets; Platform rollback/reselection preserve proxy and traffic.');
+
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
 assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
@@ -219,7 +256,7 @@ assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
 assert.ok(choices.versions.some(entry => entry.version === to && entry.status === 'available'));
 for (const version of [to, from]) {
-  const switched = await underTraffic(() => client.projects.switchVersion(id, version));
+  const switched = await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`);
   assert.equal(switched.runtime.status, 'running');
   assert.equal(switched.preview.port, app.preview.port);
   const selected = await descriptor(id);
@@ -250,6 +287,7 @@ await client.projects.remove(historical.id); await client.projects.remove(latest
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
+  productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
   managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },

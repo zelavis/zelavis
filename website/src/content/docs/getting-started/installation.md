@@ -47,13 +47,15 @@ deliberately. The installed CLI then runs `zelavis install --from-npm` with all
 remaining flags, including `--instance`, `--port`, `--public` and `--dry-run`
 (a dry run still downloads into a temporary directory, and changes nothing else).
 
-The runtime does not depend on the host's Node. On a server the dashboard listens on
-all interfaces at port 3000 and the installer prints the URL to open; the one-time
+The runtime does not depend on the host's Node. On a default system installation Traefik serves
+`http://<server-ip>/zelavis/`; the management listener stays on loopback unless
+explicitly exposed with `--public`. The installer prints the URL to open; the one-time
 first-owner token decides who may claim the account. Project process supervision
 runs through a separately supervised Agent. System installations
 also enable the restricted root host-operation Agent for signed package and Edge
 operations, with cgroup v2 containment; the Platform and Project processes remain
-unprivileged. Traefik stays disabled at installation. Automated ACME/cutover
+unprivileged. Traefik is enabled and started with a canonical domain-free HTTP route.
+Hostname-based HTTPS needs certificate configuration; automated ACME/cutover
 reconciliation remains pending.
 
 ## Updating
@@ -215,8 +217,7 @@ Only `default` may own host Edge. The installer serializes its persistent
 Platform holds the kernel reservation in `/opt/zelavis/.edge-owner.lock`; a live
 reservation refuses another claimant, and process death releases the lock.
 The service can reserve the existing lock inode but cannot rewrite its
-root-owned ownership record. Installation still leaves Traefik disabled and
-claims no public ports. Secondary instances run with Edge off and receive
+root-owned ownership record. The default installation enables Traefik and owns ports 80 and 443. Secondary instances run with Edge off and receive
 traffic through the primary's Edge or an operator-managed external proxy.
 Configure those routes explicitly; installation does not publish them.
 
@@ -250,7 +251,7 @@ selected instance and port. Without `--instance`, all installer entries repair o
 A different recorded installation or service layout is refused. Foreign npm,
 source or other commands on PATH are reported with removal/PATH guidance.
 `--force` permits deliberate command replacement; it cannot bypass a live data
-owner or another listener on the selected port. Public ports 80/443 remain unclaimed at installation.
+owner or another listener on the selected port. Default system installations require free public ports 80/443, or listeners already owned by their Traefik unit.
 
 Install and complete removal use an exclusive `<prefix>/.install.lock` (`flock`
 on Linux, supplied by `util-linux`). Node and Bun Platforms and installer
@@ -289,16 +290,13 @@ shadows it on PATH.
 
 ## First-Run Setup & Ownership Claim
 
-A system installation starts its HTTP service listener on port 3000, on all
-interfaces, and prints `http://<server-ip>:3000/zelavis` when it finishes. That
-address is plain HTTP, so claim the owner account straight away and add a hostname
-with HTTPS in the setup wizard. If a cloud firewall blocks the port, allow it.
-Named instances and user-mode installs stay on `127.0.0.1` unless given `--public`;
-rerunning the installer applies the flag it is given.
-
-Public web ports (`80` and `443`) intentionally remain dormant during first install:
-Zelavis never hijacks public HTTP/HTTPS ports before you have explicitly configured
-your domain and verified DNS.
+A default system installation starts Traefik on public ports 80 and 443 and
+prints `http://<server-ip>/zelavis/`. The management listener stays on
+`127.0.0.1:3000` unless explicitly exposed with `--public`. A hostname is optional
+for HTTP; HTTPS requires hostname and certificate configuration. Claim the owner
+account and configure HTTPS in the setup wizard. Installation refuses ports
+owned by another service. Named instances and user-mode installs have no host
+Edge and stay on loopback by default. Live updates retain configured listeners.
 
 A one-time **bootstrap token** is generated during installation and printed in
 your terminal output (also saved in `/etc/zelavis/zelavis.env` with
@@ -310,25 +308,25 @@ interactive terminal option:
 
 ### Option A: Direct Browser Access (the default on a server)
 
-If your firewall permits inbound traffic on port 3000:
+If your firewall permits inbound HTTP on port 80:
 
 1. Open your browser and navigate directly to:
    ```text
-   http://<your-server-ip>:3000/zelavis/setup
+   http://<your-server-ip>/zelavis/setup
    ```
 2. Paste the **bootstrap token** from `/etc/zelavis/zelavis.env`.
 3. Enter your administrator email and password to claim the **Owner** account.
 4. The optional Platform hostname step follows the durable Owner claim. An apex
    (`example.com`) or subdomain (`panel.example.com`) is a valid hostname.
-5. Choose **Configure later** to keep using the installation’s recovery address,
+5. Choose **Configure later** to keep using the IP address,
    or configure an external TLS terminator separately. Automatic certificate
-   issuance and reconciled Traefik activation still need production qualification;
+   issuance and hostname cutover still need production qualification;
    installation does not establish public HTTPS.
 
 Hostname/TLS setup uses authenticated Edge operations after ownership is claimed.
 A failure there does not undo the Owner account or reopen first-owner setup.
 
-### Option B: SSH Port Forwarding (if you would rather not open port 3000)
+### Option B: SSH Port Forwarding to the private management listener
 
 Use an SSH tunnel when a firewall blocks the port or you prefer not to expose it, including for a named or user-mode instance:
 

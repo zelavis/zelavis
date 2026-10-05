@@ -278,7 +278,7 @@ test("Edge Host Operations: lifecycle, envelope authorization, and execution", a
 
   // Verify active dynamic configuration is in place
   const activeConfig = await readFile(
-    join(edgeBaseDir, "active", "traefik-dynamic.json"),
+    join(edgeBaseDir, "active", "traefik-dynamic.yml"),
     "utf8",
   );
   assert.equal(activeConfig.trim(), configContent.trim());
@@ -319,7 +319,7 @@ test("Edge Host Operations: lifecycle, envelope authorization, and execution", a
 
   // Verify active is now rev-2
   const activeV2 = await readFile(
-    join(edgeBaseDir, "active", "traefik-dynamic.json"),
+    join(edgeBaseDir, "active", "traefik-dynamic.yml"),
     "utf8",
   );
   assert.equal(activeV2.trim(), config2Content.trim());
@@ -334,7 +334,7 @@ test("Edge Host Operations: lifecycle, envelope authorization, and execution", a
 
   // Verify active is restored to rev-1
   const activeRestored = await readFile(
-    join(edgeBaseDir, "active", "traefik-dynamic.json"),
+    join(edgeBaseDir, "active", "traefik-dynamic.yml"),
     "utf8",
   );
   assert.equal(activeRestored.trim(), configContent.trim());

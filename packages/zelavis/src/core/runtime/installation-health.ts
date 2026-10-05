@@ -70,7 +70,21 @@ export const preflightZelavisInstallProgram = Effect.fn("Installation.preflightZ
   const heldByOwnSocket = !!socket?.present && socket.active;
   const platformHoldsPort = (stopPlatform || input.live) && owner.active && ((owner.supervisorPid ?? owner.pid) === unit?.pid || !input.system) && (yield* integration(() => host.portOwnedBy((owner.supervisorPid ?? owner.pid)!, port)));
   if (!(yield* integration(() => host.portAvailable(port))) && !heldByOwnSocket && !platformHoldsPort) return yield* new IntegrationFailure(new Error(`Port ${port} is occupied by another listener. Stop it before installation; --force cannot bypass a port conflict.`));
+  if (input.system && !scope.named) yield* assertProductionEdgePortsProgram({ host, paths, port, edge: receipt?.edge === true });
   return { stopPlatform };
+});
+/** Both fresh installation and live root selection refuse foreign ingress listeners. */
+export const assertProductionEdgePortsProgram = Effect.fn("Installation.productionEdgePorts")(function* (input: {
+  readonly host: ZelavisInstallationProbeHost; readonly paths: ZelavisInstallPaths;
+  readonly port: number; readonly edge: boolean;
+}): Effect.fn.Return<void, TaggedFailure> {
+  if ([80, 443].includes(input.port)) return yield* new IntegrationFailure(new Error("The Platform management port must be distinct from production ingress ports 80 and 443."));
+  const unit = input.edge ? yield* integration(() => input.host.unitState("zelavis-traefik.service", input.paths)) : undefined;
+  for (const publicPort of [80, 443]) {
+    const available = yield* integration(() => input.host.portAvailable(publicPort));
+    const owned = unit?.active && unit.pid && (yield* integration(() => input.host.portOwnedBy(unit.pid!, publicPort)));
+    if (!available && !owned) return yield* new IntegrationFailure(new Error(`Production ingress port ${publicPort} is occupied by another listener. Zelavis will not replace its owner.`));
+  }
 });
 export function preflightZelavisInstall(input: { host: ZelavisInstallationProbeHost; paths: ZelavisInstallPaths; system: boolean; user?: boolean; force?: boolean; otherPrefixes?: readonly string[]; port?: number; live?: boolean }): Promise<{ stopPlatform: boolean }> { return present(preflightZelavisInstallProgram(input)); }
 
@@ -163,7 +177,13 @@ export const inspectZelavisInstallationProgram = Effect.fn("Installation.inspect
       const ours = lock && owner?.schemaVersion === 1 && owner.prefix === paths.prefix && owner.instance === scope.instance && owner.dataDirectory === paths.dataDirectory;
       return { status: receipt?.edge && !ours ? "error" : "ok", detail: scope.named ? `Edge off; host owner ${owner?.instance ?? "none"}.` : `Host Edge reservation ${ours ? "matches" : "missing or foreign"}.` };
     })));
-    for (const port of [80, 443]) (yield* check(`port:${port}`, () => Effect.gen(function* () { return { status: "ok", detail: `Port ${port}: ${(yield* integration(() => host.portAvailable(port))) ? "available" : "occupied"}; installation does not claim public web ports.` }; })));
+    for (const port of [80, 443]) (yield* check(`port:${port}`, () => Effect.gen(function* () {
+      const available = yield* integration(() => host.portAvailable(port));
+      if (!receipt?.edge) return { status: "ok", detail: `Port ${port}: ${available ? "available" : "occupied"}; this instance has no host Edge authority.` };
+      const edge = yield* integration(() => host.unitState("zelavis-traefik.service", paths));
+      const owned = edge.active && edge.enabled && edge.pid && (yield* integration(() => host.portOwnedBy(edge.pid!, port)));
+      return { status: owned ? "ok" : "error", detail: `Production ingress port ${port}: ${owned ? `owned by Zelavis Traefik (PID ${edge.pid})` : "no enabled, active Zelavis Traefik listener proved"}.` };
+    })));
   }
   return { instance: scope.instance, installation, checks, healthy: checks.every((item) => item.status !== "error") };
 });

@@ -380,11 +380,12 @@ sudo zelavis install --from-release /absolute/path/to/extracted-release
 
 `--dry-run` prints the ordered TypeScript plan and each step's idempotence without changes.
 Units and configuration come from the release tree; the service uses its private
-Node and binds to `127.0.0.1:3000`. Use an SSH tunnel to reach a remote host, or
-explicitly pass `--public` to bind to all interfaces. Existing bootstrap tokens
-and trust configuration are preserved. `zelavis install --from package --version
-<exact-version>` verifies npm metadata and the matching prebuilt archive before
-using the same plan; a matching archive must be published. Create takes no
+Node and binds the management listener to `127.0.0.1:3000`. Default system
+installations expose `http://<server-ip>/zelavis/` through bundled Traefik.
+`--public` explicitly exposes the management listener; named and user installations
+use direct listener access or an operator-managed proxy. Existing bootstrap tokens
+and trust configuration are preserved. The bootstrap acquires npm with scripts disabled and invokes `zelavis install
+--from-npm <prepared-tree>` using the same plan. Create takes no
 folder argument. User mode installs no systemd, Agent or Edge. Install/removal
 use an exclusive installer lock and share the runtime data ownership guard.
 Foreign installations, live data owners and instance port conflicts are refused;

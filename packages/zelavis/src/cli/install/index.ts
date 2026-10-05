@@ -14,7 +14,7 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
   let instance = "default", port: number | undefined;
   let source: string | undefined, npmPrepared: string | undefined;
   let dryRun = false, json = false, allowDowngrade = false, user = false, live = false, stageOnly = false;
-  // Unset means the default: a server's default instance is reachable, anything else stays local.
+  // The management listener is private unless the operator explicitly exposes it.
   let publicBind: boolean | undefined;
   let installedBy: ZelavisNativeInstallationReceipt["installedBy"] = "cli";
   const forceEnvironment = process.env.ZELAVIS_FORCE_BIN === "1";
@@ -58,9 +58,8 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
   const paths = user ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, instance);
   validateInstallationPaths(paths);
   const system = !user && process.getuid?.() === 0 && !!(yield* integration(() => host.which("systemctl")));
-  // A server install ends with a URL you can open, as a WordPress install does. The first-owner
-  // token gates who may claim the account; there is deliberately no loopback-only server mode.
-  const bindPublic = publicBind ?? (system && instance === "default");
+  // Production ingress belongs to Traefik; the internal listener stays on loopback.
+  const bindPublic = publicBind ?? false;
   if (!user && paths.prefix === "/opt/zelavis") {
     if (process.platform !== "linux") return yield* new IntegrationFailure(new Error("System installation requires Linux with systemd; use --user on this host."));
     if (!dryRun && process.getuid?.() !== 0) return yield* new IntegrationFailure(new Error("System installation must run as root. Use create-zelavis for safe elevation, or --user."));
@@ -102,11 +101,12 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
     const output = (yield* executeZelavisInstallationPlanProgram(host, plan));
     if (json) console.log(JSON.stringify({ installed: true, plan, output }, null, 2));
     else {
-      const address = system && bindPublic ? serverAddress() : "127.0.0.1";
-      console.log(`Zelavis instance ${instance} installed.\nOpen the dashboard: http://${address}:${port}/zelavis`);
+      const productionIngress = system && instance === "default";
+      const address = productionIngress || (system && bindPublic) ? serverAddress() : "127.0.0.1";
+      console.log(`Zelavis instance ${instance} installed.\nOpen the dashboard: http://${address}${productionIngress ? "" : `:${port}`}/zelavis/`);
       if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${bindPublic ? " --host 0.0.0.0" : ""}`);
-      if (system && bindPublic) console.log(`This address is plain HTTP, so claim the owner account now and add a hostname with HTTPS in the setup wizard. If a firewall blocks port ${port}, allow it, or reach it with: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
-      if (system && !bindPublic) console.log(`This instance listens on 127.0.0.1 only. From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
+      if (productionIngress) console.log(`Traefik serves production ingress on ports 80 and 443. Claim the owner account now and add a hostname with HTTPS in the setup wizard. The management listener uses port ${port}.`);
+      if (system && !productionIngress && !bindPublic) console.log(`This instance listens on 127.0.0.1 only. From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
       for (const line of output) console.log(line);
     }
   }

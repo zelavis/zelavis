@@ -122,7 +122,8 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
           return { port: address.port };
         }
         const listener = createNodeRuntimeIngress({ admission, target: () => supervisor?.target() ?? "", headers: headers(projectId) });
-        const port = yield* listener.listen({ host: options.host, port: Number(input.port) }).pipe(Effect.onError(() => listener.close.pipe(Effect.ignore)));
+        const installation = options.configuration?.installation as { edge?: boolean } | undefined;
+        const port = yield* listener.listen({ host: installation?.edge ? "0.0.0.0" : options.host, port: Number(input.port) }).pipe(Effect.onError(() => listener.close.pipe(Effect.ignore)));
         previews.set(projectId, listener); return { port };
       }));
     }

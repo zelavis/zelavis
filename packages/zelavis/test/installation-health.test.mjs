@@ -96,10 +96,10 @@ test("user Platforms must stop before maintenance and units with competing layou
 
 test("doctor reports healthy receipt/release/service state without touching configuration or secrets", async () => {
   const host = new Probe(); const before = JSON.stringify([...host.files]);
-  host.busy.add(80); host.busy.add(443);
+  host.busy.add(80); host.busy.add(443); host.matchesPort = true;
   const report = await doctor(host);
   assert.equal(report.healthy, true, JSON.stringify(report));
-  assert.ok(report.checks.some((check) => check.id === "port:443" && /occupied/.test(check.detail)));
+  assert.ok(report.checks.some((check) => check.id === "port:443" && /owned by Zelavis Traefik/.test(check.detail)));
   assert.equal(JSON.stringify([...host.files]), before);
   assert.equal(host.mutations.length, 0);
   assert.ok(!host.reads.some((path) => path.endsWith("zelavis.env")));
@@ -170,5 +170,17 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
 test("a foreign host Edge owner blocks default repair before any changes", async () => {
   const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
   await assert.rejects(preflight(host, { force: true }), /Host Edge belongs/);
+  assert.equal(host.mutations.length, 0);
+});
+
+
+test("production ingress refuses foreign port ownership and doctor rejects an inactive proxy", async () => {
+  const host = new Probe(); host.busy.add(80);
+  await assert.rejects(preflight(host, { force: true }), /Production ingress port 80/);
+  host.matchesPort = true;
+  await preflight(host);
+  assert.equal((await doctor(host)).checks.find(check => check.id === "port:80").status, "ok");
+  host.units.active = false;
+  assert.equal((await doctor(host)).checks.find(check => check.id === "port:80").status, "error");
   assert.equal(host.mutations.length, 0);
 });

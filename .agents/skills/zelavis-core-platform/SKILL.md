@@ -199,8 +199,7 @@ before editing.
   Node. Distribution has no signatures, keys, CI secrets or GitHub releases: trust
   is npm, nodejs.org and zelavis.com (AGENTS.md "Distribution Trust Model"). Keep planning in core runtime, host effects in
   adapters, unit/configuration templates in the release tree, and pins/checksums
-  in distribution staging. A server's default instance listens on all interfaces and prints its URL (the first-owner token gates the claim); user installs and named instances stay on `127.0.0.1`; `--public` is the explicit
-  all-interface opt-in for those. There is no loopback-only server mode. Updating is a request the unprivileged
+  in distribution staging. A default system installation enables Traefik ingress on ports 80 and 443, with a canonical HTTP fallback for `http://<server-ip>/zelavis/`; no domain is needed for HTTP. Management listeners stay on loopback unless explicitly exposed with `--public`. Refuse foreign public-port owners, honor persisted listener configuration on updates, and retain persistent host/proxy processes. Never add compatibility aliases or version branches. Updating is a request the unprivileged
   Platform drops for a root-owned `zelavis-update` path/service pair; the updater trusts
   nothing in the request and rolls back a release that does not answer (AGENTS.md). Updates prepare then swap
   (`--stage-only`, `--live`), acknowledge root inventory before resuming queued
@@ -538,7 +537,7 @@ restores only its recorded policy; shared dependencies remain installed.
 
 Project preview ingress belongs to Zelavis Edge (`edge.previews` in the System
 Store), never the runtime driver's private URL. Node previews bind one stable
-HTTP port per local top-level Project, following the Platform's listen host.
+HTTP port per local top-level Project, public on default system installations with Edge, otherwise following the Platform's listen host.
 Stop closes the listener; deletion removes its durable intent. Preserve the
 visitor Host, redirects and site cookies through host transport while stripping
 Platform cookies and authority headers. Cookie-authenticated mutations require

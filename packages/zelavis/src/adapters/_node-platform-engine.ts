@@ -11,6 +11,7 @@ import type { ZelavisProjectRecord, ZelavisProjectRuntimeDriver } from "../proje
 import { createZelavisEdgePreviews, type ZelavisEdgePreviews } from "../edge/previews.js";
 import { requestNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
+import { ensureProductionEdge } from "../edge/production.js";
 
 export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configuration: Readonly<Record<string, unknown>>): Effect.fn.Return<NodeRuntimeEngine, TaggedFailure> {
   const options = yield* evaluate(() => {
@@ -104,7 +105,21 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
         onError: ({ error }) => ({ status: 400, body: { error: error instanceof Error ? error.message : "Unknown error" } }),
       });
       const runtime = yield* integration(() => zv.runtime()).pipe(Effect.onError(() => integration(() => zv.close()).pipe(Effect.ignore)));
-      yield* Effect.gen(function* () { if (previews) yield* effectOperations(previews, ["configure"]).restore(); }).pipe(
+      yield* Effect.gen(function* () {
+        if (options.installation?.edge) {
+          yield* evaluate(() => { if (!resources?.edge || !resources.edgeRoutes) throw new Error("Production ingress requires the installation's Edge manager and host operation Agent."); });
+          // The installer-owned descriptor selects the persistent listener's
+          // port independently of the replaceable engine worker.
+          const descriptor = yield* integration(() => readFile(resolve(options.installation!.prefix, "runtime.json"), "utf8"));
+          const port = yield* evaluate(() => {
+            const value = JSON.parse(descriptor);
+            if (value.prefix !== options.installation!.prefix || value.instance !== options.installation!.instance || value.dataDirectory !== options.dataDirectory || value.edge !== true) throw new Error("Production ingress disagrees with installer-selected runtime paths.");
+            return Number(value.port);
+          });
+          yield* ensureProductionEdge({ manager: resources!.edge!, routes: resources!.edgeRoutes!, port });
+        }
+        if (previews) yield* effectOperations(previews, ["configure"]).restore();
+      }).pipe(
         Effect.onError(() => integration(() => zv.close()).pipe(Effect.ignore)),
       );
       const qualify = Effect.gen(function* () {

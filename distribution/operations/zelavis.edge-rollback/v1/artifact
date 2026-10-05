@@ -29,10 +29,10 @@ fi
 
 if [ -n "$target_gen" ] && [ -f "$base_dir/generations/$target_gen/traefik-dynamic.json" ]; then
   # Restore target generation
-  tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+  tmp_file="$active_dir/traefik-dynamic.yml.tmp.$$"
   cp "$base_dir/generations/$target_gen/traefik-dynamic.json" "$tmp_file"
   chmod 0644 "$tmp_file"
-  mv -f "$tmp_file" "$active_dir/traefik-dynamic.json"
+  mv -f "$tmp_file" "$active_dir/traefik-dynamic.yml"
   
   if [ -f "$base_dir/generations/$target_gen/manifest.json" ]; then
     cp "$base_dir/generations/$target_gen/manifest.json" "$active_dir/manifest.json.tmp.$$" 2>/dev/null && \
@@ -48,10 +48,10 @@ if [ -n "$target_gen" ] && [ -f "$base_dir/generations/$target_gen/traefik-dynam
   exit 0
 else
   # No previous generation exists; write empty dynamic configuration
-  tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+  tmp_file="$active_dir/traefik-dynamic.yml.tmp.$$"
   printf '{"http":{"routers":{},"services":{}}}\n' > "$tmp_file"
   chmod 0644 "$tmp_file"
-  mv -f "$tmp_file" "$active_dir/traefik-dynamic.json"
+  mv -f "$tmp_file" "$active_dir/traefik-dynamic.yml"
   
   rm -f "$state_file" 2>/dev/null || true
   

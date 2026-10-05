@@ -73,7 +73,12 @@ test("fresh install plans the existing inventory, without mutations or secret ma
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
   assert.equal(host.tokens, 1);
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 127\.0\.0\.1/);
-  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "disable zelavis-traefik.service"));
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable zelavis-traefik.service"));
+  for (const directory of ["edge", "edge/traefik", "edge/traefik/active"]) {
+    const path = `${paths.dataDirectory}/${directory}`;
+    assert.ok(host.actions.some(action => action.kind === "mkdir" && action.path === path && action.mode === 0o750));
+    assert.ok(host.actions.some(action => action.command === "chown" && action.args.join(" ") === `root:zelavis ${path}`));
+  }
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-agent.service"));
   assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
@@ -212,7 +217,7 @@ test("named instances select independent releases, accounts, units and tokens wi
   host.release("2.0.0");
   const plan = await install(host, { paths: secondary, port: 3100 });
   assert.equal(plan.instance, "preview");
-  assert.ok(!plan.steps.some((step) => ["edge-owner", "edge-disable", "command"].includes(step.id)));
+  assert.ok(!plan.steps.some((step) => ["edge-owner", "edge-enable", "command"].includes(step.id)));
   assert.ok(!plan.steps.some((step) => step.action.args?.includes("zelavis.service")));
   await executeZelavisInstallationPlan(host, plan);
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
@@ -301,4 +306,23 @@ test("live host assets share fresh-install rendering without restarting services
   assert.match(update.action.content, /instances\/blue\/current/);
   assert.match(update.action.content, /update --run --instance blue/);
   assert.ok(steps.every(step => step.action.path.startsWith("/etc/systemd/system/")));
+});
+
+test("host inventory materializes only the selected Edge publication and refuses malformed generations", async () => {
+  const { planZelavisRuntimeHostAssetsProgram } = await import("../dist/core/runtime/installation-plan.js");
+  const { Effect } = await import("effect");
+  const host = new FakeHost(), base = "/var/lib/zelavis/edge/traefik";
+  host.files.set(`${base}/active-generation.json`, JSON.stringify({ activeGeneration: "42" }));
+  const configuration = JSON.stringify({ http: { routers: { platform: { rule: "PathPrefix(`/`)" } } } });
+  host.files.set(`${base}/generations/42/traefik-dynamic.json`, configuration);
+  const plan = () => Effect.runPromise(planZelavisRuntimeHostAssetsProgram({ host, paths, source: "/stage", port: 3000 }));
+  const step = (await plan()).find(step => step.id === "edge-publication");
+  assert.equal(step.action.path, `${base}/active/traefik-dynamic.yml`);
+  assert.equal(step.action.content, configuration);
+  assert.equal(step.action.atomic, true);
+  for (const state of ["{", JSON.stringify({ activeGeneration: "../foreign" }), JSON.stringify({})]) {
+    host.files.set(`${base}/active-generation.json`, state);
+    await assert.rejects(plan());
+  }
+  assert.equal(host.actions.length, 0);
 });
