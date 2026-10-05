@@ -3,7 +3,7 @@ title: "@zelavis/ui"
 ---
 `@zelavis/ui` is the dashboard SPA mounted by the Zelavis runtime.
 
-It uses React Router v7 in SPA mode and is served under the configured
+It uses React Router v8 in SPA mode and is served under the configured
 dashboard root path, `/zelavis` by default. The dashboard opens to the Projects
 overview; project-local pages live under `/zelavis/projects/:projectId/*`.
 

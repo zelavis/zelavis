@@ -1324,7 +1324,7 @@ export function getRuntimeConfig(): Promise<RuntimeConfig> {
  *
  * After the root loader determines the correct runtime config (checking
  * project existence, running status, proxy resolution), it calls
- * `commitNavigationRuntime(config)` to resolve the deferred.
+ * the returned handle's `commit(config)` to resolve the deferred.
  *
  * Because React Router calls matched `clientLoader` functions synchronously
  * in route-match order (root first), the deferred is always created before
@@ -1345,11 +1345,8 @@ let _navigationDeferred: {
  */
 export function beginNavigationRuntimeResolve(
   projectId: string | undefined,
-): void {
-  if (!projectId) {
-    _navigationDeferred = undefined;
-    return;
-  }
+  signal: AbortSignal,
+) {
   let resolve!: (config: ActiveRuntimeConfig) => void;
   let reject!: (error: unknown) => void;
   const promise = new Promise<ActiveRuntimeConfig>((r, fail) => {
@@ -1357,19 +1354,20 @@ export function beginNavigationRuntimeResolve(
     reject = fail;
   });
   void promise.catch(() => undefined);
-  _navigationDeferred = { projectId, promise, resolve, reject };
-}
-
-/**
- * Resolve the navigation deferred with the final runtime config.
- * Called by the root loader after it determines the correct config.
- */
-export function commitNavigationRuntime(config: RuntimeConfig, project?: RuntimeProject): void {
-  _navigationDeferred?.resolve({ ...config, ...(project ? { project } : {}) });
-}
-
-export function rejectNavigationRuntime(error: unknown): void {
-  _navigationDeferred?.reject(error);
+  _navigationDeferred = projectId ? { projectId, promise, resolve, reject } : undefined;
+  const abort = () => reject(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return {
+    commit(config: RuntimeConfig, project?: RuntimeProject) {
+      signal.removeEventListener("abort", abort);
+      resolve({ ...config, ...(project ? { project } : {}) });
+    },
+    reject(error: unknown) {
+      signal.removeEventListener("abort", abort);
+      reject(error);
+    },
+  };
 }
 
 /**

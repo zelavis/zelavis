@@ -1475,7 +1475,7 @@ When creating a new core package, service package, or plugin package:
 
 `packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
 
-- It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
+- It uses **React Router v8** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
 - Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
@@ -1549,6 +1549,10 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   or kill by port or command line, because that can take down a running dev
   server. Specs share one runtime and run one at a time. Run `pnpm run docs:check`
   after docs changes.
+- Dashboard boot, mounting and navigation changes also require
+  `pnpm run ci:ui:embedded:local`: the production bundle served by a throwaway
+  Platform must hydrate and navigate on desktop and mobile without browser errors.
+  Dev-server tests alone do not cover rewritten production HTML and asset URLs.
 - Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
   workspace package is invisible to every root command, whatever its scripts say.
 

@@ -1,6 +1,7 @@
 import type * as React from "react";
 import {
   LayoutDashboard,
+  LoaderCircle,
   Pause,
   Play,
   Plus,
@@ -10,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLoaderData, useRevalidator, useRouteLoaderData, type ClientLoaderFunctionArgs } from "react-router";
+import { Link, useLoaderData, useNavigation, useRevalidator, useRouteLoaderData, type ClientLoaderFunctionArgs } from "react-router";
 
 import { ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { AssistantButton } from "#/components/assistant/AssistantButton";
@@ -40,7 +41,7 @@ import {
   setProjectRunning,
   type RuntimeProject,
 } from "#/lib/runtime-api";
-import { toDashboardPath, toProjectPath } from "#/lib/routing";
+import { getProjectIdFromPathname, toDashboardPath, toProjectPath } from "#/lib/routing";
 import { projectSiteUrl } from "#/lib/project-site-url";
 import {
   parseAsString,
@@ -148,6 +149,9 @@ function ProjectsRoute() {
   const { versions } = useLoaderData<typeof clientLoader>();
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const revalidator = useRevalidator();
+  const navigation = useNavigation();
+  const openingProjectId = navigation.state === "loading" && navigation.location
+    ? getProjectIdFromPathname(navigation.location.pathname) : undefined;
   const [{ q, new: createMode, name: requestedName, recipe: recipeName, versionProject, engineVersion }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [message, setMessage] = useState<string>();
@@ -456,6 +460,7 @@ function ProjectsRoute() {
             const siteUrl = projectSiteUrl(project);
             const isRunning = project.runtime.status === "running" && !project.deletion;
             const isPending = pendingProjectId === project.id;
+            const isOpening = openingProjectId === encodeURIComponent(project.id);
             return (
               <Card key={project.id} className="overflow-hidden">
                 <CardHeader className="gap-3">
@@ -563,6 +568,8 @@ function ProjectsRoute() {
                     {isRunning ? (
                       <Button
                         nativeButton={false}
+                        disabled={isOpening}
+                        aria-busy={isOpening}
                         render={
                           <Link
                             to={toDashboardPath(toProjectPath("/", project.id))}
@@ -570,8 +577,8 @@ function ProjectsRoute() {
                           />
                         }
                       >
-                        <LayoutDashboard className="size-4" />
-                        Open
+                        {isOpening ? <LoaderCircle className="size-4 animate-spin" /> : <LayoutDashboard className="size-4" />}
+                        {isOpening ? "Opening…" : "Open"}
                       </Button>
                     ) : (
                       // Its pages are served by its own runtime; opening a Project

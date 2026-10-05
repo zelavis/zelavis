@@ -1,6 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 
 import {
+  beginNavigationRuntimeResolve,
+  getActiveRuntimeConfig,
   getProjectRuntimeConfig,
   getResolvedDashboardPreferences,
   normalizeRuntimeProject,
@@ -10,6 +12,27 @@ import {
   type RuntimeConfig,
   type RuntimeProject,
 } from "./runtime-api";
+
+test("an interrupted navigation releases its waiting child loaders", async () => {
+  const request = new Request("http://localhost/zelavis/projects/interrupt", { signal: AbortSignal.timeout(20) });
+  beginNavigationRuntimeResolve("interrupt", request.signal);
+  await expect(getActiveRuntimeConfig(request)).rejects.toThrow();
+});
+
+test("a previous navigation cannot resolve the next navigation's runtime", async () => {
+  const firstRequest = new Request("http://localhost/zelavis/projects/shared");
+  const first = beginNavigationRuntimeResolve("shared", firstRequest.signal);
+  const firstChild = getActiveRuntimeConfig(firstRequest);
+  const nextRequest = new Request(firstRequest.url);
+  const next = beginNavigationRuntimeResolve("shared", nextRequest.signal);
+  const nextChild = getActiveRuntimeConfig(nextRequest);
+  const firstConfig = { api: { basePath: "/first" } } as RuntimeConfig;
+  first.commit(firstConfig);
+  const failure = new Error("Next navigation failed");
+  next.reject(failure);
+  await expect(firstChild).resolves.toEqual(firstConfig);
+  await expect(nextChild).rejects.toBe(failure);
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

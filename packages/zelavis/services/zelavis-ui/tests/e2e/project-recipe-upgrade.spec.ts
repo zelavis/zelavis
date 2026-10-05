@@ -278,7 +278,7 @@ test("@smoke managed recipe SDK menus and pages refresh through their Project Ga
   expect(interruptions).toBe(0)
 })
 
-test("@smoke Open loads a managed Project overview without probing unused APIs", async ({ page }) => {
+test("@smoke @embedded Open loads a managed Project overview without probing unused APIs", async ({ page }) => {
   test.skip(!projectId, "needs the e2e Project")
   await pretendStale(page, { kind: "wordpress", recipe: { name: "@zelavis/wordpress", title: "WordPress", version: "7.1.3-alpha.2", managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } } })
   await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/runtime/config$`), async route => {
@@ -302,6 +302,39 @@ test("@smoke Open loads a managed Project overview without probing unused APIs",
   await expect(page.getByText("Hosting controls", { exact: true })).toBeVisible()
   expect(errors).toEqual([])
   expect(probes).toEqual([])
+})
+
+test("@smoke @embedded Open shows progress while resolving its Project runtime", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  let release!: () => void
+  const ready = new Promise<void>(resolve => { release = resolve })
+  await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/runtime/config$`), async route => {
+    await ready
+    await route.continue()
+  })
+  await page.goto(`${basePath}/projects`)
+  await page.getByRole("button", { name: "Open", exact: true }).click()
+  try {
+    await expect(page.getByRole("button", { name: "Opening…", exact: true })).toHaveAttribute("aria-busy", "true")
+  } finally {
+    release()
+  }
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`))
+})
+
+test("@smoke @embedded an early navigation API failure settles Open and allows a retry", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await page.goto(`${basePath}/projects`)
+  await expect(page.getByRole("button", { name: "Open", exact: true })).toBeVisible()
+  await page.route(/\/runtime\/access$/, route => route.fulfill({ status: 403, json: { error: "Access temporarily unavailable" } }))
+  await page.getByRole("button", { name: "Open", exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`))
+  await expect(page.getByText("Dashboard error", { exact: true })).toBeVisible()
+  await page.unroute(/\/runtime\/access$/)
+  await page.goto(`${basePath}/projects`)
+  await page.getByRole("button", { name: "Open", exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`))
+  await expect(page.getByText("Dashboard error", { exact: true })).toHaveCount(0)
 })
 
 test("@smoke managed apps reuse native dashboard sections only after API usage", async ({ page }) => {

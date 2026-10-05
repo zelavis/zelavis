@@ -17,6 +17,7 @@
     "check:effect-source": "node scripts/check-effect-source.mjs",
     "ci:runtime": "pnpm run verify",
     "ci:ui:local": "bash scripts/ci-ui-local.sh",
+    "ci:ui:embedded:local": "ZELAVIS_E2E_EMBEDDED=1 bash scripts/ci-ui-local.sh",
     "ci:ui:setup:local": "bash scripts/ci-ui-setup-local.sh",
     "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_E2E_PROJECT_ID=dashboard-e2e ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop --grep @smoke",
     "changeset": "changeset",

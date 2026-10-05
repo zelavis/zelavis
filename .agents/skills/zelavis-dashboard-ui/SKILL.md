@@ -1,6 +1,6 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
+description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v8 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
@@ -13,7 +13,7 @@ Use this skill for changes in:
 
 ## Stack
 
-- **Router**: React Router v7 in SPA mode (`ssr: false`) — not TanStack Router
+- **Router**: React Router v8 in SPA mode (`ssr: false`) — not TanStack Router
 - **Styling**: Tailwind CSS v4 + shadcn/ui (Base UI components)
 - **Build**: Vite via `@react-router/dev`
 - **Verifying a UI change**: `pnpm --filter @zelavis/ui build`. `build:plugin`
@@ -169,6 +169,7 @@ pnpm dev
 pnpm --filter @zelavis/ui typecheck
 pnpm --filter @zelavis/ui build
 pnpm run ci:ui:local          # smoke specs against a throwaway Platform
+pnpm run ci:ui:embedded:local # production bundle, desktop/mobile hydration and navigation
 pnpm run ci:ui:setup:local    # first-run wizard against an unclaimed Platform
 ```
 
@@ -178,6 +179,13 @@ make one claim 3000/3100 or kill by port. Browser specs live in `tests/e2e`
 excluded from the unit runner. Assistant UI (chat, approval card, settings cards)
 is covered there; the approval card must keep focusing nothing, and reply
 Markdown must never load an image.
+
+Changes to dashboard boot, mount paths or navigation must also pass the embedded
+browser suite. The dev server does not prove that the packaged HTML and modules
+hydrate together. Keep rewritten asset URLs consistent across the shell and
+modules, and keep host bootstrap scripts from displacing hydrated head elements.
+Root runtime resolution must settle waiting child loaders on every failure,
+redirect and cancellation; an earlier navigation cannot settle a later one.
 
 After substantial UI changes, verify the mounted dashboard flow still works at:
 

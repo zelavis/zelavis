@@ -24,4 +24,9 @@ curl --fail --silent --request POST \
   --data '{"id":"dashboard-e2e","name":"Zelavis Runtime","start":true}' \
   $ZELAVIS_DEV_SERVER/zelavis/api/v1/runtime/projects >/dev/null
 
-ZELAVIS_E2E_SESSION_TOKEN="$token" pnpm run ci:ui
+if [[ "${ZELAVIS_E2E_EMBEDDED:-}" == "1" ]]; then
+  ZELAVIS_E2E_PROJECT_ID=dashboard-e2e ZELAVIS_UI_BASE_PATH=/zelavis/ \
+    pnpm --filter @zelavis/ui exec playwright test --grep @embedded
+else
+  ZELAVIS_E2E_SESSION_TOKEN="$token" pnpm run ci:ui
+fi
