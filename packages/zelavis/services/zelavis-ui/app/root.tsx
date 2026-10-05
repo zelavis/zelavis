@@ -23,6 +23,8 @@ import {
   getProjectRuntimeConfig,
   getRuntimeConfig,
   listDatabaseCollections,
+  listDatabaseTableMenu,
+  listSystemStoreNamespaces,
   listDatabaseSchemaCollections,
   listAssistantThreads,
   listProjects,
@@ -30,6 +32,7 @@ import {
   RuntimeApiError,
   ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
+import { canAccessDashboardItem } from "#/lib/dashboard-data";
 import { stripRouterBasename } from "#/lib/router-basename";
 import type { Route } from "./+types/root";
 import "@glideapps/glide-data-grid/dist/index.css";
@@ -90,6 +93,8 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
         bootstrapStatus,
         settings,
         databaseCollections: [],
+        databaseMenuItems: [],
+        systemStoreNamespaces: [],
         schemaCollections: [],
         projects: [],
         projectRuntime: undefined,
@@ -150,14 +155,17 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     navigation.commit(runtimeConfig, selectedProject);
 
     const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
-    const hasDatabaseService = runtime.capabilities?.database?.available === true &&
+    const hasDatabaseService = Boolean(selectedProject) && runtime.capabilities?.database?.available === true &&
       (!selectedProject?.recipe.managed || runtime.capabilities.database.used === true);
-    const [settings, databaseCollections, schemaCollections] = await Promise.all([
+    const [settings, databaseCollections, schemaCollections, databaseMenuItems, systemStoreNamespaces] = await Promise.all([
       getDashboardSettings(runtime),
       hasDatabaseService
         ? listDatabaseCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID)
         : [],
       hasDatabaseService ? listDatabaseSchemaCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID) : [],
+      hasDatabaseService ? listDatabaseTableMenu(runtime) : [],
+      !selectedProject && canAccessDashboardItem(access, { access: { permissions: ["server.database.inspect"], scope: { type: "system" } } })
+        ? listSystemStoreNamespaces(controlRuntime) : [],
     ]);
 
     return {
@@ -168,6 +176,8 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
       },
       settings,
       databaseCollections,
+      databaseMenuItems,
+      systemStoreNamespaces,
       schemaCollections,
       projects: projectResult.projects,
       projectRuntime: projectResult.runtime,

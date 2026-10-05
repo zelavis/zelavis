@@ -1373,6 +1373,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.settings.update",
       "runtime.openapi.bare",
       "runtime.openapi",
+      "runtime.system-store.namespaces",
+      "runtime.system-store.records",
       "runtime.agent.read",
       "runtime.agent.operations.list",
       "runtime.agent.operations.get",

@@ -32,6 +32,15 @@ Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
 database and is never exposed through that store.
 
+**Server → Database** inspects that Platform backend in read-only logical tables,
+with secrets redacted. HTTP (`/runtime/system-store/namespaces` and
+`/runtime/system-store/namespaces/:namespace/records`), SDK
+(`client.runtime.systemStore.namespaces()` / `.records(namespace, { limit, after })`)
+and CLI (`zelavis system-store namespaces|records`) share the system-scoped
+`server.database.inspect` permission. Custom System Store adapters implement
+`namespaces()` for counts and `page(namespace, { limit, after })` for bounded,
+key-ordered reads. Project databases remain separate.
+
 The Platform does not mount `zelavis/app/db` as a global application database by
 default. Node process projects live under `.zelavis/projects/<projectId>`; each
 has one logical App database routed across physical SQLite shards below

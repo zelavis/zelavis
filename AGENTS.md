@@ -260,7 +260,9 @@ Rules that hold for every change:
   two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
-- **System Store** is Platform OS persistence. Local adapters default to
+- **System Store** is Platform OS persistence. Server → Database is its read-only,
+  paginated namespace/record inspection surface; require system-scoped
+  `server.database.inspect` and redact secrets. It is not the Project Database API. Local adapters default to
   `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/db`
   project databases and must never appear in a project's Database UI.
 - Fresh installations have one bootstrap state and one first-owner authority.

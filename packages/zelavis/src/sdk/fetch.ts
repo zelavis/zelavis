@@ -1,3 +1,4 @@
+import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
 import type { ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
@@ -300,6 +301,10 @@ export interface ZelavisClient {
   /** Accounts, login ceremonies, sessions, provider settings, and service clients. */
   readonly auth: ZelavisAuthClient;
   readonly runtime: {
+    readonly systemStore: {
+      namespaces(): Promise<readonly ZelavisSystemStoreNamespace[]>;
+      records(namespace: string, options?: { limit?: number; after?: string }): Promise<ZelavisSystemStorePage>;
+    };
     access(): Promise<ZelavisRuntimeAccessResponse>;
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
@@ -1120,6 +1125,15 @@ export function createZelavisClient(
     request,
     json,
     runtime: {
+      systemStore: {
+        namespaces: () => json<{ namespaces: readonly ZelavisSystemStoreNamespace[] }>("/runtime/system-store/namespaces").then(result => result.namespaces),
+        records: (namespace, options = {}) => {
+          const query = new URLSearchParams();
+          if (options.limit !== undefined) query.set("limit", String(options.limit));
+          if (options.after !== undefined) query.set("after", options.after);
+          return json<ZelavisSystemStorePage>(`/runtime/system-store/namespaces/${encodeURIComponent(namespace)}/records?${query}`);
+        },
+      },
       access() {
         return json<ZelavisRuntimeAccessResponse>("/runtime/access");
       },

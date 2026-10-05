@@ -549,21 +549,6 @@ export class RuntimeApiError extends Error {
   }
 }
 
-export const DATABASE_COLLECTION_CREATED_EVENT =
-  "zelavis:database-collection-created";
-
-function dispatchDatabaseCollectionCreated(collection: DatabaseCollection) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.dispatchEvent(
-    new CustomEvent<DatabaseCollection>(DATABASE_COLLECTION_CREATED_EVENT, {
-      detail: collection,
-    }),
-  );
-}
-
 export type DashboardThemeMode = "light" | "dark" | "auto";
 
 export interface DashboardContentPreferences {
@@ -2420,6 +2405,27 @@ export async function listDatabaseCollections(
   );
 }
 
+export interface SystemStoreNamespace { namespace: string; recordCount: number }
+export interface SystemStorePage {
+  records: { namespace: string; key: string; value: unknown; updatedAt: string }[];
+  next?: string;
+}
+export async function listSystemStoreNamespaces(config: RuntimeConfig) {
+  return (await readJson<{ namespaces: SystemStoreNamespace[] }>(`${config.api.basePath}/runtime/system-store/namespaces`)).namespaces;
+}
+export function listSystemStoreRecords(config: RuntimeConfig, namespace: string, after?: string) {
+  const query = new URLSearchParams({ limit: "50" });
+  if (after !== undefined) query.set("after", after);
+  return readJson<SystemStorePage>(`${config.api.basePath}/runtime/system-store/namespaces/${encodeURIComponent(namespace)}/records?${query}`);
+}
+
+export async function listDatabaseTableMenu(config: RuntimeConfig) {
+  const result = await readJson<{ items: RuntimeServiceMenuDefinition[] }>(
+    `${config.api.basePath}/database/menu/tables`,
+  );
+  return result.items;
+}
+
 export async function queryDatabaseSystemView(
   config: RuntimeConfig,
   view: DatabaseSystemViewName,
@@ -2447,8 +2453,6 @@ export async function createDatabaseCollection(
       body: JSON.stringify(input),
     },
   );
-
-  dispatchDatabaseCollectionCreated(collection);
 
   return collection;
 }

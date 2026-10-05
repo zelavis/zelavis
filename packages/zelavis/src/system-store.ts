@@ -13,7 +13,21 @@ export interface ZelavisSystemStoreRecord {
   updatedAt: string;
 }
 
+export interface ZelavisSystemStoreNamespace {
+  namespace: string;
+  recordCount: number;
+}
+
+export interface ZelavisSystemStorePage {
+  records: readonly ZelavisSystemStoreRecord[];
+  next?: string;
+}
+
 export interface ZelavisSystemStore {
+  /** Logical tables in the Platform store, independent of the physical engine. */
+  namespaces(): Promise<readonly ZelavisSystemStoreNamespace[]> | readonly ZelavisSystemStoreNamespace[];
+  page(namespace: string, options: { limit: number; after?: string }):
+    Promise<ZelavisSystemStorePage> | ZelavisSystemStorePage;
   get(
     namespace: string,
     key: string,
@@ -98,6 +112,20 @@ export function createMemorySystemStore(): ZelavisSystemStore {
   const recordId = (namespace: string, key: string) => `${namespace}\u0000${key}`;
 
   return {
+    namespaces() {
+      const counts = new Map<string, number>();
+      for (const record of records.values()) counts.set(record.namespace, (counts.get(record.namespace) ?? 0) + 1);
+      return [...counts].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([namespace, recordCount]) => ({ namespace, recordCount }));
+    },
+    page(namespace, { limit, after }) {
+      const name = normalizePart(namespace, "namespace");
+      const rows = [...records.values()].filter(record => record.namespace === name &&
+        (after === undefined || record.key > after)).sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+        .slice(0, limit + 1);
+      return { records: rows.slice(0, limit).map(cloneRecord),
+        ...(rows.length > limit ? { next: rows[limit - 1]!.key } : {}) };
+    },
     get(namespace, key) {
       const record = records.get(
         recordId(

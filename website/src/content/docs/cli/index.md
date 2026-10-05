@@ -93,6 +93,12 @@ command tree.
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;
   `--project <id>` adds the standard scoped Project operator grants.
+- `system-store namespaces|records <namespace>` inspects the Platform's own
+  backend tables through `client.runtime.systemStore` and
+  `/zelavis/api/v1/runtime/system-store/namespaces`. Use `--limit` (1–200),
+  `--after` with the returned next key, and `--json` for paginated records.
+  Inspection is read-only, redacts secrets, and requires the system-scoped
+  `server.database.inspect` permission. Supply `--token` for authentication.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.

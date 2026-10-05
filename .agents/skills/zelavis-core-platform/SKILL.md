@@ -540,3 +540,8 @@ visitor Host, redirects and site cookies through host transport while stripping
 Platform cookies and authority headers. Cookie-authenticated mutations require
 the same browser origin; ports do not isolate cookies. Remote placements must
 not publish a local listener pointing at another Node's loopback address.
+
+Platform System Store inspection is read-only under `/runtime/system-store`,
+`client.runtime.systemStore` and `zelavis system-store`. Require system-scoped
+`server.database.inspect`, paginate in the store adapter and redact authority
+material before any transport. Never expose it as a Project database.

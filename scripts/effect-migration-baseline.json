@@ -266,12 +266,6 @@
       "fingerprint": "0104acd38083511afc1f69184bfebcd95521c2455da49c7df675bf7acc8a8735"
     },
     {
-      "file": "packages/zelavis/src/adapters/_bun-sqlite-system-store.ts",
-      "kind": "async-function",
-      "owner": "module/createBunSqliteSystemStore",
-      "fingerprint": "ff1d94927f2646bfa417a82c8c78200bb51f232af727c7addd1b4dbe39af6d1c"
-    },
-    {
       "file": "packages/zelavis/src/adapters/_host-package-policy.ts",
       "kind": "async-function",
       "owner": "module/restoreHostPackagePolicy",
@@ -3498,12 +3492,6 @@
       "kind": "async-function",
       "owner": "module/defineDatabaseRootService/api/v1/handler/callback",
       "fingerprint": "625be972b8f86a30ca039efb500dc3bbeec593ebdbdeb86d3d1e1f04da30a7cb"
-    },
-    {
-      "file": "packages/zelavis/src/db/database-service.ts",
-      "kind": "async-function",
-      "owner": "module/defineDatabaseRootService/api/v1/handler/callback",
-      "fingerprint": "3b5c9047fb7f2f0c41d474050eac1bfd71754b592ca192ff6446d1707fbe3d75"
     },
     {
       "file": "packages/zelavis/src/db/database-service.ts",

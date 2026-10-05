@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/app",
-  "version": "1.0.1-alpha.23",
+  "version": "1.0.1-alpha.24",
   "private": false,
   "description": "Official Zelavis App project recipe with database, auth, and workloads.",
   "license": "MIT",

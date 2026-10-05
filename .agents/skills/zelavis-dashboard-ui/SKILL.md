@@ -209,3 +209,9 @@ its software updates. Use the driver's `recipeUpdateMode: "integration"` and
 `zeroDowntimeUpdates` capability to enable the running action. Never call
 start/stop/restart around a recipe integration update. Native Zelavis Apps keep
 **Upgrade recipe** and the full engine handover/version controls.
+
+Native Database sidebar items come from the Project's `/database/menu/tables`
+operation, including each table's Tenant and grouped logical System Tables.
+Use loader revalidation after mutations; do not synthesize selected tables or
+maintain a local event copy of runtime services. Platform **Server → Database**
+inspects its separate read-only System Store, never the App database endpoints.

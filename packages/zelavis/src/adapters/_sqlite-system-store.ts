@@ -61,6 +61,13 @@ export function createLocalSqliteSystemStore(
     )
   `);
 
+  const namespacesStatement = database.prepare(
+    "SELECT namespace, COUNT(*) AS recordCount FROM zelavis_system_records GROUP BY namespace ORDER BY namespace",
+  );
+  const pageStatement = database.prepare(
+    "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND (? IS NULL OR record_key > ?) ORDER BY record_key LIMIT ?",
+  );
+
   const readStatement = database.prepare(
     "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
   );
@@ -111,6 +118,17 @@ export function createLocalSqliteSystemStore(
   let closed = false;
 
   return {
+    namespaces() {
+      return namespacesStatement.all().map(row => {
+        const value = row as { namespace: string; recordCount: number };
+        return { namespace: value.namespace, recordCount: Number(value.recordCount) };
+      });
+    },
+    page(namespace, { limit, after }) {
+      const rows = pageStatement.all(namespace, after ?? null, after ?? null, limit + 1).map(toRecord);
+      return { records: rows.slice(0, limit),
+        ...(rows.length > limit ? { next: rows[limit - 1]!.key } : {}) };
+    },
     get(namespace, key) {
       const row = readStatement.get(namespace, key);
       return row ? toRecord(row) : undefined;

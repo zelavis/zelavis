@@ -23,8 +23,8 @@ import {
 import { ZelavisMark } from "#/components/zelavis-mark";
 import type { DashboardSlotId } from "#/components/DashboardSlots";
 import type {
-  DatabaseCollection,
   RuntimeService,
+  SystemStoreNamespace,
   RuntimeServiceMenuDefinition,
   RuntimeServicePageDefinition,
   RuntimeServiceRegistryMenuDefinition,
@@ -334,6 +334,7 @@ function sortRootNavItems(items: readonly DashboardNavItem[]): readonly Dashboar
 
 export function buildProjectManagementNavItems(
   services?: readonly RuntimeService[],
+  systemStoreNamespaces?: readonly SystemStoreNamespace[],
 ): readonly DashboardNavItem[] {
   const platformServiceNavItems = (services ?? [])
     .filter((service) => service.scope === "system")
@@ -372,7 +373,13 @@ export function buildProjectManagementNavItems(
         scope: { type: "system" },
       },
     },
-    ...platformServiceNavItems,
+    ...platformServiceNavItems.map(item => item.url === "/server" ? { ...item,
+      items: (item.items ?? []).map(child => child.url === "/server/database" ? { ...child,
+        items: (systemStoreNamespaces ?? []).map(table => ({ title: table.namespace,
+          url: "/server/database" as const, icon: Database, pageLabel: "Platform Database",
+          search: { namespace: table.namespace } })),
+      } : child),
+    } : item),
   ] as const);
 }
 
@@ -382,7 +389,7 @@ export function buildManagedProjectNavItems(
   services?: readonly RuntimeService[],
   capabilities?: RuntimeCapabilities,
   contentTypes?: readonly ContentTypeRow[],
-  databaseCollections?: readonly DatabaseCollection[],
+  databaseMenuItems?: readonly RuntimeServiceMenuDefinition[],
 ): readonly DashboardNavItem[] {
   const appAdminTitle = managed.adminTitle ?? "App Admin";
 
@@ -390,7 +397,7 @@ export function buildManagedProjectNavItems(
     ["identity", "database", "storage", "workloads", "site"].map(name =>
       [name, { available: capabilities?.[name]?.available === true && capabilities[name].used === true }]),
   );
-  const nativeItems = buildPlatformNavItems([], [], contentTypes, databaseCollections, projectId, nativeCapabilities)
+  const nativeItems = buildPlatformNavItems([], [], contentTypes, databaseMenuItems, projectId, nativeCapabilities)
     .filter(item => ["Users", "Content", "Media", "Backend"].includes(item.title) &&
       (item.title !== "Backend" || Boolean(item.items?.length)));
 
@@ -886,10 +893,6 @@ const nativeProjectMenus: readonly NativeProjectMenu[] = [
       path: "/database",
       surface: "core",
       panelLabel: "Database",
-      dynamicItems: {
-        path: "/database/menu/tables",
-        emptyTitle: "No tables yet",
-      },
       items: [{
         title: "Create Table",
         path: "/database/new",
@@ -949,12 +952,11 @@ export function buildPlatformNavItems(
   services: readonly RuntimeService[] | undefined,
   serviceRegistry: readonly RuntimeServiceRegistryEntry[] | undefined,
   contentTypes: readonly ContentTypeRow[] | undefined,
-  databaseCollections: readonly DatabaseCollection[] | undefined,
+  databaseMenuItems: readonly RuntimeServiceMenuDefinition[] | undefined,
   projectId: string,
   capabilities?: RuntimeCapabilities,
 ): readonly DashboardNavItem[] {
   const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
-  void databaseCollections;
   const contributedMenuPaths = new Set(
     (services ?? []).flatMap((service) =>
       getRuntimeServiceMenus(service)
@@ -968,7 +970,17 @@ export function buildPlatformNavItems(
       (!menu.path || !contributedMenuPaths.has(menu.path)),
     )
     .map(({ id, apiPath, menu }) => ({
-      item: createProjectAwareDashboardServiceMenuItem(menu, id, projectId, {
+      item: createProjectAwareDashboardServiceMenuItem(
+        id === "database" ? { ...menu, items: [
+          ...(menu.items ?? []),
+          ...(databaseMenuItems ?? []).filter(item => !item.search?.databaseSystemView)
+            .map(item => ({ ...item, sectionLabel: "Tables" })),
+          ...((databaseMenuItems ?? []).some(item => item.search?.databaseSystemView) ? [{
+            title: "System Tables", path: "/database", panelLabel: "System Tables",
+            items: (databaseMenuItems ?? []).filter(item => item.search?.databaseSystemView)
+              .map(item => ({ ...item, title: item.title.replace(/^System · /u, "") })),
+          }] : []),
+        ] } : menu, id, projectId, {
         name: `native:${id}`,
         scope: "system",
         apiPath,

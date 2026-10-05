@@ -13,6 +13,7 @@ import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
+import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runEdgeCommand } from "./edge.js";
@@ -116,6 +117,7 @@ function printHelp(): void {
   console.log(`Zelavis CLI
 
 Usage:
+  zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
@@ -580,6 +582,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "auth") {
       (yield* integration(() => runAuthCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "system-store") {
+      yield* integration(() => runSystemStoreCommand(args.slice(1)));
       return;
     }
     if (args[0] === "data") {

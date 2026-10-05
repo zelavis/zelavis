@@ -41,6 +41,8 @@ import {
   getResolvedDashboardPreferences,
   type DatabaseCollection,
   type DatabaseSchemaCollectionSummary,
+  type RuntimeServiceMenuDefinition,
+  type SystemStoreNamespace,
   type RuntimeConfig,
   type RuntimeAssistantThread,
   type RuntimeProject,
@@ -51,6 +53,8 @@ export function AppSidebar({
   assistantConfig,
   settings,
   databaseCollections,
+  databaseMenuItems,
+  systemStoreNamespaces,
   schemaCollections,
   projects,
   assistantThreads,
@@ -61,6 +65,8 @@ export function AppSidebar({
   assistantConfig?: RuntimeConfig;
   settings?: DashboardSettings;
   databaseCollections?: readonly DatabaseCollection[];
+  databaseMenuItems?: readonly RuntimeServiceMenuDefinition[];
+  systemStoreNamespaces?: readonly SystemStoreNamespace[];
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
   projects?: readonly RuntimeProject[];
   assistantThreads?: readonly RuntimeAssistantThread[];
@@ -113,57 +119,31 @@ export function AppSidebar({
     }),
     [runtime?.access],
   );
-  const selectedDatabaseTable = React.useMemo(() => {
-    const search = readSearchParams(location.search);
-    return typeof search.databaseTable === "string" && search.databaseTable.length > 0
-      ? search.databaseTable
-      : undefined;
-  }, [location.search]);
-  const effectiveDatabaseCollections = React.useMemo(() => {
-    const collections = [...(databaseCollections ?? [])];
-    if (
-      selectedDatabaseTable &&
-      !collections.some((collection) => collection.name === selectedDatabaseTable)
-    ) {
-      collections.push({
-        name: selectedDatabaseTable,
-        tenantId: "default",
-        createdAt: new Date().toISOString(),
-        documentCount: 0,
-        metadata: {
-          surface: "database",
-          kind: "table",
-        },
-      });
-    }
-
-    return collections;
-  }, [databaseCollections, selectedDatabaseTable]);
   const contentTypes = React.useMemo(
     () =>
       buildContentTypeRows(
-        filterUserDatabaseCollections(effectiveDatabaseCollections),
+        filterUserDatabaseCollections(databaseCollections ?? []),
         schemaCollections ?? [],
         getResolvedDashboardPreferences(settings).content,
       ),
-    [effectiveDatabaseCollections, schemaCollections, settings],
+    [databaseCollections, schemaCollections, settings],
   );
   const items = React.useMemo(
     () =>
       isProjectManagementRoute
         ? filterDashboardNavItemsForAccess(
-            buildProjectManagementNavItems(runtime?.services),
+            buildProjectManagementNavItems(runtime?.services, systemStoreNamespaces),
             runtime?.access,
           )
         : projectId && managedProject
-        ? filterDashboardNavItemsForAccess(buildManagedProjectNavItems(projectId, managedProject, runtime?.services, runtime?.capabilities, contentTypes, filterUserDatabaseCollections(effectiveDatabaseCollections)), runtime?.access)
+        ? filterDashboardNavItemsForAccess(buildManagedProjectNavItems(projectId, managedProject, runtime?.services, runtime?.capabilities, contentTypes, databaseMenuItems), runtime?.access)
         : runtime && projectId
         ? filterDashboardNavItemsForAccess(
             buildPlatformNavItems(
               runtime.services,
               runtime.serviceRegistry,
               contentTypes,
-              filterUserDatabaseCollections(effectiveDatabaseCollections),
+              databaseMenuItems,
               projectId,
               runtime.capabilities,
             ),
@@ -172,7 +152,8 @@ export function AppSidebar({
         : [],
     [
       contentTypes,
-      effectiveDatabaseCollections,
+      databaseMenuItems,
+      systemStoreNamespaces,
       isProjectManagementRoute,
       managedProject,
       projectId,

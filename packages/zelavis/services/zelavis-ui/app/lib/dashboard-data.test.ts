@@ -491,22 +491,7 @@ describe("dashboard navigation ownership", () => {
           pinnedIndex: Number.MAX_SAFE_INTEGER,
         },
       ],
-      [
-        {
-          name: "audit_log",
-          documentCount: 3,
-          tenantId: "default",
-          createdAt: "2026-06-02T00:00:00.000Z",
-          surface: "database" as const,
-        },
-        {
-          name: "fruits",
-          documentCount: 1,
-          tenantId: "default",
-          createdAt: "2026-06-03T00:00:00.000Z",
-          surface: "content-studio" as const,
-        },
-      ],
+      [],
       "project-a",
     );
 
@@ -757,4 +742,22 @@ describe("dashboard navigation ownership", () => {
       "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/settings.html",
     );
   });
+});
+
+it("lists native and managed backend tables with their Tenant and separate system views", () => {
+  const menus = [
+    { title: "tenant-a · invoices", path: "/database", search: { databaseTenant: "tenant-a", databaseTable: "invoices" } },
+    { title: "tenant-b · invoices", path: "/database", search: { databaseTenant: "tenant-b", databaseTable: "invoices" } },
+    { title: "System · Events", path: "/database", search: { databaseTenant: "tenant-a", databaseSystemView: "events" } },
+  ];
+  const capabilities = { database: { available: true, used: true } };
+  for (const nav of [buildPlatformNavItems([], [], [], menus, "app", capabilities),
+    buildManagedProjectNavItems("app", {}, [], capabilities, [], menus)]) {
+    const database = findNavItem(nav, "Database")!;
+    expect(findNavItem(database.items ?? [], "tenant-a · invoices")).toMatchObject({
+      url: "/projects/app/database", sectionLabel: "Tables", search: { databaseTenant: "tenant-a", databaseTable: "invoices" },
+    });
+    expect(findNavItem(database.items ?? [], "tenant-b · invoices")?.search?.databaseTenant).toBe("tenant-b");
+    expect(findNavItem(database.items ?? [], "System Tables")?.items?.map(item => item.title)).toEqual(["Events"]);
+  }
 });
