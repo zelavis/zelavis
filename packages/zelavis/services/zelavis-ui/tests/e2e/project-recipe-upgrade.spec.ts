@@ -226,3 +226,54 @@ test("@smoke a running managed app updates its integration without lifecycle com
   await expect(page.getByText("Zelavis Runtime now uses @zelavis/wordpress 2.0.0. Its data is unchanged. It is running at the same address.")).toBeVisible()
   expect(interruptions).toBe(0)
 })
+
+test("@smoke managed recipe SDK menus and pages refresh through their Project Gateway", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  let revision = 1, interruptions = 0
+  const recipe = () => ({ name: "@acme/site", title: "Managed site", version: `${revision}.0.0`, runtimeKinds: ["native"], managed: { adminTitle: "App Admin" } })
+  await page.route(/\/runtime\/projects$/, async route => {
+    if (route.request().method() !== "GET") return route.continue()
+    const response = await route.fetch(), body = await response.json()
+    body.projects = body.projects.map((project: { id: string }) => project.id === projectId ? {
+      ...project, kind: "managed-site", recipe: recipe(), capabilities: { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" },
+      recipeStatus: revision === 1 ? { state: "upgradeAvailable", version: "2.0.0" } : { state: "current" },
+    } : project)
+    await route.fulfill({ response, json: body })
+  })
+  const proxy = `/zelavis/api/v1/runtime/projects/${projectId}/proxy`
+  await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/runtime/config$`), async route => {
+    const response = await route.fetch(), body = await response.json()
+    const menu = { title: `Integration ${revision}`, path: "/integration", surface: "root",
+      page: { id: "integration", src: "/zelavis/api/v1/runtime/service-page-assets/%40acme%2Fsite/dashboard/index.html" } }
+    body.services = [{ name: "@acme/site", scope: "system", kind: "app", apiPath: "/zelavis/api/v1/plugins/site", menus: [menu] }]
+    body.serviceRegistry = [{ name: "@acme/site", version: recipe().version, status: "installed", source: "community", menu }]
+    body.capabilities = { ...body.capabilities, database: { available: false }, identity: { available: false }, workloads: { available: false }, storage: { available: false } }
+    await route.fulfill({ response, json: body })
+  })
+  const assetUrls: string[] = []
+  await page.route(/\/service-page-assets\/%40acme%2Fsite\/dashboard\/index.html/, route => {
+    assetUrls.push(route.request().url())
+    return route.fulfill({ contentType: "text/html", body: `<h1>Integration asset ${revision}</h1>` })
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/upgrade$`), route => {
+    revision = 2
+    return route.fulfill({ json: { project: { id: projectId, recipe: recipe(), runtime: { status: "running" } } } })
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/(start|stop|restart)$`), route => {
+    interruptions++; return route.fulfill({ status: 409, json: { error: "No app lifecycle call permitted" } })
+  })
+  await page.goto(`${basePath}/projects/${projectId}/integration`)
+  await expect(page.getByText("Integration 1", { exact: true }).first()).toBeVisible()
+  await expect(page.frameLocator("iframe").first().getByRole("heading", { name: "Integration asset 1" })).toBeVisible()
+  await page.goto(`${basePath}/projects`)
+  await page.getByLabel("Recipe upgrade").getByRole("button", { name: "Update recipe", exact: true }).click()
+  await expect.poll(() => revision).toBe(2)
+  await page.goto(`${basePath}/projects/${projectId}/integration`)
+  await expect(page.getByText("Integration 2", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("Integration 1", { exact: true })).toHaveCount(0)
+  await expect(page.frameLocator("iframe").first().getByRole("heading", { name: "Integration asset 2" })).toBeVisible()
+  expect(assetUrls.every(url => url.includes(proxy))).toBe(true)
+  expect(assetUrls.some(url => url.includes("zelavisServiceVersion=1.0.0"))).toBe(true)
+  expect(assetUrls.some(url => url.includes("zelavisServiceVersion=2.0.0"))).toBe(true)
+  expect(interruptions).toBe(0)
+})

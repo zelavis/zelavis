@@ -470,8 +470,16 @@ software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
 their software updates. The native managed-runtime path must keep the service
 running, stage a verified integration recipe, persist its update intent, and
 commit metadata/artifact without provisioning, rewriting runtime configuration,
-or start/stop/restart. Interrupted integration transactions restore the previous
-recipe without touching app data or processes. Preserve app identity, runtime
+or start/stop/restart. Activate SDK menus, operation discovery, REST/setup
+endpoints and disk-backed dashboard pages in a separate Project-scoped Zelavis
+integration runtime behind the existing Gateway. It uses the shared persistent
+host/Effect handover, its private state lives below the Project's `.zelavis/integration`,
+and it shares the workload's existing Agent/Fabric placement. Never mount recipe
+endpoints into the Platform or forward Platform authority to third-party software.
+Adopt integration hosts separately from app processes through the same Agent;
+keep the app supervisor serving. Recover an interrupted live update from proved
+host selection, including a missing canonical recipe; passive updates restore
+previous snapshots. Never claim activation from metadata-only tests. Preserve app identity, runtime
 entry, host package set and isolation intent; refuse changed deployment contracts
 without disturbing the existing app. Native Zelavis App upgrades and version
 switches replace the full engine through the same Effect handover as the outer

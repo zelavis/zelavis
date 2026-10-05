@@ -396,6 +396,18 @@ describe("dashboard navigation ownership", () => {
     ).toBe("App Admin");
   });
 
+  it("renders and scopes live managed recipe menus beside hosting controls", () => {
+    const service = { name: "@acme/wordpress", scope: "system" as const, namespace: "wordpress", kind: "app" as const,
+      apiPath: "/proxy/zelavis/api/v1/wordpress", menus: [{ title: "Recipe v1", path: "/recipe", surface: "root" as const,
+        page: { id: "recipe", src: "/proxy/page.html" } }] };
+    const first = buildManagedProjectNavItems("wp", {}, [service]);
+    expect(first.at(-1)).toMatchObject({ title: "Recipe v1", url: "/projects/wp/recipe", page: { src: "/proxy/page.html" } });
+    const next = buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [{ ...service.menus[0], title: "Recipe v2" }] }]);
+    expect(next.some(item => item.title === "Recipe v1")).toBe(false);
+    expect(next.at(-1)?.title).toBe("Recipe v2");
+    expect(buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [] }])).toHaveLength(8);
+  });
+
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",

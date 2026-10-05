@@ -7,6 +7,8 @@ import test from "node:test";
 
 import { createLocalProjectRuntime } from "../dist/adapters/_local-project-runtime.js";
 import { zelavis, createMemorySystemStore } from "../dist/index.js";
+import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
+import { createProjectForwarder } from "../dist/platform/project-gateway.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -26,7 +28,17 @@ async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepa
     exports: { ".": { import: "./dist/index.js" } },
     zelavis: { kind: "app", namespace: "acmesite", project: { runtimeKinds: ["native"], runtime, ...(managed ? { managed } : {}) } },
   }));
-  await writeFile(join(directory, "dist", "index.js"), "export function register() {}");
+  await writeFile(join(directory, "dist", "index.js"), managed ? `
+import { zelavis } from "zelavis/sdk";
+import { ZELAVIS_VERSION } from "zelavis";
+export function register() {
+  zelavis.plugins.ui.menus.create({ title: "Integration ${marker}", path: "/integration", surface: "root", page: { id: "integration", bundle: "dashboard", file: "index.html" } });
+  zelavis.operations.create({ id: "revision.get", resource: "revision", action: "get", method: "GET", path: "/revision", spec: { operationId: "getRevision", summary: "Read integration revision" }, access: { permissions: ["site.read"], scope: { type: "project", projectId: "site" } },
+    handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)}, engine: ZELAVIS_VERSION } }) });
+  zelavis.routes.create({ id: "revision.${marker}", method: "GET", path: "/${marker}", handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)} } }) });
+  zelavis.setup(context => context.addEndpointGroup({ id: "recipe.setup", context: {}, origin: { type: "service", serviceName: "@acme/site" }, basePath: "/setup", api: { v1: [{ id: "setup", method: "GET", path: "/", handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)} } }) }] } }));
+}` : "export function register() {}");
+  if (managed) { await mkdir(join(directory, "dashboard"), { recursive: true }); await writeFile(join(directory, "dashboard/index.html"), "<h1>Integration " + marker + "</h1>"); }
   await writeFile(join(directory, "dist", "runtime.js"), exportsFactory ? `
 import { writeFile, mkdir, appendFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -60,9 +72,10 @@ const project = (id = "site") => ({
   recipe: { name: "@acme/site", title: "Site", version: "1.0.0", specifier: "@acme/site", runtimeKinds: ["native"] },
 });
 
-function router(directory, source, { trusted = true, options } = {}) {
+function router(directory, source, { trusted = true, options, agent } = {}) {
   return createLocalProjectRuntime({
     directory,
+    ...(agent ? { agent } : {}),
     recipeRuntimes: { packageDirectory: (name) => (name === "@acme/site" ? source : undefined), trusted: () => trusted },
     ...(options ? { recipeRuntimeOptions: options } : {}),
   });
@@ -417,9 +430,10 @@ test("interrupted integration recovery repairs a missing canonical artifact with
   const canonical = join(f.projects, "site", ".zelavis", "recipe");
   // Power loss in the canonical-file presentation, with durable intent retained.
   await rename(canonical, canonical + ".previous-interrupted");
+  await f.driver.close();
   const restarted = router(f.projects, f.source); t.after(() => restarted.close());
-  assert.equal(await restarted.recoverUpdate("site", update), "previous");
-  assert.equal(JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8")).recipe.version, "1.0.0");
+  assert.equal(await restarted.recoverUpdate("site", update), "target");
+  assert.equal(JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8")).recipe.version, "2.0.0");
   assert.equal(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), f.prepared);
   assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
 });
@@ -454,7 +468,7 @@ test("the selected integration implementation is used on the next ordinary app s
 
 
 async function managedPlatform(t, store, driver, version, advertiseManaged = true) {
-  const zv = await zelavis({ systemStore: store, projectRuntime: driver, serviceRegistry: { catalog: [{
+  const zv = await zelavis({ subsystems: { fabric: false }, systemStore: store, projectRuntime: driver, serviceRegistry: { catalog: [{
     service: { name: "@acme/site", version, kind: "app", project: { runtimeKinds: ["native"], ...(advertiseManaged ? { managed: { adminTitle: "Admin " + version, adminPath: "/admin/" } } : {}) } },
     status: "available", source: "community", specifier: "@acme/site",
   }] } });
@@ -465,7 +479,7 @@ async function managedPlatform(t, store, driver, version, advertiseManaged = tru
   return { zv, client };
 }
 
-test("SDK/HTTP integration updates preserve a running app and roll back a failed final registry write", async t => {
+test("SDK/HTTP integration updates recover the proved host selection after a failed final registry write", async t => {
   const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
   const driver = router(projects, source), store = createMemorySystemStore();
   let fail = false;
@@ -485,9 +499,10 @@ test("SDK/HTTP integration updates preserve a running app and roll back a failed
   fail = true;
   await assert.rejects(next.client.projects.upgrade("site"), { status: 500 });
   const restored = await next.client.projects.get("site");
-  assert.equal(restored.recipe.version, "1.0.0"); assert.equal(restored.runtimeUpdate, undefined);
+  assert.equal(restored.recipe.version, "2.0.0"); assert.equal(restored.runtimeUpdate, undefined);
   assert.equal(restored.runtime.status, "running"); assert.equal(restored.runtime.url, original.runtime.url);
-  const upgraded = await next.client.projects.upgrade("site");
+  const upgraded = restored;
+  await assert.rejects(next.client.projects.upgrade("site"), { status: 409 });
   assert.equal(upgraded.recipe.version, "2.0.0"); assert.equal(upgraded.recipe.managed.adminTitle, "Admin 2.0.0");
   assert.equal(upgraded.runtime.status, "running"); assert.equal(upgraded.runtime.url, original.runtime.url);
   assert.equal(upgraded.runtimeUpdate, undefined);
@@ -507,4 +522,132 @@ test("stopped managed projects update their integration without provisioning or 
   assert.equal(upgraded.runtime.status, "stopped"); assert.equal(upgraded.recipe.version, "2.0.0");
   assert.equal(await readFile(join(projects, "site", "prepared-by.txt"), "utf8"), prepared);
   await assert.rejects(access(join(projects, "site", "workload-events")), { code: "ENOENT" });
+});
+
+
+test("managed SDK menus, REST, setup endpoints and disk pages activate through the Project Gateway without app lifecycle calls", { timeout: 30_000 }, async t => {
+  const f = await managedUpdateFixture(t);
+  let record = f.previous;
+  const forward = createProjectForwarder({ projects: {
+    get: async () => record,
+    gatewayTarget: () => f.driver.gatewayTarget(record),
+    signGatewayAuthority: (id, claims) => f.driver.signGatewayAuthority(id, claims),
+  }, fabric: {
+    getProjectPlacement: async () => ({ identity: { type: "project", workloadId: "site", scopeId: "platform" }, state: "active", generation: 1, runtimeNodeId: "local" }),
+    getNode: async () => ({ status: "ready" }),
+  }, unavailableProjectsResponse: () => ({ status: 503 }) });
+  const exchange = path => forward({ projectId: "site", wildcardPath: path.replace(/^\//, ""), query: new URLSearchParams(),
+    request: new Request("http://localhost" + path), principal: { id: "reader", type: "user" }, permissions: ["site.read"], allowFrontend: false });
+  const fetcher = async path => { const r = await exchange(path); return new Response(r.body, { status: r.status, headers: r.headers }); };
+  const get = async path => { const r = await fetcher(path); assert.equal(r.status, 200, await r.clone().text()); return r.json(); };
+  const selected = async revision => {
+    const config = await get("/zelavis/api/v1/runtime/config");
+    const service = config.services.find(s => s.name === "@acme/site");
+    assert.equal(service.menus[0].title, "Integration " + revision);
+    assert.deepEqual((await get(service.apiPath + "/revision")).revision, revision);
+    assert.equal((await get("/zelavis/api/v1/setup/")).revision, revision);
+    const page = await fetcher(service.menus[0].page.src);
+    assert.equal(page.status, 200); assert.match(await page.text(), new RegExp("Integration " + revision));
+    return service.apiPath;
+  };
+  const api = await selected("v1");
+  const denied = await forward({ projectId: "site", wildcardPath: (api + "/revision").slice(1), query: new URLSearchParams(),
+    request: new Request("http://localhost" + api + "/revision"), principal: { id: "denied", type: "user" }, permissions: [], allowFrontend: false });
+  assert.equal(denied.status, 403);
+  await managedRecipePackage(f.root, { marker: "v2", version: "2.0.0" });
+  const update = await f.driver.prepareUpdate(record, f.candidate);
+  let done = false, hits = 0;
+  const traffic = (async () => { do { await get(api + "/revision"); hits++; } while (!done); })();
+  try { await f.driver.applyUpdate("site", update, async choice => { record = { ...(choice === "target" ? f.candidate : f.previous), recipe: choice === "target" ? update.recipe : f.previous.recipe }; }); }
+  finally { done = true; await traffic; }
+  assert.ok(hits > 0); await selected("v2");
+  assert.equal((await fetcher(api + "/v1")).status, 404);
+  assert.equal((await get(api + "/v2")).revision, "v2");
+  // SDK discovery must re-read the active catalogue on the same client.
+  const sdk = createZelavisClient({ baseUrl: "http://localhost", fetch: (url, init) => fetcher(new URL(url).pathname) });
+  assert.equal((await sdk.plugins.acmesite.revision.get()).revision, "v2");
+  await managedRecipePackage(f.root, { marker: "v3", version: "3.0.0" });
+  const third = await f.driver.prepareUpdate(record, { ...record, recipe: { ...record.recipe, version: "3.0.0", artifact: undefined } });
+  await assert.rejects(f.driver.applyUpdate("site", third, async choice => {
+    if (choice === "target") throw Error("registry rejected v3");
+    record = { ...record, recipe: update.recipe };
+  }), /registry rejected v3/);
+  await selected("v2"); assert.equal((await sdk.plugins.acmesite.revision.get()).revision, "v2");
+  assert.equal((await fetcher(api + "/v3")).status, 404);
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+  assert.equal(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), f.prepared);
+  const address = await f.driver.gatewayTarget(record);
+  await f.driver.destroy("site");
+  await assert.rejects(fetch(address + "/zelavis/api/v1/runtime/config"));
+  await assert.rejects(access(join(f.projects, "site")), { code: "ENOENT" });
+});
+
+
+test("managed adoption claims Agent custody once and shares it with the app supervisor", async t => {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  await writeFile(join(source, "dist/runtime.js"), `
+export function createProjectRuntime({ agent }) {
+  let children = [];
+  return { name: "custody-proof", capabilities: () => ({ survivesControlPlaneRestart: true }),
+    async prepare() {}, async start() {}, async stop() {}, async logs() { return []; }, async destroy() {}, async close() {},
+    async adopt() { children = await agent.attach("site"); },
+    async status() { return children.length === 3 && children.every(entry => entry.process.running)
+      ? { status: "running", url: "http://127.0.0.1:1234" } : { status: "stopped" }; }
+  };
+}`);
+  let claims = 0;
+  const agent = { survivesControlPlaneRestart: true, async close() {}, async attach(id) {
+    claims++;
+    return claims === 1 ? ["database", "php", "nginx"].map(name => ({
+      process: { id: name, workloadId: id, running: true },
+      command: { workloadId: id, executable: name, cwd: projects, args: [] }, replay: [],
+    })) : [];
+  } };
+  const first = router(projects, source, { agent }); t.after(() => first.close());
+  const descriptor = project(); descriptor.recipe.managed = { adminTitle: "Admin", adminPath: "/admin/" };
+  await first.prepare(descriptor, descriptor.recipe);
+  const restarted = router(projects, source, { agent }); t.after(() => restarted.close());
+  await restarted.adopt();
+  assert.equal(claims, 1, "Agent custody must be claimed once across both supervisors");
+  assert.deepEqual(await restarted.status("site"), { status: "running", url: "http://127.0.0.1:1234" });
+});
+
+test("a surviving managed integration host is re-keyed and repairs an interrupted canonical recipe swap", { timeout: 30_000 }, async t => {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  const backing = createLocalAgentProcessRunner(), attached = [];
+  const agent = { ...backing, survivesControlPlaneRestart: true, attach: async id => attached.filter(entry => entry.process.workloadId === id && entry.process.running),
+    start: async (command, options) => {
+      const replay = []; let listener;
+      const child = await backing.start(command, { ...options, onOutput: event => { replay.push(event); if (listener) listener(event); else options.onOutput?.(event); } });
+      const process = { ...child, get running() { return child.running; }, listen: handler => { listener = handler; } };
+      attached.push({ process, command, replay }); return process;
+    },
+  };
+  t.after(() => backing.close());
+  const first = router(projects, source, { agent }); t.after(() => first.close());
+  let previous = { ...project(), desiredState: "running", runtime: { status: "running", url: "http://127.0.0.1:1" } };
+  previous.recipe.managed = { adminTitle: "Admin", adminPath: "/admin/" };
+  await first.prepare(previous, previous.recipe); await first.start(previous);
+  previous = JSON.parse(await readFile(join(projects, "site/project.json"), "utf8"));
+  const address = await first.gatewayTarget(previous);
+  const oldAuthority = await first.signGatewayAuthority("site", { projectId: "site", scopeId: "platform", generation: 1,
+    runtimeNodeId: "local", subject: "reader", subjectType: "user", tenantId: "tenant", permissions: ["site.read"] });
+  await managedRecipePackage(root, { marker: "v2", version: "2.0.0" });
+  const target = { ...previous, recipe: { ...previous.recipe, version: "2.0.0", artifact: undefined } };
+  const update = await first.prepareUpdate(previous, target);
+  await first.applyUpdate("site", update, async () => {});
+  await rename(join(projects, "site/.zelavis/recipe"), join(projects, "site/.zelavis/recipe.previous-interrupted"));
+  const restarted = router(projects, source, { agent }); t.after(() => restarted.close());
+  await restarted.adopt();
+  assert.equal(await restarted.recoverUpdate("site", update), "target");
+  const selected = JSON.parse(await readFile(join(projects, "site/project.json"), "utf8"));
+  assert.equal(await restarted.gatewayTarget(selected), address);
+  const denied = await fetch(address + "/zelavis/api/v1/plugins/acmesite/revision", { headers: { "x-zelavis-authority": oldAuthority } });
+  assert.equal(denied.status, 401); await denied.text();
+  const authority = await restarted.signGatewayAuthority("site", { projectId: "site", scopeId: "platform", generation: 1,
+    runtimeNodeId: "local", subject: "reader", subjectType: "user", tenantId: "tenant", permissions: ["site.read"] });
+  const active = await fetch(address + "/zelavis/api/v1/plugins/acmesite/revision", { headers: { "x-zelavis-authority": authority } });
+  assert.equal(active.status, 200); assert.equal((await active.json()).revision, "v2");
+  assert.equal(attached.length, 1, "Adoption must retain the same integration host");
+  assert.equal(await readFile(join(projects, "site/workload-events"), "utf8"), "start:v1\n");
 });

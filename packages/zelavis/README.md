@@ -184,7 +184,10 @@ Native Zelavis Apps upgrade their complete engine through the same live handover
 as the Platform. Managed app recipe updates refresh the Zelavis integration while
 the app keeps serving and owns its software updates. They stage and commit the
 verified recipe without provisioning, rewriting runtime configuration, or
-starting/stopping the app; interrupted commits restore the previous integration.
+starting/stopping the app. SDK menus, REST/setup endpoints and dashboard assets
+activate immediately in a separate Project-scoped integration runtime behind the
+Project Gateway, using the shared Effect handover. Live recovery follows the
+proved host selection; a rejected activation restores the previous integration.
 Custom runtimes load selected code from verified digest-specific directories.
 Unsupported runtime upgrades require a stopped or failed Project; failed
 preparation restores the previous recipe and host descriptor. Projects pending deletion

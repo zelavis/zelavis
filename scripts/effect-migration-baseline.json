@@ -5446,12 +5446,6 @@
     {
       "file": "packages/zelavis/src/platform/project-gateway.ts",
       "kind": "async-function",
-      "owner": "module/createProjectForwarder/callback",
-      "fingerprint": "1e700b70771872594464a31627c764a11881002c159ab99092c01bf0bc28a9bb"
-    },
-    {
-      "file": "packages/zelavis/src/platform/project-gateway.ts",
-      "kind": "async-function",
       "owner": "module/createProjectGatewayRoutes/proxyRoutes/callback/handler/callback",
       "fingerprint": "489fe8f3a7cc60db7f0cc574c94fb44793ae0b3675b99041aaf8ff8808283690"
     },

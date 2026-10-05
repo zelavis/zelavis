@@ -41,6 +41,13 @@ if (phase === "claim") {
     manifest.version = "0.0.0-qualification";
     manifest.zelavis.project.managed.adminTitle = "Historical integration admin";
     await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
+    await writeFile(`${frozen}/dist/index.js`, `import { zelavis } from "zelavis/sdk";
+export { WORDPRESS_APP_NAME } from "./runtime.js";
+export function register() {
+  zelavis.plugins.ui.menus.create({ title: "Historical SDK integration", path: "/historical-integration", surface: "root" });
+  zelavis.operations.create({ id: "integration.get", resource: "integration", action: "get", method: "GET", path: "/integration",
+    spec: { operationId: "getHistoricalIntegration", summary: "Read the historical integration fixture" }, handler: () => ({ status: 200, body: { revision: "historical" } }) });
+}`);
     const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
     descriptor.recipe = { ...descriptor.recipe, version: manifest.version, managed: manifest.zelavis.project.managed, artifact: { digest: await digestArtifactDirectory(frozen) } };
     await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));

@@ -150,8 +150,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     throw error;
   }
   let runtimeConfig = controlRuntime;
-  const isManagedProject = Boolean(selectedProject?.recipe.managed);
-  if (selectedProject && !isManagedProject) {
+  if (selectedProject) {
     try {
       runtimeConfig = await getProjectRuntimeConfig(controlRuntime, selectedProject.id);
     } catch (error) {

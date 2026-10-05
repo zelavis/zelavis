@@ -603,7 +603,7 @@ export interface ZelavisProjectsClient {
   start(projectId: string): Promise<ZelavisProjectRecord>;
   stop(projectId: string): Promise<ZelavisProjectRecord>;
   restart(projectId: string): Promise<ZelavisProjectRecord>;
-  /** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */
+  /** Updates managed SDK integrations without restarting the app, or hands a supported native App to its selected engine; data is kept. */
   upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;

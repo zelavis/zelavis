@@ -59,18 +59,13 @@ export default function ManagedProjectSectionRoute() {
   const managed = getManagedProject(project);
   const siteUrl = project ? projectSiteUrl(project) : undefined;
 
-  // This route's pattern swallows every single-segment path under a project,
-  // which is also where a service's project-surface pages live. A Zelavis-native
-  // project has no managed sections, so hand the path to the service page mount
-  // — the same thing the splat route would have done had this pattern not
-  // matched first.
-  if (!managed) {
+  // Recipe pages share this route pattern with fixed hosting controls.
+  // Give every other path to the ordinary SDK service-page renderer.
+  const section = managedSections[params.managedSection as keyof typeof managedSections];
+  if (!managed || !section) {
     return <ServicePageMount allowPlaceholder fallback={<DashboardNotFound />} />;
   }
 
-  const section =
-    managedSections[params.managedSection as keyof typeof managedSections] ??
-    managedSections.admin;
   const Icon = section.icon;
 
   return (

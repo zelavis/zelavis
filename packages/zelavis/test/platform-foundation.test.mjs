@@ -247,6 +247,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
     async logs() { return []; }, async destroy() {}, async close() {},
     async signGatewayAuthority() { return "signed"; },
+    async gatewayTarget() { return "http://127.0.0.1:3000"; },
     async fencePrevious() { return true; }, async adopt() {}, async detach() {},
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },

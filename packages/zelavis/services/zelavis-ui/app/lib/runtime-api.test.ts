@@ -231,3 +231,23 @@ test("only system packages' Project-surface menus reach a Project, and never pla
   expect(selected.map((service) => service.name)).toEqual(["@zelavis/marketplace", "@zelavis/auth"]);
   expect(selected[0]?.menus?.map((entry) => entry.surface)).toEqual(["root"]);
 });
+
+
+test("managed recipe pages and nested assets stay in their Project Gateway and change URL with the locked version", async () => {
+  let version = "1.0.0";
+  const page = { id: "integration", src: "/zelavis/api/v1/runtime/service-page-assets/%40acme%2Fsite/dashboard/index.html" };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ rootPath: "/zelavis",
+    api: { basePath: "/zelavis/api/v1" }, services: [{ name: "@acme/site", apiPath: "/zelavis/api/v1/plugins/site",
+      menus: [{ title: "Integration", path: "/integration", page, items: [{ title: "Nested", page }] }] }],
+    serviceRegistry: [{ name: "@acme/site", version, menu: { title: "Integration", page } }],
+  }), { headers: { "content-type": "application/json" } })));
+  const control = { rootPath: "/zelavis", api: { basePath: "/zelavis/api/v1" }, services: [], dashboard: {} } as unknown as RuntimeConfig;
+  const old = await getProjectRuntimeConfig(control, "site");
+  const src = old.services[0].menus![0].page!.src;
+  expect(src).toContain("/runtime/projects/site/proxy/zelavis/api/v1/runtime/service-page-assets/");
+  expect(src).toContain("zelavisServiceVersion=1.0.0");
+  expect(old.services[0].menus![0].items![0].page!.src).toBe(src);
+  expect(old.serviceRegistry[0].menu!.page!.src).toBe(src);
+  version = "2.0.0";
+  expect((await getProjectRuntimeConfig(control, "site")).services[0].menus![0].page!.src).not.toBe(src);
+});

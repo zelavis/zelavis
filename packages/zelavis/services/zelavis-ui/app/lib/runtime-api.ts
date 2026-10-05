@@ -1666,6 +1666,11 @@ export async function getProjectRuntimeConfig(
   );
   const projectApiBasePath = `${proxyRoot}${projectConfig.api.basePath}`;
 
+  const projectMenu = (menu: RuntimeServiceMenuDefinition, version?: string): RuntimeServiceMenuDefinition => ({ ...menu,
+    ...(menu.page ? { page: { ...menu.page, src: menu.page.src.startsWith(`${projectConfig.rootPath}/`)
+      ? `${proxyRoot}${menu.page.src}${version ? `${menu.page.src.includes("?") ? "&" : "?"}zelavisServiceVersion=${encodeURIComponent(version)}` : ""}` : menu.page.src } } : {}),
+    ...(menu.items ? { items: menu.items.map(item => projectMenu(item, version)) } : {}),
+  });
   const projectServices = normalizeRuntimeServices(
     (projectConfig.services ?? [])
       .filter(
@@ -1675,6 +1680,8 @@ export async function getProjectRuntimeConfig(
       )
       .map((service) => ({
         ...service,
+        ...(service.menu ? { menu: projectMenu(service.menu, projectConfig.serviceRegistry?.find(entry => entry.name === service.name)?.version) } : {}),
+        ...(service.menus ? { menus: service.menus.map(menu => projectMenu(menu, projectConfig.serviceRegistry?.find(entry => entry.name === service.name)?.version)) } : {}),
         apiPath: service.apiPath.startsWith(projectConfig.rootPath)
           ? `${proxyRoot}${service.apiPath}`
           : service.apiPath,
@@ -1696,7 +1703,7 @@ export async function getProjectRuntimeConfig(
     dashboard: controlConfig.dashboard,
     services: [...projectServices, ...platformProjectServices],
     serviceRegistry: normalizeRuntimeServiceRegistry(
-      projectConfig.serviceRegistry ?? [],
+      (projectConfig.serviceRegistry ?? []).map(entry => ({ ...entry, ...(entry.menu ? { menu: projectMenu(entry.menu, entry.version) } : {}) })),
     ),
   };
 }

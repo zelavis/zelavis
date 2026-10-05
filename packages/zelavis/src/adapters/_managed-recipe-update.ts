@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
+import { ZELAVIS_VERSION } from "../version.js";
+import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { evaluate, integration } from "../core/runtime/effect-boundary.js";
 import { ZelavisProjectValidationError, type ZelavisProjectRecord } from "../project.js";
 import { manifestProjectRecipe, validatePluginPackageManifest } from "../service.js";
@@ -12,7 +14,7 @@ import { freezeNodeProjectRelease } from "./_node-project-release.js";
  * are outside this transaction; provisioning is never an integration update.
  */
 export const prepareManagedRecipeUpdate = Effect.fn("ManagedRecipe.prepareUpdate")(function* (
-  directory: string, previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, source: string,
+  directory: string, previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, source: string, running?: RuntimeRelease,
 ) {
   const before = join(directory, ".zelavis", "recipe", "package");
   const manifest = yield* Effect.flatMap(integration(() => readFile(join(source, "package.json"), "utf8")), text => evaluate(() => JSON.parse(text)));
@@ -46,14 +48,14 @@ export const prepareManagedRecipeUpdate = Effect.fn("ManagedRecipe.prepareUpdate
       JSON.stringify(previous.recipe.runtimeKinds) !== JSON.stringify(next.runtimeKinds))
       throw new ZelavisProjectValidationError("Integration updates cannot change the app's deployment contract. The existing app keeps running.");
   });
-  const selected = yield* freezeNodeProjectRelease(directory, directory, previous.recipe.version);
+  const selected = running ?? (yield* freezeNodeProjectRelease(directory, directory, ZELAVIS_VERSION));
   const staging = join(directory, ".zelavis", "update-preparation", randomUUID());
   yield* integration(() => mkdir(staging, { recursive: true, mode: 0o700 }));
   return yield* Effect.gen(function* () {
     const artifact = yield* integration(() => materializeRecipeArtifact(source, join(staging, ".zelavis")));
     const recipe = { ...next, artifact };
     yield* integration(() => writeFile(join(staging, "project.json"), JSON.stringify({ ...candidate, recipe, runtime: previous.runtime }), { mode: 0o600 }));
-    const target = yield* freezeNodeProjectRelease(directory, staging, recipe.version);
-    return { mode: "integration" as const, previous: selected, target, recipe };
+    const target = yield* freezeNodeProjectRelease(directory, staging, ZELAVIS_VERSION);
+    return { mode: "integration" as const, previous: selected, target, recipe, ...(running ? { host: true as const } : {}) };
   }).pipe(Effect.ensuring(integration(() => rm(staging, { recursive: true, force: true })).pipe(Effect.orDie)));
 });

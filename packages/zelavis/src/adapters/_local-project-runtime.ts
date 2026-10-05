@@ -2,8 +2,8 @@ import { unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
 import { defineEffectProjectRuntime } from "./project-runtime.js";
-import { Effect } from "effect";
-import { evaluate, integration, effectOperations, type EffectOperations } from "../core/runtime/effect-boundary.js";
+import { Deferred, Effect } from "effect";
+import { evaluate, integration, present, effectOperations, singleFlight, type EffectOperations } from "../core/runtime/effect-boundary.js";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -13,7 +13,7 @@ import { ZelavisProjectRuntimeError } from "../project.js";
 import { createNodeProcessProjectRuntime, type NodeProcessProjectRuntimeOptions, } from "./_node-project-runtime.js";
 import { createServerFrontendProjectRuntime, type ServerFrontendProjectRuntimeOptions, } from "./_server-frontend-project-runtime.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
-import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
+import type { ZelavisAgentAttachedProcess, ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import { resolveBundledServiceDirectory, linkPlatformPackage } from "./_local-runtime.js";
 import { RECIPE_ARTIFACT_DIRECTORY, digestArtifactDirectory, materializeRecipeArtifact, } from "./_recipe-artifact.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
@@ -88,7 +88,27 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         createLocalAgentProcessRunner({
             stateDirectory: join(directory, ".agent-processes"),
         });
-    const node = createNodeProcessProjectRuntime({ ...options, agent });
+    // Share placement and execution authority, but adopt only the processes
+    // belonging to each supervisor. The Agent withholds environment secrets.
+    // Agent attachment transfers custody once. Claim each workload once per
+    // adoption pass, then give each supervisor its own view of that inventory.
+    let adoptionInventory: Map<string, Deferred.Deferred<readonly ZelavisAgentAttachedProcess[], TaggedFailure>> | undefined;
+    const agentView = (integrationHost: boolean): ZelavisAgentProcessRunner => ({ ...agent,
+        ...(agent.attach ? { attach: (id: string) => present((adoptionInventory
+            ? singleFlight(adoptionInventory, id, () => integration(() => agent.attach!(id)), true)
+            : integration(() => agent.attach!(id))).pipe(
+            Effect.map(attached => attached.filter(({ command }) => (command.args?.includes("--integration") === true) === integrationHost)),
+        )) } : {}),
+    });
+    const recipeAgent = agentView(false);
+    const node = createNodeProcessProjectRuntime({ ...options, agent: recipeAgent });
+    const integrationNode = createNodeProcessProjectRuntime({ ...options, integrationOnly: true, agent: agentView(true),
+        recipePackageDirectory: (name, version) => present(Effect.gen(function* () {
+            return (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(name, version))) ??
+                (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
+        })),
+    });
+    const integrationRuntime = effectOperations(integrationNode);
     const serverFrontend = options.serverFrontend
         ? createServerFrontendProjectRuntime({
             directory,
@@ -101,6 +121,8 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     const recipeDrivers = new Map<string, ZelavisProjectRuntimeDriver>();
     const driverOfProject = new Map<string, ZelavisProjectRuntimeDriver>();
     const verified = new Set<string>();
+    const managedProjects = new Set<string>();
+    const adoptionFailures = new Map<ZelavisProjectRuntimeDriver, string>();
     const selectFrontend = (): ZelavisProjectRuntimeDriver => {
         if (!serverFrontend) {
             throw new ZelavisProjectRuntimeError("This host is not configured to run server frontends.");
@@ -166,7 +188,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }
         const driver = module.createProjectRuntime({
             directory,
-            agent,
+            agent: recipeAgent,
             options: options.recipeRuntimeOptions?.[recipe.name] ?? {},
         });
         recipeDrivers.set(digest, driver);
@@ -233,6 +255,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             recipe?: {
                 name?: unknown;
                 version?: unknown;
+                managed?: unknown;
                 artifact?: {
                     digest?: unknown;
                 };
@@ -243,6 +266,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         yield* evaluate(() => assertNative(record.runtimeKind));
         if (record.kind === SERVER_FRONTEND_KIND)
             return selectFrontend();
+        if (record.recipe?.managed) managedProjects.add(projectId); else managedProjects.delete(projectId);
         const name = record.recipe?.name;
         if (typeof name === "string") {
             const digest = record.recipe?.artifact?.digest;
@@ -257,6 +281,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         return error instanceof Error && "code" in error && error.code === "ENOENT" && "path" in error && error.path === join(directory, id, "project.json");
     };
     const stopProject = Effect.fn("LocalProjects.stopProject")(function* (id: string) {
+        yield* integrationRuntime.stop(id);
         return yield* Effect.catch(Effect.gen(function* () { const selected = yield* forProjectId(id); return yield* effectOperations(selected).stop(id); }), Effect.fn("LocalProjects.recover")(function* (error) {
             if (!missingDescriptor(error, id))
                 return yield* Effect.fail(error);
@@ -287,22 +312,28 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             yield* integration(() => agent.close());
         }),
         adopt: Effect.fn("LocalProjects.adopt")(function* () {
-            yield* Effect.catch(Effect.gen(function* () {
-                for (const entry of (yield* integration(() => readdir(directory, { withFileTypes: true })))) {
-                    if (!entry.isDirectory() || entry.name.startsWith("."))
-                        continue;
-                    (yield* Effect.catch(Effect.gen(function* () {
-                        (yield* forProjectId(entry.name));
-                    }), Effect.fn("LocalProjects.recover")(function* (_error) {
-                    })));
+            adoptionInventory = new Map();
+            yield* Effect.gen(function* () {
+                yield* Effect.catch(Effect.gen(function* () {
+                    for (const entry of (yield* integration(() => readdir(directory, { withFileTypes: true })))) {
+                        if (!entry.isDirectory() || entry.name.startsWith("."))
+                            continue;
+                        (yield* Effect.catch(Effect.gen(function* () {
+                            (yield* forProjectId(entry.name));
+                        }), Effect.fn("LocalProjects.recover")(function* (_error) {
+                        })));
+                    }
+                }), Effect.fn("LocalProjects.recover")(function* (_error) {
+                }));
+                // Each driver knows which of its own Projects the Agent still runs; the
+                // router only has to ask all of them.
+                for (const driver of [node, integrationNode, ...loaded(), serverFrontend]) {
+                    if (driver) yield* (effectOperations(driver).adopt?.() ?? Effect.void).pipe(
+                        Effect.tap(() => Effect.sync(() => adoptionFailures.delete(driver))),
+                        Effect.catch(error => Effect.sync(() => { adoptionFailures.set(driver, String(unwrapFailure(error)).slice(0, 4000)); })),
+                    );
                 }
-            }), Effect.fn("LocalProjects.recover")(function* (_error) {
-            }));
-            // Each driver knows which of its own Projects the Agent still runs; the
-            // router only has to ask all of them.
-            for (const driver of [node, ...loaded(), serverFrontend]) {
-                if (driver) yield* (effectOperations(driver).adopt?.() ?? Effect.void);
-            }
+            }).pipe(Effect.ensuring(Effect.sync(() => { adoptionInventory = undefined; })));
         }),
         runtimeKinds: Object.freeze(["native"]),
         defaultRuntimeKind: "native",
@@ -317,22 +348,30 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         resolveVersion: Effect.fn("LocalProjects.resolveVersion")(function* (project, version) {
             return yield* effectOperations(node).resolveVersion!(project, version);
         }),
-        prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate) {
+        prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate, placement) {
             if (managedIntegration(previous)) {
                 yield* assertTrusted(candidate.recipe.name);
                 const source = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(candidate.recipe.name, candidate.recipe.version))) ??
                     (yield* integration(() => options.recipePackageDirectory?.(candidate.recipe.name, candidate.recipe.version))) ??
                     resolveBundledServiceDirectory(candidate.recipe.name);
                 if (!source) return yield* Effect.fail(new ZelavisProjectRuntimeError("Managed recipe source is unavailable."));
+                if (previous.runtime.status === "running") {
+                    yield* integrationRuntime.start(previous, placement);
+                    return yield* integrationRuntime.prepareUpdate!(previous, candidate, placement);
+                }
                 return yield* prepareManagedRecipeUpdate(join(directory, previous.id), previous, candidate, source);
             }
             const selected = effectOperations(forDescriptor(previous));
             if (!selected.prepareUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));
-            return yield* selected.prepareUpdate(previous, candidate);
+            return yield* selected.prepareUpdate(previous, candidate, placement);
         }),
         applyUpdate: Effect.fn("LocalProjects.applyUpdate")(function* (id, update, commit) {
             if (update.mode === "integration") {
                 const selected = effectOperations(yield* forProjectId(id));
+                if (update.host) {
+                    yield* integrationRuntime.applyUpdate!(id, update, commit);
+                    return yield* selected.status(id);
+                }
                 return yield* Effect.uninterruptible(Effect.gen(function* () {
                     yield* restoreNodeProjectRelease(join(directory, id), id, update.target);
                     yield* integration(() => commit("target"));
@@ -348,6 +387,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }),
         recoverUpdate: Effect.fn("LocalProjects.recoverUpdate")(function* (id, update) {
             if (update.mode === "integration") {
+                if (update.host) return yield* integrationRuntime.recoverUpdate!(id, update);
                 // The durable intent is cleared only after the complete commit.
                 // An interrupted integration transaction rolls back its code and
                 // metadata; the app's software and processes were never changed.
@@ -424,8 +464,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         status: Effect.fn("LocalProjects.status")(function* (id) {
             return yield* Effect.gen(function* () {
                 const selected = yield* forProjectId(id);
-                return yield* effectOperations(selected).status(id);
-            }).pipe(Effect.orElseSucceed(() => ({ status: "stopped" as const })));
+                const state = yield* effectOperations(selected).status(id);
+                const error = adoptionFailures.get(selected);
+                return error && state.status !== "running" ? { status: "failed" as const, error } : state;
+            }).pipe(Effect.orElseSucceed(error => ({ status: "failed" as const, error: String(unwrapFailure(error)).slice(0, 4000) })));
         }),
         logs: Effect.fn("LocalProjects.logs")(function* (id) {
             const selected = yield* forProjectId(id);
@@ -439,15 +481,22 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 (yield* stopProject(id));
                 selected = driverOfProject.get(id) ?? node;
             }));
+            yield* integrationRuntime.stop(id);
             yield* effectOperations(selected!).destroy(id);
+            yield* integrationRuntime.destroy(id);
             driverOfProject.delete(id);
+            managedProjects.delete(id);
         }),
         close: Effect.fn("LocalProjects.step")(function* () {
-            yield* Effect.forEach([node, ...loaded(), ...serverFrontend ? [serverFrontend] : []], driver => effectOperations(driver).close(), { concurrency: 8, discard: true });
+            yield* Effect.forEach([node, integrationNode, ...loaded(), ...serverFrontend ? [serverFrontend] : []], driver => effectOperations(driver).close(), { concurrency: 8, discard: true });
+        }),
+        gatewayTarget: Effect.fn("LocalProjects.gatewayTarget")(function* (project, placement) {
+            yield* forProjectId(project.id);
+            return managedIntegration(project) ? (yield* integrationRuntime.start(project, placement)).url : project.runtime.url;
         }),
         signGatewayAuthority: Effect.fn("LocalProjects.step")(function* (id, claims) {
-            const selected = yield* Effect.catch(forProjectId(id), Effect.fn("LocalProjects.recover")(function* () { return node; }));
-            const sign = effectOperations(selected).signGatewayAuthority;
+            const selected = driverOfProject.get(id) ?? (yield* forProjectId(id));
+            const sign = effectOperations(managedProjects.has(id) ? integrationNode : selected).signGatewayAuthority;
             if (!sign) return undefined;
             return yield* sign(id, claims);
         }),

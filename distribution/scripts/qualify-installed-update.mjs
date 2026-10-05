@@ -29,6 +29,16 @@ const frontend = `/var/lib/zelavis/projects/${id}/.zelavis/services/continuity`;
 await mkdir(join(frontend, 'dist'), { recursive: true });
 await writeFile(join(frontend, 'package.json'), JSON.stringify({ name: '@qualification/continuity', version: '1.0.0', zelavis: { kind: 'frontend', frontend: { runtime: 'static', bundle: 'dist' } } }));
 await writeFile(join(frontend, 'dist/index.html'), '<h1>Stable site across real versions</h1>');
+// This plugin resolves Zelavis from the engine actually executing it, so a
+// descriptor rewrite cannot masquerade as a successful version switch.
+const engineProof = `/var/lib/zelavis/projects/${id}/.zelavis/services/engine-proof`;
+await mkdir(join(engineProof, 'dist'), { recursive: true });
+await writeFile(join(engineProof, 'package.json'), JSON.stringify({ name: '@qualification/engine-proof', version: '1.0.0', type: 'module', exports: './dist/index.js',
+  zelavis: { kind: 'plugin', namespace: 'engineproof' } }));
+await writeFile(join(engineProof, 'dist/index.js'), `import { zelavis } from "zelavis/sdk";
+import { ZELAVIS_VERSION } from "zelavis";
+export function register() { zelavis.operations.create({ id: "engine.get", resource: "engine", action: "get", method: "GET", path: "/engine",
+  spec: { operationId: "getExecutingEngine", summary: "Report the executing engine" }, handler: () => ({ status: 200, body: { version: ZELAVIS_VERSION } }) }); }`);
 execFileSync('chown', ['-R', 'zelavis:zelavis', join(frontend, '..')]);
 const app = await client.projects.start(id);
 const data = () => client.data(id);
@@ -36,6 +46,9 @@ await data().collections.create({ name: 'continuity' });
 await data().documents.insert('continuity', { id: 'stable', data: { value: 'retained across real engine versions' } });
 const descriptor = async projectId => JSON.parse(await readFile(`/var/lib/zelavis/projects/${projectId}/project.json`, 'utf8'));
 assert.equal((await descriptor(id)).engine.runtime.version, from);
+const projectClient = projectId => createZelavisClient({ ...config, rootPath: `/zelavis/api/v1/runtime/projects/${projectId}/proxy/zelavis` });
+const executingVersion = () => projectClient(id).plugins.engineproof.engine.get();
+assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
 const wp = await client.projects.get('qualification-wordpress');
 assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
 const wpData = '/var/lib/zelavis/projects/qualification-wordpress/.zelavis';
@@ -59,12 +72,13 @@ const initialPid = hostPid();
 const unitFile = '/etc/systemd/system/zelavis.service';
 await writeFile(unitFile, `# Qualification marker: refresh during live root commit\n${await readFile(unitFile, 'utf8')}`);
 const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
+urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`);
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
 async function underTraffic(operation) {
   let finished = false;
   const traffic = Promise.all(urls.map(async url => {
     do {
-      const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(url, { ...(url.startsWith(`${baseUrl}/zelavis/api/`) ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(30_000) });
       assert.ok([200, 302].includes(response.status), `${url}: ${response.status}`);
       await response.arrayBuffer(); counts[url]++;
       await new Promise(resolve => setTimeout(resolve, 20));
@@ -149,17 +163,27 @@ assert.deepEqual(await identities(), before, 'Project supervision must survive t
 assert.equal(JSON.parse(await readFile('/opt/zelavis/installation.json', 'utf8')).version, to);
 assert.ok(!(await readFile(unitFile, 'utf8')).includes('Qualification marker'), 'Live root commit must refresh installed unit templates');
 assert.equal((await descriptor(id)).engine.runtime.version, from, 'Parent update preserves App engine');
+assert.equal((await executingVersion()).version, from, 'Parent update must retain the executing child engine');
 assert.equal((await client.projects.get(id)).preview.port, app.preview.port);
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
 assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
+const wpClient = projectClient(wp.id);
+const beforeIntegration = await wpClient.runtime.config();
+assert.equal(beforeIntegration.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
+assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
+const integrationBefore = await identities();
+const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
+urls.push(wpControl); counts[wpControl] = 0;
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
 assert.equal(integration.runtime.status, 'running');
 assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
 assert.equal(integration.runtimeUpdate, undefined);
-assert.deepEqual(await identities(), before, 'Integration update must not stop, start or replace app processes');
+assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
+await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
 assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
 console.log('PASS: running WordPress integration recipe update preserves processes, software, configuration, content and preview.');
 const choices = await client.projects.versions(id);
@@ -172,6 +196,7 @@ for (const version of [to, from]) {
   assert.equal(switched.preview.port, app.preview.port);
   const selected = await descriptor(id);
   assert.equal(selected.engine.runtime.version, version);
+  assert.equal((await executingVersion()).version, version, 'Plugin code inside the executing engine must report the selected real npm version');
   const engineRoot = `/opt/zelavis/releases/${version}`;
   const recipe = JSON.parse(await readFile(join(engineRoot, 'platform/services/zelavis-app/package.json'), 'utf8'));
   assert.equal(switched.recipe.version, recipe.version);
@@ -194,8 +219,8 @@ const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated 
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
-    processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true },
-  liveSelection: [to, from], dataRetained: true, requests: counts,
+    processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
+  liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
   artifact: JSON.parse(await readFile(`/opt/zelavis/releases/${to}/runtime-artifact.json`, 'utf8')).digest };
 await writeFile('/tmp/zelavis-update-proof.json', JSON.stringify(proof, null, 2));
 console.log(`PASS: published ${from} updates to ${to}; no stopped Projects or refused HTTP requests (${mode}).`);

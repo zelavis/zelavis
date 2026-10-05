@@ -126,7 +126,7 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
             if (!driver.capabilities(project).survivesControlPlaneRestart) throw new Error(`Project ${project.id} has no qualified Agent custody for a Platform handover.`);
           });
           const state = yield* effectOperations(driver, ["capabilities", "supportsLiveUpdate"]).status(project.id);
-          yield* evaluate(() => { if (state.status !== "running" || state.url !== project.runtime.url) throw new Error(`Project ${project.id} was not adopted at its stable address.`); });
+          yield* evaluate(() => { if (state.status !== "running" || state.url !== project.runtime.url) throw new Error(`Project ${project.id} was not adopted at its stable address: ${state.error ?? state.status}.`); });
         }), { concurrency: 4, discard: true });
         incomingContinuity = [];
       });

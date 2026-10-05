@@ -23,7 +23,7 @@ const run = Scope.use(Effect.gen(function* () {
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Project runner received an invalid port.");
     if (!parentSecret || !/^[A-Za-z0-9_-]{43}$/.test(parentSecret)) throw new Error("Project host requires an ephemeral Gateway signing key.");
     const initial = process.env.ZELAVIS_PROJECT_INITIAL_RELEASE ? JSON.parse(process.env.ZELAVIS_PROJECT_INITIAL_RELEASE) as RuntimeRelease : undefined;
-    return { projectId, directory: resolve(dataDirectory, ".."), parentSecret, port, initial };
+    return { projectId, directory: resolve(dataDirectory, ".."), parentSecret, port, initial, integrationOnly: process.argv.includes("--integration") };
   });
   let shutdown: ReturnType<typeof shutdownOnSignals> | undefined;
   yield* Effect.addFinalizer(() => Effect.sync(() => shutdown?.dispose()));
@@ -32,6 +32,7 @@ const run = Scope.use(Effect.gen(function* () {
   const catalog = catalogDirectory ? createNodeRuntimeCatalog({ directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" }) : undefined;
   const host = yield* createNodeProjectHost({ ...options, environment: projectProcessEnvironment(),
     ...(catalog ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
+      if (options.integrationOnly) return yield* catalog.resolve(yield* catalog.select(version), "project", configuration, environment);
       const selected = yield* evaluate(() => {
         const engine = record.engine as { runtime?: RuntimeRelease } | undefined;
         if (!engine?.runtime || engine.runtime.version !== version) throw new Error("Installed Project requires its exact runtime engine lock.");

@@ -9,6 +9,8 @@
 import {
   ZELAVIS_GATEWAY_AUTHORITY_HEADER,
 } from "./gateway-authority.js";
+import { Effect } from "effect";
+import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/index.js";
 import { tenantOfPrincipal } from "./shared.js";
 import type { FabricApi } from "../core/fabric/index.js";
@@ -295,7 +297,7 @@ export function resolveProxyTarget(
 
   const segments = wildcardPath.split("/").filter((segment) => segment !== "");
   const safeSegments: string[] = [];
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     let decoded: string;
     try {
       decoded = decodeURIComponent(segment);
@@ -304,12 +306,16 @@ export function resolveProxyTarget(
       return undefined;
     }
 
+    // The asset API carries a scoped npm name as one encoded parameter.
+    // Keep that slash encoded; no other path may introduce a separator.
+    const packageAsset = index === 5 && segments.slice(0, 5).join("/") === "zelavis/api/v1/runtime/service-page-assets" &&
+      /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(decoded);
     // Reject traversal and anything that could re-introduce a separator or a
     // scheme once the segment is re-encoded.
     if (
       decoded === "." ||
       decoded === ".." ||
-      decoded.includes("/") ||
+      (decoded.includes("/") && !packageAsset) ||
       decoded.includes("\\") ||
       /[\u0000-\u001f\u007f]/.test(decoded)
     ) {
@@ -409,15 +415,15 @@ export function createProjectForwarder(
 ): (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse> {
   const { projects, fabric, unavailableProjectsResponse } = dependencies;
 
-  return async (options) => {
+  const forward = Effect.fn("ProjectGateway.forward")(function* (options: ProjectForwardOptions) {
     if (!projects) {
       return unavailableProjectsResponse();
     }
-    const project = await projects.get(options.projectId);
+    const project = yield* integration(() => projects.get(options.projectId));
     if (!project) {
-      throw new ZelavisProjectNotFoundError(
+      return yield* Effect.fail(new ZelavisProjectNotFoundError(
         `Project "${options.projectId}" was not found.`,
-      );
+      ));
     }
     if (project.runtime.status !== "running" || !project.runtime.url) {
       return {
@@ -426,7 +432,7 @@ export function createProjectForwarder(
       };
     }
 
-    const placement = await fabric?.getProjectPlacement(project.id);
+    const placement = yield* integration(() => fabric?.getProjectPlacement(project.id));
     if (
       !placement ||
       placement.identity.type !== "project" ||
@@ -440,7 +446,7 @@ export function createProjectForwarder(
         },
       };
     }
-    const placementNode = await fabric?.getNode(placement.runtimeNodeId);
+    const placementNode = yield* integration(() => fabric?.getNode(placement.runtimeNodeId));
     if (!placementNode || placementNode.status === "unavailable") {
       return {
         status: 503,
@@ -454,11 +460,15 @@ export function createProjectForwarder(
     // installed; its control plane always stays with the Zelavis runtime.
     const frontend =
       options.allowFrontend && !isRuntimeControlPlanePath(options.wildcardPath)
-        ? await findRunningFrontend(projects, project.id)
+        ? yield* integration(() => findRunningFrontend(projects, project.id))
         : undefined;
 
+    const controlPlane = isRuntimeControlPlanePath(options.wildcardPath);
+    const runtimeUrl = controlPlane && projects.gatewayTarget
+      ? yield* integration(() => projects.gatewayTarget!(project.id)) : project.runtime.url;
+    if (controlPlane && !runtimeUrl) return { status: 503, body: { error: "Project integration runtime is unavailable." } };
     const target = resolveProxyTarget(
-      frontend?.url ?? project.runtime.url,
+      frontend?.url ?? runtimeUrl!,
       options.wildcardPath,
     );
     if (!target) {
@@ -477,9 +487,9 @@ export function createProjectForwarder(
     // signed with a per-runtime secret, carrying the caller's own Project
     // permissions rather than a wildcard, so proxying never amplifies
     // authority.
-    const authority = frontend
+    const authority = frontend || (project.recipe.managed && !controlPlane)
       ? undefined
-      : await projects.signGatewayAuthority(project.id, {
+      : yield* integration(() => projects.signGatewayAuthority(project.id, {
           projectId: project.id,
           scopeId: placement.identity.scopeId,
           generation: placement.generation,
@@ -490,14 +500,14 @@ export function createProjectForwarder(
             ? tenantOfPrincipal(options.principal)
             : "anonymous",
           permissions: options.permissions,
-        });
+        }));
     if (authority) {
       headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
     }
     const body =
       options.request.method === "GET" || options.request.method === "HEAD"
         ? undefined
-        : await options.request.clone().arrayBuffer();
+        : yield* integration(() => options.request.clone().arrayBuffer());
     if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
       return {
         status: 413,
@@ -515,16 +525,15 @@ export function createProjectForwarder(
       ? AbortSignal.any([options.request.signal, timeout])
       : timeout;
 
-    let response: Response;
-    try {
-      response = await fetch(target, {
+    const result = yield* Effect.result(integration(() => fetch(target, {
         method: options.request.method,
         headers,
         redirect: "manual",
         signal: abort,
         ...(body && body.byteLength > 0 ? { body } : {}),
-      });
-    } catch (cause) {
+      }), { interruptible: true }));
+    if (result._tag === "Failure") {
+      const cause = unwrapFailure(result.failure);
       if (
         cause instanceof Error &&
         (cause.name === "TimeoutError" || cause.name === "AbortError")
@@ -547,10 +556,11 @@ export function createProjectForwarder(
           },
         };
       }
-      throw cause;
+      return yield* result.failure;
     }
+    const response = result.success;
     const responseHeaders = gatewayResponseHeaders(response.headers);
-    const responseBody = await response.arrayBuffer();
+    const responseBody = yield* integration(() => response.arrayBuffer());
     if (responseBody.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
       return {
         status: 502,
@@ -564,7 +574,8 @@ export function createProjectForwarder(
       headers: responseHeaders,
       body: new Uint8Array(responseBody),
     };
-  };
+  });
+  return options => present(forward(options));
 }
 
 /**

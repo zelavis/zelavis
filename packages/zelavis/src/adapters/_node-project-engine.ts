@@ -27,12 +27,13 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
     open: Effect.fn("ProjectEngine.open")(function* () {
       const gatewaySecret = process.env.ZELAVIS_PROJECT_GATEWAY_SECRET?.trim();
       const gatewayNonces = createGatewayNonceTracker();
-      const adapter = nodeAdapter({ role: "project", dataDirectory, projects: false });
+      const integrationOnly = configuration.integrationOnly === true;
+      const adapter = nodeAdapter({ role: "project", dataDirectory, projects: false, ...(integrationOnly ? { database: false } : {}) });
       const zv = new Zelavis({ adapter: defineAdapter({ name: "node-project",
         close: () => present(integration(() => adapter.close?.())),
         resolve: options => present(Effect.gen(function* () {
           const resolved = yield* integration(() => adapter.resolve?.(options));
-          return { ...(resolved ?? {}), metadata: { ...resolved?.metadata, projectId },
+          return { ...(resolved ?? {}), ...(integrationOnly ? { subsystems: { ...resolved?.subsystems, auth: false, database: false, fabric: false, storage: false, workloads: false } } : {}), metadata: { ...resolved?.metadata, projectId },
             resolvePrincipal: ({ request }) => present(Effect.gen(function* () {
               if (!gatewaySecret) return undefined;
               const token = request.headers.get(ZELAVIS_GATEWAY_AUTHORITY_HEADER);

@@ -379,6 +379,7 @@ export function buildProjectManagementNavItems(
 export function buildManagedProjectNavItems(
   projectId: string,
   managed: { adminTitle?: string },
+  services?: readonly RuntimeService[],
 ): readonly DashboardNavItem[] {
   const appAdminTitle = managed.adminTitle ?? "App Admin";
 
@@ -439,6 +440,11 @@ export function buildManagedProjectNavItems(
       pageLabel: appAdminTitle,
       sectionLabel: "Settings",
     },
+    ...(services ?? []).flatMap(service => getRuntimeServiceMenus(service)
+      .filter(menu => (menu.surface ?? getServiceMenuSurface(service)) !== "platform" && menu.path !== "/")
+      .map(menu => createProjectAwareDashboardServiceMenuItem(menu, service.name, projectId, {
+        name: service.name, scope: service.scope ?? "extension", apiPath: service.apiPath,
+      }))),
   ] as const;
 }
 

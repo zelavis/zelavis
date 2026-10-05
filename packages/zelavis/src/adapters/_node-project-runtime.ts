@@ -11,6 +11,7 @@ import { ZELAVIS_VERSION } from "../version.js";
 import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease } from "./_node-project-release.js";
+import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
 import { randomUUID } from "node:crypto";
 import { evaluate } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
@@ -23,6 +24,8 @@ import { ZelavisProjectValidationError } from "../project.js";
 import type { ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, } from "../project.js";
 export interface NodeProcessProjectRuntimeOptions {
     directory: string;
+    /** Project-scoped SDK integration beside a managed third-party workload. */
+    integrationOnly?: boolean;
     /**
      * Agent that executes this Project's process.
      *
@@ -185,6 +188,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     function projectDirectory(projectId: string): string {
         return join(projectsDirectory, projectId);
     }
+    const runtimeDataDirectory = (id: string) => join(projectDirectory(id), ".zelavis", ...(options.integrationOnly ? ["integration"] : []));
     function appendLog(state: NodeProjectProcess, stream: ZelavisProjectLogEntry["stream"], message: string) {
         const trimmed = message.trimEnd();
         if (!trimmed) {
@@ -266,6 +270,11 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 return value;
             });
             const directory = projectDirectory(previous.id);
+            if (options.integrationOnly) {
+                const source = yield* integration(() => options.recipePackageDirectory?.(candidate.recipe.name, candidate.recipe.version));
+                if (!source) return yield* new IntegrationFailure(new Error("Managed recipe source is unavailable."));
+                return yield* prepareManagedRecipeUpdate(directory, previous, candidate, source, selected);
+            }
             const engine = yield* readCreationEngine(directory);
             const installedCatalog = yield* catalogConfiguration();
             // A deliberate App upgrade selects the latest qualified engine as
@@ -292,7 +301,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }).pipe(Effect.ensuring(integration(() => rm(staging, { recursive: true, force: true })).pipe(Effect.orDie)));
         }),
         applyUpdate: Effect.fn("NodeProjects.applyUpdate")(function* (projectId, update, commit) {
-            if (update.mode !== "engine") return yield* new IntegrationFailure(new Error("Native App handover requires an engine update."));
+            if (update.mode !== (options.integrationOnly ? "integration" : "engine")) return yield* new IntegrationFailure(new Error("Native App handover requires an engine update."));
             const state = processes.get(projectId);
             if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project handover host is not running."));
             const same = (a: RuntimeRelease, b: RuntimeRelease) => a.version === b.version && a.digest === b.digest;
@@ -311,7 +320,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             return state.snapshot;
         }),
         recoverUpdate: Effect.fn("NodeProjects.recoverUpdate")(function* (projectId, update) {
-            if (update.mode !== "engine") return yield* new IntegrationFailure(new Error("Native App recovery requires an engine update."));
+            if (update.mode !== (options.integrationOnly ? "integration" : "engine")) return yield* new IntegrationFailure(new Error("Native App recovery requires an engine update."));
             const state = processes.get(projectId);
             let selected: RuntimeRelease;
             if (state?.process?.running && state.control) {
@@ -319,8 +328,8 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 if (status.requiresRecovery === true) return yield* new IntegrationFailure(new Error("Project runtime ownership requires fenced recovery."));
                 selected = status.release as RuntimeRelease;
             } else {
-                yield* proveNodeRuntimeUnowned(join(projectDirectory(projectId), ".zelavis"));
-                const source = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "runtime-handover.json"), "utf8"));
+                yield* proveNodeRuntimeUnowned(runtimeDataDirectory(projectId));
+                const source = yield* integration(() => readFile(join(runtimeDataDirectory(projectId), "runtime-handover.json"), "utf8"));
                 selected = yield* evaluate(() => {
                     const journal = JSON.parse(source);
                     if (journal.format !== "zelavis-runtime/1" || !Number.isSafeInteger(journal.generation) || journal.generation < 1) throw new Error("Invalid Project runtime recovery journal.");
@@ -386,13 +395,20 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 .map(entry => entry.name);
             for (const projectId of directories) {
                 const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
-                if (!frozenManifest) continue;
-                const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
-                if (customRuntime) continue;
+                if (frozenManifest) {
+                    const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
+                    if (options.integrationOnly ? !customRuntime : customRuntime) continue;
+                }
+                // A canonical recipe swap can be interrupted while a verified
+                // snapshot is serving. Adoption must still reach that host so
+                // durable intent recovery can restore the selected recipe.
                 const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
                 if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
                 const attached = yield* Effect.catch(integration(() => agent.attach!(projectId)), Effect.fn("NodeProjects.recover")(function* () { return []; }));
-                for (const { process: child, replay } of attached) {
+                for (const { process: child, command, replay } of attached) {
+                    const runner = command.args?.[0];
+                    if (!runner?.endsWith("/_node-project-runner.js") || command.cwd !== projectDirectory(projectId) ||
+                        command.args?.includes("--integration") !== (options.integrationOnly === true)) continue;
                     if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
                     if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
                     const state: NodeProjectProcess = {
@@ -466,8 +482,10 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 }
                 return (yield* error);
             }));
-            const engine = yield* readCreationEngine(directory);
             const catalogOptions = yield* catalogConfiguration();
+            const engine = options.integrationOnly
+                ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* createNodeRuntimeCatalog(catalogOptions).select(ZELAVIS_VERSION) : undefined }
+                : yield* readCreationEngine(directory);
             let executable = process.execPath, selectedRunner = runnerPath;
             if (catalogOptions) {
                 if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
@@ -497,7 +515,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 workloadId: project.id,
                 ...(placement ? { placement } : {}),
                 executable,
-                args: [selectedRunner],
+                args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : [])],
                 cwd: directory,
                 stdin: "pipe",
                 env: {
@@ -561,7 +579,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             state.control = createNodeRuntimeClient(child, startupTimeoutMs);
             return yield* restore(Deferred.await(ready).pipe(
                 Effect.timeoutOrElse({ duration: startupTimeoutMs,
-                    orElse: () => Effect.fail(new IntegrationFailure(new Error(`Project "${project.id}" did not become ready within ${startupTimeoutMs}ms.`))) }),
+                    orElse: () => Effect.fail(new IntegrationFailure(new Error(`Project "${project.id}" did not become ready within ${startupTimeoutMs}ms. ${state.logs.slice(-8).map(entry => entry.message).join(" ")}`))) }),
                 Effect.onError(cause => Effect.gen(function* () {
                     state.stopping = true;
                     yield* integration(() => child.stop({ graceMs: 2000 })).pipe(Effect.ignore);

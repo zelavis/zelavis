@@ -189,6 +189,8 @@ export interface ZelavisProjectRuntimeSnapshot {
 export interface ZelavisProjectRuntimeUpdate {
   /** Engine handover or a recipe integration refresh which leaves the workload alone. */
   readonly mode: "engine" | "integration";
+  /** A running Project-scoped integration host participates in this transaction. */
+  readonly host?: true;
   readonly previous: RuntimeRelease;
   readonly target: RuntimeRelease;
   readonly recipe: ZelavisProjectRecipeLock;
@@ -230,10 +232,11 @@ export interface ZelavisProjectRuntimeDriver {
   versions?(project?: Readonly<ZelavisProjectDescriptor>): Promise<ZelavisProjectVersions>;
   /** Resolves only a verified installed engine and its bundled App recipe. */
   resolveVersion?(project: Readonly<ZelavisProjectDescriptor>, version?: string): Promise<{ engineVersion: string; recipe: ZelavisProjectRecipeLock } | undefined>;
-  prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeUpdate>;
+  prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<ZelavisProjectRuntimeUpdate>;
   applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
+  gatewayTarget?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<string | undefined>;
   capabilities(
     project: Readonly<ZelavisProjectDescriptor>,
   ): ZelavisProjectDriverCapabilities;
@@ -347,6 +350,7 @@ export interface ZelavisProjectManager {
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
   /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
+  gatewayTarget?(projectId: string): Promise<string | undefined>;
   signGatewayAuthority(
     projectId: string,
     claims: ZelavisProjectGatewayAuthorityInput,
@@ -989,7 +993,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (update.execution.mode !== "engine" && update.execution.mode !== "integration") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
         if (recipe.name !== target.recipe.name || recipe.version !== target.recipe.version || recipe.artifact?.digest !== target.recipe.artifact?.digest) throw new ZelavisProjectValidationError("Project handover target differs from its persisted recipe lock.");
         return { id: update.id, startedAt: update.startedAt, previous, target,
-            execution: { mode: update.execution.mode, previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
+            execution: { mode: update.execution.mode, ...(update.execution.host === true ? { host: true as const } : {}), previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
             ...(typeof update.error === "string" ? { error: update.error.slice(0, 4000) } : {}) };
     }
     function normalizeStoredProject(value: ZelavisSystemStoreValue): {
@@ -1975,7 +1979,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         ? runtimeEffects.prepare({ ...project, engineVersion: previousEngine }, project.recipe).pipe(Effect.orDie)
                         : Effect.void));
                 }
-                const execution = yield* runtimeEffects.prepareUpdate!(project, candidate);
+                const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
                 upgraded.recipe = execution.recipe;
                 upgraded.capabilities = runtime.capabilities(upgraded);
                 upgraded.runtime = project.runtime;
@@ -1999,6 +2003,16 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
             yield* requireProject(id);
             return yield* runtimeEffects.logs((yield* evaluate(() => normalizeProjectId(id))));
+        }),
+        gatewayTarget: Effect.fn("Projects.gatewayTarget")(function* (id: string) {
+            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => Effect.gen(function* () {
+                const project = yield* requireProject(id);
+                yield* evaluate(() => assertProjectIsOperable(project, "accessed"));
+                if (project.runtime.status !== "running") return undefined;
+                return runtimeEffects.gatewayTarget
+                    ? yield* runtimeEffects.gatewayTarget(project, yield* localPlacementToken(id))
+                    : project.runtime.url;
+            }));
         }),
         signGatewayAuthority: Effect.fn("Projects.signGatewayAuthority")(function* (projectId: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[0], claims: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[1]) {
             if (!runtimeEffects.signGatewayAuthority) return undefined;

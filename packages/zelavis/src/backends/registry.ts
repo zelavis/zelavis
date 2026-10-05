@@ -418,6 +418,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   capabilities: "descriptor",
   supportsLiveUpdate: "descriptor",
   prepareUpdate: "descriptor",
+  gatewayTarget: "descriptor",
   versions: "wrapper",
   resolveVersion: "descriptor",
   applyUpdate: "project-id",
@@ -518,10 +519,10 @@ export function createDeploymentBackendProjectRuntime(options: {
     start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1]) {
       return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement);
     }),
-    prepareUpdate: Effect.fn("BackendProjects.prepareUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[1]) {
+    prepareUpdate: Effect.fn("BackendProjects.prepareUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[1], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[2]) {
       const prepare = effectOperations(yield* evaluate(() => forDescriptor(previous))).prepareUpdate;
       if (!prepare) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
-      return yield* prepare(previous, candidate);
+      return yield* prepare(previous, candidate, placement);
     }),
     applyUpdate: Effect.fn("BackendProjects.applyUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[1], commit: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[2]) {
       const apply = effectOperations(yield* forProjectId(id)).applyUpdate;
@@ -558,6 +559,10 @@ export function createDeploymentBackendProjectRuntime(options: {
         const detach = effectOperations(runtime).detach;
         return detach ? detach() : Effect.fail(new ZelavisProjectRuntimeError("Backend has no qualified custody transfer."));
       }, { concurrency: 1, discard: true });
+    }),
+    gatewayTarget: Effect.fn("BackendProjects.gatewayTarget")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[1]) {
+      const runtime = effectOperations(yield* evaluate(() => forDescriptor(project)));
+      return runtime.gatewayTarget ? yield* runtime.gatewayTarget(project, placement) : project.runtime.url;
     }),
     signGatewayAuthority: Effect.fn("BackendProjects.signGatewayAuthority")(function* (id: string, claims: Parameters<NonNullable<ZelavisProjectRuntimeDriver["signGatewayAuthority"]>>[1]) {
       const sign = effectOperations(yield* forProjectId(id)).signGatewayAuthority;

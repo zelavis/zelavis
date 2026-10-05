@@ -128,12 +128,22 @@ rewrites its runtime configuration, or stops/restarts its service.
 Managed app cards offer **Update recipe** through the same
 `client.projects.upgrade`, HTTP upgrade endpoint and CLI command. The local
 managed-runtime adapter stages and verifies a new immutable recipe, persists the
-update intent, and commits its artifact and metadata while the existing runtime
-supervisor continues serving. The selected integration implementation is used
-when supervision is next composed or the app is ordinarily prepared; the recipe
-update itself never needs a service restart. An incomplete commit restores the
-previous integration on recovery without changing the app's software or processes.
-Stopped managed apps can refresh their integration without starting or provisioning.
+update intent, and replaces a Project-scoped Zelavis integration worker through
+the same persistent host and Effect handover as native Apps. Recipe SDK menus,
+REST endpoints, setup-mounted endpoint groups, operation discovery and disk-backed
+page assets become active immediately through the existing Project Gateway.
+The dashboard reloads Project configuration and versions its page URLs so changed
+assets are displayed. WordPress visitors still reach the original web server;
+Gateway authority is sent only to the Project integration runtime.
+
+The app supervisor and its processes keep serving throughout. Integration
+workers share the Project's Agent/Fabric placement, have no parent Fabric authority,
+and keep their private Zelavis state below `.zelavis/integration`. A rejected
+activation restores the previous integration before admission resumes. Recovery
+of an interrupted commit follows the host's proved immutable selection, including
+repair of interrupted canonical file swaps. Stopped managed apps can refresh
+their recipe without starting or provisioning the app; their integration runtime
+opens when the running Project is accessed.
 
 An integration update must preserve the app identity and deployment contract:
 runtime entry, host package set and isolation intent. A changed deployment

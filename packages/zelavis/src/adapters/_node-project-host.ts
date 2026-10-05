@@ -25,12 +25,13 @@ export const createNodeProjectHost = Effect.fn("ProjectHost.create")(function* (
   readonly parentSecret: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly initial?: RuntimeRelease;
+  readonly integrationOnly?: boolean;
   readonly agent?: ZelavisAgentProcessRunner;
   readonly resolveEngine?: (version: string, record: Readonly<Record<string, unknown>>, configuration: Readonly<Record<string, unknown>>, environment: Readonly<Record<string, string>>) => Effect.Effect<NodeRuntimeExecution, TaggedFailure>;
   readonly startupTimeoutMs?: number;
   readonly output?: (stream: "stdout" | "stderr", line: string) => void;
 }) {
-  const directory = resolve(options.directory), dataDirectory = join(directory, ".zelavis");
+  const directory = resolve(options.directory), dataDirectory = join(directory, ".zelavis", ...(options.integrationOnly ? ["integration"] : []));
   const commands = Semaphore.makeUnsafe(1);
   let parentSecret = options.parentSecret;
   let workerSecret = "";
@@ -54,7 +55,7 @@ export const createNodeProjectHost = Effect.fn("ProjectHost.create")(function* (
       const secret = createGatewayAuthoritySecret();
       // Every process, including rollback, gets a new private worker key.
       secrets.set(selected.digest, secret);
-      const configuration = { projectId: options.projectId, dataDirectory, descriptor: join(snapshot, "project.json"), recipeDataDirectory: snapshot };
+      const configuration = { projectId: options.projectId, dataDirectory, descriptor: join(snapshot, "project.json"), recipeDataDirectory: snapshot, integrationOnly: options.integrationOnly === true };
       const environment = { ...options.environment, ZELAVIS_PROJECT_GATEWAY_SECRET: secret, ZELAVIS_UI_DEV_SERVER: "" };
       if (options.resolveEngine) return yield* options.resolveEngine(selected.version, record, configuration, environment);
       if (selected.version !== ZELAVIS_VERSION) return yield* new IntegrationFailure(new Error("A checkout cannot execute an independently selected installed engine."));
