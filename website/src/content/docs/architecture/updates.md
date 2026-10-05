@@ -117,6 +117,35 @@ parent authority before queuing and creates fresh private worker authority after
 admission. Re-keying a surviving App host uses the authenticated Agent process
 pipe, not a public control endpoint.
 
+## Updating a managed app recipe
+
+WordPress and future managed apps such as Drupal, Shopware, PrestaShop, TYPO3
+and Joomla own their software updates. Updating their **Project recipe** refreshes
+the Zelavis integration, including its locked metadata and dashboard entry. It
+never provisions the app again, downloads replacement application software,
+rewrites its runtime configuration, or stops/restarts its service.
+
+Managed app cards offer **Update recipe** through the same
+`client.projects.upgrade`, HTTP upgrade endpoint and CLI command. The local
+managed-runtime adapter stages and verifies a new immutable recipe, persists the
+update intent, and commits its artifact and metadata while the existing runtime
+supervisor continues serving. The selected integration implementation is used
+when supervision is next composed or the app is ordinarily prepared; the recipe
+update itself never needs a service restart. An incomplete commit restores the
+previous integration on recovery without changing the app's software or processes.
+Stopped managed apps can refresh their integration without starting or provisioning.
+
+An integration update must preserve the app identity and deployment contract:
+runtime entry, host package set and isolation intent. A changed deployment
+contract is refused while the existing app remains available. Changing an app's
+software/deployment is a separate app-owned or explicit hosting operation.
+This implemented path covers the native managed-runtime contract used by
+WordPress; the other named apps are future recipes, not shipped recipes.
+
+Native Zelavis Apps update the complete engine through the same handover used
+by the Platform. Their shared composition has scoped Project authority; the
+outer Platform's Fabric remains the privileged hosting control plane.
+
 ## Project and visitor continuity
 
 System installations run the Project Agent in its own systemd unit. A Platform

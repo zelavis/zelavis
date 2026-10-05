@@ -77,3 +77,8 @@ API/systemd action with real npm acquisition using `ZELAVIS_QUALIFY_UPDATE=npm`
 and `ZELAVIS_PROVISIONING_FROM_NPM=<previous exact version>`. Preserve continuous
 HTTP traffic, Project process custody, preview URLs, locks and data; prove App
 selection in both directions across real distinct published engine versions.
+
+Qualify managed app integration recipe updates under continuous traffic. Preserve
+process identities, preview ports, app files, database and runtime configuration;
+prove commit rollback/recovery without provisioning or lifecycle commands. Native
+App upgrades/version switches must retain the full Platform/App engine handover.

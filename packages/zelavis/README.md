@@ -180,10 +180,14 @@ enforcement proof; no shipped backend currently advertises hardened isolation,
 so required intent is refused everywhere today. The refusal body carries
 `code: "project.isolation.unsatisfied"` and the `isolation` assessment.
 
-A stopped or failed Project can explicitly upgrade its recipe through the
-dashboard, SDK, HTTP or CLI. Custom runtimes load the new artifact and its
-relative imports from a verified digest-specific directory; failed preparation
-restores the previous recipe and host descriptor. Projects pending deletion
+Native Zelavis Apps upgrade their complete engine through the same live handover
+as the Platform. Managed app recipe updates refresh the Zelavis integration while
+the app keeps serving and owns its software updates. They stage and commit the
+verified recipe without provisioning, rewriting runtime configuration, or
+starting/stopping the app; interrupted commits restore the previous integration.
+Custom runtimes load selected code from verified digest-specific directories.
+Unsupported runtime upgrades require a stopped or failed Project; failed
+preparation restores the previous recipe and host descriptor. Projects pending deletion
 show **Retry deletion** instead of offering an upgrade, because cleanup may
 already have removed resources.
 

@@ -39,9 +39,10 @@ if (phase === "claim") {
     const frozen = `${directory}/.zelavis/recipe/package`;
     const manifest = JSON.parse(await readFile(`${frozen}/package.json`, "utf8"));
     manifest.version = "0.0.0-qualification";
+    manifest.zelavis.project.managed.adminTitle = "Historical integration admin";
     await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
     const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
-    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, artifact: { digest: await digestArtifactDirectory(frozen) } };
+    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, managed: manifest.zelavis.project.managed, artifact: { digest: await digestArtifactDirectory(frozen) } };
     await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
     const store = createLocalSqliteSystemStore({ filename: "/var/lib/zelavis/system/zelavis.sqlite" });
     try {
@@ -73,7 +74,13 @@ if (phase === "claim") {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
-    let project = ["verify-preview", "upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    let project = ["verify-preview", "upgrade", "start-historical"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    if (phase === "start-historical") {
+      assert.equal(project.recipeStatus.state, "upgradeAvailable");
+      project = await client.projects.start(project.id);
+      assert.equal(project.recipe.version, "0.0.0-qualification");
+      console.log("PASS: historical integration fixture is running before the Platform update.");
+    }
     if (phase === "upgrade") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
       project = await client.projects.upgrade(project.id, {});

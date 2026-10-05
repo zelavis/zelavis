@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -37,6 +37,16 @@ await data().documents.insert('continuity', { id: 'stable', data: { value: 'reta
 const descriptor = async projectId => JSON.parse(await readFile(`/var/lib/zelavis/projects/${projectId}/project.json`, 'utf8'));
 assert.equal((await descriptor(id)).engine.runtime.version, from);
 const wp = await client.projects.get('qualification-wordpress');
+assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
+const wpData = '/var/lib/zelavis/projects/qualification-wordpress/.zelavis';
+await writeFile(join(wpData, 'wordpress/integration-preserved.txt'), 'Application content stays outside recipe updates.');
+const wpFiles = ['wordpress-native.json', 'nginx.conf', 'php-fpm.conf', 'wordpress/wp-config.php', 'wordpress/wp-includes/version.php', 'wordpress/integration-preserved.txt'];
+const fingerprints = async () => Object.fromEntries(await Promise.all(wpFiles.map(async file => {
+  const path = join(wpData, file), metadata = await stat(path);
+  return [file, { digest: createHash('sha256').update(await readFile(path)).digest('hex'),
+    uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
+})));
+const appFilesBefore = await fingerprints();
 const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).map(async file => {
   const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
   return `${value.workloadId}:${value.pid}`;
@@ -48,7 +58,7 @@ const initialPid = hostPid();
 // without stopping the service currently using it.
 const unitFile = '/etc/systemd/system/zelavis.service';
 await writeFile(unitFile, `# Qualification marker: refresh during live root commit\n${await readFile(unitFile, 'utf8')}`);
-const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`];
+const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
 async function underTraffic(operation) {
   let finished = false;
@@ -142,6 +152,16 @@ assert.equal((await descriptor(id)).engine.runtime.version, from, 'Parent update
 assert.equal((await client.projects.get(id)).preview.port, app.preview.port);
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
+assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
+const integration = await underTraffic(() => client.projects.upgrade(wp.id));
+assert.equal(integration.runtime.status, 'running');
+assert.equal(integration.preview.port, wp.preview.port);
+assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
+assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
+assert.equal(integration.runtimeUpdate, undefined);
+assert.deepEqual(await identities(), before, 'Integration update must not stop, start or replace app processes');
+assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
+console.log('PASS: running WordPress integration recipe update preserves processes, software, configuration, content and preview.');
 const choices = await client.projects.versions(id);
 assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
@@ -173,6 +193,8 @@ await client.projects.remove(historical.id); await client.projects.remove(latest
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
+  managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
+    processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true },
   liveSelection: [to, from], dataRetained: true, requests: counts,
   artifact: JSON.parse(await readFile(`/opt/zelavis/releases/${to}/runtime-artifact.json`, 'utf8')).digest };
 await writeFile('/tmp/zelavis-update-proof.json', JSON.stringify(proof, null, 2));

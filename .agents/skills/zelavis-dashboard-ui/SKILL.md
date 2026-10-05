@@ -188,3 +188,9 @@ version** over the runtime's installed engine catalogue. Keep the selected exact
 version and open Project panel in URL search state. Use matching public SDK/HTTP
 operations with Project grants; disable unavailable versions and explain source
 or unsupported driver restrictions. Failed switches revalidate persisted state.
+
+Managed app recipe updates use **Update recipe** and explain that the app owns
+its software updates. Use the driver's `recipeUpdateMode: "integration"` and
+`zeroDowntimeUpdates` capability to enable the running action. Never call
+start/stop/restart around a recipe integration update. Native Zelavis Apps keep
+**Upgrade recipe** and the full engine handover/version controls.

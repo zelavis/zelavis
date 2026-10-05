@@ -464,6 +464,19 @@ before adding a tool, and give every tool an `access` requirement, an operator
 `describe` label, and a test. A tool that changes anything must declare
 `mutation` so it becomes an approval request.
 
+
+Managed third-party app recipe updates refresh Zelavis integration, not the app's
+software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
+their software updates. The native managed-runtime path must keep the service
+running, stage a verified integration recipe, persist its update intent, and
+commit metadata/artifact without provisioning, rewriting runtime configuration,
+or start/stop/restart. Interrupted integration transactions restore the previous
+recipe without touching app data or processes. Preserve app identity, runtime
+entry, host package set and isolation intent; refuse changed deployment contracts
+without disturbing the existing app. Native Zelavis App upgrades and version
+switches replace the full engine through the same Effect handover as the outer
+Platform; Fabric authority remains with that outer control plane.
+
 ## Design checklist
 
 1. Start from the public API and authority boundary.

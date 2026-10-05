@@ -213,6 +213,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     const capabilities = {
         independentRuntimeVersion: Boolean(options.runtimeCatalog || installation.kind === "packaged"),
         zeroDowntimeUpdates: true,
+        recipeUpdateMode: "engine" as const,
         movable: false,
         liveMigration: false,
         secureIsolation: false,
@@ -287,10 +288,11 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 yield* integration(() => writeFile(join(staging, "project.json"), JSON.stringify({ ...candidate, recipe, engine,
                     runtime: { driver: driver.name, capabilities: driver.capabilities(candidate) } }), { mode: 0o600 }));
                 const target = yield* freezeNodeProjectRelease(directory, staging, engine.runtime?.version ?? ZELAVIS_VERSION);
-                return { previous: selected, target, recipe };
+                return { mode: "engine" as const, previous: selected, target, recipe };
             }).pipe(Effect.ensuring(integration(() => rm(staging, { recursive: true, force: true })).pipe(Effect.orDie)));
         }),
         applyUpdate: Effect.fn("NodeProjects.applyUpdate")(function* (projectId, update, commit) {
+            if (update.mode !== "engine") return yield* new IntegrationFailure(new Error("Native App handover requires an engine update."));
             const state = processes.get(projectId);
             if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project handover host is not running."));
             const same = (a: RuntimeRelease, b: RuntimeRelease) => a.version === b.version && a.digest === b.digest;
@@ -309,6 +311,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             return state.snapshot;
         }),
         recoverUpdate: Effect.fn("NodeProjects.recoverUpdate")(function* (projectId, update) {
+            if (update.mode !== "engine") return yield* new IntegrationFailure(new Error("Native App recovery requires an engine update."));
             const state = processes.get(projectId);
             let selected: RuntimeRelease;
             if (state?.process?.running && state.control) {

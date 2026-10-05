@@ -187,6 +187,8 @@ export interface ZelavisProjectRuntimeSnapshot {
 
 /** Prepared immutable identities, separate from the persisted Project lock. */
 export interface ZelavisProjectRuntimeUpdate {
+  /** Engine handover or a recipe integration refresh which leaves the workload alone. */
+  readonly mode: "engine" | "integration";
   readonly previous: RuntimeRelease;
   readonly target: RuntimeRelease;
   readonly recipe: ZelavisProjectRecipeLock;
@@ -984,9 +986,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         };
         const previous = state(update.previous), target = state(update.target);
         const recipe = readStoredRecipeLock({ recipe: update.execution.recipe });
+        if (update.execution.mode !== "engine" && update.execution.mode !== "integration") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
         if (recipe.name !== target.recipe.name || recipe.version !== target.recipe.version || recipe.artifact?.digest !== target.recipe.artifact?.digest) throw new ZelavisProjectValidationError("Project handover target differs from its persisted recipe lock.");
         return { id: update.id, startedAt: update.startedAt, previous, target,
-            execution: { previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
+            execution: { mode: update.execution.mode, previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
             ...(typeof update.error === "string" ? { error: update.error.slice(0, 4000) } : {}) };
     }
     function normalizeStoredProject(value: ZelavisSystemStoreValue): {
@@ -1903,6 +1906,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
                 const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true &&
                     runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                const integrationUpdate = runtime.capabilities(project).recipeUpdateMode === "integration" &&
+                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
                 if (!live && !["stopped", "failed"].includes(project.runtime.status)) {
                     return (yield* Effect.fail(new ZelavisProjectConflictError(`Project "${project.id}" is ${project.runtime.status}. Stop it before upgrading its recipe.`)));
                 }
@@ -1963,7 +1968,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     runtime: { driver: runtime.name, status: "stopped" },
                     updatedAt: now,
                 };
-                if (!live) {
+                if (!live && !integrationUpdate) {
                     const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
                     return yield* write(upgraded).pipe(Effect.onError(() => previousEngine
@@ -1972,6 +1977,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 }
                 const execution = yield* runtimeEffects.prepareUpdate!(project, candidate);
                 upgraded.recipe = execution.recipe;
+                upgraded.capabilities = runtime.capabilities(upgraded);
                 upgraded.runtime = project.runtime;
                 const intent: ZelavisProjectRuntimeUpdateIntent = { id: crypto.randomUUID(), startedAt: now, execution,
                     previous: { kind: project.kind, recipe: project.recipe, recipeHistory: project.recipeHistory, engineVersion: project.engineVersion },
@@ -1981,6 +1987,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
                         ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
                     }).pipe(Effect.asVoid)));
+                    if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
                     return yield* write(applySnapshot(upgraded, snapshot));
                 }).pipe(Effect.onError(cause => Effect.gen(function* () {
                     const latest = yield* requireProject(project.id);

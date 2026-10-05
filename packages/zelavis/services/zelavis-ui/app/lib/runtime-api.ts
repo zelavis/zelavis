@@ -288,6 +288,7 @@ export interface RuntimeProjectDriverInfo {
 export interface RuntimeProjectDriverCapabilities {
   independentRuntimeVersion?: boolean;
   zeroDowntimeUpdates?: boolean;
+  recipeUpdateMode?: "engine" | "integration";
   movable: boolean;
   liveMigration: boolean;
   secureIsolation: boolean;

@@ -394,6 +394,19 @@ its custom cleanup can still run after failure and restart. A missing descriptor
 must still allow cleanup of that exact Project through its trusted driver or
 Agent; malformed descriptors and genuine cleanup failures must remain visible.
 
+
+Managed third-party app recipe updates refresh Zelavis integration, not the app's
+software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
+their software updates. The native managed-runtime path must keep the service
+running, stage a verified integration recipe, persist its update intent, and
+commit metadata/artifact without provisioning, rewriting runtime configuration,
+or start/stop/restart. Interrupted integration transactions restore the previous
+recipe without touching app data or processes. Preserve app identity, runtime
+entry, host package set and isolation intent; refuse changed deployment contracts
+without disturbing the existing app. Native Zelavis App upgrades and version
+switches replace the full engine through the same Effect handover as the outer
+Platform; Fabric authority remains with that outer control plane.
+
 Project deletion is a durable Platform lifecycle operation, not a direct
 filesystem shortcut. Persist a deletion tombstone before cleanup, stop the
 runtime, run stable idempotent cleanup participants, remove runtime/project data

@@ -16,6 +16,8 @@ import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import { resolveBundledServiceDirectory, linkPlatformPackage } from "./_local-runtime.js";
 import { RECIPE_ARTIFACT_DIRECTORY, digestArtifactDirectory, materializeRecipeArtifact, } from "./_recipe-artifact.js";
+import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
+import { restoreNodeProjectRelease } from "./_node-project-release.js";
 /**
  * Where a recipe that provides its own runtime comes from, and whether this host
  * lets it.
@@ -122,7 +124,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     });
     const loadRecipeDriver = Effect.fn("LocalProjects.loadRecipeDriver")(function* (projectId: string, recipe: Pick<ZelavisProjectRecipeLock, "name"> & {
         version?: string;
-    }, digest: string, entry: string): Effect.fn.Return<ZelavisProjectRuntimeDriver, TaggedFailure> {
+    }, digest: string, entry: string, retainSupervisor = false): Effect.fn.Return<ZelavisProjectRuntimeDriver, TaggedFailure> {
         yield* assertTrusted(recipe.name);
         const frozen = frozenRecipeDirectory(directory, projectId);
         const manifest = yield* Effect.flatMap(integration(() => readFile(join(frozen, "package.json"), "utf8")), value => evaluate(() => JSON.parse(value)));
@@ -134,6 +136,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" does not match its locked digest; refusing to run modified code.`));
         }
         verified.add(key);
+        // Recipe integration refreshes never replace a live app's supervisor.
+        // Its next ordinary prepare, or Agent adoption by a new Platform engine,
+        // loads the selected recipe implementation after verifying this lock.
+        const active = driverOfProject.get(projectId);
+        if (retainSupervisor && active) return active;
         const cached = recipeDrivers.get(digest);
         if (cached) {
             driverOfProject.set(projectId, cached);
@@ -183,7 +190,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 if (!entry)
                     return undefined;
                 const digest = recipe.artifact?.digest ?? ((yield* integration(() => digestArtifactDirectory(frozen))));
-                return { driver: (yield* loadRecipeDriver(projectId, recipe, digest, entry)), digest };
+                return { driver: (yield* loadRecipeDriver(projectId, recipe, digest, entry, mode === "use")), digest };
             }
         }
         if (mode === "use")
@@ -271,6 +278,8 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }));
     });
     const loaded = () => [...new Set([...recipeDrivers.values()])];
+    const managedIntegration = (project: Readonly<ZelavisProjectDescriptor>) =>
+        !!project.recipe.managed && forDescriptor(project) !== node && forDescriptor(project) !== serverFrontend;
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "local-project",
         detach: Effect.fn("LocalProjects.detach")(function* () {
@@ -298,8 +307,9 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         runtimeKinds: Object.freeze(["native"]),
         defaultRuntimeKind: "native",
         startupConcurrency: 1,
-        capabilities: (project) => forDescriptor(project).capabilities(project),
-        supportsLiveUpdate: project => forDescriptor(project).supportsLiveUpdate?.(project) === true,
+        capabilities: (project) => ({ ...forDescriptor(project).capabilities(project),
+            ...(managedIntegration(project) ? { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" as const } : {}) }),
+        supportsLiveUpdate: project => managedIntegration(project) || forDescriptor(project).supportsLiveUpdate?.(project) === true,
         versions: Effect.fn("LocalProjects.versions")(function* (project) {
             if (project && forDescriptor(project) !== node) return { selectable: false, reason: "This recipe manages its own runtime version.", versions: [] };
             return yield* effectOperations(node).versions!(project);
@@ -308,16 +318,43 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             return yield* effectOperations(node).resolveVersion!(project, version);
         }),
         prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate) {
+            if (managedIntegration(previous)) {
+                yield* assertTrusted(candidate.recipe.name);
+                const source = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(candidate.recipe.name, candidate.recipe.version))) ??
+                    (yield* integration(() => options.recipePackageDirectory?.(candidate.recipe.name, candidate.recipe.version))) ??
+                    resolveBundledServiceDirectory(candidate.recipe.name);
+                if (!source) return yield* Effect.fail(new ZelavisProjectRuntimeError("Managed recipe source is unavailable."));
+                return yield* prepareManagedRecipeUpdate(join(directory, previous.id), previous, candidate, source);
+            }
             const selected = effectOperations(forDescriptor(previous));
             if (!selected.prepareUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));
             return yield* selected.prepareUpdate(previous, candidate);
         }),
         applyUpdate: Effect.fn("LocalProjects.applyUpdate")(function* (id, update, commit) {
+            if (update.mode === "integration") {
+                const selected = effectOperations(yield* forProjectId(id));
+                return yield* Effect.uninterruptible(Effect.gen(function* () {
+                    yield* restoreNodeProjectRelease(join(directory, id), id, update.target);
+                    yield* integration(() => commit("target"));
+                    return yield* selected.status(id);
+                }).pipe(Effect.onError(() => Effect.gen(function* () {
+                    yield* restoreNodeProjectRelease(join(directory, id), id, update.previous);
+                    yield* integration(() => commit("previous"));
+                }).pipe(Effect.orDie))));
+            }
             const selected = effectOperations(yield* forProjectId(id));
             if (!selected.applyUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime does not support live updates."));
             return yield* selected.applyUpdate(id, update, commit);
         }),
         recoverUpdate: Effect.fn("LocalProjects.recoverUpdate")(function* (id, update) {
+            if (update.mode === "integration") {
+                // The durable intent is cleared only after the complete commit.
+                // An interrupted integration transaction rolls back its code and
+                // metadata; the app's software and processes were never changed.
+                yield* restoreNodeProjectRelease(join(directory, id), id, update.previous);
+                yield* (effectOperations(yield* forProjectId(id)).adopt?.() ?? Effect.void);
+                return "previous" as const;
+            }
             const selected = effectOperations(yield* forProjectId(id));
             if (!selected.recoverUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime cannot recover a live update."));
             return yield* selected.recoverUpdate(id, update);

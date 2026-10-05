@@ -599,7 +599,7 @@ export async function loadPluginPackage(options: {
  * requirement fails when the package is loaded rather than when a Project is
  * first created from it.
  */
-function manifestProjectRecipe(
+export function manifestProjectRecipe(
   manifest: ZelavisPackageManifest,
 ): ZelavisProjectRecipeDefinition | undefined {
   const project = (manifest.zelavis as { project?: unknown } | undefined)?.project as

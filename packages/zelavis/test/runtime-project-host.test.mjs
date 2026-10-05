@@ -162,7 +162,7 @@ for (const failedCommit of [false, true]) test(`the Platform Project lifecycle $
       const current = await store.get("projects", "one");
       const release = JSON.parse(await readFile(join(directory, "projects", "one", ".zelavis", "runtime-handover.json"), "utf8")).selected;
       const pending = { id: "lost-reply", startedAt: new Date().toISOString(),
-        execution: { previous: { ...release, digest: `sha256:${"a".repeat(64)}` }, target: release, recipe: selected.recipe },
+        execution: { mode: "engine", previous: { ...release, digest: `sha256:${"a".repeat(64)}` }, target: release, recipe: selected.recipe },
         previous: { kind: initial.kind, recipe: initial.recipe, recipeHistory: [] },
         target: { kind: selected.kind, recipe: selected.recipe, recipeHistory: selected.recipeHistory } };
       await store.set("projects", "one", { ...current.value, recipe: initial.recipe, runtimeUpdate: pending });

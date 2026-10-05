@@ -94,6 +94,7 @@ function RecipeUpgradeNotice({
   const status = project.recipeStatus;
   const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
   const live = project.runtime.status === "running" && project.capabilities.zeroDowntimeUpdates === true;
+  const integrationUpdate = project.capabilities.recipeUpdateMode === "integration";
   const canUpgrade = idle || live;
   if (project.deletion) return null;
   if (project.runtimeUpdate) return (
@@ -108,7 +109,9 @@ function RecipeUpgradeNotice({
     <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Recipe upgrade">
       <p>
         {status.state === "upgradeAvailable"
-          ? `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
+          ? integrationUpdate
+            ? `A newer recipe is available: ${status.version}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
+            : `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
           : `${status.reason} Choose a recipe to move this Project to; its data is kept.`}
       </p>
       {status.state === "unavailable" ? (
@@ -133,7 +136,7 @@ function RecipeUpgradeNotice({
           disabled={disabled || !canUpgrade || (status.state === "unavailable" && !target)}
           onClick={() => onUpgrade(status.state === "unavailable" ? target : undefined)}
         >
-          Upgrade recipe
+          {integrationUpdate ? "Update recipe" : "Upgrade recipe"}
         </Button>
         {!canUpgrade ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
       </div>

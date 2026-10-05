@@ -5692,7 +5692,7 @@ function resolvePlatformEndpointGroup(
           id: "runtime.projects.upgrade",
           spec: {
             operationId: "upgradeProject",
-            summary: "Upgrade an App engine and recipe, with live handover when supported",
+            summary: "Update a managed app integration or upgrade a Zelavis App engine without stopping supported Projects",
             tags: ["projects"],
             requestBody: {
               required: false,

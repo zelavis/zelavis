@@ -3,7 +3,7 @@ import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import { digestArtifactDirectory, loadRecipeArtifact } from "./_recipe-artifact.js";
-import { evaluate, integration, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { evaluate, integration, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { isExactVersion } from "../updates.js";
@@ -33,7 +33,7 @@ const writeDescriptor = Effect.fn("ProjectRelease.writeDescriptor")(function* (d
 });
 
 export const nodeProjectReleaseDirectory = (directory: string, release: RuntimeRelease) => {
-  if (!isExactVersion(release.version) || !/^sha256:[a-f0-9]{64}$/.test(release.digest)) throw new Error("Project release requires an exact engine version and snapshot digest.");
+  if (!isExactVersion(release.version) || !/^sha256:[a-f0-9]{64}$/.test(release.digest)) throw new Error("Project release requires an exact version and snapshot digest.");
   return join(directory, ".zelavis", "runtime-releases", release.digest.slice(7));
 };
 
@@ -42,7 +42,7 @@ export const nodeProjectReleaseDirectory = (directory: string, release: RuntimeR
  * files still served by the previous owner or needed for rollback.
  */
 export const freezeNodeProjectRelease = Effect.fn("ProjectRelease.freeze")(function* (directory: string, source = directory, version = ZELAVIS_VERSION) {
-  yield* evaluate(() => { if (!isExactVersion(version)) throw new Error("Project release requires an exact engine version."); });
+  yield* evaluate(() => { if (!isExactVersion(version)) throw new Error("Project release requires an exact version."); });
   const releases = join(directory, ".zelavis", "runtime-releases");
   const incoming = join(releases, `.incoming-${randomUUID()}`);
   yield* integration(() => mkdir(incoming, { recursive: true, mode: 0o700 }));
@@ -88,17 +88,20 @@ export const restoreNodeProjectRelease = Effect.fn("ProjectRelease.restore")(fun
   const previousDescriptor = yield* integration(() => readFile(join(directory, "project.json"), "utf8"));
   const canonical = join(directory, ".zelavis", "recipe");
   const incoming = `${canonical}.incoming-${randomUUID()}`, backup = `${canonical}.previous-${randomUUID()}`;
+  const hadCanonical = yield* integration(() => lstat(canonical)).pipe(Effect.as(true),
+    Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(false)));
   yield* Effect.uninterruptible(Effect.gen(function* () {
     yield* integration(() => cp(join(snapshot, "recipe"), incoming, { recursive: true, verbatimSymlinks: true }));
     yield* flushTree(incoming);
-    yield* integration(() => rename(canonical, backup));
-    yield* integration(() => rename(incoming, canonical)).pipe(Effect.onError(() => integration(() => rename(backup, canonical)).pipe(Effect.orDie)));
+    if (hadCanonical) yield* integration(() => rename(canonical, backup));
+    yield* integration(() => rename(incoming, canonical)).pipe(Effect.onError(() => hadCanonical
+      ? integration(() => rename(backup, canonical)).pipe(Effect.orDie) : Effect.void));
     yield* Effect.gen(function* () {
       yield* flush(dirname(canonical), true);
       yield* writeDescriptor(directory, `${JSON.stringify(record)}\n`);
     }).pipe(Effect.onError(() => Effect.gen(function* () {
       yield* integration(() => rm(canonical, { recursive: true, force: true }));
-      yield* integration(() => rename(backup, canonical));
+      if (hadCanonical) yield* integration(() => rename(backup, canonical));
       yield* flush(dirname(canonical), true);
       yield* writeDescriptor(directory, previousDescriptor);
     }).pipe(Effect.orDie)));

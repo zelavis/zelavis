@@ -30,7 +30,7 @@ async function platform(t, failCommit = false) {
     async stop(id) { running.delete(id); return { status: "stopped" }; },
     async status(id) { return { status: running.has(id) ? "running" : "stopped", ...(running.has(id) ? { url: "http://127.0.0.1:1" } : {}) }; },
     async prepareUpdate(previous, candidate) {
-      return { previous: { version: selected.get(previous.id), digest: digest(selected.get(previous.id)) },
+      return { mode: "engine", previous: { version: selected.get(previous.id), digest: digest(selected.get(previous.id)) },
         target: { version: candidate.engineVersion, digest: digest(candidate.engineVersion) }, recipe: candidate.recipe };
     },
     async applyUpdate(id, update, commit) {

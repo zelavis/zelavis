@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { createLocalProjectRuntime } from "../dist/adapters/_local-project-runtime.js";
+import { zelavis, createMemorySystemStore } from "../dist/index.js";
+import { createZelavisClient } from "../dist/sdk/fetch.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -16,17 +18,17 @@ async function scratch(t) {
 }
 
 /** A recipe package that provides its own runtime, recording what it is asked to do. */
-async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepare = false, failDestroy = false, runtime = "./dist/runtime.js", exportsFactory = true } = {}) {
+async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepare = false, failDestroy = false, runtime = "./dist/runtime.js", exportsFactory = true, managed } = {}) {
   const directory = join(root, "pkg");
   await mkdir(join(directory, "dist"), { recursive: true });
   await writeFile(join(directory, "package.json"), JSON.stringify({
     name: "@acme/site", version, type: "module",
     exports: { ".": { import: "./dist/index.js" } },
-    zelavis: { kind: "app", project: { runtimeKinds: ["native"], runtime } },
+    zelavis: { kind: "app", namespace: "acmesite", project: { runtimeKinds: ["native"], runtime, ...(managed ? { managed } : {}) } },
   }));
   await writeFile(join(directory, "dist", "index.js"), "export function register() {}");
   await writeFile(join(directory, "dist", "runtime.js"), exportsFactory ? `
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 export const MARKER = ${JSON.stringify(marker)};
 export function createProjectRuntime({ directory, options }) {
@@ -41,9 +43,9 @@ export function createProjectRuntime({ directory, options }) {
       await writeFile(join(directory, project.id, "project.json"), JSON.stringify({ ...project, recipe }));
       await writeFile(join(directory, project.id, "prepared-by.txt"), MARKER + ":" + (recipe.artifact?.digest ?? "none"));
     },
-    async start(project) { running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
-    async stop(id) { running.delete(id); return { status: "stopped" }; },
-    async status(id) { return running.has(id) ? { status: "running" } : { status: "stopped" }; },
+    async start(project) { await appendFile(join(directory, project.id, "workload-events"), "start:" + MARKER + "\\n"); running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
+    async stop(id) { if (running.has(id)) await appendFile(join(directory, id, "workload-events"), "stop:" + MARKER + "\\n"); running.delete(id); return { status: "stopped" }; },
+    async status(id) { return running.has(id) ? { status: "running", url: "http://127.0.0.1:1" } : { status: "stopped" }; },
     async logs() { return []; },
     async destroy(id) { if (${JSON.stringify(failDestroy)}) throw new Error("recipe cleanup failed"); running.delete(id); },
     async close() {},
@@ -355,4 +357,154 @@ export function createProjectRuntime({ options }) {
   await Effect.runPromise(Deferred.await(entered));
   await Effect.runPromise(Fiber.interrupt(fiber));
   assert.equal(released, true);
+});
+
+
+const managedRecipePackage = (root, options = {}) => recipePackage(root, {
+  managed: { adminTitle: "Admin " + (options.version ?? "1.0.0"), adminPath: "/admin/" }, ...options,
+});
+
+async function managedUpdateFixture(t) {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  const driver = router(projects, source); t.after(() => driver.close());
+  const base = { ...project(), desiredState: "running", runtime: { driver: "local-project", status: "running", url: "http://127.0.0.1:1" } };
+  base.recipe.managed = { adminTitle: "Original admin", adminPath: "/admin/" };
+  await driver.prepare(base, base.recipe);
+  const previous = JSON.parse(await readFile(join(projects, "site", "project.json"), "utf8"));
+  await driver.start(previous);
+  const prepared = await readFile(join(projects, "site", "prepared-by.txt"), "utf8");
+  const candidate = { ...previous, recipe: { ...previous.recipe, version: "2.0.0", artifact: undefined, managed: { adminTitle: "New integration admin", adminPath: "/new-admin/" } } };
+  return { root, source, projects, driver, previous, candidate, prepared };
+}
+
+test("managed recipe updates replace integration metadata without provisioning, start or stop", async t => {
+  const f = await managedUpdateFixture(t);
+  // Any accidental call to the new runtime's prepare would fail this update.
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0", failPrepare: true });
+  const original = await readFile(join(f.projects, "site", "project.json"), "utf8");
+  const update = await f.driver.prepareUpdate(f.previous, f.candidate);
+  assert.equal(update.mode, "integration");
+  assert.equal(await readFile(join(f.projects, "site", "project.json"), "utf8"), original, "staging leaves the selected descriptor alone");
+  const commits = [];
+  const snapshot = await f.driver.applyUpdate("site", update, async choice => commits.push(choice));
+  assert.deepEqual(commits, ["target"]);
+  assert.equal(snapshot.status, "running"); assert.equal(snapshot.url, f.previous.runtime.url);
+  const selected = JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8"));
+  assert.equal(selected.recipe.version, "2.0.0"); assert.equal(selected.recipe.managed.adminTitle, "New integration admin");
+  assert.equal(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), f.prepared);
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+  assert.equal((await f.driver.status("site")).status, "running");
+});
+
+test("a rejected integration commit restores the old artifact and leaves the app running", async t => {
+  const f = await managedUpdateFixture(t);
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0" });
+  const update = await f.driver.prepareUpdate(f.previous, f.candidate), commits = [];
+  await assert.rejects(f.driver.applyUpdate("site", update, async choice => {
+    commits.push(choice); if (choice === "target") throw Error("registry rejected integration commit");
+  }), /registry rejected/);
+  assert.deepEqual(commits, ["target", "previous"]);
+  assert.equal(JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8")).recipe.version, "1.0.0");
+  assert.equal((await f.driver.status("site")).status, "running");
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+});
+
+test("interrupted integration recovery repairs a missing canonical artifact without provisioning", async t => {
+  const f = await managedUpdateFixture(t);
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0" });
+  const update = await f.driver.prepareUpdate(f.previous, f.candidate);
+  await f.driver.applyUpdate("site", update, async () => {});
+  const canonical = join(f.projects, "site", ".zelavis", "recipe");
+  // Power loss in the canonical-file presentation, with durable intent retained.
+  await rename(canonical, canonical + ".previous-interrupted");
+  const restarted = router(f.projects, f.source); t.after(() => restarted.close());
+  assert.equal(await restarted.recoverUpdate("site", update), "previous");
+  assert.equal(JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8")).recipe.version, "1.0.0");
+  assert.equal(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), f.prepared);
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+});
+
+test("an integration update refuses deployment contract changes without disturbing the app", async t => {
+  const f = await managedUpdateFixture(t);
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0", runtime: "./dist/other.js" });
+  await assert.rejects(f.driver.prepareUpdate(f.previous, f.candidate), /deployment contract/);
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0" });
+  await assert.rejects(f.driver.prepareUpdate(f.previous, { ...f.candidate, recipe: { ...f.candidate.recipe, hostPackages: ["other-packages"] } }), /deployment contract/);
+  const manifestFile = join(f.source, "package.json");
+  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+  manifest.zelavis.project.hostPackages = ["unadvertised-packages"];
+  await writeFile(manifestFile, JSON.stringify(manifest));
+  await assert.rejects(f.driver.prepareUpdate(f.previous, { ...f.candidate, recipe: { ...f.candidate.recipe, managed: undefined } }), /deployment contract/);
+  assert.equal((await f.driver.status("site")).status, "running");
+  assert.equal(JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8")).recipe.version, "1.0.0");
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+});
+
+test("the selected integration implementation is used on the next ordinary app start", async t => {
+  const f = await managedUpdateFixture(t);
+  await managedRecipePackage(f.root, { managed: f.candidate.recipe.managed, marker: "v2", version: "2.0.0" });
+  const update = await f.driver.prepareUpdate(f.previous, f.candidate);
+  await f.driver.applyUpdate("site", update, async () => {});
+  await f.driver.stop("site");
+  const selected = JSON.parse(await readFile(join(f.projects, "site", "project.json"), "utf8"));
+  await f.driver.prepare(selected, selected.recipe); await f.driver.start(selected);
+  assert.match(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), /^v2:/);
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\nstop:v1\nstart:v2\n");
+});
+
+
+async function managedPlatform(t, store, driver, version, advertiseManaged = true) {
+  const zv = await zelavis({ systemStore: store, projectRuntime: driver, serviceRegistry: { catalog: [{
+    service: { name: "@acme/site", version, kind: "app", project: { runtimeKinds: ["native"], ...(advertiseManaged ? { managed: { adminTitle: "Admin " + version, adminPath: "/admin/" } } : {}) } },
+    status: "available", source: "community", specifier: "@acme/site",
+  }] } });
+  t.after(() => zv.close());
+  const client = createZelavisClient({ baseUrl: "http://localhost", fetch: (url, init) => zv.fetch(new Request(url, init), {
+    principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] },
+  }) });
+  return { zv, client };
+}
+
+test("SDK/HTTP integration updates preserve a running app and roll back a failed final registry write", async t => {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  const driver = router(projects, source), store = createMemorySystemStore();
+  let fail = false;
+  const guarded = { ...store, async set(namespace, id, value) {
+    if (fail && namespace === "projects" && id === "site" && value.recipe?.version === "2.0.0" && !value.runtimeUpdate) {
+      fail = false; throw Error("final integration commit failed");
+    }
+    return store.set(namespace, id, value);
+  } };
+  const old = await managedPlatform(t, guarded, driver, "1.0.0");
+  const original = await old.client.projects.create({ id: "site", name: "Managed site", recipeName: "@acme/site", start: true });
+  await managedRecipePackage(root, { marker: "v2", version: "2.0.0", failPrepare: true });
+  const next = await managedPlatform(t, guarded, driver, "2.0.0", false);
+  assert.equal((await next.client.projects.recipes()).find(r => r.name === "@acme/site").managed, undefined, "Catalogue metadata is deliberately incomplete");
+  const before = await next.client.projects.get("site");
+  assert.equal(before.capabilities.recipeUpdateMode, "integration");
+  fail = true;
+  await assert.rejects(next.client.projects.upgrade("site"), { status: 500 });
+  const restored = await next.client.projects.get("site");
+  assert.equal(restored.recipe.version, "1.0.0"); assert.equal(restored.runtimeUpdate, undefined);
+  assert.equal(restored.runtime.status, "running"); assert.equal(restored.runtime.url, original.runtime.url);
+  const upgraded = await next.client.projects.upgrade("site");
+  assert.equal(upgraded.recipe.version, "2.0.0"); assert.equal(upgraded.recipe.managed.adminTitle, "Admin 2.0.0");
+  assert.equal(upgraded.runtime.status, "running"); assert.equal(upgraded.runtime.url, original.runtime.url);
+  assert.equal(upgraded.runtimeUpdate, undefined);
+  assert.equal(await readFile(join(projects, "site", "workload-events"), "utf8"), "start:v1\n");
+  await assert.rejects(next.client.projects.switchVersion("site", "2.0.0"), { status: 400 });
+});
+
+test("stopped managed projects update their integration without provisioning or starting the app", async t => {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  const driver = router(projects, source), store = createMemorySystemStore();
+  const old = await managedPlatform(t, store, driver, "1.0.0");
+  await old.client.projects.create({ id: "site", name: "Managed site", recipeName: "@acme/site", start: false });
+  const prepared = await readFile(join(projects, "site", "prepared-by.txt"), "utf8");
+  await managedRecipePackage(root, { marker: "v2", version: "2.0.0", failPrepare: true });
+  const next = await managedPlatform(t, store, driver, "2.0.0");
+  const upgraded = await next.client.projects.upgrade("site");
+  assert.equal(upgraded.runtime.status, "stopped"); assert.equal(upgraded.recipe.version, "2.0.0");
+  assert.equal(await readFile(join(projects, "site", "prepared-by.txt"), "utf8"), prepared);
+  await assert.rejects(access(join(projects, "site", "workload-events")), { code: "ENOENT" });
 });

@@ -195,3 +195,34 @@ test("@smoke App creation defaults to latest and can select an older installed e
   await expect(page.getByText("Historical UI is running in its own project runtime.")).toBeVisible()
   await expect(page.getByRole("combobox", { name: "Zelavis version" })).toHaveCount(0)
 })
+
+
+test("@smoke a running managed app updates its integration without lifecycle commands", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, {
+    kind: "wordpress", recipe: { name: "@zelavis/wordpress", title: "WordPress", version: "1.0.0", runtimeKinds: ["native"], managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } },
+    recipeStatus: { state: "upgradeAvailable", version: "2.0.0" },
+    capabilities: { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" },
+  })
+  let updates = 0, interruptions = 0
+  await page.route(new RegExp(`/runtime/projects/${projectId}/upgrade$`), async route => {
+    updates++
+    await route.fulfill({ json: { project: {
+      id: projectId, name: "Zelavis Runtime", kind: "wordpress", runtimeKind: "native",
+      recipe: { name: "@zelavis/wordpress", title: "WordPress", version: "2.0.0", managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } },
+      runtime: { status: "running" }, capabilities: { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" },
+    } } })
+  })
+  await page.route(new RegExp(`/runtime/projects/${projectId}/(start|stop|restart)$`), async route => {
+    interruptions++
+    await route.fulfill({ status: 409, json: { error: "Integration updates must not interrupt the app" } })
+  })
+  await page.goto(`${basePath}/projects`)
+  const notice = page.getByLabel("Recipe upgrade")
+  await expect(notice).toContainText("The app manages its own software updates")
+  await expect(notice.getByRole("button", { name: "Update recipe", exact: true })).toBeEnabled()
+  await notice.getByRole("button", { name: "Update recipe", exact: true }).click()
+  await expect.poll(() => updates).toBe(1)
+  await expect(page.getByText("Zelavis Runtime now uses @zelavis/wordpress 2.0.0. Its data is unchanged. It is running at the same address.")).toBeVisible()
+  expect(interruptions).toBe(0)
+})

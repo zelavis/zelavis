@@ -18,6 +18,7 @@ export const migratedFiles = new Set([
   "packages/zelavis/src/adapters/_node-project-engine.ts", "packages/zelavis/src/adapters/_node-platform-engine.ts",
   "packages/zelavis/src/adapters/_node-runtime-gateway.ts", "packages/zelavis/src/adapters/_node-runtime-journal.ts",
   "packages/zelavis/src/adapters/_node-project-release.ts",
+  "packages/zelavis/src/adapters/_managed-recipe-update.ts",
   "packages/zelavis/src/adapters/_node-runtime-artifact.ts", "packages/zelavis/src/adapters/_node-runtime-catalog.ts",
   "packages/zelavis/src/adapters/_release-tree.ts",
   "packages/zelavis/src/adapters/_node-project-host.ts", "packages/zelavis/src/adapters/_node-runtime-ownership.ts",
