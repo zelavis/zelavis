@@ -417,7 +417,11 @@ an ordinary private Zelavis App composition by default: Database, Auth, Storage
 and Workloads are available through normal Project APIs and `zelavis.setup`
 `core` APIs, without feature enable switches or a second visible Project record.
 The bound App and all its data belong to the managed Project and share its
-cleanup and authority. App software and its own database stay separate. Record
+cleanup and authority. App software and its own database stay separate. For managed
+third-party Apps, the bound Zelavis database supports additional features built
+by services and extensions; it does not store, replace, or automatically mirror
+the application's own tables (for example WordPress's MariaDB tables). Keep their
+APIs, storage, dashboard navigation and terminology distinct. Record
 successful subsystem requests and service-facing native API calls in the bound
 runtime's own store. Availability remains independent of usage; the dashboard
 reuses native sections only after the corresponding API has been used. Merely

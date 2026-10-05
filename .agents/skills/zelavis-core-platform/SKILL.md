@@ -85,6 +85,10 @@ before editing.
   the same private runtime store. Bound engine convergence uses the shared
   persistent host journal and preserves recipe locks and third-party processes;
   native App engine pins remain unchanged on parent updates.
+  A managed third-party App's own database (for example WordPress's MariaDB)
+  belongs to that application. Its bound Zelavis database supports additional
+  features built by services and extensions; it does not store, replace, or
+  automatically mirror the application's tables. Keep APIs and storage distinct.
 
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw

@@ -92,6 +92,9 @@ visibility. Do not probe unused native APIs while loading a managed dashboard.
 Use `capabilities.database.available` for database loading, never a pseudo-service
 name. Keep the third-party app's database link distinct (`/app-database`) from
 its bound Zelavis database (`/database`). There is no second visible Project.
+The app's own tables (for example WordPress's MariaDB tables) belong only in
+App database. The bound Zelavis database supports additional service/extension
+features; never present it as containing or replacing the app's own database.
 
 ## Sidebar and navigation rules
 
