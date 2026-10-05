@@ -49,6 +49,14 @@ assert.equal((await descriptor(id)).engine.runtime.version, from);
 const projectClient = projectId => createZelavisClient({ ...config, rootPath: `/zelavis/api/v1/runtime/projects/${projectId}/proxy/zelavis` });
 const executingVersion = () => projectClient(id).plugins.engineproof.engine.get();
 assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
+// A genuine npm catalogue Project stays untouched by the historical fixture.
+// This is the path behind Open that development-only manifests failed to test.
+const catalogueApp = await client.projects.create({ id: 'catalogue-wordpress', name: 'Catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
+const catalogueDescriptor = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
+const catalogueControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${catalogueApp.id}/proxy/zelavis/api/v1/runtime/config`;
+const initialCatalogueResponse = await fetch(catalogueControl, { headers: { cookie }, redirect: 'manual' });
+const catalogueBeforeStatus = initialCatalogueResponse.status;
+await initialCatalogueResponse.arrayBuffer();
 const wp = await client.projects.get('qualification-wordpress');
 assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
 const wpData = '/var/lib/zelavis/projects/qualification-wordpress/.zelavis';
@@ -173,6 +181,17 @@ assert.equal((await client.projects.get(id)).preview.port, app.preview.port);
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
 assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
+const catalogueAfter = await client.projects.get(catalogueApp.id);
+assert.equal(catalogueAfter.recipe.managed.adminTitle, 'WordPress Admin');
+assert.equal(catalogueAfter.recipe.version, catalogueApp.recipe.version);
+assert.equal(catalogueAfter.runtime.url, catalogueApp.runtime.url);
+assert.equal(catalogueAfter.preview.port, catalogueApp.preview.port);
+assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueDescriptor, 'Fixing Open never rewrites the frozen host descriptor');
+const catalogueConfig = await projectClient(catalogueApp.id).runtime.config();
+assert.equal(catalogueConfig.services.find(service => service.name === '@zelavis/wordpress').kind, 'app');
+for (const capability of ['database', 'identity', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
+urls.push(catalogueControl);
+counts[catalogueControl] = 0;
 const beforeIntegration = await wpClient.runtime.config();
 assert.equal(beforeIntegration.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
@@ -223,10 +242,15 @@ for (const version of [to, from]) {
 assert.equal((await client.projects.start(historical.id)).runtime.status, 'running');
 const latest = await client.projects.create({ id: 'explicit-latest', name: 'Latest', start: false });
 assert.equal(latest.engineVersion, to); assert.equal((await descriptor(latest.id)).engine.runtime.version, to);
+const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpress', name: 'Fresh catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
+assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
+assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
+await client.projects.remove(freshManaged.id); await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,

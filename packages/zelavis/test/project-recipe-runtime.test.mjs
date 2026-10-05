@@ -520,6 +520,7 @@ test("SDK/HTTP integration updates recover the proved host selection after a fai
   await assert.rejects(next.client.projects.upgrade("site"), { status: 409 });
   assert.equal(upgraded.recipe.version, "2.0.0"); assert.equal(upgraded.recipe.managed.adminTitle, "Admin 2.0.0");
   assert.equal(upgraded.runtime.status, "running"); assert.equal(upgraded.runtime.url, original.runtime.url);
+  assert.equal(upgraded.capabilities.recipeUpdateMode, "integration");
   assert.equal(upgraded.runtimeUpdate, undefined);
   assert.equal(await readFile(join(projects, "site", "workload-events"), "utf8"), "start:v1\n");
   await assert.rejects(next.client.projects.switchVersion("site", "2.0.0"), { status: 400 });
@@ -534,6 +535,7 @@ test("stopped managed projects update their integration without provisioning or 
   await managedRecipePackage(root, { marker: "v2", version: "2.0.0", failPrepare: true });
   const next = await managedPlatform(t, store, driver, "2.0.0");
   const upgraded = await next.client.projects.upgrade("site");
+  assert.equal(upgraded.capabilities.recipeUpdateMode, "integration");
   assert.equal(upgraded.runtime.status, "stopped"); assert.equal(upgraded.recipe.version, "2.0.0");
   assert.equal(await readFile(join(projects, "site", "prepared-by.txt"), "utf8"), prepared);
   await assert.rejects(access(join(projects, "site", "workload-events")), { code: "ENOENT" });
@@ -724,4 +726,35 @@ test("managed apps provide ordinary private APIs by default and retain usage and
   await checkData();
   await f.driver.destroy("site");
   await assert.rejects(access(join(f.projects, "site")), { code: "ENOENT" });
+});
+
+
+test("a catalogue summary cannot override the verified managed recipe or send dashboard config to the app", { timeout: 30_000 }, async t => {
+  const root = await scratch(t), source = await managedRecipePackage(root), projects = join(root, "projects");
+  const driver = router(projects, source), store = createMemorySystemStore();
+  const platform = await managedPlatform(t, store, driver, "1.0.0", false);
+  await platform.client.projects.create({ id: "site", name: "Managed site", recipeName: "@acme/site", start: true });
+  const read = () => platform.client.projects.get("site");
+  const record = await read();
+  assert.equal(record.recipe.managed.adminTitle, "Admin 1.0.0");
+  assert.equal(record.capabilities.recipeUpdateMode, "integration");
+  const stored = await store.get("projects", "site");
+  await store.set("projects", "site", { ...stored.value, recipe: { ...stored.value.recipe, managed: { adminTitle: "Wrong catalogue title" } } });
+  assert.equal((await read()).recipe.managed.adminTitle, "Admin 1.0.0");
+  const forward = createProjectForwarder({ projects: {
+    get: read, gatewayTarget: async () => driver.gatewayTarget(await read()),
+    signGatewayAuthority: (id, claims) => driver.signGatewayAuthority(id, claims),
+  }, fabric: {
+    getProjectPlacement: async () => ({ identity: { type: "project", workloadId: "site", scopeId: "platform" }, state: "active", generation: 1, runtimeNodeId: "local" }),
+    getNode: async () => ({ status: "ready" }),
+  }, unavailableProjectsResponse: () => ({ status: 503 }) });
+  const config = await forward({ projectId: "site", wildcardPath: "zelavis/api/v1/runtime/config", query: new URLSearchParams(),
+    request: new Request("http://localhost/zelavis/api/v1/runtime/config"), principal: { id: "owner", type: "user" }, permissions: ["*"], allowFrontend: false });
+  assert.equal(config.status, 200);
+  assert.equal(new Headers(config.headers).get("location"), null);
+  const body = await new Response(config.body).json();
+  assert.equal(body.services.find(service => service.name === "@acme/site").menus[0].title, "Integration v1");
+  assert.equal(body.capabilities.database.used, false);
+  assert.equal(body.capabilities.identity.used, false);
+  assert.equal(await readFile(join(projects, "site", "workload-events"), "utf8"), "start:v1\n");
 });

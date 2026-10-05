@@ -385,6 +385,12 @@ Platform dashboard must communicate with project runtimes through the Project
 Gateway boundary. The current proxy route is the first local implementation of
 that boundary.
 
+The exact digest-verified frozen recipe manifest owns runtime classification and
+Project integration metadata. Catalogue summaries only advertise acquisition;
+they must preserve managed declarations, and may never override the selected
+package's definition. Project driver wrappers forward the verified definition.
+Opening managed Project overview pages must not probe unused native APIs.
+
 Custom recipe runtimes execute from verified digest-specific module paths below
 `<project>/.zelavis/recipe-modules` so ESM caching cannot reuse relative imports
 from a previous recipe during an explicit upgrade. These are derived copies,

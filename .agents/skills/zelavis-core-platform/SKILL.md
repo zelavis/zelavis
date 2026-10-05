@@ -72,6 +72,11 @@ before editing.
   through Update now and pass the real previous-release update gate; do not
   use a manual installer conversion as a release procedure.
 
+- Derive custom runtime classification and Project integration metadata from
+  the exact digest-verified frozen recipe manifest, never a catalogue summary.
+  Forward the verified definition through deployment-driver wrappers. Preserve
+  managed declarations in allow-list parsing/catalogues and release validation.
+
 - Managed third-party apps have an ordinary private Project Zelavis App by
   default, under `.zelavis/integration`, with no separate Project card or opt-in
   feature flags. Expose the normal setup `core` APIs and scoped HTTP/SDK/CLI

@@ -1,3 +1,5 @@
+import type { ZelavisProjectManagedDefinition } from "zelavis";
+
 /**
  * The marketplace allow-list.
  *
@@ -40,6 +42,7 @@ export interface AllowlistService {
    */
   readonly projectRuntime?: boolean;
   readonly hostPackages?: readonly string[];
+  readonly managed?: ZelavisProjectManagedDefinition;
   readonly versions: readonly AllowlistVersion[];
   /** The version the marketplace offers by default; always one of `versions`. */
   readonly latest: string;

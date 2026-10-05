@@ -278,6 +278,32 @@ test("@smoke managed recipe SDK menus and pages refresh through their Project Ga
   expect(interruptions).toBe(0)
 })
 
+test("@smoke Open loads a managed Project overview without probing unused APIs", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, { kind: "wordpress", recipe: { name: "@zelavis/wordpress", title: "WordPress", version: "7.1.3-alpha.2", managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } } })
+  await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/runtime/config$`), async route => {
+    const response = await route.fetch(), body = await response.json()
+    body.capabilities = { ...body.capabilities, database: { available: true, used: false }, identity: { available: true, used: false },
+      storage: { available: true, used: false }, workloads: { available: true, used: false } }
+    await route.fulfill({ response, json: body })
+  })
+  const errors: string[] = [], probes: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/(database|auth)/`), async route => {
+    probes.push(route.request().url())
+    return route.continue()
+  })
+  await page.goto(`${basePath}/projects`)
+  await page.getByRole("button", { name: "Open", exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`))
+  await expect(page.getByText("Hosting controls", { exact: true })).toBeVisible()
+  await expect(page.getByText("Dashboard error", { exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByText("Hosting controls", { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+  expect(probes).toEqual([])
+})
+
 test("@smoke managed apps reuse native dashboard sections only after API usage", async ({ page }) => {
   test.skip(!projectId, "needs the e2e Project")
   await pretendStale(page, { kind: "wordpress", recipe: { name: "@acme/site", title: "Managed site", version: "1.0.0", managed: { adminTitle: "App Admin" } } })

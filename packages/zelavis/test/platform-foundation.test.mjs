@@ -242,6 +242,7 @@ test("the deployment backend runtime exposes every member of the driver contract
   const store = createMemorySystemStore();
   const driver = {
     name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
+    recipeDefinition: () => ({ runtimeKinds: ["native"], managed: { adminTitle: "Verified app" } }),
     capabilities: () => ({}),
     async prepare() {}, async start() { return { status: "running" }; },
     async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
@@ -259,6 +260,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: driver, detect: async () => ({}) }],
   });
 
+  assert.equal(runtime.recipeDefinition({ runtimeKind: "native" }).managed.adminTitle, "Verified app");
   const contract = Object.keys(PROJECT_DRIVER_MEMBER_ROUTING).sort();
   assert.deepEqual(contract.filter((member) => !(member in driver)), [], "the fixture implements the whole contract");
   assert.deepEqual(contract.filter((member) => runtime[member] === undefined), [],

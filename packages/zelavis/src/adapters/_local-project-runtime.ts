@@ -9,6 +9,7 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZelavisProjectDescriptor, ZelavisProjectRecipeLock, ZelavisProjectRuntimeDriver } from "../project.js";
+import { manifestProjectRecipe, validatePluginPackageManifest, type ZelavisProjectRecipeDefinition } from "../service.js";
 import { ZelavisProjectRuntimeError } from "../project.js";
 import { createNodeProcessProjectRuntime, type NodeProcessProjectRuntimeOptions, } from "./_node-project-runtime.js";
 import { createServerFrontendProjectRuntime, type ServerFrontendProjectRuntimeOptions, } from "./_server-frontend-project-runtime.js";
@@ -120,8 +121,8 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     // shared by every Project frozen to the same digest.
     const recipeDrivers = new Map<string, ZelavisProjectRuntimeDriver>();
     const driverOfProject = new Map<string, ZelavisProjectRuntimeDriver>();
-    const verified = new Set<string>();
-    const managedProjects = new Set<string>();
+    const verified = new Map<string, { name: string; version: string; definition: ZelavisProjectRecipeDefinition }>();
+    const recipeDefinitions = new Map<string, { name: string; version: string; digest: string; definition: ZelavisProjectRecipeDefinition }>();
     const adoptionFailures = new Map<ZelavisProjectRuntimeDriver, string>();
     const selectFrontend = (): ZelavisProjectRuntimeDriver => {
         if (!serverFrontend) {
@@ -154,10 +155,15 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe artifact does not match its locked name and version.`));
         }
         const key = `${projectId}:${digest}`;
-        if (!verified.has(key) && ((yield* integration(() => digestArtifactDirectory(frozen)))) !== digest) {
-            return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" does not match its locked digest; refusing to run modified code.`));
+        if (!verified.has(key)) {
+            if ((yield* integration(() => digestArtifactDirectory(frozen))) !== digest)
+                return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" does not match its locked digest; refusing to run modified code.`));
+            const definition = yield* evaluate(() => manifestProjectRecipe(validatePluginPackageManifest(manifest)));
+            if (!definition) return yield* Effect.fail(new ZelavisProjectRuntimeError("A custom runtime requires a Project recipe definition."));
+            verified.set(key, { name: manifest.name, version: manifest.version, definition });
         }
-        verified.add(key);
+        // Reuse only the definition read when this exact digest was verified.
+        recipeDefinitions.set(projectId, { ...verified.get(key)!, digest });
         // Recipe integration refreshes never replace a live app's supervisor.
         // Its next ordinary prepare, or Agent adoption by a new Platform engine,
         // loads the selected recipe implementation after verifying this lock.
@@ -266,7 +272,6 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         yield* evaluate(() => assertNative(record.runtimeKind));
         if (record.kind === SERVER_FRONTEND_KIND)
             return selectFrontend();
-        if (record.recipe?.managed) managedProjects.add(projectId); else managedProjects.delete(projectId);
         const name = record.recipe?.name;
         if (typeof name === "string") {
             const digest = record.recipe?.artifact?.digest;
@@ -303,8 +308,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }));
     });
     const loaded = () => [...new Set([...recipeDrivers.values()])];
+    const recipeDefinition = (project: Readonly<ZelavisProjectDescriptor>) => {
+        const selected = recipeDefinitions.get(project.id);
+        return selected?.name === project.recipe.name && selected.version === project.recipe.version &&
+            (!project.recipe.artifact || selected.digest === project.recipe.artifact.digest) ? selected.definition : undefined;
+    };
     const managedIntegration = (project: Readonly<ZelavisProjectDescriptor>) =>
-        !!project.recipe.managed && forDescriptor(project) !== node && forDescriptor(project) !== serverFrontend;
+        !!recipeDefinition(project)?.managed && forDescriptor(project) !== node && forDescriptor(project) !== serverFrontend;
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "local-project",
         detach: Effect.fn("LocalProjects.detach")(function* () {
@@ -338,6 +348,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         runtimeKinds: Object.freeze(["native"]),
         defaultRuntimeKind: "native",
         startupConcurrency: 1,
+        recipeDefinition,
         capabilities: (project) => ({ ...forDescriptor(project).capabilities(project),
             ...(managedIntegration(project) ? { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" as const } : {}) }),
         supportsLiveUpdate: project => managedIntegration(project) || forDescriptor(project).supportsLiveUpdate?.(project) === true,
@@ -370,14 +381,17 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 const selected = effectOperations(yield* forProjectId(id));
                 if (update.host) {
                     yield* integrationRuntime.applyUpdate!(id, update, commit);
+                    yield* forProjectId(id);
                     return yield* selected.status(id);
                 }
                 return yield* Effect.uninterruptible(Effect.gen(function* () {
                     yield* restoreNodeProjectRelease(join(directory, id), id, update.target);
                     yield* integration(() => commit("target"));
+                    yield* forProjectId(id);
                     return yield* selected.status(id);
                 }).pipe(Effect.onError(() => Effect.gen(function* () {
                     yield* restoreNodeProjectRelease(join(directory, id), id, update.previous);
+                    yield* forProjectId(id);
                     yield* integration(() => commit("previous"));
                 }).pipe(Effect.orDie))));
             }
@@ -387,7 +401,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }),
         recoverUpdate: Effect.fn("LocalProjects.recoverUpdate")(function* (id, update) {
             if (update.mode === "integration") {
-                if (update.host) return yield* integrationRuntime.recoverUpdate!(id, update);
+                if (update.host) {
+                    const selection = yield* integrationRuntime.recoverUpdate!(id, update);
+                    yield* forProjectId(id);
+                    return selection;
+                }
                 // The durable intent is cleared only after the complete commit.
                 // An interrupted integration transaction rolls back its code and
                 // metadata; the app's software and processes were never changed.
@@ -411,6 +429,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 changing = manifest.name !== recipe.name || manifest.version !== recipe.version;
             }
             const previousDriver = driverOfProject.get(project.id);
+            const previousDefinition = recipeDefinitions.get(project.id);
             const backup = join(data, `recipe-backup-${crypto.randomUUID()}`);
             let descriptor: Buffer | undefined;
             if (changing) {
@@ -447,6 +466,8 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                         driverOfProject.set(project.id, previousDriver);
                     else
                         driverOfProject.delete(project.id);
+                    if (previousDefinition) recipeDefinitions.set(project.id, previousDefinition);
+                    else recipeDefinitions.delete(project.id);
                     discardBackup = true;
                 }
             }).pipe(Effect.orDie)), Effect.ensuring(Effect.suspend(() => changing && discardBackup
@@ -485,7 +506,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             yield* effectOperations(selected!).destroy(id);
             yield* integrationRuntime.destroy(id);
             driverOfProject.delete(id);
-            managedProjects.delete(id);
+            recipeDefinitions.delete(id);
         }),
         close: Effect.fn("LocalProjects.step")(function* () {
             yield* Effect.forEach([node, integrationNode, ...loaded(), ...serverFrontend ? [serverFrontend] : []], driver => effectOperations(driver).close(), { concurrency: 8, discard: true });
@@ -496,7 +517,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }),
         signGatewayAuthority: Effect.fn("LocalProjects.step")(function* (id, claims) {
             const selected = driverOfProject.get(id) ?? (yield* forProjectId(id));
-            const sign = effectOperations(managedProjects.has(id) ? integrationNode : selected).signGatewayAuthority;
+            const sign = effectOperations(recipeDefinitions.get(id)?.definition.managed ? integrationNode : selected).signGatewayAuthority;
             if (!sign) return undefined;
             return yield* sign(id, claims);
         }),

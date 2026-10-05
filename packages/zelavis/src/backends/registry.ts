@@ -416,6 +416,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   startupConcurrency: "wrapper",
   custody: "wrapper",
   capabilities: "descriptor",
+  recipeDefinition: "descriptor",
   supportsLiveUpdate: "descriptor",
   prepareUpdate: "descriptor",
   gatewayTarget: "descriptor",
@@ -579,9 +580,10 @@ export function createDeploymentBackendProjectRuntime(options: {
     startupConcurrency: Math.min(
       ...uniqueRuntimes.map((runtime) => runtime.startupConcurrency ?? 4),
     ),
+    recipeDefinition: (project: Readonly<ZelavisProjectDescriptor>) => forDescriptor(project).recipeDefinition?.(project),
     capabilities: (project) => forDescriptor(project).capabilities(project),
     supportsLiveUpdate: (project: Readonly<ZelavisProjectDescriptor>) => forDescriptor(project).supportsLiveUpdate?.(project) === true,
     ...(uniqueRuntimes[0]?.custody && uniqueRuntimes.every(runtime => runtime.custody === uniqueRuntimes[0]!.custody)
       ? { custody: uniqueRuntimes[0].custody } : {}),
-  } satisfies Pick<ZelavisProjectRuntimeDriver, "name" | "runtimeKinds" | "defaultRuntimeKind" | "startupConcurrency" | "capabilities" | "supportsLiveUpdate">);
+  } satisfies Pick<ZelavisProjectRuntimeDriver, "name" | "runtimeKinds" | "defaultRuntimeKind" | "startupConcurrency" | "capabilities" | "supportsLiveUpdate" | "recipeDefinition">);
 }

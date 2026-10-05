@@ -136,6 +136,11 @@ The dashboard reloads Project configuration and versions its page URLs so change
 assets are displayed. WordPress visitors still reach the original web server;
 Gateway authority is sent only to the Project integration runtime.
 
+The Gateway and Project dashboard use the exact verified frozen recipe's managed
+app definition. npm catalogue summaries advertise installation and cannot change
+that running definition. Opening the overview does not probe unused native APIs,
+change the selected recipe version, or restart the app.
+
 The app supervisor and its processes keep serving throughout. Integration
 workers share the Project's Agent/Fabric placement, have no parent Fabric authority,
 and keep their private Zelavis state below `.zelavis/integration`. A rejected

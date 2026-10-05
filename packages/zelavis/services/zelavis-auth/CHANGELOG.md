@@ -1,5 +1,12 @@
 # @zelavis/auth
 
+## 1.1.0-alpha.22
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.22
+
 ## 1.1.0-alpha.21
 
 ### Patch Changes

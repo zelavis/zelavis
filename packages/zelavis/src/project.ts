@@ -16,6 +16,7 @@ import type {
 } from "./core/index.js";
 import type {
   ZelavisProjectRuntimeKind,
+  ZelavisProjectRecipeDefinition,
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
 } from "./service.js";
@@ -30,6 +31,7 @@ import {
 } from "./project-isolation.js";
 export * from "./project-isolation.js";
 import { normalizeProjectManaged, type ZelavisProjectManagedDefinition } from "./project-managed.js";
+export { normalizeProjectManaged };
 export type { ZelavisProjectManagedDefinition } from "./project-managed.js";
 import type {
   ZelavisSystemStore,
@@ -237,6 +239,8 @@ export interface ZelavisProjectRuntimeDriver {
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
   gatewayTarget?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<string | undefined>;
+  /** Metadata of the exact digest-verified frozen recipe, independent of catalogue summaries. */
+  recipeDefinition?(project: Readonly<ZelavisProjectDescriptor>): ZelavisProjectRecipeDefinition | undefined;
   capabilities(
     project: Readonly<ZelavisProjectDescriptor>,
   ): ZelavisProjectDriverCapabilities;
@@ -1004,7 +1008,12 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const rawRecord = rawProject as unknown as Record<string, unknown>;
         const storedRecipe = readStoredRecipeLock(rawRecord);
         const deletion = readStoredDeletionState(rawRecord);
-        const recipe = storedRecipe;
+        const definition = runtime.recipeDefinition?.({ id: rawProject.id, name: rawProject.name,
+            kind: rawProject.kind, recipe: storedRecipe, runtimeKind: normalizeRuntimeKind(rawRecord.runtimeKind ?? DEFAULT_RUNTIME_KIND) });
+        // The selected frozen package owns its definition. Catalogue metadata is
+        // only a pre-acquisition preview, never authority over running routing.
+        const recipe = definition ? { ...storedRecipe, runtimeKinds: normalizeRecipeRuntimeKinds(definition.runtimeKinds),
+            managed: definition.managed, hostPackages: definition.hostPackages, isolation: definition.isolation } : storedRecipe;
         const storedOwner = typeof (rawProject as {
             ownerProjectId?: unknown;
         }).ownerProjectId === "string"
@@ -1107,7 +1116,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (!runtimeEffects.recoverUpdate) return yield* new IntegrationFailure(new Error("Project driver cannot recover its persisted runtime update."));
         const choice = yield* runtimeEffects.recoverUpdate(project.id, intent.execution);
         const { runtimeUpdate: _intent, ...settled } = project;
-        return yield* write({ ...settled, ...intent[choice], updatedAt: new Date().toISOString() });
+        const selected = { ...settled, ...intent[choice] };
+        return yield* write({ ...selected, capabilities: runtime.capabilities(selected), updatedAt: new Date().toISOString() });
     });
     function assertProjectIsOperable(project: ZelavisProjectRecord, operation: string): void {
         if (project.deletion) {
@@ -1975,7 +1985,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 if (!live && !integrationUpdate) {
                     const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
-                    return yield* write(upgraded).pipe(Effect.onError(() => previousEngine
+                    return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(Effect.onError(() => previousEngine
                         ? runtimeEffects.prepare({ ...project, engineVersion: previousEngine }, project.recipe).pipe(Effect.orDie)
                         : Effect.void));
                 }
@@ -1991,6 +2001,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
                         ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
                     }).pipe(Effect.asVoid)));
+                    upgraded.capabilities = runtime.capabilities(upgraded);
                     if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
                     return yield* write(applySnapshot(upgraded, snapshot));
                 }).pipe(Effect.onError(cause => Effect.gen(function* () {

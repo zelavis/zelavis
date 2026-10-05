@@ -1,3 +1,4 @@
+import { normalizeProjectManaged } from "zelavis";
 import type { Allowlist, AllowlistService, AllowlistVersion } from "./types.js";
 
 export class AllowlistFormatError extends Error {
@@ -87,6 +88,12 @@ function parseService(value: unknown, where: string): AllowlistService {
   if (hostPackages && (kind !== "app" || hostPackages.length > 8 || new Set(hostPackages).size !== hostPackages.length || hostPackages.some((set) => !/^[a-z][a-z0-9-]{0,31}$/.test(set)))) {
     throw new AllowlistFormatError(`${where}.hostPackages must be at most eight distinct named sets on a Project recipe.`);
   }
+  let managed: AllowlistService["managed"];
+  if (input.managed !== undefined) {
+    if (kind !== "app") throw new AllowlistFormatError(`${where}.managed is only for Project recipes.`);
+    try { managed = normalizeProjectManaged(input.managed); }
+    catch (error) { throw new AllowlistFormatError(`${where}.managed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   const runtimeKinds = texts(input.runtimeKinds, `${where}.runtimeKinds`);
   if (input.projectRuntime !== undefined && typeof input.projectRuntime !== "boolean") {
     throw new AllowlistFormatError(`${where}.projectRuntime must be true or false.`);
@@ -103,6 +110,7 @@ function parseService(value: unknown, where: string): AllowlistService {
     ...(categories ? { categories } : {}),
     ...(tags ? { tags } : {}),
     ...(hostPackages ? { hostPackages } : {}),
+    ...(managed ? { managed } : {}),
     ...(runtimeKinds ? { runtimeKinds } : {}),
     ...(input.projectRuntime === true ? { projectRuntime: true } : {}),
     versions,

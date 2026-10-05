@@ -197,3 +197,13 @@ test("the catalogue offers each service at its latest exact version", () => {
   assert.equal(entry.service.marketplace.title, "WordPress");
   assert.deepEqual(entry.service.project, { runtimeKinds: ["native"] });
 });
+
+
+test("managed recipe metadata survives parsing and catalogue publication; invalid declarations are refused", () => {
+  const service = { ...list().services[0], managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } };
+  const parsed = parseAllowlist(list({ services: [service] }));
+  assert.deepEqual(allowlistCatalogEntries(parsed.services)[0].service.project.managed, service.managed);
+  for (const managed of [null, true, [], { adminPath: "http://localhost" }, { adminPath: "/../private" }, { unexpected: true }])
+    assert.throws(() => parseAllowlist(list({ services: [{ ...service, managed }] })), /managed/);
+  assert.throws(() => parseAllowlist(list({ services: [{ ...service, kind: "plugin" }] })), /only for Project recipes/);
+});

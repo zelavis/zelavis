@@ -155,7 +155,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
 
   // Resolve the deferred so child loaders waiting on getActiveRuntimeConfig
   // proceed with the correctly-scoped config.
-  commitNavigationRuntime(runtimeConfig);
+  commitNavigationRuntime(runtimeConfig, selectedProject);
 
   const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
   const hasDatabaseService = runtime.capabilities?.database?.available === true &&

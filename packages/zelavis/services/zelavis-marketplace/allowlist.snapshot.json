@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "sequence": 9,
-  "issuedAt": "2026-10-04T17:57:04.088Z",
-  "expiresAt": "2027-10-04T17:57:04.088Z",
+  "sequence": 10,
+  "issuedAt": "2026-10-05T12:13:18.180Z",
+  "expiresAt": "2027-10-05T12:13:18.180Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
@@ -133,6 +133,10 @@
       "hostPackages": [
         "wordpress-stack"
       ],
+      "managed": {
+        "adminTitle": "WordPress Admin",
+        "adminPath": "/wp-admin/"
+      },
       "runtimeKinds": [
         "native"
       ],

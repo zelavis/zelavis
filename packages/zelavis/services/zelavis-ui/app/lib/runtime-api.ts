@@ -1330,10 +1330,12 @@ export function getRuntimeConfig(): Promise<RuntimeConfig> {
  * in route-match order (root first), the deferred is always created before
  * child loaders execute their synchronous body.
  */
+type ActiveRuntimeConfig = RuntimeConfig & { readonly project?: RuntimeProject };
+
 let _navigationDeferred: {
   projectId: string;
-  promise: Promise<RuntimeConfig>;
-  resolve: (config: RuntimeConfig) => void;
+  promise: Promise<ActiveRuntimeConfig>;
+  resolve: (config: ActiveRuntimeConfig) => void;
   reject: (error: unknown) => void;
 } | undefined;
 
@@ -1348,9 +1350,9 @@ export function beginNavigationRuntimeResolve(
     _navigationDeferred = undefined;
     return;
   }
-  let resolve!: (config: RuntimeConfig) => void;
+  let resolve!: (config: ActiveRuntimeConfig) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<RuntimeConfig>((r, fail) => {
+  const promise = new Promise<ActiveRuntimeConfig>((r, fail) => {
     resolve = r;
     reject = fail;
   });
@@ -1362,8 +1364,8 @@ export function beginNavigationRuntimeResolve(
  * Resolve the navigation deferred with the final runtime config.
  * Called by the root loader after it determines the correct config.
  */
-export function commitNavigationRuntime(config: RuntimeConfig): void {
-  _navigationDeferred?.resolve(config);
+export function commitNavigationRuntime(config: RuntimeConfig, project?: RuntimeProject): void {
+  _navigationDeferred?.resolve({ ...config, ...(project ? { project } : {}) });
 }
 
 export function rejectNavigationRuntime(error: unknown): void {
@@ -1380,7 +1382,7 @@ export function rejectNavigationRuntime(error: unknown): void {
  */
 export async function getActiveRuntimeConfig(
   request: Request,
-): Promise<RuntimeConfig> {
+): Promise<ActiveRuntimeConfig> {
   const pathname = new URL(request.url).pathname;
   const match = pathname.match(/(?:^|\/)projects\/([^/]+)/);
   const projectId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
@@ -1394,7 +1396,11 @@ export async function getActiveRuntimeConfig(
   }
 
   const controlConfig = await getRuntimeConfig();
-  return getProjectRuntimeConfig(controlConfig, projectId);
+  const [config, project] = await Promise.all([
+    getProjectRuntimeConfig(controlConfig, projectId),
+    listProjects(controlConfig).then(result => result.projects.find(project => project.id === projectId)),
+  ]);
+  return { ...config, project };
 }
 
 export async function getDashboardAccess(

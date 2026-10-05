@@ -113,6 +113,7 @@ async function update() {
       ...(marketplaceInfo.summary ? { summary: marketplaceInfo.summary } : {}),
       ...(marketplaceInfo.categories ? { categories: marketplaceInfo.categories } : {}),
       ...(marketplaceInfo.tags ? { tags: marketplaceInfo.tags } : {}),
+      ...(manifest.zelavis.project?.managed ? { managed: manifest.zelavis.project.managed } : {}),
       ...(manifest.zelavis.project?.runtimeKinds ? { runtimeKinds: manifest.zelavis.project.runtimeKinds } : {}),
       ...(manifest.zelavis.project?.hostPackages ? { hostPackages: manifest.zelavis.project.hostPackages } : {}),
       // Recipes that ship host code are ours, so this list vouches for it.
