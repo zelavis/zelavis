@@ -145,6 +145,22 @@ repair of interrupted canonical file swaps. Stopped managed apps can refresh
 their recipe without starting or provisioning the app; their integration runtime
 opens when the running Project is accessed.
 
+The bound runtime is an ordinary private Zelavis App with Auth, Database, Storage
+and Workloads available by default. It belongs to the same managed Project and
+has no separate Project card or public app address. Services use the normal
+Project APIs or setup `core` APIs; no feature enable flags are required. Successful
+native API requests and service API calls record usage in this private runtime.
+The existing native dashboard sections appear only for APIs that have been used,
+and that usage survives updates and restarts. Internal identity database access
+and opening the dashboard do not activate unused sections. The app's own database
+and files remain separate from the bound Zelavis data.
+
+An adopted bound App follows the current qualified Platform engine through the
+same handover, without changing its recipe lock or restarting the third-party
+app. Visible native Apps keep their explicitly selected engine versions. Native
+workload definitions and run logs use the runtime's private durable store so an
+integration handover does not discard them.
+
 An integration update must preserve the app identity and deployment contract:
 runtime entry, host package set and isolation intent. A changed deployment
 contract is refused while the existing app remains available. Changing an app's

@@ -404,7 +404,22 @@ or start/stop/restart. Activate SDK menus, operation discovery, REST/setup
 endpoints and disk-backed dashboard pages in a separate Project-scoped Zelavis
 integration runtime behind the existing Gateway. It uses the shared persistent
 host/Effect handover, its private state lives below the Project's `.zelavis/integration`,
-and it shares the workload's existing Agent/Fabric placement. Never mount recipe
+and it shares the workload's existing Agent/Fabric placement. Managed apps use
+an ordinary private Zelavis App composition by default: Database, Auth, Storage
+and Workloads are available through normal Project APIs and `zelavis.setup`
+`core` APIs, without feature enable switches or a second visible Project record.
+The bound App and all its data belong to the managed Project and share its
+cleanup and authority. App software and its own database stay separate. Record
+successful subsystem requests and service-facing native API calls in the bound
+runtime's own store. Availability remains independent of usage; the dashboard
+reuses native sections only after the corresponding API has been used. Merely
+opening a managed dashboard, probing configuration, or internally using the
+identity database must not reveal unused sections. Keep usage and workloads
+through handover/restart. Adopted bound Apps converge to the current qualified
+Platform engine through the existing persistent host; preserve their recipe
+lock, running third-party app, and interrupted recipe-update recovery. Native
+visible Apps retain their explicitly selected engine versions.
+Never mount recipe
 endpoints into the Platform or forward Platform authority to third-party software.
 Adopt integration hosts separately from app processes through the same Agent;
 keep the app supervisor serving. Recover an interrupted live update from proved

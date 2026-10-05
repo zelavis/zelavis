@@ -9,6 +9,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { buttonVariants } from "#/components/ui/button";
 import { cn } from "#/lib/utils";
+import { DashboardNotFound } from "#/components/DashboardNotFound";
+import { getManagedProject } from "#/lib/routing";
 import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
@@ -17,14 +19,18 @@ export const handle = {
 } as const;
 
 export default function BackendRoute() {
-  const { projectId = "default" } = useParams();
+  const { projectId } = useParams();
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
-  const services = rootData?.runtime.services ?? [];
-
-  const hasDb = services.some((s) => s.name === "@zelavis/db");
-  const hasAuth = services.some((s) => s.name === "@zelavis/auth");
-  const hasStorage = services.some((s) => s.name === "@zelavis/storage");
-  const hasWorkloads = services.some((s) => s.name === "@zelavis/workloads");
+  if (!projectId) return <DashboardNotFound />;
+  const project = rootData?.projects.find(value => value.id === projectId);
+  const managed = getManagedProject(project);
+  const capabilities = rootData?.runtime.capabilities;
+  const visible = (name: string) => capabilities?.[name]?.available === true &&
+    (!managed || capabilities[name].used === true);
+  const hasDb = visible("database");
+  const hasAuth = visible("identity");
+  const hasStorage = visible("storage");
+  const hasWorkloads = visible("workloads");
 
   const backendSections = [
     {
@@ -55,7 +61,7 @@ export default function BackendRoute() {
       detail: "Functions, jobs, schedules, and webhooks.",
       active: hasWorkloads,
     },
-  ] as const;
+  ].filter(section => !managed || section.active);
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -78,7 +84,7 @@ export default function BackendRoute() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Server className="size-4" />
-            Backend Services
+            Backend APIs
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -122,8 +128,8 @@ export default function BackendRoute() {
       </Card>
 
       <ResourceNotice
-        title="Project-scoped Backend Architecture"
-        description="Each Zelavis project mounts dedicated, isolated instances of core backend services served by the long-running Zelavis server runtime."
+        title="Project data"
+        description="Zelavis data belongs to this Project. For managed apps, the application’s own data remains separate."
       />
     </section>
   );

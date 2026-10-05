@@ -458,7 +458,7 @@ export interface RuntimeServiceRegistryMutationResult {
 }
 
 export type RuntimeCapabilities = Readonly<
-  Record<string, { available: boolean }>
+  Record<string, { available: boolean; used?: boolean }>
 >;
 
 export interface RuntimeConfig {

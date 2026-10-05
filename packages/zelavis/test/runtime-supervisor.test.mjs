@@ -44,7 +44,14 @@ async function fixture(extra = {}) {
   const port = await Effect.runPromise(supervisor.listen({ host: "127.0.0.1", port: 0 }));
   return { directory, supervisor, port, checkpoints, commits, logs,
     url: `http://127.0.0.1:${port}`,
-    close: async () => { await Effect.runPromise(supervisor.close); await agent.close(); await rm(directory, { recursive: true, force: true }); },
+    close: async () => {
+      // Release fixture-only held requests even when an assertion fails before
+      // the test reaches its normal release, so teardown can report that failure.
+      await writeFile(join(directory, "finish"), "yes");
+      await Effect.runPromise(supervisor.close);
+      await agent.close();
+      await rm(directory, { recursive: true, force: true });
+    },
   };
 }
 async function until(predicate) {

@@ -25,8 +25,8 @@ const managedSections = {
     icon: Files,
     detail: "A project file manager and deployment file view will live here.",
   },
-  database: {
-    title: "Database",
+  "app-database": {
+    title: "App database",
     icon: Database,
     detail: "Managed app database access belongs here, separate from Zelavis-native collections.",
   },
@@ -88,7 +88,7 @@ export default function ManagedProjectSectionRoute() {
 
       <ResourceNotice
         title="Managed app boundary"
-        description="This project does not expose Zelavis-native sections like Auth, Content, and Plugins. It gets hosting controls similar to managed WordPress or generic app hosting."
+        description="Hosting controls manage the application itself. When its services use Zelavis APIs, the existing Zelavis sections appear in this project."
       />
       {managed.adminPath && params.managedSection === "admin" && siteUrl ? (
         <Button

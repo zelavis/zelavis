@@ -1,4 +1,7 @@
-import { evaluate, integration, present, unwrapFailure } from "./core/runtime/effect-boundary.js";
+import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
+import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
+import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
+import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
 import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
@@ -5962,712 +5965,1035 @@ function createEndpointGroupPrefixes(
   );
 }
 
-export async function zelavis(
+export function zelavis(
   options: ZelavisServerOptions = {},
 ): Promise<ZelavisRuntime> {
-  const compositionOptions = options as ZelavisRuntimeCompositionOptions;
-  const rootPath = normalizePath(options.rootPath, "/zelavis");
-  const apiPrefix = normalizePath(options.api?.prefix, "/api");
-  const apiVersion = normalizePathPart(options.api?.version ?? "v1");
-  // Resolved before the management core, which needs the paths this frontend
-  // claims and the design tokens it supplies. The frontend needs the runtime
-  // configuration in return, so it receives a thunk rather than the document —
-  // a frontend reads it when serving a request, long after composition.
-  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
-  const platformFrontend = await resolvePlatformFrontend(
-    options.frontend,
-    {
-      rootPath,
-      createRuntimeConfig: async () => {
-        if (!runtimeManagement) {
-          throw new Error(
-            "The runtime configuration was requested before composition finished.",
-          );
-        }
-        return runtimeManagement.createRuntimeConfig();
-      },
-    },
-  );
+  return present(
+    Effect.scoped(
+      Effect.gen(function* () {
+        let ready = false;
+        const compositionOptions = options as ZelavisRuntimeCompositionOptions;
+        const rootPath = normalizePath(options.rootPath, "/zelavis");
+        const apiPrefix = normalizePath(options.api?.prefix, "/api");
+        const apiVersion = normalizePathPart(options.api?.version ?? "v1");
+        // Resolved before the management core, which needs the paths this frontend
+        // claims and the design tokens it supplies. The frontend needs the runtime
+        // configuration in return, so it receives a thunk rather than the document —
+        // a frontend reads it when serving a request, long after composition.
+        let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
+        const platformFrontend = yield* integration(() =>
+          resolvePlatformFrontend(options.frontend, {
+            rootPath,
+            createRuntimeConfig: () => {
+              return present(
+                Effect.gen(function* () {
+                  if (!runtimeManagement) {
+                    return yield* new IntegrationFailure(
+                      new Error(
+                        "The runtime configuration was requested before composition finished.",
+                      ),
+                    );
+                  }
+                  return yield* integration(() =>
+                    runtimeManagement!.createRuntimeConfig(),
+                  );
+                }),
+              );
+            },
+          }),
+        );
 
-  const baseServiceRegistry =
-    compositionOptions.serviceRegistry?.catalog !== undefined
-      ? await loadConfiguredServiceRegistryModules(
-          compositionOptions.serviceRegistry.catalog,
-          compositionOptions.serviceRegistry.importer,
-          compositionOptions.serviceRegistry.manifestResolver,
-        )
-      : defaultDashboardServiceRegistry;
-  // The official identities are whatever the host selected from its immutable
-  // distribution (catalog entries it marked official) plus the frontend it was
-  // given. Nothing lists them by name here.
-  const protectedPackageNames = protectedOfficialPackageNames(
-    baseServiceRegistry,
-    platformFrontend?.service.name,
-  );
-  const systemStore = options.systemStore ?? createMemorySystemStore();
-  const serviceRegistryStore = resolveServiceRegistryStore(
-    compositionOptions.serviceRegistry,
-    createSystemStoreServiceRegistryStore(systemStore),
-  );
-  const initialServiceRegistryState =
-    await readInitialServiceRegistryState(serviceRegistryStore);
-  const storedServiceRegistry = await loadStoredServiceRegistryModules(
-    initialServiceRegistryState,
-    compositionOptions.serviceRegistry?.importer,
-    compositionOptions.serviceRegistry?.manifestResolver,
-  );
-  // Loaded through the same importer and manifest resolver as everything else,
-  // so a package dropped into the folder is subject to the same validation as
-  // one installed through the registry endpoints.
-  const discoveredServiceRegistry: Readonly<
-    ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
-  >[] = [];
-  for (const entry of compositionOptions.serviceRegistry?.discovered ?? []) {
-    // Refused before loading: mutable operator packages cannot silently
-    // shadow identities selected from the immutable distribution.
-    const declaredName =
-      typeof entry.manifest?.name === "string" ? entry.manifest.name : undefined;
-    if (declaredName && protectedPackageNames.has(declaredName)) {
-      console.warn(
-        `Zelavis skipped product service "${declaredName}": that official package identity cannot be shadowed by a mutable package source.`,
-      );
-      continue;
-    }
-    // A capability owner may be a bare service name or a package, so the wrong
-    // one of the two is valid, owns nothing, and produces no error — the
-    // extension simply never appears where it was meant to. Loaded anyway,
-    // because the rest of the package is fine and refusing it would turn a
-    // typo into a service that will not start.
-    for (const mistake of misscopedExtensionOwners(
-      { capabilities: entry.manifest?.zelavis?.capabilities },
-      new Set([
-        ...baseServiceRegistry.map((candidate) => candidate.service.name),
-        ...storedServiceRegistry.map((candidate) => candidate.service.name),
-      ]),
-    )) {
-      console.warn(
-        `Zelavis service "${declaredName ?? "(unnamed)"}" declares ${mistake.capabilities
-          .map((capability) => `"${mistake.declared}:${capability}"`)
-          .join(", ")}, but no service is called "${mistake.declared}". `
-          + `The service it extends is "${mistake.intended}", so nothing will list it until the capability names that instead.`,
-      );
-    }
-    try {
-      discoveredServiceRegistry.push(
-        ...(await loadServiceRegistry<ZelavisServiceSetupContext>([entry], {
-          importer: compositionOptions.serviceRegistry?.importer,
-          ...(compositionOptions.serviceRegistry?.manifestResolver
-            ? {
-                manifestResolver:
-                  compositionOptions.serviceRegistry.manifestResolver,
-              }
-            : {}),
-        })).map(asExtensionScoped),
-      );
-    } catch (error) {
-      // Loaded one at a time so a single unusable package cannot stop the
-      // Platform from booting. An operator who drops in a broken download
-      // should lose that service, not their installation.
-      console.warn(
-        `Zelavis could not load product service ${entry.specifier}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-  const knownServiceNames = new Set(
-    baseServiceRegistry.map((entry) => entry.service.name),
-  );
-  // A dropped-in package must not take over a name the installation composed
-  // itself: shadowing `@zelavis/auth` from the folder would replace the
-  // Platform's own auth with whatever was on disk.
-  const discoveredServices = discoveredServiceRegistry.filter((entry) => {
-    if (knownServiceNames.has(entry.service.name)) return false;
-    knownServiceNames.add(entry.service.name);
-    return true;
-  });
-  const completeServiceRegistry = createServiceRegistry([
-    ...baseServiceRegistry,
-    ...discoveredServices,
-    ...storedServiceRegistry.filter(
-      (entry) => !knownServiceNames.has(entry.service.name),
-    ),
-  ]);
-  const serviceRegistry = applyServiceRegistryState(
-    completeServiceRegistry,
-    initialServiceRegistryState,
-  ).map((entry) =>
-    entry.service.name === "@zelavis/auth" && options.subsystems?.auth === false
-      ? Object.freeze({ ...entry, status: "available" as const })
-      : entry,
-  );
-  // A Project runtime composes the same subsystems as the Platform. Only the
-  // home of its identity data differs: its own database, not the System Store.
-  const projectRole = options.role === "project";
-  const databaseSubsystem = await resolveDatabaseCoreService(
-    options.subsystems?.database,
-  );
-  const databaseEndpointGroups = databaseSubsystem
-    ? defineDatabaseEndpointGroups(databaseSubsystem.api)
-    : [];
-  const resolvedDatabaseApi = databaseSubsystem?.api;
-  const projectIdentityOption = options.subsystems?.auth;
-  const identityEndpointGroup = projectRole
-    ? projectIdentityOption === false
-      ? undefined
-      : await (async () => {
-          if (!resolvedDatabaseApi) {
-            throw new Error(
-              "A Project runtime requires a database for its identity. Configure the runtime's database subsystem with a storage directory.",
+        const baseServiceRegistry =
+          compositionOptions.serviceRegistry?.catalog !== undefined
+            ? yield* integration(() =>
+                loadConfiguredServiceRegistryModules(
+                  compositionOptions.serviceRegistry!.catalog!,
+                  compositionOptions.serviceRegistry!.importer,
+                  compositionOptions.serviceRegistry!.manifestResolver,
+                ),
+              )
+            : defaultDashboardServiceRegistry;
+        // The official identities are whatever the host selected from its immutable
+        // distribution (catalog entries it marked official) plus the frontend it was
+        // given. Nothing lists them by name here.
+        const protectedPackageNames = protectedOfficialPackageNames(
+          baseServiceRegistry,
+          platformFrontend?.service.name,
+        );
+        const systemStore = options.systemStore ?? createMemorySystemStore();
+        yield* Effect.addFinalizer(() =>
+          ready
+            ? Effect.void
+            : integration(() => systemStore.close?.()).pipe(Effect.orDie),
+        );
+        const apiUsage = yield* createRuntimeApiUsage(systemStore);
+        const serviceRegistryStore = resolveServiceRegistryStore(
+          compositionOptions.serviceRegistry,
+          createSystemStoreServiceRegistryStore(systemStore),
+        );
+        const initialServiceRegistryState = yield* integration(() =>
+          readInitialServiceRegistryState(serviceRegistryStore),
+        );
+        const storedServiceRegistry = yield* integration(() =>
+          loadStoredServiceRegistryModules(
+            initialServiceRegistryState,
+            compositionOptions.serviceRegistry?.importer,
+            compositionOptions.serviceRegistry?.manifestResolver,
+          ),
+        );
+        // Loaded through the same importer and manifest resolver as everything else,
+        // so a package dropped into the folder is subject to the same validation as
+        // one installed through the registry endpoints.
+        const discoveredServiceRegistry: Readonly<
+          ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
+        >[] = [];
+        for (const entry of compositionOptions.serviceRegistry?.discovered ??
+          []) {
+          // Refused before loading: mutable operator packages cannot silently
+          // shadow identities selected from the immutable distribution.
+          const declaredName =
+            typeof entry.manifest?.name === "string"
+              ? entry.manifest.name
+              : undefined;
+          if (declaredName && protectedPackageNames.has(declaredName)) {
+            console.warn(
+              `Zelavis skipped product service "${declaredName}": that official package identity cannot be shadowed by a mutable package source.`,
+            );
+            continue;
+          }
+          // A capability owner may be a bare service name or a package, so the wrong
+          // one of the two is valid, owns nothing, and produces no error — the
+          // extension simply never appears where it was meant to. Loaded anyway,
+          // because the rest of the package is fine and refusing it would turn a
+          // typo into a service that will not start.
+          for (const mistake of misscopedExtensionOwners(
+            { capabilities: entry.manifest?.zelavis?.capabilities },
+            new Set([
+              ...baseServiceRegistry.map((candidate) => candidate.service.name),
+              ...storedServiceRegistry.map(
+                (candidate) => candidate.service.name,
+              ),
+            ]),
+          )) {
+            console.warn(
+              `Zelavis service "${declaredName ?? "(unnamed)"}" declares ${mistake.capabilities
+                .map((capability) => `"${mistake.declared}:${capability}"`)
+                .join(
+                  ", ",
+                )}, but no service is called "${mistake.declared}". ` +
+                `The service it extends is "${mistake.intended}", so nothing will list it until the capability names that instead.`,
             );
           }
-          const platformMetadata = options.serviceContext?.platform?.metadata;
-          return createProjectIdentityEndpointGroup({
-            database: resolvedDatabaseApi,
-            registry: serviceRegistry,
-            methods: collectAuthMethodPlugins(serviceRegistry),
-            projectId:
-              typeof platformMetadata?.projectId === "string"
-                ? platformMetadata.projectId
-                : undefined,
-            options: projectIdentityOption === true || projectIdentityOption === undefined
-              ? undefined
-              : projectIdentityOption,
-          });
-        })()
-    : await resolveAuthCoreService(
-        options.subsystems?.auth,
-        collectAuthMethodPlugins(serviceRegistry),
-        systemStore,
-        serviceRegistry,
-        collectAuthMethodServiceNames(serviceRegistry),
-        rootPath,
-        options.bootstrap?.token ?? readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
-      );
-  // A Project's face is the static frontend installed in its own services
-  // folder, mounted at its root. Until one is installed the placeholder answers.
-  const projectSiteFrontend = projectRole
-    ? [...serviceRegistry]
-        .filter(
-          (entry) => entry.status === "installed" && isSiteFrontendService(entry.service),
-        )
-        // Deterministic when discovery finds several: declared order, then
-        // name. Selecting through the registry keeps it to one.
-        .sort(
-          (left, right) =>
-            (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER) ||
-            left.service.name.localeCompare(right.service.name),
-        )[0]?.service.name
-    : undefined;
-  const activatedServices = await activateServiceRegistry(
-    serviceRegistry,
-    {
-      rootPath,
-      api: {
-        prefix: apiPrefix,
-        version: apiVersion,
-        basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
-      },
-      platform: createServiceSetupPlatformContext(options.serviceContext?.platform),
-      core: {
-        ...(resolvedDatabaseApi ? { database: resolvedDatabaseApi } : {}),
-      },
-    },
-    {
-      bundleStore: options.bundleStore,
-      domainBindings: options.domainBindings,
-      ...(projectSiteFrontend ? { siteFrontendName: projectSiteFrontend } : {}),
-      // Scoped per service, so the namespace a plugin writes to is decided
-      // here rather than by the plugin naming one for itself.
-      serviceStore: (serviceName: string) =>
-        createServiceStore(systemStore, serviceName),
-    },
-  );
-  const serviceRuntimeServices = await Promise.all(activatedServices.services);
-  const serviceEndpointGroups = await Promise.all(activatedServices.endpointGroups);
-  const dashboardSettingsStore = resolveRuntimeSettingsStore(
-    options.runtimeSettingsStore,
-    createSystemStoreDashboardSettingsStore(systemStore),
-  );
-  const siteEnabled = options.subsystems?.site !== false;
-  // Every installation serves something at its root, and what that is depends
-  // on which installation it is.
-  //
-  // An installation that runs the dashboard *is* its own product: the dashboard
-  // is its default frontend, so `/` leads there. A Project runtime has no such
-  // default — it exists to host something that has not been chosen yet — so it
-  // serves the placeholder until a Frontend is installed.
-  //
-  // Either way `/` answers, rather than returning the 404 that reads as a
-  // broken installation.
-
-  let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
-  // Filled in once mounting resolves them, and read at request time.
-  let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
-
-  const configuredAuth = options.subsystems?.auth;
-  const configuredSessionCookie = typeof configuredAuth === "object" ? configuredAuth.definition?.sessionCookie : undefined;
-  const protectedCookieNames = configuredSessionCookie && configuredSessionCookie.name ? [configuredSessionCookie.name] : [];
-
-  const websiteService = !siteEnabled || projectSiteFrontend
-      ? undefined
-      : createProjectFrontendPlaceholderService({
-          reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
-          ...(options.role === "project" ? {} : { redirectTo: rootPath }),
-          publicDomains: {
-            protectedCookieNames,
-            fetchSite: options.publicSiteFetch,
-            ...(options.domainBindings ? { domainBindings: options.domainBindings } : {}),
-            // Late-bound: the Project manager is composed after this service.
-            projects: () => projects,
-          },
+          yield* integration(() =>
+            loadServiceRegistry<ZelavisServiceSetupContext>([entry], {
+              importer: compositionOptions.serviceRegistry?.importer,
+              ...(compositionOptions.serviceRegistry?.manifestResolver
+                ? {
+                    manifestResolver:
+                      compositionOptions.serviceRegistry.manifestResolver,
+                  }
+                : {}),
+            }),
+          ).pipe(
+            Effect.tap((loaded) =>
+              Effect.sync(() => {
+                discoveredServiceRegistry.push(
+                  ...loaded.map(asExtensionScoped),
+                );
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                console.warn(
+                  `Zelavis could not load product service ${entry.specifier}: ${String(unwrapFailure(error))}`,
+                );
+              }),
+            ),
+          );
+        }
+        const knownServiceNames = new Set(
+          baseServiceRegistry.map((entry) => entry.service.name),
+        );
+        // A dropped-in package must not take over a name the installation composed
+        // itself: shadowing `@zelavis/auth` from the folder would replace the
+        // Platform's own auth with whatever was on disk.
+        const discoveredServices = discoveredServiceRegistry.filter((entry) => {
+          if (knownServiceNames.has(entry.service.name)) return false;
+          knownServiceNames.add(entry.service.name);
+          return true;
         });
-  const storageEndpointGroup = await resolveStorageEndpointGroup(options.subsystems?.storage, {
-        rootPath,
-        apiPrefix,
-        apiVersion,
-      });
-  const workloadsCoreService = await resolveWorkloadsCoreService(options.subsystems?.workloads);
-  const deletionAssistant = systemStore
-    ? createAssistantManager({ store: systemStore })
-    : undefined;
-  const edgeRoutes =
-    options.edgeRoutes ??
-    (systemStore ? createZelavisEdgeRouteStore({ store: systemStore }) : undefined);
-  const edgeCertificates =
-    options.edgeCertificates ??
-    options.subsystems?.edgeCertificates;
-  const deploymentBackends =
-    systemStore && options.deploymentBackends?.length
-      ? createDeploymentBackendManager({
-          store: systemStore,
-          backends: options.deploymentBackends,
-          assignedProjectCount: async (backendId) =>
-            (await systemStore.list("projects")).filter((record) => {
-              if (
-                !record.value ||
-                typeof record.value !== "object" ||
-                Array.isArray(record.value)
-              ) {
-                return false;
-              }
-              const value = record.value as Readonly<Record<string, unknown>>;
-              return value.runtimeKind === backendId;
-            }).length,
-        })
-      : undefined;
-  const projectRuntime = systemStore && options.deploymentBackends?.length
-    ? createDeploymentBackendProjectRuntime({
-        store: systemStore,
-        backends: options.deploymentBackends,
-      }) ?? options.projectRuntime
-    : options.projectRuntime;
-  const projectPlacementAuthority = options.subsystems?.fabric === false
-    ? undefined
-    : createProjectPlacementAuthority({
-        store: systemStore,
-        mayPlace: async (projectId, nodeId) => {
-          const project = await systemStore.get("projects", projectId);
-          if (!project || !fabricCoreService) return false;
-          const node = await fabricCoreService.context.getNode(nodeId);
-          return node?.status === "ready" || node?.status === "degraded";
-        },
-        ...(projectRuntime?.fencePrevious
-          ? { fencePrevious: (previous: ProjectPlacementRecord) =>
-              projectRuntime.fencePrevious!({
-                projectId: previous.projectId,
-                nodeId: previous.nodeId,
-                ownerSession: previous.ownerSession,
-                epoch: previous.epoch,
-              }) }
-          : {}),
-      });
-  const projects =
-    systemStore && projectRuntime
-      ? await createProjectManager({
-          projectRecipes: serviceRegistry,
-          store: systemStore,
-          runtime: projectRuntime,
-          ...(options.edgePreviews ? { synchronizeIngress: (project) => options.edgePreviews!.synchronize(project) } : {}),
-          // Resolved lazily: Fabric is composed further down, after the
-          // Project manager it plans for. Reconciliation is deferred to match,
-          // because it runs once and a pass before Fabric exists would enforce
-          // nothing.
-          placement: () => fabricCoreService?.context,
-          ...(projectPlacementAuthority
-            ? { authoritativePlacement: projectPlacementAuthority }
-            : {}),
-          dispatch: () => ({
-            localNodeId: resolveLocalNodeId(options.subsystems?.fabric),
-            ...(options.projectDispatcher?.dispatchStart
-              ? { dispatchStart: options.projectDispatcher.dispatchStart }
-              : {}),
-            ...(options.projectDispatcher?.authorizeDispatch
-              ? { authorizeDispatch: options.projectDispatcher.authorizeDispatch }
-              : {}),
-            ...(options.projectDispatcher?.dispatchLeaseFenced
-              ? { dispatchLeaseFenced: options.projectDispatcher.dispatchLeaseFenced }
-              : {}),
-            ...(options.projectDispatcher?.dispatchStartFenced
-              ? { dispatchStartFenced: options.projectDispatcher.dispatchStartFenced }
-              : {}),
-            ...(options.projectDispatcher?.dispatchStopFenced
-              ? { dispatchStopFenced: options.projectDispatcher.dispatchStopFenced }
-              : {}),
-          }),
-          autoReconcile: false,
-          ...(deploymentBackends
-            ? {
-                resolveDefaultRuntimeKind: async () =>
-                  (await deploymentBackends.getPolicy()).defaultBackend,
-                // Administrator order (the order backends were enabled in),
-                // restricted to ones that can run a Project here right now.
-                resolveAlternativeRuntimeKinds: async () => {
-                  const [policy, snapshots] = await Promise.all([
-                    deploymentBackends.getPolicy(),
-                    deploymentBackends.list(),
-                  ]);
-                  const runnable = new Set(
-                    snapshots
-                      .filter((backend) =>
-                        backend.executable && backend.detection.state === "ready")
-                      .map((backend) => backend.id),
-                  );
-                  return policy.enabledBackends.filter((id) => runnable.has(id));
-                },
-                // Only a backend that can execute Projects describes a
-                // Project's isolation; a detection-only adapter's capability
-                // literals prove nothing about how a Project would run.
-                backendCapabilities: (runtimeKind: string) => {
-                  const backend = options.deploymentBackends?.find(
-                    (candidate) => candidate.id === runtimeKind,
-                  );
-                  return backend?.projectRuntime ? backend.capabilities : undefined;
-                },
-              }
-            : {}),
-          cleanupParticipants: [
-            ...(options.edgePreviews ? [{
-              id: "edge-preview",
-              cleanup: (project: Readonly<ZelavisProjectRecord>) => options.edgePreviews!.remove(project.id),
-            }] : []),
-            {
-              id: "project-placement-authority",
-              cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                deleteProjectPlacementAuthority(systemStore, project.id),
-            },
-            {
-              id: "app-data-placement",
-              cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                deleteAppShardPlacementReservations(systemStore, project.id),
-            },
-            ...(systemStore
-              ? [{
-                  id: "assistant-provider",
-                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                    removeProjectAssistantProvider(systemStore, project.id),
-                }]
-              : []),
-            ...(deletionAssistant
-              ? [{
-                  id: "assistant-threads",
-                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                    deletionAssistant
-                      .deleteProjectThreads(project.id, (threadId) =>
-                        createAssistantApprovalStore(systemStore!).deleteForThread(threadId),
-                      )
-                      .then(() => undefined),
-                }]
-              : []),
-            ...(options.domainBindings
-              ? [{
-                  id: "domain-bindings",
-                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                    deleteProjectDomainBindings(
-                      options.domainBindings!,
-                      project.id,
-                    ).then(() => undefined),
-                }]
-              : []),
-            ...(options.bundleStore
-              ? [{
-                  id: "bundle-assets",
-                  cleanup: async (project: Readonly<ZelavisProjectRecord>) => {
-                    if (!options.bundleStore?.deleteProject) {
-                      throw new Error(
-                        "The configured BundleStore cannot delete Project-owned assets.",
-                      );
-                    }
-                    await options.bundleStore.deleteProject(project.id);
-                  },
-                }]
-              : []),
-            ...(edgeRoutes
-              ? [{
-                  id: "edge-routes",
-                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                    edgeRoutes.deleteProjectRoutes(project.id).then(
-                      () => undefined,
+        const completeServiceRegistry = createServiceRegistry([
+          ...baseServiceRegistry,
+          ...discoveredServices,
+          ...storedServiceRegistry.filter(
+            (entry) => !knownServiceNames.has(entry.service.name),
+          ),
+        ]);
+        const serviceRegistry = applyServiceRegistryState(
+          completeServiceRegistry,
+          initialServiceRegistryState,
+        ).map((entry) =>
+          entry.service.name === "@zelavis/auth" &&
+          options.subsystems?.auth === false
+            ? Object.freeze({ ...entry, status: "available" as const })
+            : entry,
+        );
+        // A Project runtime composes the same subsystems as the Platform. Only the
+        // home of its identity data differs: its own database, not the System Store.
+        const projectRole = options.role === "project";
+        const databaseSubsystem = yield* integration(() =>
+          resolveDatabaseCoreService(options.subsystems?.database),
+        );
+        yield* Effect.addFinalizer(() =>
+          ready
+            ? Effect.void
+            : integration(() => databaseSubsystem?.close?.()).pipe(
+                Effect.orDie,
+              ),
+        );
+        const databaseEndpointGroups = databaseSubsystem
+          ? defineDatabaseEndpointGroups(databaseSubsystem.api)
+          : [];
+        const resolvedDatabaseApi = databaseSubsystem?.api;
+        const projectIdentityOption = options.subsystems?.auth;
+        const identityEndpointGroup = projectRole
+          ? projectIdentityOption === false
+            ? undefined
+            : yield* Effect.gen(function* () {
+                if (!resolvedDatabaseApi)
+                  return yield* new IntegrationFailure(
+                    new Error(
+                      "A Project runtime requires a database for its identity. Configure the runtime's database subsystem with a storage directory.",
                     ),
-                }]
-              : []),
+                  );
+                const platformMetadata =
+                  options.serviceContext?.platform?.metadata;
+                return yield* integration(() =>
+                  createProjectIdentityEndpointGroup({
+                    database: resolvedDatabaseApi,
+                    registry: serviceRegistry,
+                    methods: collectAuthMethodPlugins(serviceRegistry),
+                    projectId:
+                      typeof platformMetadata?.projectId === "string"
+                        ? platformMetadata.projectId
+                        : undefined,
+                    options:
+                      projectIdentityOption === true ||
+                      projectIdentityOption === undefined
+                        ? undefined
+                        : projectIdentityOption,
+                  }),
+                );
+              })
+          : yield* integration(() =>
+              resolveAuthCoreService(
+                options.subsystems?.auth,
+                collectAuthMethodPlugins(serviceRegistry),
+                systemStore,
+                serviceRegistry,
+                collectAuthMethodServiceNames(serviceRegistry),
+                rootPath,
+                options.bootstrap?.token ??
+                  readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
+              ),
+            );
+        // A Project's face is the static frontend installed in its own services
+        // folder, mounted at its root. Until one is installed the placeholder answers.
+        const projectSiteFrontend = projectRole
+          ? [...serviceRegistry]
+              .filter(
+                (entry) =>
+                  entry.status === "installed" &&
+                  isSiteFrontendService(entry.service),
+              )
+              // Deterministic when discovery finds several: declared order, then
+              // name. Selecting through the registry keeps it to one.
+              .sort(
+                (left, right) =>
+                  (left.order ?? Number.MAX_SAFE_INTEGER) -
+                    (right.order ?? Number.MAX_SAFE_INTEGER) ||
+                  left.service.name.localeCompare(right.service.name),
+              )[0]?.service.name
+          : undefined;
+        const storageEndpointGroup = yield* integration(() =>
+          resolveStorageEndpointGroup(options.subsystems?.storage, {
+            rootPath,
+            apiPrefix,
+            apiVersion,
+          }),
+        );
+        const workloadsCoreService = yield* integration(() =>
+          resolveWorkloadsCoreService(
+            options.subsystems?.workloads === false
+              ? false
+              : {
+                  ...(typeof options.subsystems?.workloads === "object"
+                    ? options.subsystems.workloads
+                    : {}),
+                  store:
+                    (typeof options.subsystems?.workloads === "object"
+                      ? options.subsystems.workloads.store
+                      : undefined) ??
+                    createSystemStoreWorkloadsStore(systemStore),
+                },
+          ),
+        );
+        const activatedServices = yield* integration(() =>
+          activateServiceRegistry(
+            serviceRegistry,
+            {
+              rootPath,
+              api: {
+                prefix: apiPrefix,
+                version: apiVersion,
+                basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
+              },
+              platform: createServiceSetupPlatformContext(
+                options.serviceContext?.platform,
+              ),
+              core: {
+                ...(resolvedDatabaseApi
+                  ? {
+                      database: apiUsage.observe(
+                        resolvedDatabaseApi,
+                        "database",
+                      ),
+                    }
+                  : {}),
+                ...(identityEndpointGroup
+                  ? {
+                      auth: apiUsage.observe(
+                        identityEndpointGroup.context,
+                        "identity",
+                      ),
+                    }
+                  : {}),
+                ...(storageEndpointGroup
+                  ? {
+                      storage: apiUsage.observe(
+                        storageEndpointGroup.context.storage,
+                        "storage",
+                      ),
+                    }
+                  : {}),
+                ...(workloadsCoreService
+                  ? {
+                      workloads: apiUsage.observe(
+                        workloadsCoreService.context,
+                        "workloads",
+                      ),
+                    }
+                  : {}),
+              },
+            },
+            {
+              bundleStore: options.bundleStore,
+              domainBindings: options.domainBindings,
+              ...(projectSiteFrontend
+                ? { siteFrontendName: projectSiteFrontend }
+                : {}),
+              // Scoped per service, so the namespace a plugin writes to is decided
+              // here rather than by the plugin naming one for itself.
+              serviceStore: (serviceName: string) =>
+                createServiceStore(systemStore, serviceName),
+            },
+          ),
+        );
+        yield* apiUsage.flush;
+        const serviceRuntimeServices = yield* Effect.forEach(
+          activatedServices.services,
+          (value) => integration(() => value),
+          { concurrency: 4 },
+        );
+        const serviceEndpointGroups = yield* Effect.forEach(
+          activatedServices.endpointGroups,
+          (value) => integration(() => value),
+          { concurrency: 4 },
+        );
+        const dashboardSettingsStore = resolveRuntimeSettingsStore(
+          options.runtimeSettingsStore,
+          createSystemStoreDashboardSettingsStore(systemStore),
+        );
+        const siteEnabled = options.subsystems?.site !== false;
+        // Every installation serves something at its root, and what that is depends
+        // on which installation it is.
+        //
+        // An installation that runs the dashboard *is* its own product: the dashboard
+        // is its default frontend, so `/` leads there. A Project runtime has no such
+        // default — it exists to host something that has not been chosen yet — so it
+        // serves the placeholder until a Frontend is installed.
+        //
+        // Either way `/` answers, rather than returning the 404 that reads as a
+        // broken installation.
+
+        let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
+        // Filled in once mounting resolves them, and read at request time.
+        let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
+
+        const configuredAuth = options.subsystems?.auth;
+        const configuredSessionCookie =
+          typeof configuredAuth === "object"
+            ? configuredAuth.definition?.sessionCookie
+            : undefined;
+        const protectedCookieNames =
+          configuredSessionCookie && configuredSessionCookie.name
+            ? [configuredSessionCookie.name]
+            : [];
+
+        const websiteService =
+          !siteEnabled || projectSiteFrontend
+            ? undefined
+            : createProjectFrontendPlaceholderService({
+                reservedPrefixes: [
+                  rootPath,
+                  joinPathParts(rootPath, apiPrefix),
+                ],
+                ...(options.role === "project" ? {} : { redirectTo: rootPath }),
+                publicDomains: {
+                  protectedCookieNames,
+                  fetchSite: options.publicSiteFetch,
+                  ...(options.domainBindings
+                    ? { domainBindings: options.domainBindings }
+                    : {}),
+                  // Late-bound: the Project manager is composed after this service.
+                  projects: () => projects,
+                },
+              });
+        const deletionAssistant = systemStore
+          ? createAssistantManager({ store: systemStore })
+          : undefined;
+        const edgeRoutes =
+          options.edgeRoutes ??
+          (systemStore
+            ? createZelavisEdgeRouteStore({ store: systemStore })
+            : undefined);
+        const edgeCertificates =
+          options.edgeCertificates ?? options.subsystems?.edgeCertificates;
+        const deploymentBackends =
+          systemStore && options.deploymentBackends?.length
+            ? createDeploymentBackendManager({
+                store: systemStore,
+                backends: options.deploymentBackends,
+                assignedProjectCount: (backendId) => {
+                  return present(
+                    Effect.gen(function* () {
+                      return (yield* integration(() =>
+                        systemStore.list("projects"),
+                      )).filter((record) => {
+                        if (
+                          !record.value ||
+                          typeof record.value !== "object" ||
+                          Array.isArray(record.value)
+                        ) {
+                          return false;
+                        }
+                        const value = record.value as Readonly<
+                          Record<string, unknown>
+                        >;
+                        return value.runtimeKind === backendId;
+                      }).length;
+                    }),
+                  );
+                },
+              })
+            : undefined;
+        const projectRuntime =
+          systemStore && options.deploymentBackends?.length
+            ? (createDeploymentBackendProjectRuntime({
+                store: systemStore,
+                backends: options.deploymentBackends,
+              }) ?? options.projectRuntime)
+            : options.projectRuntime;
+        const projectPlacementAuthority =
+          options.subsystems?.fabric === false
+            ? undefined
+            : createProjectPlacementAuthority({
+                store: systemStore,
+                mayPlace: (projectId, nodeId) => {
+                  return present(
+                    Effect.gen(function* () {
+                      const project = yield* integration(() =>
+                        systemStore.get("projects", projectId),
+                      );
+                      if (!project || !fabricCoreService) return false;
+                      const node = yield* integration(() =>
+                        fabricCoreService.context.getNode(nodeId),
+                      );
+                      return (
+                        node?.status === "ready" || node?.status === "degraded"
+                      );
+                    }),
+                  );
+                },
+                ...(projectRuntime?.fencePrevious
+                  ? {
+                      fencePrevious: (previous: ProjectPlacementRecord) =>
+                        projectRuntime.fencePrevious!({
+                          projectId: previous.projectId,
+                          nodeId: previous.nodeId,
+                          ownerSession: previous.ownerSession,
+                          epoch: previous.epoch,
+                        }),
+                    }
+                  : {}),
+              });
+        const projects =
+          systemStore && projectRuntime
+            ? yield* integration(() =>
+                createProjectManager({
+                  projectRecipes: serviceRegistry,
+                  store: systemStore,
+                  runtime: projectRuntime,
+                  ...(options.edgePreviews
+                    ? {
+                        synchronizeIngress: (project) =>
+                          options.edgePreviews!.synchronize(project),
+                      }
+                    : {}),
+                  // Resolved lazily: Fabric is composed further down, after the
+                  // Project manager it plans for. Reconciliation is deferred to match,
+                  // because it runs once and a pass before Fabric exists would enforce
+                  // nothing.
+                  placement: () => fabricCoreService?.context,
+                  ...(projectPlacementAuthority
+                    ? { authoritativePlacement: projectPlacementAuthority }
+                    : {}),
+                  dispatch: () => ({
+                    localNodeId: resolveLocalNodeId(options.subsystems?.fabric),
+                    ...(options.projectDispatcher?.dispatchStart
+                      ? {
+                          dispatchStart:
+                            options.projectDispatcher.dispatchStart,
+                        }
+                      : {}),
+                    ...(options.projectDispatcher?.authorizeDispatch
+                      ? {
+                          authorizeDispatch:
+                            options.projectDispatcher.authorizeDispatch,
+                        }
+                      : {}),
+                    ...(options.projectDispatcher?.dispatchLeaseFenced
+                      ? {
+                          dispatchLeaseFenced:
+                            options.projectDispatcher.dispatchLeaseFenced,
+                        }
+                      : {}),
+                    ...(options.projectDispatcher?.dispatchStartFenced
+                      ? {
+                          dispatchStartFenced:
+                            options.projectDispatcher.dispatchStartFenced,
+                        }
+                      : {}),
+                    ...(options.projectDispatcher?.dispatchStopFenced
+                      ? {
+                          dispatchStopFenced:
+                            options.projectDispatcher.dispatchStopFenced,
+                        }
+                      : {}),
+                  }),
+                  autoReconcile: false,
+                  ...(deploymentBackends
+                    ? {
+                        resolveDefaultRuntimeKind: () => {
+                          return present(
+                            Effect.gen(function* () {
+                              return (yield* integration(() =>
+                                deploymentBackends.getPolicy(),
+                              )).defaultBackend;
+                            }),
+                          );
+                        },
+                        // Administrator order (the order backends were enabled in),
+                        // restricted to ones that can run a Project here right now.
+                        resolveAlternativeRuntimeKinds: () => {
+                          return present(
+                            Effect.gen(function* () {
+                              const { policy, snapshots } = yield* Effect.all(
+                                {
+                                  policy: integration(() =>
+                                    deploymentBackends.getPolicy(),
+                                  ),
+                                  snapshots: integration(() =>
+                                    deploymentBackends.list(),
+                                  ),
+                                },
+                                { concurrency: 2 },
+                              );
+                              const runnable = new Set(
+                                snapshots
+                                  .filter(
+                                    (backend) =>
+                                      backend.executable &&
+                                      backend.detection.state === "ready",
+                                  )
+                                  .map((backend) => backend.id),
+                              );
+                              return policy.enabledBackends.filter((id) =>
+                                runnable.has(id),
+                              );
+                            }),
+                          );
+                        },
+                        // Only a backend that can execute Projects describes a
+                        // Project's isolation; a detection-only adapter's capability
+                        // literals prove nothing about how a Project would run.
+                        backendCapabilities: (runtimeKind: string) => {
+                          const backend = options.deploymentBackends?.find(
+                            (candidate) => candidate.id === runtimeKind,
+                          );
+                          return backend?.projectRuntime
+                            ? backend.capabilities
+                            : undefined;
+                        },
+                      }
+                    : {}),
+                  cleanupParticipants: [
+                    ...(options.edgePreviews
+                      ? [
+                          {
+                            id: "edge-preview",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) => options.edgePreviews!.remove(project.id),
+                          },
+                        ]
+                      : []),
+                    {
+                      id: "project-placement-authority",
+                      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                        deleteProjectPlacementAuthority(
+                          systemStore,
+                          project.id,
+                        ),
+                    },
+                    {
+                      id: "app-data-placement",
+                      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                        deleteAppShardPlacementReservations(
+                          systemStore,
+                          project.id,
+                        ),
+                    },
+                    ...(systemStore
+                      ? [
+                          {
+                            id: "assistant-provider",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) =>
+                              removeProjectAssistantProvider(
+                                systemStore,
+                                project.id,
+                              ),
+                          },
+                        ]
+                      : []),
+                    ...(deletionAssistant
+                      ? [
+                          {
+                            id: "assistant-threads",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) =>
+                              deletionAssistant
+                                .deleteProjectThreads(project.id, (threadId) =>
+                                  createAssistantApprovalStore(
+                                    systemStore!,
+                                  ).deleteForThread(threadId),
+                                )
+                                .then(() => undefined),
+                          },
+                        ]
+                      : []),
+                    ...(options.domainBindings
+                      ? [
+                          {
+                            id: "domain-bindings",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) =>
+                              deleteProjectDomainBindings(
+                                options.domainBindings!,
+                                project.id,
+                              ).then(() => undefined),
+                          },
+                        ]
+                      : []),
+                    ...(options.bundleStore
+                      ? [
+                          {
+                            id: "bundle-assets",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) => {
+                              return present(
+                                Effect.gen(function* () {
+                                  if (!options.bundleStore?.deleteProject) {
+                                    return yield* new IntegrationFailure(
+                                      new Error(
+                                        "The configured BundleStore cannot delete Project-owned assets.",
+                                      ),
+                                    );
+                                  }
+                                  yield* integration(() =>
+                                    options.bundleStore!.deleteProject!(
+                                      project.id,
+                                    ),
+                                  );
+                                }),
+                              );
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(edgeRoutes
+                      ? [
+                          {
+                            id: "edge-routes",
+                            cleanup: (
+                              project: Readonly<ZelavisProjectRecord>,
+                            ) =>
+                              edgeRoutes
+                                .deleteProjectRoutes(project.id)
+                                .then(() => undefined),
+                          },
+                        ]
+                      : []),
+                  ],
+                }),
+              )
+            : undefined;
+        const fabricCoreService = resolveFabricCoreService(
+          options.subsystems?.fabric,
+          {
+            projects,
+            placementAuthority: projectPlacementAuthority,
+            runtimeEngine: detectCurrentRuntimeEngine(
+              options.serviceContext?.platform?.metadata,
+            ),
+          },
+        );
+        const siteMounted =
+          Boolean(websiteService) || Boolean(projectSiteFrontend);
+        // An installation with no frontend still serves its API. The root path
+        // explains that rather than returning a 404, which reads as a broken
+        // deployment when it is a supported state — and it is the only way to have
+        // no frontend, so there is nothing to reconcile against a second switch.
+        const frontendPackageService = platformFrontend?.service;
+        const missingFrontendComponent = platformFrontend
+          ? undefined
+          : createMissingPlatformFrontendService({
+              rootPath,
+              reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
+              ...(readFrontendTitle(options.frontend)
+                ? { title: readFrontendTitle(options.frontend)! }
+                : {}),
+            });
+        // Synthesize the sibling app service through the same primitive user
+        // services use, then hide the service-only `app` field from the externally
+        // visible service map.
+        const dashboardAppService = platformFrontend
+          ? yield* integration(() =>
+              synthesizeFrontendAppService(platformFrontend),
+            )
+          : undefined;
+        const sanitizedDashboardService = frontendPackageService
+          ? stripFrontendServiceFields(frontendPackageService)
+          : undefined;
+
+        runtimeManagement = yield* integration(() =>
+          resolveRuntimeManagementCore(options.frontend, {
+            apiPrefix,
+            apiVersion,
+            serviceRegistry,
+            serviceRegistryStore,
+            serviceImporter: compositionOptions.serviceRegistry?.importer,
+            serviceManifestResolver:
+              compositionOptions.serviceRegistry?.manifestResolver,
+            servicePackageInstaller: options.servicePackageInstaller,
+            marketplace: options.marketplace,
+            updates: options.updates,
+            serviceActivation: options.serviceActivation,
+            rootPath,
+            getServices: () => runtimeConfigServices,
+            getEndpointGroups: () => serviceEndpointGroups,
+            exclusiveSiteFrontend: projectRole,
+            getMountedRoutes: () => mountedRoutes ?? [],
+            settingsStore: dashboardSettingsStore,
+            siteEnabled: siteMounted,
+            bundleStore: options.bundleStore,
+            platform: options.serviceContext?.platform,
+            ...(platformFrontend?.clientRoutes
+              ? { frontendClientRoutes: platformFrontend.clientRoutes }
+              : {}),
+            ...(platformFrontend?.servicePageStylesheet
+              ? {
+                  servicePageStylesheet: platformFrontend.servicePageStylesheet,
+                }
+              : {}),
+            ...(platformFrontend?.serviceElementsScript
+              ? {
+                  serviceElementsScript: platformFrontend.serviceElementsScript,
+                }
+              : {}),
+            ...(frontendPackageService
+              ? { frontendServiceName: frontendPackageService.name }
+              : {}),
+            capabilities: apiUsage.capabilities({
+              server: { available: true },
+              fabric: { available: Boolean(fabricCoreService) },
+              database: { available: Boolean(databaseSubsystem) },
+              identity: { available: Boolean(identityEndpointGroup) },
+              storage: { available: Boolean(storageEndpointGroup) },
+              workloads: { available: Boolean(workloadsCoreService) },
+              site: { available: siteMounted },
+            }),
+          }),
+        );
+        // Composition is far enough along for placement to resolve, so the startup
+        // reconcile can run with the group rule in force. Fire-and-forget, as before:
+        // Platform readiness does not wait for every Project runtime.
+        options.edgePreviews?.configure((projectId, request) => {
+          return present(
+            Effect.gen(function* () {
+              const project = yield* integration(() =>
+                projects?.get(projectId),
+              );
+              if (!project || project.deletion)
+                return new Response("Site not found.", { status: 404 });
+              const placement = yield* integration(() =>
+                fabricCoreService?.context.getProjectPlacement(projectId),
+              );
+              const node = placement
+                ? yield* integration(() =>
+                    fabricCoreService?.context.getNode(placement.runtimeNodeId),
+                  )
+                : undefined;
+              if (
+                !placement ||
+                placement.identity.type !== "project" ||
+                placement.identity.workloadId !== projectId ||
+                placement.state !== "active" ||
+                !node ||
+                node.status === "unavailable"
+              ) {
+                return new Response("Site placement is unavailable.", {
+                  status: 503,
+                });
+              }
+              // Preview requests are visitors, never Platform principals. The site's
+              // native control-plane paths and Platform credentials are withheld.
+              return toResponse(
+                yield* integration(() =>
+                  forwardProjectSiteRequest(
+                    {
+                      projects: projects!,
+                      project,
+                      protectedCookieNames,
+                      fetchSite: options.publicSiteFetch,
+                    },
+                    request,
+                  ),
+                ),
+              );
+            }),
+          );
+        });
+        void projects?.reconcile();
+        const platformEndpointGroup = yield* integration(() =>
+          resolvePlatformEndpointGroup(
+            serviceRegistry,
+            projects,
+            fabricCoreService?.context,
+            systemStore,
+            deploymentBackends,
+            options.agentOperations,
+            options.hostOperations,
+            options.edge,
+            runtimeManagement.routes,
+            options.assistant,
+            edgeRoutes,
+            edgeCertificates,
+            options.remoteEnvironment,
+            resolvedDatabaseApi,
+          ),
+        );
+        const productServices = [
+          sanitizedDashboardService,
+          ...serviceRuntimeServices,
+        ].filter((service): service is ZelavisRuntimeService<any> =>
+          Boolean(service),
+        );
+        const subsystemComponents = [
+          websiteService,
+          missingFrontendComponent,
+          dashboardAppService,
+        ].filter((service): service is ZelavisRuntimeService<any> =>
+          Boolean(service),
+        );
+        // Mount the HTTP-01 challenge responder when a domain-binding store
+        // is configured. The endpoint serves `verificationToken` back to
+        // requesters who hit `<host>/.well-known/zelavis-challenge/<token>`,
+        // making automatic verification a no-op for the operator once they
+        // point their DNS at this zelavis instance.
+        const domainChallengeService = options.domainBindings
+          ? createDomainChallengeService(options.domainBindings)
+          : undefined;
+        // Mount the ACME HTTP-01 challenge responder when Edge certificate
+        // controller is active, allowing automated issuance and renewal.
+        const acmeChallengeService = edgeCertificates
+          ? createAcmeChallengeService(edgeCertificates.challengeStore)
+          : undefined;
+        runtimeConfigServices = [...productServices];
+        const infrastructureComponents = [
+          domainChallengeService,
+          acmeChallengeService,
+        ].filter((service): service is ZelavisRuntimeService<any> =>
+          Boolean(service),
+        );
+        const mountedComponents = [
+          ...productServices,
+          ...subsystemComponents,
+          ...infrastructureComponents,
+        ];
+        const mountPrefix = siteMounted ? "/" : rootPath;
+        const nativeEndpointGroups = yield* Effect.forEach(
+          [
+            platformEndpointGroup,
+            ...(fabricCoreService ? [fabricCoreService] : []),
+            ...(storageEndpointGroup ? [storageEndpointGroup] : []),
+            ...(workloadsCoreService ? [workloadsCoreService] : []),
+            ...(identityEndpointGroup ? [identityEndpointGroup] : []),
+            ...databaseEndpointGroups,
+            ...serviceEndpointGroups,
           ],
-        })
-      : undefined;
-  const fabricCoreService = resolveFabricCoreService(
-    options.subsystems?.fabric,
-    {
-      projects,
-      placementAuthority: projectPlacementAuthority,
-      runtimeEngine: detectCurrentRuntimeEngine(
-        options.serviceContext?.platform?.metadata,
-      ),
-    },
-  );
-  const siteMounted = Boolean(websiteService) || Boolean(projectSiteFrontend);
-  // An installation with no frontend still serves its API. The root path
-  // explains that rather than returning a 404, which reads as a broken
-  // deployment when it is a supported state — and it is the only way to have
-  // no frontend, so there is nothing to reconcile against a second switch.
-  const frontendPackageService = platformFrontend?.service;
-  const missingFrontendComponent = platformFrontend
-    ? undefined
-    : createMissingPlatformFrontendService({
-      rootPath,
-      reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
-      ...(readFrontendTitle(options.frontend)
-        ? { title: readFrontendTitle(options.frontend)! }
-        : {}),
-      });
-  // Synthesize the sibling app service through the same primitive user
-  // services use, then hide the service-only `app` field from the externally
-  // visible service map.
-  const dashboardAppService = platformFrontend
-    ? await synthesizeFrontendAppService(platformFrontend)
-    : undefined;
-  const sanitizedDashboardService = frontendPackageService
-    ? stripFrontendServiceFields(frontendPackageService)
-    : undefined;
+          (value) => integration(() => value),
+          { concurrency: 4 },
+        );
 
-  runtimeManagement = await resolveRuntimeManagementCore(
-    options.frontend,
-    {
-      apiPrefix,
-      apiVersion,
-      serviceRegistry,
-      serviceRegistryStore,
-      serviceImporter: compositionOptions.serviceRegistry?.importer,
-      serviceManifestResolver:
-        compositionOptions.serviceRegistry?.manifestResolver,
-      servicePackageInstaller: options.servicePackageInstaller,
-      marketplace: options.marketplace,
-      updates: options.updates,
-      serviceActivation: options.serviceActivation,
-      rootPath,
-      getServices: () => runtimeConfigServices,
-      getEndpointGroups: () => serviceEndpointGroups,
-      exclusiveSiteFrontend: projectRole,
-      getMountedRoutes: () => mountedRoutes ?? [],
-      settingsStore: dashboardSettingsStore,
-      siteEnabled: siteMounted,
-      bundleStore: options.bundleStore,
-      platform: options.serviceContext?.platform,
-      ...(platformFrontend?.clientRoutes
-        ? { frontendClientRoutes: platformFrontend.clientRoutes }
-        : {}),
-      ...(platformFrontend?.servicePageStylesheet
-        ? { servicePageStylesheet: platformFrontend.servicePageStylesheet }
-        : {}),
-      ...(platformFrontend?.serviceElementsScript
-        ? { serviceElementsScript: platformFrontend.serviceElementsScript }
-        : {}),
-      ...(frontendPackageService
-        ? { frontendServiceName: frontendPackageService.name }
-        : {}),
-      capabilities: {
-        server: { available: true },
-        fabric: { available: Boolean(fabricCoreService) },
-        database: { available: Boolean(databaseSubsystem) },
-        identity: { available: Boolean(identityEndpointGroup) },
-        storage: { available: Boolean(storageEndpointGroup) },
-        workloads: { available: Boolean(workloadsCoreService) },
-        site: { available: siteMounted },
-      },
-    },
-  );
-  // Composition is far enough along for placement to resolve, so the startup
-  // reconcile can run with the group rule in force. Fire-and-forget, as before:
-  // Platform readiness does not wait for every Project runtime.
-  options.edgePreviews?.configure(async (projectId, request) => {
-    const project = await projects?.get(projectId);
-    if (!project || project.deletion) return new Response("Site not found.", { status: 404 });
-    const placement = await fabricCoreService?.context.getProjectPlacement(projectId);
-    const node = placement ? await fabricCoreService?.context.getNode(placement.runtimeNodeId) : undefined;
-    if (!placement || placement.identity.type !== "project" || placement.identity.workloadId !== projectId || placement.state !== "active" || !node || node.status === "unavailable") {
-      return new Response("Site placement is unavailable.", { status: 503 });
-    }
-    // Preview requests are visitors, never Platform principals. The site's
-    // native control-plane paths and Platform credentials are withheld.
-    return toResponse(await forwardProjectSiteRequest({ projects: projects!, project,
-      protectedCookieNames, fetchSite: options.publicSiteFetch,
-    }, request));
-  });
-  void projects?.reconcile();
-  const platformEndpointGroup = await resolvePlatformEndpointGroup(
-    serviceRegistry,
-    projects,
-    fabricCoreService?.context,
-    systemStore,
-    deploymentBackends,
-    options.agentOperations,
-    options.hostOperations,
-    options.edge,
-    runtimeManagement.routes,
-    options.assistant,
-    edgeRoutes,
-    edgeCertificates,
-    options.remoteEnvironment,
-    resolvedDatabaseApi,
-  );
-  const productServices = [
-    sanitizedDashboardService,
-    ...serviceRuntimeServices,
-  ].filter(
-    (service): service is ZelavisRuntimeService<any> => Boolean(service),
-  );
-  const subsystemComponents = [
-    websiteService,
-    missingFrontendComponent,
-    dashboardAppService,
-  ].filter(
-    (service): service is ZelavisRuntimeService<any> => Boolean(service),
-  );
-  // Mount the HTTP-01 challenge responder when a domain-binding store
-  // is configured. The endpoint serves `verificationToken` back to
-  // requesters who hit `<host>/.well-known/zelavis-challenge/<token>`,
-  // making automatic verification a no-op for the operator once they
-  // point their DNS at this zelavis instance.
-  const domainChallengeService = options.domainBindings
-    ? createDomainChallengeService(options.domainBindings)
-    : undefined;
-  // Mount the ACME HTTP-01 challenge responder when Edge certificate
-  // controller is active, allowing automated issuance and renewal.
-  const acmeChallengeService = edgeCertificates
-    ? createAcmeChallengeService(edgeCertificates.challengeStore)
-    : undefined;
-  runtimeConfigServices = [
-    ...productServices,
-  ];
-  const infrastructureComponents = [
-    domainChallengeService,
-    acmeChallengeService,
-  ].filter((service): service is ZelavisRuntimeService<any> => Boolean(service));
-  const mountedComponents = [
-    ...productServices,
-    ...subsystemComponents,
-    ...infrastructureComponents,
-  ];
-  const mountPrefix = siteMounted ? "/" : rootPath;
-  const nativeEndpointGroups = await Promise.all([
-    platformEndpointGroup,
-    ...(fabricCoreService ? [fabricCoreService] : []),
-    ...(storageEndpointGroup ? [storageEndpointGroup] : []),
-    ...(workloadsCoreService ? [workloadsCoreService] : []),
-    ...(identityEndpointGroup ? [identityEndpointGroup] : []),
-    ...databaseEndpointGroups,
-    ...serviceEndpointGroups,
-  ]);
+        const runtime = yield* integration(() =>
+          mountZelavisServer({
+            ...options,
+            prefix: mountPrefix,
+            version: "v1",
+            services: productServices,
+            endpointGroups: [
+              ...nativeEndpointGroups,
+              ...subsystemComponents.map((component) =>
+                endpointGroupFromRuntimeComponent(component, {
+                  type: "subsystem",
+                  subsystem: component.name,
+                }),
+              ),
+              ...infrastructureComponents.map((component) =>
+                endpointGroupFromRuntimeComponent(component, {
+                  type: "infrastructure",
+                  component: component.name,
+                }),
+              ),
+            ],
+            servicePrefixes: {
+              ...createServicePrefixes(mountedComponents, {
+                rootPath,
+                mountPrefix,
+                apiPrefix,
+                apiVersion,
+                frontendServiceNames: [
+                  ...(frontendPackageService
+                    ? [frontendPackageService.name]
+                    : []),
+                  ...(dashboardAppService ? [dashboardAppService.name] : []),
+                  ...(missingFrontendComponent
+                    ? [missingFrontendComponent.name]
+                    : []),
+                ],
+              }),
+              ...createEndpointGroupPrefixes(nativeEndpointGroups, {
+                rootPath,
+                mountPrefix,
+                apiPrefix,
+                apiVersion,
+              }),
+              ...options.servicePrefixes,
+            },
+          }),
+        );
+        // The spec describes what this runtime actually serves, so it reads the
+        // routes mounting produced rather than recomputing them from the service
+        // list with inputs that were never guaranteed to match.
+        mountedRoutes = runtime.routes as readonly ZelavisResolvedRoute[];
+        let closePromise: Promise<void> | undefined;
+        const close = (): Promise<void> => {
+          closePromise ??= present(
+            apiUsage.flush.pipe(
+              Effect.ensuring(
+                integration(() => options.edgePreviews?.close()).pipe(
+                  Effect.orDie,
+                ),
+              ),
+              Effect.ensuring(
+                integration(() => projects?.close()).pipe(Effect.orDie),
+              ),
+              Effect.ensuring(
+                integration(() => databaseSubsystem?.close?.()).pipe(
+                  Effect.orDie,
+                ),
+              ),
+              Effect.ensuring(
+                integration(() => systemStore.close?.()).pipe(Effect.orDie),
+              ),
+            ),
+          );
+          return closePromise;
+        };
 
-  const runtime = await mountZelavisServer({
-    ...options,
-    prefix: mountPrefix,
-    version: "v1",
-    services: productServices,
-    endpointGroups: [
-      ...nativeEndpointGroups,
-      ...subsystemComponents.map((component) =>
-        endpointGroupFromRuntimeComponent(component, {
-          type: "subsystem",
-          subsystem: component.name,
-        }),
-      ),
-      ...infrastructureComponents.map((component) =>
-        endpointGroupFromRuntimeComponent(component, {
-          type: "infrastructure",
-          component: component.name,
-        }),
-      ),
-    ],
-    servicePrefixes: {
-      ...createServicePrefixes(mountedComponents, {
-        rootPath,
-        mountPrefix,
-        apiPrefix,
-        apiVersion,
-        frontendServiceNames: [
-          ...(frontendPackageService ? [frontendPackageService.name] : []),
-          ...(dashboardAppService ? [dashboardAppService.name] : []),
-          ...(missingFrontendComponent ? [missingFrontendComponent.name] : []),
-        ],
+        // A hostname bound to a Project is that Project's, not the Platform's. The
+        // dashboard route otherwise matches before the public forwarder runs, so
+        // `/zelavis` would serve a Platform login page on every customer domain.
+        const publicDomainOptions = options.domainBindings
+          ? { domainBindings: options.domainBindings, projects: () => projects }
+          : undefined;
+
+        // Captured before the assignment below: `Object.assign` mutates `runtime`, so
+        // reading `runtime.fetch` inside the wrapper would call the wrapper.
+        const composedDispatch = runtime.dispatch.bind(runtime);
+        const dispatch: typeof runtime.dispatch = (request, context) =>
+          present(
+            Effect.gen(function* () {
+              const result = yield* integration(() =>
+                composedDispatch(request, context),
+              );
+              apiUsage.record(result);
+              yield* apiUsage.flush;
+              return result;
+            }),
+          );
+        const guardedFetch: typeof runtime.fetch = (request, context) =>
+          present(
+            Effect.gen(function* () {
+              if (publicDomainOptions) {
+                const refused = yield* integration(() =>
+                  guardControlPlaneHost(publicDomainOptions, request, rootPath),
+                );
+                if (refused) return refused;
+              }
+              return (yield* integration(() => dispatch(request, context)))
+                .response;
+            }),
+          );
+
+        ready = true;
+        return Object.assign(runtime, {
+          fetch: guardedFetch,
+          dispatch,
+          plain: createZelavisPlainHandler(dispatch),
+          close,
+          auth: identityEndpointGroup?.context,
+          database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
+        });
       }),
-      ...createEndpointGroupPrefixes(nativeEndpointGroups, {
-        rootPath,
-        mountPrefix,
-        apiPrefix,
-        apiVersion,
-      }),
-      ...options.servicePrefixes,
-    },
-  });
-  // The spec describes what this runtime actually serves, so it reads the
-  // routes mounting produced rather than recomputing them from the service
-  // list with inputs that were never guaranteed to match.
-  mountedRoutes = runtime.routes as readonly ZelavisResolvedRoute[];
-  let closePromise: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    closePromise ??= (async () => {
-      await options.edgePreviews?.close();
-      await projects?.close();
-      // The shards are a scoped resource this runtime acquired, so closing it
-      // has to release them. Closing twice is already safe.
-      await databaseSubsystem?.close?.();
-      // Release the local store handle too. Optional and idempotent, so custom
-      // and embeddable stores that do not implement it are unaffected; without
-      // it a repeatedly constructed embedded runtime retains database handles
-      // until the process exits.
-      await systemStore?.close?.();
-    })();
-    return closePromise;
-  };
-
-  // A hostname bound to a Project is that Project's, not the Platform's. The
-  // dashboard route otherwise matches before the public forwarder runs, so
-  // `/zelavis` would serve a Platform login page on every customer domain.
-  const publicDomainOptions = options.domainBindings
-    ? { domainBindings: options.domainBindings, projects: () => projects }
-    : undefined;
-
-  // Captured before the assignment below: `Object.assign` mutates `runtime`, so
-  // reading `runtime.fetch` inside the wrapper would call the wrapper.
-  const composedFetch = runtime.fetch.bind(runtime);
-  const guardedFetch: typeof runtime.fetch = async (request, context) => {
-    if (publicDomainOptions) {
-      const refused = await guardControlPlaneHost(
-        publicDomainOptions,
-        request,
-        rootPath,
-      );
-      if (refused) return refused;
-    }
-    return composedFetch(request, context);
-  };
-
-  return Object.assign(runtime, {
-    fetch: guardedFetch,
-    close,
-    auth: identityEndpointGroup?.context,
-    database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
-  });
+    ),
+  );
 }
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {

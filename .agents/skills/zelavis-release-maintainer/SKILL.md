@@ -86,3 +86,10 @@ prove actual SDK menu, REST/setup endpoint, discovery and disk-page activation,
 removal, permissions, commit rollback/recovery and Agent adoption without app
 provisioning or lifecycle commands. A menu metadata change alone is insufficient. Native
 App upgrades/version switches must retain the full Platform/App engine handover.
+
+For bound managed Apps, open the previous release's private runtime before the
+parent update. Prove adoption and engine convergence under traffic with unchanged
+app and host process identities, recipe lock, files and ownership. Exercise native
+Auth/Database/Storage/Workloads APIs, usage-based native navigation, private state
+retention across integration handover/restart, and Project cleanup. Opening the
+bound runtime only after the parent update does not qualify existing instances.

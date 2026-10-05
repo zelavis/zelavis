@@ -385,7 +385,7 @@ describe("dashboard navigation ownership", () => {
       ["Overview", "Overview"],
       ["Domains", "Hosting"],
       ["Files", "Hosting"],
-      ["Database", "Hosting"],
+      ["App database", "Hosting"],
       ["Backups", "Operations"],
       ["Logs", "Operations"],
       ["Updates", "Operations"],
@@ -406,6 +406,20 @@ describe("dashboard navigation ownership", () => {
     expect(next.some(item => item.title === "Recipe v1")).toBe(false);
     expect(next.at(-1)?.title).toBe("Recipe v2");
     expect(buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [] }])).toHaveLength(8);
+  });
+
+  it("reveals the existing native sections only for used managed app APIs", () => {
+    const available = { identity: { available: true, used: false }, database: { available: true, used: false },
+      storage: { available: true, used: false }, workloads: { available: true, used: false } };
+    const hidden = buildManagedProjectNavItems("wp", {}, [], available);
+    expect(hidden.some(item => item.title === "Backend" || item.title === "Users")).toBe(false);
+    const nav = buildManagedProjectNavItems("wp", {}, [], { ...available,
+      identity: { available: true, used: true }, database: { available: true, used: true } });
+    expect(nav.find(item => item.title === "Users")?.url).toBe("/projects/wp/users");
+    expect(nav.find(item => item.title === "Content")?.landingUrl).toBe("/projects/wp/content");
+    expect(nav.find(item => item.title === "Backend")?.items?.map(item => item.title)).toEqual(["Auth", "Database"]);
+    expect(nav.some(item => item.title === "Media")).toBe(false);
+    expect(nav.find(item => item.title === "App database")?.url).toBe("/projects/wp/app-database");
   });
 
   it("uses a management nav for the all-projects view", () => {

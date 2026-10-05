@@ -206,6 +206,10 @@ export interface ZelavisServiceSetupPlatformContext {
 
 export interface ZelavisServiceSetupCoreContext {
   database?: unknown;
+  /** Native Project APIs. Using them is reflected in the existing dashboard. */
+  auth?: import("./app/identity/index.js").IdentityApi;
+  storage?: import("./index.js").ZelavisFileStorage;
+  workloads?: import("./app/workloads/workloads-service.js").WorkloadsApi;
   /**
    * Durable storage scoped to this service.
    *

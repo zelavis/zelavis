@@ -94,6 +94,14 @@ test("a new Project freezes its recipe and keeps running it when the Platform's 
   );
   assert.equal(packaged.version, record.recipe.version);
 
+  // Change the synthetic historical fixture only after the ordinary lifecycle
+  // has stopped it. Editing a live lock bypasses its permit and races status
+  // reconciliation, which may persist the still-running selection over it.
+  const stopped = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/frozen/stop", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), OWNER);
+  assert.equal(stopped.status, 200);
+
   // Simulate the Platform having moved on since this Project was created: its
   // frozen recipe is an older release that the Platform no longer bundles. The
   // System Store's lock and the descriptor both say so.

@@ -72,6 +72,15 @@ before editing.
   through Update now and pass the real previous-release update gate; do not
   use a manual installer conversion as a release procedure.
 
+- Managed third-party apps have an ordinary private Project Zelavis App by
+  default, under `.zelavis/integration`, with no separate Project card or opt-in
+  feature flags. Expose the normal setup `core` APIs and scoped HTTP/SDK/CLI
+  APIs. Persist service API usage independently of capability availability;
+  internal identity database access is not service usage. Persist workloads in
+  the same private runtime store. Bound engine convergence uses the shared
+  persistent host journal and preserves recipe locks and third-party processes;
+  native App engine pins remain unchanged on parent updates.
+
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw
   `api` objects are rejected. Host options supply scope and package location.

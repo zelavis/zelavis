@@ -1,5 +1,12 @@
 # @zelavis/app
 
+## 1.0.1-alpha.21
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.21
+
 ## 1.0.1-alpha.20
 
 ### Patch Changes

@@ -20,7 +20,7 @@ async function scratch(t) {
 }
 
 /** A recipe package that provides its own runtime, recording what it is asked to do. */
-async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepare = false, failDestroy = false, runtime = "./dist/runtime.js", exportsFactory = true, managed } = {}) {
+async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepare = false, failDestroy = false, runtime = "./dist/runtime.js", exportsFactory = true, managed, backend = false } = {}) {
   const directory = join(root, "pkg");
   await mkdir(join(directory, "dist"), { recursive: true });
   await writeFile(join(directory, "package.json"), JSON.stringify({
@@ -31,12 +31,27 @@ async function recipePackage(root, { marker = "v1", version = "1.0.0", failPrepa
   await writeFile(join(directory, "dist", "index.js"), managed ? `
 import { zelavis } from "zelavis/sdk";
 import { ZELAVIS_VERSION } from "zelavis";
+import { Effect } from "effect";
 export function register() {
   zelavis.plugins.ui.menus.create({ title: "Integration ${marker}", path: "/integration", surface: "root", page: { id: "integration", bundle: "dashboard", file: "index.html" } });
   zelavis.operations.create({ id: "revision.get", resource: "revision", action: "get", method: "GET", path: "/revision", spec: { operationId: "getRevision", summary: "Read integration revision" }, access: { permissions: ["site.read"], scope: { type: "project", projectId: "site" } },
     handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)}, engine: ZELAVIS_VERSION } }) });
   zelavis.routes.create({ id: "revision.${marker}", method: "GET", path: "/${marker}", handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)} } }) });
-  zelavis.setup(context => context.addEndpointGroup({ id: "recipe.setup", context: {}, origin: { type: "service", serviceName: "@acme/site" }, basePath: "/setup", api: { v1: [{ id: "setup", method: "GET", path: "/", handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)} } }) }] } }));
+  zelavis.setup(context => {
+    const tenant = ${backend ? 'context.core.database.forTenant("site")' : 'undefined'};
+    context.addEndpointGroup({ id: "recipe.setup", context: {}, origin: { type: "service", serviceName: "@acme/site" }, basePath: "/setup", api: { v1: [{ id: "setup", method: "GET", path: "/", handler: () => ({ status: 200, body: { revision: ${JSON.stringify(marker)} } }) }] } });
+    ${backend ? `context.addEndpointGroup({ id: "recipe.native", context: {}, origin: { type: "service", serviceName: "@acme/site" }, basePath: "/integration-native", api: { v1: [{ id: "native", method: "POST", path: "/:capability", access: { permissions: ["site.write"] }, handler: ({ params }) => Effect.runPromise(Effect.gen(function* () {
+      const call = operation => Effect.tryPromise({ try: operation, catch: error => error });
+      if (params.capability === "database") {
+        const existing = yield* call(() => tenant.documents.listCollections());
+        if (!existing.some(collection => collection.name === "power")) yield* call(() => tenant.documents.createCollection({ name: "power" }));
+        yield* call(() => tenant.documents.insert({ collection: "power", id: "proof", data: { title: "private app data" } }));
+      } else if (params.capability === "identity") yield* call(() => context.core.auth.accounts.create({ id: "integration-user", email: "user@example.test" }));
+      else if (params.capability === "storage") yield* call(() => context.core.storage.put({ path: "integration-proof.txt", body: new TextEncoder().encode("private storage") }));
+      else if (params.capability === "workloads") yield* call(() => context.core.workloads.store.save({ id: "integration-job", projectId: "site", type: "job", name: "integration job", code: "export default () => {}", enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+      return { status: 200, body: { exercised: params.capability } };
+    })) }] } });` : ""}
+  });
 }` : "export function register() {}");
   if (managed) { await mkdir(join(directory, "dashboard"), { recursive: true }); await writeFile(join(directory, "dashboard/index.html"), "<h1>Integration " + marker + "</h1>"); }
   await writeFile(join(directory, "dist", "runtime.js"), exportsFactory ? `
@@ -650,4 +665,63 @@ test("a surviving managed integration host is re-keyed and repairs an interrupte
   assert.equal(active.status, 200); assert.equal((await active.json()).revision, "v2");
   assert.equal(attached.length, 1, "Adoption must retain the same integration host");
   assert.equal(await readFile(join(projects, "site/workload-events"), "utf8"), "start:v1\n");
+});
+
+test("managed apps provide ordinary private APIs by default and retain usage and data through recipe handover", { timeout: 30_000 }, async t => {
+  const f = await managedUpdateFixture(t);
+  let record = f.previous;
+  const forward = createProjectForwarder({ projects: {
+    get: async () => record, gatewayTarget: () => f.driver.gatewayTarget(record),
+    signGatewayAuthority: (id, claims) => f.driver.signGatewayAuthority(id, claims),
+  }, fabric: {
+    getProjectPlacement: async () => ({ identity: { type: "project", workloadId: "site", scopeId: "platform" }, state: "active", generation: 1, runtimeNodeId: "local" }),
+    getNode: async () => ({ status: "ready" }),
+  }, unavailableProjectsResponse: () => ({ status: 503 }) });
+  const request = async (path, init = {}, permissions = ["site.read", "site.write", "project.users.manage", "storage.read", "storage.write", "workloads.view", "workloads.manage", "database.read", "database.inspect"]) => {
+    const url = new URL(path, "http://localhost");
+    const result = await forward({ projectId: "site", wildcardPath: url.pathname.slice(1), query: url.searchParams,
+      request: new Request(url, init), principal: { id: "owner", type: "user" }, permissions, allowFrontend: false });
+    return new Response(result.body, { status: result.status, headers: result.headers });
+  };
+  const json = async (path, init) => { const response = await request(path, init); assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
+  const configuration = () => json("/zelavis/api/v1/runtime/config");
+  let config = await configuration();
+  for (const domain of ["database", "identity", "storage", "workloads"]) assert.deepEqual(config.capabilities[domain], { available: true, used: false });
+  assert.equal(config.capabilities.fabric.available, false, "A bound App must never acquire parent Fabric authority");
+  assert.equal((await request("/zelavis/api/v1/auth/accounts", {}, [])).status, 403);
+  assert.equal((await configuration()).capabilities.identity.used, false, "Denied requests do not reveal menus");
+  assert.equal((await request("/zelavis/api/v1/database/not-a-real-api")).status, 404);
+  assert.equal((await configuration()).capabilities.database.used, false);
+  await managedRecipePackage(f.root, { marker: "v2", version: "2.0.0", backend: true });
+  const update = await f.driver.prepareUpdate(record, f.candidate);
+  await f.driver.applyUpdate("site", update, async choice => { record = { ...(choice === "target" ? f.candidate : f.previous), recipe: choice === "target" ? update.recipe : f.previous.recipe }; });
+  config = await configuration();
+  assert.equal(config.capabilities.database.used, true, "An ordinary setup API call automatically reveals its native section");
+  assert.equal(config.capabilities.identity.used, false, "Merely receiving Auth in the setup context is not usage");
+  for (const capability of ["database", "identity", "storage", "workloads"]) {
+    assert.equal((await json("/zelavis/api/v1/integration-native/" + capability, { method: "POST" })).exercised, capability);
+  }
+  const checkData = async () => {
+    const active = await configuration();
+    for (const domain of ["database", "identity", "storage", "workloads"]) assert.deepEqual(active.capabilities[domain], { available: true, used: true });
+    const accounts = await json("/zelavis/api/v1/auth/accounts");
+    assert.ok(accounts.some(account => account.id === "integration-user"));
+    assert.equal(await (await request("/zelavis/api/v1/storage/files/integration-proof.txt")).text(), "private storage");
+    const workloads = await json("/zelavis/api/v1/workloads/?projectId=site");
+    assert.ok(workloads.workloads.some(workload => workload.id === "integration-job"));
+    const stored = await readFile(join(f.projects, "site", ".zelavis", "integration", "files", "integration-proof.txt"), "utf8");
+    assert.equal(stored, "private storage");
+  };
+  await checkData();
+  await managedRecipePackage(f.root, { marker: "v3", version: "3.0.0" });
+  const third = await f.driver.prepareUpdate(record, { ...record, recipe: { ...record.recipe, version: "3.0.0", artifact: undefined } });
+  await f.driver.applyUpdate("site", third, async choice => { if (choice === "target") record = { ...record, recipe: third.recipe }; });
+  await checkData();
+  assert.equal(await readFile(join(f.projects, "site", "workload-events"), "utf8"), "start:v1\n");
+  assert.equal(await readFile(join(f.projects, "site", "prepared-by.txt"), "utf8"), f.prepared);
+  await f.driver.stop("site");
+  await f.driver.start(record);
+  await checkData();
+  await f.driver.destroy("site");
+  await assert.rejects(access(join(f.projects, "site")), { code: "ENOENT" });
 });

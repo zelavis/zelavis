@@ -10,7 +10,7 @@ import { ensureRecipeArtifact } from "./_recipe-artifact.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
-import { freezeNodeProjectRelease, restoreNodeProjectRelease } from "./_node-project-release.js";
+import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
 import { randomUUID } from "node:crypto";
 import { evaluate } from "../core/runtime/effect-boundary.js";
@@ -46,6 +46,7 @@ export interface NodeProcessProjectRuntimeOptions {
     runtimeCatalog?: { readonly directory: string; readonly rootOwned: boolean };
 }
 interface NodeProjectProcess {
+    boundEngineVersion?: string;
     process?: ZelavisAgentProcess;
     control?: ReturnType<typeof createNodeRuntimeClient>;
     logs: ZelavisProjectLogEntry[];
@@ -473,6 +474,45 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const current = processes.get(project.id);
             if (current?.process?.running &&
                 (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
+                // A managed app's private App follows its control plane engine.
+                // Its recipe lock and public app processes remain independent.
+                // The persistent host journal is the sole engine selection;
+                // interrupted replacement recovers through that same journal.
+                if (options.integrationOnly && current.control && current.boundEngineVersion !== ZELAVIS_VERSION) {
+                    const status = yield* current.control.request({ action: "status" });
+                    const previous = yield* evaluate(() => {
+                        const release = status.release as RuntimeRelease;
+                        if (status.requiresRecovery === true || !release || typeof release.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(release.digest))
+                            throw new Error("Bound Project runtime requires fenced recovery before engine convergence.");
+                        return release;
+                    });
+                    if (previous.version !== ZELAVIS_VERSION) {
+                        const catalog = yield* catalogConfiguration();
+                        if (catalog) yield* createNodeRuntimeCatalog(catalog).select(ZELAVIS_VERSION);
+                        const target = { version: ZELAVIS_VERSION, digest: previous.digest };
+                        const { record } = yield* verifyNodeProjectRelease(projectDirectory(project.id), project.id, target);
+                        const canonical = yield* integration(() => readFile(join(projectDirectory(project.id), "project.json"), "utf8"));
+                        const unchanged = yield* evaluate(() => {
+                            const value = JSON.parse(canonical);
+                            return value.id === project.id && value.recipe?.name === record.recipe.name && value.recipe?.version === record.recipe.version && value.recipe?.artifact?.digest === record.recipe.artifact.digest;
+                        });
+                        // Convergence never changes recipe selection. Refuse a
+                        // pending canonical recipe swap rather than adopting it.
+                        if (!unchanged) return yield* new IntegrationFailure(new Error("Bound Project recipe recovery must finish before engine convergence."));
+                        const reply = yield* current.control.request({ action: "replace", release: target, commit: true }, {
+                            timeoutMs: 150_000,
+                            commit: Effect.fn("NodeProjects.commitBoundEngine")(function* (selected, generation) {
+                                if (!Number.isSafeInteger(generation) || generation < 1 || selected.digest !== previous.digest ||
+                                    selected.version !== previous.version && selected.version !== target.version)
+                                    return yield* new IntegrationFailure(new Error("Bound Project host requested an unqualified engine selection."));
+                                // Identical immutable recipe content needs no
+                                // canonical rewrite or second registry record.
+                            }),
+                        });
+                        if (reply.type !== "replaced") return yield* new IntegrationFailure(new Error("Bound Project host did not acknowledge engine convergence."));
+                    }
+                    current.boundEngineVersion = ZELAVIS_VERSION;
+                }
                 return current.snapshot;
             }
             const directory = projectDirectory(project.id);
@@ -495,6 +535,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }
             const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
             const state: NodeProjectProcess = {
+                ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
                 logs: current?.logs ?? [],
                 snapshot: { status: "starting" },
                 stopping: false,

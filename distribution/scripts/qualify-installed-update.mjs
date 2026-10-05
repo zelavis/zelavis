@@ -64,6 +64,11 @@ const identities = async () => (await Promise.all((await readdir('/var/lib/zelav
   const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
   return `${value.workloadId}:${value.pid}`;
 }))).sort();
+const wpClient = projectClient(wp.id);
+const initialBound = await wpClient.runtime.config();
+assert.equal(initialBound.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
+assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
+const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
 const before = await identities();
 const hostPid = () => execFileSync('systemctl', ['show', 'zelavis.service', '-p', 'MainPID', '--value'], { encoding: 'utf8' }).trim();
 const initialPid = hostPid();
@@ -72,7 +77,7 @@ const initialPid = hostPid();
 const unitFile = '/etc/systemd/system/zelavis.service';
 await writeFile(unitFile, `# Qualification marker: refresh during live root commit\n${await readFile(unitFile, 'utf8')}`);
 const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
-urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`);
+urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`, wpControl);
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
 async function underTraffic(operation) {
   let finished = false;
@@ -168,13 +173,17 @@ assert.equal((await client.projects.get(id)).preview.port, app.preview.port);
 ({ createZelavisClient } = await load(await realpath('/opt/zelavis/current'), 'sdk/fetch.js'));
 client = createZelavisClient(config);
 assert.equal((await client.projects.get(wp.id)).recipe.version, wp.recipe.version, 'Parent update must preserve the managed recipe lock');
-const wpClient = projectClient(wp.id);
 const beforeIntegration = await wpClient.runtime.config();
 assert.equal(beforeIntegration.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
+for (const capability of ['database', 'identity', 'storage', 'workloads']) {
+  assert.equal(beforeIntegration.capabilities[capability].available, true, `An adopted bound App must execute the current engine's ${capability} API`);
+  assert.equal(beforeIntegration.capabilities[capability].used, false, 'Unused APIs stay hidden after engine convergence');
+}
+assert.equal(beforeIntegration.capabilities.fabric.available, false);
+assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
 const integrationBefore = await identities();
-const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
-urls.push(wpControl); counts[wpControl] = 0;
+
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
 assert.equal(integration.runtime.status, 'running');
 assert.equal(integration.preview.port, wp.preview.port);

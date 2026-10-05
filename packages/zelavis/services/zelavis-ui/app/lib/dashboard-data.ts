@@ -380,8 +380,19 @@ export function buildManagedProjectNavItems(
   projectId: string,
   managed: { adminTitle?: string },
   services?: readonly RuntimeService[],
+  capabilities?: RuntimeCapabilities,
+  contentTypes?: readonly ContentTypeRow[],
+  databaseCollections?: readonly DatabaseCollection[],
 ): readonly DashboardNavItem[] {
   const appAdminTitle = managed.adminTitle ?? "App Admin";
+
+  const nativeCapabilities = Object.fromEntries(
+    ["identity", "database", "storage", "workloads", "site"].map(name =>
+      [name, { available: capabilities?.[name]?.available === true && capabilities[name].used === true }]),
+  );
+  const nativeItems = buildPlatformNavItems([], [], contentTypes, databaseCollections, projectId, nativeCapabilities)
+    .filter(item => ["Users", "Content", "Media", "Backend"].includes(item.title) &&
+      (item.title !== "Backend" || Boolean(item.items?.length)));
 
   return [
     {
@@ -406,10 +417,10 @@ export function buildManagedProjectNavItems(
       sectionLabel: "Hosting",
     },
     {
-      title: "Database",
-      url: toProjectPath("/database", projectId) as DashboardRoutePath,
+      title: "App database",
+      url: toProjectPath("/app-database", projectId) as DashboardRoutePath,
       icon: Database,
-      pageLabel: "Database",
+      pageLabel: "App database",
       sectionLabel: "Hosting",
     },
     {
@@ -440,6 +451,7 @@ export function buildManagedProjectNavItems(
       pageLabel: appAdminTitle,
       sectionLabel: "Settings",
     },
+    ...nativeItems,
     ...(services ?? []).flatMap(service => getRuntimeServiceMenus(service)
       .filter(menu => (menu.surface ?? getServiceMenuSurface(service)) !== "platform" && menu.path !== "/")
       .map(menu => createProjectAwareDashboardServiceMenuItem(menu, service.name, projectId, {

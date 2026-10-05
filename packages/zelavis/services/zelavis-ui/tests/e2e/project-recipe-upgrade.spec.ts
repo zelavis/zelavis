@@ -277,3 +277,43 @@ test("@smoke managed recipe SDK menus and pages refresh through their Project Ga
   expect(assetUrls.some(url => url.includes("zelavisServiceVersion=2.0.0"))).toBe(true)
   expect(interruptions).toBe(0)
 })
+
+test("@smoke managed apps reuse native dashboard sections only after API usage", async ({ page }) => {
+  test.skip(!projectId, "needs the e2e Project")
+  await pretendStale(page, { kind: "wordpress", recipe: { name: "@acme/site", title: "Managed site", version: "1.0.0", managed: { adminTitle: "App Admin" } } })
+  let used = false
+  let prematureApiReads = 0
+  const configPattern = new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/runtime/config$`)
+  await page.route(configPattern, async route => {
+    const response = await route.fetch(), body = await response.json()
+    body.capabilities = { ...body.capabilities, database: { available: true, used }, identity: { available: true, used },
+      storage: { available: true, used: false }, workloads: { available: true, used: false } }
+    await route.fulfill({ response, json: body })
+  })
+  const nativeRequests: string[] = []
+  await page.route(new RegExp(`/projects/${projectId}/proxy/zelavis/api/v1/(database|auth)/`), async route => {
+    nativeRequests.push(route.request().url())
+    if (!used) prematureApiReads++
+    return route.continue()
+  })
+  await page.goto(`${basePath}/projects/${projectId}/files`)
+  await expect(page.getByText("Managed app boundary", { exact: true })).toBeVisible()
+  await expect(page.getByText("Users", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("Backend", { exact: true })).toHaveCount(0)
+  expect(prematureApiReads).toBe(0)
+  used = true
+  await page.reload()
+  await expect(page.getByText("Users", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("Backend", { exact: true }).first()).toBeVisible()
+  await page.getByText("Backend", { exact: true }).first().click()
+  await expect(page.getByText("Auth", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("Database", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("Storage", { exact: true })).toHaveCount(0)
+  await page.getByText("Auth", { exact: true }).first().click()
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/auth`))
+  await expect(page.getByText("Dashboard error", { exact: true })).toHaveCount(0)
+  expect(nativeRequests.some(url => url.includes("/auth/"))).toBe(true)
+  expect(nativeRequests.every(url => url.includes(`/projects/${projectId}/proxy/`))).toBe(true)
+  await page.goto(`${basePath}/projects`)
+  await expect(page.getByRole("button", { name: "Open", exact: true })).toHaveCount(1)
+})

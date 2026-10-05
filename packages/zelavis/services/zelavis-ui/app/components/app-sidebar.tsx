@@ -156,7 +156,7 @@ export function AppSidebar({
             runtime?.access,
           )
         : projectId && managedProject
-        ? filterDashboardNavItemsForAccess(buildManagedProjectNavItems(projectId, managedProject, runtime?.services), runtime?.access)
+        ? filterDashboardNavItemsForAccess(buildManagedProjectNavItems(projectId, managedProject, runtime?.services, runtime?.capabilities, contentTypes, filterUserDatabaseCollections(effectiveDatabaseCollections)), runtime?.access)
         : runtime && projectId
         ? filterDashboardNavItemsForAccess(
             buildPlatformNavItems(

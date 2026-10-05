@@ -86,6 +86,13 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 `clientLoader` reads search params from `request.url` (not `useLocation`) so data loading and URL state are always in sync on reload.
 
+Managed apps reuse the native Project pages and menu generator for APIs whose
+runtime capability reports `used: true`; API availability is independent of this
+visibility. Do not probe unused native APIs while loading a managed dashboard.
+Use `capabilities.database.available` for database loading, never a pseudo-service
+name. Keep the third-party app's database link distinct (`/app-database`) from
+its bound Zelavis database (`/database`). There is no second visible Project.
+
 ## Sidebar and navigation rules
 
 - Plugin and service packages register menus through `zelavis.plugins.ui.menus.create`
