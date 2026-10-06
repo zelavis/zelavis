@@ -406,6 +406,13 @@ before editing.
   persists a conditional reservation only. A future committed grant and Agent
   validation are required for activation and writes. Do not extend the
   Project-local `PartitionMap` into physical Node authority.
+- Cloud capacity is a core capability over the `CapacityProvider` contract;
+  Alchemy (exact pin, bundled in a first-party cloud service, never in the core
+  runtime) is the default provisioning engine, and Fabric keeps all placement,
+  fencing and draining authority. Existing servers must work with no provider.
+  Do not write a general infrastructure-as-code engine. Follow
+  `../../references/alchemy-architecture-brief.md` and the "Cloud Capacity And
+  Alchemy" section of `AGENTS.md`.
 - Project runtime ownership uses the Platform System Store CAS record in
   `src/platform/project-placement-authority.ts`. The Project manager must
   acquire it before start; the Agent process lease supervisor fences local

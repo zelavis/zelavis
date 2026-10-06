@@ -209,6 +209,54 @@ maintenance in CI, forks, and when `ZELAVIS_GITHUB_MAINTENANCE=0`. Stop its fibe
 and pending subprocesses when the dev server shuts down. No shared credentials,
 OS timers, cleanup workflows, or reference-sync side effects.
 
+## Cloud Capacity And Alchemy
+
+Decision (2026-10-06, direction chosen; behavior not yet proven). Full reasoning,
+measurements and open tests are in `.agents/references/alchemy-architecture-brief.md`.
+
+- Cloud capacity is a core capability. The capacity controller, provider
+  connections, enrollment and the dashboard flow live in the Platform over the
+  existing `CapacityProvider` contract (`core/provider`). Fabric alone decides
+  allocation, placement, draining and fencing; a provisioning engine only
+  supplies machines and external resources and never becomes a second authority.
+- Alchemy (pinned to an exact version) is the default engine for provisioning
+  external resources, shipped in a bundled first-party cloud service, never in the
+  core runtime and never as something a self-hoster installs. Do not write a
+  general infrastructure-as-code engine in-house. If its behavioral tests fail,
+  fall back to a narrow adapter on the `@distilled.cloud/*` clients, not a rebuilt
+  engine.
+- It is bundled, not installed: engine plus the needed provider code, with
+  `effect` host-provided. Measured at 824 KB (against 1.3 GB unbundled), no native
+  binding and no other clouds' code. The bundle needs one build patch (stubbing
+  module-scope `import.meta.resolve`); the repo owns that patch and re-verifies
+  it on every Alchemy bump. The "no native dependency" rule is unchanged.
+- Existing servers are the primary path. Server creation is optional everywhere:
+  `install.sh` on the user's own machine, or enrolling an Agent with a one-time
+  token, needs no cloud and no provider. Connecting a provider only adds adopt
+  conveniences (firewall, DNS) and automatic scale-out. Zelavis deletes only
+  machines it labeled itself, never adopted or user-enrolled ones.
+- A provisioned machine is not a Node until enrollment verifies identity, version,
+  backend and health. Release only after Fabric reports the Node drained and
+  fenced. Provider calls check the current epoch, and a promotion rotates the
+  provider token.
+- The Alchemy state store is provisioning state only, written conditionally and
+  backed by Zelavis storage with its own epoch checks (Alchemy's interface has no
+  lock). It never holds Project, placement or data authority.
+- Provider tokens are stored encrypted, never returned or logged, and every use is
+  audited. The wizard states plainly what a token can do and recommends a
+  dedicated cloud project. Scale-out consent is separate from the firewall and DNS
+  conveniences.
+- Alchemy also powers a local deploy tool (`npx`) that creates a server from a
+  token for users who want that. It runs on the user's machine and ships nothing
+  in the Platform.
+- Not in scope: Alchemy as a runtime for Projects, a replacement for Fabric
+  reconciliation, or part of local native App creation. A recipe may later declare
+  bounded external resources, provisioned through the same service, with a
+  checkpointed deletion participant; arbitrary stack files from a recipe are
+  never executed.
+- DigitalOcean, Vultr and Linode have no Alchemy provider; adding one is a custom
+  provider.
+
 ## Marketplace Allow-List
 
 `@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
