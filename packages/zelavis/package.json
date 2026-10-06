@@ -230,7 +230,7 @@
     "@zelavis/ui": "workspace:*",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
-    "lmdb": "^3.4.3",
+    "lmdb": "^3.5.7",
     "typescript": "^7.0.2",
     "usearch": "^2.26.2"
   },
@@ -248,7 +248,7 @@
     "@libsql/client": "^0.15.0",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
-    "lmdb": "^3.4.3",
+    "lmdb": "^3.5.7",
     "usearch": "^2.15.0"
   },
   "peerDependenciesMeta": {
