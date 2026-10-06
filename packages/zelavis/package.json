@@ -221,7 +221,7 @@
   "devDependencies": {
     "@effect/language-service": "^0.87.3",
     "@effect/tsgo": "^0.48.0",
-    "@harperfast/rocksdb-js": "2.9.1",
+    "@harperfast/rocksdb-js": "2.10.0",
     "@libsql/client": "^0.18.0",
     "@types/node": "^26.6.4",
     "@zelavis/app": "workspace:*",

@@ -8,8 +8,14 @@ import { engineAvailable } from "./_engine-available.mjs";
 
 const tempDir = (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-engine-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  const databases = [];
+  // Node runs after hooks in registration order. Close/flush every database
+  // before removing the directory; RocksDB 2.10 reports a failed flush.
+  t.after(async () => {
+    for (const database of databases) await database.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return { dir, track: (database) => databases.push(database) };
 };
 
 // The same work through the host, whichever engine is underneath. A failure
@@ -30,9 +36,9 @@ const exercise = async (opened) => {
 };
 
 test("the default engine is sqlite, and needs nothing installed", async (t) => {
-  const dir = tempDir(t);
+  const { dir, track } = tempDir(t);
   const opened = await openNodeDatabase({ directory: dir });
-  t.after(() => opened.close());
+  track(opened);
 
   assert.equal(opened.engine, "sqlite", "chosen by omission, not by configuration");
   await exercise(opened);
@@ -50,23 +56,24 @@ const engines = ["sqlite", "libsql", "rocksdb", "lmdb"].map((name) => [
 
 for (const [name, installed] of engines) {
   test(`the host opens on ${name}`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
-    const dir = tempDir(t);
+    const { dir, track } = tempDir(t);
     const opened = await openNodeDatabase({ directory: dir, engine: { name } });
-    t.after(() => opened.close());
+    track(opened);
     assert.equal(opened.engine, name);
     await exercise(opened);
   });
 }
 
 test("an engine choice survives a close and reopen", async (t) => {
-  const dir = tempDir(t);
+  const { dir, track } = tempDir(t);
   const first = await openNodeDatabase({ directory: dir, engine: { name: "lmdb" } });
+  track(first);
   const home = first.api.shardOf("acme");
   await exercise(first);
   await first.close();
 
   const again = await openNodeDatabase({ directory: dir, engine: { name: "lmdb" } });
-  t.after(() => again.close());
+  track(again);
   assert.equal(again.api.shardOf("acme"), home, "the stored map still places the tenant");
   const found = await again.api.forTenant("acme").documents.findById({
     collection: "posts", id: "p1",
