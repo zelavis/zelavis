@@ -1,3 +1,4 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../../core/runtime/effect-boundary.js";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
@@ -161,36 +162,38 @@ export const makeLibsqlRemoteEngine = (
             }),
 
           conditionalWrite: (writes, conditions) => Effect.tryPromise({
-            try: async () => {
-              const txn = await client.transaction("write");
+            try: () => { return presentProtocol(Effect.gen(function* () {
+              const txn = (yield* integrationValue(client.transaction("write")));
               try {
-                const results = conditions.length === 0 ? [] : await txn.batch(conditions.map(condition => ({
+                const results = conditions.length === 0 ? [] : unwrapIntegrationResult(yield* Effect.result(integrationValue(txn.batch(conditions.map(condition => ({
                   sql: `SELECT value FROM ${table} WHERE key = ?`, args: [condition.key],
-                })));
+                }))))));
                 for (let index = 0; index < conditions.length; index++) {
                   const row = results[index]!.rows[0];
                   if (!equalBytes(row === undefined ? undefined : toBytes(row.value), conditions[index]!.value)) {
-                    await txn.rollback();
+                    unwrapIntegrationResult(yield* Effect.result(integrationValue(txn.rollback())));
                     return false;
                   }
                 }
-                if (writes.length > 0) await txn.batch(writes.map(write => write.op === "put"
+                if (writes.length > 0) unwrapIntegrationResult(yield* Effect.result(integrationValue(txn.batch(writes.map(write => write.op === "put"
                   ? {
                     sql: `INSERT INTO ${table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
                     args: [write.key, write.value],
                   }
-                  : { sql: `DELETE FROM ${table} WHERE key = ?`, args: [write.key] }));
-                await txn.commit();
+                  : { sql: `DELETE FROM ${table} WHERE key = ?`, args: [write.key] })))));
+                unwrapIntegrationResult(yield* Effect.result(integrationValue(txn.commit())));
                 return true;
               } catch (cause) {
                 // A failed commit may already have closed the transaction.
                 // Preserve its original error and unknown outcome.
-                try { await txn.rollback(); } catch {}
+                try { unwrapIntegrationResult(yield* Effect.result(integrationValue(txn.rollback()))); } catch (rollbackCause) {
+                  throw new AggregateError([cause, rollbackCause], "Conditional write failed and rollback could not be confirmed");
+                }
                 throw cause;
               } finally {
                 txn.close();
               }
-            },
+            }).pipe(Effect.withSpan("makeLibsqlRemoteEngine/callback/callback/callback/engine/conditionalWrite/callback/try/callback"))); },
             catch: fail("libsql-remote.conditionalWrite"),
           }),
           coordination: "remote",

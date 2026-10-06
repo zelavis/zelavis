@@ -1,3 +1,4 @@
+import { parseJson, isJsonValue } from "../core/json-validation.js";
 import { Effect } from "effect";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import { mkdirSync } from "node:fs";
@@ -5,7 +6,6 @@ import { dirname, resolve } from "node:path";
 import {
   type ZelavisSystemStore,
   type ZelavisSystemStoreRecord,
-  type ZelavisSystemStoreValue,
 } from "../system-store.js";
 
 type BunStatement = {
@@ -94,7 +94,7 @@ export function createBunSqliteSystemStore(options: {
     return {
       namespace: value.namespace,
       key: value.record_key,
-      value: JSON.parse(value.value_json) as ZelavisSystemStoreValue,
+      value: parseJson(value.value_json, isJsonValue, "System Store value"),
       updatedAt: value.updated_at,
     };
   }

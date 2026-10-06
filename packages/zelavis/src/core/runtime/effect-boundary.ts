@@ -104,3 +104,26 @@ export function lifecycleGate() {
       entry => Effect.sync(() => { if (--entry.users === 0) entries.delete(id); }),
     );
 }
+
+/** Individual Promise protocol calls adapted inside an Effect program. */
+export const integrationValue = <A>(value: A): Effect.Effect<Awaited<A>, IntegrationFailure> =>
+  integration(() => Promise.resolve(value));
+
+/** Local JS recovery blocks consume Result explicitly; unrecovered failures are
+ * restored to the typed channel by the Promise presentation below. Never use
+ * this to turn a failed operation into successful state. */
+export function unwrapIntegrationResult<A>(result: import("effect").Result.Result<A, IntegrationFailure>): A {
+  if (result._tag === "Failure") throw unwrapFailure(result.failure);
+  return result.success;
+}
+
+/** Promise protocols cannot cancel an in-flight call. Keep each converted
+ * protocol operation atomic with respect to interruption so its existing
+ * finally blocks finish, and preserve synchronous validation errors as typed
+ * failures. Native interruptible workflows use scoped programs directly. */
+export function presentProtocol<A>(program: Effect.Effect<A, IntegrationFailure>): Promise<A> {
+  return present(program.pipe(
+    Effect.catchDefect(cause => Effect.fail(new IntegrationFailure(cause))),
+    Effect.uninterruptible,
+  ));
+}

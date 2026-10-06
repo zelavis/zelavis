@@ -1,3 +1,4 @@
+import { isUnknown, recordOf, parseJson } from "../core/json-validation.js";
 import { randomUUID } from "node:crypto";
 import { open, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -37,7 +38,7 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
   const receipt = yield* evaluate(() => {
     assertInstallationPath(options.prefix, "runtime selection prefix");
     assertInstallationPath(options.dataDirectory, "runtime selection data");
-    const value = JSON.parse(source) as Record<string, unknown>;
+    const value = parseJson(source, recordOf(isUnknown));
     if (value.schemaVersion !== 2 || value.prefix !== options.prefix || value.instance !== options.instance || value.dataDirectory !== options.dataDirectory || !isExactVersion(value.version) || !["system", "user"].includes(String(value.mode))) throw new Error("Runtime selection disagrees with the installation receipt.");
     if (value.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
     return value;

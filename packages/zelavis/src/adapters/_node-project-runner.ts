@@ -1,3 +1,5 @@
+import { parseJson } from "../core/json-validation.js";
+import { runtimeReleaseRecord } from "../core/runtime/handover.js";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Deferred, Effect, Exit, Scope } from "effect";
@@ -22,7 +24,7 @@ const run = Scope.use(Effect.gen(function* () {
     if (!projectId || !dataDirectory) throw new Error("Project runner requires a project id and data directory.");
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Project runner received an invalid port.");
     if (!parentSecret || !/^[A-Za-z0-9_-]{43}$/.test(parentSecret)) throw new Error("Project host requires an ephemeral Gateway signing key.");
-    const initial = process.env.ZELAVIS_PROJECT_INITIAL_RELEASE ? JSON.parse(process.env.ZELAVIS_PROJECT_INITIAL_RELEASE) as RuntimeRelease : undefined;
+    const initial = process.env.ZELAVIS_PROJECT_INITIAL_RELEASE ? parseJson(process.env.ZELAVIS_PROJECT_INITIAL_RELEASE, runtimeReleaseRecord) : undefined;
     return { projectId, directory: resolve(dataDirectory, ".."), parentSecret, port, initial, integrationOnly: process.argv.includes("--integration") };
   });
   let shutdown: ReturnType<typeof shutdownOnSignals> | undefined;

@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, recordOf, parseJson } from "../core/json-validation.js";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Effect } from "effect";
@@ -36,7 +37,7 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
     const file = resolve(dispatchFile);
     const source = yield* integration(() => readFile(file, "utf8"));
     remoteDispatch = yield* evaluate(() => {
-      const input = JSON.parse(source) as { localNodeId?: unknown; nodes?: Record<string, { url?: unknown; agentId?: unknown; caFile?: unknown }> };
+      const input = parseJson(source, objectFields<{ localNodeId?: unknown; nodes?: Record<string, { url?: unknown; agentId?: unknown; caFile?: unknown }> }>({localNodeId: optional(isUnknown), nodes: optional(recordOf(objectFields<{ url?: unknown; agentId?: unknown; caFile?: unknown }>({url: optional(isUnknown), agentId: optional(isUnknown), caFile: optional(isUnknown)})))}));
       if (typeof input.localNodeId !== "string" || !input.nodes || typeof input.nodes !== "object" || Array.isArray(input.nodes) ||
         Object.values(input.nodes).some(node => !node || typeof node.url !== "string" || typeof node.agentId !== "string" || typeof node.caFile !== "string"))
         throw new Error("Project dispatch config needs localNodeId and TLS-pinned Agent nodes.");

@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { IntegrationFailure, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { defineEffectProjectRuntime } from "./project-runtime.js";
@@ -131,10 +132,10 @@ const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
  */
 function readyUrl(line: string): string | undefined {
     try {
-        const event = JSON.parse(line) as {
+        const event = parseJson(line, objectFields<{
             type?: unknown;
             url?: unknown;
-        };
+        }>({type: optional(isUnknown), url: optional(isUnknown)}));
         if (event.type !== "ready" || typeof event.url !== "string") return undefined;
         const url = new URL(event.url);
         if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.pathname !== "/" || url.username || url.password || url.search || url.hash) return undefined;

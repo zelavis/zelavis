@@ -1064,7 +1064,8 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
           "Zelavis API route was not found. If you are using the UI dev server, start the Node.js example and restart the UI dev server.";
       }
     } catch {
-      // Keep the status-only fallback when the response is not JSON.
+      // An HTML/non-JSON response still produces an explicit HTTP status error.
+      message = `Request failed: ${response.status}`;
     }
 
     throw new RuntimeApiError(`${message} (${path})`, response.status, path);
@@ -1604,7 +1605,7 @@ export async function* streamAssistantMessage(
       const body = (await response.json()) as { error?: unknown };
       if (typeof body.error === "string" && body.error) message = body.error;
     } catch {
-      // Keep the status-only message.
+      message = `Request failed: ${response.status}`;
     }
     throw new RuntimeApiError(`${message} (${path})`, response.status, path);
   }

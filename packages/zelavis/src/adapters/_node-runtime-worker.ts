@@ -1,3 +1,4 @@
+import { isUnknown, recordOf, parseJson } from "../core/json-validation.js";
 import { pathToFileURL } from "node:url";
 import type { Server } from "node:http";
 import { Deferred, Effect } from "effect";
@@ -28,7 +29,7 @@ const run = Effect.gen(function* () {
     if (!value) throw new Error("Runtime worker requires an immutable engine module.");
     return value;
   });
-  const configuration = yield* evaluate(() => JSON.parse(process.env.ZELAVIS_RUNTIME_ENGINE_CONFIGURATION ?? "{}") as Record<string, unknown>);
+  const configuration = yield* evaluate(() => parseJson(process.env.ZELAVIS_RUNTIME_ENGINE_CONFIGURATION ?? "{}", recordOf(isUnknown)));
   const module = yield* integration(() => import(pathToFileURL(entry).href) as Promise<NodeRuntimeEngineModule>);
   if (typeof module.prepare !== "function") return yield* new IntegrationFailure(new Error("Selected engine does not implement the handover protocol."));
   const engine = yield* module.prepare(configuration);

@@ -1,10 +1,10 @@
+import { parseJson, isJsonValue } from "../core/json-validation.js";
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   type ZelavisSystemStore,
   type ZelavisSystemStoreRecord,
-  type ZelavisSystemStoreValue,
 } from "../system-store.js";
 
 export interface LocalSqliteSystemStoreOptions {
@@ -24,8 +24,9 @@ function restrictFilePermissions(path: string): void {
   try {
     if (statSync(path, { throwIfNoEntry: false })?.isFile() !== true) return;
     chmodSync(path, 0o600);
-  } catch {
-    // Nothing to restrict, or the host does not support it.
+  } catch (cause) {
+    // A System Store can contain credentials. Refuse an insecure open.
+    throw new Error("Could not restrict System Store file permissions", { cause });
   }
 }
 
@@ -110,7 +111,7 @@ export function createLocalSqliteSystemStore(
     return {
       namespace: value.namespace,
       key: value.record_key,
-      value: JSON.parse(value.value_json) as ZelavisSystemStoreValue,
+      value: parseJson(value.value_json, isJsonValue, "System Store value"),
       updatedAt: value.updated_at,
     };
   }

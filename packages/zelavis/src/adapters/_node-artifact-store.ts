@@ -1,3 +1,6 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { parseJson, objectFields, isString, optional, recordOf } from "../core/json-validation.js";
 import { mkdir, open, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -73,17 +76,17 @@ export function createNodeFileArtifactStore(
     };
   }
 
-  async function get(digest: ZelavisArtifactDigest): Promise<ZelavisArtifactStoreObject | undefined> {
+  function get(digest: ZelavisArtifactDigest): Promise<ZelavisArtifactStoreObject | undefined> { return presentProtocol(Effect.gen(function* () {
     const target = paths(digest);
     let body: Uint8Array;
     try {
-      body = new Uint8Array(await readFile(target.body));
+      body = new Uint8Array(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(target.body)))));
     } catch (error) {
       if (isMissing(error)) return undefined;
       throw error;
     }
 
-    const actualDigest = await createArtifactDigest(body);
+    const actualDigest = (yield* integrationValue(createArtifactDigest(body)));
     if (actualDigest !== digest) {
       throw new Error(
         `ArtifactStore object ${digest} is corrupt: content hashes to ${actualDigest}.`,
@@ -92,7 +95,7 @@ export function createNodeFileArtifactStore(
 
     let stored: StoredArtifactMetadata = {};
     try {
-      stored = JSON.parse(await readFile(target.metadata, "utf8")) as StoredArtifactMetadata;
+      stored = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(target.metadata, "utf8")))), metadataRecord);
     } catch (error) {
       if (!isMissing(error)) throw error;
     }
@@ -103,7 +106,7 @@ export function createNodeFileArtifactStore(
       contentType: stored.contentType,
       metadata: stored.metadata ? { ...stored.metadata } : undefined,
     };
-  }
+  }).pipe(Effect.withSpan("createNodeFileArtifactStore/get"))); }
 
   return {
     async has(digest) {
@@ -137,3 +140,5 @@ export function createNodeFileArtifactStore(
     },
   };
 }
+
+const metadataRecord = objectFields<StoredArtifactMetadata>({ contentType: optional(isString), metadata: optional(recordOf(isString)) });

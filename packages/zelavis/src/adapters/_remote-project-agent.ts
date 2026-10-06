@@ -1,3 +1,7 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { parseJson } from "../core/json-validation.js";
+import { preparedProjectRecord, projectForRemoteStart } from "./_project-record-validation.js";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -12,10 +16,9 @@ import {
   readPreparedRemoteProjectDigest,
 } from "./_remote-project-snapshot.js";
 import { createProjectDispatchHttpsServer } from "./_project-dispatch-https.js";
-import type { ZelavisProjectRecord } from "../project.js";
 
 /** A separately supervised Node Agent that runs prepared Projects on this Node. */
-export async function createRemoteProjectAgent(options: {
+export function createRemoteProjectAgent(options: {
   readonly dataDirectory: string;
   readonly host: string;
   readonly port: number;
@@ -25,11 +28,11 @@ export async function createRemoteProjectAgent(options: {
   readonly agentId: string;
   readonly nodeId: string;
   readonly runtime?: Omit<LocalProjectRuntimeOptions, "directory" | "agent">;
-}): Promise<{ readonly address: string; close(): Promise<void> }> {
+}): Promise<{ readonly address: string; close(): Promise<void> }> { return presentProtocol(Effect.gen(function* () {
   const root = resolve(options.dataDirectory);
   const agentDirectory = join(root, "agent");
   const projectsDirectory = join(root, "projects");
-  await mkdir(agentDirectory, { recursive: true, mode: 0o700 });
+  (yield* integrationValue(mkdir(agentDirectory, { recursive: true, mode: 0o700 })));
   const store = createLocalSqliteSystemStore({
     filename: join(agentDirectory, "remote-placements.sqlite"),
   });
@@ -43,7 +46,7 @@ export async function createRemoteProjectAgent(options: {
   });
   let runtime: ReturnType<typeof createLocalProjectRuntime> | undefined;
   let ready = false;
-  const server = await createProjectDispatchHttpsServer({
+  const server = (yield* integrationValue(createProjectDispatchHttpsServer({
     host: options.host, port: options.port,
     keyPem: options.keyPem, certPem: options.certPem,
     trust: options.trust, agentId: options.agentId, nodeId: options.nodeId,
@@ -60,34 +63,35 @@ export async function createRemoteProjectAgent(options: {
       await installRemoteProjectSnapshot({ projectsDirectory, projectId, body, digest });
     },
     preparedDigest: (projectId) => readPreparedRemoteProjectDigest(projectsDirectory, projectId),
-    start: async (claims) => {
+    start: (claims) => { return presentProtocol(Effect.gen(function* () {
       if (!ready || !runtime) throw new Error("Project Agent is still starting.");
-      const project = JSON.parse(await readFile(join(projectsDirectory,
-        claims.projectId, "project.json"), "utf8")) as ZelavisProjectRecord;
+      const prepared = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(projectsDirectory,
+        claims.projectId, "project.json"), "utf8")))), preparedProjectRecord);
+      const project = projectForRemoteStart(prepared);
       if (project.id !== claims.projectId) throw new Error("Prepared Project identity differs from dispatch.");
-      await runtime.start(project, {
+      unwrapIntegrationResult(yield* Effect.result(integrationValue(runtime.start(project, {
         projectId: claims.projectId, nodeId: claims.nodeId,
         ownerSession: claims.ownerSession, epoch: claims.epoch,
-      });
-    },
+      }))));
+    }).pipe(Effect.withSpan("createRemoteProjectAgent/server/start/callback"))); },
     stop: async (claims) => {
       if (!ready || !runtime) throw new Error("Project Agent is still starting.");
       await runtime.stop(claims.projectId);
     },
-  });
+  })));
   let processServer: Awaited<ReturnType<typeof createAgentProcessServer>> | undefined;
   try {
-    await runner.reclaim?.();
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(runner.reclaim?.())));
     const endpointDirectory = join(agentDirectory, "ipc");
-    processServer = await createAgentProcessServer({
+    processServer = unwrapIntegrationResult(yield* Effect.result(integrationValue(createAgentProcessServer({
       directory: endpointDirectory,
       runner,
       placement: {
         isProjectWorkload: () => true,
         read: leases.read,
       },
-    });
-    client = await createAgentProcessClient({ directory: endpointDirectory });
+    }))));
+    client = unwrapIntegrationResult(yield* Effect.result(integrationValue(createAgentProcessClient({ directory: endpointDirectory }))));
     runtime = createLocalProjectRuntime({
       directory: projectsDirectory,
       agent: client,
@@ -108,11 +112,11 @@ export async function createRemoteProjectAgent(options: {
     };
   } catch (error) {
     ready = false;
-    await server.close().catch(() => undefined);
-    await runtime?.close().catch(() => undefined);
-    await client?.close().catch(() => undefined);
-    await processServer?.close().catch(() => undefined);
-    await store.close?.();
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(server.close().catch(() => undefined))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(runtime?.close().catch(() => undefined))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(client?.close().catch(() => undefined))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(processServer?.close().catch(() => undefined))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(store.close?.())));
     throw error;
   }
-}
+}).pipe(Effect.withSpan("createRemoteProjectAgent"))); }

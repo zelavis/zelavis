@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 /**
  * Forwards public traffic on a verified domain to the Project that owns it.
  *
@@ -127,7 +129,7 @@ export async function forwardPublicRequest(
 }
 
 /** Shared anonymous site ingress for verified hostnames and per-Project previews. */
-export async function forwardProjectSiteRequest(
+export function forwardProjectSiteRequest(
   options: {
     readonly projects: Pick<ZelavisProjectManager, "listOwned">;
     readonly project: { readonly id: string; readonly runtime: { readonly status: string; readonly url?: string } };
@@ -135,7 +137,7 @@ export async function forwardProjectSiteRequest(
   readonly fetchSite?: (url: URL, init: RequestInit) => Promise<Response>;
   },
   request: Request,
-): Promise<ZelavisRouteResponse> {
+): Promise<ZelavisRouteResponse> { return presentProtocol(Effect.gen(function* () {
   const { projects, project } = options;
   const url = new URL(request.url);
   const protectedCookies = new Set(["zelavis_session", ...(options.protectedCookieNames ?? [])]);
@@ -157,7 +159,7 @@ export async function forwardProjectSiteRequest(
     return { status: 404, body: { error: "Not found" } };
   }
 
-  const frontend = await findRunningFrontend(projects, project.id);
+  const frontend = (yield* integrationValue(findRunningFrontend(projects, project.id)));
   const target = resolveProxyTarget(
     new URL(frontend?.url ?? project.runtime.url).origin,
     url.pathname.replace(/^\/+/, ""),
@@ -188,7 +190,7 @@ export async function forwardProjectSiteRequest(
 
   let body: Uint8Array | undefined;
   try {
-    if (request.method !== "GET" && request.method !== "HEAD") body = await boundedBody(request.body);
+    if (request.method !== "GET" && request.method !== "HEAD") body = unwrapIntegrationResult(yield* Effect.result(integrationValue(boundedBody(request.body))));
   } catch (error) {
     if (error instanceof RangeError) return { status: 413, body: { error: "Request body is too large." } };
     throw error;
@@ -201,13 +203,13 @@ export async function forwardProjectSiteRequest(
 
   let response: Response;
   try {
-    response = await (options.fetchSite ?? fetch)(target, {
+    response = unwrapIntegrationResult(yield* Effect.result(integrationValue((options.fetchSite ?? fetch)(target, {
       method: request.method,
       headers,
       redirect: "manual",
       signal,
       ...(body && body.byteLength > 0 ? { body: body as BodyInit } : {}),
-    });
+    }))));
   } catch (cause) {
     if (
       cause instanceof Error &&
@@ -223,7 +225,7 @@ export async function forwardProjectSiteRequest(
   }
 
   let responseBody: Uint8Array;
-  try { responseBody = await boundedBody(response.body); }
+  try { responseBody = unwrapIntegrationResult(yield* Effect.result(integrationValue(boundedBody(response.body)))); }
   catch (error) {
     if (error instanceof RangeError) return { status: 502, body: { error: "This site returned too much data." } };
     throw error;
@@ -242,14 +244,17 @@ export async function forwardProjectSiteRequest(
       if (redirect.origin === target.origin) {
         responseHeaders.set("location", `${url.origin}${redirect.pathname}${redirect.search}${redirect.hash}`);
       }
-    } catch { /* Preserve a site's non-URL response rather than guessing. */ }
+    } catch {
+      // Preserve the site's original header when URL normalization is impossible.
+      responseHeaders.set("location", location);
+    }
   }
   return {
     status: response.status,
     headers: responseHeaders,
     body: new Uint8Array(responseBody),
   };
-}
+}).pipe(Effect.withSpan("forwardProjectSiteRequest"))); }
 
 /**
  * Guards the Platform control plane against being served on a Project's domain.

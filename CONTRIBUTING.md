@@ -1,182 +1,84 @@
 # Contributing to Zelavis
 
-Thanks for contributing.
+Zelavis is The App Platform. Start with [README.md](README.md) for the product
+and [AGENTS.md](AGENTS.md) for canonical architecture and coding rules. These
+apply whether you write code yourself or use an agent. Follow the
+[Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities through the private
+path in [SECURITY.md](SECURITY.md).
 
-Zelavis is an early-stage backend platform built as a pnpm workspace of composable TypeScript packages. The project is still evolving quickly, so small, concrete, repo-aligned contributions are preferred over broad speculative refactors.
+## Get started
 
-## Before you change code
-
-Read these first:
-
-- [README.md](README.md)
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- [SECURITY.md](SECURITY.md)
-- [AGENTS.md](AGENTS.md)
-- [.github/copilot-instructions.md](.github/copilot-instructions.md)
-
-Those files describe the current product direction, package boundaries, and repo-specific constraints.
-
-## Current project focus
-
-The main platform building blocks are:
-
-- auth
-- database
-- shared server/runtime composition
-- distributed Platform Fabric
-- admin/dashboard UI
-
-Today, the most important packages are:
-
-- [packages/zelavis](packages/zelavis)
-- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
-
-The reusable runtime/Fabric, built-in App stack, and trusted Platform services
-all live in focused folders and public subpaths of `packages/zelavis`.
-
-The ecommerce package is still useful, but it should be treated as an optional domain layer on top of the core platform.
-
-## Core contribution principles
-
-- Keep changes small and focused.
-- Prefer explicit contracts over hidden magic.
-- Keep the core implementation framework-agnostic unless code is explicitly an adapter.
-- Favor composition, plugins, and adapters over tight coupling.
-- Avoid heavy dependencies unless clearly justified.
-- Be clear about what exists today versus what is only planned.
-
-## Repo layout
-
-- `packages/*` contains core platform workspace packages.
-- `zelavis-services/*` contains the officially maintained services (plugins, apps), published separately from the Platform.
-- `packages/zelavis/adapters/*` contains optional framework, database, or external runtime adapters.
-- `packages/zelavis/plugins/*` contains package-local capability/provider packages.
-- `examples/*` contains runnable example workspace packages.
-- `website/src/content/docs/` contains the public documentation source of truth.
-
-## Local development
-
-Install dependencies:
+Use Git, Node.js 24 and the pnpm version pinned in the root
+[package.json](package.json). From your clone:
 
 ```bash
-pnpm install
-```
-
-### Main dashboard development workflow
-
-For end-to-end dashboard work, use:
-
-```bash
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-That starts:
+`pnpm dev` starts the runtime and dashboard development servers, selecting free
+ports if the preferred ones are busy. Use the URLs printed by the command.
 
-- the Zelavis runtime, preferring `http://127.0.0.1:3000`
-- the UI dev server, preferring `http://127.0.0.1:3001`
-
-In this mode, requests to `/zelavis` are redirected to the live UI dev server.
-If either preferred port is already in use, the script automatically selects the
-next available local port.
-
-### Other useful commands
+Before working with Effect, fetch its matching source reference:
 
 ```bash
-pnpm build
-pnpm test
-pnpm typecheck
-pnpm audit:security
-pnpm ci:runtime
-pnpm ci:ui
-pnpm --filter ./packages/zelavis/services/zelavis-ui build
-pnpm --filter ./packages/zelavis/services/zelavis-ui test
-pnpm --filter zelavis test
+pnpm refs:sync
 ```
 
-## UI-specific notes
+The reference checkout stays local in Git-ignored `repos/effect/`; it is optional
+for ordinary installs, builds and CI. Sync derives the version from our manifests
+and refuses to overwrite local changes. When upgrading Effect, include the
+updated `scripts/reference-sources.json` in your PR. See the
+[Effect guidance](.agents/references/effect-v4-guidance.md) for details.
 
-The UI package has extra rules:
+For core-team members with GitHub Write access, `pnpm dev` also checks a shared
+GitHub cleanup timestamp on startup and hourly; storage cleanup runs only when
+seven days are due. It uses your own `gh` login and preserves security reports
+and unknown items. GitHub errors never block development. See the
+[maintenance guide](.agents/references/github-zero-spend.md#shared-cleanup-schedule-during-development)
+for permissions, manual commands and `ZELAVIS_GITHUB_MAINTENANCE=0` to opt out.
 
-- It uses React Router v7 in SPA mode, shadcn/ui, and Tailwind CSS v4.
-- Generated route types under `.react-router/types/` must not be hand-edited.
-- The sidebar uses a slide-based navigation model.
-- The `Community` section belongs inside the first sidebar slide.
+## Find the right guidance
 
-## Runtime-specific notes
+- [Core platform](.agents/skills/zelavis-core-platform/SKILL.md): unified `zelavis` package, runtime, Fabric and authority boundaries.
+- [Dashboard](.agents/skills/zelavis-dashboard-ui/SKILL.md): `packages/zelavis/services/zelavis-ui`.
+- [Repository maintenance](.agents/skills/zelavis-repo-maintainer/SKILL.md): CI, dependencies and contributor process.
+- [GitHub zero-spend guide](.agents/references/github-zero-spend.md): billing controls, storage cleanup and local qualification.
 
-- The main public runtime API is `new Zelavis(...)`.
-- The default dashboard root path is `/zelavis`.
-- The runtime supports dashboard dev-server mode through `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
+These workflows and `AGENTS.md` own the detailed rules; this page is the starting
+point. Reviewer ownership is recorded in [.github/CODEOWNERS](.github/CODEOWNERS).
 
-## Documentation expectations
+## Validate your change
 
-When public behavior changes:
+Run the checks relevant to your change and report the results. Common commands:
 
-- update the relevant package README
-- update the root README if the change affects project positioning or main workflows
-- keep docs concrete and current
-- avoid vague marketing language
+```bash
+pnpm ci:runtime       # build, typecheck, tests and Effect checks
+pnpm ci:ui:local      # dashboard smoke tests against a throwaway runtime
+pnpm docs:check       # documentation checks
+pnpm audit:security   # dependency audit
+```
 
-## Tests and validation
+For the dashboard smoke tests, first install Chromium with
+`pnpm --filter @zelavis/ui exec playwright install chromium`.
+Run the audit for dependency or lockfile changes. Keep architecture details and
+public documentation aligned with any changed behavior.
 
-Run the smallest useful validation for the area you changed.
+## Open a pull request
 
-The default CI baseline currently runs:
-
-- `pnpm check`
-- `pnpm --filter zelavis test`
-- `pnpm ci:ui`
-- `pnpm audit:security`
-
-For lockfile or dependency changes, run the audit locally before opening a PR.
-
-Dependabot, repository auto-merge, branch protection, issue forms, and GitHub
-Discussions are already part of the repository workflow.
+Use the [PR template](.github/pull_request_template.md). Explain the problem,
+resulting behavior and relevant validation; call out breaking changes and
+migration steps. Keep the scope focused, and discuss substantial API or
+architecture changes in an issue before implementation. Never commit credentials,
+local runtime data or generated build output.
 
 ## Release workflow
 
-Publishable packages use Changesets-based release management.
+Publishable package changes use Changesets. Add a changeset when needed with
+`pnpm changeset`. Maintainers should follow the
+[release-maintainer workflow](.agents/skills/zelavis-release-maintainer/SKILL.md)
+for validation, versioning and npm publishing.
 
-- create a release note: `pnpm changeset`
-- prepare versions: `pnpm release:version`
-- publish alpha builds: `pnpm release:publish:alpha`
-- publish stable builds later: `pnpm release:publish:latest`
-
-Examples:
-
-- UI-only change: run UI build and tests
-- runtime change: run Zelavis package tests
-- cross-package change: run the relevant package tests plus any affected examples
-
-If a test setup does not exist yet, keep the change easy to validate and document what was checked.
-
-## Generated files and sensitive areas
-
-Be careful with these:
-
-- `packages/zelavis/services/zelavis-ui/src/routeTree.gen.ts` is generated
-- `packages/*/dist/*` is build output
-- `website/.astro/*` and `website/dist/*` are generated site output
-
-## Pull request guidance
-
-A good contribution usually includes:
-
-- a focused problem statement
-- the smallest coherent implementation
-- updated docs if public behavior changed
-- validation notes or test coverage
-
-If you introduce a new abstraction, explain why the existing patterns were not enough.
-
-## Architectural constraint: runtime neutrality
-
-Zelavis core is intentionally built on JavaScript and standard Web APIs only.
-
-Contributors should not:
-
-- introduce Node-only assumptions into core
-- couple core APIs to framework objects
-- build core features around cloud/provider SDKs
-
-Use adapter packages for host-specific behavior instead.
+Coding follows [the TigerStyle adaptation](.agents/references/tigerstyle-typescript.md)
+for TypeScript and Effect v4. `pnpm verify` includes the repo-rule checks; TigerStyle has no debt allowances, and passing static checks does not replace
+behavioral tests. The separate legacy Effect migration baseline may only shrink.

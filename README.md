@@ -422,7 +422,6 @@ The repository currently uses protected `main`, repository-level auto-merge, pri
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [SECURITY.md](SECURITY.md)
-- [MAINTAINERS.md](MAINTAINERS.md)
 
 Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not commit tokens to this repository.

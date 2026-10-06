@@ -20,6 +20,8 @@ before editing.
 
 ## Working rules
 
+- Follow [TigerStyle for TypeScript and Effect v4](../../references/tigerstyle-typescript.md). Apply bounded work, validated data, typed failures, scoped cleanup and invariant/fault tests. `pnpm check:tigerstyle` and `pnpm test:repo-rules` run in verification; the migrated TigerStyle gate has no debt allowances. Mechanical checks do not prove semantic safety.
+
 - Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
   package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
   failure channels, scoped finalizers, and bounded Effect concurrency. Pure

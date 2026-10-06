@@ -1,5 +1,9 @@
 name: CI
 
+# Zero paid GitHub usage: standard Ubuntu runners in this public repository,
+# no Actions artifacts, and no dependency caches. See AGENTS.md and
+# .agents/references/github-zero-spend.md before changing that policy.
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
@@ -39,7 +43,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -71,7 +75,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -179,7 +183,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -1,3 +1,4 @@
+import { parseJson, objectFields, isString, optional } from "../json-validation.js";
 import { Cause, Effect } from "effect";
 import { integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { installationInstanceScope } from "./installation-instance.js";
@@ -115,7 +116,7 @@ export const inspectZelavisInstallationProgram = Effect.fn("Installation.inspect
     return { status: matches ? "ok" : "warning", detail: command ? `PATH answers at ${command}${link ? ` -> ${link}` : ""}; inspected CLI is ${installation.path}.` : `No zelavis on PATH; inspected CLI is ${installation.path}.` };
   })));
   (yield* check("release", () => Effect.gen(function* () {
-    const manifest = JSON.parse((yield* integration(() => host.read(`${scope.current}/manifest.json`))) ?? "null") as { version?: string } | null;
+    const manifest = parseJson((yield* integration(() => host.read(`${scope.current}/manifest.json`))) ?? "null", (value): value is { version?: string } | null => value === null || objectFields<{ version?: string }>({ version: optional(isString) })(value));
     const node = (yield* integration(() => host.exists(`${scope.current}/runtime/node/bin/node`)));
     const current = (yield* integration(() => host.readlink(`${scope.current}`)));
     const matches = !!manifest && manifest.version === receipt?.version && node && (current === `releases/${receipt?.version}` || current === `${paths.prefix}/releases/${receipt?.version}`);

@@ -1,3 +1,5 @@
+import { parseJson } from "../core/json-validation.js";
+import { documentRecord, collectionRecord } from "./documents.js";
 import { Effect, Stream } from "effect";
 import type { DbEvent, EventCursor } from "./events.js";
 import type { Collection, Document, JsonObject } from "./documents.js";
@@ -91,8 +93,8 @@ export const toDomainEvent = (
   const origin = originOf(event.identity!.namespace, event.identity!.key);
   if (origin === undefined) return undefined;
 
-  const decoded = JSON.parse(dec.decode(event.bytes)) as Document | Collection;
   const collectionEvent = isCollectionEvent(event.identity!.namespace);
+  const decoded = collectionEvent ? parseJson(dec.decode(event.bytes), collectionRecord) : parseJson(dec.decode(event.bytes), documentRecord);
 
   return {
     cursor: event.cursor,

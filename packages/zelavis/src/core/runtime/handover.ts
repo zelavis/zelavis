@@ -1,3 +1,4 @@
+import { objectFields, isString } from "../json-validation.js";
 import { Cause, Data, Effect, Exit, Semaphore } from "effect";
 import type { RuntimeAdmission } from "./admission.js";
 import type { TaggedFailure } from "./effect-boundary.js";
@@ -7,6 +8,11 @@ export interface RuntimeRelease {
   readonly version: string;
   readonly digest: string;
 }
+
+export const runtimeReleaseRecord = objectFields<RuntimeRelease>({
+  version: (value): value is string => isString(value) && value.length > 0 && value.length <= 100,
+  digest: (value): value is string => isString(value) && /^sha256:[a-f0-9]{64}$/.test(value),
+});
 
 export interface RuntimeHandoverCheckpoint {
   readonly generation: number;

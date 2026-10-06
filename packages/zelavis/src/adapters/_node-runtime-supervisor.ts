@@ -66,7 +66,7 @@ export const createNodeRuntimeSupervisor = Effect.fn("RuntimeSupervisor.create")
       }, {
         onOutput: ({ stream, line }) => {
           let event: { protocol?: unknown; type?: unknown; id?: unknown; url?: unknown; error?: unknown } | undefined;
-          try { event = JSON.parse(line); } catch { /* ordinary engine log */ }
+          try { event = JSON.parse(line); } catch { options.output?.(stream, line); return; }
           if (stream !== "stdout" || event?.protocol !== NODE_RUNTIME_PROTOCOL) { options.output?.(stream, line); return; }
           if (event.type === "prepared") { Deferred.doneUnsafe(prepared, Effect.void); return; }
           if (typeof event.id !== "string") return;

@@ -1,3 +1,6 @@
+import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { createServer, request as httpsRequest, type Server } from "node:https";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -55,7 +58,7 @@ export interface ProjectDispatchHttpsServer {
 }
 
 /** A destination Agent's TLS ingress for signed Project lifecycle commands. */
-export async function createProjectDispatchHttpsServer(options: {
+export function createProjectDispatchHttpsServer(options: {
   readonly host: string;
   readonly port: number;
   readonly keyPem: string;
@@ -73,7 +76,7 @@ export async function createProjectDispatchHttpsServer(options: {
   readonly preparedDigest: (projectId: string) => Promise<ZelavisArtifactDigest | undefined>;
   readonly start: (claims: ProjectDispatchClaims) => Promise<void>;
   readonly stop: (claims: ProjectDispatchClaims) => Promise<void>;
-}): Promise<ProjectDispatchHttpsServer> {
+}): Promise<ProjectDispatchHttpsServer> { return presentProtocol(Effect.gen(function* () {
   if (!options.host || !Number.isInteger(options.port) ||
       options.port < 0 || options.port > 65_535 ||
       !options.keyPem || !options.certPem) {
@@ -82,19 +85,19 @@ export async function createProjectDispatchHttpsServer(options: {
   const nonces = createProjectDispatchNonceConsumer(options.nonceStore, options.agentId);
   const server: Server = createServer({ key: options.keyPem, cert: options.certPem },
     (request, response) => {
-      void (async () => {
+      void (() => { return presentProtocol(Effect.gen(function* () {
         if (request.method === "GET" && request.url === "/v1/health") {
           reply(response, 200, JSON.stringify({ agentId: options.agentId,
             nodeId: options.nodeId, ready: options.isReady?.() ?? true }));
           return;
         }
         if (request.method === "POST" && request.url === "/v1/placements") {
-          const body = JSON.parse((await readBounded(request)).toString("utf8")) as { grant?: unknown };
+          const body = parseJson(((yield* integrationValue(readBounded(request)))).toString("utf8"), objectFields<{ grant?: unknown }>({grant: optional(isUnknown)}));
           if (!body || typeof body.grant !== "string") {
             reply(response, 400, '{"error":"invalid request"}');
             return;
           }
-          await options.acceptLease(body.grant);
+          (yield* integrationValue(options.acceptLease(body.grant)));
           reply(response, 200, '{"ok":true}');
           return;
         }
@@ -106,7 +109,7 @@ export async function createProjectDispatchHttpsServer(options: {
             reply(response, 400, '{"error":"invalid request"}');
             return;
           }
-          await receiveProjectDispatch({
+          (yield* integrationValue(receiveProjectDispatch({
             trust: options.trust, token: authority,
             agentId: options.agentId, action: "prepare", projectId,
             nodeId: options.nodeId, readPlacement: options.readPlacement,
@@ -120,7 +123,7 @@ export async function createProjectDispatchHttpsServer(options: {
               }
               await options.prepareArtifact(projectId, snapshot, digest);
             },
-          });
+          })));
           reply(response, 200, '{"ok":true}');
           return;
         }
@@ -131,12 +134,12 @@ export async function createProjectDispatchHttpsServer(options: {
         }
         const projectId = decodeURIComponent(match[1]!);
         const action = match[2] as "start" | "stop";
-        const body = JSON.parse((await readBounded(request)).toString("utf8")) as { authority?: unknown };
+        const body = parseJson(((yield* integrationValue(readBounded(request)))).toString("utf8"), objectFields<{ authority?: unknown }>({authority: optional(isUnknown)}));
         if (!body || typeof body.authority !== "string") {
           reply(response, 400, '{"error":"invalid request"}');
           return;
         }
-        const claims = await receiveProjectDispatch({
+        const claims = (yield* integrationValue(receiveProjectDispatch({
           trust: options.trust,
           token: body.authority,
           agentId: options.agentId,
@@ -154,23 +157,23 @@ export async function createProjectDispatchHttpsServer(options: {
             await (action === "start" ? options.start : options.stop)(value);
             return value;
           },
-        });
-        if (action === "stop" && !(await options.releaseLease(claims))) {
+        })));
+        if (action === "stop" && !((yield* integrationValue(options.releaseLease(claims))))) {
           throw new Error("Project placement changed during stop.");
         }
         reply(response, 200, '{"ok":true}');
-      })().catch(() => {
+      }).pipe(Effect.withSpan("createProjectDispatchHttpsServer/server/callback/callback"))); })().catch(() => {
         if (!response.headersSent) reply(response, 403, '{"error":"dispatch refused"}');
         else response.destroy();
       });
     });
-  await new Promise<void>((resolve, reject) => {
+  (yield* integrationValue(new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, options.host, () => {
       server.removeListener("error", reject);
       resolve();
     });
-  });
+  })));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Agent TLS listener has no address.");
   return {
@@ -180,7 +183,7 @@ export async function createProjectDispatchHttpsServer(options: {
       server.closeAllConnections();
     }),
   };
-}
+}).pipe(Effect.withSpan("createProjectDispatchHttpsServer"))); }
 
 interface Destination {
   readonly url: string;
@@ -189,10 +192,11 @@ interface Destination {
 }
 
 /** Verify the configured TLS peer is the Agent assigned to this Node. */
-export async function probeProjectAgent(destination: Destination,
-  nodeId: string): Promise<boolean> {
+export function probeProjectAgent(destination: Destination,
+  nodeId: string): Promise<boolean> { return presentProtocol(Effect.gen(function* () {
   const url = endpoint(destination);
-  return new Promise<boolean>((resolve) => {
+  return yield* Effect.callback<boolean>((resume) => {
+    const resolve = (value: boolean) => resume(Effect.succeed(value));
     const request = httpsRequest({
       hostname: url.hostname, port: url.port, path: "/v1/health",
       method: "GET", ca: destination.caPem, rejectUnauthorized: true,
@@ -207,9 +211,9 @@ export async function probeProjectAgent(destination: Destination,
       });
       response.once("end", () => {
         try {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          const body = parseJson(Buffer.concat(chunks).toString("utf8"), objectFields<{
             agentId?: unknown; nodeId?: unknown; ready?: unknown;
-          };
+          }>({agentId: optional(isUnknown), nodeId: optional(isUnknown), ready: optional(isUnknown)}));
           resolve(response.statusCode === 200 && body.agentId === destination.agentId &&
             body.nodeId === nodeId && body.ready === true);
         } catch { resolve(false); }
@@ -218,8 +222,9 @@ export async function probeProjectAgent(destination: Destination,
     request.once("timeout", () => request.destroy());
     request.once("error", () => resolve(false));
     request.end();
+    return Effect.sync(() => { request.destroy(); });
   });
-}
+}).pipe(Effect.withSpan("probeProjectAgent"))); }
 
 function endpoint(destination: Destination): URL {
   const url = new URL(destination.url);

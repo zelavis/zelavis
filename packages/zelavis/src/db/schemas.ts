@@ -1,4 +1,6 @@
-import { Effect, Stream } from "effect";
+import { CollectionFieldEntrySchema } from "./schema/field-types.js";
+import { isPositiveInteger, isString, isBoolean, objectFields, parseJson } from "../core/json-validation.js";
+import { Effect, Stream, Schema } from "effect";
 import { SchemaVersionExists, SchemaNotFound } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import { equals } from "./query.js";
@@ -63,6 +65,9 @@ export interface SchemasApi {
   ) => Effect.Effect<SchemaValidationResult>;
 }
 
+const schemaRecord = objectFields<StoredCollectionSchema>({ collection: isString, version: isPositiveInteger,
+  active: isBoolean, fields: (value): value is StoredCollectionSchema["fields"] => Array.isArray(value) && value.every(Schema.is(CollectionFieldEntrySchema)) });
+
 export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi => {
   const readAt = (namespace: string, key: string) =>
     Effect.gen(function* () {
@@ -88,12 +93,12 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
 
   const getVersion = (collection: string, version: number) =>
     Effect.map(readAt(SCHEMA_NS, schemaKey(tenant, collection, version)), (raw) =>
-      raw === undefined ? undefined : (JSON.parse(raw) as StoredCollectionSchema),
+      raw === undefined ? undefined : (parseJson(raw, schemaRecord)),
     );
 
   const activeVersionOf = (collection: string) =>
     Effect.map(readAt(ACTIVE_NS, activeKey(tenant, collection)), (raw) =>
-      raw === undefined ? undefined : (JSON.parse(raw) as { version: number }).version,
+      raw === undefined ? undefined : (parseJson(raw, objectFields<{ version: number }>({version: isPositiveInteger}))).version,
     );
 
   const allStored = Effect.gen(function* () {
@@ -101,7 +106,7 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
     const out: StoredCollectionSchema[] = [];
     for (const seq of seqs) {
       const object = yield* store.read(seq);
-      if (object !== undefined) out.push(JSON.parse(dec.decode(object.bytes)) as StoredCollectionSchema);
+      if (object !== undefined) out.push(parseJson(dec.decode(object.bytes), schemaRecord));
     }
     return out;
   }).pipe(Effect.orDie);

@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 import {
   calculateP256JwkThumbprint,
   exportP256Jwk,
@@ -149,12 +151,12 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
     return fetchNonce();
   }
 
-  async function postJws(
+  function postJws(
     url: string,
     payload: Record<string, unknown> | string,
     retryOnBadNonce = true,
-  ): Promise<Response> {
-    const nonce = await getNonce();
+  ): Promise<Response> { return presentProtocol(Effect.gen(function* () {
+    const nonce = (yield* integrationValue(getNonce()));
     const header = {
       alg: "ES256" as const,
       nonce,
@@ -170,13 +172,13 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
       payload,
     });
 
-    const response = await customFetch(url, {
+    const response = (yield* integrationValue(customFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/jose+json",
       },
       body: JSON.stringify(jws),
-    });
+    })));
 
     // Update next cached nonce if present
     const nextNonce = response.headers.get("replay-nonce");
@@ -187,9 +189,10 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
     if (!response.ok) {
       let errorBody: { type?: string; detail?: string; status?: number } = {};
       try {
-        errorBody = (await response.json()) as typeof errorBody;
+        errorBody = (unwrapIntegrationResult(yield* Effect.result(integrationValue(response.json())))) as typeof errorBody;
       } catch {
-        // non-json error body
+        // Preserve the status fallback for non-JSON ACME responses.
+        errorBody = { status: response.status };
       }
 
       // Handle badNonce retry per RFC 8555 Section 6.5
@@ -198,7 +201,7 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         errorBody.type === "urn:ietf:params:acme:error:badNonce"
       ) {
         cachedNonce = undefined;
-        return postJws(url, payload, false);
+        return (yield* integrationValue(postJws(url, payload, false)));
       }
 
       throw new AcmeError(
@@ -209,8 +212,8 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
       );
     }
 
-    return response;
-  }
+    return (yield* integrationValue(response));
+  }).pipe(Effect.withSpan("createAcmeClient/postJws"))); }
 
   return {
     getDirectory,

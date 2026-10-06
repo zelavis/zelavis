@@ -1,3 +1,6 @@
+import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { parseJson, objectFields, isString, isTimestamp } from "../core/json-validation.js";
 /**
  * Custody of the Platform's Agent authority key.
  *
@@ -52,45 +55,47 @@ async function writeAtomically(path: string, body: string, mode: number) {
   await rename(temporary, path);
 }
 
-export async function readOrCreatePlatformAuthorityKey(
+export function readOrCreatePlatformAuthorityKey(
   directory: string,
   now = Date.now(),
 ): Promise<{
   readonly signer: ZelavisPlatformAuthoritySigner;
   readonly trustFile: string;
   readonly trust: ZelavisHostOperationTrustStore;
-}> {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700).catch(() => undefined);
+}> { return presentProtocol(Effect.gen(function* () {
+  (yield* integrationValue(mkdir(directory, { recursive: true, mode: 0o700 })));
+  (yield* integrationValue(chmod(directory, 0o700).catch(() => undefined)));
   const keyPath = join(directory, KEY_FILE);
   let keys: StoredKey[] = [];
-  const stats = await lstat(keyPath).catch(() => undefined);
+  const stats = (yield* integrationValue(lstat(keyPath).catch(() => undefined)));
   if (stats) {
     if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o077) !== 0) {
       throw new Error(`Platform authority key file ${keyPath} must be a 0600 regular file.`);
     }
-    keys = (JSON.parse(await readFile(keyPath, "utf8")) as { keys: StoredKey[] }).keys;
+    keys = (parseJson((yield* integrationValue(readFile(keyPath, "utf8"))), keysRecord)).keys;
   }
   const live = keys.filter((key) => Date.parse(key.notAfter) > now);
   let current = live.at(-1);
   if (!current || Date.parse(current.notAfter) - now < ROTATE_BEFORE_MS) {
-    current = await generate(now);
+    current = (yield* integrationValue(generate(now)));
     live.push(current);
   }
   if (live.length !== keys.length || live.at(-1) !== keys.at(-1)) {
-    await writeAtomically(keyPath, `${JSON.stringify({ keys: live }, null, 2)}\n`, 0o600);
+    (yield* integrationValue(writeAtomically(keyPath, `${JSON.stringify({ keys: live }, null, 2)}\n`, 0o600)));
   }
   const trust: ZelavisHostOperationTrustStore = {
     keys: live.map(({ keyId, publicKey, notBefore, notAfter }) => ({ keyId, publicKey, notBefore, notAfter })),
   };
   const trustFile = join(directory, PLATFORM_AUTHORITY_TRUST_FILE);
-  await writeAtomically(trustFile, `${JSON.stringify(trust, null, 2)}\n`, 0o644);
-  const privateKey = await crypto.subtle.importKey(
+  (yield* integrationValue(writeAtomically(trustFile, `${JSON.stringify(trust, null, 2)}\n`, 0o644)));
+  const privateKey = (yield* integrationValue(crypto.subtle.importKey(
     "pkcs8",
     Buffer.from(current.privateKeyPkcs8, "base64"),
     { name: "Ed25519" },
     false,
     ["sign"],
-  );
+  )));
   return { signer: { keyId: current.keyId, privateKey }, trustFile, trust };
-}
+}).pipe(Effect.withSpan("readOrCreatePlatformAuthorityKey"))); }
+
+const keysRecord = objectFields<{ keys: StoredKey[] }>({ keys: (value): value is StoredKey[] => Array.isArray(value) && value.every(objectFields<StoredKey>({ keyId: isString, privateKeyPkcs8: isString, publicKey: isString, notBefore: isTimestamp, notAfter: isTimestamp })) });

@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, parseJson, isString } from "../core/json-validation.js";
 import { IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { Deferred, Effect } from "effect";
@@ -50,7 +51,7 @@ export interface NodeUpdateControlOptions {
 function readUserInstallation(dataDirectory: string): { prefix: string; runningRelease: string } | undefined {
   try {
     const prefix = dirname(dataDirectory);
-    const receipt = JSON.parse(readFileSync(join(prefix, "installation.json"), "utf8")) as { mode?: unknown; instance?: unknown; dataDirectory?: unknown };
+    const receipt = parseJson(readFileSync(join(prefix, "installation.json"), "utf8"), objectFields<{ mode?: unknown; instance?: unknown; dataDirectory?: unknown }>({mode: optional(isUnknown), instance: optional(isUnknown), dataDirectory: optional(isUnknown)}));
     if (receipt.mode !== "user" || receipt.instance !== "default" || receipt.dataDirectory !== dataDirectory) return undefined;
     return { prefix, runningRelease: realpathSync(join(prefix, "current")) };
   } catch {
@@ -70,7 +71,7 @@ function startUpdaterAsUser({ prefix, runningRelease }: { prefix: string; runnin
 }
 
 export function runningVersion(): string {
-  const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
+  const manifest = parseJson(readFileSync(new URL("../../package.json", import.meta.url), "utf8"), objectFields<{ version: string }>({version: isString}));
   return manifest.version;
 }
 
@@ -87,7 +88,7 @@ const boundedJson = Effect.fn("Updates.boundedJson")(function* (response: Respon
       if (size > MAX_RESPONSE_BYTES) return yield* new IntegrationFailure(new RangeError("The registry answered with more than expected."));
       chunks.push(value);
     }
-    return yield* integration(() => JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
+    return yield* integration(() => JSON.parse(Buffer.concat(chunks).toString("utf8")));
   }).pipe(Effect.ensuring(integration(() => reader.cancel()).pipe(Effect.ignore)));
 });
 

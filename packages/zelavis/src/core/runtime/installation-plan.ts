@@ -1,3 +1,4 @@
+import { isString, objectFields, parseJson, isPositiveInteger, isBoolean, literal, optional } from "../json-validation.js";
 import { Effect } from "effect";
 import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "./installation-instance.js";
@@ -111,7 +112,7 @@ export const readNativeInstallationReceiptProgram = Effect.fn("Installation.read
   const scope = installationInstanceScope(prefix, instance);
   const content = (yield* integration(() => host.read(scope.receipt)));
   if (content === undefined) return undefined;
-  const value = yield* evaluate(() => JSON.parse(content) as ZelavisNativeInstallationReceipt);
+  const value = yield* evaluate(() => parseJson(content, receiptRecord, `Native installation receipt at ${scope.receipt}`));
   if (!value || value.schemaVersion !== 2 || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
       !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
       value.instance !== instance || !["script", "deb", "create", "cli"].includes(value.installedBy) ||
@@ -265,14 +266,14 @@ export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZela
   validateInstallationPaths(paths);
   if (input.user && input.system) return yield* new IntegrationFailure(new Error("User installations do not support systemd."));
   assertInstallationPath(source, "release source");
-  const manifest = JSON.parse((yield* integration(() => host.read(`${source}/manifest.json`))) ?? "null") as { version?: unknown } | null;
+  const manifest = parseJson((yield* integration(() => host.read(`${source}/manifest.json`))) ?? "null", (value): value is { version?: string } | null => value === null || objectFields<{ version?: string }>({ version: optional(isString) })(value));
   if (!manifest || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(manifest.version)) {
     return yield* new IntegrationFailure(new Error("Release manifest must contain a valid version."));
   }
   const version = manifest.version;
   const installedManifest = (yield* integration(() => host.read(`${scope.current}/manifest.json`)));
   if (installedManifest && !input.allowDowngrade) {
-    const installed = JSON.parse(installedManifest) as { version: string };
+    const installed = parseJson(installedManifest, objectFields<{ version: string }>({version: isString}));
     if (compareInstallationVersions(version, installed.version) < 0) {
       return yield* new IntegrationFailure(new Error(`Refusing downgrade from ${installed.version} to ${version}; use --allow-downgrade deliberately.`));
     }
@@ -469,3 +470,5 @@ export const executeZelavisInstallationPlanProgram = Effect.fn("Installation.exe
   }).pipe(Effect.ensuring(integration(() => host.releaseMaintenance?.()).pipe(Effect.orDie)));
 });
 export function executeZelavisInstallationPlan(host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Promise<readonly string[]> { return present(executeZelavisInstallationPlanProgram(host, plan, confirmation)); }
+
+const receiptRecord = objectFields<ZelavisNativeInstallationReceipt>({ schemaVersion: literal(2), mode: literal("system", "user"), source: literal("release", "package"), installedBy: literal("script", "deb", "create", "cli"), prefix: isString, instance: isString, version: isString, edge: isBoolean, port: isPositiveInteger, configDirectory: isString, dataDirectory: isString, commandPath: isString, ownsUser: isBoolean, ownsGroup: isBoolean });

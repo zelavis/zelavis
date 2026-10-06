@@ -1,3 +1,4 @@
+import { parseJson, objectFields, optional, arrayOf, recordOf, literal, isString, isTimestamp, isBoolean, isFiniteNumber, isPositiveInteger, isNonNegativeInteger, isJsonValue, isJsonObject, isUnknown, type JsonValidator } from "../core/json-validation.js";
 import { createHash } from "node:crypto";
 import { Effect, Stream } from "effect";
 import type { Json, JsonObject } from "./json.js";
@@ -767,6 +768,35 @@ interface StoredCollection extends Omit<Collection, "indexes"> {
   readonly indexes?: ReadonlyArray<StoredIndex>;
 }
 
+export const documentRecord = objectFields<Document>({ id: isString, collection: isString,
+  data: isJsonObject, createdAt: isTimestamp, updatedAt: isTimestamp, version: isPositiveInteger,
+  expiresAt: optional(isTimestamp), score: optional(isFiniteNumber), distance: optional(isFiniteNumber),
+  highlights: optional(recordOf(arrayOf(isString))) });
+const filterRecord = objectFields<DocumentFilter>({ path: isString,
+  op: optional(literal("eq", "ne", "gt", "gte", "lt", "lte", "in", "geometry", "phrase", "search")),
+  value: (value): value is DocumentFilter["value"] => isJsonValue(value) });
+const storedIndexRecord = objectFields<StoredIndex>({ name: isString, column: isString,
+  unique: isBoolean, state: literal("building", "ready"), fields: arrayOf(objectFields<Required<IndexField>>({
+    path: isString, direction: literal("asc", "desc"), nulls: literal("first", "last") })) });
+export const collectionRecord = objectFields<StoredCollection>({ name: isString, createdAt: isTimestamp,
+  surface: literal("content-studio", "database"), metadata: optional(recordOf(isUnknown)),
+  indexes: optional(arrayOf(storedIndexRecord)),
+  checks: optional(arrayOf(objectFields<CheckConstraint>({ name: isString, where: arrayOf(filterRecord) }))),
+  references: optional(arrayOf(objectFields<Required<ReferenceConstraint>>({ name: isString, path: isString,
+    collection: isString, onDelete: literal("restrict", "cascade", "set-null") }))),
+  analyzer: optional(objectFields<Analyzer>({ fields: arrayOf(isString), version: isNonNegativeInteger,
+    fold: optional(isBoolean), stopWords: optional(arrayOf(isString)), minLength: optional(isNonNegativeInteger), language: optional(isString) })),
+  spatial: optional(objectFields<SpatialIndex>({ fields: arrayOf(isString), resolution: isNonNegativeInteger, version: isNonNegativeInteger })),
+  embedding: optional(objectFields<EmbeddingIndex>({ field: isString, dimension: isPositiveInteger,
+    metric: literal("cosine", "dot", "euclidean"), quantization: optional(literal("f32", "f16", "i8", "b1")),
+    normalize: optional(isBoolean), model: optional(isString), modelVersion: optional((value): value is string | number => isString(value) || isFiniteNumber(value)), version: isNonNegativeInteger })),
+  edges: optional(arrayOf(objectFields<EdgeDefinition>({ name: isString, path: isString, collection: isString }))),
+  measures: optional(arrayOf(objectFields<MeasureDefinition>({ name: isString, path: isString }))),
+  referencedBy: optional(arrayOf(objectFields<{ collection: string; reference: string }>({ collection: isString, reference: isString }))),
+});
+const receiptRecord = objectFields<Receipt>({ key: isString, fingerprint: isString, request: isString, result: isUnknown, at: isTimestamp });
+const renameFenceRecord = objectFields<{ from: string; to: string }>({ from: isString, to: isString });
+
 const publicIndex = (index: StoredIndex): CollectionIndex => ({
   name: index.name,
   fields: index.fields,
@@ -801,7 +831,7 @@ const validateName = (name: string): Effect.Effect<void, InvalidCollectionName> 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const encode = (value: unknown) => enc.encode(JSON.stringify(value));
-const decode = <A>(bytes: Uint8Array) => JSON.parse(dec.decode(bytes)) as A;
+const decode = <A>(bytes: Uint8Array, check: JsonValidator<A>): A => parseJson(dec.decode(bytes), check, "database record");
 
 const readPath = (data: JsonObject, path: string): Json | undefined => {
   let cursor: Json | undefined = data;
@@ -2160,7 +2190,7 @@ export const documentsFor = (
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
       if (object === undefined) return undefined;
-      const receipt = decode<Receipt>(object.bytes);
+      const receipt = decode(object.bytes, receiptRecord);
       if (receipt.fingerprint !== fingerprint) {
         return yield* new IdempotencyKeyReused({
           tenant,
@@ -2237,7 +2267,7 @@ export const documentsFor = (
       const seq = yield* lookup(collectionNs(tenant), name);
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
-      return object === undefined ? undefined : decode<StoredCollection>(object.bytes);
+      return object === undefined ? undefined : decode(object.bytes, collectionRecord);
     });
 
   const requireCollection = (name: string) =>
@@ -2248,7 +2278,7 @@ export const documentsFor = (
     );
 
   const readDocument = (seq: Seq) =>
-    Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode<Document>(o.bytes)));
+    Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode(o.bytes, documentRecord)));
 
   /**
    * Refuse a write to a tenant that is being relocated off this shard.
@@ -2264,7 +2294,7 @@ export const documentsFor = (
     if (seq === undefined) return;
     const fence = yield* readObject(seq);
     if (fence === undefined) return;
-    const { from, to } = decode<{ from: string; to: string }>(fence.bytes);
+    const { from, to } = decode(fence.bytes, renameFenceRecord);
     return yield* new TenantMoving({ tenant, from, to });
   });
 
@@ -2975,7 +3005,7 @@ export const documentsFor = (
             for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
               const object = yield* readObject(seq);
               if (object === undefined) continue;
-              const doc = decode<Document>(object.bytes);
+              const doc = decode(object.bytes, documentRecord);
               if (doc.collection !== collection) continue;
               // Re-derived, not re-checked: these documents were accepted
               // once already, so a target that has since gone leaves the link
@@ -4113,7 +4143,7 @@ const generateHighlights = (
       const out: Collection[] = [];
       for (const seq of seqs) {
         const object = yield* readObject(seq);
-        if (object !== undefined) out.push(publicCollection(decode<StoredCollection>(object.bytes)));
+        if (object !== undefined) out.push(publicCollection(decode(object.bytes, collectionRecord)));
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     }),
@@ -4937,7 +4967,7 @@ const generateHighlights = (
             resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
           )) {
             const object = yield* readObject(seq);
-            if (object !== undefined) names.push(decode<StoredCollection>(object.bytes).name);
+            if (object !== undefined) names.push(decode(object.bytes, collectionRecord).name);
           }
         } else {
           yield* requireCollection(input.collection);
@@ -4958,7 +4988,7 @@ const generateHighlights = (
           if (input?.before !== undefined) {
             const object = yield* readObject(seq);
             if (object === undefined) continue;
-            if (decode<Receipt>(object.bytes).at >= input.before) continue;
+            if (decode(object.bytes, receiptRecord).at >= input.before) continue;
           }
           yield* write((txn) => txn.retract(seq));
           forgotten += 1;

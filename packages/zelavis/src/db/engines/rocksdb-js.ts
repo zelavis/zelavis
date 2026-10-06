@@ -1,3 +1,4 @@
+import { isUnknown, recordOf, parseJson } from "../../core/json-validation.js";
 import { existsSync, mkdirSync, realpathSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Array as Arr, Effect, Stream, type Scope } from "effect";
@@ -100,7 +101,7 @@ const claimFormat = (path: string, versions: Readonly<Record<string, string>>): 
   const marker = join(path, FORMAT_FILE);
   const expected = Object.keys(FORMAT) as Array<keyof typeof FORMAT>;
   if (existsSync(marker)) {
-    const found = JSON.parse(readFileSync(marker, "utf8")) as Record<string, unknown>;
+    const found = parseJson(readFileSync(marker, "utf8"), recordOf(isUnknown));
     if (expected.some((field) => found[field] !== FORMAT[field])) {
       const described = Object.fromEntries(expected.map((field) => [field, found[field]]));
       throw new Error(

@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, parseJson, isString, isPositiveInteger } from "../core/json-validation.js";
 import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, realpath, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -45,9 +46,9 @@ export const assembleNpmReleaseTreeProgram = Effect.fn("ReleaseTree.assemble")(f
     return yield* new IntegrationFailure(new Error(`Unsupported installation target: ${platform}-${architecture}.`));
   }
   const configSource = yield* integration(() => readFile(assetPath("release.json"), "utf8"));
-  const config = yield* evaluate(() => JSON.parse(configSource) as ReleaseConfig);
+  const config = yield* evaluate(() => parseJson(configSource, releaseConfigRecord));
   const packageSource = yield* integration(() => readFile(join(prepared, "platform", "package.json"), "utf8"));
-  const packageManifest = yield* evaluate(() => JSON.parse(packageSource) as { name?: unknown; version?: unknown });
+  const packageManifest = yield* evaluate(() => parseJson(packageSource, objectFields<{ name?: unknown; version?: unknown }>({name: optional(isUnknown), version: optional(isUnknown)})));
   if (packageManifest.name !== "zelavis" || typeof packageManifest.version !== "string") return yield* new IntegrationFailure(new Error("The prepared tree does not hold the zelavis package."));
 
   const node = join(prepared, "runtime", "node", "bin", "node");
@@ -106,3 +107,5 @@ export const assembleNpmReleaseTreeProgram = Effect.fn("ReleaseTree.assemble")(f
   yield* sealNodeRuntimeArtifact(prepared);
   return { version: packageManifest.version };
 });
+
+const releaseConfigRecord = objectFields<ReleaseConfig>({ schemaVersion: isPositiveInteger, nodeVersion: isString, traefikVersion: isString, minimumNodeMajor: isPositiveInteger });

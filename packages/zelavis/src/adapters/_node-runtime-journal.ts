@@ -1,3 +1,5 @@
+import { parseJson, objectFields, isPositiveInteger, literal, optional } from "../core/json-validation.js";
+import { runtimeReleaseRecord } from "../core/runtime/handover.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -20,7 +22,7 @@ function release(value: unknown): value is RuntimeRelease {
   return typeof input.version === "string" && input.version.length > 0 && input.version.length <= 100 && /^sha256:[a-f0-9]{64}$/.test(input.digest);
 }
 function parse(source: string): RuntimeJournalState {
-  const value = JSON.parse(source) as RuntimeJournalState;
+  const value = parseJson(source, journalRecord, "Invalid runtime journal; fenced recovery required");
   if (value.format !== "zelavis-runtime/1" || !Number.isSafeInteger(value.generation) || value.generation < 1 || !release(value.selected)) throw new Error("Invalid runtime journal; fenced recovery required.");
   const transition = value.transition;
   if (transition && (!phases.has(transition.phase) || !Number.isSafeInteger(transition.generation) || transition.generation < 1 || transition.generation > value.generation || !release(transition.previous) || !release(transition.target))) throw new Error("Invalid runtime transition; fenced recovery required.");
@@ -107,3 +109,8 @@ export const createNodeRuntimeJournal = Effect.fn("RuntimeJournal.open")(functio
     snapshot: () => state ? parse(JSON.stringify(state)) : undefined,
   };
 });
+
+const journalRecord = objectFields<RuntimeJournalState>({ format: literal("zelavis-runtime/1"), generation: isPositiveInteger,
+  selected: runtimeReleaseRecord, transition: optional(objectFields<RuntimeHandoverCheckpoint>({
+    generation: isPositiveInteger, phase: literal("prepared", "releasing", "activating", "committing", "ready", "failed"),
+    previous: runtimeReleaseRecord, target: runtimeReleaseRecord })) });

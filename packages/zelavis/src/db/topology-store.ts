@@ -1,3 +1,4 @@
+import { isString, isNonNegativeInteger, isPositiveInteger, objectFields, arrayOf, recordOf, literal, parseJson } from "../core/json-validation.js";
 import { Effect, Stream } from "effect";
 import {
   PartitionMapInvalid,
@@ -24,6 +25,31 @@ import {
   type ShardId,
   type TenantId,
 } from "./topology.js";
+
+export const partitionMapRecord = objectFields<PartitionMap>({ version: isNonNegativeInteger,
+  virtualRanges: isPositiveInteger, placements: arrayOf(objectFields<{ from: number; to: number; shard: string }>({
+    from: isNonNegativeInteger, to: isPositiveInteger, shard: isString })) });
+const placementRecord = objectFields<PlacementCatalog>({ version: isNonNegativeInteger,
+  collections: recordOf(literal("partitioned", "global", "replicated")) });
+const subdivisionRecord = objectFields<SubdivisionCatalog>({ version: isNonNegativeInteger, tenants: recordOf(arrayOf(isString)) });
+const decodePartitionMap = (source: string): PartitionMap => {
+  const map = parseJson(source, partitionMapRecord, "partition map");
+  const invalid = validatePartitionMap(map);
+  if (invalid) throw invalid;
+  return map;
+};
+const decodePlacementCatalog = (source: string): PlacementCatalog => {
+  const catalog = parseJson(source, placementRecord, "placement catalog");
+  const invalid = validatePlacementCatalog(catalog);
+  if (invalid) throw invalid;
+  return catalog;
+};
+const decodeSubdivisionCatalog = (source: string): SubdivisionCatalog => {
+  const catalog = parseJson(source, subdivisionRecord, "subdivision catalog");
+  const invalid = validateSubdivisionCatalog(catalog);
+  if (invalid) throw invalid;
+  return catalog;
+};
 
 const TOPOLOGY_NS = TOPOLOGY_SHARD;
 const TOPOLOGY_KEY = "partition-map";
@@ -84,7 +110,7 @@ export const tenantsOn = (store: ObjectStoreApi): Effect.Effect<ReadonlyArray<Te
     for (const seq of seqs) {
       const object = yield* store.read(seq);
       if (object !== undefined) {
-        out.push((JSON.parse(dec.decode(object.bytes)) as { tenant: string }).tenant);
+        out.push((parseJson(dec.decode(object.bytes), objectFields<{ tenant: string }>({tenant: isString}))).tenant);
       }
     }
     return out.sort();
@@ -99,7 +125,7 @@ export const loadPartitionMap = (
     const object = yield* store.read(seq);
     return object === undefined
       ? undefined
-      : (JSON.parse(dec.decode(object.bytes)) as PartitionMap);
+      : (decodePartitionMap(dec.decode(object.bytes)));
   }).pipe(Effect.orDie);
 
 const writePartitionMap = (store: ObjectStoreApi, map: PartitionMap) =>
@@ -192,7 +218,7 @@ export const loadPlacementCatalog = (
     const object = yield* store.read(seq);
     return object === undefined
       ? undefined
-      : (JSON.parse(dec.decode(object.bytes)) as PlacementCatalog);
+      : (decodePlacementCatalog(dec.decode(object.bytes)));
   }).pipe(Effect.orDie);
 
 const writePlacementCatalog = (store: ObjectStoreApi, catalog: PlacementCatalog) =>
@@ -323,7 +349,7 @@ export const loadSubdivisionCatalog = (
     const object = yield* store.read(seq);
     return object === undefined
       ? undefined
-      : (JSON.parse(dec.decode(object.bytes)) as SubdivisionCatalog);
+      : (decodeSubdivisionCatalog(dec.decode(object.bytes)));
   }).pipe(Effect.orDie);
 
 const writeSubdivisionCatalog = (store: ObjectStoreApi, catalog: SubdivisionCatalog) =>

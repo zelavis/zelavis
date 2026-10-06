@@ -44,3 +44,13 @@ test("an Effect Promise boundary preserves unchanged nested callback identity wi
   assert.equal(violations(scanEffectUsage(migrated.replace('return handlers', 'return new Promise(resolve => resolve(handlers))'), "existing.ts"), baseline).length, 1);
   assert.equal(violations(scanEffectUsage(migrated.replace(']; yield*', ', async () => await leaf("old")]; yield*'), "existing.ts"), baseline).length, 1);
 });
+
+test("traced Effect.gen protocol presentations preserve only unchanged nested debt", () => {
+  const original = 'async function compose() { const handlers = [async () => await leaf("old")]; return handlers; }';
+  const converted = 'function compose() { return presentProtocol(Effect.gen(function* () { const handlers = [async () => await leaf("old")]; return handlers; }).pipe(Effect.withSpan("compose"))); }';
+  const baseline = scanEffectUsage(original, "existing.ts");
+  assert.equal(violations(scanEffectUsage(converted, "existing.ts"), baseline).length, 0);
+  assert.equal(violations(scanEffectUsage(converted.replace('withSpan("compose")', 'withSpan("different")'), "existing.ts"), baseline).length, 1);
+  assert.equal(violations(scanEffectUsage(converted.replace('leaf("old")', 'leaf("new")'), "existing.ts"), baseline).length, 1);
+  assert.equal(violations(scanEffectUsage(converted.replace(']; return', ', async () => await leaf("old")]; return'), "existing.ts"), baseline).length, 1);
+});

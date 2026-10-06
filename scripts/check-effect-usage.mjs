@@ -39,7 +39,7 @@ export function scanEffectUsage(source, file = "source.ts") {
     .map(token => source.slice(token.start, token.end)).join("\0");
   const add = (node, kind, owner) => findings.push({ file, kind, owner, line: node.loc.start.line,
     fingerprint: createHash("sha256").update(`${kind}\0${owner}\0${syntax(node)}`).digest("hex") });
-  function visit(node, owner = "module", asyncOwner = false, parent, grandparent) {
+  function visit(node, owner = "module", asyncOwner = false, parent, grandparent, ancestors = []) {
     if (!node || typeof node !== "object") return;
     const isFunction = /Function|Method/.test(node.type) && (node.body || node.type === "ArrowFunctionExpression");
     const binding = node.type === "VariableDeclarator" ? node.id?.name : node.type === "ObjectProperty" ? node.key?.name ?? node.key?.value : undefined;
@@ -51,15 +51,27 @@ export function scanEffectUsage(source, file = "source.ts") {
       parent.callee.type === "MemberExpression" && parent.callee.object.type === "Identifier" &&
       parent.callee.object.name === "Effect" && parent.callee.property.name === "gen" &&
       grandparent?.type === "CallExpression" && grandparent.callee.type === "Identifier" && grandparent.callee.name === "present";
-    const currentOwner = effectGenerator ? owner : binding ? `${owner}/${binding}` : isFunction ? `${owner}/${node.id?.name ?? node.key?.name ?? node.key?.value ?? "callback"}` : owner;
+    // Traced immediate programs preserve an existing protocol operation owner.
+    // The span must match that owner and the program must be presented directly;
+    // nested legacy syntax and occurrence counts remain fully checked.
+    const pipe = ancestors.at(-3);
+    const presentation = ancestors.at(-4);
+    const protocolGenerator = isFunction && node.generator && !node.async &&
+      parent?.type === "CallExpression" && parent.callee.object?.name === "Effect" && parent.callee.property?.name === "gen" &&
+      grandparent?.type === "MemberExpression" && grandparent.object === parent && grandparent.property.name === "pipe" &&
+      pipe?.type === "CallExpression" && pipe.arguments.length === 1 &&
+      pipe.arguments[0].callee?.object?.name === "Effect" && pipe.arguments[0].callee?.property?.name === "withSpan" &&
+      pipe.arguments[0].arguments[0]?.value === owner.replace(/^module\//, "") &&
+      presentation?.type === "CallExpression" && presentation.callee.name === "presentProtocol" && presentation.arguments[0] === pipe;
+    const currentOwner = effectGenerator || protocolGenerator ? owner : binding ? `${owner}/${binding}` : isFunction ? `${owner}/${node.id?.name ?? node.key?.name ?? node.key?.value ?? "callback"}` : owner;
     if (isFunction && node.async) add(node, "async-function", currentOwner);
     if (node.type === "AwaitExpression" && !asyncOwner) add(node, "await", owner);
     if (node.type === "NewExpression" && node.callee.type === "Identifier" && node.callee.name === "Promise") add(node, "promise-constructor", owner);
     if (node.type === "CallExpression" && node.callee.type === "MemberExpression" && node.callee.object.type === "Identifier" && node.callee.object.name === "Promise" && ["all", "allSettled", "any", "race"].includes(node.callee.property.name)) add(node, "promise-coordination", owner);
     for (const [key, value] of Object.entries(node)) {
       if (["loc", "start", "end", "tokens", "comments"].includes(key)) continue;
-      if (Array.isArray(value)) for (const child of value) { if (child?.type) visit(child, currentOwner, isFunction ? node.async : asyncOwner, node, parent); }
-      else if (value?.type) visit(value, currentOwner, isFunction ? node.async : asyncOwner, node, parent);
+      if (Array.isArray(value)) for (const child of value) { if (child?.type) visit(child, currentOwner, isFunction ? node.async : asyncOwner, node, parent, [...ancestors, node]); }
+      else if (value?.type) visit(value, currentOwner, isFunction ? node.async : asyncOwner, node, parent, [...ancestors, node]);
     }
   }
   visit(ast.program);

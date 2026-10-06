@@ -2,6 +2,7 @@ import { execSync, spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import getPort, { portNumbers } from "get-port";
+import { startDevelopmentMaintenance } from "./github-storage-maintenance.mjs";
 
 const shell = process.platform === "win32";
 
@@ -223,6 +224,7 @@ async function main() {
   ];
 
   let shuttingDown = false;
+  const maintenance = startDevelopmentMaintenance();
 
   function shutdown(signal = "SIGTERM") {
     if (shuttingDown) {
@@ -230,6 +232,7 @@ async function main() {
     }
 
     shuttingDown = true;
+    maintenance.stop();
 
     for (const child of children) {
       if (!child.killed) {

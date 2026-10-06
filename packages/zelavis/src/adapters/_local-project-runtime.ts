@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
@@ -66,7 +67,7 @@ const declaredRuntimeEntry = Effect.fn("LocalProjects.declaredRuntimeEntry")(fun
     const text = yield* Effect.catch(integration(() => readFile(join(packageDirectory, "package.json"), "utf8")), Effect.fn("LocalProjects.recover")(function* () { return undefined; }));
     if (!text)
         return undefined;
-    const manifest = yield* integration(() => JSON.parse(text) as { zelavis?: { project?: { runtime?: unknown } } }).pipe(Effect.orElseSucceed(() => undefined));
+    const manifest = yield* integration(() => parseJson(text, objectFields<{ zelavis?: { project?: { runtime?: unknown } } }>({zelavis: optional(objectFields<{ project?: { runtime?: unknown } }>({project: optional(objectFields<{ runtime?: unknown }>({runtime: optional(isUnknown)}))}))}))).pipe(Effect.orElseSucceed(() => undefined));
     if (!manifest)
         return undefined;
     const entry = manifest.zelavis?.project?.runtime;

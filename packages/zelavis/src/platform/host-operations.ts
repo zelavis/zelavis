@@ -1,3 +1,6 @@
+import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { parseJson, isJsonValue } from "../core/json-validation.js";
 /**
  * Issuing authority for host operations.
  *
@@ -27,7 +30,7 @@ import {
   principalHasPermission,
 } from "../core/runtime/request-dispatcher.js";
 import type { ZelavisPrincipal } from "../core/runtime/contracts.js";
-import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
+import type { ZelavisSystemStore } from "../system-store.js";
 
 const AUDIT_NAMESPACE = "host-operation-audit";
 const DEFAULT_DEADLINE_MS = 5 * 60_000;
@@ -244,12 +247,12 @@ export function createHostOperationBroker(options: {
         }));
     },
 
-    async submit(input, principal) {
+    submit(input, principal) { return presentProtocol(Effect.gen(function* () {
       requireAuthenticated(principal);
       if (!input || typeof input.operation !== "string") {
         throw new ZelavisHostOperationValidationError("A host operation name is required.");
       }
-      const { agentId, operations } = await requestable();
+      const { agentId, operations } = (yield* integrationValue(requestable()));
       const candidates = operations.filter((manifest) =>
         manifest.id === input.operation &&
         (input.version === undefined || manifest.version === input.version));
@@ -299,8 +302,8 @@ export function createHostOperationBroker(options: {
       };
       // Same validation the Agent applies, before anything is signed.
       const validated = validateHostOperationRequest(unsigned, manifest, issuedAt);
-      const argumentsDigest = await hostOperationArgumentsDigest(validated.arguments);
-      const authority = await signAgentAuthority(options.signer.privateKey, {
+      const argumentsDigest = (yield* integrationValue(hostOperationArgumentsDigest(validated.arguments)));
+      const authority = (yield* integrationValue(signAgentAuthority(options.signer.privateKey, {
         keyId: options.signer.keyId,
         agentId,
         operationId: validated.operationId,
@@ -314,7 +317,7 @@ export function createHostOperationBroker(options: {
         // Long enough to reach the Agent, never longer than the operation.
         expiresAt: issuedAt + Math.min(AUTHORITY_LIFETIME_MS, deadlineMs),
         nonce: randomHex(16),
-      });
+      })));
       const record: ZelavisHostOperationRecord = {
         operationId: validated.operationId,
         operation: validated.operation,
@@ -327,14 +330,14 @@ export function createHostOperationBroker(options: {
       };
       // Recorded before the Agent sees it: an issued envelope always has an
       // audit entry, even if submission then fails.
-      await options.store.setIfAbsent(
+      (yield* integrationValue(options.store.setIfAbsent(
         AUDIT_NAMESPACE,
         record.operationId,
-        JSON.parse(JSON.stringify(record)) as ZelavisSystemStoreValue,
-      );
-      const agentSummary = await options.agent.submitHostOperation({ ...validated, authority });
+        parseJson(JSON.stringify(record), isJsonValue, "host operation audit"),
+      )));
+      const agentSummary = (yield* integrationValue(options.agent.submitHostOperation({ ...validated, authority })));
       return { ...record, agent: agentSummary };
-    },
+    }).pipe(Effect.withSpan("createHostOperationBroker/submit"))); },
 
     async audit(query, principal) {
       requireAuthenticated(principal);

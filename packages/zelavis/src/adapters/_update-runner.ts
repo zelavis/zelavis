@@ -1,3 +1,4 @@
+import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { IntegrationFailure, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
@@ -211,9 +212,9 @@ export const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* 
 });
 function requestId(text: string): string {
     try {
-        const request = JSON.parse(text) as {
+        const request = parseJson(text, objectFields<{
             id?: unknown;
-        };
+        }>({id: optional(isUnknown)}));
         return typeof request.id === "string" && request.id.length <= 128 ? request.id : randomUUID();
     }
     catch {

@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { parseJson, objectFields, isString, isPositiveInteger, isTimestamp, optional, literal } from "../core/json-validation.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -110,14 +112,14 @@ export function acquireLocalDataOwnership(directory: string, purpose: LocalDataO
   return present(acquireDataOwnership(directory, purpose).pipe(Effect.uninterruptible));
 }
 
-export async function readLocalDataOwner(directory: string): Promise<LocalDataOwner | undefined> {
+export function readLocalDataOwner(directory: string): Promise<LocalDataOwner | undefined> { return presentProtocol(Effect.gen(function* () {
   let content: string;
-  try { content = await readFile(join(directory, ".platform-owner.json"), "utf8"); }
+  try { content = unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(directory, ".platform-owner.json"), "utf8")))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-  const value = JSON.parse(content) as LocalDataOwner;
+  const value = parseJson(content, ownerRecord);
   if (!Number.isSafeInteger(value.pid) || value.pid <= 0 || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.session !== "string" || !["platform", "maintenance"].includes(value.purpose)) throw new Error("Malformed Platform ownership record.");
-  return value;
-}
+  return (yield* integrationValue(value));
+}).pipe(Effect.withSpan("readLocalDataOwner"))); }
 
 
 export interface LocalEdgeSelection { readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
@@ -173,3 +175,5 @@ export async function releaseLocalEdgeOwner(selection: LocalEdgeSelection): Prom
   try { await rm(join(selection.prefix, "edge-owner.json"), { force: true }); await rm(lock, { force: true }); }
   finally { await lease.release(); }
 }
+
+const ownerRecord = objectFields<LocalDataOwner>({ pid: isPositiveInteger, startedAt: isTimestamp, session: isString, installationRoot: optional(isString), purpose: literal("platform", "maintenance") });
