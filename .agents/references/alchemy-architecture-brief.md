@@ -141,9 +141,56 @@ The two worries are mostly resolved. Native code does not load, and the 1.3 GB f
 
 Also keep in mind: Alchemy is beta, so pin the exact version, own the bundle patch, and expect churn. DigitalOcean needs a custom provider.
 
+### Results against a fake Hetzner API (same day, no token)
+
+A fake Hetzner Cloud API (servers, SSH keys, actions, with fault injection) was driven through a real, headless Alchemy `deploy` and `destroy` with Alchemy's `Hetzner.Server` provider, an in-memory state store with injected write failures, and the API endpoint overridden through `HCLOUD_ENDPOINT`. The fake, the headless runner and the scenarios now live in `packages/zelavis/services/zelavis-cloud` (`@zelavis/cloud`, private, not yet wired into the Platform build) and run as `node --test`: 14 tests, about 5 seconds, no network.
+
+| Scenario | Result |
+|---|---|
+| Create, then rerun the same stack | Pass. One server, one `createServer` call, rerun is a no-op. |
+| Destroy | Pass. Server and its generated deploy key both removed. |
+| State write fails right after the cloud create (the exact crash window) | Pass. State keeps a `creating` row; a retry finds the server and creates nothing. |
+| Create committed but the response never arrives | Pass. The retry hits the name conflict and adopts the existing server: one server. |
+| **Crash after create and the state is lost entirely** | **Fail with Alchemy's default naming.** The physical name carries a random suffix that lives only in state, so a redeploy created a second server and left an orphan (and a second key). |
+| Same, with a deterministic `name` derived from the capacity request id | Pass. The redeploy adopts the existing server by name: one server, one key. |
+| Destroy with an unrelated server present | Pass. Only its own server was deleted. |
+
+What this changes:
+
+- **Deterministic names are mandatory.** The cloud service must pass `name` derived from the `requestId` (and labels), never rely on Alchemy's generated names. Without it, any loss of provisioning state creates an orphan that nothing will ever delete or bill-proof.
+- **State durability is the real safety net**, which is why the Zelavis-backed store (conditional, epoch-checked writes, written before any dependent action) matters more than the engine itself. Alchemy records a `creating` row before the cloud call, which is what makes the common crash recoverable.
+- **Headless operation works**, but needs `@effect/platform-node` (an optional peer). It must be bundled with the service, because only `zelavis` and `effect` are host-provided. The bundle grew from 824 KB to 900 KB with it.
+- The scenarios still need confirming against real Hetzner (rate limits, eventual consistency, real error shapes, 409 behavior), and cloud-init enrollment has not been tried at all.
+
+### Zelavis-backed state store (built, tested against the fake)
+
+`packages/zelavis/services/zelavis-cloud/src/provisioning-state.ts`. One System Store document per stack and stage, so every write is a single-key `compareAndSet` (the store has no multi-key transaction). `acquire` bumps an epoch and records the owner; the service it returns is bound to that owner and epoch and fails with `StateFenced` on any read or write once superseded.
+
+Held by tests (32 in the package, about 10 seconds): 24 concurrent writes lose no update; a superseded worker is fenced on read, write and delete and changes nothing; a worker superseded before it starts is stopped at Alchemy's `creating` write, so it reaches no cloud (0 servers created); a stale `destroy` cannot delete the new owner's machine; a restarted worker recovers a crash after the cloud create without creating again; compare-and-set conflicts retry a fixed 16 times then fail with `StateContention`; a malformed stored document is reported as `StateCorrupt`.
+
+Findings that changed the design:
+
+- **Alchemy's own encoder stores `Redacted` values in the clear**, including the generated deploy SSH key. The store seals them (AES-256-GCM, bound to the document so a sealed secret cannot be moved) and a stored document contains no private key material.
+- **The secret codec must be required, not optional.** A secret first appears after the cloud has acted (the deploy key exists once the machine does), so "fail closed when there is no codec" fired after a machine and key already existed. Construction now refuses to run without a codec.
+- A worker that deleted the stack itself must read it as empty afterwards, not as fenced.
+
+Open: where the secret key comes from (the Platform's key management), tying `acquire` to a Fabric lease, a deletion participant for Project cleanup, and values Alchemy does not mark `Redacted` are stored as given.
+
+### Telemetry (found while building the runner)
+
+Alchemy's own entrypoints add a telemetry layer that is **on by default** and exports traces, metrics and logs to `https://otel.alchemy.run`, tagged with a persistent user id, the git root commit, hashed origin and branch, OS, architecture, CPU count and memory. It also writes `~/.alchemy/id`. It is disabled by `ALCHEMY_TELEMETRY_DISABLED`, `DO_NOT_TRACK` or `NO_TRACK`, or a persisted file.
+
+The first spike driver and the first version of the package tests ran through Alchemy's `Test/Core.deploy`, which includes that layer, so those runs likely sent telemetry; `~/.alchemy/id` and `~/.alchemy/profiles` were created at the time of the first run. The package now runs through `makeAlchemyRunner` (`src/alchemy-runner.ts`), which composes none of it, sets the opt-out, points `ALCHEMY_HOME` and Alchemy's working directory at a directory we choose, and supplies credentials through an in-memory `ConfigProvider` rather than `process.env`. Tests hold this: every request during a deploy goes to the cloud API host (with a negative control proving the observer sees stray requests), the token is not in `process.env`, and nothing is written to the process cwd.
+
+### CapacityProvider (built, tested against the fake)
+
+`createCapacityProvider` (`src/capacity-provider.ts`) over a `CloudPort` (`src/cloud-port.ts`), with `createHetznerCloud` (`src/hetzner-cloud.ts`) as the first port: create and delete go through Alchemy; find, list and the last-resort delete of an orphan go straight to the Hetzner API. Held by 13 provider tests: node id is the deterministic machine name; the smallest approved class that fits is chosen and an impossible request is refused; the same or concurrent requests produce one machine; a node ceiling refuses new machines but never an existing request; a running machine is `provisioning` until the Platform has verified its Agent; `get` and `list` show only machines this Platform labeled; release removes the machine and its key, is idempotent, refuses (and leaves alone) a machine it did not create, and still removes its own machine when provisioning state was lost; a crash after the cloud create is recovered by provisioning again without a second create.
+
+Open: first-boot data and the enrollment token (the Agent installer command and a single-use token are not designed), the orphan deploy key when state is lost, policy and caps living in the capacity controller, wiring into the Platform build and allow-list, and everything against a real cloud.
+
 ### Next spike steps (need a disposable Hetzner project and token)
 
-1. Run one real apply and destroy through the bundle with a Zelavis-style conditional state store.
+1. Confirm the fake-API scenarios (now a repo test suite) against one disposable real Hetzner project, and replace the in-memory state with the Zelavis-backed conditional, epoch-checked store.
 2. Force a crash between create and state write; confirm no duplicate or orphan after retry (label lookup).
 3. Run supervised, cancellable and headless as a long-lived service.
 4. Boot a machine with cloud-init that runs `install.sh` in Agent-only mode and enrolls.

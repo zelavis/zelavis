@@ -211,7 +211,7 @@ OS timers, cleanup workflows, or reference-sync side effects.
 
 ## Cloud Capacity And Alchemy
 
-Decision (2026-10-06, direction chosen; behavior not yet proven). Full reasoning,
+Decision (2026-10-06). The provisioning code, fenced state store and `CapacityProvider` exist in `packages/zelavis/services/zelavis-cloud` (private, not yet wired into the Platform) and pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
 measurements and open tests are in `.agents/references/alchemy-architecture-brief.md`.
 
 - Cloud capacity is a core capability. The capacity controller, provider
@@ -242,6 +242,20 @@ measurements and open tests are in `.agents/references/alchemy-architecture-brie
 - The Alchemy state store is provisioning state only, written conditionally and
   backed by Zelavis storage with its own epoch checks (Alchemy's interface has no
   lock). It never holds Project, placement or data authority.
+- Alchemy telemetry is on by default: its own entrypoints export traces, metrics
+  and logs to a vendor collector (`otel.alchemy.run`) with a persistent user id,
+  git root-commit and hashed origin/branch, and host details, and write that id
+  under the user's home directory. Never compose its telemetry layer or its
+  `Test/Core` helper in shipped code or tests. Run it only through
+  `makeAlchemyRunner`, which composes none of that, keeps Alchemy's files under a
+  directory we choose (`ALCHEMY_HOME`), passes credentials as in-memory
+  configuration instead of `process.env`, and sets the vendor's opt-out. The
+  network guard test (every request goes to the cloud API host, with a
+  negative control proving the observer sees stray requests) must stay green on
+  every Alchemy bump.
+- Provisioned machine names are deterministic from the capacity request id.
+  Alchemy's default names carry a random suffix held only in its state, so
+  lost state would orphan a machine nobody deletes.
 - Provider tokens are stored encrypted, never returned or logged, and every use is
   audited. The wizard states plainly what a token can do and recommends a
   dedicated cloud project. Scale-out consent is separate from the firewall and DNS
