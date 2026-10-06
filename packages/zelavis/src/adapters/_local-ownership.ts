@@ -1,8 +1,13 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { parseJson, objectFields, isString, isPositiveInteger, isTimestamp, optional, literal } from "../core/json-validation.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Effect } from "effect";
 import { describeInstallation } from "../cli/installation.js";
+import { evaluate, integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 
 export interface LocalOwnershipLease { release(): Promise<void> }
 export interface LocalDataOwner {
@@ -13,14 +18,42 @@ export interface LocalDataOwner {
   readonly purpose: "platform" | "maintenance";
 }
 
-/** Kernel-released reservation; no PID-only stale-lock takeover. */
-async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
+async function openSqlite(path: string): Promise<{ exec(sql: string): void; close(): void }> {
   // Node and Bun use the same on-disk lock and SQLite's process-death semantics.
   const moduleName = "Bun" in globalThis ? "bun:sqlite" : "node:sqlite";
   const sqlite = await import(moduleName) as { DatabaseSync?: new (path: string) => { exec(sql: string): void; close(): void }; Database?: new (path: string, options: { create: boolean }) => { exec(sql: string): void; close(): void } };
-  const db = sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
+  return sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
+}
+
+/**
+ * Gives a reservation file its database header once, by whoever may write beside it.
+ *
+ * Taking a lock on an empty SQLite file writes that header, which needs a journal
+ * file in the file's directory. The Edge reservation lives in the root-owned
+ * installation prefix, which the service user cannot write, so the installer
+ * (root) initializes it and the service then only ever takes the lock.
+ */
+async function initializeReservationFile(path: string): Promise<void> {
+  const db = await openSqlite(path);
+  try { db.exec("CREATE TABLE IF NOT EXISTS zelavis_reservation (id INTEGER)"); }
+  finally { db.close(); }
+}
+
+/** Kernel-released reservation; no PID-only stale-lock takeover. */
+async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
+  const db = await openSqlite(path);
   try { db.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); }
-  catch (error) { db.close(); throw new Error(`Local ownership is already reserved at ${path}. Stop the owning Platform or wait for installation maintenance to finish.`, { cause: error }); }
+  catch (error) {
+    db.close();
+    // SQLite refuses for more than one reason (held by another process, an
+    // unreadable or read-only file), so say which rather than always "reserved".
+    const failure = error as { errcode?: number; errstr?: string; message?: string };
+    const reason = failure.errstr ?? failure.message ?? "unknown";
+    if (failure.errcode === 5 || /locked|busy/i.test(reason)) {
+      throw new Error(`Local ownership is already reserved at ${path}. Stop the owning Platform or wait for installation maintenance to finish.`, { cause: error });
+    }
+    throw new Error(`Local ownership could not be reserved at ${path} (${reason}). Check that this user can read and write the file.`, { cause: error });
+  }
   let released = false;
   return { async release() { if (!released) { released = true; db.close(); } } };
 }
@@ -50,38 +83,43 @@ export async function acquireNodeInstallerLock(prefix: string): Promise<LocalOwn
 }
 
 /** One guard for runtime startup and installer maintenance of the same data. */
-export async function acquireLocalDataOwnership(directory: string, purpose: LocalDataOwner["purpose"] = "platform"): Promise<LocalOwnershipLease> {
-  await mkdir(directory, { recursive: true });
-  const root = await realpath(directory);
+const acquireDataOwnership = Effect.fn("LocalOwnership.acquireData")(function* (directory: string, purpose: LocalDataOwner["purpose"]) {
+  yield* integration(() => mkdir(directory, { recursive: true }));
+  const root = yield* integration(() => realpath(directory));
   const path = join(root, ".platform.lock");
-  try { if ((await lstat(path)).isSymbolicLink()) throw new Error("Refusing a symlinked Platform ownership lock."); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const lease = await sqliteReservation(path);
+  const stat = yield* integration(() => lstat(path)).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException).code === "ENOENT", () => Effect.void));
+  if (stat?.isSymbolicLink()) return yield* new IntegrationFailure(new Error("Refusing a symlinked Platform ownership lock."));
+  const lease = yield* integration(() => sqliteReservation(path));
   const ownerFile = join(root, ".platform-owner.json");
   const temporary = `${ownerFile}.${randomUUID()}`;
-  let installationRoot: string | undefined;
-  try { if (process.argv[1]) installationRoot = describeInstallation(await realpath(process.argv[1])).root; } catch {}
+  // The binding belongs to the selected engine; argv may name its private worker.
+  const installationRoot = yield* integration(() => realpath(fileURLToPath(new URL("../cli.js", import.meta.url)))).pipe(
+    Effect.flatMap((cli) => evaluate(() => describeInstallation(cli).root)),
+    Effect.catch(() => Effect.void),
+  );
   const owner: LocalDataOwner = { pid: process.pid, startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(), session: randomUUID(), purpose, ...(installationRoot ? { installationRoot } : {}) };
-  try {
-    await writeFile(temporary, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: "wx" });
-    await rename(temporary, ownerFile);
-  } catch (error) { await rm(temporary, { force: true }); await lease.release(); throw error; }
-  return { async release() {
-    try {
-      const current = await readLocalDataOwner(root);
-      if (current?.session === owner.session) await rm(ownerFile, { force: true });
-    } finally { await lease.release(); }
-  } };
+  yield* integration(() => writeFile(temporary, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: "wx" })).pipe(
+    Effect.andThen(integration(() => rename(temporary, ownerFile))),
+    Effect.onError(() => integration(() => rm(temporary, { force: true })).pipe(Effect.ensuring(integration(() => lease.release()).pipe(Effect.orDie)), Effect.orDie)),
+  );
+  const release = Effect.gen(function* () {
+    const current = yield* integration(() => readLocalDataOwner(root));
+    if (current?.session === owner.session) yield* integration(() => rm(ownerFile, { force: true }));
+  }).pipe(Effect.ensuring(integration(() => lease.release()).pipe(Effect.orDie)), Effect.uninterruptible);
+  return { release: () => present(release) };
+});
+export function acquireLocalDataOwnership(directory: string, purpose: LocalDataOwner["purpose"] = "platform"): Promise<LocalOwnershipLease> {
+  return present(acquireDataOwnership(directory, purpose).pipe(Effect.uninterruptible));
 }
 
-export async function readLocalDataOwner(directory: string): Promise<LocalDataOwner | undefined> {
+export function readLocalDataOwner(directory: string): Promise<LocalDataOwner | undefined> { return presentProtocol(Effect.gen(function* () {
   let content: string;
-  try { content = await readFile(join(directory, ".platform-owner.json"), "utf8"); }
+  try { content = unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(directory, ".platform-owner.json"), "utf8")))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-  const value = JSON.parse(content) as LocalDataOwner;
+  const value = parseJson(content, ownerRecord);
   if (!Number.isSafeInteger(value.pid) || value.pid <= 0 || !Number.isFinite(Date.parse(value.startedAt)) || typeof value.session !== "string" || !["platform", "maintenance"].includes(value.purpose)) throw new Error("Malformed Platform ownership record.");
-  return value;
-}
+  return (yield* integrationValue(value));
+}).pipe(Effect.withSpan("readLocalDataOwner"))); }
 
 
 export interface LocalEdgeSelection { readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
@@ -93,6 +131,7 @@ export async function claimLocalEdgeOwner(selection: LocalEdgeSelection): Promis
   if (current && (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory)) throw new Error(`Host Edge belongs to instance ${current.instance} at ${current.dataDirectory}.`);
   const lock = join(selection.prefix, ".edge-owner.lock");
   await refuseEdgeSymlink(lock);
+  await initializeReservationFile(lock);
   const lease = await sqliteReservation(lock);
   try {
     // The default service can reserve the existing inode, but cannot alter its
@@ -136,3 +175,5 @@ export async function releaseLocalEdgeOwner(selection: LocalEdgeSelection): Prom
   try { await rm(join(selection.prefix, "edge-owner.json"), { force: true }); await rm(lock, { force: true }); }
   finally { await lease.release(); }
 }
+
+const ownerRecord = objectFields<LocalDataOwner>({ pid: isPositiveInteger, startedAt: isTimestamp, session: isString, installationRoot: optional(isString), purpose: literal("platform", "maintenance") });

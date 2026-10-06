@@ -180,8 +180,8 @@ for (const adapter of ["memory", "sqlite"]) {
       await store.delete("services", "registry");
       await store.setIfAbsent("services", "registry", newer);
     } else {
-      const { default: Database } = await import("better-sqlite3");
-      const db = new Database(filename);
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(filename);
       db.prepare("UPDATE zelavis_system_records SET value_json = ? WHERE namespace = 'services' AND record_key = 'registry'").run(JSON.stringify(newer));
       db.close();
     }

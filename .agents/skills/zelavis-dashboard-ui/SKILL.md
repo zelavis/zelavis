@@ -1,6 +1,6 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
+description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v8 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
@@ -13,7 +13,7 @@ Use this skill for changes in:
 
 ## Stack
 
-- **Router**: React Router v7 in SPA mode (`ssr: false`) — not TanStack Router
+- **Router**: React Router v8 in SPA mode (`ssr: false`) — not TanStack Router
 - **Styling**: Tailwind CSS v4 + shadcn/ui (Base UI components)
 - **Build**: Vite via `@react-router/dev`
 - **Verifying a UI change**: `pnpm --filter @zelavis/ui build`. `build:plugin`
@@ -52,7 +52,10 @@ import type { clientLoader as rootClientLoader } from '../root';
 const { runtime, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
 ```
 
-After mutations, trigger a loader rerun with `useRevalidator().revalidate()` — do not manually refetch.
+After mutations, trigger a loader rerun with `useRevalidator().revalidate()` — do not manually refetch. Revalidate failed mutations too: a failed deletion can
+have persisted its tombstone. Project cards with a deletion tombstone disable
+start/restart/upgrade, show the cleanup error, and offer confirmed Retry deletion.
+Never clear a tombstone to make a Project startable.
 
 For sub-component data not tied to a URL (e.g. loading related documents for a field editor), use `useFetcher` pointing at a resource route under `app/routes/api.*.tsx`.
 
@@ -82,6 +85,16 @@ const [prefix, setPrefix] = useTypedSearchParam('prefix', parseAsString.withDefa
 Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `use-typed-search-params.ts` following the `createParser` factory pattern — do not reach for external libraries.
 
 `clientLoader` reads search params from `request.url` (not `useLocation`) so data loading and URL state are always in sync on reload.
+
+Managed apps reuse the native Project pages and menu generator for APIs whose
+runtime capability reports `used: true`; API availability is independent of this
+visibility. Do not probe unused native APIs while loading a managed dashboard.
+Use `capabilities.database.available` for database loading, never a pseudo-service
+name. Keep the third-party app's database link distinct (`/app-database`) from
+its bound Zelavis database (`/database`). There is no second visible Project.
+The app's own tables (for example WordPress's MariaDB tables) belong only in
+App database. The bound Zelavis database supports additional service/extension
+features; never present it as containing or replacing the app's own database.
 
 ## Sidebar and navigation rules
 
@@ -159,6 +172,7 @@ pnpm dev
 pnpm --filter @zelavis/ui typecheck
 pnpm --filter @zelavis/ui build
 pnpm run ci:ui:local          # smoke specs against a throwaway Platform
+pnpm run ci:ui:embedded:local # production bundle, desktop/mobile hydration and navigation
 pnpm run ci:ui:setup:local    # first-run wizard against an unclaimed Platform
 ```
 
@@ -169,7 +183,38 @@ excluded from the unit runner. Assistant UI (chat, approval card, settings cards
 is covered there; the approval card must keep focusing nothing, and reply
 Markdown must never load an image.
 
+Changes to dashboard boot, mount paths or navigation must also pass the embedded
+browser suite. The dev server does not prove that the packaged HTML and modules
+hydrate together. Keep rewritten asset URLs consistent across the shell and
+modules, and keep host bootstrap scripts from displacing hydrated head elements.
+Root runtime resolution must settle waiting child loaders on every failure,
+redirect and cancellation; an earlier navigation cannot settle a later one.
+
 After substantial UI changes, verify the mounted dashboard flow still works at:
 
 - `http://127.0.0.1:3000/zelavis`
 - `http://127.0.0.1:3001/zelavis/`
+
+Site and managed Admin links use the Project's derived `preview` descriptor
+and the dashboard browser hostname, through `projectSiteUrl`. `runtime.url`
+is an Agent's private target and cannot be offered to a remote browser. An
+unavailable preview must be visible without mislabeling the running app as
+failed. Previews terminate HTTP; do not infer HTTPS from the dashboard URL.
+
+Native App creation exposes **Zelavis version** and App cards expose **Manage
+version** over the runtime's installed engine catalogue. Keep the selected exact
+version and open Project panel in URL search state. Use matching public SDK/HTTP
+operations with Project grants; disable unavailable versions and explain source
+or unsupported driver restrictions. Failed switches revalidate persisted state.
+
+Managed app recipe updates use **Update recipe** and explain that the app owns
+its software updates. Use the driver's `recipeUpdateMode: "integration"` and
+`zeroDowntimeUpdates` capability to enable the running action. Never call
+start/stop/restart around a recipe integration update. Native Zelavis Apps keep
+**Upgrade recipe** and the full engine handover/version controls.
+
+Native Database sidebar items come from the Project's `/database/menu/tables`
+operation, including each table's Tenant and grouped logical System Tables.
+Use loader revalidation after mutations; do not synthesize selected tables or
+maintain a local event copy of runtime services. Platform **Server → Database**
+inspects its separate read-only System Store, never the App database endpoints.

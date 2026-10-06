@@ -4,9 +4,11 @@ import { createServer } from "node:http";
 
 import {
   forwardPublicRequest,
+  forwardProjectSiteRequest,
   guardControlPlaneHost,
   resolveVerifiedBinding,
 } from "../dist/platform/public-domain-forwarder.js";
+import { fetchNodeSite } from "../dist/adapters/_node-site-fetch.js";
 import { zelavis, createInMemoryDomainBindingStore } from "../dist/index.js";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
@@ -60,6 +62,7 @@ function startSite() {
 
 function platform(site, overrides = {}) {
   return {
+    fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
     projects: () => ({
       get: async () => ({
@@ -150,7 +153,8 @@ test("an unbound host falls through to the installation's own root", async () =>
 test("a stopped Project answers instead of hanging", async () => {
   const response = await forwardPublicRequest(
     {
-      domainBindings: bindingStore({ "example.com": verified() }),
+      fetchSite: fetchNodeSite,
+    domainBindings: bindingStore({ "example.com": verified() }),
       projects: () => ({
         get: async () => ({ id: "site", kind: "zelavis", runtime: { status: "stopped" } }),
         listOwned: async () => [],
@@ -168,7 +172,8 @@ test("a running frontend takes precedence over the Project runtime", async () =>
   try {
     const response = await forwardPublicRequest(
       {
-        domainBindings: bindingStore({ "example.com": verified() }),
+        fetchSite: fetchNodeSite,
+    domainBindings: bindingStore({ "example.com": verified() }),
         projects: () => ({
           get: async () => ({
             id: "site",
@@ -290,4 +295,53 @@ test("an unverified binding does not hide the dashboard", async () => {
   });
   const response = await runtime.fetch(new Request("http://pending.example/zelavis"));
   assert.notEqual(response.status, 404);
+});
+
+test('site ingress preserves login cookies and public Host, and rewrites private redirects', async () => {
+  const server = createServer(async (request,response) => {
+    if (request.url === '/redirect') {
+      response.setHeader('location', `http://127.0.0.1:${server.address().port}/wp-admin/`);
+      response.setHeader('set-cookie', ['wordpress_logged_in=site; Path=/', 'zelavis_session=attack; Path=/']);
+      response.writeHead(302); response.end(); return;
+    }
+    const chunks=[]; for await (const chunk of request) chunks.push(chunk);
+    response.end(JSON.stringify({path:request.url,headers:request.headers,body:Buffer.concat(chunks).toString()}));
+  });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const site={url:`http://127.0.0.1:${server.address().port}`};
+  try {
+    const response=await forwardPublicRequest(platform(site),new Request('http://example.com:42000/wp-login.php',{
+      method:'POST',body:'log=owner',headers:{cookie:'zelavis_session=secret; wordpress_logged_in=site', 'x-forwarded-host':'evil.test', 'x-forwarded-proto':'https', 'x-zelavis-authority':'attack'},
+    }));
+    const body=JSON.parse(new TextDecoder().decode(response.body));
+    assert.equal(body.headers.host,'example.com:42000');
+    assert.equal(body.headers['x-forwarded-proto'],'http');
+    assert.equal(body.headers.cookie,'wordpress_logged_in=site');
+    assert.equal(body.headers['x-zelavis-authority'],undefined);
+    assert.equal(body.body,'log=owner');
+    const directory=await forwardPublicRequest(platform(site),new Request('http://example.com:42000/wp-admin/'));
+    assert.equal(directory.status,200);
+    assert.equal(JSON.parse(new TextDecoder().decode(directory.body)).path,"/wp-admin/");
+    const redirect=await forwardPublicRequest(platform(site),new Request('http://example.com:42000/redirect'));
+    assert.equal(redirect.headers.get('location'),'http://example.com:42000/wp-admin/');
+    assert.deepEqual(redirect.headers.getSetCookie(),['wordpress_logged_in=site; Path=/']);
+    for(const path of ['/zelavis/api/v1/runtime','/%7aelavis/api/v1/runtime','//zelavis/']) {
+      assert.equal((await forwardPublicRequest(platform(site),new Request(`http://example.com${path}`))).status,404);
+    }
+  } finally { server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); }
+});
+
+
+test("ingress cancels oversized request and response streams at its bound", async () => {
+  let cancelled=false;
+  const stream=()=>new ReadableStream({start(controller){controller.enqueue(new Uint8Array(32*1024*1024+1));},cancel(){cancelled=true;}});
+  const project={id:"site",runtime:{status:"running",url:"http://127.0.0.1:1"}};
+  const options={project,projects:{listOwned:async()=>[]},fetchSite:async()=>{throw Error("oversized request must not be fetched");}};
+  const request=new Request("http://example.com/upload",{method:"POST",body:stream(),duplex:"half"});
+  assert.equal((await forwardProjectSiteRequest(options,request)).status,413);
+  assert.equal(cancelled,true);
+  cancelled=false;
+  const response=await forwardProjectSiteRequest({...options,fetchSite:async()=>new Response(stream())},new Request("http://example.com/"));
+  assert.equal(response.status,502);
+  assert.equal(cancelled,true);
 });

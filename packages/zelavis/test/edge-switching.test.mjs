@@ -464,3 +464,31 @@ test("Stale-generation refusal: aborts cutover if publication is superseded befo
   assert.match(activeSwitch.error, /superseded by "routes-43"/);
   assert.equal((await manager.getPolicy()).activeAdapterId, undefined);
 });
+
+for (const participant of ["adapter", "certificates"]) {
+  test(`Recovery keeps its checkpoint retryable when ${participant} rollback fails`, async () => {
+    const events = [];
+    const store = createMemorySystemStore();
+    await store.set("edge", "active-switch", {
+      schemaVersion: 1, id: "failed-recovery", targetAdapterId: "traefik", publication,
+      phase: "stage-routing", startedAt: "2026-09-20T10:00:00.000Z", updatedAt: "2026-09-20T10:00:01.000Z",
+      leaseOwner: "dead-controller", leaseExpiresAt: "2026-09-20T10:00:10.000Z", fenceToken: 2,
+    });
+    const failure = new Error(`${participant} rollback unavailable`);
+    let unavailable = true;
+    const target = adapter("traefik", events, participant === "adapter" ? {
+      rollback() { if (unavailable) throw failure; },
+    } : {});
+    const certificates = certificateDistributor(events);
+    if (participant === "certificates") certificates.rollback = () => { if (unavailable) throw failure; };
+    let time = new Date("2026-09-20T10:01:00.000Z");
+    const manager = createZelavisEdgeManager({ store, adapters: [target], defaultAdapterId: "traefik",
+      certificates, now: () => time, controllerId: "recovery-controller" });
+    await assert.rejects(manager.reconcile(), error => error === failure);
+    assert.equal((await manager.getActiveSwitch()).phase, "stage-routing");
+    assert.equal((await manager.getPolicy()).activeAdapterId, undefined);
+    unavailable = false;
+    time = new Date("2026-09-20T10:10:00.000Z");
+    assert.equal((await manager.reconcile()).status, "rolled-back");
+  });
+}

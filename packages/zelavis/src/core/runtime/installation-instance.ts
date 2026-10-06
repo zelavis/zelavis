@@ -11,5 +11,9 @@ export function installationInstanceScope(prefix: string, instance = "default") 
   const directory = named ? `${prefix}/instances/${instance}` : prefix;
   const unit = (base: string) => named ? `${base}@${instance}.service` : `${base}.service`;
   const template = (base: string) => named ? `${base}@.service` : `${base}.service`;
-  return { instance, named, directory, current: `${directory}/current`, receipt: `${directory}/installation.json`, runtime: `${directory}/runtime.json`, account: named ? `zelavis-${instance}` : "zelavis", units: [unit("zelavis"), unit("zelavis-agent"), ...(named ? [] : [unit("zelavis-traefik")])], templates: [template("zelavis"), template("zelavis-agent"), ...(named ? [] : [template("zelavis-traefik")])] };
+  // The default instance's update units are the shared templates; a named instance's are rendered from
+  // them, like its socket, because a path unit cannot be a template over another unit's data folder.
+  const updatePath = named ? `zelavis-update-${instance}.path` : "zelavis-update.path";
+  const updateService = named ? `zelavis-update-${instance}.service` : "zelavis-update.service";
+  return { instance, named, socket: `zelavis${named ? `-${instance}` : ""}.socket`, directory, current: `${directory}/current`, receipt: `${directory}/installation.json`, runtime: `${directory}/runtime.json`, account: named ? `zelavis-${instance}` : "zelavis", units: [unit("zelavis"), unit("zelavis-agent"), ...(named ? [updatePath, updateService] : [unit("zelavis-traefik"), updatePath, updateService]), unit("zelavis-host-agent")], updatePath, updateService, templates: [template("zelavis"), template("zelavis-agent"), ...(named ? [] : [template("zelavis-traefik"), "zelavis-update.path", "zelavis-update.service"]), template("zelavis-host-agent")] };
 }

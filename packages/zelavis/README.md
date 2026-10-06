@@ -32,6 +32,15 @@ Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
 database and is never exposed through that store.
 
+**Server → Database** inspects that Platform backend in read-only logical tables,
+with secrets redacted. HTTP (`/runtime/system-store/namespaces` and
+`/runtime/system-store/namespaces/:namespace/records`), SDK
+(`client.runtime.systemStore.namespaces()` / `.records(namespace, { limit, after })`)
+and CLI (`zelavis system-store namespaces|records`) share the system-scoped
+`server.database.inspect` permission. Custom System Store adapters implement
+`namespaces()` for counts and `page(namespace, { limit, after })` for bounded,
+key-ordered reads. Project databases remain separate.
+
 The Platform does not mount `zelavis/app/db` as a global application database by
 default. Node process projects live under `.zelavis/projects/<projectId>`; each
 has one logical App database routed across physical SQLite shards below
@@ -120,12 +129,21 @@ The `@zelavis/wordpress` recipe (an officially maintained service in
 provisions a native, Dockerless WordPress Project. It downloads the exact WordPress release locked in the
 Project, generates private database credentials and `wp-config.php` salts, and
 runs dedicated Nginx, PHP-FPM, and MariaDB instances with Project-owned
-configuration, sockets, ports, logs, site files, and database data. The Zelavis
-Debian package installs the native stack as package dependencies. Archive and
-npm installations provision it through APT or Homebrew on first use when the
+configuration, sockets, ports, logs, site files, and database data. A base Zelavis
+installation includes no Nginx, PHP or MariaDB. The current recipe
+provisions them through APT or Homebrew on first use when the
 Zelavis process has host-package authority; otherwise preparation fails with an
 actionable dependency error instead of silently falling back to SQLite or a
 shared database.
+
+`zelavis/recipe` exposes the initial Effect v4 authoring contract for the next
+recipe driver: `parseRecipeManifest`, `defineRecipe`, `RecipeHost`, and
+`parseProcessPlan`. It validates contract 1 metadata, independent software
+versions, digest-pinned OCI declarations and supervised process plans.
+`selectRecipeMethod` selects an available named method at creation and refuses
+an unavailable explicit choice. Driver integration, persisting that choice in
+Project locks, and OCI execution remain planned; existing Projects still use
+`zelavis/adapters/project-runtime`.
 WordPress remains a managed app with hosting-style controls; it does not mount
 Zelavis App database/auth/content services. Maintainers can refresh the recipe
 pin from the official WordPress version API with:
@@ -171,9 +189,23 @@ enforcement proof; no shipped backend currently advertises hardened isolation,
 so required intent is refused everywhere today. The refusal body carries
 `code: "project.isolation.unsatisfied"` and the `isolation` assessment.
 
+Native Zelavis Apps upgrade their complete engine through the same live handover
+as the Platform. Managed app recipe updates refresh the Zelavis integration while
+the app keeps serving and owns its software updates. They stage and commit the
+verified recipe without provisioning, rewriting runtime configuration, or
+starting/stopping the app. SDK menus, REST/setup endpoints and dashboard assets
+activate immediately in a separate Project-scoped integration runtime behind the
+Project Gateway, using the shared Effect handover. Live recovery follows the
+proved host selection; a rejected activation restores the previous integration.
+Custom runtimes load selected code from verified digest-specific directories.
+Unsupported runtime upgrades require a stopped or failed Project; failed
+preparation restores the previous recipe and host descriptor. Projects pending deletion
+show **Retry deletion** instead of offering an upgrade, because cleanup may
+already have removed resources.
+
 Projects are reachable through all three surfaces with the same routes:
 `GET|POST /zelavis/api/v1/runtime/projects`, `GET|DELETE .../projects/:id`,
-`POST .../projects/:id/start|stop|restart`, `GET .../projects/:id/logs` and
+`POST .../projects/:id/start|stop|restart|upgrade`, `GET .../projects/:id/logs` and
 `GET .../runtime/project-recipes`; `createZelavisClient().projects.*` from
 `zelavis/sdk`; and `zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [--json]`.
 
@@ -205,8 +237,8 @@ a missing or malformed one instead of assuming native. The
 `zelavis/agent` surface provides stable Agent identity, operation-bound signed
 authority, and a durable lease-based operation journal. Agent records can be
 read through `/zelavis/api/v1/runtime/agent`. There is no general
-command-submission endpoint: only installed, release-signed operations can be
-requested, under the policy their signed manifest declares (see below). Host-operation validation returns an
+command-submission endpoint: only installed operations can be
+requested, under the policy their manifest declares (see below). Host-operation validation returns an
 immutable request/argument snapshot retained by the journal and executor.
 Arguments require own manifest declarations, at most 64 entries, names up to
 64 characters, values up to 16,384 characters without NUL bytes, and a JSON
@@ -217,12 +249,12 @@ the operation root, every parent and the artifact are still the registered
 inodes with the same owner and safe modes, reads the bytes through a no-follow
 handle, and spawns a private 0500 copy of those verified bytes from a 0700
 staging directory (`stagingDirectory`, default the OS temp directory) rather
-than the registered path. Operations must be installed with a release-signed
-manifest (`<root>/<id>/<version>/manifest.json` beside `artifact`,
-`loadInstalledHostOperations`): Ed25519 over canonical JSON, verified against
-the operator's trust store (`trust`: keys with validity windows; rotation by
-overlapping windows; `revokedKeyIds` invalidates everything a key signed).
-Scripts must name their interpreter in the signed manifest; a shebang without
+than the registered path. Operations are installed as a plain manifest
+(`<root>/<id>/<version>/manifest.json` beside `artifact`,
+`loadInstalledHostOperations`) in a tree only root can change: there is no
+signature, so the manifest file is held to the artifact's standard (a regular
+file, not group- or world-writable, root-owned when `requireRootOwned` is set).
+Scripts must name their interpreter in the manifest; a shebang without
 one is refused, and the interpreter and its directories are identity-proven
 like the artifact. Each operation runs in its own process group, which
 is killed at the deadline (`timedOut: true`) and when the operation's leader
@@ -238,8 +270,8 @@ not Linux, the hierarchy is not cgroup v2, `cgroup.kill` is missing, or the
 subtree is not delegated. Shared libraries of an interpreter are not pinned,
 and destination ownership is not enforced.
 
-`zelavis agent --operations-root <dir> --operation-trust <file> --platform-authority <file>`
-assembles them in the separately supervised Agent: installed signed operations,
+`zelavis agent --operations-root <dir> --platform-authority <file>`
+assembles them in the separately supervised Agent: installed operations,
 the executor and a durable SQLite journal under `<data>/agent-operations`. The
 Agent socket accepts `operation.catalog`, `operation.submit` and
 `operation.get`. Each request carries a short-lived envelope signed with the
@@ -288,7 +320,7 @@ are limited per actor (default 30 per minute, burst 10; `rateLimit` on
 records newest first and needs `server.host-operations.audit`, or
 `project.host-operations.audit` for a Project; it reads the whole audit
 namespace, so pagination is a known gap. Custom route `authorize` hooks do not
-apply to host operations: their policy is the signed manifest plus core grants.
+apply to host operations: their policy is the installed manifest plus core grants.
 
 The release ships one operation, `zelavis.host-report` v1: a read-only `/bin/sh`
 report (OS, kernel, architecture, CPUs, memory, root filesystem free space,
@@ -348,11 +380,12 @@ sudo zelavis install --from-release /absolute/path/to/extracted-release
 
 `--dry-run` prints the ordered TypeScript plan and each step's idempotence without changes.
 Units and configuration come from the release tree; the service uses its private
-Node and binds to `127.0.0.1:3000`. Use an SSH tunnel to reach a remote host, or
-explicitly pass `--public` to bind to all interfaces. Existing bootstrap tokens
-and trust configuration are preserved. `zelavis install --from package --version
-<exact-version>` verifies npm metadata and the matching prebuilt archive before
-using the same plan; a matching archive must be published. Create takes no
+Node and binds the management listener to `127.0.0.1:3000`. Default system
+installations expose `http://<server-ip>/zelavis/` through bundled Traefik.
+`--public` explicitly exposes the management listener; named and user installations
+use direct listener access or an operator-managed proxy. Existing bootstrap tokens
+and trust configuration are preserved. The bootstrap acquires npm with scripts disabled and invokes `zelavis install
+--from-npm <prepared-tree>` using the same plan. Create takes no
 folder argument. User mode installs no systemd, Agent or Edge. Install/removal
 use an exclusive installer lock and share the runtime data ownership guard.
 Foreign installations, live data owners and instance port conflicts are refused;
@@ -1067,6 +1100,25 @@ in this package under `src/app` and is exported as `zelavis/app`. Each created
 Project locks its exact recipe/runtime version so parent Platform upgrades do
 not silently upgrade child Apps.
 
+Packaged Node installations run both Platform and App engines behind persistent
+hosts. Qualified updates keep ingress and preview ports bound, drain requests,
+transfer exclusive database ownership, and resume traffic after readiness and
+durable selection acknowledgement. A failed candidate is fenced before rollback.
+System installations use a separately supervised Project Agent so running Apps
+and qualified recipe processes survive a Platform engine handover.
+
+New Apps and explicit native App recipe upgrades use the latest qualified
+installed engine. Parent updates and rollbacks preserve existing App engine pins.
+The dashboard offers **Zelavis version** at creation and **Manage version** on
+native App cards. SDK `client.projects.versions(id?)` and
+`client.projects.switchVersion(id, exactVersion)` match
+`zelavis projects versions [id]` and
+`zelavis projects switch-version <id> --engine-version <exact-version>`.
+Choices are qualified installed engines; each uses its matching bundled recipe.
+The default for new Apps is the latest available engine. An installation without
+the persistent host needs one full installer run with a restart before it can use
+live updates. See the [update architecture](../../website/src/content/docs/architecture/updates.md).
+
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside
 created Project runtimes.
@@ -1079,3 +1131,11 @@ generated routes, and the existing SDK and CLI discover those operations.
 Use `{ routes: false }` for local authoring helpers and `operations.create`
 for explicit schemas, response codes, and route contracts. See the
 [plugin API guide](../../website/src/content/docs/guides/plugin-api.md).
+
+Running local Projects receive a separate HTTP preview port from Zelavis Edge.
+The dashboard's Site and managed Admin links use its browser hostname and that
+port, so an installed VPS shows a reachable server address rather than the
+Project's private loopback target. The port survives Project and Platform
+restarts, closes while stopped, and is removed on deletion. Previews follow the
+Platform's listen host; remote Node previews are unavailable. Preview HTTP is
+separate from hostname and HTTPS configuration.

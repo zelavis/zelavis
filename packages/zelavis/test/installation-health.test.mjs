@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectZelavisInstallation, preflightZelavisInstall } from "../dist/core/runtime/installation-health.js";
 
-const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"], aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg" };
+const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"] };
 const receipt = { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
 const installation = { kind: "packaged", path: "/opt/zelavis/current/platform/dist/cli.js", root: paths.prefix };
 class Probe {
@@ -10,7 +10,7 @@ class Probe {
   links = new Map([[paths.commandPath, "/opt/zelavis/current/bin/zelavis"], ["/opt/zelavis/current", "releases/1.2.3"]]);
   owner = { active: false }; command = paths.commandPath; busy = new Set(); matchesPort = false; uid = { uid: 10, expectedUid: 10 };
   units = { present: true, active: true, enabled: true, pid: 42, delegates: true }; support = { cgroupV2: true, cgroupKill: true };
-  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
+  constructor() { this.files.set("/opt/zelavis/.edge-owner.lock", ""); this.files.set("/opt/zelavis/runtime.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory, configDirectory: paths.configDirectory, port: 3000, host: "127.0.0.1", edge: true})); this.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "default", dataDirectory: paths.dataDirectory})); for (const name of ["zelavis-agent.service", "zelavis-traefik.service", "zelavis-host-agent.service"]) this.files.set(`/etc/systemd/system/${name}`, this.files.get("/etc/systemd/system/zelavis.service")); }
   reads = []; mutations = [];
   async read(path) { this.reads.push(path); return this.files.get(path); }
   async exists(path) { return path.endsWith("runtime/node/bin/node") || this.files.has(path); }
@@ -19,7 +19,8 @@ class Probe {
   async dataOwnership() { return this.owner; }
   async portAvailable(port) { return !this.busy.has(port); }
   async portOwnedBy() { return this.matchesPort; }
-  async unitState() { return this.units; }
+  socketUnit = { present: false, active: false, enabled: false };
+  async unitState(name) { return name.endsWith(".socket") ? this.socketUnit : this.units; }
   async dataOwner() { return this.uid; }
   async agentSupport() { return this.support; }
   async execute(action) { this.mutations.push(action); throw new Error("inspection must never mutate"); }
@@ -65,6 +66,25 @@ test("maintenance stops only its own service, with matching live data and listen
   assert.equal(host.mutations.length, 0);
 });
 
+test("a port held by this installation's own socket is not a conflict, and doctor says so", async () => {
+  const host = new Probe();
+  host.busy.add(3000); host.socketUnit = { present: true, active: true, enabled: true };
+  assert.deepEqual(await preflight(host), { stopPlatform: true });
+  const report = await doctor(host);
+  assert.equal(report.checks.find((item) => item.id === "port:3000").status, "ok");
+  assert.match(report.checks.find((item) => item.id === "port:3000").detail, /held by systemd/);
+  assert.equal(report.checks.find((item) => item.id === "socket").status, "ok");
+  host.socketUnit = { present: false, active: false, enabled: false };
+  assert.equal((await doctor(host)).checks.find((item) => item.id === "socket").status, "warning");
+});
+
+test("a live swap leaves the running Platform and its own lock alone", async () => {
+  const host = new Probe();
+  host.owner = { active: true, pid: 42, installationRoot: paths.prefix, purpose: "platform" };
+  host.busy.add(3000); host.matchesPort = true;
+  assert.deepEqual(await preflight(host, { live: true }), { stopPlatform: false });
+});
+
 test("user Platforms must stop before maintenance and units with competing layouts are refused", async () => {
   const host = new Probe(); host.files.set("/opt/zelavis/installation.json", JSON.stringify({ ...receipt, mode: "user", edge: false }));
   host.owner = { active: true, pid: 42, installationRoot: paths.prefix, purpose: "platform" };
@@ -76,10 +96,10 @@ test("user Platforms must stop before maintenance and units with competing layou
 
 test("doctor reports healthy receipt/release/service state without touching configuration or secrets", async () => {
   const host = new Probe(); const before = JSON.stringify([...host.files]);
-  host.busy.add(80); host.busy.add(443);
+  host.busy.add(80); host.busy.add(443); host.matchesPort = true;
   const report = await doctor(host);
   assert.equal(report.healthy, true, JSON.stringify(report));
-  assert.ok(report.checks.some((check) => check.id === "port:443" && /occupied/.test(check.detail)));
+  assert.ok(report.checks.some((check) => check.id === "port:443" && /owned by Zelavis Traefik/.test(check.detail)));
   assert.equal(JSON.stringify([...host.files]), before);
   assert.equal(host.mutations.length, 0);
   assert.ok(!host.reads.some((path) => path.endsWith("zelavis.env")));
@@ -135,11 +155,11 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
   const host = new Probe();
   const named = { ...paths, instance: "preview", dataDirectory: "/var/lib/zelavis-preview", configDirectory: "/etc/zelavis-preview" };
   const scope = "/opt/zelavis/instances/preview";
-  host.files.set(`${scope}/runtime.json`, JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "preview", dataDirectory: named.dataDirectory, configDirectory: named.configDirectory, port: 3100, host: "127.0.0.1", edge: false}));
+  host.files.set(`${scope}/runtime.json`, JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "preview", dataDirectory: named.dataDirectory, configDirectory: named.configDirectory, port: 3100, host: "127.0.0.1", edge: false}));
   host.files.set(`${scope}/installation.json`, JSON.stringify({ ...receipt, ...named, instance: "preview", port: 3100, edge: false }));
   host.files.set(`${scope}/current/manifest.json`, '{"version":"1.2.3"}');
   host.links.set(`${scope}/current`, "/opt/zelavis/releases/1.2.3");
-  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) host.files.set(`/etc/systemd/system/${unit}`, "ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i");
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent@.service"]) host.files.set(`/etc/systemd/system/${unit}`, "ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i");
   const report = await inspectZelavisInstallation({ host, paths: named, installation });
   assert.equal(report.healthy, true, JSON.stringify(report));
   assert.ok(report.checks.some((item) => item.id === "port:3100"));
@@ -148,7 +168,19 @@ test("named doctor inspects its own receipt/release/port and expanded templates 
   assert.equal(host.mutations.length, 0);
 });
 test("a foreign host Edge owner blocks default repair before any changes", async () => {
-  const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
+  const host = new Probe(); host.files.set("/opt/zelavis/edge-owner.json", JSON.stringify({schemaVersion: 1, version: receipt.version, prefix: paths.prefix, instance: "foreign", dataDirectory: "/elsewhere/data"}));
   await assert.rejects(preflight(host, { force: true }), /Host Edge belongs/);
+  assert.equal(host.mutations.length, 0);
+});
+
+
+test("production ingress refuses foreign port ownership and doctor rejects an inactive proxy", async () => {
+  const host = new Probe(); host.busy.add(80);
+  await assert.rejects(preflight(host, { force: true }), /Production ingress port 80/);
+  host.matchesPort = true;
+  await preflight(host);
+  assert.equal((await doctor(host)).checks.find(check => check.id === "port:80").status, "ok");
+  host.units.active = false;
+  assert.equal((await doctor(host)).checks.find(check => check.id === "port:80").status, "error");
   assert.equal(host.mutations.length, 0);
 });

@@ -1,6 +1,7 @@
 import type * as React from "react";
 import {
   LayoutDashboard,
+  LoaderCircle,
   Pause,
   Play,
   Plus,
@@ -10,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useRevalidator, useRouteLoaderData } from "react-router";
+import { Link, useLoaderData, useNavigation, useRevalidator, useRouteLoaderData, type ClientLoaderFunctionArgs } from "react-router";
 
 import { ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { AssistantButton } from "#/components/assistant/AssistantButton";
@@ -31,13 +32,17 @@ import {
 } from "#/lib/dashboard-data";
 import {
   createProject,
+  getActiveRuntimeConfig,
+  getProjectVersions,
+  switchProjectVersion,
   deleteProject,
   restartProject,
   upgradeProject,
   setProjectRunning,
   type RuntimeProject,
 } from "#/lib/runtime-api";
-import { toDashboardPath, toProjectPath } from "#/lib/routing";
+import { getProjectIdFromPathname, toDashboardPath, toProjectPath } from "#/lib/routing";
+import { projectSiteUrl } from "#/lib/project-site-url";
 import {
   parseAsString,
   useTypedSearchParams,
@@ -53,7 +58,17 @@ const projectSearchSchema = {
   new: parseAsString.withDefault(""),
   name: parseAsString.withDefault(""),
   recipe: parseAsString.withDefault("zelavis/app"),
+  versionProject: parseAsString.withDefault(""),
+  engineVersion: parseAsString.withDefault(""),
 } as const;
+
+export async function clientLoader({ request }: ClientLoaderFunctionArgs) {
+  const query = new URL(request.url).searchParams;
+  if (query.get("new") !== "1" && !query.get("versionProject")) return { versions: undefined };
+  const runtime = await getActiveRuntimeConfig(request);
+  try { return { versions: await getProjectVersions(runtime, query.get("versionProject") || undefined) }; }
+  catch (error) { return { versions: { selectable: false, versions: [], reason: error instanceof Error ? error.message : "Installed versions could not be loaded." } }; }
+}
 
 function formatUpdatedAt(value: string) {
   const date = new Date(value);
@@ -79,12 +94,25 @@ function RecipeUpgradeNotice({
   const [target, setTarget] = useState(recipes[0]?.name ?? "");
   const status = project.recipeStatus;
   const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
+  const live = project.runtime.status === "running" && project.capabilities.zeroDowntimeUpdates === true;
+  const integrationUpdate = project.capabilities.recipeUpdateMode === "integration";
+  const canUpgrade = idle || live;
+  if (project.deletion) return null;
+  if (project.runtimeUpdate) return (
+    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Project update">
+      <p>{project.runtimeUpdate.error ? "Update recovery required" : "Update in progress"}</p>
+      {project.runtimeUpdate.error ? <p className="text-destructive">{project.runtimeUpdate.error}</p> : null}
+      {project.runtimeUpdate.error ? <Button type="button" variant="outline" disabled={disabled} onClick={() => onUpgrade()}>Retry update</Button> : null}
+    </div>
+  );
   if (!status || status.state === "current") return null;
   return (
     <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Recipe upgrade">
       <p>
         {status.state === "upgradeAvailable"
-          ? `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
+          ? integrationUpdate
+            ? `A newer recipe is available: ${status.version}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
+            : `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
           : `${status.reason} Choose a recipe to move this Project to; its data is kept.`}
       </p>
       {status.state === "unavailable" ? (
@@ -92,7 +120,7 @@ function RecipeUpgradeNotice({
           aria-label="Recipe to move to"
           value={target}
           onChange={(event) => setTarget(event.target.value)}
-          disabled={disabled || !idle}
+          disabled={disabled || !canUpgrade}
           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         >
           {recipes.map((recipe) => (
@@ -106,21 +134,25 @@ function RecipeUpgradeNotice({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || !idle || (status.state === "unavailable" && !target)}
+          disabled={disabled || !canUpgrade || (status.state === "unavailable" && !target)}
           onClick={() => onUpgrade(status.state === "unavailable" ? target : undefined)}
         >
-          Upgrade recipe
+          {integrationUpdate ? "Update recipe" : "Upgrade recipe"}
         </Button>
-        {!idle ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
+        {!canUpgrade ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
       </div>
     </div>
   );
 }
 
 function ProjectsRoute() {
+  const { versions } = useLoaderData<typeof clientLoader>();
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const revalidator = useRevalidator();
-  const [{ q, new: createMode, name: requestedName, recipe: recipeName }, setParams] =
+  const navigation = useNavigation();
+  const openingProjectId = navigation.state === "loading" && navigation.location
+    ? getProjectIdFromPathname(navigation.location.pathname) : undefined;
+  const [{ q, new: createMode, name: requestedName, recipe: recipeName, versionProject, engineVersion }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -137,6 +169,7 @@ function ProjectsRoute() {
           service.menu?.title ??
           service.name,
         summary: service.marketplace?.summary,
+        hostPackages: service.project?.hostPackages,
         runtimeKinds: service.project?.runtimeKinds ?? ["native"],
       })) ?? [];
   const selectedRecipe =
@@ -183,6 +216,7 @@ function ProjectsRoute() {
     }
     setMessage(undefined);
     setError(undefined);
+    const installHostPackages = new FormData(event.currentTarget).get("installHostPackages") === "on";
     setCreating(true);
 
     try {
@@ -190,13 +224,15 @@ function ProjectsRoute() {
         name: requestedName,
         recipeName: selectedRecipe?.name ?? recipeName,
         start: true,
+        ...(selectedRecipe?.name === "@zelavis/app" && engineVersion ? { engineVersion } : {}),
+        ...(installHostPackages ? { installHostPackages: true } : {}),
       });
-      setParams({ name: null, new: null, recipe: null });
+      setParams({ name: null, new: null, recipe: null, engineVersion: null });
       setMessage(`${project.name} is running in its own project runtime.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setCreating(false);
     }
   }
@@ -211,10 +247,10 @@ function ProjectsRoute() {
     try {
       await setProjectRunning(rootData.runtime, project.id, running);
       setMessage(`${project.name} ${running ? "started" : "stopped"}.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -229,10 +265,10 @@ function ProjectsRoute() {
     try {
       await restartProject(rootData.runtime, project.id);
       setMessage(`${project.name} restarted.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -247,14 +283,25 @@ function ProjectsRoute() {
     try {
       const upgraded = await upgradeProject(rootData.runtime, project.id, targetRecipe);
       setMessage(
-        `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged; start it when you are ready.`,
+        `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged. ${upgraded.runtime.status === "running" ? "It is running at the same address." : "Start it when you are ready."}`,
       );
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
+  }
+
+  async function handleSwitchVersion(project: RuntimeProject) {
+    if (!rootData || !engineVersion) return;
+    setMessage(undefined); setError(undefined); setPendingProjectId(project.id);
+    try {
+      const selected = await switchProjectVersion(rootData.controlRuntime, project.id, engineVersion);
+      setMessage(`${project.name} now uses Zelavis ${selected.engineVersion}.`);
+      setParams({ versionProject: null, engineVersion: null });
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { revalidator.revalidate(); setPendingProjectId(undefined); }
   }
 
   async function handleDeleteProject(project: RuntimeProject) {
@@ -262,7 +309,9 @@ function ProjectsRoute() {
       return;
     }
     const confirmed = window.confirm(
-      `Delete ${project.name}? This permanently removes the project runtime, database, files, and metadata.`,
+      project.deletion
+        ? `Retry deletion of ${project.name}? This permanently removes the remaining project runtime, database, files, and metadata.`
+        : `Delete ${project.name}? This permanently removes the project runtime, database, files, and metadata.`,
     );
     if (!confirmed) {
       return;
@@ -274,10 +323,10 @@ function ProjectsRoute() {
     try {
       await deleteProject(rootData.runtime, project.id);
       setMessage(`${project.name} was deleted.`);
-      revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      revalidator.revalidate();
       setPendingProjectId(undefined);
     }
   }
@@ -318,7 +367,7 @@ function ProjectsRoute() {
                     id="project-recipe"
                     value={selectedRecipe?.name ?? recipeName}
                     onChange={(event) =>
-                      setParams({ recipe: event.target.value || null })
+                      setParams({ recipe: event.target.value || null, engineVersion: null })
                     }
                     className="flex h-9 w-full rounded-md border bg-background px-9 text-sm outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={creating || projectRecipes.length === 0}
@@ -331,6 +380,17 @@ function ProjectsRoute() {
                   </select>
                 </div>
               </div>
+              {selectedRecipe?.name === "@zelavis/app" ? (
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium" htmlFor="create-engine-version">Zelavis version</label>
+                  <select id="create-engine-version" value={engineVersion} onChange={event => setParams({ engineVersion: event.target.value || null })}
+                    disabled={creating || !versions?.selectable} className="h-9 rounded-md border bg-background px-3 text-sm">
+                    <option value="">Latest available{versions?.latest ? ` (${versions.latest})` : ""}</option>
+                    {versions?.versions.map(entry => <option key={entry.version} value={entry.version} disabled={entry.status !== "available"}>{entry.version}{entry.status !== "available" ? " (unavailable)" : ""}</option>)}
+                  </select>
+                  {versions?.reason ? <p className="text-sm text-muted-foreground">{versions.reason}</p> : null}
+                </div>
+              ) : null}
               <div className="flex items-end gap-2">
                 <Button type="submit" disabled={creating || projectRecipes.length === 0}>
                   {creating ? "Creating..." : "Create"}
@@ -344,6 +404,14 @@ function ProjectsRoute() {
                   Cancel
                 </Button>
               </div>
+              {selectedRecipe?.hostPackages?.length ? (
+                <label key={selectedRecipe.name} className="flex items-start gap-2 text-sm md:col-span-3">
+                  <input type="checkbox" name="installHostPackages" className="mt-1" disabled={creating} />
+                  <span>Install required host packages ({selectedRecipe.hostPackages.join(", ")}) if missing.
+                    <span className="block text-muted-foreground">This changes the server and requires host package installation permission. Existing host services keep their configuration.</span>
+                  </span>
+                </label>
+              ) : null}
             </form>
             {error ? (
               <div className="mt-4">
@@ -389,8 +457,10 @@ function ProjectsRoute() {
       {filteredProjects.length > 0 ? (
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredProjects.map((project) => {
-            const isRunning = project.runtime.status === "running";
+            const siteUrl = projectSiteUrl(project);
+            const isRunning = project.runtime.status === "running" && !project.deletion;
             const isPending = pendingProjectId === project.id;
+            const isOpening = openingProjectId === encodeURIComponent(project.id);
             return (
               <Card key={project.id} className="overflow-hidden">
                 <CardHeader className="gap-3">
@@ -424,18 +494,23 @@ function ProjectsRoute() {
                       <dt className="text-muted-foreground">Runtime</dt>
                       <dd className="truncate font-medium">
                         <span className="capitalize">{project.runtimeKind}</span>
-                        {" · "}
-                        {project.runtime.url ? (
+                        {" · "}{project.runtime.driver}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Site</dt>
+                      <dd className="truncate font-medium">
+                        {siteUrl ? (
                           <a
-                            href={project.runtime.url}
+                            href={siteUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
                           >
-                            {project.runtime.url}
+                            {siteUrl}
                           </a>
                         ) : (
-                          project.runtime.driver
+                          project.preview?.status === "unavailable" ? "Preview unavailable" : "Not published"
                         )}
                       </dd>
                     </div>
@@ -446,10 +521,19 @@ function ProjectsRoute() {
                       </dd>
                     </div>
                   </dl>
+                  {project.deletion ? (
+                    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Project deletion">
+                      <p className="font-medium">{project.deletion.status === "failed" ? "Deletion failed" : "Deletion in progress"}</p>
+                      <p>This Project is pending deletion. Starting and recipe upgrades are unavailable. Retry deletion to finish removing its remaining resources.</p>
+                      {project.deletion.currentParticipant ? <p>Cleanup step: {project.deletion.currentParticipant}</p> : null}
+                      {project.deletion.error ? <p className="text-destructive">{project.deletion.error}</p> : null}
+                    </div>
+                  ) : null}
                   {project.runtime.error ? (
                     <p className="text-sm text-destructive">{project.runtime.error}</p>
                   ) : null}
-                  {project.recipeStatus && project.recipeStatus.state !== "current" ? (
+                  {project.preview?.error ? <p className="text-sm text-destructive">{project.preview.error}</p> : null}
+                  {project.runtimeUpdate || project.recipeStatus && project.recipeStatus.state !== "current" ? (
                     <RecipeUpgradeNotice
                       project={project}
                       recipes={projectRecipes}
@@ -457,10 +541,35 @@ function ProjectsRoute() {
                       onUpgrade={(target) => handleUpgradeProject(project, target)}
                     />
                   ) : null}
+                  {versionProject === project.id ? (
+                    <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="App version">
+                      <p>Current Zelavis version: {versions?.current ?? project.engineVersion ?? "Unavailable"}</p>
+                      <p className="text-muted-foreground">Select an installed version and its matching App recipe. Project data is preserved.</p>
+                      {versions?.reason ? <p>{versions.reason}</p> : null}
+                      <select aria-label="Zelavis version" value={engineVersion || versions?.current || ""}
+                        onChange={event => setParams({ engineVersion: event.target.value })}
+                        disabled={isPending || !!project.deletion || !!project.runtimeUpdate || !versions?.selectable}
+                        className="h-9 rounded-md border bg-background px-3 text-sm">
+                        {!versions?.current ? <option value="">Choose a version</option> : null}
+                        {versions?.versions.map(entry => <option key={entry.version} value={entry.version} disabled={entry.status !== "available"}>{entry.version}{entry.status !== "available" ? " (unavailable)" : ""}</option>)}
+                      </select>
+                      <div className="flex gap-2">
+                        <Button type="button" disabled={isPending || !!project.deletion || !!project.runtimeUpdate || !versions?.selectable || !engineVersion || engineVersion === versions.current}
+                          onClick={() => handleSwitchVersion(project)}>{isPending ? "Switching…" : "Switch version"}</Button>
+                        <Button type="button" variant="outline" onClick={() => setParams({ versionProject: null, engineVersion: null })}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {project.recipe.name === "@zelavis/app" && project.capabilities.independentRuntimeVersion ? (
+                      <Button type="button" variant="outline" disabled={isPending || !!project.deletion || !!project.runtimeUpdate}
+                        onClick={() => setParams({ versionProject: project.id, engineVersion: null, new: null })}>Manage version</Button>
+                    ) : null}
                     {isRunning ? (
                       <Button
                         nativeButton={false}
+                        disabled={isOpening}
+                        aria-busy={isOpening}
                         render={
                           <Link
                             to={toDashboardPath(toProjectPath("/", project.id))}
@@ -468,8 +577,8 @@ function ProjectsRoute() {
                           />
                         }
                       >
-                        <LayoutDashboard className="size-4" />
-                        Open
+                        {isOpening ? <LoaderCircle className="size-4 animate-spin" /> : <LayoutDashboard className="size-4" />}
+                        {isOpening ? "Opening…" : "Open"}
                       </Button>
                     ) : (
                       // Its pages are served by its own runtime; opening a Project
@@ -482,7 +591,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending}
+                      disabled={isPending || !!project.deletion || !!project.runtimeUpdate && !isRunning}
                       onClick={() => changeProjectState(project, !isRunning)}
                       aria-label={isRunning ? "Stop" : "Start"}
                     >
@@ -491,7 +600,7 @@ function ProjectsRoute() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isPending || project.runtime.status === "provisioning"}
+                      disabled={isPending || !!project.deletion || !!project.runtimeUpdate || project.runtime.status === "provisioning"}
                       onClick={() => handleRestartProject(project)}
                       aria-label="Restart"
                     >
@@ -502,9 +611,10 @@ function ProjectsRoute() {
                       variant="destructive"
                       disabled={isPending}
                       onClick={() => handleDeleteProject(project)}
-                      aria-label="Delete"
+                      aria-label={project.deletion ? "Retry deletion" : "Delete"}
                     >
                       <Trash2 className="size-4" />
+                      {project.deletion ? "Retry deletion" : null}
                     </Button>
                     <AssistantButton
                       label={`Ask Assistant about ${project.name}`}

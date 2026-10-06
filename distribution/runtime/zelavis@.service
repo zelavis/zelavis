@@ -1,7 +1,8 @@
 [Unit]
 Description=Zelavis Platform OS
-After=network-online.target
+After=network-online.target zelavis-%i.socket zelavis-agent@%i.service
 Wants=network-online.target
+Requires=zelavis-%i.socket zelavis-agent@%i.service
 
 [Service]
 Type=simple
@@ -11,6 +12,9 @@ WorkingDirectory=/var/lib/zelavis-%i
 Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis-%i
 EnvironmentFile=-/etc/zelavis-%i/zelavis.env
 ExecStart=/opt/zelavis/instances/%i/current/bin/zelavis serve --instance %i
+# The host drains and releases its worker. Signal only the host first.
+KillMode=mixed
+TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

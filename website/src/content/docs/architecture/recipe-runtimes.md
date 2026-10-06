@@ -45,7 +45,20 @@ refuses code that was modified or does not match.
 So updating the recipe package on the Platform never changes what an existing
 Project runs. Moving a stopped Project to a newer recipe is an explicit
 **recipe upgrade**, and the new copy is frozen and swapped in only when complete.
-A failed upgrade leaves the Project as it was. The Project's data is untouched.
+A failed upgrade restores the previous frozen recipe and host descriptor.
+Custom runtime modules load from verified digest-specific copies under
+`<project>/.zelavis/recipe-modules`, including their relative imports, so a
+Platform process cannot reuse the old runtime when upgrading. The Project's
+data is untouched.
+
+The host records the locked recipe before provisioning begins, so custom
+cleanup can still run after a failed preparation and a Platform restart.
+
+A Project pending deletion cannot be started or upgraded: cleanup may already
+have removed resources. Its card shows the failed cleanup step and offers
+**Retry deletion** to finish removal. Early provisioning failure before a
+host descriptor exists can still be deleted; genuine cleanup failures remain
+visible and retryable.
 
 ## Who may load a recipe's runtime
 
@@ -54,8 +67,8 @@ authority. That is exactly what an installed npm package must not be able to do
 by default, so a host loads one only from a recipe it trusts. Any one of these
 makes it trusted:
 
-- the allow-list entry says `projectRuntime: true` (a vouch made when the list
-  is signed, for services the Zelavis project maintains);
+- the allow-list entry says `projectRuntime: true` (a vouch made in the list
+  served over HTTPS from zelavis.com, for services the Zelavis project maintains);
 - the package is in the operator's own development checkout of
   `zelavis-services`;
 - the operator named it in the host's `projects.recipeRuntimes` option.
@@ -74,11 +87,86 @@ name.
 
 ## Versions
 
-The package version is the recipe version. `@zelavis/wordpress@7.1.2` installs
-WordPress 7.1.2, and `7.1.0` installs WordPress 7.1. The exact WordPress archive
-digest is pinned inside the package, and the runtime refuses any other bytes
-before unpacking, so what a Project downloads is fixed by the recipe version, not
-by the download server.
+The npm package version identifies the recipe revision. Its software release and
+archive digest are pinned independently inside that package. A provisioning fix
+can therefore keep installing the same WordPress release. The runtime verifies
+the digest before unpacking, and each Project keeps its frozen recipe revision.
+
+## Effect runtime drivers
+
+Project lifecycle orchestration, the local driver router, Node/server frontend
+runtimes, and the native WordPress recipe use Effect v4 programs. The public
+runtime driver protocol still presents Promises. `defineEffectProjectRuntime`
+from `zelavis/adapters/project-runtime` presents a native Effect driver through
+that protocol; internal Platform callers retain its Effect implementation, so
+interruption reaches coordination and cleanup finalizers.
+
+A failed or interrupted startup stops the processes it acquired. A failed or
+interrupted recipe preparation restores the previous frozen artifact and host
+descriptor. Deletion persists its tombstone before cleanup, records each
+completed participant, and keeps interrupted cleanup visible and retryable.
+Effect permits and Deferred results coordinate callers within one process;
+persisted checkpoints and Fabric fencing still own restart recovery and
+placement authority.
+
+Frozen runtime modules resolve `effect` and `zelavis` from the Platform. Recipes
+must declare them as host-provided peers rather than installing another copy.
+No Project runtime gains host package authority through Effect.
+
+## Effect recipe authoring contract
+
+The public `zelavis/recipe` subpath provides an initial runtime-neutral contract
+for recipes written with Effect v4. It is available for authoring and validation;
+package admission and Project execution still use the runtime-module model above.
+The JS recipe driver, Node host layer and OCI execution remain planned.
+
+`parseRecipeManifest` validates contract 1 metadata: named methods, bounded host
+requirements, declared ports and software releases with HTTPS archives, SHA-256
+digests and download size limits. JS methods name a relative module entry. OCI
+methods declare digest-pinned images; declaring an image does not enable execution.
+Unknown fields, unsupported contracts, duplicate identities and mutable image tags
+are refused. The returned manifest is an immutable snapshot.
+
+Software versions belong to verified recipe metadata independently of the npm
+recipe revision. `selectRecipeMethod` picks the first method the supplied host
+capabilities can satisfy, or refuses an unavailable explicit choice. Integration
+must lock the selected method ID at creation; a Project start must use that lock.
+
+`defineRecipe` describes Effect `install` and `start` phases, with optional `stop`,
+`upgrade`, `backup` and `remove`. Phases request the `RecipeHost` service, which
+defines Project-local file access, bounded verified downloads, extraction, declared
+executable calls, opaque secret references and progress events. The host owns
+execution scopes and supervision; phases return values rather than daemonizing.
+`parseProcessPlan` validates declared executables and ports, bounded arguments and
+readiness deadlines, unique process names and acyclic dependencies before
+supervision. Credential references can be passed in arguments and environment
+values without storing the credential itself in the plan.
+
+Concrete host layers must enforce path and symlink confinement, executable
+restrictions, output limits, cancellation and owner-only secret persistence.
+The service interface itself does not enforce those restrictions and is not a
+sandbox for arbitrary JavaScript. Privileged package installation belongs to the
+Platform's audited host-operation broker, outside RecipeHost.
+
+System installations and updates configure `zelavis-host-agent.service`, a separate
+root Agent accepting only operation catalog/submit/get. Its endpoint and token are
+root-owned and accessible only to the dedicated Platform group. The Platform uses
+`ZELAVIS_HOST_OPERATIONS_ENDPOINT`; the unprivileged Project process Agent remains
+separate. The root Agent uses systemd-delegated cgroup v2 containment and refuses
+arbitrary process commands.
+
+Recipes may declare bounded `zelavis.project.hostPackages` sets such as
+`["wordpress-stack"]`. These are fixed operations, never supplied package names or
+commands. Project creation accepts `installHostPackages: true` through HTTP/SDK,
+`--install-host-packages` through CLI, and an explicit dashboard checkbox. It
+requires the broker's `server.packages.install` permission independently of
+`projects.create`; without approval, the recipe only uses existing dependencies.
+
+The package operation preserves existing host services, suppresses APT-triggered
+starts only in its process tree, and disables only newly introduced units. Its
+persistent policy delegates normal calls to the recorded original, so cancellation
+cannot leave a global deny policy. Complete uninstall restores the owned policy
+while retaining operator edits and shared packages.
 
 ## Related
 

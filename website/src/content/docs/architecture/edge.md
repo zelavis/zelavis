@@ -42,7 +42,10 @@ zelavis edge switch caddy --publication platform-routes@42 --routes 1 --require 
 
 The switch commands are usable only when the host has supplied an operational
 Edge manager and adapter. Packaged Linux releases include and supervise the
-pinned Traefik binary with an empty route directory. The remaining host adapter
+pinned Traefik binary. Default system installations publish an HTTP fallback
+through the canonical route store and enable the proxy on ports 80 and 443.
+`http://<server-ip>/zelavis/` works without a hostname; management listeners stay
+on loopback unless explicitly exposed. Hostname-specific routes outrank this fallback. The remaining host adapter
 must compile canonical route publications, stage certificate material through
 signed Agent operations, perform live probes, and atomically activate or roll
 back the generated directory before the installer can publish a hostname.
@@ -60,8 +63,9 @@ default.
 ## First-run hostname
 
 Owner bootstrap and public ingress are separate authority boundaries. The first
-owner is claimed through the private listener. Only afterward may an
+owner can be claimed through production HTTP ingress or the private management listener. Only afterward may an
 authenticated Edge operation offer a managed hostname, an externally managed
 endpoint, or “configure later.” The browser and terminal wizards currently
-perform the authenticated Edge readiness check and leave public routing
-disabled when the host integration is incomplete.
+perform the authenticated Edge readiness check and leave hostname/TLS setup incomplete when the host integration is unavailable.
+Choosing “configure later” leaves IP-based HTTP ingress active. HTTPS is not
+established by the HTTP fallback.

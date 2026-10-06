@@ -107,7 +107,7 @@ export interface ZelavisEdgeRoute {
   scope: "platform" | "project";
   /** Required when scope is `"project"`. */
   projectId?: string;
-  /** FQDN this route matches. Must exist in the hostname store. */
+  /** Hostname this route matches; "*" is the Platform's HTTP fallback. */
   hostname: string;
   /** Path prefix to match. `"/"` matches all paths. */
   pathPrefix: string;
@@ -352,7 +352,10 @@ function validateHealthCheck(check: ZelavisEdgeHealthCheckPolicy): ZelavisEdgeHe
 function validateRoute(route: ZelavisEdgeRoute): ZelavisEdgeRoute {
   const id = normalizeRouteId(route.id);
   validateScope(route.scope, route.projectId, "Route");
-  const hostname = normalizeHostValue(route.hostname);
+  const hostname = route.hostname === "*" ? "*" : normalizeHostValue(route.hostname);
+  if (hostname === "*" && (route.scope !== "platform" || route.pathPrefix !== "/" || route.pathMatch !== "prefix" || route.priority !== 1)) {
+    throw new ZelavisEdgeValidationError('The hostname "*" is reserved for a Platform root fallback with priority 1.');
+  }
   const pathPrefix = route.pathPrefix?.trim();
   if (!pathPrefix || !pathPrefix.startsWith("/")) {
     throw new ZelavisEdgeValidationError(

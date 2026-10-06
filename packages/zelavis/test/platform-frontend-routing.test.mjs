@@ -88,6 +88,7 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
   const project = {
     id: "site",
     kind: "zelavis",
+    recipe: { name: "@zelavis/app", version: "1.0.0" },
     runtime: { status: "running", url: runtime.url },
   };
   const owned = [

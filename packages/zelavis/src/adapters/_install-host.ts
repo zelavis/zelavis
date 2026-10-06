@@ -1,3 +1,8 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { integration, present } from "../core/runtime/effect-boundary.js";
+import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
+import { restoreHostPackagePolicy } from "./_host-package-policy.js";
 import { assertInstallationInstance, installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { claimLocalEdgeOwner, releaseLocalEdgeOwner, acquireLocalDataOwnership, readLocalDataOwner, type LocalOwnershipLease } from "./_local-ownership.js";
 import { isAlive, processAgeMs } from "./_agent-process-runner.js";
@@ -26,8 +31,6 @@ export function nodeInstallationPaths(env: NodeJS.ProcessEnv = process.env, inst
     commandPath: env.ZELAVIS_UNINSTALL_COMMAND ?? join(bin, "zelavis"),
     systemCommandPath: env.ZELAVIS_UNINSTALL_SYSTEM_BIN ?? "/usr/bin/zelavis",
     systemdDirectories: [env.ZELAVIS_UNINSTALL_SYSTEMD_ETC_DIR ?? "/etc/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_LIB_DIR ?? "/lib/systemd/system", env.ZELAVIS_UNINSTALL_SYSTEMD_USR_LIB_DIR ?? "/usr/lib/systemd/system"],
-    aptSource: env.ZELAVIS_UNINSTALL_APT_SOURCE ?? "/etc/apt/sources.list.d/zelavis.sources",
-    aptKeyring: env.ZELAVIS_UNINSTALL_APT_KEYRING ?? "/usr/share/keyrings/zelavis-archive-keyring.gpg",
   };
 }
 
@@ -39,7 +42,7 @@ export function nodeUserInstallationPaths(home = realpathSync(homedir())): Zelav
 
 export async function assertNodeInstallationPrivilege(paths: ZelavisInstallPaths, skipHostCommands = false): Promise<void> {
   if (skipHostCommands || process.getuid?.() === 0) return;
-  for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, paths.commandPath, paths.systemCommandPath, ...paths.systemdDirectories, paths.aptSource, paths.aptKeyring]) {
+  for (const path of [paths.prefix, paths.dataDirectory, paths.configDirectory, paths.commandPath, paths.systemCommandPath, ...paths.systemdDirectories]) {
     if (/^\/(?:etc|usr|var|opt|lib)\//u.test(path)) throw new Error("Installation maintenance of a system installation must run as root.");
   }
 }
@@ -57,14 +60,24 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
   };
   const host: ZelavisInstallationProbeHost = {
     async releaseMaintenance() { const lease = maintenance; maintenance = undefined; await lease?.release(); },
-    async dataOwnership(path) {
-      const owner = await readLocalDataOwner(path);
+    dataOwnership: path => present(Effect.gen(function* () {
+      const owner = yield* integration(() => readLocalDataOwner(path));
       if (!owner || !isAlive(owner.pid)) return { active: false };
-      const age = await processAgeMs(owner.pid);
-      // Unknown process identity is conservatively treated as an occupied directory.
+      const age = yield* integration(() => processAgeMs(owner.pid));
       const active = age === undefined || Math.abs(age - (Date.now() - Date.parse(owner.startedAt))) <= 30_000;
-      return { active, pid: owner.pid, installationRoot: owner.installationRoot, purpose: owner.purpose };
-    },
+      let supervisorPid: number | undefined;
+      if (active && owner.purpose === "platform") {
+        const status = yield* requestNodeRuntimeControl(join(path, "runtime-control.sock"), { action: "status" }).pipe(Effect.timeoutOrElse({ duration: 5_000, orElse: () => Effect.void }), Effect.orElseSucceed(() => undefined));
+        if (status?.protocol === "zelavis-runtime/1" && status.ready && Number.isSafeInteger(status.supervisorPid)) {
+          const parent = yield* (process.platform === "linux"
+            ? integration(() => readFile(`/proc/${owner.pid}/status`, "utf8")).pipe(Effect.map(source => Number(/^PPid:\s+(\d+)$/m.exec(source)?.[1])))
+            : integration(() => exec("ps", ["-p", String(owner.pid), "-o", "ppid="])).pipe(Effect.map(result => Number(result.stdout.trim()))))
+            .pipe(Effect.orElseSucceed(() => undefined));
+          if (parent === status.supervisorPid) supervisorPid = parent;
+        }
+      }
+      return { active, pid: owner.pid, ...(supervisorPid ? { supervisorPid } : {}), installationRoot: owner.installationRoot, purpose: owner.purpose };
+    })),
     async portAvailable(port) {
       // Read-only inspection: a temporary bind would itself look like a
       // foreign listener to another installer or doctor running concurrently.
@@ -117,15 +130,18 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
         return { uid: info.uid, expectedUid };
       } catch (error) { if (missing(error)) return undefined; throw error; }
     },
-    async agentSupport(unit = "zelavis-agent.service") {
-      const cgroupV2 = await host.exists("/sys/fs/cgroup/cgroup.controllers");
+    agentSupport(unit = "zelavis-agent.service") { return presentProtocol(Effect.gen(function* () {
+      const cgroupV2 = (yield* integrationValue(host.exists("/sys/fs/cgroup/cgroup.controllers")));
       let group = "";
-      if (process.platform === "linux" && await host.which("systemctl")) {
-        try { group = (await exec("systemctl", ["show", "--property=ControlGroup", "--value", unit], { timeout: 5_000 })).stdout.trim(); } catch {}
+      if (process.platform === "linux" && (yield* integrationValue(host.which("systemctl")))) {
+        try { group = (unwrapIntegrationResult(yield* Effect.result(integrationValue(exec("systemctl", ["show", "--property=ControlGroup", "--value", unit], { timeout: 5_000 }))))).stdout.trim(); } catch {
+          // An unavailable unit provides no cgroup supervision proof.
+          group = "";
+        }
       }
       const safeGroup = group.startsWith("/") && !group.split("/").includes("..");
-      return { cgroupV2, cgroupKill: safeGroup && await host.exists(`/sys/fs/cgroup${group}/cgroup.kill`) };
-    },
+      return { cgroupV2, cgroupKill: safeGroup && unwrapIntegrationResult(yield* Effect.result(integrationValue(host.exists(`/sys/fs/cgroup${group}/cgroup.kill`)))) };
+    }).pipe(Effect.withSpan("createNodeInstallHost/host/agentSupport"))); },
     async exists(path) {
       try { await lstat(path); return true; } catch (error) { if (missing(error)) return false; throw error; }
     },
@@ -138,32 +154,35 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
         throw error;
       }
     },
-    async which(command, plannedCommandPath) {
+    which(command, plannedCommandPath) { return presentProtocol(Effect.gen(function* () {
       for (const directory of (command === "zelavis" ? options.invokingPath ?? process.env.PATH ?? "" : process.env.PATH ?? "").split(":")) {
         const path = join(directory, command);
-        if (path === plannedCommandPath) return path;
-        try { await access(path, constants.X_OK); return path; } catch {}
+        if (path === plannedCommandPath) return (yield* integrationValue(path));
+        try { unwrapIntegrationResult(yield* Effect.result(integrationValue(access(path, constants.X_OK)))); return unwrapIntegrationResult(yield* Effect.result(integrationValue(path))); } catch (cause) {
+          const code = (cause as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES") throw cause;
+        }
       }
       return undefined;
-    },
+    }).pipe(Effect.withSpan("createNodeInstallHost/host/which"))); },
     async accountExists(kind, name) {
       try { await exec(kind === "group" ? "getent" : "id", kind === "group" ? ["group", name] : [name]); return true; } catch { return false; }
     },
-    async execute(action) {
+    execute(action) { return presentProtocol(Effect.gen(function* () {
       switch (action.kind) {
-        case "reserve-data": maintenance = await acquireLocalDataOwnership(action.path, "maintenance"); break;
-        case "release-data": await host.releaseMaintenance?.(); break;
+        case "reserve-data": maintenance = (yield* integrationValue(acquireLocalDataOwnership(action.path, "maintenance"))); break;
+        case "release-data": (yield* integrationValue(host.releaseMaintenance?.())); break;
         case "mkdir":
-          await mkdir(action.path, { recursive: true, mode: action.mode });
-          if (action.mode !== undefined) await chmod(action.path, action.mode);
+          (yield* integrationValue(mkdir(action.path, { recursive: true, mode: action.mode })));
+          if (action.mode !== undefined) (yield* integrationValue(chmod(action.path, action.mode)));
           break;
         case "copy": {
           // A failed copy never becomes a release. The next run can repair it.
           const temporary = `${action.path}.install-${process.pid}`;
           try {
-            await cp(action.source, temporary, { recursive: true, verbatimSymlinks: true });
-            await rename(temporary, action.path);
-          } finally { await rm(temporary, { recursive: true, force: true }); }
+            unwrapIntegrationResult(yield* Effect.result(integrationValue(cp(action.source, temporary, { recursive: true, verbatimSymlinks: true }))));
+            unwrapIntegrationResult(yield* Effect.result(integrationValue(rename(temporary, action.path))));
+          } finally { unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(temporary, { recursive: true, force: true })))); }
           break;
         }
         case "link": {
@@ -171,90 +190,95 @@ export function createNodeInstallHost(options: { invokingPath?: string } = {}): 
             // current's scratch link lives under the owned installation root.
             const temporary = `${action.path}.install-${process.pid}`;
             try {
-              await symlink(action.target, temporary);
-              await rename(temporary, action.path);
-            } finally { await rm(temporary, { force: true }); }
+              unwrapIntegrationResult(yield* Effect.result(integrationValue(symlink(action.target, temporary))));
+              unwrapIntegrationResult(yield* Effect.result(integrationValue(rename(temporary, action.path))));
+            } finally { unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(temporary, { force: true })))); }
             break;
           }
           // No scratch links outside the owned installation tree. In
           // particular a crash must not leave /usr/bin/zelavis.install-*.
-          await rm(action.path, { force: true });
-          await symlink(action.target, action.path);
+          (yield* integrationValue(rm(action.path, { force: true })));
+          (yield* integrationValue(symlink(action.target, action.path)));
           break;
         }
         case "write": {
-          await mkdir(dirname(action.path), { recursive: true });
+          (yield* integrationValue(mkdir(dirname(action.path), { recursive: true })));
           if (action.ifAbsent) {
-            try { await writeFile(action.path, action.content, { mode: action.mode, flag: "wx" }); }
+            try { unwrapIntegrationResult(yield* Effect.result(integrationValue(writeFile(action.path, action.content, { mode: action.mode, flag: "wx" })))); }
             catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; break; }
           } else if (action.atomic) {
             const temporary = `${action.path}.install-${process.pid}`;
             try {
-              await writeFile(temporary, action.content, { mode: action.mode, flag: "wx" });
-              await chmod(temporary, action.mode);
-              await rename(temporary, action.path);
-            } finally { await rm(temporary, { force: true }); }
+              unwrapIntegrationResult(yield* Effect.result(integrationValue(writeFile(temporary, action.content, { mode: action.mode, flag: "wx" }))));
+              unwrapIntegrationResult(yield* Effect.result(integrationValue(chmod(temporary, action.mode))));
+              unwrapIntegrationResult(yield* Effect.result(integrationValue(rename(temporary, action.path))));
+            } finally { unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(temporary, { force: true })))); }
           } else {
-            await writeFile(action.path, action.content, { mode: action.mode });
+            (yield* integrationValue(writeFile(action.path, action.content, { mode: action.mode })));
           }
-          await chmod(action.path, action.mode);
+          (yield* integrationValue(chmod(action.path, action.mode)));
           break;
         }
         case "bootstrap": {
-          if (await host.exists(action.path)) break;
+          if ((yield* integrationValue(host.exists(action.path)))) break;
           const token = randomBytes(32).toString("hex");
           const environment = `ZELAVIS_BOOTSTRAP_TOKEN=${token}\n` + (action.dataDirectory ? `ZELAVIS_DATA_DIR=${JSON.stringify(action.dataDirectory)}\nHOST=${action.public ? "0.0.0.0" : "127.0.0.1"}\n` : "");
-          try { await writeFile(action.path, environment, { mode: 0o600, flag: "wx" }); }
+          try { unwrapIntegrationResult(yield* Effect.result(integrationValue(writeFile(action.path, environment, { mode: 0o600, flag: "wx" })))); }
           catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") break; throw error; }
-          return `First-run bootstrap token: ${token}\nEnter it in the dashboard setup wizard or run: zelavis setup`;
+          return (yield* integrationValue(`First-run bootstrap token: ${token}\nEnter it in the dashboard setup wizard or run: zelavis setup`));
         }
         case "agent-environment": {
-          const content = await host.read(action.path) ?? "";
-          if (!/^ZELAVIS_AGENT_ENDPOINT=/mu.test(content)) await appendFile(action.path, `${content && !content.endsWith("\n") ? "\n" : ""}ZELAVIS_AGENT_ENDPOINT=${action.endpoint}\n`);
+          const content = (yield* integrationValue(host.read(action.path))) ?? "";
+          const variable = action.variable ?? "ZELAVIS_AGENT_ENDPOINT";
+          if (!new RegExp(`^${variable}=`, "mu").test(content)) (yield* integrationValue(appendFile(action.path, `${content && !content.endsWith("\n") ? "\n" : ""}${variable}=${action.endpoint}\n`)));
           break;
         }
         case "command":
-          try { await exec(action.command, [...action.args], { maxBuffer: 1024 * 1024 }); }
+          try { unwrapIntegrationResult(yield* Effect.result(integrationValue(exec(action.command, [...action.args], { maxBuffer: 1024 * 1024 })))); }
           catch (error) { if (!action.ignoreFailure) throw error; }
           break;
-        case "remove": await rm(action.path, { recursive: action.recursive, force: true }); break;
+        case "remove": (yield* integrationValue(rm(action.path, { recursive: action.recursive, force: true }))); break;
         case "remove-link": {
-          const target = await host.readlink(action.path);
-          if (target?.startsWith(`${action.prefix}/`)) await rm(action.path, { force: true });
-          else if (target || await host.exists(action.path)) return `Retaining foreign command at ${action.path}${target ? ` -> ${target}` : ""}`;
+          const target = (yield* integrationValue(host.readlink(action.path)));
+          if (target?.startsWith(`${action.prefix}/`)) (yield* integrationValue(rm(action.path, { force: true })));
+          else if (target || (yield* integrationValue(host.exists(action.path)))) return (yield* integrationValue(`Retaining foreign command at ${action.path}${target ? ` -> ${target}` : ""}`));
           break;
         }
+        case "restore-package-policy": return (yield* integrationValue(restoreHostPackagePolicy(action.stateDirectory, action.policy)));
         case "purge-packages": {
-          if (!await host.which("dpkg-query") || !await host.which("apt-get")) break;
+          if (!(yield* integrationValue(host.which("dpkg-query"))) || !(yield* integrationValue(host.which("apt-get")))) break;
           const packages: string[] = [];
-          for (const name of ["zelavis", "zelavis-repository"]) {
-            try { if ((await exec("dpkg-query", ["-W", "-f=${db:Status-Abbrev}", name])).stdout.startsWith("ii")) packages.push(name); } catch {}
+          for (const name of ["zelavis"]) {
+            try { if ((unwrapIntegrationResult(yield* Effect.result(integrationValue(exec("dpkg-query", ["-W", "-f=${db:Status-Abbrev}", name]))))).stdout.startsWith("ii")) packages.push(name); } catch (cause) {
+              // dpkg-query exits 1 when the named package is not installed.
+              if ((cause as { code?: unknown }).code !== 1) throw cause;
+            }
           }
-          if (packages.length) await exec("apt-get", ["purge", "-y", ...packages], { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } });
+          if (packages.length) (yield* integrationValue(exec("apt-get", ["purge", "-y", ...packages], { env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" } })));
           break;
         }
-        case "claim-edge": await claimLocalEdgeOwner(action); break;
-        case "release-edge": await releaseLocalEdgeOwner(action); break;
+        case "claim-edge": (yield* integrationValue(claimLocalEdgeOwner(action))); break;
+        case "release-edge": (yield* integrationValue(releaseLocalEdgeOwner(action))); break;
         case "remove-account": {
           const account = action.account ?? "zelavis";
-          if (!await host.which("getent")) break;
+          if (!(yield* integrationValue(host.which("getent")))) break;
           const messages: string[] = [];
-          if (await host.accountExists("user", account)) {
-            const fields = (await exec("getent", ["passwd", account])).stdout.trim().split(":");
+          if ((yield* integrationValue(host.accountExists("user", account)))) {
+            const fields = ((yield* integrationValue(exec("getent", ["passwd", account])))).stdout.trim().split(":");
             if (action.ownsUser && fields[5] === action.dataDirectory && /\/(?:nologin|false)$/u.test(fields[6] ?? "")) {
-              try { await exec("userdel", [account]); } catch { messages.push(`Retaining ${account} account: userdel failed.`); }
+              try { unwrapIntegrationResult(yield* Effect.result(integrationValue(exec("userdel", [account])))); } catch { messages.push(`Retaining ${account} account: userdel failed.`); }
             } else messages.push(`Retaining ${account} account: ownership or current properties do not prove a dedicated installer account.`);
           }
-          if (await host.accountExists("group", account)) {
+          if ((yield* integrationValue(host.accountExists("group", account)))) {
             if (action.ownsGroup) {
-              try { await exec("groupdel", [account]); } catch { messages.push(`Retaining ${account} group because another account still uses it.`); }
+              try { unwrapIntegrationResult(yield* Effect.result(integrationValue(exec("groupdel", [account])))); } catch { messages.push(`Retaining ${account} group because another account still uses it.`); }
             } else messages.push(`Retaining ${account} group: the installer did not record creating it.`);
           }
-          return messages.join("\n") || undefined;
+          return (yield* integrationValue(messages.join("\n") || undefined));
         }
       }
       return undefined;
-    },
+    }).pipe(Effect.withSpan("createNodeInstallHost/host/execute"))); },
   };
   return host;
 }

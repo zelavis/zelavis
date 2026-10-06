@@ -13,8 +13,9 @@ npm create zelavis@latest -- --yes
 Linux defaults to system mode when root or sudo is available: `/opt/zelavis`
 contains versioned releases, `/var/lib/zelavis` contains data, and `/etc/zelavis`
 contains configuration. The Platform starts through systemd using the release's
-private Node. The default listener is `127.0.0.1:3000`; use an SSH tunnel for a
-remote host. Agent enablement is opt-in (`--enable-agent`).
+private Node. On a server the dashboard listens on all interfaces at port 3000 and the
+installer prints the URL to open; the first-owner token gates who can claim the account.
+System mode enables the separately supervised Project Agent.
 
 macOS and Linux without sudo default to user mode. Select it explicitly with:
 
@@ -30,20 +31,22 @@ not register systemd, Agent or Edge. The launcher loads the private token and
 data location from `config/zelavis.env` regardless of the working directory.
 
 Options: `--user`, `--system`, `-y/--yes`, `--dry-run`, `--public`, `--force`,
-`--instance <name>`, `--port <port>`, `--allow-downgrade`, `--enable-agent`, `--help`, `--version`. A non-interactive
+`--instance <name>`, `--port <port>`, `--allow-downgrade`, `--help`, `--version`. A non-interactive
 installation requires `--yes`. Dry-run prints the layout and exact bootstrap
 command without downloads, elevation or changes.
 
-Each build stamps the exact Platform version. npm supplies that version's
-metadata; the matching prebuilt GitHub release supplies the production package,
-native dependencies, private Node and release templates. SHA-256 is verified
-before extraction or execution. Missing archives fail explicitly; no older
-release is substituted. Published prereleases must include these assets for
-this path to work. Native dependency compilation is done at release build time,
-not on the installing host.
+Each build stamps the exact Platform version. The bootstrap downloads the
+private Node pinned by the release from nodejs.org and verifies it against
+nodejs.org's published SHA-256, then installs that exact `zelavis` version from
+npm, which verifies it against the registry digest. Install scripts stay off for
+the whole dependency tree; none is needed, since every dependency is plain
+JavaScript and the Platform uses Node's built-in SQLite, so no compiler is needed on
+the host. A missing version fails explicitly; no other version is substituted.
+Those two https origins are the whole trust chain: there are no release
+signatures or keys to manage.
 
 For system mode, sudo runs literal bootstrap code that downloads and verifies
-its own release into a private root-owned temporary directory. It never runs a
+its own tree into a private root-owned temporary directory. It never runs a
 file from the invoking user's package cache as root. The bootstrap source is
 maintained once in `distribution/installers/install.sh` and copied
 into the package at build time.
@@ -54,7 +57,9 @@ serialize maintenance; live data and instance port conflicts cannot be forced.
 Foreign PATH commands are checked using the invoking user's PATH, passed only as
 diagnostic data; privileged command execution still uses a fixed trusted PATH.
 Stop a user-run Platform before maintenance. A matching systemd Platform can be
-stopped and restarted during repair/upgrade. Named system instances share immutable releases and have their own data, config,
+stopped and restarted during full repair. Qualified dashboard updates use live
+engine handover for both system and user installations. Installations without
+the persistent host need one installer conversion with a restart. Named system instances share immutable releases and have their own data, config,
 account, units, token, System Store and release selection.
 
 Run `zelavis doctor --user --json` for user mode or `sudo zelavis doctor --json`
@@ -91,7 +96,7 @@ Names use at most 24 lowercase letters, digits and hyphens, starting with a
 letter. A new named instance requires a distinct port (1024–65535). User mode
 supports only default. `preview` owns `/var/lib/zelavis-preview`,
 `/etc/zelavis-preview`, the `zelavis-preview` account, `zelavis@preview.service`
-and the opt-in `zelavis-agent@preview.service`. Its `current`, receipt and public
+and `zelavis-agent@preview.service`. Its `current`, receipt and public
 `runtime.json` live under `/opt/zelavis/instances/preview`. Only default may own
 host Edge, enforced by the persistent Edge record and kernel reservation;
 secondary instances run with Edge off. Use explicit `--url` for their setup/API.

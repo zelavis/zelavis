@@ -55,7 +55,7 @@ export async function installNodeRuntime(output, nodeVersion, releaseTarget, cac
 
   const runtimeDirectory = join(output, "runtime");
   await mkdir(runtimeDirectory, { recursive: true });
-  run("tar", ["-xf", archivePath, "-C", runtimeDirectory]);
+  run("tar", ["--no-same-owner", "-xf", archivePath, "-C", runtimeDirectory]);
   await rename(join(runtimeDirectory, directoryName), join(runtimeDirectory, "node"));
 }
 
@@ -84,7 +84,7 @@ export async function installTraefikRuntime(output, traefikVersion, releaseTarge
 
   const targetDirectory = join(output, "edge", "traefik");
   await mkdir(targetDirectory, { recursive: true });
-  run("tar", ["-xzf", archivePath, "-C", targetDirectory]);
+  run("tar", ["--no-same-owner", "-xzf", archivePath, "-C", targetDirectory]);
   await chmod(join(targetDirectory, "traefik"), 0o755);
   return true;
 }

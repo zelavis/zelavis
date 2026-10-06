@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { integration, IntegrationFailure, present, unwrapFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { assertInstallationInstance } from "../core/runtime/installation-instance.js";
 import {
   bootstrapPlatformOwner,
@@ -9,7 +11,9 @@ import { runAuthCommand } from "./auth.js";
 import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
+import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
+import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runEdgeCommand } from "./edge.js";
@@ -90,7 +94,6 @@ interface ParsedArgs {
   token?: string;
   forService?: string;
   operationsRoot?: string;
-  operationTrust?: string;
   placementStore?: string;
   remoteProjectConfig?: string;
   platformAuthority?: string;
@@ -98,6 +101,8 @@ interface ParsedArgs {
   operationMemoryMaxBytes?: number;
   operationPidsMax?: number;
   requireRootOwnedOperations: boolean;
+  operationsOnly: boolean;
+  endpointGroupAccess: boolean;
   passwordStdin: boolean;
   install: boolean;
   all: boolean;
@@ -112,14 +117,16 @@ function printHelp(): void {
   console.log(`Zelavis CLI
 
 Usage:
+  zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
-  zelavis install --from package --version <version> [--instance <name> --port <port>] [--user] [--dry-run]
+  zelavis install --from-release <path> | --from-npm <path> [--instance <name> --port <port>] [--user] [--dry-run]
   zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
@@ -134,11 +141,11 @@ Usage:
   zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
-  zelavis agent [--data-dir <path>] [--operations-root <dir> --operation-trust <file> --platform-authority <file>]
+  zelavis agent [--data-dir <path>] [--operations-root <dir> --platform-authority <file>]
                 [--placement-store <system-sqlite-file>]
                 [--remote-project-config <file>]
                 [--operation-cgroup delegated|<path>] [--operation-memory-max <bytes>]
-                [--operation-pids-max <n>] [--require-root-owned-operations]
+                [--operation-pids-max <n>] [--require-root-owned-operations] [--operations-only] [--endpoint-group-access]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
@@ -156,6 +163,8 @@ Commands:
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
   marketplace               Show or refresh the marketplace allow-list.
+  update                    Check for a newer version and update this installation
+                            from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes.
   auth service-accounts     Create and revoke machine identities and rotate their
@@ -224,6 +233,8 @@ function parseOrder(value: string): number {
 function parseArgs(args: readonly string[]): ParsedArgs {
   const parsed: ParsedArgs = {
     requireRootOwnedOperations: false,
+    operationsOnly: false,
+    endpointGroupAccess: false,
     passwordStdin: false,
     install: false,
     all: false,
@@ -310,10 +321,14 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--for=")) {
       parsed.forService = arg.slice("--for=".length);
+    } else if (arg === "--endpoint-group-access") {
+      parsed.endpointGroupAccess = true;
+    } else if (arg === "--operations-only") {
+      parsed.operationsOnly = true;
     } else if (arg === "--require-root-owned-operations") {
       parsed.requireRootOwnedOperations = true;
     } else if (
-      ["--operations-root", "--operation-trust", "--platform-authority", "--placement-store", "--remote-project-config", "--operation-cgroup", "--operation-memory-max", "--operation-pids-max"]
+      ["--operations-root", "--platform-authority", "--placement-store", "--remote-project-config", "--operation-cgroup", "--operation-memory-max", "--operation-pids-max"]
         .some((flag) => arg === flag || arg.startsWith(`${flag}=`))
     ) {
       const separator = arg.indexOf("=");
@@ -321,7 +336,6 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       const value = separator === -1 ? readValue(args, index, arg) : arg.slice(separator + 1);
       if (separator === -1) index += 1;
       if (flag === "--operations-root") parsed.operationsRoot = value;
-      if (flag === "--operation-trust") parsed.operationTrust = value;
       if (flag === "--placement-store") parsed.placementStore = value;
       if (flag === "--remote-project-config") parsed.remoteProjectConfig = value;
       if (flag === "--platform-authority") parsed.platformAuthority = value;
@@ -546,37 +560,44 @@ async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
   console.log("Sign in from the dashboard, or with the auth API, to continue.");
 }
 
-export async function runCli(
+const runCliProgram = Effect.fn("CLI.dispatch")(function* (
   args: readonly string[] = process.argv.slice(2),
   options: ZelavisCliOptions = {},
-): Promise<void> {
-  try {
+): Effect.fn.Return<void, TaggedFailure> {
     if (args[0] === "plugins") {
-      await runPluginsCommand(args.slice(1));
+      (yield* integration(() => runPluginsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "projects") {
-      await runProjectsCommand(args.slice(1));
+      (yield* integration(() => runProjectsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "marketplace") {
-      await runMarketplaceCommand(args.slice(1));
+      (yield* integration(() => runMarketplaceCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "update") {
+      (yield* integration(() => runUpdateCommand(args.slice(1))));
       return;
     }
     if (args[0] === "auth") {
-      await runAuthCommand(args.slice(1));
+      (yield* integration(() => runAuthCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "system-store") {
+      yield* integration(() => runSystemStoreCommand(args.slice(1)));
       return;
     }
     if (args[0] === "data") {
-      await runDataCommand(args.slice(1));
+      (yield* integration(() => runDataCommand(args.slice(1))));
       return;
     }
     if (args[0] === "host-operations") {
-      await runHostOperationsCommand(args.slice(1));
+      (yield* integration(() => runHostOperationsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "edge") {
-      await runEdgeCommand(args.slice(1));
+      (yield* integration(() => runEdgeCommand(args.slice(1))));
       return;
     }
     if (args[0] === "doctor") {
@@ -584,21 +605,21 @@ export async function runCli(
         console.log("zelavis doctor [--instance <name>] [--user | --system] [--json]\nRead-only host inspection; no HTTP endpoint.");
         return;
       }
-      if (!options.runtime?.doctor) throw new Error("Doctor requires the local host adapter.");
-      await options.runtime.doctor(args.slice(1));
+      if (!options.runtime?.doctor) return yield* new IntegrationFailure(new Error("Doctor requires the local host adapter."));
+      (yield* integration(() => options.runtime!.doctor!(args.slice(1))));
       return;
     }
     if (args[0] === "install") {
       if (args.includes("--help") || args.includes("-h")) {
-        console.log("zelavis install (--from-release <absolute path> | --from package --version <exact version>) [--instance <name> --port <port>] [--user] [--dry-run] [--json] [--force] [--public] [--enable-agent] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
+        console.log("zelavis install (--from-release <absolute path> | --from package --version <exact version>) [--instance <name> --port <port>] [--user] [--dry-run] [--json] [--force] [--public] [--allow-downgrade]\nHost-local only; no HTTP endpoint.");
         return;
       }
-      if (!options.runtime?.install) throw new Error("Install requires the local host adapter.");
-      await options.runtime.install(args.slice(1));
+      if (!options.runtime?.install) return yield* new IntegrationFailure(new Error("Install requires the local host adapter."));
+      (yield* integration(() => options.runtime!.install!(args.slice(1))));
       return;
     }
     const parsed = parseArgs(args);
-    if (parsed.instance && !["serve", "uninstall"].includes(parsed.command ?? "")) throw new Error("--instance selects local installation lifecycle commands. Use --url for endpoint-backed commands.");
+    if (parsed.instance && !["serve", "uninstall"].includes(parsed.command ?? "")) return yield* new IntegrationFailure(new Error("--instance selects local installation lifecycle commands. Use --url for endpoint-backed commands."));
 
     if (parsed.version) {
       // The bare version stays on its own first line, so anything parsing this
@@ -615,11 +636,11 @@ export async function runCli(
     }
     if (parsed.command === "serve") {
       if (!options.runtime) {
-        throw new Error(
+        return yield* new IntegrationFailure(new Error(
           "The serve command is provided by the public zelavis Platform package.",
-        );
+        ));
       }
-      await options.runtime.serve({
+      (yield* integration(() => options.runtime!.serve({
         ...(parsed.instance ? { instance: parsed.instance } : {}),
         ...(parsed.instance || parsed.host !== undefined || parsed.port !== undefined || parsed.dataDirectory !== undefined ? { dataExplicit: parsed.dataDirectory !== undefined, portExplicit: parsed.port !== undefined, hostExplicit: parsed.host !== undefined } : {}),
         host: parsed.host ?? process.env.HOST ?? "127.0.0.1",
@@ -628,27 +649,27 @@ export async function runCli(
         ...((parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)
           ? { servicesDirectory: (parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)! }
           : {}),
-      });
+      })));
       return;
     }
     if (parsed.command === "uninstall") {
       if (!parsed.all) {
-        throw new Error(
+        return yield* new IntegrationFailure(new Error(
           "Complete uninstall requires --all because it permanently deletes every Zelavis Project and all Platform data.",
-        );
+        ));
       }
       if (!options.runtime?.createInstallationUninstaller) {
-        throw new Error(
+        return yield* new IntegrationFailure(new Error(
           "Complete uninstall is available only from a packaged Zelavis installation on a supported host adapter.",
-        );
+        ));
       }
-      const uninstaller = await options.runtime.createInstallationUninstaller({
+      const uninstaller = (yield* integration(() => options.runtime!.createInstallationUninstaller!({
         ...(parsed.instance ? { instance: parsed.instance } : {}),
         dataDirectory:
           parsed.dataDirectory ?? (parsed.instance ? undefined : process.env.ZELAVIS_DATA_DIR),
-      });
+      })));
       if (parsed.dryRun) {
-        const plan = await uninstaller.plan();
+        const plan = (yield* integration(() => uninstaller.plan()));
         console.log(
           parsed.json
             ? JSON.stringify({ dryRun: true, plan }, null, 2)
@@ -657,13 +678,13 @@ export async function runCli(
         return;
       }
       if (!parsed.confirmation) {
-        throw new Error(
+        return yield* new IntegrationFailure(new Error(
           `Complete uninstall requires --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION}. Run with --dry-run first.`,
-        );
+        ));
       }
-      const result = await uninstaller.uninstall({
-        confirmation: parsed.confirmation,
-      });
+      const result = (yield* integration(() => uninstaller.uninstall({
+        confirmation: parsed.confirmation!,
+      })));
       console.log(
         parsed.json
           ? JSON.stringify(result, null, 2)
@@ -675,10 +696,10 @@ export async function runCli(
     if (parsed.command === "extensions") {
       console.log(
         formatRuntimeExtensions(
-          await listRuntimeExtensions({
+          (yield* integration(() => listRuntimeExtensions({
             url: parsed.url,
             ...(parsed.forService ? { owner: parsed.forService } : {}),
-          }),
+          }))),
         ),
       );
       return;
@@ -686,12 +707,13 @@ export async function runCli(
     if (parsed.command === "agent") {
       const env = process.env;
       const operationsRoot = parsed.operationsRoot ?? env.ZELAVIS_AGENT_OPERATIONS_ROOT;
-      const operationTrust = parsed.operationTrust ?? env.ZELAVIS_AGENT_OPERATION_TRUST;
       const operationCgroup = parsed.operationCgroup ?? env.ZELAVIS_AGENT_OPERATION_CGROUP;
       const platformAuthority = parsed.platformAuthority ?? env.ZELAVIS_AGENT_PLATFORM_AUTHORITY;
       const placementStore = parsed.placementStore ?? env.ZELAVIS_AGENT_PLACEMENT_STORE;
       const remoteProjectConfig = parsed.remoteProjectConfig ?? env.ZELAVIS_AGENT_REMOTE_PROJECT_CONFIG;
-      await runAgentCommand({
+      (yield* integration(() => runAgentCommand({
+        operationsOnly: parsed.operationsOnly,
+        endpointGroupAccess: parsed.endpointGroupAccess,
         ...(parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR
           ? {
               dataDirectory: (parsed.dataDirectory ??
@@ -699,7 +721,6 @@ export async function runCli(
             }
           : {}),
         ...(operationsRoot ? { operationsRoot } : {}),
-        ...(operationTrust ? { operationTrust } : {}),
         ...(platformAuthority ? { platformAuthority } : {}),
         ...(placementStore ? { placementStore } : {}),
         ...(remoteProjectConfig ? { remoteProjectConfig } : {}),
@@ -710,29 +731,36 @@ export async function runCli(
         ...(parsed.operationPidsMax !== undefined ? { operationPidsMax: parsed.operationPidsMax } : {}),
         requireRootOwnedOperations:
           parsed.requireRootOwnedOperations || env.ZELAVIS_AGENT_REQUIRE_ROOT_OWNED_OPERATIONS === "1",
-      });
+      })));
       return;
     }
     if (parsed.command === "bootstrap") {
-      await runBootstrapCommand(parsed);
+      (yield* integration(() => runBootstrapCommand(parsed)));
       return;
     }
     if (parsed.command === "setup") {
       if (parsed.target) {
-        throw new Error("setup does not accept positional arguments.");
+        return yield* new IntegrationFailure(new Error("setup does not accept positional arguments."));
       }
-      await runSetupWizard({
+      (yield* integration(() => runSetupWizard({
         url: parsed.url,
         bootstrapToken: parsed.token,
-      });
+      })));
       return;
     }
     if (parsed.command === "services") {
-      await runServicesCommand(parsed);
+      (yield* integration(() => runServicesCommand(parsed)));
       return;
     }
-    throw new Error(`Unknown command "${parsed.command}".`);
-  } catch (error) {
+    return yield* new IntegrationFailure(new Error(`Unknown command "${parsed.command}".`));
+
+});
+export function runCli(
+  args: readonly string[] = process.argv.slice(2),
+  options: ZelavisCliOptions = {},
+): Promise<void> {
+  return present(runCliProgram(args, options).pipe(Effect.catchCause(cause => Effect.sync(() => {
+    const error = unwrapFailure(Cause.squash(cause));
     if (args[0] === "plugins" || args.includes("--json")) {
       console.error(JSON.stringify({
         error: error instanceof Error ? error.message : String(error),
@@ -742,5 +770,5 @@ export async function runCli(
       console.error(error instanceof Error ? error.message : String(error));
     }
     process.exitCode = 1;
-  }
+  }))));
 }

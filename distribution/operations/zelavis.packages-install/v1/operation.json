@@ -1,0 +1,10 @@
+{
+  "id": "zelavis.packages-install",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "set": { "required": true, "pattern": "^wordpress-stack$", "maxLength": 32 }
+  },
+  "authorization": { "permission": "server.packages.install", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 4096 }
+}

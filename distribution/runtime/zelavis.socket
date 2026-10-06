@@ -1,0 +1,12 @@
+[Unit]
+Description=Zelavis dashboard and API socket
+
+[Socket]
+ListenStream=127.0.0.1:3000
+# systemd holds the port, so connections made while the Platform restarts (an
+# update) wait here instead of being refused.
+Backlog=1024
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

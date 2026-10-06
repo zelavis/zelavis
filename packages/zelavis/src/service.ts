@@ -1,3 +1,4 @@
+import { normalizeProjectHostPackages } from "./project-host-packages.js";
 import type { ZelavisServiceStore } from "./platform/service-store.js";
 import {
   normalizeProjectIsolationIntent,
@@ -100,6 +101,8 @@ export type ZelavisProjectRuntimeKind = string;
  * becomes a create-project option.
  */
 export interface ZelavisProjectRecipeDefinition {
+  /** Fixed host-operation package sets; installation always requires separate authorization. */
+  readonly hostPackages?: readonly string[];
   readonly runtimeKinds: readonly ZelavisProjectRuntimeKind[];
   /** Isolation the recipe requires or advises; see `ZelavisProjectIsolationIntent`. */
   readonly isolation?: ZelavisProjectIsolationIntent;
@@ -203,6 +206,10 @@ export interface ZelavisServiceSetupPlatformContext {
 
 export interface ZelavisServiceSetupCoreContext {
   database?: unknown;
+  /** Native Project APIs. Using them is reflected in the existing dashboard. */
+  auth?: import("./app/identity/index.js").IdentityApi;
+  storage?: import("./index.js").ZelavisFileStorage;
+  workloads?: import("./app/workloads/workloads-service.js").WorkloadsApi;
   /**
    * Durable storage scoped to this service.
    *
@@ -596,13 +603,14 @@ export async function loadPluginPackage(options: {
  * requirement fails when the package is loaded rather than when a Project is
  * first created from it.
  */
-function manifestProjectRecipe(
+export function manifestProjectRecipe(
   manifest: ZelavisPackageManifest,
 ): ZelavisProjectRecipeDefinition | undefined {
   const project = (manifest.zelavis as { project?: unknown } | undefined)?.project as
     | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed"> & { isolation?: unknown; managed?: unknown })
     | undefined;
   if (!project) return undefined;
+  const hostPackages = normalizeProjectHostPackages(project.hostPackages);
   let managed: ZelavisProjectManagedDefinition | undefined;
   try {
     managed = normalizeProjectManaged(project.managed);
@@ -613,7 +621,7 @@ function manifestProjectRecipe(
   }
   if (project.isolation === undefined) {
     const { managed: _managed, isolation: _isolation, ...rest } = project;
-    return managed ? { ...rest, managed } : rest;
+    return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(managed ? { managed } : {}) };
   }
   let isolation: ZelavisProjectIsolationIntent | undefined;
   try {
@@ -624,7 +632,7 @@ function manifestProjectRecipe(
     );
   }
   const { isolation: _declared, managed: _managed, ...rest } = project;
-  return { ...rest, ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}) };
+  return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}) };
 }
 
 /**

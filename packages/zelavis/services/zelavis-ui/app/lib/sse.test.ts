@@ -38,14 +38,27 @@ describe("readServerSentEvents", () => {
     ])
   })
 
-  it("accepts CRLF, a final frame without a blank line, and skips comments and junk", async () => {
+  it("accepts CRLF, a final frame without a blank line, and skips comment-only frames", async () => {
     expect(
       await collect(
-        streamOf([': hi\r\n\r\nevent: text\r\ndata: {"delta":"a"}\r\n\r\ndata: nope\n\nevent: done\ndata: {"n":1}'])
+        streamOf([': hi\r\n\r\nevent: text\r\ndata: {"delta":"a"}\r\n\r\nevent: done\ndata: {"n":1}'])
       ),
     ).toEqual([
       { event: "text", data: { delta: "a" } },
       { event: "done", data: { n: 1 } },
     ])
   })
+
+  it("rejects malformed JSON frames and cancels the reader instead of losing an event", async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: text\ndata: nope\n\n'))
+      },
+      cancel() { cancelled = true },
+    })
+    await expect(collect(stream)).rejects.toThrow("malformed JSON event frame")
+    expect(cancelled).toBe(true)
+  })
+
 })

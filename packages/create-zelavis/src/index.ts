@@ -15,10 +15,9 @@ export const HELP = `Install Zelavis on this machine.
   --dry-run          Show acquisition, layout and the exact command; make no changes
   --instance <name>  Select a named system instance
   --port <port>      Reserve its Platform port (required for a new named instance)
-  --public           Bind the Platform to 0.0.0.0 instead of 127.0.0.1
+  --public           Listen on all interfaces (already the default for a server's default instance)
   --force            Replace a conflicting Zelavis command deliberately
   --allow-downgrade  Permit an older release deliberately
-  --enable-agent     Enable the Agent (system mode only)
   --help, -h         Show help
   --version, -v      Show the create package version
 
@@ -57,7 +56,7 @@ export function parseArguments(args: readonly string[]): InstallArguments {
     else if (arg === "--dry-run") dryRun = true;
     else if (arg === "--help" || arg === "-h") help = true;
     else if (arg === "--version" || arg === "-v") version = true;
-    else if (["--public", "--force", "--allow-downgrade", "--enable-agent"].includes(arg)) flags.push(arg);
+    else if (["--public", "--force", "--allow-downgrade"].includes(arg)) flags.push(arg);
     else throw new Error(`Unexpected argument: ${arg}. create-zelavis installs on this machine and accepts no folder argument. Use --help.`);
   }
   return { mode, yes, dryRun, help, version, flags };
@@ -79,7 +78,6 @@ export function installationCommand(input: { version: string; script: string; mo
   try { if (parseArguments(flags).flags.length !== flags.length) throw new Error("Invalid installer flag."); } catch { throw new Error("Invalid installer flag."); }
   const instance = flags[flags.indexOf("--instance") + 1];
   if (input.mode === "user" && flags.includes("--instance") && instance !== "default") throw new Error("Named instances require system mode.");
-  if (input.mode === "user" && flags.includes("--enable-agent")) throw new Error("The Agent requires system mode.");
   const elevated = input.mode === "system" && !input.root;
   const command = elevated ? "sudo" : "/bin/sh";
   const args = [...elevated ? ["--", "/bin/sh"] : [], "-c", input.script, "--", input.version, ...input.mode === "user" ? ["--user"] : [], ...flags, ...input.invokingPath ? ["--invoking-path", input.invokingPath] : [], ...input.invokingHome ? ["--invoking-home", input.invokingHome] : []];
@@ -91,7 +89,7 @@ export function installationOverview(mode: "system" | "user", version: string, h
   const instance = flags.includes("--instance") ? flags[flags.indexOf("--instance") + 1] : "default";
   const suffix = instance === "default" ? "" : `-${instance}`;
   const port = flags.includes("--port") ? flags[flags.indexOf("--port") + 1] : instance === "default" ? "3000" : "required for a new instance";
-  return [`Instance: ${instance}; port: ${port}`, `Install Zelavis ${version} (${mode})`, "Verify npm version metadata and the matching prebuilt release SHA-256.", `Release: ${prefix}/releases/${version}; ${instance === "default" ? "current" : `instances/${instance}/current`} selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : `/var/lib/zelavis${suffix}`}`, `Config: ${mode === "user" ? join(prefix, "config") : `/etc/zelavis${suffix}`}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : "Start the systemd Platform on private Node. Agent is opt-in; Edge stays disabled."].join("\n");
+  return [`Instance: ${instance}; port: ${port}`, `Install Zelavis ${version} (${mode})`, "Fetch the pinned private Node from nodejs.org (SHA-256 verified) and the exact package from npm (registry digest verified).", `Release: ${prefix}/releases/${version}; ${instance === "default" ? "current" : `instances/${instance}/current`} selects that release.`, `Data: ${mode === "user" ? join(prefix, "data") : `/var/lib/zelavis${suffix}`}`, `Config: ${mode === "user" ? join(prefix, "config") : `/etc/zelavis${suffix}`}`, `Command: ${mode === "user" ? join(home, ".local/bin/zelavis") : "/usr/local/bin/zelavis"}`, mode === "user" ? "Run zelavis serve after installation. Uses private Node; no systemd, Agent or Edge." : "Start the systemd Platform on private Node with a separately supervised Project Agent. Edge stays disabled."].join("\n");
 }
 
 export async function loadInstallerAssets(): Promise<{ version: string; script: string }> {

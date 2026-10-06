@@ -1,9 +1,12 @@
+import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
+import type { ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
 import type { ServiceSourceDiagnostic } from "../platform/service-registry-view.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectRecord,
+  ZelavisProjectVersions,
 } from "../project.js";
 import type { ZelavisProjectIsolationIntent } from "../project-isolation.js";
 import type {
@@ -281,6 +284,7 @@ export interface ZelavisClient {
   readonly projects: ZelavisProjectsClient;
   /** The marketplace allow-list, over `/runtime/marketplace`. Same contract as `zelavis marketplace`. */
   readonly marketplace: ZelavisMarketplaceClient;
+  readonly updates: ZelavisUpdatesClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -289,7 +293,7 @@ export interface ZelavisClient {
    * client ends up writing another App's records.
    */
   data(projectId: string): ZelavisDataClient;
-  /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
+  /** Host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
   readonly environment: ZelavisEnvironmentClient;
   /** Proxy-neutral Edge management. Same contract as `zelavis edge`. */
@@ -297,6 +301,10 @@ export interface ZelavisClient {
   /** Accounts, login ceremonies, sessions, provider settings, and service clients. */
   readonly auth: ZelavisAuthClient;
   readonly runtime: {
+    readonly systemStore: {
+      namespaces(): Promise<readonly ZelavisSystemStoreNamespace[]>;
+      records(namespace: string, options?: { limit?: number; after?: string }): Promise<ZelavisSystemStorePage>;
+    };
     access(): Promise<ZelavisRuntimeAccessResponse>;
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
@@ -512,9 +520,12 @@ export type ZelavisDataWritten =
   | { readonly _tag: "Deleted"; readonly collection: string; readonly id: string };
 
 export interface ZelavisProjectCreateInput {
+  /** Explicitly approve the recipe's fixed host package sets; requires server.packages.install. */
+  readonly installHostPackages?: boolean;
   readonly name: string;
   readonly id?: string;
   readonly recipeName?: string;
+  readonly engineVersion?: string;
   /** Defaults to true. */
   readonly start?: boolean;
 }
@@ -524,6 +535,7 @@ export interface ZelavisProjectUpdateInput {
 }
 
 export interface ZelavisProjectRecipeSummary {
+  readonly hostPackages?: readonly string[];
   readonly name: string;
   readonly title: string;
   readonly summary?: string;
@@ -573,7 +585,22 @@ export interface ZelavisMarketplaceClient {
   refresh(): Promise<ZelavisMarketplaceRefreshResult>;
 }
 
+export interface ZelavisUpdatesClient {
+  /** Which version runs and whether a newer one is available; needs `system.updates.view`. */
+  status(): Promise<ZelavisUpdateStatus>;
+  /** Looks up the newest version on this installation's channel; needs `system.updates.manage`. */
+  check(): Promise<ZelavisUpdateStatus>;
+  /**
+   * Asks for the update to the newest version and returns at once (HTTP 202);
+   * the update runs as root and survives a restart, so poll `status`. Refused
+   * with 409 when it cannot run; needs `system.updates.manage`.
+   */
+  apply(): Promise<ZelavisUpdateStatus>;
+}
+
 export interface ZelavisProjectsClient {
+  versions(projectId?: string): Promise<ZelavisProjectVersions>;
+  switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
@@ -581,8 +608,8 @@ export interface ZelavisProjectsClient {
   start(projectId: string): Promise<ZelavisProjectRecord>;
   stop(projectId: string): Promise<ZelavisProjectRecord>;
   restart(projectId: string): Promise<ZelavisProjectRecord>;
-  /** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */
-  upgrade(projectId: string, input?: { readonly recipeName?: string }): Promise<ZelavisProjectRecord>;
+  /** Updates managed SDK integrations without restarting the app, or hands a supported native App to its selected engine; data is kept. */
+  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;
@@ -841,6 +868,11 @@ export function createZelavisClient(
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
     },
+    updates: {
+      status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
+      check: () => json<ZelavisUpdateStatus>("/runtime/updates/check", { method: "POST" }),
+      apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
+    },
     data: (projectId) => createDataClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),
@@ -1093,6 +1125,15 @@ export function createZelavisClient(
     request,
     json,
     runtime: {
+      systemStore: {
+        namespaces: () => json<{ namespaces: readonly ZelavisSystemStoreNamespace[] }>("/runtime/system-store/namespaces").then(result => result.namespaces),
+        records: (namespace, options = {}) => {
+          const query = new URLSearchParams();
+          if (options.limit !== undefined) query.set("limit", String(options.limit));
+          if (options.after !== undefined) query.set("after", options.after);
+          return json<ZelavisSystemStorePage>(`/runtime/system-store/namespaces/${encodeURIComponent(namespace)}/records?${query}`);
+        },
+      },
       access() {
         return json<ZelavisRuntimeAccessResponse>("/runtime/access");
       },
@@ -1283,6 +1324,8 @@ function createProjectsClient(
     async (projectId: string) =>
       (await json<ProjectBody>(projectPath(projectId, action), { method: "POST" })).project;
   return {
+    versions: projectId => json<ZelavisProjectVersions>(projectId === undefined ? "/runtime/project-versions" : projectPath(projectId, "versions")),
+    switchVersion: (projectId, version) => json<ProjectBody>(projectPath(projectId, "version"), { method: "POST", body: { version } }).then(result => result.project),
     list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
     get: async (projectId) => (await json<ProjectBody>(projectPath(projectId))).project,
     create: async (input) =>

@@ -42,8 +42,9 @@ function failClosed(response: ServerResponse, status: number): void {
     // The socket is already gone; nothing further to do.
     try {
       response.destroy();
-    } catch {
-      // ignore
+    } catch (cause) {
+      // Preserve the original response failure; report failed socket cleanup.
+      console.warn("HTTP response socket cleanup failed.", cause instanceof Error ? cause.name : "unknown error");
     }
   }
 }

@@ -77,11 +77,8 @@ function registry(tarballs) {
   return fetcher;
 }
 
-// --- a signed allow-list ---------------------------------------------------
+// --- a served allow-list ---------------------------------------------------
 
-const { allowlist: lib } = await (async () => ({ allowlist: await import("../services/zelavis-marketplace/dist/allowlist/index.js") }))();
-const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64");
 
 // Far above any list the release ships, so a fake list is never a replay of an older one.
 const TEST_SEQUENCE = 100_000;
@@ -101,8 +98,8 @@ const entry = (versions) => ({
 });
 
 async function serveList(services, sequence) {
-  const envelope = await lib.signAllowlist({ privateKey: keys.privateKey, keyId: "test-key", allowlist: listing(services, sequence) });
-  return async () => new Response(JSON.stringify(envelope), { status: 200 });
+  const list = listing(services, sequence);
+  return async () => new Response(JSON.stringify(list), { status: 200 });
 }
 
 async function sourcesFor(directory, marketplace) {
@@ -124,7 +121,7 @@ test("only listed packages install, at the listed version, with the listed diges
   const unlisted = thing("2.0.0");
   const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])]);
   const { servicePackages, marketplace } = await sourcesFor(directory, {
-    sources: ["https://list.example/allowlist.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher,
+    sources: ["https://list.example/allowlist.json"], fetch: fetcher,
   });
   assert.equal((await marketplace.control.refresh()).updated, true);
 
@@ -172,7 +169,7 @@ test("a service that needs dependencies the Platform will not install is refused
     const directory = await scratch(t);
     const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(bytes) }])]);
     const { servicePackages, marketplace } = await sourcesFor(directory, {
-      sources: ["https://list.example/allowlist.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher,
+      sources: ["https://list.example/allowlist.json"], fetch: fetcher,
     });
     await marketplace.control.refresh();
     const originalFetch = globalThis.fetch;
@@ -195,7 +192,7 @@ test("a service that needs dependencies the Platform will not install is refused
 
 test("other kinds of source are refused while the allow-list gates installs", async (t) => {
   const directory = await scratch(t);
-  const { servicePackages } = await sourcesFor(directory, { sources: [], keys: [] });
+  const { servicePackages } = await sourcesFor(directory, { sources: [] });
   const refusal = await Effect.runPromise(Effect.flip(Effect.scoped(
     servicePackages.acquire({ reference: "https://example.test/pkg.tgz" }))));
   assert.equal(refusal._tag, "SourceRefused");
@@ -213,7 +210,7 @@ test("what the list vouches for is offered by the marketplace at the next start"
   const directory = await scratch(t);
   const good = thing("1.0.0");
   const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])]);
-  const first = await sourcesFor(directory, { sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher });
+  const first = await sourcesFor(directory, { sources: ["https://list.example/a.json"], fetch: fetcher });
   await first.marketplace.control.refresh();
 
   // A restart shares the System Store, so it starts from the cached list.
@@ -221,10 +218,10 @@ test("what the list vouches for is offered by the marketplace at the next start"
   const withStore = (marketplace) => createLocalServiceSources({
     dataDirectory: directory, services: { marketplace }, isProjectRuntime: false, systemStore: store,
   });
-  const a = await withStore({ sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher });
+  const a = await withStore({ sources: ["https://list.example/a.json"], fetch: fetcher });
   assert.equal(a.serviceRegistry.catalog.some((c) => c.service.name === "@example/thing"), false, "nothing cached yet");
   await a.marketplace.control.refresh();
-  const b = await withStore({ sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher });
+  const b = await withStore({ sources: ["https://list.example/a.json"], fetch: fetcher });
   const offered = b.serviceRegistry.catalog.find((c) => c.service.name === "@example/thing");
   assert.equal(offered.status, "available");
   assert.equal(offered.service.marketplace.title, "Thing");
@@ -237,7 +234,7 @@ test("in development, an official service in the local checkout stands in for it
   await mkdir(join(checkout, "wordpress"), { recursive: true });
   await writeFile(join(checkout, "wordpress", "package.json"), JSON.stringify({
     name: "@zelavis/wordpress", version: "7.1.0",
-    zelavis: { kind: "app", marketplace: { title: "WordPress", summary: "A site." }, project: { runtimeKinds: ["native"] } },
+    zelavis: { kind: "app", marketplace: { title: "WordPress", summary: "A site." }, project: { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] } },
   }));
   await mkdir(join(checkout, "not-a-service"), { recursive: true });
   await writeFile(join(checkout, "not-a-service", "package.json"), JSON.stringify({ name: "plain", version: "1.0.0" }));
@@ -248,7 +245,7 @@ test("in development, an official service in the local checkout stands in for it
   assert.equal(local.maintainer, "zelavis", "what is in the operator's zelavis-services checkout is ours");
   assert.equal(local.specifier, join(checkout, "wordpress"));
   assert.equal(local.service.version, "7.1.0");
-  assert.deepEqual(local.service.project, { runtimeKinds: ["native"] });
+  assert.deepEqual(local.service.project, { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] });
   assert.equal(serviceRegistry.catalog.some((c) => c.service.name === "plain"), false);
   assert.deepEqual(marketplace.managedDirectories, [checkout]);
 });
@@ -316,7 +313,7 @@ test("the Platform hands its verified list to its Projects, which verify it agai
 
   const good = thing("1.0.0");
   const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE + 5);
-  const trust = { keys: [{ keyId: "test-key", publicKey }], fetch: fetcher };
+  const trust = { fetch: fetcher };
   const platform = await createLocalServiceSources({
     dataDirectory: directory,
     services: { marketplace: { sources: ["https://list.example/a.json"], ...trust } },
@@ -328,7 +325,7 @@ test("the Platform hands its verified list to its Projects, which verify it agai
 
   // A refresh reaches a Project that is already running, and nothing else.
   const file = join(running, "allowlist.json");
-  assert.equal(JSON.parse(await readFile(file, "utf8")).envelope.keyId, "test-key");
+  assert.equal(JSON.parse(await readFile(file, "utf8")).allowlist.sequence, TEST_SEQUENCE + 5);
   await assert.rejects(readFile(join(projects, "not-a-project", ".zelavis", "allowlist.json")));
 
   // A Project reads it from its own data folder, with no sources of its own.
@@ -344,11 +341,11 @@ test("the Platform hands its verified list to its Projects, which verify it agai
   const later = join(projects, "later", ".zelavis");
   await mkdir(later, { recursive: true });
   await platform.marketplace.handDown(later);
-  assert.equal(JSON.parse(await readFile(join(later, "allowlist.json"), "utf8")).envelope.keyId, "test-key");
+  assert.equal(JSON.parse(await readFile(join(later, "allowlist.json"), "utf8")).allowlist.sequence, TEST_SEQUENCE + 5);
 
-  // The file is only a cache: edited, it stops verifying and is not believed.
+  // The file is only a cache: edited, it stops parsing and is not believed.
   const held = JSON.parse(await readFile(file, "utf8"));
-  held.envelope.payload = held.envelope.payload.slice(0, -4) + "AAAA";
+  held.allowlist.sequence = 0;
   await writeFile(file, JSON.stringify(held));
   const tampered = await (await open()).marketplace.client.current();
   assert.notEqual(tampered?.origin, "cache");
@@ -360,7 +357,7 @@ test("operators can see how current the list is, and refresh it, over HTTP", asy
   const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE + 5);
   const zv = new Zelavis({ adapter: nodeAdapter({
     dataDirectory: directory,
-    services: { marketplace: { sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher } },
+    services: { marketplace: { sources: ["https://list.example/a.json"], fetch: fetcher } },
   }) });
   t.after(() => zv.close());
   const call = (path, principal, method = "GET") => zv.fetch(
@@ -397,7 +394,7 @@ test("the list is the same over HTTP, the SDK and the CLI, and installs are desc
   const fetcher = await serveList([entry([{ version: "1.0.0", integrity: integrityOf(good) }])], TEST_SEQUENCE);
   const zv = new Zelavis({ adapter: nodeAdapter({
     dataDirectory: directory,
-    services: { marketplace: { sources: ["https://list.example/a.json"], keys: [{ keyId: "test-key", publicKey }], fetch: fetcher, officialServicesDirectory: checkout } },
+    services: { marketplace: { sources: ["https://list.example/a.json"], fetch: fetcher, officialServicesDirectory: checkout } },
   }) });
   t.after(() => zv.close());
   const send = (url, init) => zv.fetch(new Request(url, init), OWNER);

@@ -417,7 +417,10 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
       <button
         type="button"
         onClick={() => {
-          copyImagePart(part).catch(() => {});
+          copyImagePart(part).catch(() => {
+            // Clipboard permission failure must be visible without exposing image data.
+            console.warn("The image could not be copied to the clipboard.");
+          });
         }}
         data-slot="image-copy"
         aria-label="Copy image"

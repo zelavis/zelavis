@@ -6,9 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createNodeHostOperationExecutor } from "../dist/adapters/_node-host-operation-executor.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
 
-const signer = await createReleaseSigner();
 
 test("Node host operation executor verifies authority, manifest digest, arguments, and idempotency", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-host-operation-"));
@@ -21,10 +19,9 @@ test("Node host operation executor verifies authority, manifest digest, argument
   try {
     const executor = await createNodeHostOperationExecutor({
       rootDirectory: directory,
-      trust: signer.trust,
       operations: [{
         file: "verify.sh",
-        signed: await signer.sign({
+        manifest: ({
           id: "native.verify",
           version: "v1",
           sha256,
@@ -103,13 +100,11 @@ test("executor retains the authorized snapshot and refuses deadlines expired dur
   const request = { operationId:"operation_0123456789abcdef", operation:"native.verify", version:"v1",
     artifactDigest:sha256, authority:"test", arguments:{project:"before"}, deadline:new Date(Date.now()+30_000).toISOString() };
   try {
-    const executor = await createNodeHostOperationExecutor({ rootDirectory:directory,
-      trust: signer.trust, operations:[{file:"verify.sh", signed: await signer.sign({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
+    const executor = await createNodeHostOperationExecutor({ rootDirectory:directory, operations:[{file:"verify.sh", manifest: ({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
       authorize:async snapshot => { request.arguments.project="after"; assert.equal(snapshot.arguments.project,"before"); return true; },
     });
     assert.equal((await executor.execute(request)).stdout,"before");
-    const expired = await createNodeHostOperationExecutor({rootDirectory:directory,
-      trust: signer.trust, operations:[{file:"verify.sh", signed: await signer.sign({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
+    const expired = await createNodeHostOperationExecutor({rootDirectory:directory, operations:[{file:"verify.sh", manifest: ({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
       authorize:async snapshot => { while(Date.now() <= Date.parse(snapshot.deadline)) await new Promise(resolve=>setTimeout(resolve,5)); return true; },
     });
     await assert.rejects(expired.execute({...request,operationId:"operation_abcdef0123456789",deadline:new Date(Date.now()+50).toISOString()}),/deadline/);

@@ -1,253 +1,169 @@
-/**
- * Proves the native WordPress runtime installs what it needs.
- *
- * Everything else about WordPress has only ever been exercised on a host that
- * already had nginx, PHP and MariaDB, so the provisioning path — the half of
- * the promise that says an operator does not have to install anything — had
- * never actually run. This is the check that runs it, and it is a script rather
- * than a test because it only means something on a host that is missing those
- * packages and is allowed to install them. That is a container, not a laptop.
- *
- * It refuses to run anywhere else. A pass on a machine that already had the
- * packages would be worse than no check at all: it would look like evidence.
- */
-import { access, mkdtemp, readFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { createNativeWordPressProjectRuntime, WORDPRESS_APP_NAME } from "../dist/runtime.js";
-
-const { version: RECIPE_VERSION } = JSON.parse(
-  await readFile(new URL("../package.json", import.meta.url), "utf8"),
-);
-
-/**
- * What has to exist afterwards, and every name it may go by.
- *
- * Debian ships PHP-FPM as `php-fpm8.2` rather than a bare `php-fpm`, which the
- * driver already knows — its candidate list carries the versioned names. A
- * check that insisted on the unversioned one would report a failure the
- * Platform does not have.
- */
-const REQUIRED_BINARIES = [
-  { label: "nginx", candidates: ["nginx"], formula: "nginx", relative: "bin/nginx" },
-  {
-    label: "php-fpm",
-    candidates: ["php-fpm", "php-fpm8.5", "php-fpm8.4", "php-fpm8.3", "php-fpm8.2"],
-    formula: "php",
-    relative: "sbin/php-fpm",
-  },
-  {
-    label: "mariadbd",
-    candidates: ["mariadbd"],
-    formula: "mariadb",
-    relative: "bin/mariadbd",
-  },
-];
-
-function run(command, args) {
-  return new Promise((resolveRun) => {
-    execFile(command, args, (error, stdout) => {
-      resolveRun({ ok: !error, stdout: stdout?.trim() ?? "" });
-    });
+/** Qualify the installed root broker and an unprivileged Platform on disposable Debian/systemd. */
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { access, readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== "1") throw new Error("Run through wordpress-provisioning-container.sh on a disposable container.");
+await access("/.dockerenv");
+const platform = process.env.ZELAVIS_QUALIFICATION_PLATFORM ?? "/opt/zelavis/current/platform";
+const phase = process.argv[2] ?? "create";
+const baseUrl = "http://127.0.0.1:3000";
+const { createZelavisClient } = await import(pathToFileURL(`${platform}/dist/sdk/fetch.js`).href);
+if (phase === "claim") {
+  assert.equal(process.getuid(), 0);
+  const environment = await readFile("/etc/zelavis/zelavis.env", "utf8");
+  const bootstrapToken = /^ZELAVIS_BOOTSTRAP_TOKEN=(.+)$/m.exec(environment)?.[1];
+  const response = await fetch(`${baseUrl}/zelavis/api/v1/auth/bootstrap`, {
+    method: "POST", headers: { "content-type": "application/json", origin: baseUrl },
+    body: JSON.stringify({ bootstrapToken, provider: "password", account: { email: "qualification@example.test" }, credential: { identifier: "qualification@example.test", password: "disposable qualification password 2026" } }),
   });
-}
-
-async function present(binary) {
-  const { ok } = await run("sh", ["-c", `command -v ${binary}`]);
-  return ok;
-}
-
-/**
- * Finds a binary the way the driver does, not the way a shell does.
- *
- * `command -v` is not enough on either platform. Debian ships PHP-FPM as
- * `php-fpm8.2`, and Homebrew installs binaries under a formula prefix that is
- * often not on PATH at all — `php-fpm` is absent from PATH on a Mac that has
- * the `php` formula installed. A check that only asked the shell would report
- * a failure the Platform does not have, and worse, would call a host "bare"
- * when it is fully equipped.
- */
-async function anyPresent(binary) {
-  for (const candidate of binary.candidates) {
-    if (await present(candidate)) return candidate;
-  }
-
-  if (process.platform === "darwin" && binary.formula) {
-    const prefix = await run("brew", ["--prefix", binary.formula]);
-    const directory = prefix.stdout.trim();
-    if (prefix.ok && directory) {
-      const path = join(directory, binary.relative);
-      const found = await run("test", ["-x", path]);
-      if (found.ok) return path;
-    }
-  }
-
-  return undefined;
-}
-
-function fail(message) {
-  console.error(`FAIL: ${message}`);
-  process.exitCode = 1;
-}
-
-const installed = [];
-for (const binary of REQUIRED_BINARIES) {
-  if (await anyPresent(binary)) installed.push(binary.label);
-}
-
-if (installed.length > 0) {
-  console.error(
-    `This check only means something on a host that is missing WordPress's ` +
-      `dependencies, and this one already has: ${installed.join(", ")}. ` +
-      (process.platform === "darwin"
-        ? `Uninstall them first — on a disposable machine, not one you work on.`
-        : `Run it in a container.`),
-  );
-  process.exit(2);
-}
-
-// What "able to install packages" means depends on the package manager.
-//
-// Homebrew refuses to run as root and needs no elevation at all, so on macOS
-// the requirement is simply that brew exists. apt needs root or passwordless
-// sudo, and both are real deployments: an operator's own account, and Zelavis
-// installed as a system service.
-const darwin = process.platform === "darwin";
-const asRoot = process.getuid?.() === 0;
-const canSudo = !asRoot && (await run("sudo", ["-n", "true"])).ok;
-
-if (darwin) {
-  if (asRoot) {
-    console.error(
-      "Homebrew refuses to run as root, so this check cannot provision as root " +
-        "on macOS. Run it as the user who owns the Homebrew installation.",
-    );
-    process.exit(2);
-  }
-  if (!(await run("brew", ["--version"])).ok) {
-    console.error("Homebrew is not installed, so there is nothing to provision with.");
-    process.exit(2);
-  }
-} else if (!asRoot && !canSudo) {
-  console.error(
-    "Provisioning installs host packages, so this check needs package " +
-      "authority: run it as root or as a user with passwordless sudo, in a " +
-      "container.",
-  );
-  process.exit(2);
-}
-
-const identity = darwin
-  ? "the Homebrew owner"
-  : asRoot
-    ? "root"
-    : "an unprivileged user with sudo";
-
-console.log(`Running as ${identity} on ${process.platform}.`);
-
-console.log("Host is missing nginx, php-fpm and mariadbd. Starting a WordPress Project.");
-
-const dataDirectory = await mkdtemp(join(tmpdir(), "zelavis-provisioning-"));
-const projectsDirectory = join(dataDirectory, "projects");
-
-// The driver directly rather than through the Platform's HTTP surface. What is
-// being checked is provisioning, and the runtime's error-disclosure policy
-// turns exactly the failure this exists to catch into "the request could not be
-// completed" — which is right for a client and useless for a diagnosis.
-const driver = createNativeWordPressProjectRuntime({
-  directory: projectsDirectory,
-  // Generous: this start includes an apt update, a package install, and a
-  // WordPress download before anything begins listening.
-  startupTimeoutMs: 600_000,
-});
-
-const recipe = {
-  name: WORDPRESS_APP_NAME,
-  title: "WordPress",
-  version: RECIPE_VERSION,
-  specifier: WORDPRESS_APP_NAME,
-};
-const project = {
-  id: "provisioned",
-  name: "provisioned",
-  kind: "wordpress",
-  runtimeKind: "native",
-  recipe,
-};
-
-const started = Date.now();
-let snapshot;
-try {
-  await driver.prepare(project, recipe);
-  snapshot = await driver.start(project);
-} catch (error) {
-  fail(`the Project did not start: ${error instanceof Error ? error.message : String(error)}`);
-  if (error?.cause) {
-    console.error(`  cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}`);
-  }
-}
-const elapsed = Math.round((Date.now() - started) / 1000);
-
-if (snapshot) {
-  console.log(`Project started in ${elapsed}s: ${snapshot.url}`);
-}
-
-// The packages are the point. A Project that started without them would mean
-// the check proved nothing about provisioning.
-for (const binary of REQUIRED_BINARIES) {
-  const found = await anyPresent(binary);
-  if (found) {
-    console.log(`  installed: ${found}`);
-  } else {
-    fail(`${binary.label} is still missing, so provisioning did not install it`);
-  }
-}
-
-if (snapshot?.url) {
-  const response = await fetch(snapshot.url, { redirect: "manual" }).catch((error) => error);
-  if (response instanceof Error) {
-    fail(`the site did not answer: ${response.message}`);
-  } else {
-    const location = response.headers.get("location") ?? "";
-    // WordPress redirects to its installer only once wp-config exists and the
-    // database is reachable; an unreachable database renders an error page
-    // instead. The redirect is what proves the whole stack came up.
-    if (response.status === 302 && location.includes("install.php")) {
-      console.log(`  serving: ${response.status} -> ${location}`);
-    } else {
-      fail(`unexpected response ${response.status} ${location}`);
-    }
-  }
-}
-
-const logs = await driver.logs("provisioned").catch(() => []);
-if (process.exitCode) {
-  console.error("  last project output:");
-  for (const entry of logs.slice(-15)) {
-    console.error(`    [${entry.stream}] ${entry.message.slice(0, 220)}`);
-  }
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const cookie = response.headers.get("set-cookie").split(";")[0];
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile("/var/lib/zelavis/qualification-session", cookie, { mode: 0o600 });
+  console.log("PASS: installed Platform owner claimed through bootstrap.");
 } else {
-  console.log(`  project log lines: ${logs.length}`);
-}
+  assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");
+  assert.equal(execFileSync("systemctl", ["show", "zelavis.service", "-p", "User", "--value"], { encoding: "utf8" }).trim(), "zelavis");
+  const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
+  const client = createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl } });
+  if (phase === "seed-upgrade") {
+    // Controlled historical-lock fixture on a stopped disposable installation.
+    // No live System Store is edited, and this is not a released recipe version.
+    assert.notEqual(execFileSync("sh", ["-c", "systemctl is-active zelavis.service 2>/dev/null || true"], { encoding: "utf8" }).trim(), "active");
+    const { writeFile } = await import("node:fs/promises");
+    const { createLocalSqliteSystemStore } = await import(pathToFileURL(`${platform}/dist/adapters/_sqlite-system-store.js`).href);
+    const { digestArtifactDirectory } = await import(pathToFileURL(`${platform}/dist/adapters/_recipe-artifact.js`).href);
+    const id = "qualification-wordpress";
+    const directory = `/var/lib/zelavis/projects/${id}`;
+    const frozen = `${directory}/.zelavis/recipe/package`;
+    const manifest = JSON.parse(await readFile(`${frozen}/package.json`, "utf8"));
+    manifest.version = "0.0.0-qualification";
+    manifest.zelavis.project.managed.adminTitle = "Historical integration admin";
+    await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
+    await writeFile(`${frozen}/dist/index.js`, `import { zelavis } from "zelavis/sdk";
+export { WORDPRESS_APP_NAME } from "./runtime.js";
+export function register() {
+  zelavis.plugins.ui.menus.create({ title: "Historical SDK integration", path: "/historical-integration", surface: "root" });
+  zelavis.operations.create({ id: "integration.get", resource: "integration", action: "get", method: "GET", path: "/integration",
+    spec: { operationId: "getHistoricalIntegration", summary: "Read the historical integration fixture" }, handler: () => ({ status: 200, body: { revision: "historical" } }) });
+}`);
+    const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
+    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, managed: manifest.zelavis.project.managed, artifact: { digest: await digestArtifactDirectory(frozen) } };
+    await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
+    const store = createLocalSqliteSystemStore({ filename: "/var/lib/zelavis/system/zelavis.sqlite" });
+    try {
+      const record = await store.get("projects", id);
+      assert.equal(record.value.desiredState, "stopped");
+      await store.set("projects", id, { ...record.value, recipe: descriptor.recipe });
+    } finally { await store.close(); }
+    console.log("PASS: stopped WordPress historical recipe lock fixture prepared.");
+  } else if (phase === "cancel") {
+    await assert.rejects(access("/usr/sbin/nginx"), { code: "ENOENT" });
+    const operation = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set: "wordpress-stack" }, deadlineMs: 1000 });
+    let record = operation;
+    for (let i = 0; i < 100 && ["running", "queued"].includes(record.agent?.status); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      record = await client.hostOperations.get(operation.operationId);
+    }
+    assert.equal(record.agent.status, "failed");
+    const wrapper = await readFile("/usr/sbin/policy-rc.d", "utf8");
+    assert.match(wrapper, /Zelavis host-package policy/);
+    const normal = execFileSync("sh", ["-c", '/usr/sbin/policy-rc.d nginx start >/dev/null 2>&1; printf "%s" "$?"'], { encoding: "utf8" });
+    const original = execFileSync("sh", ["-c", 'if [ -x /usr/sbin/policy-rc.d.zelavis-original ]; then /usr/sbin/policy-rc.d.zelavis-original nginx start >/dev/null 2>&1; printf "%s" "$?"; else printf 0; fi'], { encoding: "utf8" });
+    assert.equal(normal, original, "cancelled APT must not leave a global deny policy");
+    console.log("PASS: cancelled package operation preserves normal host service policy.");
+  } else {
+    const { createAgentProcessClient } = await import(pathToFileURL(`${platform}/dist/adapters/_agent-ipc.js`).href);
+    const rootAgent = await createAgentProcessClient({ directory: "/opt/zelavis/host-agent/agent" });
+    await assert.rejects(rootAgent.start({ workloadId: "forbidden", executable: "/bin/touch", args: ["/root/forbidden-project-command"] }), /host operations only/);
+    await rootAgent.close();
+    await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
+    const recipes = await client.projects.recipes();
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
+    let project = ["verify-preview", "upgrade", "start-historical"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    if (phase === "start-historical") {
+      assert.equal(project.recipeStatus.state, "upgradeAvailable");
+      project = await client.projects.start(project.id);
+      assert.equal(project.recipe.version, "0.0.0-qualification");
+      console.log("PASS: historical integration fixture is running before the Platform update.");
+    }
+    if (phase === "upgrade") {
+      assert.equal(project.recipeStatus.state, "upgradeAvailable");
+      project = await client.projects.upgrade(project.id, {});
+      assert.equal(project.recipe.version, recipes.find(recipe => recipe.name === "@zelavis/wordpress").version);
+      assert.equal(project.runtime.status, "stopped");
+      project = await client.projects.start(project.id);
+      console.log("PASS: authenticated recipe upgrade freezes the current WordPress recipe and starts it.");
+    }
+    if (phase === "verify-preview") {
+      for(let attempt=0; attempt<120 && project.runtime.status !== "running"; attempt++) {
+        await new Promise(resolve=>setTimeout(resolve,500));
+        project=await client.projects.get(project.id);
+      }
+    }
+    assert.equal(project.runtime.status, "running", JSON.stringify(project));
+    const response = await fetch(project.runtime.url, { redirect: "manual" });
+    if (phase === "create") {
+      assert.equal(response.status, 302);
+      assert.match(response.headers.get("location"), /install.php/);
+    }
+    assert.equal(project.preview.status, "ready", JSON.stringify(project.preview));
+    const previewUrl = `http://127.0.0.1:${project.preview.port}`;
+    const { writeFile } = await import("node:fs/promises");
+    if (phase === "create") {
+      const address = execFileSync("hostname",["-I"],{encoding:"utf8"}).trim().split(/\s+/)[0];
+      const externalOrigin = `http://${address}:${project.preview.port}`;
+      const external = await fetch(externalOrigin,{redirect:"manual"});
+      assert.equal(external.status,302,"preview must listen on the server network interface");
+      assert.equal(new URL(external.headers.get("location")).origin,externalOrigin);
+      const installer = await fetch(previewUrl, {redirect:"manual"});
+      assert.equal(installer.status,302);
+      assert.equal(new URL(installer.headers.get("location")).origin,previewUrl);
+      const install = await fetch(`${previewUrl}/wp-admin/install.php?step=2`, {
+        method:"POST",body:new URLSearchParams({weblog_title:"Preview qualification",user_name:"preview_owner",admin_password:"Disposable Preview Password 2026!",admin_password2:"Disposable Preview Password 2026!",admin_email:"preview@example.test",blog_public:"0",pw_weak:"1",Submit:"Install WordPress"}),
+      });
+      assert.match(await install.text(),/Success!|WordPress has been installed/i);
+      await writeFile("/var/lib/zelavis/qualification-preview",String(project.preview.port));
 
-await driver.close();
-
-// Where the driver actually extracts the release: inside the Project's own
-// runtime directory, not a sibling of it.
-const siteDirectory = join(projectsDirectory, "provisioned", ".zelavis", "wordpress");
-
-await access(join(siteDirectory, "wp-settings.php")).then(
-  () => console.log("  WordPress source is on disk"),
-  () => fail("the WordPress release was not extracted"),
-);
-
-if (!process.exitCode) {
-  const version = await readFile(
-    join(siteDirectory, "wp-includes", "version.php"),
-    "utf8",
-  ).catch(() => "");
-  const match = /\$wp_version = '([^']+)'/.exec(version);
-  console.log(`\nPASS: provisioning installed WordPress ${match?.[1] ?? "(version unknown)"} from nothing.`);
+    } else {
+      assert.equal(String(project.preview.port),await readFile("/var/lib/zelavis/qualification-preview","utf8"));
+    }
+    const loginPage = await fetch(`${previewUrl}/wp-login.php`);
+    const testCookies = loginPage.headers.getSetCookie().map(value=>value.split(";")[0]).join("; ");
+    const login = await fetch(`${previewUrl}/wp-login.php`, {
+      method:"POST",redirect:"manual",headers:{cookie:testCookies},
+      body:new URLSearchParams({log:"preview_owner",pwd:"Disposable Preview Password 2026!",testcookie:"1",redirect_to:`${previewUrl}/wp-admin/`}),
+    });
+    assert.equal(login.status,302);
+    assert.equal(new URL(login.headers.get("location")).origin,previewUrl);
+    const loginCookies=login.headers.getSetCookie().map(value=>value.split(";")[0]).join("; ");
+    assert.match(loginCookies,/wordpress_logged_in_/);
+    let admin=await fetch(`${previewUrl}/wp-admin/`,{headers:{cookie:loginCookies},redirect:"manual"});
+    for(let hop=0; hop<5 && [301,302,303,307,308].includes(admin.status);hop++) {
+      const target = new URL(admin.headers.get("location"),previewUrl);
+      assert.equal(target.origin,previewUrl,`Admin redirected to ${target}`);
+      admin=await fetch(target,{headers:{cookie:loginCookies},redirect:"manual"});
+    }
+    assert.equal(admin.status,200,`Admin ${admin.status}: ${admin.headers.get("location")}`);
+    assert.match(await admin.text(),/Dashboard/);
+    console.log(`PASS: public preview installation, redirects, login and wp-admin${phase === "verify-preview" ? " after Platform restart with the same port" : phase === "upgrade" ? " after recipe upgrade with the same account and port" : ""}.`);
+    for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
+      assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
+    }
+    const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set: "wordpress-stack" } });
+    let record = repeated;
+    for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      record = await client.hostOperations.get(repeated.operationId);
+    }
+    assert.equal(record.agent.status, "succeeded");
+    assert.equal(record.agent.result.changed, false);
+    if (phase === "create") await client.projects.stop(project.id);
+    if (phase === "verify-preview") {
+      await client.projects.remove(project.id);
+      await assert.rejects(fetch(previewUrl));
+      console.log("PASS: package installation is idempotent and Project deletion closes preview ingress.");
+    }
+  }
 }

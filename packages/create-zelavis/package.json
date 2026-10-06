@@ -1,6 +1,6 @@
 {
   "name": "create-zelavis",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.10",
   "private": false,
   "description": "Install Zelavis on this machine: npm create zelavis",
   "license": "MIT",

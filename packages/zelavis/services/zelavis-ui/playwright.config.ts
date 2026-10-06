@@ -15,7 +15,10 @@ const dashboardBasePath = normalizeBasePath(
   process.env.ZELAVIS_UI_BASE_PATH ?? "/",
 );
 const uiPort = process.env.ZELAVIS_E2E_UI_PORT ?? "3100";
-const webServerOrigin = `http://127.0.0.1:${uiPort}`;
+const embeddedDashboard = process.env.ZELAVIS_E2E_EMBEDDED === "1";
+const webServerOrigin = embeddedDashboard
+  ? process.env.ZELAVIS_E2E_RUNTIME_ORIGIN ?? "http://127.0.0.1:3000"
+  : `http://127.0.0.1:${uiPort}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -33,7 +36,7 @@ export default defineConfig({
     // bootstraps or signs in the first owner and stores its session cookie.
     storageState: storageStatePath,
   },
-  webServer: {
+  webServer: embeddedDashboard ? undefined : {
     command: `pnpm exec react-router dev --host 127.0.0.1 --port ${uiPort}`,
     reuseExistingServer: !process.env.CI,
     url: `${webServerOrigin}${dashboardBasePath === "/" ? "/" : dashboardBasePath}`,

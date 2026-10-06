@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,25 +30,26 @@ const factoryOf = (loaded: unknown): ZelavisPlatformFrontendFactory | undefined 
  * that folder has no dashboard (a build without it) does an installed
  * `@zelavis/ui` stand in. Without either, the Platform serves its placeholder.
  */
-export async function resolveBundledFrontend(
+export function resolveBundledFrontend(
   options: ResolveBundledFrontendOptions,
-): Promise<ZelavisPlatformFrontendFactory | undefined> {
+): Promise<ZelavisPlatformFrontendFactory | undefined> { return presentProtocol(Effect.gen(function* () {
   const load = options.importer ?? ((specifier: string) => import(specifier));
 
   const directory = options.bundledDirectory("@zelavis/ui");
   const entry = directory ? join(directory, "dist", "frontend.js") : undefined;
   if (entry && existsSync(entry)) {
     try {
-      const shipped = factoryOf(await load(pathToFileURL(entry).href));
-      if (shipped) return shipped;
+      const shipped = factoryOf(unwrapIntegrationResult(yield* Effect.result(integrationValue(load(pathToFileURL(entry).href)))));
+      if (shipped) return unwrapIntegrationResult(yield* Effect.result(integrationValue(shipped)));
     } catch {
-      // Fall through to an installed package.
+      // The installed package is a separate supported source.
+      console.warn("Bundled dashboard loading failed; trying the installed dashboard package.");
     }
   }
 
   try {
-    return factoryOf(await load(DASHBOARD_PACKAGE));
+    return unwrapIntegrationResult(yield* Effect.result(integrationValue(factoryOf(unwrapIntegrationResult(yield* Effect.result(integrationValue(load(DASHBOARD_PACKAGE))))))));
   } catch {
     return undefined;
   }
-}
+}).pipe(Effect.withSpan("resolveBundledFrontend"))); }

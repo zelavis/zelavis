@@ -4,7 +4,7 @@ const usage =
   "zelavis host-operations <catalog|submit|get|audit> [operation|id] [--limit N] [--version V] [--project ID] [--arg name=value]... [--deadline-ms N] [--url URL] [--token TOKEN] [--json]";
 
 /**
- * `zelavis host-operations` — release-signed host operations through the JS
+ * `zelavis host-operations` — host operations through the JS
  * SDK client, so the CLI cannot drift from `client.hostOperations.*`.
  */
 export async function runHostOperationsCommand(args: readonly string[]): Promise<void> {

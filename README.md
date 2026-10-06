@@ -10,22 +10,22 @@ Project planning and real-time collaboration are committed roadmap direction, no
 
 ## Install
 
-Installations bundle a private pinned Node runtime. A host Node or Bun is needed
-only to start the create frontend:
+Every installation runs on its own private, pinned Node runtime. A host Node or Bun is
+needed only to start the create frontend:
 
 ```bash
 curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha
 # or
-npm create zelavis@latest -- --yes
+npm create zelavis@alpha -- --yes
 ```
 
-Linux create uses system mode with root/sudo; macOS and Linux without sudo use
-user mode (`--user`), followed by `zelavis serve`. Matching release archives must
-be published for the exact version selected by create. Public installer hosting
-and the matching new signed release still require owner publication.
-
-APT, direct `.deb`, and manual `.tar.gz`/`.zip` releases use the same staged
-Platform payload. See the [installation guide](website/src/content/docs/getting-started/installation.md)
+Both commands run the same installer and produce the same installation. It fetches the
+pinned private Node from nodejs.org and the exact `zelavis` version from npm, so those two
+origins are the whole trust chain, and a release is `npm publish`. Linux uses system mode
+with root/sudo; macOS and Linux without sudo use user mode (`--user`), followed by
+`zelavis serve`. The new installer ships with the next alpha. An APT repository and a
+published `.deb` are planned. See the
+[installation guide](website/src/content/docs/getting-started/installation.md)
 and [distribution documentation](distribution/README.md).
 
 Native installers print a one-time bootstrap token. Open the dashboard to use
@@ -422,7 +422,6 @@ The repository currently uses protected `main`, repository-level auto-merge, pri
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [SECURITY.md](SECURITY.md)
-- [MAINTAINERS.md](MAINTAINERS.md)
 
 Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not commit tokens to this repository.

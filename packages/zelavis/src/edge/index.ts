@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol, IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreRecord,
@@ -839,11 +841,11 @@ export function createZelavisEdgeManager(
         localSwitch = undefined;
       }
     },
-    async reconcile(): Promise<ZelavisEdgeReconciliationResult> {
+    reconcile(): Promise<ZelavisEdgeReconciliationResult> { return presentProtocol(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeReconciliationResult, IntegrationFailure> {
       if (localSwitch) {
         return { status: "idle", detail: "Switch is currently running locally" };
       }
-      const record = await options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY);
+      const record = (yield* integrationValue(options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY)));
       if (!record) {
         return { status: "idle" };
       }
@@ -876,13 +878,13 @@ export function createZelavisEdgeManager(
         leaseExpiresAt: leaseExpiresAt(),
         updatedAt: timestamp(),
       };
-      const claimedRecord = await options.store.compareAndSet(
+      const claimedRecord = (yield* integrationValue(options.store.compareAndSet(
         EDGE_NAMESPACE,
         ACTIVE_SWITCH_KEY,
         record.updatedAt,
         storeValue(claimed),
         record.value,
-      );
+      )));
       if (!claimedRecord) {
         return {
           status: "idle",
@@ -914,21 +916,17 @@ export function createZelavisEdgeManager(
       ];
       if (preTrafficPhases.includes(claimed.phase)) {
         if (target?.rollback) {
-          try {
-            await target.rollback(context);
-          } catch {}
+          (yield* integrationValue(target.rollback(context)));
         }
         if (options.certificates.rollback) {
-          try {
-            await options.certificates.rollback(context);
-          } catch {}
+          (yield* integrationValue(options.certificates.rollback(context)));
         }
-        const failed = await persistSwitch(
+        const failed = (yield* integrationValue(persistSwitch(
           claimedRecord,
           claimed,
           "failed",
           "Interrupted by controller restart before traffic activation",
-        );
+        )));
         return {
           status: "rolled-back",
           switchId: failed.value.id,
@@ -948,7 +946,7 @@ export function createZelavisEdgeManager(
         let isHealthy = false;
         if (target) {
           try {
-            const verification = await target.verify(context);
+            const verification = unwrapIntegrationResult(yield* Effect.result(integrationValue(target.verify(context))));
             isHealthy = verification.ready;
           } catch {
             isHealthy = false;
@@ -957,16 +955,14 @@ export function createZelavisEdgeManager(
         if (isHealthy && target) {
           // Forward recovery: target adapter is healthy, complete the switch!
           if (previous && previous.id !== target.id && previous.drain) {
-            try {
-              await previous.drain(context);
-            } catch {}
+            (yield* integrationValue(previous.drain(context)));
           }
-          await writePolicy(target.id, claimed.publication);
-          const completed = await persistSwitch(
+          (yield* integrationValue(writePolicy(target.id, claimed.publication)));
+          const completed = (yield* integrationValue(persistSwitch(
             claimedRecord,
             claimed,
             "complete",
-          );
+          )));
           return {
             status: "recovered-forward",
             switchId: completed.value.id,
@@ -977,26 +973,20 @@ export function createZelavisEdgeManager(
         } else {
           // Backward recovery: Target unhealthy, roll back to previous adapter.
           if (target?.rollback) {
-            try {
-              await target.rollback(context);
-            } catch {}
+            (yield* integrationValue(target.rollback(context)));
           }
           if (options.certificates.rollback) {
-            try {
-              await options.certificates.rollback(context);
-            } catch {}
+            (yield* integrationValue(options.certificates.rollback(context)));
           }
           if (previous?.activate) {
-            try {
-              await previous.activate(context);
-            } catch {}
+            (yield* integrationValue(previous.activate(context)));
           }
-          const failed = await persistSwitch(
+          const failed = (yield* integrationValue(persistSwitch(
             claimedRecord,
             claimed,
             "failed",
             "Interrupted cutover failed target verification during recovery; rolled back",
-          );
+          )));
           return {
             status: "rolled-back",
             switchId: failed.value.id,
@@ -1010,21 +1000,17 @@ export function createZelavisEdgeManager(
       // Case 3: Already in rollback
       if (claimed.phase === "rollback") {
         if (target?.rollback) {
-          try {
-            await target.rollback(context);
-          } catch {}
+          (yield* integrationValue(target.rollback(context)));
         }
         if (options.certificates.rollback) {
-          try {
-            await options.certificates.rollback(context);
-          } catch {}
+          (yield* integrationValue(options.certificates.rollback(context)));
         }
-        const failed = await persistSwitch(
+        const failed = (yield* integrationValue(persistSwitch(
           claimedRecord,
           claimed,
           "failed",
           "Incomplete rollback finalized during recovery",
-        );
+        )));
         return {
           status: "rolled-back",
           switchId: failed.value.id,
@@ -1038,7 +1024,7 @@ export function createZelavisEdgeManager(
         switchId: claimed.id,
         phase: claimed.phase,
       };
-    },
+    }).pipe(Effect.withSpan("createZelavisEdgeManager/manager/reconcile"))); },
   };
 
   return manager;
@@ -1051,3 +1037,5 @@ export * from "./onboarding.js";
 export * from "./acme-crypto.js";
 export * from "./acme-client.js";
 export * from "./certificates.js";
+export { createZelavisEdgePreviews } from "./previews.js";
+export type { ZelavisEdgePreviews, ZelavisEdgePreviewHost, ZelavisProjectPreview } from "./previews.js";

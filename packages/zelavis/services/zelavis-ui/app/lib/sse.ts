@@ -30,7 +30,8 @@ export async function* readServerSentEvents(
       try {
         yield { event, data: JSON.parse(data.join("\n")) }
       } catch {
-        // A frame that is not JSON is not one of ours; skip it.
+        // A malformed frame cannot silently discard an assistant delta.
+        throw new Error("The server sent a malformed JSON event frame.");
       }
     }
   }

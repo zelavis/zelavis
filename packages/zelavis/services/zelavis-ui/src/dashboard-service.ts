@@ -160,6 +160,8 @@ export const zelavisServerMenu = {
         },
       ],
     },
+    { title: "Database", path: "/server/database", pageLabel: "Platform Database", panelLabel: "Platform Database",
+      access: { permissions: ["server.database.inspect"], scope: { type: "system" } } },
     { title: "Backups", path: "/server/backups", pageLabel: "Backups" },
     { title: "Logs", path: "/server/logs", pageLabel: "Logs" },
   ],
@@ -178,6 +180,7 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/server/resources",
   "/server/security",
   "/server/backups",
+  "/server/database",
   "/server/domains",
   "/server/runtimes",
   "/server/logs",
@@ -264,9 +267,11 @@ function declareRuntimeBasePath(content: string, rootPath: string): string {
   const script = `<script>window[${encodeForScript(
     BASE_PATH_GLOBAL,
   )}]=${encodeForScript(rootPath)};</script>`;
-  const head = /<head\b[^>]*>/i.exec(content);
+  // Keep the generated head's hydration order intact. Classic scripts run
+  // during parsing, before the deferred modules that boot the dashboard.
+  const head = /<\/head\s*>/i.exec(content);
   if (!head) return `${script}${content}`;
-  const at = head.index + head[0].length;
+  const at = head.index;
   return `${content.slice(0, at)}${script}${content.slice(at)}`;
 }
 
@@ -364,7 +369,9 @@ function readDashboardAsset(asset: DashboardAsset, rootPath: string): Uint8Array
       : decodeBase64(asset.content);
   }
 
-  return encodeText(prefixDashboardAssetReferences(asset.content, rootPath));
+  return encodeText(prefixDashboardAssetReferences(asset.content, rootPath, {
+    cacheAbsoluteAssets: true,
+  }));
 }
 
 function injectDashboardRuntimeConfig(html: string, config: unknown): string {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,8 +12,10 @@ import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-r
 import { createNodeProcessProjectRuntime } from "../dist/adapters/_node-project-runtime.js";
 
 const closers = new Set();
+const roots = new Set();
 after(async () => {
   for (const close of closers) await close().catch(() => undefined);
+  for (const root of roots) await rm(root, { recursive: true, force: true });
 });
 
 function alive(pid) {
@@ -39,35 +41,28 @@ async function runningPid(stateDirectory) {
 const RECIPE = {
   name: "@zelavis/app",
   title: "Zelavis App",
-  version: "1.0.0-test",
+  version: JSON.parse(await readFile(new URL("../services/zelavis-app/package.json", import.meta.url), "utf8")).version,
+  runtimeKinds: ["native"],
   specifier: "@zelavis/app",
 };
 
-/**
- * A Project directory the Node driver will accept, with a runner it can start.
- *
- * The driver spawns its own runner module, so the Project is stood up by
- * writing what `prepare` writes and letting `start` do the rest — except the
- * runner here is a stub that performs the same readiness handshake the real one
- * does, because what is being tested is the handshake and the adoption, not the
- * Zelavis runtime.
- */
+/** A prepared real App, including its frozen recipe and host descriptor. */
 async function platformDirectory() {
   const root = await mkdtemp(join(tmpdir(), "zelavis-adopt-"));
+  roots.add(root);
   const projects = join(root, "projects");
-  await mkdir(join(projects, "sample"), { recursive: true });
-  await writeFile(
-    join(projects, "sample", "project.json"),
-    JSON.stringify({ id: "sample", name: "sample", recipe: RECIPE }),
-  );
-  return { root, projects };
+  const project = { id: "sample", name: "Sample", kind: "zelavis", runtimeKind: "native", recipe: RECIPE };
+  const driver = createNodeProcessProjectRuntime({ directory: projects });
+  await driver.prepare(project, RECIPE);
+  await driver.close();
+  return { root, projects, project };
 }
 
 async function agentAt(root) {
   const directory = join(root, "agent");
   const runner = createLocalAgentProcessRunner({
     stateDirectory: join(root, "projects", ".agent-processes"),
-    graceMs: 500,
+    graceMs: 5000,
   });
   const server = await createAgentProcessServer({ directory, runner });
   closers.add(() => server.close());
@@ -88,117 +83,36 @@ test("a runner that cannot outlive the Platform says so", async () => {
   assert.equal(local.attach, undefined);
 });
 
-test("a Project the Agent still runs is adopted, not restarted", async () => {
-  const { root, projects } = await platformDirectory();
+for (const agedOut of [false, true]) test(`a real App is adopted and re-keyed without restart${agedOut ? " after its readiness replay is gone" : ""}`, async () => {
+  const { root, projects, project } = await platformDirectory();
   const endpoint = await agentAt(root);
-
-  // Stands in for the Zelavis runtime: announces the address it bound on
-  // stdout, exactly as the real runner does, then keeps serving.
-  const runnerModule = join(root, "fake-runner.mjs");
-  await writeFile(
-    runnerModule,
-    `process.stdout.write(JSON.stringify({ type: "ready", url: "http://127.0.0.1:45001" }) + "\\n");
-     setInterval(() => {}, 1000);`,
-  );
-
   const first = await client(endpoint);
-  const started = await first.start({
-    workloadId: "sample",
-    executable: process.execPath,
-    args: [runnerModule],
-    cwd: projects,
-    env: { PATH: process.env.PATH ?? "" },
-  });
-  await new Promise((wait) => setTimeout(wait, 300));
-
-  // The Platform disappears. The Agent keeps the Project serving.
+  const original = createNodeProcessProjectRuntime({ directory: projects, agent: first });
+  const started = await original.start(project);
+  const pid = await runningPid(join(projects, ".agent-processes"));
+  const claims = { projectId: "sample", scopeId: "platform", generation: 1, runtimeNodeId: "local", subject: "member", subjectType: "user", tenantId: "tenant", permissions: [] };
+  const { ZELAVIS_GATEWAY_AUTHORITY_HEADER: header } = await import("../dist/platform/gateway-authority.js");
+  const oldToken = await original.signGatewayAuthority("sample", claims);
   await first.close();
-  await new Promise((wait) => setTimeout(wait, 200));
-
-  // `running` is this client's view, and this client is gone — it reports what
-  // it knows, which is nothing. The process itself is still there.
-  assert.equal(started.running, false, "the disconnected client sees nothing");
-  const pid = await runningPid(join(root, "projects", ".agent-processes"));
-  assert.equal(alive(pid), true, "the Agent still holds it");
-
-  // A new Platform composes: new client, new driver, same Agent.
+  assert.equal(alive(pid), true, "the separately supervised Agent keeps the App running");
   const second = await client(endpoint);
-  const driver = createNodeProcessProjectRuntime({
-    directory: projects,
-    agent: second,
-  });
-
-  assert.equal(
-    driver.capabilities({ id: "sample", kind: "zelavis", recipe: RECIPE })
-      .survivesControlPlaneRestart,
-    true,
-    "the capability follows the Agent",
-  );
-
+  const agent = !agedOut ? second : { ...second, attach: async id => (await second.attach(id)).map(value => ({ ...value, replay: [] })) };
+  const driver = createNodeProcessProjectRuntime({ directory: projects, agent });
+  assert.equal(driver.capabilities(project).survivesControlPlaneRestart, true);
   await driver.adopt();
-
-  const snapshot = await driver.status("sample");
-  // Restarting would drop the connections it is serving, and for a Project with
-  // a persisted port would collide with the copy still listening.
-  assert.equal(snapshot.status, "running");
-  assert.equal(
-    snapshot.url,
-    "http://127.0.0.1:45001",
-    "the address came from output written while no Platform was connected",
-  );
-
-  const logs = await driver.logs("sample");
-  assert.ok(
-    logs.some((entry) => /Re-attached to a running Project/.test(entry.message)),
-    "the adoption is visible in the Project's own logs",
-  );
-
-  // And it is genuinely the Platform's again: stopping works through the
-  // contract rather than needing the process killed.
-  const stopped = await driver.stop("sample");
-  assert.equal(stopped.status, "stopped");
-  assert.equal(started.running, false);
-});
-
-test("adoption reports a Project whose readiness line has aged out honestly", async () => {
-  const { root, projects } = await platformDirectory();
-  const endpoint = await agentAt(root);
-
-  // No readiness handshake at all: the same position a Platform is in when the
-  // line has scrolled out of the Agent's bounded buffer.
-  const runnerModule = join(root, "quiet-runner.mjs");
-  await writeFile(runnerModule, `setInterval(() => {}, 1000);`);
-
-  const first = await client(endpoint);
-  await first.start({
-    workloadId: "sample",
-    executable: process.execPath,
-    args: [runnerModule],
-    cwd: projects,
-    env: { PATH: process.env.PATH ?? "" },
-  });
-  await new Promise((wait) => setTimeout(wait, 200));
-  await first.close();
-
-  const second = await client(endpoint);
-  const driver = createNodeProcessProjectRuntime({
-    directory: projects,
-    agent: second,
-  });
-  await driver.adopt();
-
-  const snapshot = await driver.status("sample");
-  assert.equal(snapshot.status, "running");
-  // No address invented. A Project routed to a guessed URL is worse than one
-  // the Platform admits it cannot route.
-  assert.equal(snapshot.url, undefined);
-  const logs = await driver.logs("sample");
-  assert.ok(
-    logs.some((entry) => /no longer in the Agent's buffer/.test(entry.message)),
-    "the gap is stated rather than papered over",
-  );
-
-  await driver.stop("sample");
+  const adopted = await driver.status("sample");
+  assert.equal(adopted.status, "running");
+  assert.equal(adopted.url, started.url, "authenticated host re-keying reports the actual listener");
+  assert.equal(await runningPid(join(projects, ".agent-processes")), pid);
+  const denied = await fetch(`${adopted.url}/zelavis/api/v1/runtime/access`, { headers: { [header]: oldToken } });
+  assert.equal(denied.status, 401); await denied.text();
+  const token = await driver.signGatewayAuthority("sample", claims);
+  const accepted = await fetch(`${adopted.url}/zelavis/api/v1/runtime/access`, { headers: { [header]: token } });
+  assert.equal(accepted.status, 200); await accepted.text();
+  assert.ok((await driver.logs("sample")).some(entry => /Re-attached/.test(entry.message)));
+  assert.equal((await driver.stop("sample")).status, "stopped");
+  await driver.close();
+  await original.close();
 });
 
 test("adopting finds nothing when the Agent is running nothing", async () => {

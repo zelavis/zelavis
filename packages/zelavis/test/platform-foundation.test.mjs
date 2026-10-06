@@ -242,18 +242,25 @@ test("the deployment backend runtime exposes every member of the driver contract
   const store = createMemorySystemStore();
   const driver = {
     name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
+    recipeDefinition: () => ({ runtimeKinds: ["native"], managed: { adminTitle: "Verified app" } }),
     capabilities: () => ({}),
     async prepare() {}, async start() { return { status: "running" }; },
     async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
     async logs() { return []; }, async destroy() {}, async close() {},
     async signGatewayAuthority() { return "signed"; },
-    async fencePrevious() { return true; }, async adopt() {},
+    async gatewayTarget() { return "http://127.0.0.1:3000"; },
+    async fencePrevious() { return true; }, async adopt() {}, async detach() {},
+    custody: { ownerSession: "host-session", preserveOnClose: () => false },
+    supportsLiveUpdate() { return true; },
+    async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },
+    async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; },
   };
   const runtime = createDeploymentBackendProjectRuntime({
     store,
     backends: [{ id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: driver, detect: async () => ({}) }],
   });
 
+  assert.equal(runtime.recipeDefinition({ runtimeKind: "native" }).managed.adminTitle, "Verified app");
   const contract = Object.keys(PROJECT_DRIVER_MEMBER_ROUTING).sort();
   assert.deepEqual(contract.filter((member) => !(member in driver)), [], "the fixture implements the whole contract");
   assert.deepEqual(contract.filter((member) => runtime[member] === undefined), [],

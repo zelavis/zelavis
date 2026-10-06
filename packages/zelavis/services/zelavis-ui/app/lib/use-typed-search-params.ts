@@ -19,8 +19,8 @@
  *   const [prefix, setPrefix] = useTypedSearchParam('prefix', parseAsString.withDefault(''));
  */
 
-import { useMemo } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useMemo, useRef } from "react";
+import { useLocation, useNavigate, useNavigation } from "react-router";
 import { mergeSearchParams, readSearchParams } from "#/lib/routing";
 
 // ---------------------------------------------------------------------------
@@ -148,12 +148,22 @@ export function useTypedSearchParams<S extends SearchParamSchema>(
 ): [SchemaOutput<S>, SetterFn<S>] {
   const location = useLocation();
   const navigate = useNavigate();
+  const navigation = useNavigation();
+  // Search-only navigations can still be waiting for loaders. Read that URL
+  // immediately so rapid edits compose and submit their selected values.
+  const selectedLocation = navigation.location?.pathname === location.pathname
+    ? navigation.location : location;
+  // Retain the most recently requested URL until a navigation commits. Two
+  // input events can run before React renders the pending navigation; merging
+  // against a render's location would otherwise discard the first edit.
+  const requested = useRef({ key: location.key, search: selectedLocation.search });
+  if (requested.current.key !== location.key) {
+    requested.current = { key: location.key, search: selectedLocation.search };
+  }
+  const search = requested.current.search;
   const defaultReplace = options?.replace ?? true;
 
-  const raw = useMemo(
-    () => readSearchParams(location.search),
-    [location.search],
-  );
+  const raw = useMemo(() => readSearchParams(search), [search]);
 
   // Parse all params — runs on every render but trivially fast
   const parsed = Object.fromEntries(
@@ -161,7 +171,11 @@ export function useTypedSearchParams<S extends SearchParamSchema>(
   ) as SchemaOutput<S>;
 
   const setParams: SetterFn<S> = (next, callOptions) => {
-    const resolved = typeof next === "function" ? next(parsed) : next;
+    const currentRaw = readSearchParams(requested.current.search);
+    const current = Object.fromEntries(
+      Object.entries(schema).map(([key, parser]) => [key, parser.parse(currentRaw[key])]),
+    ) as SchemaOutput<S>;
+    const resolved = typeof next === "function" ? next(current) : next;
 
     const serialized: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(resolved)) {
@@ -172,10 +186,11 @@ export function useTypedSearchParams<S extends SearchParamSchema>(
       }
     }
 
+    requested.current.search = mergeSearchParams(requested.current.search, serialized);
     navigate(
       {
         pathname: location.pathname,
-        search: mergeSearchParams(location.search, serialized),
+        search: requested.current.search,
       },
       { replace: callOptions?.replace ?? defaultReplace },
     );
@@ -201,30 +216,6 @@ export function useTypedSearchParam<T>(
   parser: ParamParser<T>,
   options?: { replace?: boolean },
 ): [T, (value: T | null, options?: { replace?: boolean }) => void] {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const defaultReplace = options?.replace ?? true;
-
-  const raw = useMemo(
-    () => readSearchParams(location.search),
-    [location.search],
-  );
-
-  const value = parser.parse(raw[key]);
-
-  const setValue = (next: T | null, callOptions?: { replace?: boolean }) => {
-    const serialized = next === null || next === undefined
-      ? undefined
-      : parser.serialize(next);
-
-    navigate(
-      {
-        pathname: location.pathname,
-        search: mergeSearchParams(location.search, { [key]: serialized }),
-      },
-      { replace: callOptions?.replace ?? defaultReplace },
-    );
-  };
-
-  return [value, setValue];
+  const [params, setParams] = useTypedSearchParams({ [key]: parser }, options);
+  return [params[key], (value, callOptions) => setParams({ [key]: value }, callOptions)];
 }

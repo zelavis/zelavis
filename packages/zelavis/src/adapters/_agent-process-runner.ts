@@ -1,3 +1,6 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { parseJson, objectFields, isString, isPositiveInteger, isTimestamp, optional } from "../core/json-validation.js";
 /**
  * The local Agent process runner.
  *
@@ -257,20 +260,20 @@ export function createLocalAgentProcessRunner(
     }
   }
 
-  async function readRecords(): Promise<{ file: string; record: ProcessRecord }[]> {
+  function readRecords(): Promise<{ file: string; record: ProcessRecord }[]> { return presentProtocol(Effect.gen(function* () {
     if (!stateDirectory) return [];
-    const names = await readdir(stateDirectory).catch(() => [] as string[]);
+    const names = (yield* integrationValue(readdir(stateDirectory).catch(() => [] as string[])));
     const records: { file: string; record: ProcessRecord }[] = [];
 
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
       const file = join(stateDirectory, name);
-      const raw = await readFile(file, "utf8").catch(() => undefined);
+      const raw = (yield* integrationValue(readFile(file, "utf8").catch(() => undefined)));
       if (raw === undefined) continue;
 
       let record: ProcessRecord;
       try {
-        record = JSON.parse(raw) as ProcessRecord;
+        record = parseJson(raw, processRecord);
       } catch {
         // Keep an unreadable record: takeover must fail closed rather than
         // treating an unknown child as proof that no child exists.
@@ -282,15 +285,15 @@ export function createLocalAgentProcessRunner(
         typeof record.executable !== "string" ||
         typeof record.workloadId !== "string"
       ) {
-        await rm(file, { force: true }).catch(() => undefined);
+        (yield* integrationValue(rm(file, { force: true }).catch(() => undefined)));
         continue;
       }
 
       records.push({ file, record });
     }
 
-    return records;
-  }
+    return (yield* integrationValue(records));
+  }).pipe(Effect.withSpan("createLocalAgentProcessRunner/readRecords"))); }
 
   /**
    * Stops processes a previous Platform left running.
@@ -303,10 +306,10 @@ export function createLocalAgentProcessRunner(
    * damage: a stale process holding the port the new one needs, answering
    * traffic the Platform believes it is serving itself.
    */
-  async function reclaim(workloadId?: string): Promise<number> {
+  function reclaim(workloadId?: string): Promise<number> { return presentProtocol(Effect.gen(function* () {
     let reclaimed = 0;
 
-    for (const { file, record } of await readRecords()) {
+    for (const { file, record } of (yield* integrationValue(readRecords()))) {
       if (workloadId !== undefined && record.workloadId !== workloadId) continue;
 
       // Ours, and still tracked in memory: `close` handles it.
@@ -318,7 +321,7 @@ export function createLocalAgentProcessRunner(
       if (isAlive(record.ownerPid)) continue;
 
       if (!isAlive(record.pid)) {
-        await rm(file, { force: true }).catch(() => undefined);
+        (yield* integrationValue(rm(file, { force: true }).catch(() => undefined)));
         continue;
       }
 
@@ -326,7 +329,7 @@ export function createLocalAgentProcessRunner(
       // are reused, and days can pass between the crash and this check. A
       // reused pid belongs to a process that started after ours died, so the
       // ages disagree by far more than the tolerance.
-      const ageMs = await processAgeMs(record.pid);
+      const ageMs = (yield* integrationValue(processAgeMs(record.pid)));
       const recordedAgeMs = Date.now() - Date.parse(record.startedAt);
       if (
         ageMs === undefined ||
@@ -335,7 +338,7 @@ export function createLocalAgentProcessRunner(
       ) {
         if (ageMs !== undefined && Number.isFinite(recordedAgeMs) &&
             Math.abs(ageMs - recordedAgeMs) > START_TIME_TOLERANCE_MS) {
-          await rm(file, { force: true }).catch(() => undefined);
+          (yield* integrationValue(rm(file, { force: true }).catch(() => undefined)));
         }
         continue;
       }
@@ -344,20 +347,20 @@ export function createLocalAgentProcessRunner(
         process.kill(record.pid, "SIGTERM");
         const deadline = Date.now() + defaultGraceMs;
         while (isAlive(record.pid) && Date.now() < deadline) {
-          await new Promise((wait) => setTimeout(wait, 100));
+          unwrapIntegrationResult(yield* Effect.result(integrationValue(new Promise((wait) => setTimeout(wait, 100)))));
         }
         if (isAlive(record.pid)) process.kill(record.pid, "SIGKILL");
         reclaimed += 1;
-      } catch {
-        // It exited between the check and the signal, which is the outcome
-        // being asked for anyway.
+      } catch (cause) {
+        // Only a proved missing process is equivalent to successful termination.
+        if ((cause as NodeJS.ErrnoException).code !== "ESRCH" || isAlive(record.pid)) throw cause;
       }
 
-      if (!isAlive(record.pid)) await rm(file, { force: true }).catch(() => undefined);
+      if (!isAlive(record.pid)) (yield* integrationValue(rm(file, { force: true }).catch(() => undefined)));
     }
 
-    return reclaimed;
-  }
+    return (yield* integrationValue(reclaimed));
+  }).pipe(Effect.withSpan("createLocalAgentProcessRunner/reclaim"))); }
 
   return {
     name: "local-process",
@@ -366,28 +369,28 @@ export function createLocalAgentProcessRunner(
     // rather than returning an empty list and implying it looked.
     survivesControlPlaneRestart: false,
     reclaim,
-    async fencePlacement(placement) {
+    fencePlacement(placement) { return presentProtocol(Effect.gen(function* () {
       if (!stateDirectory) return false;
       for (const [handle, owned] of [...startedPlacements]) {
         if (owned.projectId !== placement.projectId) continue;
         if (!samePlacement(owned, placement)) return false;
-        await handle.stop();
+        (yield* integrationValue(handle.stop()));
       }
       let names: string[];
-      try { names = await readdir(stateDirectory); }
+      try { names = unwrapIntegrationResult(yield* Effect.result(integrationValue(readdir(stateDirectory)))); }
       catch { return false; }
       for (const name of names) {
         if (!name.endsWith(".json")) continue;
         const file = join(stateDirectory, name);
         let record: ProcessRecord;
-        try { record = JSON.parse(await readFile(file, "utf8")) as ProcessRecord; }
+        try { record = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(file, "utf8")))), processRecord); }
         catch { return false; }
         if (record.workloadId !== placement.projectId) continue;
         if (!samePlacement(record.placement, placement) ||
             !Number.isSafeInteger(record.pid) || record.pid < 1 ||
             typeof record.startedAt !== "string") return false;
         if (isAlive(record.pid)) {
-          const ageMs = await processAgeMs(record.pid);
+          const ageMs = (yield* integrationValue(processAgeMs(record.pid)));
           const recordedAgeMs = Date.now() - Date.parse(record.startedAt);
           if (ageMs === undefined || !Number.isFinite(recordedAgeMs)) return false;
           if (Math.abs(ageMs - recordedAgeMs) <= START_TIME_TOLERANCE_MS) {
@@ -395,23 +398,23 @@ export function createLocalAgentProcessRunner(
             catch { if (isAlive(record.pid)) return false; }
             const deadline = Date.now() + defaultGraceMs;
             while (isAlive(record.pid) && Date.now() < deadline) {
-              await new Promise((wait) => setTimeout(wait, 25));
+              (yield* integrationValue(new Promise((wait) => setTimeout(wait, 25))));
             }
             if (isAlive(record.pid)) {
               try { process.kill(record.pid, "SIGKILL"); }
               catch { if (isAlive(record.pid)) return false; }
               const killDeadline = Date.now() + 1_000;
               while (isAlive(record.pid) && Date.now() < killDeadline) {
-                await new Promise((wait) => setTimeout(wait, 25));
+                (yield* integrationValue(new Promise((wait) => setTimeout(wait, 25))));
               }
               if (isAlive(record.pid)) return false;
             }
           }
         }
-        await rm(file, { force: true });
+        (yield* integrationValue(rm(file, { force: true })));
       }
       return true;
-    },
+    }).pipe(Effect.withSpan("createLocalAgentProcessRunner/fencePlacement"))); },
 
     async start(command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) {
       // Before anything is started for this workload, stop what a previous
@@ -541,3 +544,5 @@ export function createLocalAgentProcessRunner(
     },
   };
 }
+
+const processRecord = objectFields<ProcessRecord>({ workloadId: isString, pid: isPositiveInteger, executable: isString, startedAt: isTimestamp, ownerPid: isPositiveInteger, placement: optional(objectFields<AgentPlacementIdentity>({ projectId: isString, nodeId: isString, ownerSession: isString, epoch: isPositiveInteger })) });

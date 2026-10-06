@@ -11,7 +11,7 @@ Zelavis has one public adapter layer in the main package:
 Supported runtime adapters:
 
 ```txt
-zelavis/adapters/node         — Node.js with better-sqlite3, local files, and local service packages
+zelavis/adapters/node         — Node.js with node:sqlite, local files, and local service packages
 zelavis/adapters/bun          — Bun with bun:sqlite, local files, and local service packages
 ```
 

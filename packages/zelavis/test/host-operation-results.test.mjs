@@ -7,14 +7,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createNodeHostOperationExecutor } from "../dist/adapters/_node-host-operation-executor.js";
+import { validateHostOperationManifest } from "../dist/core/deployment/index.js";
 import { createAgentProcessClient } from "../dist/adapters/_agent-ipc.js";
 import { readOrCreatePlatformAuthorityKey } from "../dist/adapters/_platform-authority-key.js";
 import { runAgentCommand } from "../dist/cli/agent.js";
 import { createHostOperationBroker, createMemorySystemStore } from "../dist/index.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
 
 const sha = (body) => createHash("sha256").update(body).digest("hex");
-const signer = await createReleaseSigner();
 let sequence = 0;
 
 async function run(t, body, result) {
@@ -25,8 +24,8 @@ async function run(t, body, result) {
   await writeFile(join(root, "op"), body, { mode: 0o700 });
   const manifest = { id: "native.result", version: "v1", sha256: sha(body), interpreter: "/bin/sh", arguments: {}, ...(result ? { result } : {}) };
   const executor = await createNodeHostOperationExecutor({
-    rootDirectory: root, stagingDirectory: directory, trust: signer.trust, authorize: async () => true,
-    operations: [{ file: "op", signed: await signer.sign(manifest) }],
+    rootDirectory: root, stagingDirectory: directory, authorize: async () => true,
+    operations: [{ file: "op", manifest: (manifest) }],
   });
   return executor.execute({
     operationId: `operation_result_${String(sequence += 1).padStart(8, "0")}`, operation: manifest.id, version: "v1",
@@ -54,7 +53,7 @@ test("only a declared, bounded JSON object becomes a result", async (t) => {
   const undeclared = await run(t, `printf '{"ready":true}'`);
   assert.equal(undeclared.result, undefined);
   assert.equal(undeclared.status, "succeeded");
-  await assert.rejects(signer.sign({ id: "x.y", version: "v1", sha256: "a".repeat(64), arguments: {}, result: { format: "json", maxBytes: 70_000 } }), /result must be/);
+  assert.throws(() => validateHostOperationManifest({ id: "x.y", version: "v1", sha256: "a".repeat(64), arguments: {}, result: { format: "json", maxBytes: 70_000 } }), /result must be/);
 });
 
 test("the shipped host report runs through Platform broker and Agent and returns its result", async (t) => {
@@ -66,16 +65,14 @@ test("the shipped host report runs through Platform broker and Agent and returns
   await mkdir(installed, { recursive: true, mode: 0o700 });
   await copyFile(join(shipped, "artifact"), join(installed, "artifact"));
   const artifact = await readFile(join(installed, "artifact"));
-  await writeFile(join(installed, "manifest.json"), JSON.stringify(await signer.sign({ ...template, sha256: sha(artifact) })));
-  const trust = join(root, "operation-trust.json");
-  await writeFile(trust, JSON.stringify(signer.trust), { mode: 0o644 });
+  await writeFile(join(installed, "manifest.json"), JSON.stringify(({ ...template, sha256: sha(artifact) })));
   const authority = await readOrCreatePlatformAuthorityKey(join(root, "platform", "agent-authority"));
 
   const controller = new AbortController();
   let ready;
   const readyPromise = new Promise((resolve) => { ready = resolve; });
   const running = runAgentCommand({
-    dataDirectory: join(root, "agent"), operationsRoot: join(root, "operations"), operationTrust: trust,
+    dataDirectory: join(root, "agent"), operationsRoot: join(root, "operations"),
     platformAuthority: authority.trustFile, signal: controller.signal, onReady: ready,
   });
   t.after(async () => { controller.abort(); await running.catch(() => undefined); });

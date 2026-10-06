@@ -12,6 +12,6 @@
  * Nothing is mounted into the Platform, and WordPress Projects use the managed
  * hosting-style navigation, so there is no menu to register.
  */
-export { WORDPRESS_APP_NAME, wordpressRelease } from "./runtime.js";
+export { WORDPRESS_APP_NAME } from "./runtime.js";
 
 export function register() {}

@@ -52,3 +52,7 @@ Notes:
 - [Dashboard Development](../guides/dashboard-development.md)
 - [Dashboard Settings](./dashboard-settings.md)
 - [Route Conventions](./route-conventions.md)
+
+`ZELAVIS_HOST_OPERATIONS_ENDPOINT` names the separately supervised, operation-only
+root Agent endpoint configured by a system installation. It is distinct from
+`ZELAVIS_AGENT_ENDPOINT`, which selects Project process supervision.

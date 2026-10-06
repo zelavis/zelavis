@@ -1,3 +1,4 @@
+import { parseJson, isJsonObject } from "../core/json-validation.js";
 import type {
   Account,
   AccountRepository,
@@ -26,7 +27,7 @@ const NAMESPACE = "zelavis.platform.auth";
 type StoredEntity = Record<string, ZelavisSystemStoreValue>;
 
 function storeValue(entity: unknown): StoredEntity {
-  return JSON.parse(JSON.stringify(entity)) as StoredEntity;
+  return parseJson(JSON.stringify(entity), isJsonObject, "identity entity");
 }
 
 function revive<T extends Account | Credential | Session>(value: ZelavisSystemStoreValue): T {

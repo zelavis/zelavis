@@ -4,7 +4,7 @@ import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlin
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { stageCli } from "./staged-cli.mjs";
+import { freePort, stageCli } from "./staged-cli.mjs";
 
 async function fixture(t) {
   const home = await realpath(await mkdtemp(join(tmpdir(), "zelavis user install ")));
@@ -18,25 +18,25 @@ async function fixture(t) {
   await symlink(process.execPath, join(source, "runtime/node/bin/node"));
   await copyFile(new URL("../runtime/zelavis", import.meta.url), join(source, "bin/zelavis"));
   await stageCli(source);
-  const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home, ZELAVIS_ENABLE_AGENT: "0" };
+  const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: home };
   const run = (args) => spawnSync(process.execPath, [join(source, "platform/dist/cli.js"), ...args], { encoding: "utf8", env });
   const prefix = join(home, ".local/share/zelavis");
-  return { source, home, prefix, env, run, command: join(home, ".local/bin/zelavis") };
+  return { source, home, prefix, env, run, port: String(await freePort()), command: join(home, ".local/bin/zelavis") };
 }
 
 test("user CLI install, repair and destructive uninstall stay within the user inventory", async (t) => {
   const f = await fixture(t);
-  const dry = f.run(["install", "--from-release", f.source, "--user", "--dry-run", "--json"]);
+  const dry = f.run(["install", "--from-release", f.source, "--port", f.port, "--user", "--dry-run", "--json"]);
   assert.equal(dry.status, 0, dry.stderr);
   await assert.rejects(stat(f.prefix), { code: "ENOENT" });
-  const first = f.run(["install", "--from-release", f.source, "--user"]);
+  const first = f.run(["install", "--from-release", f.source, "--port", f.port, "--user"]);
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /First-run bootstrap token/);
   const environment = join(f.prefix, "config/zelavis.env");
   const before = await readFile(environment, "utf8");
   assert.match(before, /ZELAVIS_DATA_DIR=/);
   assert.equal((await stat(environment)).mode & 0o777, 0o600);
-  const second = f.run(["install", "--from-release", f.source, "--user"]);
+  const second = f.run(["install", "--from-release", f.source, "--port", f.port, "--user"]);
   assert.equal(second.status, 0, second.stderr);
   assert.doesNotMatch(second.stdout, /First-run bootstrap token/);
   assert.equal(await readFile(environment, "utf8"), before);
@@ -55,7 +55,7 @@ test("user CLI install, repair and destructive uninstall stay within the user in
 
 test("launcher loads user data/token from any cwd and never falls back to host Node", async (t) => {
   const f = await fixture(t);
-  const installed = f.run(["install", "--from-release", f.source, "--user"]);
+  const installed = f.run(["install", "--from-release", f.source, "--port", f.port, "--user"]);
   assert.equal(installed.status, 0, installed.stderr);
   const release = join(f.prefix, "releases/2.0.0-alpha.5");
   await writeFile(join(release, "platform/dist/cli.js"), 'console.log(JSON.stringify({data:process.env.ZELAVIS_DATA_DIR,token:!!process.env.ZELAVIS_BOOTSTRAP_TOKEN,host:process.env.HOST}));');
@@ -75,7 +75,7 @@ test("staged user doctor is read-only, returns JSON and reports missing receipts
   assert.equal(absent.status, 1, absent.stderr);
   assert.equal(JSON.parse(absent.stdout).healthy, false);
   await assert.rejects(stat(f.prefix), { code: "ENOENT" });
-  assert.equal(f.run(["install", "--from-release", f.source, "--user"]).status, 0);
+  assert.equal(f.run(["install", "--from-release", f.source, "--port", f.port, "--user"]).status, 0);
   const receipt = await readFile(join(f.prefix, "installation.json"), "utf8");
   const env = await readFile(join(f.prefix, "config/zelavis.env"), "utf8");
   const snapshot = () => Promise.all([f.prefix, join(f.prefix, "data"), join(f.prefix, "config")].map((directory) => readdir(directory)));

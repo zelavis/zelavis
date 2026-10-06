@@ -1,115 +1,97 @@
+import { IntegrationFailure, unwrapFailure } from "zelavis/adapters/project-runtime";
+import type { TaggedFailure } from "zelavis/adapters/project-runtime";
+import { Effect } from "effect";
+import { defineEffectProjectRuntime, evaluate, integration, type EffectOperations } from "zelavis/adapters/project-runtime";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import {
-  createLocalAgentProcessRunner,
-  ZelavisProjectRuntimeError,
-  type ZelavisAgentProcess,
-  type ZelavisAgentProcessRunner,
-  type ZelavisProjectLogEntry,
-  type ZelavisProjectRecipeLock,
-  type ZelavisProjectRecord,
-  type ZelavisProjectRuntimeDriver,
-  type ZelavisRecipeRuntimeContext,
-} from "zelavis/adapters/project-runtime";
+import { createLocalAgentProcessRunner, ZelavisProjectRuntimeError, type ZelavisAgentProcess, type ZelavisAgentProcessRunner, type ZelavisProjectLogEntry, type ZelavisProjectRecipeLock, type ZelavisProjectRecord, type ZelavisProjectRuntimeDriver, type ZelavisRecipeRuntimeContext, } from "zelavis/adapters/project-runtime";
 /*
  * Keep host executables shared while every Project owns its service processes,
  * configuration, sockets, ports, logs, credentials, site files, and data.
  */
 import { WORDPRESS_ARCHIVE_SHA256, WORDPRESS_RELEASE } from "./release.js";
 
+const effectSleep = (milliseconds: number) => Effect.sleep(milliseconds);
 export interface NativeWordPressProjectRuntimeOptions {
-  directory: string;
-  startupTimeoutMs?: number;
-  /**
-   * Unprivileged account the daemons run as when the Platform runs as root.
-   *
-   * Ignored otherwise: a Platform that is already unprivileged runs its
-   * Project's daemons as itself, which is what happens today.
-   *
-   * One account for all three daemons rather than the conventional split of
-   * `mysql` and `www-data`. They serve a single Project and share its files, so
-   * one identity keeps ownership coherent — and it is the shape per-Project
-   * Unix identities will need, rather than something to undo on the way there.
-   */
-  user?: string;
-  /**
-   * Agent that executes nginx, php-fpm, and the database.
-   *
-   * Defaults to the local runner. Three supervised processes rather than one,
-   * all issued as the same command through the same contract.
-   */
-  agent?: ZelavisAgentProcessRunner;
+    directory: string;
+    startupTimeoutMs?: number;
+    /**
+     * Unprivileged account the daemons run as when the Platform runs as root.
+     *
+     * Ignored otherwise: a Platform that is already unprivileged runs its
+     * Project's daemons as itself, which is what happens today.
+     *
+     * One account for all three daemons rather than the conventional split of
+     * `mysql` and `www-data`. They serve a single Project and share its files, so
+     * one identity keeps ownership coherent — and it is the shape per-Project
+     * Unix identities will need, rather than something to undo on the way there.
+     */
+    user?: string;
+    /**
+     * Agent that executes nginx, php-fpm, and the database.
+     *
+     * Defaults to the local runner. Three supervised processes rather than one,
+     * all issued as the same command through the same contract.
+     */
+    agent?: ZelavisAgentProcessRunner;
 }
-
 interface NativeWordPressConfig {
-  nginx: string;
-  php: string;
-  phpFpm: string;
-  mariadbd: string;
-  mariadbInstallDb: string;
-  mariadbClient: string;
-  httpPort: number;
-  databasePort: number;
-  databaseName: string;
-  databaseUser: string;
-  databasePassword: string;
-  socketId: string;
-  databaseInitialized: boolean;
+    nginx: string;
+    php: string;
+    phpFpm: string;
+    mariadbd: string;
+    mariadbInstallDb: string;
+    mariadbClient: string;
+    httpPort: number;
+    databasePort: number;
+    databaseName: string;
+    databaseUser: string;
+    databasePassword: string;
+    socketId: string;
+    databaseInitialized: boolean;
 }
-
 interface NativeWordPressProcesses {
-  database?: ZelavisAgentProcess;
-  nginx?: ZelavisAgentProcess;
-  phpFpm?: ZelavisAgentProcess;
-  logs: ZelavisProjectLogEntry[];
+    database?: ZelavisAgentProcess;
+    nginx?: ZelavisAgentProcess;
+    phpFpm?: ZelavisAgentProcess;
+    logs: ZelavisProjectLogEntry[];
 }
-
 interface NativeWordPressExecutables {
-  nginx: string;
-  php: string;
-  phpFpm: string;
-  mariadbd: string;
-  mariadbInstallDb: string;
-  mariadbClient: string;
+    nginx: string;
+    php: string;
+    phpFpm: string;
+    mariadbd: string;
+    mariadbInstallDb: string;
+    mariadbClient: string;
 }
-
 export const WORDPRESS_APP_NAME = "@zelavis/wordpress";
-
-/**
- * The WordPress release a recipe version installs.
- *
- * The package version is semver and WordPress names its `x.y.0` releases `x.y`,
- * so `7.1.0` installs WordPress 7.1 and `6.9.4` installs 6.9.4. Anything else is
- * refused rather than guessed at, because the result names a download.
- */
-export function wordpressRelease(recipeVersion: string): string {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(recipeVersion);
-  if (!match) throw new Error(`Invalid locked WordPress version "${recipeVersion}".`);
-  return match[3] === "0" ? `${match[1]}.${match[2]}` : recipeVersion;
-}
-const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 120000;
 const LOG_LIMIT = 500;
 const MAX_WORDPRESS_ARCHIVE_BYTES = 64 * 1024 * 1024;
-const APT_WORDPRESS_PACKAGES = Object.freeze([
-  "nginx",
-  "php-fpm",
-  "php-cli",
-  "php-mysql",
-  "php-curl",
-  "php-gd",
-  "php-intl",
-  "php-mbstring",
-  "php-xml",
-  "php-zip",
-  "mariadb-server-core",
-  "mariadb-client-core",
-]);
+const downloadArchive = Effect.fn("WordPress.downloadArchive")(function* (release: string) {
+    return yield* Effect.acquireUseRelease(
+        Effect.sync(() => new AbortController()),
+        controller => Effect.gen(function* () {
+            const response = yield* integration(signal => fetch(`https://wordpress.org/wordpress-${release}.tar.gz`, {
+                signal: AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]),
+            }), { interruptible: true });
+            if (!response.ok || !response.body)
+                return yield* new IntegrationFailure(new Error(`WordPress download failed with HTTP ${response.status}.`));
+            if (Number(response.headers.get("content-length") ?? 0) > MAX_WORDPRESS_ARCHIVE_BYTES)
+                return yield* new IntegrationFailure(new Error("WordPress release archive exceeds the provisioning size limit."));
+            const body = new Uint8Array(yield* integration(() => response.arrayBuffer(), { interruptible: true }));
+            if (body.byteLength > MAX_WORDPRESS_ARCHIVE_BYTES)
+                return yield* new IntegrationFailure(new Error("WordPress release archive exceeds the provisioning size limit."));
+            return body;
+        }),
+        controller => Effect.sync(() => controller.abort()),
+    );
+});
 const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
-
 /**
  * Environment handed to a native process this driver starts.
  *
@@ -126,75 +108,57 @@ const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
  * in explicitly.
  */
 function nativeProcessEnvironment(): Record<string, string> {
-  const environment: Record<string, string> = {};
-  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]) {
-    const value = process.env[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  return environment;
-}
-
-/**
- * The account the daemons drop to, when the Platform is root.
- *
- * MariaDB refuses to start as root at all unless it is told which user to
- * become — "Please consult the Knowledge Base to find out how to run mysqld as
- * root!" — and installing only `mariadb-server-core` leaves no `mysql` account
- * to name. Without this a root Platform installs its packages successfully and
- * then dies at the first port wait, which reads as a provisioning failure and
- * is not one.
- *
- * Returns undefined when the Platform is not root, which is the ordinary case:
- * the daemons run as whoever started the Platform.
- */
-async function resolveRuntimeAccount(
-  configured: string | undefined,
-): Promise<{ name: string; group: string; uid: number; gid: number } | undefined> {
-  if (process.getuid?.() !== 0) return undefined;
-
-  // A configured account is used or refused; it is not quietly replaced with a
-  // fallback, because an operator who named one is describing their host.
-  const candidates = configured ? [configured] : ["www-data", "mysql", "nobody"];
-
-  for (const name of candidates) {
-    const uid = await run("id", ["-u", name], { allowFailure: true });
-    const gid = await run("id", ["-g", name], { allowFailure: true });
-    // The group's name, not the user's. They coincide on Debian and do not on
-    // macOS, and PHP-FPM wants the name.
-    const group = await run("id", ["-gn", name], { allowFailure: true });
-    if (uid.code === 0 && gid.code === 0 && group.code === 0) {
-      return {
-        name,
-        group: group.stdout.trim(),
-        uid: Number(uid.stdout.trim()),
-        gid: Number(gid.stdout.trim()),
-      };
+    const environment: Record<string, string> = {};
+    for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]) {
+        const value = process.env[name];
+        if (value !== undefined)
+            environment[name] = value;
     }
-  }
-
-  throw new ZelavisProjectRuntimeError(
-    configured
-      ? `Native WordPress is configured to run as "${configured}", but no such account exists on this host.`
-      : "Native WordPress is running as root and found no unprivileged account to run its daemons as. " +
-          "MariaDB will not start as root. Create one of www-data, mysql or nobody, name one with the " +
-          "WordPress runtime's `user` option, or run Zelavis as an ordinary user with package authority.",
-  );
+    return environment;
 }
-
+const resolveRuntimeAccount = Effect.fn("WordPress.resolveRuntimeAccount")(function* (configured: string | undefined): Effect.fn.Return<{
+    name: string;
+    group: string;
+    uid: number;
+    gid: number;
+} | undefined, TaggedFailure> {
+    if (process.getuid?.() !== 0)
+        return undefined;
+    // A configured account is used or refused; it is not quietly replaced with a
+    // fallback, because an operator who named one is describing their host.
+    const candidates = configured ? [configured] : ["www-data", "mysql", "nobody"];
+    for (const name of candidates) {
+        const uid = yield* run("id", ["-u", name], { allowFailure: true });
+        const gid = yield* run("id", ["-g", name], { allowFailure: true });
+        // The group's name, not the user's. They coincide on Debian and do not on
+        // macOS, and PHP-FPM wants the name.
+        const group = yield* run("id", ["-gn", name], { allowFailure: true });
+        if (uid.code === 0 && gid.code === 0 && group.code === 0) {
+            return {
+                name,
+                group: group.stdout.trim(),
+                uid: Number(uid.stdout.trim()),
+                gid: Number(gid.stdout.trim()),
+            };
+        }
+    }
+    return yield* Effect.fail(new ZelavisProjectRuntimeError(configured
+        ? `Native WordPress is configured to run as "${configured}", but no such account exists on this host.`
+        : "Native WordPress is running as root and found no unprivileged account to run its daemons as. " +
+            "MariaDB will not start as root. Create one of www-data, mysql or nobody, name one with the " +
+            "WordPress runtime's `user` option, or run Zelavis as an ordinary user with package authority."));
+});
 function isMissingFileError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+    error = unwrapFailure(error);
+    return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
-
-async function run(
-  executable: string,
-  args: readonly string[],
-  options: {
+const run = Effect.fn("WordPress.run")(function* (executable: string, args: readonly string[], options: {
     cwd?: string;
     allowFailure?: boolean;
     /**
      * Run with the Platform's own environment.
      *
-     * Only for host package managers. `brew` and `apt` are configured through
+     * Only for host package managers. `brew` are configured through
      * environment variables an operator sets — a prefix, a mirror, a proxy, a
      * non-interactive flag — and stripping those turns "install the packages
      * this host needs" into a failure the operator cannot explain. They also
@@ -203,298 +167,202 @@ async function run(
      * anything a Project can influence.
      */
     inheritEnvironment?: boolean;
-  } = {},
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(executable, [...args], {
-      cwd: options.cwd,
-      env: options.inheritEnvironment
-        ? { ...process.env }
-        : nativeProcessEnvironment(),
-      stdio: ["ignore", "pipe", "pipe"],
+} = {}): Effect.fn.Return<{
+    code: number;
+    stdout: string;
+    stderr: string;
+}, TaggedFailure> {
+    return yield* Effect.callback<{ code: number; stdout: string; stderr: string }, TaggedFailure>(resume => {
+        const rejectRun = (error: Error) => resume(Effect.fail(new IntegrationFailure(error)));
+        const resolveRun = (value: { code: number; stdout: string; stderr: string }) => resume(Effect.succeed(value));
+        const child = spawn(executable, [...args], {
+            cwd: options.cwd,
+            env: options.inheritEnvironment
+                ? { ...process.env }
+                : nativeProcessEnvironment(),
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+        child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+        child.once("error", (error) => rejectRun(new Error(`Required native executable "${executable}" is unavailable.`, { cause: error })));
+        child.once("exit", (code) => {
+            const exitCode = code ?? 1;
+            if (exitCode !== 0 && !options.allowFailure) {
+                rejectRun(new Error(`${executable} failed: ${(stderr || stdout).trim() || `exit ${exitCode}`}`));
+                return;
+            }
+            resolveRun({ code: exitCode, stdout, stderr });
+        });
+        return Effect.callback<void>(done => {
+            if (!child.pid || child.exitCode !== null || child.signalCode !== null) { done(Effect.void); return; }
+            child.once("exit", () => done(Effect.void));
+            child.kill("SIGKILL");
+        });
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", (error) => rejectRun(new Error(
-      `Required native executable "${executable}" is unavailable.`, { cause: error },
-    )));
-    child.once("exit", (code) => {
-      const exitCode = code ?? 1;
-      if (exitCode !== 0 && !options.allowFailure) {
-        rejectRun(new Error(`${executable} failed: ${(stderr || stdout).trim() || `exit ${exitCode}`}`));
-        return;
-      }
-      resolveRun({ code: exitCode, stdout, stderr });
-    });
-  });
-}
-
-async function resolveExecutable(
-  candidates: readonly string[],
-  versionArgs: readonly string[] = ["--version"],
-  displayName = candidates.join(" or "),
-  acceptProbeFailure = false,
-): Promise<string> {
-  for (const candidate of candidates) {
-    try {
-      const probe = await run(candidate, versionArgs, { allowFailure: true });
-      if (acceptProbeFailure || probe.code === 0) return candidate;
-    } catch {
-      // Try the next conventional executable name.
+});
+const resolveExecutable = Effect.fn("WordPress.resolveExecutable")(function* (candidates: readonly string[], versionArgs: readonly string[] = ["--version"], displayName = candidates.join(" or "), acceptProbeFailure = false): Effect.fn.Return<string, TaggedFailure> {
+    for (const candidate of candidates) {
+        const probe = yield* Effect.catch(run(candidate, versionArgs, { allowFailure: true }), Effect.fn("WordPress.recover")(function* () { return undefined; }));
+        if (probe && (acceptProbeFailure || probe.code === 0))
+            return candidate;
     }
-  }
-  throw new ZelavisProjectRuntimeError(
-    `Native WordPress requires ${displayName}, but Zelavis could not find it on this host.`,
-  );
-}
-
-async function executableAvailable(executable: string): Promise<boolean> {
-  try {
-    // `brew` is one of the executables probed here and reports its version
-    // from its own installation, which it locates through its environment.
-    return (
-      await run(executable, ["--version"], {
+    return yield* Effect.fail(new ZelavisProjectRuntimeError(`Native WordPress requires ${displayName}, but Zelavis could not find it on this host.`));
+});
+const executableAvailable = Effect.fn("WordPress.executableAvailable")(function* (executable: string): Effect.fn.Return<boolean, TaggedFailure> {
+    return yield* Effect.catch(Effect.gen(function* () {
+        // `brew` is one of the executables probed here and reports its version
+        // from its own installation, which it locates through its environment.
+        return ((yield* run(executable, ["--version"], {
+            allowFailure: true,
+            inheritEnvironment: true,
+        }))).code === 0;
+    }), Effect.fn("WordPress.recover")(function* (_error) {
+        return false;
+    }));
+});
+const provisionNativeWordPressPackages = Effect.fn("WordPress.provisionNativeWordPressPackages")(function* (): Effect.fn.Return<void, TaggedFailure> {
+    if (process.platform === "linux") {
+        return yield* Effect.fail(new ZelavisProjectRuntimeError("Native WordPress dependencies are missing. Approve host package installation in the create-project form, or run: zelavis host-operations submit zelavis.packages-install --arg set=wordpress-stack"));
+    }
+    if (process.platform === "darwin" && (yield* executableAvailable("brew"))) {
+        yield* Effect.catch(Effect.gen(function* () {
+            (yield* run("brew", ["install", ...BREW_WORDPRESS_PACKAGES], {
+                inheritEnvironment: true,
+            }));
+        }), Effect.fn("WordPress.recover")(function* (cause) {
+            return (yield* Effect.fail(new ZelavisProjectRuntimeError("Zelavis could not install the native WordPress dependencies through Homebrew. Check the Homebrew installation and retry the Project start.", { cause })));
+        }));
+        return;
+    }
+    return yield* Effect.fail(new ZelavisProjectRuntimeError("Native WordPress requires a supported host package provider (APT on Debian/Ubuntu or Homebrew on macOS)."));
+});
+const brewFormulaExecutable = Effect.fn("WordPress.brewFormulaExecutable")(function* (formula: string, relativePath: string): Effect.fn.Return<string | undefined, TaggedFailure> {
+    if (process.platform !== "darwin" || !(yield* executableAvailable("brew"))) {
+        return undefined;
+    }
+    // Homebrew resolves its own prefix from its environment, so asking it where
+    // a formula lives is one of the calls that needs that environment.
+    const prefix = yield* run("brew", ["--prefix", formula], {
         allowFailure: true,
         inheritEnvironment: true,
-      })
-    ).code === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function provisionNativeWordPressPackages(): Promise<void> {
-  if (process.platform === "linux" && await executableAvailable("apt-get")) {
-    const apt = process.getuid?.() === 0
-      ? { executable: "apt-get", prefix: [] as string[] }
-      : await executableAvailable("sudo") &&
-          (await run("sudo", ["-n", "true"], { allowFailure: true, inheritEnvironment: true })).code === 0
-        ? { executable: "sudo", prefix: ["-n", "apt-get"] }
-        : undefined;
-    if (!apt) {
-      throw new ZelavisProjectRuntimeError(
-        "Native WordPress packages are missing and Zelavis cannot invoke apt with host-package authority. Install the Zelavis Debian package, run Zelavis as root for first provisioning, or grant its host Agent passwordless package installation.",
-      );
-    }
-    try {
-      await run(apt.executable, [...apt.prefix, "update"], { inheritEnvironment: true });
-      await run(
-        apt.executable,
-        [
-          ...apt.prefix,
-          "install",
-          "-y",
-          "--no-install-recommends",
-          ...APT_WORDPRESS_PACKAGES,
-        ],
-        { inheritEnvironment: true },
-      );
-    } catch (cause) {
-      throw new ZelavisProjectRuntimeError(
-        "Zelavis could not install the native WordPress dependencies through APT. Check the host package repositories and Agent package-install permissions.",
-        { cause },
-      );
-    }
-    return;
-  }
-
-  if (process.platform === "darwin" && await executableAvailable("brew")) {
-    try {
-      await run("brew", ["install", ...BREW_WORDPRESS_PACKAGES], {
-        inheritEnvironment: true,
-      });
-    } catch (cause) {
-      throw new ZelavisProjectRuntimeError(
-        "Zelavis could not install the native WordPress dependencies through Homebrew. Check the Homebrew installation and retry the Project start.",
-        { cause },
-      );
-    }
-    return;
-  }
-
-  throw new ZelavisProjectRuntimeError(
-    "Native WordPress requires a supported host package provider (APT on Debian/Ubuntu or Homebrew on macOS).",
-  );
-}
-
-async function brewFormulaExecutable(
-  formula: string,
-  relativePath: string,
-): Promise<string | undefined> {
-  if (process.platform !== "darwin" || !await executableAvailable("brew")) {
-    return undefined;
-  }
-  // Homebrew resolves its own prefix from its environment, so asking it where
-  // a formula lives is one of the calls that needs that environment.
-  const prefix = await run("brew", ["--prefix", formula], {
-    allowFailure: true,
-    inheritEnvironment: true,
-  });
-  const directory = prefix.stdout.trim();
-  return prefix.code === 0 && directory ? join(directory, relativePath) : undefined;
-}
-
-async function resolveNativeWordPressExecutables(): Promise<NativeWordPressExecutables> {
-  const resolveAll = async (): Promise<NativeWordPressExecutables> => {
-    const [brewNginx, brewPhp, brewPhpFpm, brewMariadbd, brewInstallDb, brewClient] =
-      await Promise.all([
-        brewFormulaExecutable("nginx", "bin/nginx"),
-        brewFormulaExecutable("php", "bin/php"),
-        brewFormulaExecutable("php", "sbin/php-fpm"),
-        brewFormulaExecutable("mariadb", "bin/mariadbd"),
-        brewFormulaExecutable("mariadb", "bin/mariadb-install-db"),
-        brewFormulaExecutable("mariadb", "bin/mariadb"),
-      ]);
-    return {
-      nginx: await resolveExecutable(
-        ["nginx", ...(brewNginx ? [brewNginx] : [])],
-        ["-v"],
-        "Nginx",
-      ),
-      php: await resolveExecutable(
-        ["php", ...(brewPhp ? [brewPhp] : [])],
-        ["--version"],
-        "PHP CLI",
-      ),
-      phpFpm: await resolveExecutable([
-        "php-fpm",
-        "php-fpm8.5",
-        "php-fpm8.4",
-        "php-fpm8.3",
-        "php-fpm8.2",
-        ...(brewPhpFpm ? [brewPhpFpm] : []),
-      ], ["-v"], "PHP-FPM"),
-      mariadbd: await resolveExecutable(
-        ["mariadbd", ...(brewMariadbd ? [brewMariadbd] : [])],
-        ["--version"],
-        "MariaDB Server",
-      ),
-      mariadbInstallDb: await resolveExecutable(
-        ["mariadb-install-db", ...(brewInstallDb ? [brewInstallDb] : [])],
-        ["--help"],
-        "MariaDB database initialization tools",
-        true,
-      ),
-      mariadbClient: await resolveExecutable(
-        ["mariadb", ...(brewClient ? [brewClient] : [])],
-        ["--version"],
-        "MariaDB Client",
-      ),
-    };
-  };
-
-  try {
-    return await resolveAll();
-  } catch {
-    await provisionNativeWordPressPackages();
-    return resolveAll();
-  }
-}
-
-async function availablePort(): Promise<number> {
-  return new Promise((resolvePort, rejectPort) => {
+    });
+    const directory = prefix.stdout.trim();
+    return prefix.code === 0 && directory ? join(directory, relativePath) : undefined;
+});
+const resolveNativeWordPressExecutables = Effect.fn("WordPress.resolveNativeWordPressExecutables")(function* (): Effect.fn.Return<NativeWordPressExecutables, TaggedFailure> {
+    const resolveAll = Effect.fn("WordPress.step")(function* (): Effect.fn.Return<NativeWordPressExecutables, TaggedFailure> {
+        const [brewNginx, brewPhp, brewPhpFpm, brewMariadbd, brewInstallDb, brewClient] = yield* Effect.all([
+            brewFormulaExecutable("nginx", "bin/nginx"),
+            brewFormulaExecutable("php", "bin/php"),
+            brewFormulaExecutable("php", "sbin/php-fpm"),
+            brewFormulaExecutable("mariadb", "bin/mariadbd"),
+            brewFormulaExecutable("mariadb", "bin/mariadb-install-db"),
+            brewFormulaExecutable("mariadb", "bin/mariadb"),
+        ], { concurrency: 6 });
+        return {
+            nginx: (yield* resolveExecutable(["nginx", ...(brewNginx ? [brewNginx] : [])], ["-v"], "Nginx")),
+            php: (yield* resolveExecutable(["php", ...(brewPhp ? [brewPhp] : [])], ["--version"], "PHP CLI")),
+            phpFpm: (yield* resolveExecutable([
+                "php-fpm",
+                "php-fpm8.5",
+                "php-fpm8.4",
+                "php-fpm8.3",
+                "php-fpm8.2",
+                ...(brewPhpFpm ? [brewPhpFpm] : []),
+            ], ["-v"], "PHP-FPM")),
+            mariadbd: (yield* resolveExecutable(["mariadbd", ...(brewMariadbd ? [brewMariadbd] : [])], ["--version"], "MariaDB Server")),
+            mariadbInstallDb: (yield* resolveExecutable(["mariadb-install-db", ...(brewInstallDb ? [brewInstallDb] : [])], ["--help"], "MariaDB database initialization tools", true)),
+            mariadbClient: (yield* resolveExecutable(["mariadb", ...(brewClient ? [brewClient] : [])], ["--version"], "MariaDB Client")),
+        };
+    });
+    return yield* Effect.catch(Effect.gen(function* () {
+        return (yield* resolveAll());
+    }), Effect.fn("WordPress.recover")(function* (_error) {
+        (yield* provisionNativeWordPressPackages());
+        return (yield* resolveAll());
+    }));
+});
+const availablePort = () => Effect.callback<number, TaggedFailure>(resume => {
     const server = createServer();
-    server.once("error", rejectPort);
+    server.once("error", error => resume(Effect.fail(new IntegrationFailure(error))));
     server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        rejectPort(new Error("Could not allocate a native WordPress port."));
-        return;
-      }
-      server.close((error) => error ? rejectPort(error) : resolvePort(address.port));
+        const address = server.address();
+        if (!address || typeof address === "string") {
+            resume(Effect.fail(new IntegrationFailure(new Error("Could not allocate a native WordPress port."))));
+            return;
+        }
+        server.close(error => resume(error ? Effect.fail(new IntegrationFailure(error)) : Effect.succeed(address.port)));
     });
-  });
-}
+    return Effect.sync(() => { if (server.listening) server.close(); });
+});
 
-/**
- * Waits for a port to accept connections, and for the right reason.
- *
- * `isRunning` is not optional decoration. A port accepting connections proves
- * something is listening, not that it is the process just started — and this
- * driver reuses a persisted port, so a stale listener left by a crashed
- * Platform makes the check pass immediately. That was the observed failure: a
- * Project reported running while its new nginx logged
- * `bind() ... Address already in use` and traffic went to the old process.
- * Reclamation clears the leftover first; this makes the wait tell the truth
- * even if one is ever missed.
- */
-async function waitForPort(
-  port: number,
-  timeoutMs: number,
-  isRunning?: () => boolean,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (isRunning && !isRunning()) {
-      throw new Error(
-        `Native service for port ${port} exited before it began listening.`,
-      );
-    }
-    const connected = await new Promise<boolean>((resolveConnection) => {
-      const socket = new Socket();
-      socket.setTimeout(1_000);
-      socket.once("connect", () => { socket.destroy(); resolveConnection(true); });
-      socket.once("error", () => { socket.destroy(); resolveConnection(false); });
-      socket.once("timeout", () => { socket.destroy(); resolveConnection(false); });
-      socket.connect(port, "127.0.0.1");
-    });
-    if (connected) return;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-  }
-  throw new Error(`Native service on port ${port} did not become ready.`);
-}
+const portAccepts = (port: number) => Effect.callback<boolean>(resume => {
+    const socket = new Socket();
+    const settle = (accepted: boolean) => { socket.destroy(); resume(Effect.succeed(accepted)); };
+    socket.setTimeout(1000);
+    socket.once("connect", () => settle(true));
+    socket.once("error", () => settle(false));
+    socket.once("timeout", () => settle(false));
+    socket.connect(port, "127.0.0.1");
+    return Effect.sync(() => socket.destroy());
+});
 
-async function waitForPath(
-  path: string,
-  timeoutMs: number,
-  isRunning?: () => boolean,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (isRunning && !isRunning()) {
-      throw new Error(`Native service exited before creating ${path}.`);
+const waitForPort = Effect.fn("WordPress.waitForPort")(function* (port: number, timeoutMs: number, isRunning?: () => boolean): Effect.fn.Return<void, TaggedFailure> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (isRunning && !isRunning()) {
+            return yield* new IntegrationFailure(new Error(`Native service for port ${port} exited before it began listening.`));
+        }
+        const connected = yield* portAccepts(port);
+        if (connected)
+            return;
+        yield* effectSleep(500);
     }
-    try {
-      await access(path);
-      return;
-    } catch {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    return yield* new IntegrationFailure(new Error(`Native service on port ${port} did not become ready.`));
+});
+const waitForPath = Effect.fn("WordPress.waitForPath")(function* (path: string, timeoutMs: number, isRunning?: () => boolean): Effect.fn.Return<void, TaggedFailure> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (isRunning && !isRunning()) {
+            return yield* new IntegrationFailure(new Error(`Native service exited before creating ${path}.`));
+        }
+        if ((yield* Effect.orElseSucceed(Effect.map(integration(() => access(path)), () => true), () => false)))
+            return;
+        yield* effectSleep(250);
     }
-  }
-  throw new Error(`Native service did not create ${path}.`);
-}
-
+    return yield* new IntegrationFailure(new Error(`Native service did not create ${path}.`));
+});
 function phpString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
-
 function sqlIdentifier(value: string): string {
-  if (!/^[a-z0-9_]+$/i.test(value)) throw new Error("Unsafe generated database identifier.");
-  return `\`${value}\``;
+    if (!/^[a-z0-9_]+$/i.test(value))
+        throw new Error("Unsafe generated database identifier.");
+    return `\`${value}\``;
 }
-
 function sqlString(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+    return `'${value.replace(/'/g, "''")}'`;
 }
-
-function versionAtLeast(actual: string, minimum: readonly [number, number]): boolean {
-  const match = actual.match(/(\d+)\.(\d+)/);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
+function versionAtLeast(actual: string, minimum: readonly [
+    number,
+    number
+]): boolean {
+    const match = actual.match(/(\d+)\.(\d+)/);
+    if (!match)
+        return false;
+    const major = Number(match[1]);
+    const minor = Number(match[2]);
+    return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
 }
-
 function wordpressConfig(config: NativeWordPressConfig): string {
-  const salts = Array.from({ length: 8 }, () => randomBytes(48).toString("base64url"));
-  const saltNames = [
-    "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
-    "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
-  ];
-  return `<?php
+    const salts = Array.from({ length: 8 }, () => randomBytes(48).toString("base64url"));
+    const saltNames = [
+        "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
+        "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
+    ];
+    return `<?php
 define('DB_NAME', '${phpString(config.databaseName)}');
 define('DB_USER', '${phpString(config.databaseUser)}');
 define('DB_PASSWORD', '${phpString(config.databasePassword)}');
@@ -508,32 +376,30 @@ if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
 require_once ABSPATH . 'wp-settings.php';
 `;
 }
-
 function nginxQuoted(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
-
 function phpFpmConfig(input: {
-  runtimeDirectory: string;
-  socketDirectory: string;
-  siteDirectory: string;
-  username: string;
-  /**
-   * The account's actual primary group, which is not its username.
-   *
-   * On Debian `www-data` belongs to `www-data` and the two are
-   * interchangeable; on macOS an ordinary user belongs to `staff`. Assuming
-   * they match made PHP-FPM refuse to start with "cannot get gid for group",
-   * on every Mac, for as long as nobody ran WordPress on one.
-   */
-  group: string;
+    runtimeDirectory: string;
+    socketDirectory: string;
+    siteDirectory: string;
+    username: string;
+    /**
+     * The account's actual primary group, which is not its username.
+     *
+     * On Debian `www-data` belongs to `www-data` and the two are
+     * interchangeable; on macOS an ordinary user belongs to `staff`. Assuming
+     * they match made PHP-FPM refuse to start with "cannot get gid for group",
+     * on every Mac, for as long as nobody ran WordPress on one.
+     */
+    group: string;
 }): string {
-  for (const value of [input.username, input.group]) {
-    if (!/^[a-zA-Z0-9_.-]+$/.test(value)) {
-      throw new Error("The native host account cannot be represented in PHP-FPM configuration.");
+    for (const value of [input.username, input.group]) {
+        if (!/^[a-zA-Z0-9_.-]+$/.test(value)) {
+            throw new Error("The native host account cannot be represented in PHP-FPM configuration.");
+        }
     }
-  }
-  return `[global]
+    return `[global]
 pid = ${input.runtimeDirectory}/php-fpm.pid
 error_log = ${input.runtimeDirectory}/php-fpm.log
 daemonize = no
@@ -566,21 +432,20 @@ php_admin_value[error_log] = ${input.runtimeDirectory}/php-errors.log
 php_admin_flag[log_errors] = on
 `;
 }
-
 function nginxConfig(input: {
-  httpPort: number;
-  runtimeDirectory: string;
-  socketDirectory: string;
-  siteDirectory: string;
-  /** Set only when the Platform is root; nginx workers drop to it. */
-  runAs?: string;
+    httpPort: number;
+    runtimeDirectory: string;
+    socketDirectory: string;
+    siteDirectory: string;
+    /** Set only when the Platform is root; nginx workers drop to it. */
+    runAs?: string;
 }): string {
-  const site = nginxQuoted(input.siteDirectory);
-  const phpSocket = `unix:${input.socketDirectory}/php-fpm.sock`;
-  // Without this an nginx started by root runs its workers as `nobody`, which
-  // cannot read a Project directory owned by anyone else. Set only when root:
-  // an unprivileged nginx cannot switch user and warns about the directive.
-  return `${input.runAs ? `user ${input.runAs};\n` : ""}pid ${nginxQuoted(join(input.runtimeDirectory, "nginx.pid"))};
+    const site = nginxQuoted(input.siteDirectory);
+    const phpSocket = `unix:${input.socketDirectory}/php-fpm.sock`;
+    // Without this an nginx started by root runs its workers as `nobody`, which
+    // cannot read a Project directory owned by anyone else. Set only when root:
+    // an unprivileged nginx cannot switch user and warns about the directive.
+    return `${input.runAs ? `user ${input.runAs};\n` : ""}pid ${nginxQuoted(join(input.runtimeDirectory, "nginx.pid"))};
 error_log stderr notice;
 
 events { worker_connections 1024; }
@@ -662,486 +527,417 @@ http {
 }
 `;
 }
-
-export function createNativeWordPressProjectRuntime(
-  options: NativeWordPressProjectRuntimeOptions,
-): ZelavisProjectRuntimeDriver {
-  const projectsDirectory = resolve(options.directory);
-  const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-  const processes = new Map<string, NativeWordPressProcesses>();
-  const agent =
-    options.agent ??
-    createLocalAgentProcessRunner({
-      stateDirectory: join(projectsDirectory, ".agent-processes"),
-    });
-  let runtimeAccount: Awaited<ReturnType<typeof resolveRuntimeAccount>> | undefined;
-  let runtimeAccountResolved = false;
-
-  async function account() {
-    if (!runtimeAccountResolved) {
-      runtimeAccount = await resolveRuntimeAccount(options.user);
-      runtimeAccountResolved = true;
-    }
-    return runtimeAccount;
-  }
-
-  /**
-   * Hands a path to the account the daemons run as.
-   *
-   * A no-op unless the Platform is root. The daemons cannot write a data
-   * directory, a socket directory or a site they do not own, and they are no
-   * longer the same user as the Platform that created those.
-   */
-  /**
-   * The primary group of whoever is running the Platform.
-   *
-   * `os.userInfo()` reports a gid but no group name, and PHP-FPM's `group`
-   * directive wants the name.
-   */
-  async function currentGroupName(): Promise<string> {
-    const group = await run("id", ["-gn"], { allowFailure: true });
-    const name = group.stdout.trim();
-    return group.code === 0 && name ? name : userInfo().username;
-  }
-
-  async function handOver(path: string) {
-    const owner = await account();
-    if (!owner) return;
-    // Not `allowFailure`. A silent chown failure surfaces later as MariaDB
-    // being unable to write its own data directory, which reads as a database
-    // problem and is a permissions one.
-    await run("chown", ["-R", `${owner.uid}:${owner.gid}`, path]);
-    await ensureTraversable(dirname(path), owner);
-  }
-
-  /**
-   * Lets the account reach a directory it owns.
-   *
-   * Owning the Project directory is not enough: every directory above it has to
-   * be traversable, and the Platform's data directory is created 0700 by the
-   * user that created it — root. Without this the daemons drop to an account
-   * that cannot walk to the files it owns, and MariaDB reports "Can't
-   * create/write to file ... Permission denied" on a directory that is
-   * unambiguously its own.
-   *
-   * Adds the execute bit only, never read. A directory that is traversable but
-   * not readable can be walked through by someone who already knows the path
-   * and cannot be listed, so this does not expose the System Store or anything
-   * else living beside the Projects — those keep their own modes. It stops at
-   * the first directory the Platform does not own, because widening something
-   * the operator set up is not this driver's business.
-   */
-  async function ensureTraversable(
-    from: string,
-    owner: { uid: number; gid: number },
-  ): Promise<void> {
-    let current = resolve(from);
-
-    while (true) {
-      const info = await stat(current).catch(() => undefined);
-      if (!info) return;
-
-      const alreadyOwned = info.uid === owner.uid;
-      const traversable = alreadyOwned || (info.mode & 0o001) !== 0;
-      if (!traversable) {
-        if (info.uid !== process.getuid?.()) return;
-        await chmod(current, info.mode | 0o001).catch(() => undefined);
-      }
-
-      const parent = dirname(current);
-      if (parent === current) return;
-      current = parent;
-    }
-  }
-
-  const projectDirectory = (id: string) => join(projectsDirectory, id);
-  const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
-  const configPath = (id: string) => join(runtimeDirectory(id), "wordpress-native.json");
-  const siteDirectory = (id: string) => join(runtimeDirectory(id), "wordpress");
-  const databaseDirectory = (id: string) => join(runtimeDirectory(id), "mariadb");
-  const socketDirectory = (config: NativeWordPressConfig) =>
-    join("/tmp", `zv-wp-${config.socketId}`);
-
-  async function readConfig(projectId: string): Promise<NativeWordPressConfig> {
-    return JSON.parse(await readFile(configPath(projectId), "utf8")) as NativeWordPressConfig;
-  }
-
-  function appendLog(projectId: string, stream: ZelavisProjectLogEntry["stream"], message: string) {
-    const state = processes.get(projectId) ?? { logs: [] };
-    for (const line of message.split("\n").filter(Boolean)) {
-      state.logs.push({ timestamp: new Date().toISOString(), stream, message: line });
-    }
-    if (state.logs.length > LOG_LIMIT) state.logs.splice(0, state.logs.length - LOG_LIMIT);
-    processes.set(projectId, state);
-  }
-
-  /** Labels a process's output, so three of them share one Project log. */
-  function capture(projectId: string, label: string) {
-    return ({ stream, line }: { stream: "stdout" | "stderr"; line: string }) =>
-      appendLog(projectId, stream, `[${label}] ${line}`);
-  }
-
-  const capabilities = Object.freeze({
-    independentRuntimeVersion: true,
-    movable: false,
-    liveMigration: false,
-    secureIsolation: false,
-    resourceLimits: false,
-    persistentFilesystem: true,
-    statelessRuntimeReplicas: false,
-    managedStorage: true,
-    managedDatabase: true,
-    databaseReplication: false,
-    tenantPlacement: false,
-    databaseSharding: false,
-    runtimeOwnership: "platform-process" as const,
-    survivesControlPlaneRestart: false,
-    description:
-      "Runs a version-pinned WordPress release with dedicated native Nginx, PHP-FPM, and MariaDB processes, configuration, sockets, logs, and data directories.",
-  });
-
-  const driver: ZelavisProjectRuntimeDriver = {
-    name: "native-wordpress",
-    runtimeKinds: Object.freeze(["native"]),
-    defaultRuntimeKind: "native",
-    startupConcurrency: 1,
-    capabilities: () => capabilities,
-    async prepare(project: ZelavisProjectRecord, recipe: ZelavisProjectRecipeLock) {
-      if (recipe.name !== WORDPRESS_APP_NAME) throw new Error(`Unsupported native WordPress recipe "${recipe.name}".`);
-      await mkdir(siteDirectory(project.id), { recursive: true, mode: 0o700 });
-      await mkdir(databaseDirectory(project.id), { recursive: true, mode: 0o700 });
-      for (const name of [
-        "tmp",
-        "sessions",
-        "nginx-client-temp",
-        "nginx-proxy-temp",
-        "nginx-fastcgi-temp",
-        "nginx-uwsgi-temp",
-        "nginx-scgi-temp",
-      ]) {
-        await mkdir(join(runtimeDirectory(project.id), name), {
-          recursive: true,
-          mode: 0o700,
+export function createNativeWordPressProjectRuntime(options: NativeWordPressProjectRuntimeOptions): ZelavisProjectRuntimeDriver {
+    const projectsDirectory = resolve(options.directory);
+    const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const processes = new Map<string, NativeWordPressProcesses>();
+    const agent = options.agent ??
+        createLocalAgentProcessRunner({
+            stateDirectory: join(projectsDirectory, ".agent-processes"),
         });
-      }
-      let storedConfig: NativeWordPressConfig | undefined;
-      try {
-        storedConfig = await readConfig(project.id);
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error;
-      }
-      const executables = await resolveNativeWordPressExecutables();
-      const phpVersion = (
-        await run(executables.php, ["-r", "echo PHP_VERSION;"])
-      ).stdout.trim();
-      const phpFpmVersionResult = await run(executables.phpFpm, ["-v"]);
-      const phpFpmVersion = `${phpFpmVersionResult.stdout} ${phpFpmVersionResult.stderr}`;
-      if (
-        !versionAtLeast(phpVersion, [8, 2]) ||
-        !versionAtLeast(phpFpmVersion, [8, 2])
-      ) {
-        throw new Error(
-          `Native WordPress requires PHP CLI and PHP-FPM 8.2 or newer; found CLI ${phpVersion} and FPM ${phpFpmVersion.trim()}.`,
-        );
-      }
-      const requiredExtensions = [
-        "curl",
-        "dom",
-        "fileinfo",
-        "gd",
-        "intl",
-        "mbstring",
-        "mysqli",
-        "openssl",
-        "xml",
-        "zip",
-      ];
-      const extensionCheck = await run(executables.php, [
-        "-r",
-        `$required=${JSON.stringify(requiredExtensions)}; echo json_encode(array_values(array_filter($required, fn($extension) => !extension_loaded($extension))));`,
-      ]);
-      const missingExtensions = JSON.parse(extensionCheck.stdout) as string[];
-      if (missingExtensions.length > 0) {
-        throw new Error(
-          `Native WordPress is missing required PHP extensions: ${missingExtensions.join(", ")}.`,
-        );
-      }
-      const mariadbVersionResult = await run(executables.mariadbd, [
-        "--version",
-      ]);
-      const mariadbVersion = `${mariadbVersionResult.stdout} ${mariadbVersionResult.stderr}`;
-      if (!versionAtLeast(mariadbVersion, [10, 6])) {
-        throw new Error(
-          `Native WordPress requires MariaDB 10.6 or newer; found ${mariadbVersion.trim()}.`,
-        );
-      }
-      const httpPort = storedConfig?.httpPort ?? (await availablePort());
-      let databasePort =
-        storedConfig?.databasePort ?? (await availablePort());
-      while (databasePort === httpPort) databasePort = await availablePort();
-      const config: NativeWordPressConfig = {
-        ...executables,
-        httpPort,
-        databasePort,
-        databaseName: "wordpress",
-        databaseUser: "wordpress",
-        databasePassword:
-          storedConfig?.databasePassword ??
-          randomBytes(32).toString("base64url"),
-        socketId:
-          storedConfig?.socketId ?? randomBytes(12).toString("hex"),
-        databaseInitialized: storedConfig?.databaseInitialized === true,
-      };
-      await writeFile(
-        configPath(project.id),
-        `${JSON.stringify(config, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-      await mkdir(socketDirectory(config), { recursive: true, mode: 0o700 });
-      await handOver(socketDirectory(config));
-
-      const phpFpmConfiguration = join(
-        runtimeDirectory(project.id),
-        "php-fpm.conf",
-      );
-      await writeFile(
-        phpFpmConfiguration,
-        phpFpmConfig({
-          runtimeDirectory: runtimeDirectory(project.id),
-          socketDirectory: socketDirectory(config),
-          siteDirectory: siteDirectory(project.id),
-          username: (await account())?.name ?? userInfo().username,
-          group: (await account())?.group ?? (await currentGroupName()),
+    let runtimeAccount: Effect.Success<ReturnType<typeof resolveRuntimeAccount>> | undefined;
+    let runtimeAccountResolved = false;
+    const account = Effect.fn("WordPress.account")(function* () {
+        if (!runtimeAccountResolved) {
+            runtimeAccount = (yield* resolveRuntimeAccount(options.user));
+            runtimeAccountResolved = true;
+        }
+        return runtimeAccount;
+    });
+    const currentGroupName = Effect.fn("WordPress.currentGroupName")(function* (): Effect.fn.Return<string, TaggedFailure> {
+        const group = yield* run("id", ["-gn"], { allowFailure: true });
+        const name = group.stdout.trim();
+        return group.code === 0 && name ? name : userInfo().username;
+    });
+    const handOver = Effect.fn("WordPress.handOver")(function* (path: string) {
+        const owner = yield* account();
+        if (!owner)
+            return;
+        // Not `allowFailure`. A silent chown failure surfaces later as MariaDB
+        // being unable to write its own data directory, which reads as a database
+        // problem and is a permissions one.
+        yield* run("chown", ["-R", `${owner.uid}:${owner.gid}`, path]);
+        yield* ensureTraversable(dirname(path), owner);
+    });
+    const ensureTraversable = Effect.fn("WordPress.ensureTraversable")(function* (from: string, owner: {
+        uid: number;
+        gid: number;
+    }): Effect.fn.Return<void, TaggedFailure> {
+        let current = resolve(from);
+        while (true) {
+            const info = yield* Effect.catch(integration(() => stat(current)), Effect.fn("WordPress.recover")(function* () { return undefined; }));
+            if (!info)
+                return;
+            const alreadyOwned = info.uid === owner.uid;
+            const traversable = alreadyOwned || (info.mode & 0o001) !== 0;
+            if (!traversable) {
+                if (info.uid !== process.getuid?.())
+                    return;
+                yield* Effect.catch(integration(() => chmod(current, info.mode | 0o001)), Effect.fn("WordPress.recover")(function* () { return undefined; }));
+            }
+            const parent = dirname(current);
+            if (parent === current)
+                return;
+            current = parent;
+        }
+    });
+    const projectDirectory = (id: string) => join(projectsDirectory, id);
+    const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
+    const configPath = (id: string) => join(runtimeDirectory(id), "wordpress-native.json");
+    const siteDirectory = (id: string) => join(runtimeDirectory(id), "wordpress");
+    const databaseDirectory = (id: string) => join(runtimeDirectory(id), "mariadb");
+    const socketDirectory = (config: NativeWordPressConfig) => {
+        // Separate systemd units have separate PrivateTmp mounts. Persistent
+        // Project sockets must be visible to both the Platform and its Agent.
+        const root = process.platform === "linux" ? resolve(projectsDirectory, "..", "runtime-sockets") : "/tmp";
+        return join(root, `zv-wp-${config.socketId}`);
+    };
+    const readConfig = Effect.fn("WordPress.readConfig")(function* (projectId: string): Effect.fn.Return<NativeWordPressConfig, TaggedFailure> {
+        const config = yield* Effect.flatMap(integration(() => readFile(configPath(projectId), "utf8")), value => evaluate(() => JSON.parse(value) as NativeWordPressConfig));
+        yield* evaluate(() => {
+            if (!config || typeof config.socketId !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(config.socketId)) throw new Error("WordPress socket identity is malformed.");
+        });
+        return config;
+    });
+    function appendLog(projectId: string, stream: ZelavisProjectLogEntry["stream"], message: string) {
+        const state = processes.get(projectId) ?? { logs: [] };
+        for (const line of message.split("\n").filter(Boolean)) {
+            state.logs.push({ timestamp: new Date().toISOString(), stream, message: line });
+        }
+        if (state.logs.length > LOG_LIMIT)
+            state.logs.splice(0, state.logs.length - LOG_LIMIT);
+        processes.set(projectId, state);
+    }
+    /** Labels a process's output, so three of them share one Project log. */
+    function capture(projectId: string, label: string) {
+        return ({ stream, line }: {
+            stream: "stdout" | "stderr";
+            line: string;
+        }) => appendLog(projectId, stream, `[${label}] ${line}`);
+    }
+    const capabilities = Object.freeze({
+        independentRuntimeVersion: true,
+        movable: false,
+        liveMigration: false,
+        secureIsolation: false,
+        resourceLimits: false,
+        persistentFilesystem: true,
+        statelessRuntimeReplicas: false,
+        managedStorage: true,
+        managedDatabase: true,
+        databaseReplication: false,
+        tenantPlacement: false,
+        databaseSharding: false,
+        runtimeOwnership: "platform-process" as const,
+        survivesControlPlaneRestart: agent.survivesControlPlaneRestart === true && typeof agent.attach === "function",
+        description: "Runs a version-pinned WordPress release with dedicated native Nginx, PHP-FPM, and MariaDB processes, configuration, sockets, logs, and data directories.",
+    });
+    const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
+        name: "native-wordpress",
+        runtimeKinds: Object.freeze(["native"]),
+        defaultRuntimeKind: "native",
+        startupConcurrency: 1,
+        capabilities: () => capabilities,
+        adopt: Effect.fn("WordPress.adopt")(function* () {
+            if (!agent.survivesControlPlaneRestart || !agent.attach) return;
+            const entries = yield* integration(() => readdir(projectsDirectory, { withFileTypes: true }));
+            if (entries.length > 4096) return yield* new IntegrationFailure(new Error("WordPress adoption exceeds its discovery bound."));
+            yield* Effect.forEach(entries.filter(entry => entry.isDirectory() && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(entry.name)), entry => Effect.gen(function* () {
+                const projectId = entry.name;
+                const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.void));
+                if (!config) return;
+                const attached = yield* integration(() => agent.attach!(projectId));
+                if (attached.length === 0) return;
+                const state: NativeWordPressProcesses = { logs: [] };
+                for (const { process: child, command, replay } of attached) {
+                    const role = yield* evaluate(() => {
+                        if (child.workloadId !== projectId || command.workloadId !== projectId || !child.listen) throw new Error("WordPress Agent adoption has no exact Project authority.");
+                        const args = command.args ?? [];
+                        if (command.executable === config.mariadbd && command.cwd === runtimeDirectory(projectId) && args.includes(`--datadir=${databaseDirectory(projectId)}`)) return "database" as const;
+                        if (command.executable === config.phpFpm && command.cwd === siteDirectory(projectId) && args.includes(join(runtimeDirectory(projectId), "php-fpm.conf"))) return "phpFpm" as const;
+                        if (command.executable === config.nginx && command.cwd === runtimeDirectory(projectId) && args.includes(join(runtimeDirectory(projectId), "nginx.conf"))) return "nginx" as const;
+                        throw new Error("Agent returned an unrelated process for WordPress adoption.");
+                    });
+                    if (state[role]) return yield* new IntegrationFailure(new Error(`WordPress has duplicate live ${role} owners.`));
+                    state[role] = child;
+                    child.listen!(capture(projectId, role));
+                    for (const output of replay) capture(projectId, role)(output);
+                }
+                processes.set(projectId, state);
+            }), { concurrency: 4, discard: true });
         }),
-        { mode: 0o600 },
-      );
-      const nginxConfiguration = join(
-        runtimeDirectory(project.id),
-        "nginx.conf",
-      );
-      await writeFile(
-        nginxConfiguration,
-        nginxConfig({
-          httpPort: config.httpPort,
-          runtimeDirectory: runtimeDirectory(project.id),
-          socketDirectory: socketDirectory(config),
-          siteDirectory: siteDirectory(project.id),
-          ...((await account()) ? { runAs: (await account())!.name } : {}),
-        }),
-        { mode: 0o600 },
-      );
-      await run(config.phpFpm, ["-tt", "-y", phpFpmConfiguration]);
-      await run(config.nginx, [
-        "-t",
-        "-c",
-        nginxConfiguration,
-        "-p",
-        runtimeDirectory(project.id),
-      ]);
-
-      try {
-        await readFile(join(siteDirectory(project.id), "wp-includes", "version.php"));
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error;
-        const release = wordpressRelease(recipe.version);
-        const archive = join(runtimeDirectory(project.id), `wordpress-${release}.tar.gz`);
-        const response = await fetch(`https://wordpress.org/wordpress-${release}.tar.gz`);
-        if (!response.ok || !response.body) throw new Error(`WordPress download failed with HTTP ${response.status}.`);
-        const declaredSize = Number(response.headers.get("content-length") ?? 0);
-        if (declaredSize > MAX_WORDPRESS_ARCHIVE_BYTES) {
-          throw new Error("WordPress release archive exceeds the provisioning size limit.");
-        }
-        const archiveBody = new Uint8Array(await response.arrayBuffer());
-        if (archiveBody.byteLength > MAX_WORDPRESS_ARCHIVE_BYTES) {
-          throw new Error("WordPress release archive exceeds the provisioning size limit.");
-        }
-        // Nothing is written or unpacked until the bytes are the ones this
-        // package was released with.
-        if (release !== WORDPRESS_RELEASE) {
-          throw new Error(`This recipe pins WordPress ${WORDPRESS_RELEASE}, not ${release}.`);
-        }
-        const digest = Buffer.from(await crypto.subtle.digest("SHA-256", archiveBody)).toString("hex");
-        if (digest !== WORDPRESS_ARCHIVE_SHA256) {
-          throw new Error(`The WordPress ${release} archive does not match the digest this recipe pins.`);
-        }
-        await writeFile(archive, archiveBody, { mode: 0o600 });
-        const archiveEntries = (await run("tar", ["-tzf", archive])).stdout
-          .split("\n")
-          .filter(Boolean);
-        if (archiveEntries.some((entry) => {
-          const parts = entry.split("/");
-          return parts[0] !== "wordpress" || parts.includes("..") || entry.startsWith("/");
-        })) {
-          throw new Error("WordPress release archive contains an unsafe path.");
-        }
-        await run("tar", ["-xzf", archive, "--strip-components=1", "-C", siteDirectory(project.id)]);
-        await rm(archive, { force: true });
-      }
-      try {
-        await readFile(join(siteDirectory(project.id), "wp-config.php"));
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error;
-        await writeFile(join(siteDirectory(project.id), "wp-config.php"), wordpressConfig(config), { mode: 0o600 });
-      }
-      await writeFile(
-        join(projectDirectory(project.id), "project.json"),
-        `${JSON.stringify({ ...project, recipe, runtime: { driver: driver.name, capabilities } }, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-
-      // Last, once every file exists. Handing the tree over earlier would leave
-      // whatever `prepare` wrote afterwards — the generated wp-config.php among
-      // it — owned by the Platform and unreadable to the daemons.
-      await handOver(projectDirectory(project.id));
-    },
-    async start(project, placement) {
-      const config = await readConfig(project.id);
-      const state = processes.get(project.id) ?? { logs: [] };
-      processes.set(project.id, state);
-      try {
-        if (!config.databaseInitialized) {
-          const installAs = await account();
-          await run(config.mariadbInstallDb, [
-            `--datadir=${databaseDirectory(project.id)}`,
-            "--auth-root-authentication-method=normal",
-            "--skip-test-db",
-            ...(installAs ? [`--user=${installAs.name}`] : []),
-          ]);
-        }
-        if (!state.database?.running) {
-          state.database = await agent.start(
-            {
-              workloadId: project.id,
-              ...(placement ? { placement } : {}),
-              executable: config.mariadbd,
-              args: [
-                `--datadir=${databaseDirectory(project.id)}`,
-                `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
-                `--port=${config.databasePort}`,
-                "--bind-address=127.0.0.1",
-                `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
-                `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
-                // MariaDB refuses to run as root without this, and there is
-                // nothing sensible for it to guess.
-                ...((await account()) ? [`--user=${(await account())!.name}`] : []),
-              ],
-              cwd: runtimeDirectory(project.id),
-              env: nativeProcessEnvironment(),
-            },
-            { onOutput: capture(project.id, "mariadb") },
-          );
-        }
-        await waitForPort(
-          config.databasePort,
-          startupTimeoutMs,
-          () => state.database?.running !== false,
-        );
-        if (!config.databaseInitialized) {
-          const socket = join(socketDirectory(config), "mariadb.sock");
-          const sql = [
-            `CREATE DATABASE IF NOT EXISTS ${sqlIdentifier(config.databaseName)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-            `CREATE USER IF NOT EXISTS ${sqlString(config.databaseUser)}@'127.0.0.1' IDENTIFIED BY ${sqlString(config.databasePassword)}`,
-            `GRANT ALL PRIVILEGES ON ${sqlIdentifier(config.databaseName)}.* TO ${sqlString(config.databaseUser)}@'127.0.0.1'`,
-            "FLUSH PRIVILEGES",
-          ].join("; ");
-          await run(config.mariadbClient, ["--protocol=socket", `--socket=${socket}`, "-u", "root", "-e", sql]);
-          config.databaseInitialized = true;
-          await writeFile(configPath(project.id), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-        }
-        const phpSocket = join(socketDirectory(config), "php-fpm.sock");
-        if (!state.phpFpm?.running) {
-          // Only a stale socket from a dead PHP-FPM is cleared. Removing the
-          // live one of a PHP-FPM that keeps running leaves it listening on a
-          // path nothing can reach, and nginx answers every request with 502.
-          await rm(phpSocket, { force: true });
-          state.phpFpm = await agent.start(
-            {
-              workloadId: project.id,
-              ...(placement ? { placement } : {}),
-              executable: config.phpFpm,
-              args: ["-F", "-y", join(runtimeDirectory(project.id), "php-fpm.conf")],
-              cwd: siteDirectory(project.id),
-              env: nativeProcessEnvironment(),
-            },
-            { onOutput: capture(project.id, "php-fpm") },
-          );
-        }
-        await waitForPath(
-          phpSocket,
-          startupTimeoutMs,
-          () => state.phpFpm?.running !== false,
-        );
-        if (!state.nginx?.running) {
-          state.nginx = await agent.start(
-            {
-              workloadId: project.id,
-              ...(placement ? { placement } : {}),
-              executable: config.nginx,
-              args: [
+        prepare: Effect.fn("WordPress.prepare")(function* (project: ZelavisProjectRecord, recipe: ZelavisProjectRecipeLock) {
+            if (recipe.name !== WORDPRESS_APP_NAME)
+                return yield* new IntegrationFailure(new Error(`Unsupported native WordPress recipe "${recipe.name}".`));
+            yield* integration(() => mkdir(siteDirectory(project.id), { recursive: true, mode: 0o700 }));
+            yield* integration(() => mkdir(databaseDirectory(project.id), { recursive: true, mode: 0o700 }));
+            for (const name of [
+                "tmp",
+                "sessions",
+                "nginx-client-temp",
+                "nginx-proxy-temp",
+                "nginx-fastcgi-temp",
+                "nginx-uwsgi-temp",
+                "nginx-scgi-temp",
+            ]) {
+                yield* integration(() => mkdir(join(runtimeDirectory(project.id), name), {
+                    recursive: true,
+                    mode: 0o700,
+                }));
+            }
+            let storedConfig: NativeWordPressConfig | undefined;
+            yield* Effect.catch(Effect.gen(function* () {
+                storedConfig = (yield* readConfig(project.id));
+            }), Effect.fn("WordPress.recover")(function* (error) {
+                if (!isMissingFileError(error))
+                    return (yield* Effect.fail(error));
+            }));
+            const owner = yield* account();
+            const groupName = owner?.group ?? (yield* currentGroupName());
+            const executables = yield* resolveNativeWordPressExecutables();
+            const phpVersion = ((yield* run(executables.php, ["-r", "echo PHP_VERSION;"]))).stdout.trim();
+            const phpFpmVersionResult = yield* run(executables.phpFpm, ["-v"]);
+            const phpFpmVersion = `${phpFpmVersionResult.stdout} ${phpFpmVersionResult.stderr}`;
+            if (!versionAtLeast(phpVersion, [8, 2]) ||
+                !versionAtLeast(phpFpmVersion, [8, 2])) {
+                return yield* new IntegrationFailure(new Error(`Native WordPress requires PHP CLI and PHP-FPM 8.2 or newer; found CLI ${phpVersion} and FPM ${phpFpmVersion.trim()}.`));
+            }
+            const requiredExtensions = [
+                "curl",
+                "dom",
+                "fileinfo",
+                "gd",
+                "intl",
+                "mbstring",
+                "mysqli",
+                "openssl",
+                "xml",
+                "zip",
+            ];
+            const extensionCheck = yield* run(executables.php, [
+                "-r",
+                `$required=${JSON.stringify(requiredExtensions)}; echo json_encode(array_values(array_filter($required, fn($extension) => !extension_loaded($extension))));`,
+            ]);
+            const missingExtensions = (yield* evaluate(() => JSON.parse(extensionCheck.stdout))) as string[];
+            if (missingExtensions.length > 0) {
+                return yield* new IntegrationFailure(new Error(`Native WordPress is missing required PHP extensions: ${missingExtensions.join(", ")}.`));
+            }
+            const mariadbVersionResult = yield* run(executables.mariadbd, [
+                "--version",
+            ]);
+            const mariadbVersion = `${mariadbVersionResult.stdout} ${mariadbVersionResult.stderr}`;
+            if (!versionAtLeast(mariadbVersion, [10, 6])) {
+                return yield* new IntegrationFailure(new Error(`Native WordPress requires MariaDB 10.6 or newer; found ${mariadbVersion.trim()}.`));
+            }
+            const httpPort = storedConfig?.httpPort ?? ((yield* availablePort()));
+            let databasePort = storedConfig?.databasePort ?? ((yield* availablePort()));
+            while (databasePort === httpPort)
+                databasePort = (yield* availablePort());
+            const config: NativeWordPressConfig = {
+                ...executables,
+                httpPort,
+                databasePort,
+                databaseName: "wordpress",
+                databaseUser: "wordpress",
+                databasePassword: storedConfig?.databasePassword ??
+                    randomBytes(32).toString("base64url"),
+                socketId: storedConfig?.socketId ?? randomBytes(12).toString("hex"),
+                databaseInitialized: storedConfig?.databaseInitialized === true,
+            };
+            yield* integration(() => writeFile(configPath(project.id), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 }));
+            yield* integration(() => mkdir(socketDirectory(config), { recursive: true, mode: 0o700 }));
+            yield* handOver(socketDirectory(config));
+            const phpFpmConfiguration = join(runtimeDirectory(project.id), "php-fpm.conf");
+            yield* integration(() => writeFile(phpFpmConfiguration, phpFpmConfig({
+                runtimeDirectory: runtimeDirectory(project.id),
+                socketDirectory: socketDirectory(config),
+                siteDirectory: siteDirectory(project.id),
+                username: owner?.name ?? userInfo().username,
+                group: owner?.group ?? (groupName),
+            }), { mode: 0o600 }));
+            const nginxConfiguration = join(runtimeDirectory(project.id), "nginx.conf");
+            yield* integration(() => writeFile(nginxConfiguration, nginxConfig({
+                httpPort: config.httpPort,
+                runtimeDirectory: runtimeDirectory(project.id),
+                socketDirectory: socketDirectory(config),
+                siteDirectory: siteDirectory(project.id),
+                ...(owner ? { runAs: owner!.name } : {}),
+            }), { mode: 0o600 }));
+            yield* run(config.phpFpm, ["-tt", "-y", phpFpmConfiguration]);
+            yield* run(config.nginx, [
+                "-t",
                 "-c",
-                join(runtimeDirectory(project.id), "nginx.conf"),
+                nginxConfiguration,
                 "-p",
                 runtimeDirectory(project.id),
-                "-g",
-                "daemon off;",
-              ],
-              cwd: runtimeDirectory(project.id),
-              env: nativeProcessEnvironment(),
-            },
-            { onOutput: capture(project.id, "nginx") },
-          );
-        }
-        await waitForPort(
-          config.httpPort,
-          startupTimeoutMs,
-          () => state.nginx?.running !== false,
-        );
-        return { status: "running", url: `http://127.0.0.1:${config.httpPort}`, startedAt: new Date().toISOString() };
-      } catch (error) {
-        await driver.stop(project.id);
-        throw error;
-      }
-    },
-    async stop(projectId) {
-      const state = processes.get(projectId);
-      // In dependency order: nginx stops serving before php-fpm goes away, and
-      // php-fpm releases its connections before the database does.
-      for (const process of [state?.nginx, state?.phpFpm, state?.database]) {
-        await process?.stop().catch(() => undefined);
-      }
-      processes.delete(projectId);
-      return { status: "stopped", stoppedAt: new Date().toISOString() };
-    },
-    async status(projectId) {
-      const state = processes.get(projectId);
-      const config = await readConfig(projectId).catch(() => undefined);
-      return state?.nginx?.running && config
-        ? { status: "running", url: `http://127.0.0.1:${config.httpPort}` }
-        : { status: "stopped" };
-    },
-    async logs(projectId) { return [...(processes.get(projectId)?.logs ?? [])]; },
-    async destroy(projectId) {
-      const config = await readConfig(projectId).catch(() => undefined);
-      await driver.stop(projectId);
-      if (config) {
-        await rm(socketDirectory(config), { recursive: true, force: true });
-      }
-      await rm(projectDirectory(projectId), { recursive: true, force: true });
-    },
-    async close() {
-      await Promise.all([...processes.keys()].map((projectId) => driver.stop(projectId)));
-    },
-  };
-  return driver;
+            ]);
+            yield* Effect.catch(Effect.gen(function* () {
+                (yield* integration(() => readFile(join(siteDirectory(project.id), "wp-includes", "version.php"))));
+            }), Effect.fn("WordPress.recover")(function* (error) {
+                if (!isMissingFileError(error))
+                    return (yield* Effect.fail(error));
+                const release = WORDPRESS_RELEASE;
+                const archive = join(runtimeDirectory(project.id), `wordpress-${release}.tar.gz`);
+                const archiveBody = yield* downloadArchive(release);
+                // Nothing is written or unpacked until the bytes are the ones this
+                // package was released with.
+                const digest = Buffer.from((yield* integration(() => crypto.subtle.digest("SHA-256", archiveBody)))).toString("hex");
+                if (digest !== WORDPRESS_ARCHIVE_SHA256) {
+                    return (yield* new IntegrationFailure(new Error(`The WordPress ${release} archive does not match the digest this recipe pins.`)));
+                }
+                (yield* integration(() => writeFile(archive, archiveBody, { mode: 0o600 })));
+                const archiveEntries = ((yield* run("tar", ["-tzf", archive]))).stdout
+                    .split("\n")
+                    .filter(Boolean);
+                if (archiveEntries.some((entry) => {
+                    const parts = entry.split("/");
+                    return parts[0] !== "wordpress" || parts.includes("..") || entry.startsWith("/");
+                })) {
+                    return (yield* new IntegrationFailure(new Error("WordPress release archive contains an unsafe path.")));
+                }
+                (yield* run("tar", ["-xzf", archive, "--strip-components=1", "-C", siteDirectory(project.id)]));
+                (yield* integration(() => rm(archive, { force: true })));
+            }));
+            yield* Effect.catch(Effect.gen(function* () {
+                (yield* integration(() => readFile(join(siteDirectory(project.id), "wp-config.php"))));
+            }), Effect.fn("WordPress.recover")(function* (error) {
+                if (!isMissingFileError(error))
+                    return (yield* Effect.fail(error));
+                (yield* integration(() => writeFile(join(siteDirectory(project.id), "wp-config.php"), wordpressConfig(config), { mode: 0o600 })));
+            }));
+            yield* integration(() => writeFile(join(projectDirectory(project.id), "project.json"), `${JSON.stringify({ ...project, recipe, runtime: { driver: driver.name, capabilities } }, null, 2)}\n`, { mode: 0o600 }));
+            // Last, once every file exists. Handing the tree over earlier would leave
+            // whatever `prepare` wrote afterwards — the generated wp-config.php among
+            // it — owned by the Platform and unreadable to the daemons.
+            yield* handOver(projectDirectory(project.id));
+        }),
+        start: Effect.fn("WordPress.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
+            const owner = yield* account();
+            const config = yield* readConfig(project.id);
+            const state = processes.get(project.id) ?? { logs: [] };
+            processes.set(project.id, state);
+            return yield* Effect.uninterruptibleMask(restore => Effect.gen(function* () {
+                if (!config.databaseInitialized) {
+                    const installAs = owner;
+                    yield* run(config.mariadbInstallDb, [
+                        `--datadir=${databaseDirectory(project.id)}`,
+                        "--auth-root-authentication-method=normal",
+                        "--skip-test-db",
+                        ...(installAs ? [`--user=${installAs.name}`] : []),
+                    ]);
+                }
+                if (!state.database?.running) {
+                    state.database = (yield* integration(() => agent.start({
+                        workloadId: project.id,
+                        ...(placement ? { placement } : {}),
+                        executable: config.mariadbd,
+                        args: [
+                            `--datadir=${databaseDirectory(project.id)}`,
+                            `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
+                            `--port=${config.databasePort}`,
+                            "--bind-address=127.0.0.1",
+                            `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
+                            `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
+                            // MariaDB refuses to run as root without this, and there is
+                            // nothing sensible for it to guess.
+                            ...(owner ? [`--user=${owner!.name}`] : []),
+                        ],
+                        cwd: runtimeDirectory(project.id),
+                        env: nativeProcessEnvironment(),
+                    }, { onOutput: capture(project.id, "mariadb") })));
+                }
+                yield* restore(waitForPort(config.databasePort, startupTimeoutMs, () => state.database?.running !== false));
+                if (!config.databaseInitialized) {
+                    const socket = join(socketDirectory(config), "mariadb.sock");
+                    const sql = [
+                        `CREATE DATABASE IF NOT EXISTS ${sqlIdentifier(config.databaseName)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+                        `CREATE USER IF NOT EXISTS ${sqlString(config.databaseUser)}@'127.0.0.1' IDENTIFIED BY ${sqlString(config.databasePassword)}`,
+                        `GRANT ALL PRIVILEGES ON ${sqlIdentifier(config.databaseName)}.* TO ${sqlString(config.databaseUser)}@'127.0.0.1'`,
+                        "FLUSH PRIVILEGES",
+                    ].join("; ");
+                    yield* run(config.mariadbClient, ["--protocol=socket", `--socket=${socket}`, "-u", "root", "-e", sql]);
+                    config.databaseInitialized = true;
+                    yield* integration(() => writeFile(configPath(project.id), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 }));
+                }
+                const phpSocket = join(socketDirectory(config), "php-fpm.sock");
+                if (!state.phpFpm?.running) {
+                    // Only a stale socket from a dead PHP-FPM is cleared. Removing the
+                    // live one of a PHP-FPM that keeps running leaves it listening on a
+                    // path nothing can reach, and nginx answers every request with 502.
+                    yield* integration(() => rm(phpSocket, { force: true }));
+                    state.phpFpm = (yield* integration(() => agent.start({
+                        workloadId: project.id,
+                        ...(placement ? { placement } : {}),
+                        executable: config.phpFpm,
+                        args: ["-F", "-y", join(runtimeDirectory(project.id), "php-fpm.conf")],
+                        cwd: siteDirectory(project.id),
+                        env: nativeProcessEnvironment(),
+                    }, { onOutput: capture(project.id, "php-fpm") })));
+                }
+                yield* restore(waitForPath(phpSocket, startupTimeoutMs, () => state.phpFpm?.running !== false));
+                if (!state.nginx?.running) {
+                    state.nginx = (yield* integration(() => agent.start({
+                        workloadId: project.id,
+                        ...(placement ? { placement } : {}),
+                        executable: config.nginx,
+                        args: [
+                            "-c",
+                            join(runtimeDirectory(project.id), "nginx.conf"),
+                            "-p",
+                            runtimeDirectory(project.id),
+                            "-g",
+                            "daemon off;",
+                        ],
+                        cwd: runtimeDirectory(project.id),
+                        env: nativeProcessEnvironment(),
+                    }, { onOutput: capture(project.id, "nginx") })));
+                }
+                yield* restore(waitForPort(config.httpPort, startupTimeoutMs, () => state.nginx?.running !== false));
+                return { status: "running" as const, url: `http://127.0.0.1:${config.httpPort}`, startedAt: new Date().toISOString() };
+            })).pipe(Effect.onError(() => driver.stop(project.id).pipe(Effect.orDie)));
+        }),
+        stop: Effect.fn("WordPress.stop")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["stop"]>>[0]) {
+            const state = processes.get(projectId);
+            // In dependency order: nginx stops serving before php-fpm goes away, and
+            // php-fpm releases its connections before the database does.
+            for (const process of [state?.nginx, state?.phpFpm, state?.database]) {
+                if (process) yield* integration(() => process.stop()).pipe(Effect.uninterruptible);
+            }
+            processes.delete(projectId);
+            return { status: "stopped", stoppedAt: new Date().toISOString() };
+        }),
+        status: Effect.fn("WordPress.status")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["status"]>>[0]) {
+            const state = processes.get(projectId);
+            const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(undefined)));
+            return state?.nginx?.running && state.phpFpm?.running && state.database?.running && config
+                ? { status: "running", url: `http://127.0.0.1:${config.httpPort}` }
+                : { status: "stopped" };
+        }),
+        logs: Effect.fn("WordPress.logs")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["logs"]>>[0]) { return [...(processes.get(projectId)?.logs ?? [])]; }),
+        destroy: Effect.fn("WordPress.destroy")(function* (projectId: Parameters<NonNullable<ZelavisProjectRuntimeDriver["destroy"]>>[0]) {
+            const config = yield* readConfig(projectId).pipe(Effect.catchIf(error => (unwrapFailure(error) as NodeJS.ErrnoException)?.code === "ENOENT", () => Effect.succeed(undefined)));
+            yield* driver.stop(projectId);
+            if (config) {
+                yield* integration(() => rm(socketDirectory(config), { recursive: true, force: true }));
+            }
+            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true }));
+        }),
+        close: Effect.fn("WordPress.close")(function* () {
+            yield* Effect.forEach([...processes.keys()], projectId => driver.stop(projectId), { concurrency: 8, discard: true });
+        }),
+    };
+    return defineEffectProjectRuntime(driver);
 }
-
 /** The runtime the Platform loads from the frozen copy of this package. */
 export function createProjectRuntime(context: ZelavisRecipeRuntimeContext): ZelavisProjectRuntimeDriver {
-  const options = context.options as { startupTimeoutMs?: number; user?: string };
-  return createNativeWordPressProjectRuntime({
-    directory: context.directory,
-    agent: context.agent,
-    ...(typeof options.startupTimeoutMs === "number" ? { startupTimeoutMs: options.startupTimeoutMs } : {}),
-    ...(typeof options.user === "string" ? { user: options.user } : {}),
-  });
+    const options = context.options as {
+        startupTimeoutMs?: number;
+        user?: string;
+    };
+    return createNativeWordPressProjectRuntime({
+        directory: context.directory,
+        agent: context.agent,
+        ...(typeof options.startupTimeoutMs === "number" ? { startupTimeoutMs: options.startupTimeoutMs } : {}),
+        ...(typeof options.user === "string" ? { user: options.user } : {}),
+    });
 }

@@ -68,3 +68,19 @@ The project model should leave room for:
 - future distributed and multi-master operation without baking in single-node assumptions
 
 Current UI and runtime behavior should document what exists today while keeping those boundaries explicit.
+
+## Site previews
+
+Local top-level Projects receive a separate HTTP preview port managed by
+Zelavis Edge. Dashboard Site and managed Admin links use the dashboard's browser
+hostname and that port; the Agent-reported `runtime.url` remains a private
+routing target. Project reads through HTTP, SDK and CLI expose `preview` status
+and port. The port persists across restarts, closes on stop, and its intent is
+removed during Project deletion. A saved port occupied by another application
+reports an unavailable preview while preserving the running Project.
+
+Previews use the Platform's listening interface and plain HTTP. They preserve
+site cookies and redirects, strip Platform credentials, and do not expose the
+Project control plane. Remote placements require separate ingress and receive
+no local preview listener. Configuring a hostname and HTTPS is a separate Edge
+operation.

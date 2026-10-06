@@ -167,7 +167,7 @@ function AllowlistStatus({
     >
       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
         <ShieldCheck className="size-4" />
-        {allowlist.gated ? "Installs are limited to the signed allow-list" : "Allow-list gate is off"}
+        {allowlist.gated ? "Installs are limited to the allow-list" : "Allow-list gate is off"}
       </span>
       {list ? (
         <>
@@ -266,6 +266,15 @@ export function MarketplaceWorkspace({
       // A recipe that is not installed yet is installed first, so the one click
       // is the whole job.
       if (service.status === "available") await installService(controlRuntime!, service);
+      if (service.project?.hostPackages?.length) {
+        // Host changes need an explicit approval in the ordinary creation form.
+        const query = new URLSearchParams({ new: "1", recipe: service.name, name });
+        setCreating(undefined);
+        setProjectName("");
+        revalidator.revalidate();
+        navigate(`/zelavis?${query}`);
+        return;
+      }
       const project = await createProject(controlRuntime!, {
         name,
         recipeName: service.name,

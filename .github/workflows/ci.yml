@@ -1,5 +1,9 @@
 name: CI
 
+# Zero paid GitHub usage: standard Ubuntu runners in this public repository,
+# no Actions artifacts, and no dependency caches. See AGENTS.md and
+# .agents/references/github-zero-spend.md before changing that policy.
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
@@ -39,7 +43,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -71,7 +75,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -137,31 +141,33 @@ jobs:
         run: pnpm ci:ui
 
   wordpress-provisioning:
-    name: WordPress provisioning (${{ matrix.identity }})
+    name: WordPress provisioning
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      # Both identities, because both are real deployments and each broke in a
-      # way the other did not. As an operator's own account the daemons run as
-      # the Platform does; as root they have to drop to an unprivileged one,
-      # which took MariaDB's `--user`, traversable ancestors, and a socket the
-      # dropped-to account owns. Testing one would have left the other broken —
-      # which is exactly how root stayed broken until it was tried.
-      matrix:
-        identity: [user, root]
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # Driven through Docker rather than a `container:` job. The check needs a
-      # host with nginx, PHP and MariaDB absent — which the runner image is not
-      # — and the unprivileged case needs sudo installed and a user created as
-      # root first. A `container:` job runs every step as one user.
-      - name: Install WordPress from nothing
-        env:
-          ZELAVIS_PROVISIONING_IDENTITY: ${{ matrix.identity }}
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages for packaged installation
+        run: pnpm build
+
+      # The packaged system installation uses a root host Agent and an
+      # unprivileged zelavis service account. The harness checks both paths in
+      # one disposable Debian/systemd container; no host services are changed.
+      - name: Qualify packaged WordPress installation
         run: zelavis-services/wordpress/scripts/wordpress-provisioning-container.sh
 
   security:
@@ -179,7 +185,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

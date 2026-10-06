@@ -1,0 +1,11 @@
+[Unit]
+Description=Zelavis update requests
+
+[Path]
+# The Platform runs unprivileged and only drops this file; the unit it starts
+# runs as root and never trusts what the file says.
+PathExists=/var/lib/zelavis/update/request.json
+Unit=zelavis-update.service
+
+[Install]
+WantedBy=multi-user.target

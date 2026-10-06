@@ -1,3 +1,4 @@
+import { parseJson, objectFields, isString } from "../core/json-validation.js";
 import { Effect } from "effect";
 import type { DomainEvent, DomainEventsApi, DomainEventType } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
@@ -93,7 +94,7 @@ export const projectionsFor = (
       const object = yield* store.read(seq);
       return object === undefined
         ? undefined
-        : (JSON.parse(dec.decode(object.bytes)) as { cursor: EventCursor }).cursor;
+        : parseJson(dec.decode(object.bytes), objectFields<{ cursor: string }>({ cursor: isString })).cursor as EventCursor;
     }).pipe(Effect.orDie);
 
   const writeCheckpoint = (name: string, cursor: EventCursor) =>

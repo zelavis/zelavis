@@ -1,0 +1,29 @@
+[Unit]
+Description=Zelavis host operation Agent
+Documentation=https://zelavis.com/docs
+After=network-online.target
+Before=zelavis.service
+
+[Service]
+Type=simple
+User=root
+Group=zelavis
+WorkingDirectory=/opt/zelavis/host-agent
+Environment=ZELAVIS_HOST_PACKAGES_DIR=/opt/zelavis/host-packages
+Delegate=yes
+ExecStart=/opt/zelavis/current/bin/zelavis agent \
+  --data-dir /opt/zelavis/host-agent \
+  --operations-only --endpoint-group-access \
+  --operations-root /opt/zelavis/current/operations \
+  --platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json \
+  --require-root-owned-operations --operation-cgroup delegated \
+  --operation-pids-max 512 --operation-memory-max 1073741824
+KillMode=control-group
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

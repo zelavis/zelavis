@@ -2,11 +2,7 @@
 * @ivanjeremic
 
 # Core platform packages
-/packages/server/ @ivanjeremic
-/packages/database/ @ivanjeremic
-/packages/auth/ @ivanjeremic
 /packages/zelavis/ @ivanjeremic
-/packages/ui/ @ivanjeremic
 
 # Official plugin surface
 /zelavis-services/ @ivanjeremic
@@ -21,7 +17,6 @@
 /CONTRIBUTING.md @ivanjeremic
 /SECURITY.md @ivanjeremic
 /CODE_OF_CONDUCT.md @ivanjeremic
-/MAINTAINERS.md @ivanjeremic
 /package.json @ivanjeremic
 /pnpm-lock.yaml @ivanjeremic
 /pnpm-workspace.yaml @ivanjeremic

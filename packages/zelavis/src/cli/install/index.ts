@@ -1,19 +1,24 @@
-import { assertInstallationInstance, assertInstallationPort } from "../../core/runtime/installation-instance.js";
+import { Effect, Scope } from "effect";
+import { integration, IntegrationFailure, present, type TaggedFailure } from "../../core/runtime/effect-boundary.js";
+import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "../../core/runtime/installation-instance.js";
 import { acquireNodeInstallerLock } from "../../adapters/_local-ownership.js";
-import { preflightZelavisInstall } from "../../core/runtime/installation-health.js";
+import { preflightZelavisInstallProgram } from "../../core/runtime/installation-health.js";
 import { createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths, assertNodeInstallationPrivilege } from "../../adapters/_install-host.js";
-import { acquirePackageRelease, EXACT_INSTALL_VERSION } from "../../adapters/_package-release.js";
-import { executeZelavisInstallationPlan, planZelavisReleaseInstall, validateInstallationPaths, readNativeInstallationReceipt, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
+import { networkInterfaces } from "node:os";
+import { assembleNpmReleaseTreeProgram } from "../../adapters/_release-tree.js";
+import { executeZelavisInstallationPlanProgram, planZelavisReleaseInstallProgram, validateInstallationPaths, readNativeInstallationReceiptProgram, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
 
 /** Host-local acquisition and execution of the shared installation plan. */
-export async function runReleaseInstall(args: readonly string[]): Promise<void> {
+const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(function* (args: readonly string[]): Effect.fn.Return<void, TaggedFailure, Scope.Scope> {
   let invokingPath: string | undefined, invokingHome: string | undefined;
   let instance = "default", port: number | undefined;
-  let source: string | undefined, from: string | undefined, version: string | undefined;
-  let dryRun = false, json = false, publicBind = false, allowDowngrade = false, user = false;
-  let sourceKind: "release" | "package" = "release";
+  let source: string | undefined, npmPrepared: string | undefined;
+  let dryRun = false, json = false, allowDowngrade = false, user = false, live = false, stageOnly = false;
+  // The management listener is private unless the operator explicitly exposes it.
+  let publicBind: boolean | undefined;
   let installedBy: ZelavisNativeInstallationReceipt["installedBy"] = "cli";
-  let force = process.env.ZELAVIS_FORCE_BIN === "1", enableAgent = process.env.ZELAVIS_ENABLE_AGENT === "1";
+  const forceEnvironment = process.env.ZELAVIS_FORCE_BIN === "1";
+  let force = forceEnvironment;
   const value = (i: number, flag: string) => {
     const result = args[i];
     if (!result || result.startsWith("--")) throw new Error(`${flag} requires a value.`);
@@ -26,77 +31,104 @@ export async function runReleaseInstall(args: readonly string[]): Promise<void> 
     else if (arg === "--from-release") source = value(++i, arg);
     else if (arg === "--invoking-home") invokingHome = value(++i, arg);
     else if (arg === "--invoking-path") invokingPath = value(++i, arg);
-    else if (arg === "--from") from = value(++i, arg);
-    else if (arg === "--source") {
-      const sourceValue = value(++i, arg);
-      if (sourceValue !== "package" && sourceValue !== "release") throw new Error("Invalid install source.");
-      sourceKind = sourceValue;
-    }
+    else if (arg === "--from-npm") npmPrepared = value(++i, arg);
     else if (arg === "--installed-by") {
       const origin = value(++i, arg);
-      if (!["cli", "archive", "deb", "create"].includes(origin)) throw new Error("Invalid installation entry point.");
+      if (!["cli", "script", "deb", "create"].includes(origin)) return yield* new IntegrationFailure(new Error("Invalid installation entry point."));
       installedBy = origin as typeof installedBy;
     }
-    else if (arg === "--version") version = value(++i, arg);
     else if (arg === "--user") user = true;
     else if (arg === "--dry-run") dryRun = true;
     else if (arg === "--json") json = true;
     else if (arg === "--force") force = true;
     else if (arg === "--public") publicBind = true;
-    else if (arg === "--enable-agent") enableAgent = true;
+    else if (arg === "--live") live = true;
+    else if (arg === "--stage-only") stageOnly = true;
     else if (arg === "--allow-downgrade") allowDowngrade = true;
-    else throw new Error(`Unknown install option: ${arg}`);
+    else return yield* new IntegrationFailure(new Error(`Unknown install option: ${arg}`));
   }
-  if (from !== undefined && from !== "package") throw new Error("--from supports package; staged trees use --from-release <absolute path>.");
-  if (source && from || version && !from) throw new Error("Choose either --from-release <path> or --from package --version <exact version>.");
-  if (from && (!version || !EXACT_INSTALL_VERSION.test(version))) throw new Error("Package installation requires --version <exact version>; tags and ranges are refused.");
-  if (!source && !from) throw new Error("zelavis install requires --from-release <absolute staged-release path> or --from package --version <exact version>.");
-  if (user && enableAgent) throw new Error("User installations do not support the Agent.");
+  if (source && npmPrepared) return yield* new IntegrationFailure(new Error("Choose either --from-release <path> or --from-npm <path>."));
+  if (stageOnly && !npmPrepared) return yield* new IntegrationFailure(new Error("--stage-only prepares a release from --from-npm; there is nothing to prepare from a staged tree."));
+  if (stageOnly && live) return yield* new IntegrationFailure(new Error("Choose either --stage-only or --live."));
+  if (!source && !npmPrepared) return yield* new IntegrationFailure(new Error("zelavis install requires --from-release <absolute staged-release path> or --from-npm <absolute prepared path>."));
   assertInstallationInstance(instance);
   if (port !== undefined) assertInstallationPort(port);
-  if (user && instance !== "default") throw new Error("Named instances require system mode.");
+  if (user && instance !== "default") return yield* new IntegrationFailure(new Error("Named instances require system mode."));
   const host = createNodeInstallHost({ invokingPath });
   const paths = user ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, instance);
   validateInstallationPaths(paths);
-  const system = !user && process.getuid?.() === 0 && !!await host.which("systemctl");
+  const system = !user && process.getuid?.() === 0 && !!(yield* integration(() => host.which("systemctl")));
+  // Production ingress belongs to Traefik; the internal listener stays on loopback.
+  const bindPublic = publicBind ?? false;
   if (!user && paths.prefix === "/opt/zelavis") {
-    if (process.platform !== "linux") throw new Error("System installation requires Linux with systemd; use --user on this host.");
-    if (!dryRun && process.getuid?.() !== 0) throw new Error("System installation must run as root. Use create-zelavis for safe elevation, or --user.");
-    if (!dryRun && !system) throw new Error("System installation requires systemd.");
+    if (process.platform !== "linux") return yield* new IntegrationFailure(new Error("System installation requires Linux with systemd; use --user on this host."));
+    if (!dryRun && process.getuid?.() !== 0) return yield* new IntegrationFailure(new Error("System installation must run as root. Use create-zelavis for safe elevation, or --user."));
+    if (!dryRun && !system) return yield* new IntegrationFailure(new Error("System installation requires systemd."));
   }
-  if (system && !dryRun) await assertNodeInstallationPrivilege(paths);
-  const probeSystem = !user && process.platform === "linux" && !!await host.which("systemctl");
+  if (system && !dryRun) (yield* integration(() => assertNodeInstallationPrivilege(paths)));
+  const probeSystem = !user && process.platform === "linux" && !!(yield* integration(() => host.which("systemctl")));
   const invokingUserPrefix = invokingHome ? nodeUserInstallationPaths(invokingHome).prefix : undefined;
   if (invokingUserPrefix) validateInstallationPaths(nodeUserInstallationPaths(invokingHome));
   const otherPrefixes = paths.prefix === "/opt/zelavis" || user ? [nodeInstallationPaths().prefix, nodeUserInstallationPaths().prefix, ...invokingUserPrefix ? [invokingUserPrefix] : []] : [];
-  // A package dry-run describes acquisition without downloads or temporary state.
-  if (from && dryRun) {
-    await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port });
-    const overview = { operation: "install", source: "package", version, mode: user ? "user" : "system", paths, steps: ["Verify exact npm version metadata", "Download and verify matching prebuilt release SHA-256", "Plan release installation; detailed steps require the verified tree"], public: publicBind };
-    console.log(json ? JSON.stringify(overview, null, 2) : `${JSON.stringify(overview, null, 2)}\nNo changes were made.`);
-    return;
-  }
-  const lock = dryRun ? undefined : await acquireNodeInstallerLock(paths.prefix);
-  let acquired: Awaited<ReturnType<typeof acquirePackageRelease>> | undefined;
-  try {
-    const { stopPlatform } = await preflightZelavisInstall({ host, paths, system: probeSystem, user, force, otherPrefixes, port });
-    acquired = from ? await acquirePackageRelease(version!) : undefined;
-    port ??= (await readNativeInstallationReceipt(host, paths.prefix, instance))?.port ?? 3000;
-    const plan = await planZelavisReleaseInstall({ host, source: acquired?.source ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: publicBind, allowDowngrade, enableAgent, stopPlatform, sourceKind: from ? "package" : sourceKind, installedBy });
+  if (!dryRun) yield* Effect.acquireRelease(integration(() => acquireNodeInstallerLock(paths.prefix)), lock => integration(() => lock.release()).pipe(Effect.orDie));
+  {
+    // Preparing a release changes nothing about the running installation, so it checks nothing
+    // about it: the Platform is expected to be running and to hold its data and port.
+    if (stageOnly) {
+      const prepared = (yield* assembleNpmReleaseTreeProgram(npmPrepared!));
+      const release = `${paths.prefix}/releases/${prepared.version}`;
+      if (!(yield* integration(() => host.exists(release)))) {
+        (yield* integration(() => host.execute({ kind: "mkdir", path: `${paths.prefix}/releases`, mode: user ? 0o700 : 0o755 })));
+        (yield* integration(() => host.execute({ kind: "copy", source: npmPrepared!, path: release })));
+      }
+      if (system) yield* integration(() => host.execute({ kind: "command", command: "chown", args: ["-R", "root:root", release] }));
+      console.log(json ? JSON.stringify({ prepared: prepared.version, release }) : `Prepared Zelavis ${prepared.version} at ${release}. Nothing was switched or restarted.`);
+      return;
+    }
+    if (live && !user && !system) return yield* new IntegrationFailure(new Error("--live swaps a running installation; there is nothing to swap here."));
+    const { stopPlatform } = (yield* preflightZelavisInstallProgram({ host, paths, system: probeSystem, user, force, otherPrefixes, port, live }));
+    // The bootstrap fetched the private Node and the package; this completes the tree.
+    if (npmPrepared) (yield* assembleNpmReleaseTreeProgram(npmPrepared));
+    port ??= ((yield* readNativeInstallationReceiptProgram(host, paths.prefix, instance)))?.port ?? 3000;
+    // An update keeps the bind the installation already has: moving it would restart the held socket.
+    const keptHost = live ? (JSON.parse((yield* integration(() => host.read(installationInstanceScope(paths.prefix, instance).runtime))) ?? "{}") as { host?: unknown }).host : undefined;
+    const plan = (yield* planZelavisReleaseInstallProgram({ host, source: npmPrepared ?? source!, paths, system: dryRun ? probeSystem : system, user, force, port, public: keptHost === undefined ? bindPublic : keptHost === "0.0.0.0", live, allowDowngrade, stopPlatform, sourceKind: npmPrepared ? "package" : (yield* releaseSourceKindProgram(host, paths, instance, source!)), installedBy }));
     if (dryRun) {
       console.log(json ? JSON.stringify(plan, null, 2) : ["Zelavis install plan", ...plan.steps.map((step) => `  ${step.id}: ${step.description} (idempotent: ${step.idempotent})`), ...plan.warnings, "No changes were made."].join("\n"));
       return;
     }
     for (const warning of plan.warnings) console.error(warning);
-    const output = await executeZelavisInstallationPlan(host, plan);
+    const output = (yield* executeZelavisInstallationPlanProgram(host, plan));
     if (json) console.log(JSON.stringify({ installed: true, plan, output }, null, 2));
     else {
-      console.log(`Zelavis instance ${instance} installed.\nDashboard: http://127.0.0.1:${port}/zelavis`);
-      if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${publicBind ? " --host 0.0.0.0" : ""}`);
-      if (system && !publicBind) console.log(`From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
+      const productionIngress = system && instance === "default";
+      const address = productionIngress || (system && bindPublic) ? serverAddress() : "127.0.0.1";
+      console.log(`Zelavis instance ${instance} installed.\nOpen the dashboard: http://${address}${productionIngress ? "" : `:${port}`}/zelavis/`);
+      if (user) console.log(`Add ${paths.commandPath.slice(0, paths.commandPath.lastIndexOf("/"))} to PATH, then run: zelavis serve${bindPublic ? " --host 0.0.0.0" : ""}`);
+      if (productionIngress) console.log(`Traefik serves production ingress on ports 80 and 443. Claim the owner account now and add a hostname with HTTPS in the setup wizard. The management listener uses port ${port}.`);
+      if (system && !productionIngress && !bindPublic) console.log(`This instance listens on 127.0.0.1 only. From your local machine: ssh -N -L ${port}:127.0.0.1:${port} <user>@<server>`);
       for (const line of output) console.log(line);
     }
-  } finally {
-    try { await acquired?.cleanup(); } finally { await lock?.release(); }
   }
+});
+export function runReleaseInstall(args: readonly string[]): Promise<void> { return present(Effect.scoped(runReleaseInstallProgram(args))); }
+
+/** The server's first routable IPv4 address, for the URL to open; a placeholder when there is none. */
+function serverAddress(): string {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const entry of addresses ?? []) {
+      if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) return entry.address;
+    }
+  }
+  return "<server-ip>";
 }
+
+/**
+ * Where an installation came from. A release tree that is already one of this installation's
+ * own (a rollback selects the previous one again) is the same installation, so it keeps its
+ * receipt's source instead of becoming a "release" install.
+ */
+const releaseSourceKindProgram = Effect.fn("InstallationCLI.releaseSourceKind")(function* (host: Parameters<typeof readNativeInstallationReceiptProgram>[0], paths: { prefix: string }, instance: string, source: string): Effect.fn.Return<"release" | "package", TaggedFailure> {
+  if (!source.startsWith(`${paths.prefix}/releases/`)) return "release";
+  return ((yield* readNativeInstallationReceiptProgram(host, paths.prefix, instance)))?.source ?? "release";
+});

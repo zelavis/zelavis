@@ -63,3 +63,9 @@ Thumbs.db
 # Confidential design notes and implementation roadmap; separate private repository.
 /pnotes/
 /marketplace/
+
+# Optional upstream source checkouts for maintainers and coding agents.
+/repos/
+
+# Local experiments; no generated cross-language SDKs are published.
+/scripts/sdk-codegen/generated/

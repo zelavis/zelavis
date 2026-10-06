@@ -10,7 +10,7 @@ export * from "./remote-placement.js";
 
 /**
  * Platform authority keys an Agent accepts envelopes from. Same structure and
- * rules as the release trust store; a different file with different owners.
+ * rules as any trust store; it holds only Platform public keys.
  */
 export type ZelavisAgentAuthorityTrustStore = ZelavisHostOperationTrustStore;
 

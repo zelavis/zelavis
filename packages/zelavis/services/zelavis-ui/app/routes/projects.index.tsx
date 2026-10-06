@@ -1,1 +1,1 @@
-export { default, handle } from "./projects";
+export { default, handle, clientLoader } from "./projects";

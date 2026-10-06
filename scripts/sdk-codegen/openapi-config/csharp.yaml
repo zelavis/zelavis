@@ -1,0 +1,9 @@
+# OpenAPI Generator config for Zelavis C# SDK
+generatorName: csharp
+
+additionalProperties:
+  packageName: Zelavis.Sdk
+  packageVersion: 0.1.0
+  targetFramework: net8.0
+  library: httpclient
+  nullableReferenceTypes: true

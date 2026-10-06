@@ -1,3 +1,4 @@
+import { parseJson, objectFields, isString, isSafeInteger, isNonNegativeInteger, optional } from "../core/json-validation.js";
 import { Effect, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, ForeignCursor, LogCompacted, StoreError, WriterFenced,
@@ -32,8 +33,10 @@ const decoder = new TextDecoder();
 const u32 = (value: number): Uint8Array =>
   Uint8Array.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
 
-const readU32 = (bytes: Uint8Array, at = 0): number =>
-  ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
+const readU32 = (bytes: Uint8Array, at = 0): number => {
+  if (!Number.isSafeInteger(at) || at < 0 || at + 4 > bytes.length) throw new Error("Truncated u32 record");
+  return ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
+};
 
 const f64 = (value: number): Uint8Array => {
   const out = new Uint8Array(8);
@@ -53,7 +56,8 @@ const encodePayload = (version: number, body: Uint8Array): Uint8Array => {
 };
 
 const json = (value: unknown): Uint8Array => encoder.encode(JSON.stringify(value));
-const unjson = <A>(bytes: Uint8Array): A => JSON.parse(decoder.decode(bytes)) as A;
+const unjson = <A>(bytes: Uint8Array, check: (value: unknown) => value is A): A =>
+  parseJson(decoder.decode(bytes), check, "object-store record");
 const EMPTY = new Uint8Array(0);
 const emptyManifest = (): IndexManifest => ({ terms: [], columns: [], measures: [], edges: [] });
 
@@ -192,6 +196,24 @@ interface StoredEvent {
   readonly manifest?: IndexManifest;
   readonly identity?: ObjectIdentity;
 }
+
+const identityRecord = objectFields<ObjectIdentity>({ namespace: isString, key: isString });
+const pairs = (value: unknown, check: (value: unknown) => boolean): boolean =>
+  Array.isArray(value) && value.every(pair => Array.isArray(pair) && pair.length === 2 && isString(pair[0]) && check(pair[1]));
+const manifestRecord = objectFields<IndexManifest>({
+  terms: (value): value is IndexManifest["terms"] => pairs(value, isString),
+  columns: (value): value is IndexManifest["columns"] => pairs(value, value => value === null || typeof value === "boolean" || typeof value === "string" || typeof value === "number" && Number.isFinite(value)),
+  measures: (value): value is IndexManifest["measures"] => pairs(value, value => typeof value === "number" && Number.isFinite(value)),
+  edges: (value): value is IndexManifest["edges"] => pairs(value, value => isNonNegativeInteger(value) && value <= 0xffffffff),
+});
+const snapshotRecord = objectFields<StoredSnapshot>({ version: isNonNegativeInteger, body: isString,
+  manifest: manifestRecord, identity: optional(identityRecord) });
+const eventFields = objectFields<StoredEvent>({ generation: isNonNegativeInteger, seq: isNonNegativeInteger,
+  kind: (value): value is StoredEvent["kind"] => value === "put" || value === "retract",
+  version: isNonNegativeInteger, at: isSafeInteger, body: optional(isString),
+  manifest: optional(manifestRecord), identity: optional(identityRecord) });
+const eventRecord = (value: unknown): value is StoredEvent => eventFields(value) &&
+  (value.kind === "retract" || typeof value.body === "string" && manifestRecord(value.manifest));
 
 const SEPARATOR = "|";
 
@@ -402,7 +424,7 @@ export const storeOverKv = (
     Effect.gen(function* () {
       const stored = yield* view.get(manifestKey(seq));
       if (stored === undefined) return;
-      const manifest = unjson<IndexManifest>(stored);
+      const manifest = unjson(stored, manifestRecord);
       for (const [field, term] of manifest.terms) {
         dropPosting(view, termKey(field, term, seq), sealed);
       }
@@ -418,7 +440,7 @@ export const storeOverKv = (
 
       const identity = yield* view.get(identityBySeqKey(seq));
       if (identity !== undefined) {
-        const decoded = unjson<ObjectIdentity>(identity);
+        const decoded = unjson(identity, identityRecord);
         view.del(identityKey(decoded.namespace, decoded.key));
         view.del(identityBySeqKey(seq));
       }
@@ -496,7 +518,7 @@ export const storeOverKv = (
             const identityBytes = yield* view.get(identityBySeqKey(seq));
             const identity = identityBytes === undefined
               ? undefined
-              : unjson<ObjectIdentity>(identityBytes);
+              : unjson(identityBytes, identityRecord);
             append({
               generation, seq, kind: "retract", version: version + 1, at: Date.now(),
               ...(identity === undefined ? {} : { identity }),
@@ -918,7 +940,7 @@ export const storeOverKv = (
             Effect.sync(() => {
               if (out.length >= limit) return;
               const position = positionOf(entry.key);
-              if (position > after) out.push(toEvent(position, unjson<StoredEvent>(entry.value)));
+              if (position > after) out.push(toEvent(position, unjson(entry.value, eventRecord)));
             }));
           return out;
       }).pipe(
@@ -995,7 +1017,7 @@ export const storeOverKv = (
     const identities: Array<{ seq: Seq; identity: ObjectIdentity }> = [];
     yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.IdentityBySeq])), (entry) =>
       Effect.sync(() => {
-        identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value) });
+        identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value, identityRecord) });
       }));
     const out = [];
     for (const { seq, identity } of identities) {
@@ -1006,7 +1028,7 @@ export const storeOverKv = (
         seq,
         version: readU32(payload),
         bytes: payload.subarray(4),
-        manifest: manifest === undefined ? emptyManifest() : unjson<IndexManifest>(manifest),
+        manifest: manifest === undefined ? emptyManifest() : unjson(manifest, manifestRecord),
         identity,
       });
     }
@@ -1015,7 +1037,7 @@ export const storeOverKv = (
 
   const manifestOf = (seq: Seq) =>
     Effect.map(engine.get(manifestKey(seq)), (stored) =>
-      stored === undefined ? emptyManifest() : unjson<IndexManifest>(stored));
+      stored === undefined ? emptyManifest() : unjson(stored, manifestRecord));
 
   const reindexLenses = exclusive(Effect.gen(function* () {
     const pending = new Map<string, KvWrite>();
@@ -1031,7 +1053,7 @@ export const storeOverKv = (
     const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
     yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
       Effect.sync(() => {
-        manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value) });
+        manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value, manifestRecord) });
       }));
     for (const { seq, manifest } of manifests) {
       for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
@@ -1069,7 +1091,7 @@ export const storeOverKv = (
           const position = positionOf(entry.key);
           // Everything up to the snapshot is already in it.
           if (position <= snapshotAt) return;
-          stored.push({ position, event: unjson<StoredEvent>(entry.value) });
+          stored.push({ position, event: unjson(entry.value, eventRecord) });
         }));
       stored.sort((a, b) => a.position - b.position);
 
@@ -1091,7 +1113,7 @@ export const storeOverKv = (
         const records: Array<{ seq: number; record: StoredSnapshot }> = [];
         yield* Stream.runForEach(engine.scan(snapshotPrefix()), (entry) =>
           Effect.sync(() => {
-            records.push({ seq: readU32(entry.key, 1), record: unjson<StoredSnapshot>(entry.value) });
+            records.push({ seq: readU32(entry.key, 1), record: unjson(entry.value, snapshotRecord) });
           }));
         for (const { seq, record } of records) {
           yield* project(view, asSeq(seq), record.version,
@@ -1392,7 +1414,7 @@ export const storeOverKv = (
 
     identityOf: (seq) =>
       Effect.map(engine.get(identityBySeqKey(seq)), (bytes) =>
-        bytes === undefined ? undefined : unjson<ObjectIdentity>(bytes)),
+        bytes === undefined ? undefined : unjson(bytes, identityRecord)),
 
     scanIdentities: (input) =>
       Effect.gen(function* () {

@@ -1,3 +1,5 @@
+import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 /**
  * Talking to the Platform from a service page.
  *
@@ -68,7 +70,7 @@ export function createServicePageFetch(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let nextId = 0;
 
-  return async function brokeredFetch(input, init) {
+  return function brokeredFetch(input, init) { return presentProtocol(Effect.gen(function* () {
     let rawPath =
       typeof input === "string"
         ? input
@@ -83,7 +85,8 @@ export function createServicePageFetch(
         const parsed = new URL(rawPath);
         rawPath = parsed.pathname + parsed.search;
       } catch {
-        // keep as is
+        // Do not issue a request based on an invalid absolute URL.
+        throw new TypeError("Invalid service page request URL");
       }
     }
     const path = rawPath;
@@ -96,7 +99,7 @@ export function createServicePageFetch(
           ? safeParse(init.body)
           : init.body;
 
-    const result = await new Promise<BrokerResponse>((resolve, reject) => {
+    const result = (yield* integrationValue(new Promise<BrokerResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         window.removeEventListener("message", onMessage);
         reject(new Error("The dashboard did not answer this request in time."));
@@ -127,20 +130,20 @@ export function createServicePageFetch(
         // window the message came from rather than by anything inside it.
         "*",
       );
-    });
+    })));
 
     if (typeof result.error === "string") {
       throw new Error(result.error);
     }
 
-    return new Response(
+    return (yield* integrationValue(new Response(
       result.body === undefined ? null : JSON.stringify(result.body),
       {
         status: typeof result.status === "number" ? result.status : 200,
         headers: { "content-type": "application/json" },
       },
-    );
-  };
+    )));
+  }).pipe(Effect.withSpan("createServicePageFetch/brokeredFetch"))); };
 }
 
 function safeParse(value: string): unknown {

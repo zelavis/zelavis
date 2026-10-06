@@ -1,4 +1,0 @@
-# Vendored reference source: not our code. GitHub leaves it out of language
-# statistics and collapses its diffs in pull requests.
-repos/** linguist-vendored
-repos/** linguist-generated=true

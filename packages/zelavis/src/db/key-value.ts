@@ -1,3 +1,4 @@
+import { parseJson, objectFields, literal, isString, optional } from "../core/json-validation.js";
 import { Clock, Effect, Result, Schema } from "effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import type {
@@ -212,7 +213,7 @@ const decodeCursor = (cursor: KvCursor): Effect.Effect<CursorPayload, KeyValueCu
     try: () => {
       const decoded = Base64Url.decodeString(cursor);
       if (Result.isFailure(decoded)) throw decoded.failure;
-      const value = JSON.parse(decoded.success) as Partial<CursorPayload>;
+      const value = parseJson(decoded.success, objectFields<CursorPayload>({ v: literal(1), namespace: isString, key: isString, prefix: optional(isString), lower: optional(isString), upper: optional(isString), direction: literal("asc", "desc") }));
       if (value.v !== 1 || typeof value.namespace !== "string" || typeof value.key !== "string"
         || (value.direction !== "asc" && value.direction !== "desc")) throw new Error("invalid cursor payload");
       return value as CursorPayload;

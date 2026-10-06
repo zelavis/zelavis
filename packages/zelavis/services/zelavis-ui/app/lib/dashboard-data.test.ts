@@ -385,7 +385,7 @@ describe("dashboard navigation ownership", () => {
       ["Overview", "Overview"],
       ["Domains", "Hosting"],
       ["Files", "Hosting"],
-      ["Database", "Hosting"],
+      ["App database", "Hosting"],
       ["Backups", "Operations"],
       ["Logs", "Operations"],
       ["Updates", "Operations"],
@@ -394,6 +394,32 @@ describe("dashboard navigation ownership", () => {
     expect(
       buildManagedProjectNavItems("app", {}).at(-1)?.title,
     ).toBe("App Admin");
+  });
+
+  it("renders and scopes live managed recipe menus beside hosting controls", () => {
+    const service = { name: "@acme/wordpress", scope: "system" as const, namespace: "wordpress", kind: "app" as const,
+      apiPath: "/proxy/zelavis/api/v1/wordpress", menus: [{ title: "Recipe v1", path: "/recipe", surface: "root" as const,
+        page: { id: "recipe", src: "/proxy/page.html" } }] };
+    const first = buildManagedProjectNavItems("wp", {}, [service]);
+    expect(first.at(-1)).toMatchObject({ title: "Recipe v1", url: "/projects/wp/recipe", page: { src: "/proxy/page.html" } });
+    const next = buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [{ ...service.menus[0], title: "Recipe v2" }] }]);
+    expect(next.some(item => item.title === "Recipe v1")).toBe(false);
+    expect(next.at(-1)?.title).toBe("Recipe v2");
+    expect(buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [] }])).toHaveLength(8);
+  });
+
+  it("reveals the existing native sections only for used managed app APIs", () => {
+    const available = { identity: { available: true, used: false }, database: { available: true, used: false },
+      storage: { available: true, used: false }, workloads: { available: true, used: false } };
+    const hidden = buildManagedProjectNavItems("wp", {}, [], available);
+    expect(hidden.some(item => item.title === "Backend" || item.title === "Users")).toBe(false);
+    const nav = buildManagedProjectNavItems("wp", {}, [], { ...available,
+      identity: { available: true, used: true }, database: { available: true, used: true } });
+    expect(nav.find(item => item.title === "Users")?.url).toBe("/projects/wp/users");
+    expect(nav.find(item => item.title === "Content")?.landingUrl).toBe("/projects/wp/content");
+    expect(nav.find(item => item.title === "Backend")?.items?.map(item => item.title)).toEqual(["Auth", "Database"]);
+    expect(nav.some(item => item.title === "Media")).toBe(false);
+    expect(nav.find(item => item.title === "App database")?.url).toBe("/projects/wp/app-database");
   });
 
   it("uses a management nav for the all-projects view", () => {
@@ -465,22 +491,7 @@ describe("dashboard navigation ownership", () => {
           pinnedIndex: Number.MAX_SAFE_INTEGER,
         },
       ],
-      [
-        {
-          name: "audit_log",
-          documentCount: 3,
-          tenantId: "default",
-          createdAt: "2026-06-02T00:00:00.000Z",
-          surface: "database" as const,
-        },
-        {
-          name: "fruits",
-          documentCount: 1,
-          tenantId: "default",
-          createdAt: "2026-06-03T00:00:00.000Z",
-          surface: "content-studio" as const,
-        },
-      ],
+      [],
       "project-a",
     );
 
@@ -731,4 +742,22 @@ describe("dashboard navigation ownership", () => {
       "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/settings.html",
     );
   });
+});
+
+it("lists native and managed backend tables with their Tenant and separate system views", () => {
+  const menus = [
+    { title: "tenant-a · invoices", path: "/database", search: { databaseTenant: "tenant-a", databaseTable: "invoices" } },
+    { title: "tenant-b · invoices", path: "/database", search: { databaseTenant: "tenant-b", databaseTable: "invoices" } },
+    { title: "System · Events", path: "/database", search: { databaseTenant: "tenant-a", databaseSystemView: "events" } },
+  ];
+  const capabilities = { database: { available: true, used: true } };
+  for (const nav of [buildPlatformNavItems([], [], [], menus, "app", capabilities),
+    buildManagedProjectNavItems("app", {}, [], capabilities, [], menus)]) {
+    const database = findNavItem(nav, "Database")!;
+    expect(findNavItem(database.items ?? [], "tenant-a · invoices")).toMatchObject({
+      url: "/projects/app/database", sectionLabel: "Tables", search: { databaseTenant: "tenant-a", databaseTable: "invoices" },
+    });
+    expect(findNavItem(database.items ?? [], "tenant-b · invoices")?.search?.databaseTenant).toBe("tenant-b");
+    expect(findNavItem(database.items ?? [], "System Tables")?.items?.map(item => item.title)).toEqual(["Events"]);
+  }
 });

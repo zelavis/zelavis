@@ -7,6 +7,7 @@ import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { getManagedProject } from "#/lib/routing";
+import { projectSiteUrl } from "#/lib/project-site-url";
 import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
@@ -24,8 +25,8 @@ const managedSections = {
     icon: Files,
     detail: "A project file manager and deployment file view will live here.",
   },
-  database: {
-    title: "Database",
+  "app-database": {
+    title: "App database",
     icon: Database,
     detail: "Managed app database access belongs here, separate from Zelavis-native collections.",
   },
@@ -56,19 +57,15 @@ export default function ManagedProjectSectionRoute() {
   const { projects } = useRouteLoaderData<typeof rootClientLoader>("root")!;
   const project = projects.find((candidate) => candidate.id === params.projectId);
   const managed = getManagedProject(project);
+  const siteUrl = project ? projectSiteUrl(project) : undefined;
 
-  // This route's pattern swallows every single-segment path under a project,
-  // which is also where a service's project-surface pages live. A Zelavis-native
-  // project has no managed sections, so hand the path to the service page mount
-  // — the same thing the splat route would have done had this pattern not
-  // matched first.
-  if (!managed) {
+  // Recipe pages share this route pattern with fixed hosting controls.
+  // Give every other path to the ordinary SDK service-page renderer.
+  const section = managedSections[params.managedSection as keyof typeof managedSections];
+  if (!managed || !section) {
     return <ServicePageMount allowPlaceholder fallback={<DashboardNotFound />} />;
   }
 
-  const section =
-    managedSections[params.managedSection as keyof typeof managedSections] ??
-    managedSections.admin;
   const Icon = section.icon;
 
   return (
@@ -91,13 +88,13 @@ export default function ManagedProjectSectionRoute() {
 
       <ResourceNotice
         title="Managed app boundary"
-        description="This project does not expose Zelavis-native sections like Auth, Content, and Plugins. It gets hosting controls similar to managed WordPress or generic app hosting."
+        description="Hosting controls manage the application itself. When its services use Zelavis APIs, the existing Zelavis sections appear in this project."
       />
-      {managed.adminPath && params.managedSection === "admin" && project?.runtime.url ? (
+      {managed.adminPath && params.managedSection === "admin" && siteUrl ? (
         <Button
           className="w-fit"
           render={<a
-            href={`${project.runtime.url.replace(/\/$/, "")}${managed.adminPath}`}
+            href={`${siteUrl.replace(/\/$/, "")}${managed.adminPath}`}
             target="_blank"
             rel="noreferrer"
           />}

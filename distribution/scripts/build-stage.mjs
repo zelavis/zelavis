@@ -1,13 +1,16 @@
 import { installNodeRuntime, installTraefikRuntime } from "./runtime-assets.mjs";
-import { exactVersion, stagePublishedPackage } from "./published-package.mjs";
+import { stageOperations } from "./stage-operations.mjs";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   chmod,
   copyFile,
+  cp,
   mkdir,
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -23,7 +26,6 @@ function parseArgs(args) {
     build: true,
     platform: undefined,
     architecture: undefined,
-    version: undefined,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -32,9 +34,6 @@ function parseArgs(args) {
       index += 1;
     } else if (arg === "--skip-build") {
       options.build = false;
-    } else if (arg === "--version") {
-      options.version = args[++index];
-      if (!options.version || !exactVersion.test(options.version)) throw new Error("--version requires an exact published version.");
     } else if (arg === "--platform") {
       options.platform = args[index + 1];
       index += 1;
@@ -79,36 +78,40 @@ function target(options = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   assertDistributionPath(options.output);
-  let packageManifest = JSON.parse(
+  const packageManifest = JSON.parse(
     await readFile(join(repositoryDirectory, "packages", "zelavis", "package.json"), "utf8"),
   );
   const releaseConfig = JSON.parse(
     await readFile(join(distributionDirectory, "release.json"), "utf8"),
   );
   const releaseTarget = target(options);
-  if (options.version && (releaseTarget.platform !== process.platform || releaseTarget.architecture !== process.arch)) {
-    throw new Error("Published package staging requires a target-native release runner.");
-  }
-  if (options.version && options.version !== packageManifest.version) throw new Error("Release tag does not match the checked-out Platform version.");
 
   await rm(options.output, { recursive: true, force: true });
   await mkdir(options.output, { recursive: true });
 
   await installNodeRuntime(options.output, releaseConfig.nodeVersion, releaseTarget, join(distributionDirectory, ".cache"));
-  if (options.version) {
-    packageManifest = await stagePublishedPackage(options.output, options.version);
-  } else {
-    if (options.build) {
-      run("pnpm", ["--filter", "zelavis", "build"]);
-    }
-    run("pnpm", [
-      "--filter",
-      "zelavis",
-      "deploy",
-      "--legacy",
-      "--prod",
-      join(options.output, "platform"),
-    ]);
+  if (options.build) {
+    run("pnpm", ["--filter", "zelavis", "build"]);
+  }
+  // Exercise the same package transport as install.sh. pnpm deploy from a
+  // checkout can bring optional native development peers into the tree and
+  // run their install scripts; those are not part of a server installation.
+  const acquisition = join(options.output, ".acquisition");
+  const archives = join(acquisition, "archives");
+  await mkdir(archives, { recursive: true });
+  try {
+    run("pnpm", ["--filter", "zelavis", "pack", "--pack-destination", archives]);
+    const archive = (await readdir(archives)).filter(name => name.endsWith(".tgz"));
+    if (archive.length !== 1) throw new Error("Staging requires exactly one local zelavis npm package.");
+    run("npm", ["install", "--prefix", acquisition, "--ignore-scripts", "--omit=dev", "--omit=optional",
+      "--no-audit", "--no-fund", "--package-lock=false", "--registry", "https://registry.npmjs.org", join(archives, archive[0])]);
+    const packageDirectory = join(acquisition, "node_modules", "zelavis");
+    await cp(packageDirectory, join(options.output, "platform"), { recursive: true, verbatimSymlinks: true });
+    await rm(packageDirectory, { recursive: true, force: true });
+    await cp(join(acquisition, "node_modules"), join(options.output, "platform", "node_modules"), { recursive: true, verbatimSymlinks: true });
+    await symlink("..", join(options.output, "platform", "node_modules", "zelavis"));
+  } finally {
+    await rm(acquisition, { recursive: true, force: true });
   }
 
   await mkdir(join(options.output, "bin"), { recursive: true });
@@ -135,35 +138,18 @@ async function main() {
       join(options.output, "share", "traefik.yml"),
     );
   }
-  for (const unit of ["zelavis@.service", "zelavis-agent@.service"]) {
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket"]) {
     await copyFile(join(distributionDirectory, "runtime", unit), join(options.output, "share", unit));
   }
-  // The trust store ships beside the release; packages install it root-owned
-  // at /etc/zelavis/operation-trust.json. Operations are signed now, before
-  // the runtime artifact digest covers them.
-  await writeFile(
-    join(options.output, "share", "operation-trust.json"),
-    `${JSON.stringify(releaseConfig.operationTrust, null, 2)}\n`,
-    { mode: 0o644 },
+  const { validateHostOperationManifest } = await import(
+    pathToFileURL(join(options.output, "platform", "dist", "core", "deployment", "index.js")).href
   );
-  const { stageSignedOperations } = await import("./operation-signing.mjs");
-  const operations = await stageSignedOperations({
+  const operations = await stageOperations({
     source: join(distributionDirectory, "operations"),
     output: join(options.output, "operations"),
-    trust: releaseConfig.operationTrust,
-    signingKey: process.env.ZELAVIS_OPERATION_SIGNING_KEY,
-    keyId: process.env.ZELAVIS_OPERATION_SIGNING_KEY_ID,
-    allowSkip: process.env.ZELAVIS_SKIP_UNSIGNED_OPERATIONS === "1",
+    validate: validateHostOperationManifest,
   });
-  if (operations.skipped) {
-    console.warn(`Host operations omitted: ${operations.reason ?? "no signing key"}.`);
-  } else if (operations.signed.length > 0) {
-    console.log(`Signed host operations: ${operations.signed.join(", ")}`);
-  }
-  await copyFile(
-    join(distributionDirectory, "installers", "archive-install.sh"),
-    join(options.output, "install.sh"),
-  );
+  if (operations.length > 0) console.log(`Staged host operations: ${operations.join(", ")}`);
   await copyFile(
     join(distributionDirectory, "installers", "uninstall.sh"),
     join(options.output, "share", "uninstall.sh"),
@@ -196,63 +182,11 @@ async function main() {
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   await chmod(join(options.output, "bin", "zelavis"), 0o755);
-  await chmod(join(options.output, "install.sh"), 0o755);
   await chmod(join(options.output, "share", "uninstall.sh"), 0o755);
 
-  const { createArtifactDigest, createRuntimeArtifactManifestDigest, defineRuntimeArtifact } =
-    await import(pathToFileURL(join(options.output, "platform", "dist", "core", "artifact", "index.js")));
-  async function stagedFiles(directory, prefix = "") {
-    const files = [];
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (path === "runtime-artifact.json") continue;
-      if (entry.isDirectory()) {
-        files.push(...await stagedFiles(join(directory, entry.name), path));
-      } else if (entry.isFile()) {
-        files.push(path);
-      }
-    }
-    return files.sort();
-  }
-  const files = await stagedFiles(options.output);
-  const digestEntries = [];
-  const digestConcurrency = 32;
-  for (let index = 0; index < files.length; index += digestConcurrency) {
-    digestEntries.push(
-      ...await Promise.all(
-        files.slice(index, index + digestConcurrency).map(async (path) => [
-          path,
-          await createArtifactDigest(await readFile(join(options.output, path))),
-        ]),
-      ),
-    );
-  }
-  const fileDigests = Object.fromEntries(digestEntries);
-  const runtimeArtifactInput = {
-    formatVersion: "ZELAVIS_RUNTIME_ARTIFACT_V1",
-    name: `zelavis-${releaseTarget.platform}-${releaseTarget.architecture}`,
-    version: packageManifest.version,
-    runtime: "node",
-    entrypoint: "bin/zelavis",
-    files,
-    fileDigests,
-    compatibilityDate: packageManifest.zelavis?.compatibilityDate,
-    metadata: {
-      platform: releaseTarget.platform,
-      architecture: releaseTarget.architecture,
-      nodeVersion: releaseConfig.nodeVersion,
-      edgeDefaultAdapter: "traefik",
-      traefikVersion: releaseConfig.traefikVersion,
-    },
-  };
-  const runtimeArtifact = defineRuntimeArtifact({
-    ...runtimeArtifactInput,
-    digest: await createRuntimeArtifactManifestDigest(runtimeArtifactInput),
-  });
-  await writeFile(
-    join(options.output, "runtime-artifact.json"),
-    `${JSON.stringify(runtimeArtifact, null, 2)}\n`,
-  );
+  const { sealNodeRuntimeArtifact } = await import(pathToFileURL(join(options.output, "platform", "dist", "adapters", "_node-runtime-artifact.js")));
+  const { Effect } = await import(pathToFileURL(createRequire(join(options.output, "platform", "package.json")).resolve("effect")).href);
+  await Effect.runPromise(sealNodeRuntimeArtifact(options.output));
 
   console.log(
     `Staged Zelavis ${packageManifest.version} for ${releaseTarget.platform}-${releaseTarget.architecture} with Node ${releaseConfig.nodeVersion}: ${options.output}`,

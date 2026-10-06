@@ -1,6 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 
 import {
+  beginNavigationRuntimeResolve,
+  getActiveRuntimeConfig,
   getProjectRuntimeConfig,
   getResolvedDashboardPreferences,
   normalizeRuntimeProject,
@@ -10,6 +12,27 @@ import {
   type RuntimeConfig,
   type RuntimeProject,
 } from "./runtime-api";
+
+test("an interrupted navigation releases its waiting child loaders", async () => {
+  const request = new Request("http://localhost/zelavis/projects/interrupt", { signal: AbortSignal.timeout(20) });
+  beginNavigationRuntimeResolve("interrupt", request.signal);
+  await expect(getActiveRuntimeConfig(request)).rejects.toThrow();
+});
+
+test("a previous navigation cannot resolve the next navigation's runtime", async () => {
+  const firstRequest = new Request("http://localhost/zelavis/projects/shared");
+  const first = beginNavigationRuntimeResolve("shared", firstRequest.signal);
+  const firstChild = getActiveRuntimeConfig(firstRequest);
+  const nextRequest = new Request(firstRequest.url);
+  const next = beginNavigationRuntimeResolve("shared", nextRequest.signal);
+  const nextChild = getActiveRuntimeConfig(nextRequest);
+  const firstConfig = { api: { basePath: "/first" } } as RuntimeConfig;
+  first.commit(firstConfig);
+  const failure = new Error("Next navigation failed");
+  next.reject(failure);
+  await expect(firstChild).resolves.toEqual(firstConfig);
+  await expect(nextChild).rejects.toBe(failure);
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -230,4 +253,24 @@ test("only system packages' Project-surface menus reach a Project, and never pla
 
   expect(selected.map((service) => service.name)).toEqual(["@zelavis/marketplace", "@zelavis/auth"]);
   expect(selected[0]?.menus?.map((entry) => entry.surface)).toEqual(["root"]);
+});
+
+
+test("managed recipe pages and nested assets stay in their Project Gateway and change URL with the locked version", async () => {
+  let version = "1.0.0";
+  const page = { id: "integration", src: "/zelavis/api/v1/runtime/service-page-assets/%40acme%2Fsite/dashboard/index.html" };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ rootPath: "/zelavis",
+    api: { basePath: "/zelavis/api/v1" }, services: [{ name: "@acme/site", apiPath: "/zelavis/api/v1/plugins/site",
+      menus: [{ title: "Integration", path: "/integration", page, items: [{ title: "Nested", page }] }] }],
+    serviceRegistry: [{ name: "@acme/site", version, menu: { title: "Integration", page } }],
+  }), { headers: { "content-type": "application/json" } })));
+  const control = { rootPath: "/zelavis", api: { basePath: "/zelavis/api/v1" }, services: [], dashboard: {} } as unknown as RuntimeConfig;
+  const old = await getProjectRuntimeConfig(control, "site");
+  const src = old.services[0].menus![0].page!.src;
+  expect(src).toContain("/runtime/projects/site/proxy/zelavis/api/v1/runtime/service-page-assets/");
+  expect(src).toContain("zelavisServiceVersion=1.0.0");
+  expect(old.services[0].menus![0].items![0].page!.src).toBe(src);
+  expect(old.serviceRegistry[0].menu!.page!.src).toBe(src);
+  version = "2.0.0";
+  expect((await getProjectRuntimeConfig(control, "site")).services[0].menus![0].page!.src).not.toBe(src);
 });

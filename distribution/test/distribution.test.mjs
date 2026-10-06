@@ -9,7 +9,7 @@ test("release configuration pins a supported Node runtime", async () => {
   const release = JSON.parse(await readFile(new URL("release.json", distribution), "utf8"));
   assert.match(release.nodeVersion, /^24\./);
   assert.equal(release.minimumNodeMajor, 24);
-  assert.match(release.aptRepository, /^https:\/\//);
+  assert.equal(release.operationTrust, undefined, "releases are not signed; there is no trust store");
 });
 
 test("release configuration pins a supported Traefik runtime", async () => {
@@ -39,47 +39,45 @@ test("traefik static configuration watches active directory and disables dashboa
   assert.match(config, /address:\s*":443"/);
 });
 
-test("the Debian package manages Traefik unit, conffiles, and leaves it disabled by default", async () => {
+test("the Debian package manages Traefik unit, conffiles, and enables production ingress by default", async () => {
   const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
   assert.match(builder, /zelavis-traefik\.service/);
   assert.match(builder, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
   assert.match(builder, /conffiles.*\/etc\/zelavis\/edge\/traefik\/traefik\.yml/s);
   assert.match(builder, /cli\.js install --from-release/);
   const plan = await readFile(new URL("../../packages/zelavis/src/core/runtime/installation-plan.ts", import.meta.url), "utf8");
-  assert.match(plan, /\["disable", "zelavis-traefik\.service"\]/);
+  assert.match(plan, /\["enable", "zelavis-traefik\.service"\]/);
   assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
 });
 
-test("archive bootstrap delegates all host setup to the staged CLI", async () => {
-  const installer = await readFile(new URL("installers/archive-install.sh", distribution), "utf8");
-  assert.match(installer, /runtime\/node\/bin\/node/);
-  assert.match(installer, /platform\/dist\/cli\.js.*install --from-release/);
-  assert.doesNotMatch(installer, /systemctl|useradd|randomBytes/);
+test("the bootstrap acquires only Node and the npm package, and trusts nothing else", async () => {
+  const release = JSON.parse(await readFile(new URL("release.json", distribution), "utf8"));
+  const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
+  assert.match(installer, new RegExp(`^NODE_VERSION=${release.nodeVersion.replaceAll(".", "\\.")}$`, "m"), "install.sh pins the release's Node");
+  assert.match(installer, /https:\/\/nodejs\.org\/dist\/v\$1\/SHASUMS256\.txt/);
+  assert.match(installer, /Node checksum verification failed/);
+  assert.match(installer, /registry=https:\/\/registry\.npmjs\.org/);
+  assert.match(installer, /--omit=dev --ignore-scripts/, "dependency install scripts never run, possibly as root");
+  assert.doesNotMatch(installer, /rebuild|node-gyp|build-essential/, "no native build: every dependency is plain JavaScript");
+  assert.match(installer, /install --from-npm "\$TREE"/);
+  assert.doesNotMatch(installer, /github\.com|SHA256SUMS|\bgpg\b|apt-get/i, "no GitHub release, signature or package-manager dependency");
+  assert.doesNotMatch(installer, /systemctl|useradd|randomBytes/, "host setup is zelavis install, not shell");
 });
 
 test("install and packaging shell scripts have valid syntax", () => {
   for (const path of [
     "installers/install.sh",
-    "installers/archive-install.sh",
     "installers/uninstall.sh",
-    "scripts/build-all.sh",
-    "scripts/build-apt-repository.sh",
     "runtime/zelavis",
   ]) {
     execFileSync("sh", ["-n", new URL(path, distribution).pathname]);
   }
 });
 
-test("APT source binds the repository to its dedicated keyring", async () => {
-  const source = await readFile(new URL("apt/zelavis.sources", distribution), "utf8");
-  assert.match(source, /Signed-By: \/usr\/share\/keyrings\/zelavis-archive-keyring\.gpg/);
-  assert.match(source, /URIs: https:\/\/apt\.zelavis\.com/);
-});
-
-test("the Debian package installs the native WordPress host stack", async () => {
+test("the Debian package does not carry the WordPress host stack; the WordPress recipe provisions it", async () => {
   const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
   for (const dependency of ["nginx", "php-fpm", "php-mysql", "mariadb-server-core", "mariadb-client-core"]) {
-    assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
+    assert.doesNotMatch(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
   }
   assert.match(builder, /cli\.js install --from-release/u);
   assert.match(builder, /"opt", "zelavis", "package"/u);
@@ -95,62 +93,47 @@ test("the Platform service reads installer-generated first-run configuration", a
   assert.match(host, /First-run bootstrap token/u);
 });
 
-test("the quick archive installer verifies its payload", async () => {
-  const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
-  assert.match(installer, /SHA256SUMS/);
-  assert.match(installer, /checksum verification failed/);
-});
-
 test("release staging bounds file hashing and includes complete uninstall", async () => {
   const builder = await readFile(new URL("scripts/build-stage.mjs", distribution), "utf8");
-  assert.match(builder, /digestConcurrency = 32/u);
-  assert.doesNotMatch(builder, /Promise\.all\(files\.map/u);
+  assert.match(builder, /sealNodeRuntimeArtifact\(options\.output\)/u);
+  const artifact = await readFile(new URL("../../packages/zelavis/src/adapters/_node-runtime-artifact.ts", import.meta.url), "utf8");
+  assert.match(artifact, /concurrency: 8/u);
+  assert.doesNotMatch(artifact, /Promise\.all\(files\.map/u);
+  for (const flag of ["--ignore-scripts", "--omit=dev", "--omit=optional"]) assert.ok(builder.includes(flag));
   assert.match(builder, /share", "uninstall\.sh/u);
 });
 
-test("the Agent unit delegates cgroups and runs signed operations from the release tree", async () => {
+test("the Agent unit delegates cgroups and runs operations from the release tree", async () => {
   const unit = await readFile(new URL("runtime/zelavis-agent.service", distribution), "utf8");
   assert.match(unit, /^Delegate=yes$/m);
   assert.match(unit, /^User=zelavis$/m);
   for (const flag of [
     "--operations-root /opt/zelavis/current/operations",
-    "--operation-trust /etc/zelavis/operation-trust.json",
     "--platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json",
     "--require-root-owned-operations",
     "--operation-cgroup delegated",
   ]) {
     assert.ok(unit.includes(flag), flag);
   }
+  assert.doesNotMatch(unit, /operation-trust/, "operations carry no signature, so there is no trust store");
   const deb = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
-  assert.match(deb, /conffiles.*operation-trust\.json/s);
   // Installed but never enabled by the package.
   assert.doesNotMatch(deb, /systemctl enable zelavis-agent/);
-});
-
-test("release trust store is a valid, key-unique structure", async () => {
-  const release = JSON.parse(await readFile(new URL("release.json", distribution), "utf8"));
-  const trust = release.operationTrust;
-  assert.ok(Array.isArray(trust.keys));
-  assert.ok(Array.isArray(trust.revokedKeyIds));
-  assert.equal(new Set(trust.keys.map((key) => key.keyId)).size, trust.keys.length);
-  for (const key of trust.keys) {
-    assert.equal(Buffer.from(key.publicKey, "base64").byteLength, 32);
-    assert.ok(Date.parse(key.notBefore) < Date.parse(key.notAfter));
-  }
 });
 
 const builtRuntime = await import("node:fs").then(({ existsSync }) =>
   existsSync(new URL("../packages/zelavis/dist/core/deployment/index.js", distribution)));
 
-test("release signing produces operations the release trust store accepts, and nothing else", {
+test("staging writes plain manifests with the artifact digest, and refuses a template that claims one", {
   skip: !builtRuntime && "build packages/zelavis first (pnpm --filter zelavis build)",
 }, async (t) => {
-  const { mkdtemp, mkdir, writeFile, rm, readdir } = await import("node:fs/promises");
+  const { mkdtemp, mkdir, writeFile, rm, readFile: read } = await import("node:fs/promises");
+  const { createHash } = await import("node:crypto");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const { generateOperationSigningKey, stageSignedOperations } = await import("../scripts/operation-signing.mjs");
-  const { verifySignedHostOperationManifest } = await import("../../packages/zelavis/dist/core/deployment/index.js");
-  const directory = await mkdtemp(join(tmpdir(), "zelavis-release-signing-"));
+  const { stageOperations } = await import("../scripts/stage-operations.mjs");
+  const { validateHostOperationManifest } = await import("../../packages/zelavis/dist/core/deployment/index.js");
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-stage-operations-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = join(directory, "source");
   const operation = join(source, "native.preflight", "v1");
@@ -159,48 +142,23 @@ test("release signing produces operations the release trust store accepts, and n
   await writeFile(join(operation, "operation.json"), JSON.stringify({
     id: "native.preflight", version: "v1", interpreter: "/bin/sh", arguments: {},
   }));
-
-  const release = await generateOperationSigningKey({ keyId: "release-test", notBefore: new Date(Date.now() - 60_000) });
-  const trust = { keys: [release.trustEntry], revokedKeyIds: [] };
   const output = join(directory, "operations");
-  const staged = await stageSignedOperations({
-    source, output, trust, signingKey: release.privateKeyPkcs8, keyId: "release-test",
-  });
-  assert.deepEqual(staged.signed, ["native.preflight@v1"]);
-  const envelope = JSON.parse(await (await import("node:fs/promises")).readFile(join(output, "native.preflight", "v1", "manifest.json"), "utf8"));
-  assert.equal((await verifySignedHostOperationManifest(envelope, trust)).sha256.length, 64);
-
-  // A key the release trust store does not list fails the build.
-  const stray = await generateOperationSigningKey({ keyId: "stray", notBefore: new Date(Date.now() - 60_000) });
-  await assert.rejects(
-    stageSignedOperations({ source, output: join(directory, "stray"), trust, signingKey: stray.privateKeyPkcs8, keyId: "stray" }),
-    /untrusted key/,
-  );
-  // No release keys published yet: omitted, not a build failure.
-  const unkeyed = await stageSignedOperations({ source, output: join(directory, "unkeyed"), trust: { keys: [] } });
-  assert.equal(unkeyed.skipped, true);
-  assert.match(unkeyed.reason, /lists no keys/);
-  // Keys published but no signing key: fail, or omit when explicitly allowed —
-  // never ship unsigned.
-  await assert.rejects(stageSignedOperations({ source, output: join(directory, "nokey"), trust }), /need signing/);
-  const skipped = await stageSignedOperations({ source, output: join(directory, "skip"), trust, allowSkip: true });
-  assert.equal(skipped.skipped, true);
-  assert.deepEqual(await readdir(join(directory, "skip")), []);
+  assert.deepEqual(await stageOperations({ source, output, validate: validateHostOperationManifest }), ["native.preflight@v1"]);
+  const manifest = JSON.parse(await read(join(output, "native.preflight", "v1", "manifest.json"), "utf8"));
+  assert.equal(manifest.sha256, createHash("sha256").update("printf ok\n").digest("hex"));
+  assert.equal(manifest.signature, undefined);
   // A template that claims a digest is refused.
   await writeFile(join(operation, "operation.json"), JSON.stringify({ id: "native.preflight", version: "v1", sha256: "a".repeat(64), arguments: {} }));
-  await assert.rejects(
-    stageSignedOperations({ source, output: join(directory, "bad"), trust, signingKey: release.privateKeyPkcs8, keyId: "release-test" }),
-    /omit sha256/,
-  );
+  await assert.rejects(stageOperations({ source, output: join(directory, "bad"), validate: validateHostOperationManifest }), /omit sha256/);
 });
 
-test("shipped host operation sources are valid, signable and produce their declared result", {
+test("shipped host operation sources are valid and produce their declared result", {
   skip: !builtRuntime && "build packages/zelavis first (pnpm --filter zelavis build)",
 }, async (t) => {
-  const { mkdtemp, readdir, readFile: read, rm } = await import("node:fs/promises");
+  const { mkdtemp, readdir, readFile: read, rm, stat } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const { generateOperationSigningKey, stageSignedOperations } = await import("../scripts/operation-signing.mjs");
+  const { stageOperations } = await import("../scripts/stage-operations.mjs");
   const { validateHostOperationManifest, MAX_HOST_OPERATION_RESULT_BYTES } = await import("../../packages/zelavis/dist/core/deployment/index.js");
   const source = new URL("operations/", distribution).pathname;
   const ids = (await readdir(source, { withFileTypes: true })).filter((entry) => entry.isDirectory());
@@ -225,12 +183,13 @@ test("shipped host operation sources are valid, signable and produce their decla
   }
   const directory = await mkdtemp(join(tmpdir(), "zelavis-shipped-operations-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const release = await generateOperationSigningKey({ keyId: "shipped-test", notBefore: new Date(Date.now() - 60_000) });
-  const staged = await stageSignedOperations({
-    source, output: directory, trust: { keys: [release.trustEntry] },
-    signingKey: release.privateKeyPkcs8, keyId: "shipped-test",
-  });
-  assert.ok(staged.signed.includes("zelavis.host-report@v1"));
+  const staged = await stageOperations({ source, output: directory, validate: validateHostOperationManifest });
+  assert.ok(staged.includes("zelavis.host-report@v1"));
+  assert.ok(staged.includes("zelavis.packages-install@v1"));
+  for (const operation of staged) {
+    const [id, version] = operation.split("@");
+    assert.equal((await stat(join(directory, id, version, "artifact"))).mode & 0o777, 0o755);
+  }
 });
 
 test("named templates use the instance's private Node launcher, account, config and data, without Edge", async () => {

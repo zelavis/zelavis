@@ -53,6 +53,7 @@ function markSetupInProgress(active: boolean) {
     else window.sessionStorage.removeItem("zelavis.setup.in-progress")
   } catch {
     // Storage can be blocked; the wizard then falls back to the dashboard.
+    console.warn("Session storage is unavailable; setup progress cannot be retained in this tab.");
   }
 }
 

@@ -2,7 +2,7 @@
  * Which installation of Zelavis is answering, and where it lives.
  *
  * The command name is shared by installs that cannot see each other. A `.deb`
- * links `/usr/bin/zelavis`, the archive installer links `/usr/local/bin/zelavis`,
+ * links `/usr/bin/zelavis`, the shell installer links `/usr/local/bin/zelavis`,
  * and `npm install --global zelavis` writes into npm's own prefix — which is
  * commonly `/usr/local/bin` too. On Debian and Ubuntu `/usr/local/bin` precedes
  * `/usr/bin`, so an npm install silently shadows a packaged one: both are

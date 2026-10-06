@@ -7,10 +7,9 @@ const paths = {
   prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis",
   commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis",
   systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"],
-  aptSource: "/etc/apt/sources.list.d/zelavis.sources", aptKeyring: "/usr/share/keyrings/zelavis-archive-keyring.gpg",
 };
 const templates = {};
-for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-traefik.service", "traefik.yml"]) {
+for (const file of ["zelavis.service", "zelavis-agent.service", "zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-traefik.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "traefik.yml"]) {
   templates[file] = await readFile(new URL(`../../../distribution/runtime/${file}`, import.meta.url), "utf8");
 }
 
@@ -21,7 +20,6 @@ class FakeHost {
   release(version) {
     this.files.set("/stage/manifest.json", JSON.stringify({ version }));
     for (const [file, content] of Object.entries(templates)) this.files.set(`/stage/share/${file}`, content);
-    this.files.set("/stage/share/operation-trust.json", '{"keys":[]}');
   }
   resolve(path) {
     for (const [link, target] of this.links) if (path === link || path.startsWith(`${link}/`)) return this.resolve(target + path.slice(link.length));
@@ -46,7 +44,8 @@ class FakeHost {
       case "bootstrap": if (!await this.exists(a.path)) { this.tokens++; this.files.set(a.path, "ZELAVIS_BOOTSTRAP_TOKEN=secret\n"); return "new token"; } break;
       case "agent-environment": {
         const content = await this.read(a.path);
-        if (!/^ZELAVIS_AGENT_ENDPOINT=/m.test(content)) this.files.set(a.path, content + `ZELAVIS_AGENT_ENDPOINT=${a.endpoint}\n`);
+        const variable = a.variable ?? "ZELAVIS_AGENT_ENDPOINT";
+        if (!new RegExp(`^${variable}=`, "m").test(content)) this.files.set(a.path, content + `${variable}=${a.endpoint}\n`);
         break;
       }
       case "command":
@@ -74,21 +73,24 @@ test("fresh install plans the existing inventory, without mutations or secret ma
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
   assert.equal(host.tokens, 1);
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 127\.0\.0\.1/);
-  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "disable zelavis-traefik.service"));
-  assert.ok(!host.actions.some((a) => a.command === "systemctl" && a.args.includes("zelavis-agent.service")));
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable zelavis-traefik.service"));
+  for (const directory of ["edge", "edge/traefik", "edge/traefik/active"]) {
+    const path = `${paths.dataDirectory}/${directory}`;
+    assert.ok(host.actions.some(action => action.kind === "mkdir" && action.path === path && action.mode === 0o750));
+    assert.ok(host.actions.some(action => action.command === "chown" && action.args.join(" ") === `root:zelavis ${path}`));
+  }
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-agent.service"));
   assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
 
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {
   const host = new FakeHost();
   await executeZelavisInstallationPlan(host, await install(host));
-  host.files.set("/etc/zelavis/operation-trust.json", "operator trust");
   host.files.set("/etc/zelavis/edge/traefik/traefik.yml", "operator config");
   const plan = await install(host);
   assert.ok(!plan.steps.some((step) => ["release", "user", "group"].includes(step.id)));
   await executeZelavisInstallationPlan(host, plan);
   assert.equal(host.tokens, 1);
-  assert.equal(await host.read("/etc/zelavis/operation-trust.json"), "operator trust");
   assert.equal(await host.read("/etc/zelavis/edge/traefik/traefik.yml"), "operator config");
   assert.equal(JSON.parse(await host.read("/opt/zelavis/installation.json")).ownsUser, true);
 });
@@ -97,7 +99,7 @@ test("existing user and group remain operator-owned; existing env and Agent endp
   const host = new FakeHost();
   host.accounts = new Set(["user:zelavis", "group:zelavis"]);
   host.files.set("/etc/zelavis/zelavis.env", "ZELAVIS_BOOTSTRAP_TOKEN=operator-secret\nZELAVIS_AGENT_ENDPOINT=/operator/agent\n");
-  const plan = await install(host, { enableAgent: true });
+  const plan = await install(host, {});
   assert.doesNotMatch(JSON.stringify(plan), /operator-secret/);
   await executeZelavisInstallationPlan(host, plan);
   const receipt = JSON.parse(await host.read("/opt/zelavis/installation.json"));
@@ -107,10 +109,10 @@ test("existing user and group remain operator-owned; existing env and Agent endp
   assert.ok(plan.steps.some((step) => step.id === "agent-enable"));
 });
 
-test("Agent opt-in adds its endpoint once, after systemd reload", async () => {
+test("the separately supervised Agent endpoint is added once, after systemd reload", async () => {
   const host = new FakeHost();
-  await executeZelavisInstallationPlan(host, await install(host, { enableAgent: true }));
-  const plan = await install(host, { enableAgent: true });
+  await executeZelavisInstallationPlan(host, await install(host, {}));
+  const plan = await install(host, {});
   await executeZelavisInstallationPlan(host, plan);
   assert.equal((await host.read("/etc/zelavis/zelavis.env")).match(/ZELAVIS_AGENT_ENDPOINT=/g).length, 1);
   assert.ok(plan.steps.findIndex((s) => s.id === "reload") < plan.steps.findIndex((s) => s.id === "agent-enable"));
@@ -145,6 +147,22 @@ test("public exposure changes only the template's bind address", async () => {
   const plan = await install(host, { public: true });
   await executeZelavisInstallationPlan(host, plan);
   assert.match(await host.read("/etc/systemd/system/zelavis.service"), /--host 0\.0\.0\.0/);
+});
+
+test("the dashboard port is held by a socket unit, and a live update leaves the running Platform alone", async () => {
+  const host = new FakeHost();
+  await executeZelavisInstallationPlan(host, await install(host, { public: true }));
+  assert.match(await host.read("/etc/systemd/system/zelavis.socket"), /ListenStream=0\.0\.0\.0:3000/);
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis.socket"));
+  host.release("1.0.1"); host.actions.length = 0;
+  const plan = await install(host, { live: true, stopPlatform: true });
+  assert.ok(!plan.steps.some((step) => ["platform-stop", "data-reservation", "data-handover", "data-owner"].includes(step.id)));
+  await executeZelavisInstallationPlan(host, plan);
+  // Selection and receipt changes belong to the nonce-bound host commit.
+  assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
+  assert.equal(JSON.parse(await host.read("/opt/zelavis/installation.json")).version, "1.0.0");
+  assert.ok(!host.actions.some((a) => a.command === "systemctl"));
+  assert.ok(host.actions.some((a) => a.command === "/opt/zelavis/releases/1.0.1/runtime/node/bin/node" && a.args[0].endsWith("_node-runtime-select-cli.js")));
 });
 
 test("interrupted install rerun preserves recorded account ownership and repairs later steps", async () => {
@@ -186,7 +204,7 @@ test("user installation owns only its prefix, private environment and command; r
   assert.equal(host.tokens, 1);
   assert.equal(JSON.parse(await host.read(`${prefix}/installation.json`)).mode, "user");
   assert.equal(await host.exists("/etc/systemd/system/zelavis.service"), false);
-  await assert.rejects(install(host, { paths: userPaths, system: false, user: true, enableAgent: true }), /do not support/);
+  await assert.rejects(install(host, { paths: userPaths, system: true, user: true }), /do not support/);
 });
 
 
@@ -197,9 +215,9 @@ test("named instances select independent releases, accounts, units and tokens wi
   const defaultToken = await host.read("/etc/zelavis/zelavis.env");
   const secondary = namedPaths("preview");
   host.release("2.0.0");
-  const plan = await install(host, { paths: secondary, port: 3100, enableAgent: true });
+  const plan = await install(host, { paths: secondary, port: 3100 });
   assert.equal(plan.instance, "preview");
-  assert.ok(!plan.steps.some((step) => ["edge-owner", "edge-disable", "command"].includes(step.id)));
+  assert.ok(!plan.steps.some((step) => ["edge-owner", "edge-enable", "command"].includes(step.id)));
   assert.ok(!plan.steps.some((step) => step.action.args?.includes("zelavis.service")));
   await executeZelavisInstallationPlan(host, plan);
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
@@ -207,7 +225,14 @@ test("named instances select independent releases, accounts, units and tokens wi
   assert.equal(await host.read("/etc/zelavis/zelavis.env"), defaultToken);
   assert.ok(host.accounts.has("user:zelavis-preview"));
   assert.match(await host.read("/etc/systemd/system/zelavis@.service"), /User=zelavis-%i[\s\S]*serve --instance %i/);
+  const socket = await host.read("/etc/systemd/system/zelavis-preview.socket");
+  assert.match(socket, /Service=zelavis@preview\.service/); assert.match(socket, /ListenStream=127\.0\.0\.1:3100/);
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis@preview.service"));
+  const watch = await host.read("/etc/systemd/system/zelavis-update-preview.path");
+  assert.match(watch, /PathExists=\/var\/lib\/zelavis-preview\/update\/request\.json/); assert.match(watch, /Unit=zelavis-update-preview\.service/);
+  assert.match(await host.read("/etc/systemd/system/zelavis-update-preview.service"), /Environment=ZELAVIS_DATA_DIR=\/var\/lib\/zelavis\n/);
+  assert.match(await host.read("/etc/systemd/system/zelavis-update-preview.service"), /ExecStart=\/opt\/zelavis\/instances\/preview\/current\/bin\/zelavis update --run --instance preview/);
+  assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-update-preview.path"));
   const runtime = JSON.parse(await host.read("/opt/zelavis/instances/preview/runtime.json"));
   assert.equal(runtime.edge, false); assert.equal(runtime.port, 3100);
   assert.equal(runtime.dataDirectory, secondary.dataDirectory);
@@ -237,9 +262,67 @@ test("removal retains shared releases/templates/command/packages while another i
   for (const selected of [paths, namedPaths("preview")]) {
     const plan = planZelavisUninstall({ paths: selected, hostCommands: true, ownsUser: true, ownsGroup: true, retainShared: true });
     assert.ok(!plan.steps.some((step) => step.action.kind === "purge-packages" || step.action.kind === "remove-link"));
-    assert.ok(!plan.steps.some((step) => [paths.prefix, paths.aptSource, "/etc/systemd/system/zelavis@.service"].includes(step.action.path)));
+    assert.ok(!plan.steps.some((step) => [paths.prefix, "/etc/systemd/system/zelavis@.service"].includes(step.action.path)));
     const account = plan.steps.find((step) => step.action.kind === "remove-account").action;
     assert.equal(account.account, selected.instance ? "zelavis-preview" : "zelavis");
     if (selected.instance) assert.ok(!plan.steps.some((step) => step.action.kind === "release-edge"));
   }
+});
+
+
+test("system updates wire a distinct root operation Agent and uninstall owns its inventory", async () => {
+  const host = new FakeHost();
+  const plan = await planZelavisReleaseInstall({ host, source: "/stage", paths, system: true });
+  const operationUnit = plan.steps.find((step) => step.id === "zelavis-host-agent.service").action.content;
+  assert.match(operationUnit, /^User=root$/m);
+  assert.match(operationUnit, /--operations-only --endpoint-group-access/);
+  assert.match(operationUnit, /--require-root-owned-operations --operation-cgroup delegated/);
+  assert.match(operationUnit, /^Group=zelavis$/m);
+  assert.deepEqual(plan.steps.find((step) => step.id === "host-agent-environment").action, { kind: "agent-environment", path: "/etc/zelavis/zelavis.env", endpoint: "/opt/zelavis/host-agent/agent", variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
+  assert.ok(plan.steps.findIndex((step) => step.id === "host-agent-enable") < plan.steps.findIndex((step) => step.id === "platform-enable"));
+  assert.equal(plan.steps.some((step) => step.action.command === "apt-get"), false);
+  const uninstall = planZelavisUninstall({ paths, hostCommands: true, ownsUser: true, ownsGroup: true });
+  assert.ok(uninstall.steps.find((step) => step.id === "package-policy"));
+  assert.ok(uninstall.steps.find((step) => step.action.path === "/etc/systemd/system/zelavis-host-agent@.service"));
+  const retained = planZelavisUninstall({ paths, hostCommands: true, ownsUser: true, ownsGroup: true, retainShared: true });
+  assert.equal(retained.steps.some((step) => step.id === "package-policy"), false, "another instance still owns the shared package policy");
+  assert.ok(retained.steps.find((step) => step.action.path === "/opt/zelavis/host-agent"));
+});
+
+test("live host assets share fresh-install rendering without restarting services or changing data", async () => {
+  const { planZelavisRuntimeHostAssetsProgram } = await import("../dist/core/runtime/installation-plan.js");
+  const { Effect } = await import("effect");
+  const files = new Map();
+  for (const unit of ["zelavis@.service", "zelavis-agent@.service", "zelavis-host-agent@.service", "zelavis-update.path", "zelavis-update.service", "zelavis.socket"]) {
+    files.set(`/candidate/share/${unit}`, unit.endsWith(".socket") ? "[Socket]\nListenStream=127.0.0.1:3000\nService=zelavis.service\n" : "[Service]\nExecStart=/opt/zelavis/current/bin/zelavis\nPathExists=/var/lib/zelavis/update/request.json\nupdate --run\n");
+  }
+  const selected = namedPaths("blue");
+  const steps = await Effect.runPromise(planZelavisRuntimeHostAssetsProgram({ host: { read: async path => files.get(path) }, paths: selected, source: "/candidate", port: 3100, public: true }));
+  assert.ok(steps.every(step => step.action.kind === "write"));
+  const socket = steps.find(step => step.id === "zelavis-blue.socket");
+  assert.match(socket.action.content, /ListenStream=0\.0\.0\.0:3100/);
+  assert.match(socket.action.content, /Service=zelavis@blue\.service/);
+  const update = steps.find(step => step.id === "zelavis-update-blue.service");
+  assert.match(update.action.content, /instances\/blue\/current/);
+  assert.match(update.action.content, /update --run --instance blue/);
+  assert.ok(steps.every(step => step.action.path.startsWith("/etc/systemd/system/")));
+});
+
+test("host inventory materializes only the selected Edge publication and refuses malformed generations", async () => {
+  const { planZelavisRuntimeHostAssetsProgram } = await import("../dist/core/runtime/installation-plan.js");
+  const { Effect } = await import("effect");
+  const host = new FakeHost(), base = "/var/lib/zelavis/edge/traefik";
+  host.files.set(`${base}/active-generation.json`, JSON.stringify({ activeGeneration: "42" }));
+  const configuration = JSON.stringify({ http: { routers: { platform: { rule: "PathPrefix(`/`)" } } } });
+  host.files.set(`${base}/generations/42/traefik-dynamic.json`, configuration);
+  const plan = () => Effect.runPromise(planZelavisRuntimeHostAssetsProgram({ host, paths, source: "/stage", port: 3000 }));
+  const step = (await plan()).find(step => step.id === "edge-publication");
+  assert.equal(step.action.path, `${base}/active/traefik-dynamic.yml`);
+  assert.equal(step.action.content, configuration);
+  assert.equal(step.action.atomic, true);
+  for (const state of ["{", JSON.stringify({ activeGeneration: "../foreign" }), JSON.stringify({})]) {
+    host.files.set(`${base}/active-generation.json`, state);
+    await assert.rejects(plan());
+  }
+  assert.equal(host.actions.length, 0);
 });

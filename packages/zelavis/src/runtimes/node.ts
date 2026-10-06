@@ -104,7 +104,8 @@ export function shutdownOnSignals(
       target.on(signal, handler);
       handlers.set(signal, handler);
     } catch {
-      // A signal this platform cannot deliver (SIGHUP on some hosts) is not a reason to start without the others.
+      // Keep supported signals active while reporting the unavailable hook.
+      console.warn(`Shutdown signal ${signal} is unavailable on this host.`);
     }
   }
 

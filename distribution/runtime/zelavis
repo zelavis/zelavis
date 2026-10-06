@@ -21,6 +21,6 @@ fi
 # User installations keep their data/token environment inside their prefix.
 PREFIX=$(CDPATH= cd -- "$ZELAVIS_HOME/../.." && pwd -P)
 if [ -f "$PREFIX/config/zelavis.env" ]; then
-  exec "$NODE" --env-file="$PREFIX/config/zelavis.env" "$ZELAVIS_HOME/platform/dist/cli.js" "$@"
+  exec "$NODE" --disable-warning=ExperimentalWarning --env-file="$PREFIX/config/zelavis.env" "$ZELAVIS_HOME/platform/dist/cli.js" "$@"
 fi
-exec "$NODE" "$ZELAVIS_HOME/platform/dist/cli.js" "$@"
+exec "$NODE" --disable-warning=ExperimentalWarning "$ZELAVIS_HOME/platform/dist/cli.js" "$@"

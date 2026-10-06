@@ -1,0 +1,92 @@
+#!/bin/sh
+# Fixed package sets, never caller-provided package names, paths or commands.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+[ "$#" -eq 2 ] && [ "$1" = --set ] && [ "$2" = wordpress-stack ] || { echo 'Unknown package set.' >&2; exit 2; }
+[ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Package installation requires the root Linux operation Agent.' >&2; exit 2; }
+command -v apt-get >/dev/null && command -v dpkg-query >/dev/null || { echo 'wordpress-stack requires Debian or Ubuntu APT.' >&2; exit 2; }
+state=${ZELAVIS_HOST_PACKAGES_DIR:?Host package state was not configured by the Agent}
+case "$state" in /*) ;; *) exit 2 ;; esac
+case "$state" in *[!a-zA-Z0-9_./-]*|*/../*|*/./*|*//*) echo 'Invalid host package state directory.' >&2; exit 2 ;; esac
+[ -d "$state" ] && [ ! -L "$state" ] && [ "$(stat -c %u "$state")" = 0 ] || exit 2
+mode=$(stat -c %a "$state")
+[ "$((0$mode & 022))" -eq 0 ] || exit 2
+[ ! -L "$state/install.lock" ] || exit 2
+exec 9>"$state/install.lock"
+flock -w 60 9 || { echo 'Another host package operation is still running; retry.' >&2; exit 1; }
+
+packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core'
+missing=false
+for package in $packages; do
+  [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null || true)" = 'ii ' ] || missing=true
+done
+if [ "$missing" = false ]; then printf '{"set":"wordpress-stack","changed":false}\n'; exit 0; fi
+
+# The wrapper delegates normal host operations to the original policy. Only
+# this apt process tree has the suppression variable: interruption cannot leave
+# a global deny policy behind. The original remains in the same directory so
+# relative symlinks retain their meaning. Uninstall restores it by ownership/digest.
+policy=/usr/sbin/policy-rc.d
+backup=$policy.zelavis-original
+owner=$policy.zelavis-owner
+cat >"$state/policy.wrapper" <<'POLICY'
+#!/bin/sh
+# Zelavis host-package policy v1
+if [ "${ZELAVIS_INSTALLING_PACKAGES:-}" = wordpress-stack ]; then exit 101; fi
+if [ -x /usr/sbin/policy-rc.d.zelavis-original ]; then
+  exec /usr/sbin/policy-rc.d.zelavis-original "$@"
+fi
+exit 0
+POLICY
+digest=$(sha256sum "$state/policy.wrapper" | cut -d ' ' -f 1)
+if [ -e "$owner" ] || [ -L "$owner" ]; then
+  [ -f "$owner" ] && [ ! -L "$owner" ] && [ "$(stat -c %u "$owner")" = 0 ] && [ "$(cat "$owner")" = "$state" ] || { echo 'Host package policy belongs to another installation.' >&2; exit 1; }
+else
+  [ ! -e "$backup" ] && [ ! -L "$backup" ] || { echo 'An existing policy backup requires operator attention.' >&2; exit 1; }
+  if [ -e "$policy" ] || [ -L "$policy" ]; then
+    [ "$(stat -c %u "$policy")" = 0 ] || { echo 'Existing host policy is not root-owned.' >&2; exit 1; }
+    sha256sum "$policy" | cut -d ' ' -f 1 >"$state/policy.original-digest"
+    printf 'yes\n' >"$state/policy.had-original"
+  else
+    printf 'no\n' >"$state/policy.had-original"
+  fi
+  printf '%s\n' "$digest" >"$state/policy.digest"
+  (umask 077; printf '%s\n' "$state" >"$owner.new")
+  mv "$owner.new" "$owner"
+fi
+[ "$(cat "$state/policy.digest")" = "$digest" ] || { echo 'Unexpected installed package-policy version.' >&2; exit 1; }
+if [ ! -L "$policy" ] && [ -f "$policy" ] && [ "$(sha256sum "$policy" | cut -d ' ' -f 1)" = "$digest" ]; then
+  :
+else
+  if [ "$(cat "$state/policy.had-original")" = yes ] && [ ! -e "$backup" ] && [ ! -L "$backup" ]; then
+    [ "$(sha256sum "$policy" | cut -d ' ' -f 1)" = "$(cat "$state/policy.original-digest")" ] || { echo 'Host policy changed during provisioning.' >&2; exit 1; }
+    mv "$policy" "$backup"
+  fi
+  [ ! -e "$policy" ] && [ ! -L "$policy" ] || { echo 'Host policy was modified; refusing to replace it.' >&2; exit 1; }
+  cp "$state/policy.wrapper" "$policy.new"
+  chmod 755 "$policy.new"
+  mv "$policy.new" "$policy"
+fi
+
+before=$(mktemp "$state/units.XXXXXX")
+trap 'rm -f "$before"' EXIT HUP INT TERM
+units() {
+  for directory in /lib/systemd/system /usr/lib/systemd/system; do
+    for file in "$directory"/nginx.service "$directory"/php*-fpm.service "$directory"/mariadb.service "$directory"/mysql.service; do
+      [ ! -e "$file" ] || basename "$file"
+    done
+  done | sort -u
+}
+units >"$before"
+export DEBIAN_FRONTEND=noninteractive ZELAVIS_INSTALLING_PACKAGES=wordpress-stack
+apt-get -o Acquire::Retries=3 update >&2
+apt-get -o DPkg::Lock::Timeout=60 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-upgrade --no-install-recommends $packages >&2
+# These newly introduced units were denied startup. Do not stop or disable
+# units already present on the operator's host.
+if command -v systemctl >/dev/null; then
+  units | while IFS= read -r unit; do
+    if ! grep -Fxq "$unit" "$before"; then systemctl disable "$unit" >&2; fi
+  done
+fi
+printf '{"set":"wordpress-stack","changed":true}\n'

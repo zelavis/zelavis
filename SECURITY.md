@@ -31,7 +31,7 @@ Security reports are especially useful for:
 
 - `packages/zelavis/src/core`
 - `packages/zelavis/src/platform`
-- `packages/zelavis/src/app/db`
+- `packages/zelavis/src/db`
 - `packages/zelavis/src/app/identity`
 - `packages/zelavis/services/zelavis-ui`
 - officially maintained services under `zelavis-services/*`

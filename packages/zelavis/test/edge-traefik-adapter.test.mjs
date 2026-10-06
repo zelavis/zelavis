@@ -82,7 +82,7 @@ test("Traefik Edge Adapter: executes full switch lifecycle through signed operat
   const publication = {
     id: "platform-routes",
     revision: "rev-1",
-    routeCount: 2,
+    routeCount: 0,
     requiredCapabilities: ["http", "https"],
     certificateRefs: ["cert.example.com"],
   };
@@ -103,7 +103,7 @@ test("Traefik Edge Adapter: executes full switch lifecycle through signed operat
   assert.ok(opNames.includes("zelavis.edge-validate"));
   // 5. route activate
   assert.ok(opNames.includes("zelavis.edge-activate"));
-  // 6. unit reload
+  // 6. idempotent unit start
   assert.ok(opNames.includes("zelavis.edge-unit-control"));
 
   // Check policy is now committed
@@ -128,7 +128,7 @@ test("Traefik Edge Adapter: rolls back when validation fails", async () => {
   const publication = {
     id: "platform-routes",
     revision: "rev-1",
-    routeCount: 1,
+    routeCount: 0,
     requiredCapabilities: ["http"],
     certificateRefs: [],
   };

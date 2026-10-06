@@ -1,10 +1,10 @@
-import Database from "better-sqlite3";
+import { parseJson, isJsonValue } from "../core/json-validation.js";
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   type ZelavisSystemStore,
   type ZelavisSystemStoreRecord,
-  type ZelavisSystemStoreValue,
 } from "../system-store.js";
 
 export interface LocalSqliteSystemStoreOptions {
@@ -24,8 +24,9 @@ function restrictFilePermissions(path: string): void {
   try {
     if (statSync(path, { throwIfNoEntry: false })?.isFile() !== true) return;
     chmodSync(path, 0o600);
-  } catch {
-    // Nothing to restrict, or the host does not support it.
+  } catch (cause) {
+    // A System Store can contain credentials. Refuse an insecure open.
+    throw new Error("Could not restrict System Store file permissions", { cause });
   }
 }
 
@@ -39,14 +40,18 @@ export function createLocalSqliteSystemStore(
   // service user; this is defence in depth, not a substitute.
   mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
   chmodSync(dirname(filename), 0o700);
-  const database = new Database(filename);
+  // Node's own SQLite: nothing native to build or install on the host.
+  const database = new DatabaseSync(filename);
   restrictFilePermissions(filename);
   // WAL keeps its own sidecar files, which hold the same data.
   restrictFilePermissions(`${filename}-wal`);
   restrictFilePermissions(`${filename}-shm`);
 
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
+  // Wait for another process holding the file (the Platform, an Agent and the
+  // CLI share this store) instead of failing at once: better-sqlite3's old default.
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA foreign_keys = ON");
   database.exec(`
     CREATE TABLE IF NOT EXISTS zelavis_system_records (
       namespace TEXT NOT NULL,
@@ -56,6 +61,13 @@ export function createLocalSqliteSystemStore(
       PRIMARY KEY (namespace, record_key)
     )
   `);
+
+  const namespacesStatement = database.prepare(
+    "SELECT namespace, COUNT(*) AS recordCount FROM zelavis_system_records GROUP BY namespace ORDER BY namespace",
+  );
+  const pageStatement = database.prepare(
+    "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND (? IS NULL OR record_key > ?) ORDER BY record_key LIMIT ?",
+  );
 
   const readStatement = database.prepare(
     "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
@@ -99,7 +111,7 @@ export function createLocalSqliteSystemStore(
     return {
       namespace: value.namespace,
       key: value.record_key,
-      value: JSON.parse(value.value_json) as ZelavisSystemStoreValue,
+      value: parseJson(value.value_json, isJsonValue, "System Store value"),
       updatedAt: value.updated_at,
     };
   }
@@ -107,6 +119,17 @@ export function createLocalSqliteSystemStore(
   let closed = false;
 
   return {
+    namespaces() {
+      return namespacesStatement.all().map(row => {
+        const value = row as { namespace: string; recordCount: number };
+        return { namespace: value.namespace, recordCount: Number(value.recordCount) };
+      });
+    },
+    page(namespace, { limit, after }) {
+      const rows = pageStatement.all(namespace, after ?? null, after ?? null, limit + 1).map(toRecord);
+      return { records: rows.slice(0, limit),
+        ...(rows.length > limit ? { next: rows[limit - 1]!.key } : {}) };
+    },
     get(namespace, key) {
       const row = readStatement.get(namespace, key);
       return row ? toRecord(row) : undefined;
@@ -126,7 +149,7 @@ export function createLocalSqliteSystemStore(
       ).changes > 0;
       const row = readStatement.get(namespace, key);
       if (!row) throw new Error("System Store failed to read an atomic create.");
-  return { created, record: toRecord(row) };
+      return { created, record: toRecord(row) };
     },
     compareAndSet(namespace, key, expectedUpdatedAt, value, expectedValue) {
       const updatedAt = new Date(

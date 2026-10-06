@@ -1,6 +1,6 @@
 {
   "name": "zelavis",
-  "version": "2.0.0-alpha.5",
+  "version": "2.0.0-alpha.25",
   "private": false,
   "description": "Open, self-hostable App Platform and embeddable backend framework.",
   "license": "MIT",
@@ -159,6 +159,10 @@
     "./db/spatial": {
       "types": "./dist/db/spatial.d.ts",
       "import": "./dist/db/spatial.js"
+    },
+    "./recipe": {
+      "types": "./dist/core/recipe/index.d.ts",
+      "import": "./dist/core/recipe/index.js"
     }
   },
   "scripts": {
@@ -210,7 +214,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "better-sqlite3": "^13.0.3",
     "effect": "4.0.0",
     "jose": "^6.2.12",
     "picocolors": "^1.1.1"
@@ -220,7 +223,6 @@
     "@effect/tsgo": "^0.47.2",
     "@harperfast/rocksdb-js": "2.9.1",
     "@libsql/client": "^0.18.0",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.2",
     "@zelavis/app": "workspace:*",
     "@zelavis/auth": "workspace:*",
