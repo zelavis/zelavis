@@ -223,7 +223,7 @@
     "@effect/tsgo": "^0.47.2",
     "@harperfast/rocksdb-js": "2.9.1",
     "@libsql/client": "^0.18.0",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.4",
     "@zelavis/app": "workspace:*",
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
