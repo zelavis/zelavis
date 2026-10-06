@@ -304,7 +304,7 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
         ...extraParams,
       };
 
-      if (!createParams.payment_method_types && !createParams.automatic_payment_methods) {
+      if (!createParams.automatic_payment_methods) {
         createParams.automatic_payment_methods = { enabled: true };
       }
 

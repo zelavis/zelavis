@@ -6,6 +6,12 @@ This package registers a Stripe-backed payment provider using Stripe's official 
 
 It uses the Stripe SDK in the service-friendly form recommended by Stripe, including `appInfo`, and creates PaymentIntents for ecommerce orders.
 
+Stripe 23 uses dynamic payment methods configured in the Stripe Dashboard.
+Use `allowed_payment_method_types` in `getPaymentIntentParams` to restrict methods,
+and `automatic_payment_methods.allow_redirects: "never"` when server-side
+confirmation must exclude redirect methods. The removed `payment_method_types`
+request parameter is not supported.
+
 Recurring billing is also supported through Stripe's official Subscriptions API.
 
 ## Runtime model
