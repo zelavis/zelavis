@@ -359,7 +359,8 @@ function DatabaseDataGrid(props: {
       setSorting(parsed.sorting ?? []);
       setGlobalFilter(parsed.globalFilter ?? "");
     } catch {
-      // Ignore corrupt persisted grid preferences.
+      // Leave the default view usable, and make the invalid preference visible.
+      console.warn("Stored database grid preferences could not be restored.");
     }
   }, [storageKey]);
 
@@ -554,7 +555,8 @@ function DatabaseDataGrid(props: {
       setCreateDataDraft("{}");
       setCreateDrawerOpen(false);
     } catch {
-      // The parent owns the runtime error message so the drawer can stay open.
+      // Keep the drawer open and show the failure beside its inputs.
+      setCreateDraftError("The row could not be created. Check the reported request error.");
     }
   }
 

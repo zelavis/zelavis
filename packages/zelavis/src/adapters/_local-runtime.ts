@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { isString, optional, objectFields, parseJson, isUnknown, recordOf, arrayOf } from "../core/json-validation.js";
 /**
  * Shared service package infrastructure for local JS runtimes (Node.js, Bun).
  *
@@ -348,9 +350,7 @@ function resolveServicePackageEntry(entries: readonly ZipEntry[]): string {
 
   let manifest: ZelavisPackageManifest;
   try {
-    manifest = JSON.parse(
-      new TextDecoder().decode(manifestEntry.body),
-    ) as ZelavisPackageManifest;
+    manifest = parseJson(new TextDecoder().decode(manifestEntry.body), packageRecord);
   } catch {
     throw new Error("Service package package.json is not valid JSON.");
   }
@@ -832,9 +832,7 @@ export function createLocalRuntimeServicePackageInstaller(
 
     const binPath = yield* Effect.try({
       try: () => {
-        const createManifest = JSON.parse(
-          new TextDecoder().decode(manifestEntry.body),
-        ) as ZelavisPackageManifest & { bin?: unknown };
+        const createManifest = parseJson(new TextDecoder().decode(manifestEntry.body), packageRecord);
         return resolveCreatePackageBin(createManifest, input.command);
       },
       catch: (cause) =>
@@ -975,9 +973,7 @@ function resolveScaffoldedFrontendEntry(
 
   let manifest: ZelavisPackageManifest;
   try {
-    manifest = JSON.parse(
-      new TextDecoder().decode(manifestEntry.body),
-    ) as ZelavisPackageManifest;
+    manifest = parseJson(new TextDecoder().decode(manifestEntry.body), packageRecord);
   } catch {
     throw new Error("The scaffold's package.json is not valid JSON.");
   }
@@ -1175,16 +1171,16 @@ function distributionServicesDirectory(): string | undefined {
 
     if (existsSync(manifestPath)) {
       try {
-        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+        const raw = parseJson(readFileSync(manifestPath, "utf-8"), objectFields<{
           name?: string;
-        };
+        }>({name: optional(isString)}));
 
         if (raw?.name === "zelavis") {
           return join(current, SERVICES_DIRECTORY);
         }
       } catch {
-        // A package.json that will not parse tells us nothing about where we
-        // are; keep walking up rather than giving up on the distribution.
+        // An unreadable ancestor is not evidence of a Platform package.
+        console.warn("Skipping an unreadable ancestor package manifest.");
       }
     }
 
@@ -1216,15 +1212,16 @@ function indexBundledServices(): Map<string, string> {
       }
 
       try {
-        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+        const raw = parseJson(readFileSync(manifestPath, "utf-8"), objectFields<{
           name?: string;
-        };
+        }>({name: optional(isString)}));
 
         if (typeof raw?.name === "string" && raw.name.length > 0) {
           index.set(raw.name, packageDir);
         }
       } catch {
-        // One unreadable folder must not hide the rest of the distribution.
+        // Discovery can proceed with other independent packages.
+        console.warn("Skipping an unreadable bundled service manifest.");
       }
     }
   }
@@ -1264,16 +1261,22 @@ export function resolveBundledServiceDirectory(
 async function installedPackageDirectory(
   store: ZelavisSystemStore,
   name: string,
+  version?: string,
 ): Promise<string | undefined> {
   const entries = await createSystemStoreServiceRegistryStore(store).read();
   const specifier = entries.find((entry) => entry.name === name)?.specifier;
   if (!specifier || !isAbsolute(specifier)) return undefined;
-  // Walk up from the entry file to the package.json that names this package.
-  for (let current = dirname(specifier); current !== dirname(current); current = dirname(current)) {
+  const directory = packageDirectoryOf(specifier, name);
+  return directory && (!version || JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).version === version) ? directory : undefined;
+}
+
+/** Walks up from a package's entry file to the folder whose package.json names it. */
+function packageDirectoryOf(entryFile: string, name: string): string | undefined {
+  for (let current = dirname(entryFile); current !== dirname(current); current = dirname(current)) {
     const manifest = join(current, "package.json");
     if (existsSync(manifest)) {
       try {
-        const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown };
+        const parsed = parseJson(readFileSync(manifest, "utf8"), objectFields<{ name?: unknown }>({name: optional(isUnknown)}));
         if (parsed.name === name) return current;
       } catch {
         return undefined;
@@ -1284,6 +1287,29 @@ async function installedPackageDirectory(
 }
 
 /**
+ * Fetches the exact locked version of a recipe the marketplace offered but this
+ * installation never installed. It goes through the ordinary acquisition path,
+ * so the allow-list authorizes the exact version before any fetch and checks
+ * the digest after; a Project can never be frozen from anything else.
+ */
+async function acquireRecipePackage(
+  installer: ZelavisServicePackageInstaller,
+  name: string,
+  version: string,
+): Promise<string> {
+  if (!installer.acquire) throw new Error(`Cannot install ${name}@${version}: this installation does not fetch packages.`);
+  try {
+    const result = await Effect.runPromise(Effect.scoped(installer.acquire({ reference: `npm:${name}@${version}` })));
+    const directory = packageDirectoryOf(result.specifier, name);
+    if (!directory) throw new Error("the downloaded package has no package.json naming it");
+    return directory;
+  } catch (cause) {
+    const reason = (cause as { reason?: string; message?: string })?.reason ?? (cause as Error)?.message ?? String(cause);
+    throw new Error(`Project recipe ${name}@${version} could not be installed from the marketplace allow-list: ${reason}`);
+  }
+}
+
+/**
  * Loads a package the host itself selected (bundled, or a recipe artifact it
  * materialized and verified) through the ordinary package loader. Trust comes
  * from that host-side selection, never from anything the package exports.
@@ -1291,6 +1317,7 @@ async function installedPackageDirectory(
 export async function loadSystemPackage(
   manifest: ZelavisPackageManifest & { packageDir: string },
 ) {
+  provideHostPackagesTo(manifest.packageDir);
   return loadPluginPackage({
     manifest,
     packageDir: manifest.packageDir,
@@ -1314,7 +1341,8 @@ export async function loadBundledServiceCatalog(
 ): Promise<readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]> {
   return Promise.all(
     selections.map(async (selection) => {
-      const manifest = resolveLocalPackageManifest(selection.name);
+      const directory = resolveBundledServiceDirectory(selection.name);
+      const manifest = resolveLocalPackageManifest(directory ?? selection.name);
       if (!manifest) {
         throw new Error(
           `Unable to resolve bundled service manifest for ${selection.name}.`,
@@ -1427,9 +1455,7 @@ function bundledServiceEntry(packageDir: string): string | undefined {
   };
 
   try {
-    raw = JSON.parse(
-      readFileSync(join(packageDir, "package.json"), "utf-8"),
-    ) as typeof raw;
+    raw = parseJson(readFileSync(join(packageDir, "package.json"), "utf-8"), objectFields<typeof raw>({ exports: isUnknown, module: optional(isString), main: optional(isString) }));
   } catch {
     return undefined;
   }
@@ -1511,7 +1537,7 @@ export function resolveLocalPackageManifest(
 
   const parseAndValidate = (manifestPath: string, packageDir: string) => {
     if (!existsSync(manifestPath)) return undefined;
-    const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as ZelavisPackageManifest;
+    const raw = parseJson(readFileSync(manifestPath, "utf-8"), packageRecord);
     if (!raw || typeof raw !== "object" || !raw.zelavis || typeof raw.zelavis !== "object" || !raw.zelavis.kind) {
       return undefined;
     }
@@ -1635,8 +1661,8 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * actually executing, so a folder package always compiles against the same
  * Platform that loaded it rather than some other copy on the machine.
  */
-export async function linkPlatformPackage(folder: string): Promise<void> {
-  const { mkdir: makeDirectory, symlink, readlink } = await import("node:fs/promises");
+export function linkPlatformPackage(folder: string): Promise<void> { return presentProtocol(Effect.gen(function* () {
+  const { mkdir: makeDirectory, symlink, readlink } = (yield* integrationValue(import("node:fs/promises")));
   // Four levels up from `dist/adapters/_local-runtime.js` is the package root.
   const platformRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
   const modules = join(folder, "node_modules");
@@ -1646,18 +1672,18 @@ export async function linkPlatformPackage(folder: string): Promise<void> {
     if (existsSync(link)) {
       // Repointed when it is stale, so upgrading or moving the Platform does
       // not leave every folder package importing a version that is gone.
-      const current = await readlink(link).catch(() => undefined);
+      const current = unwrapIntegrationResult(yield* Effect.result(integrationValue(readlink(link).catch(() => undefined))));
       if (current && resolve(dirname(link), current) === platformRoot) return;
-      await rm(link, { recursive: true, force: true });
+      unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(link, { recursive: true, force: true }))));
     }
-    await makeDirectory(modules, { recursive: true });
-    await symlink(platformRoot, link, "junction");
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(makeDirectory(modules, { recursive: true }))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(symlink(platformRoot, link, "junction"))));
   } catch {
-    // Symlinks can be unavailable (restricted Windows accounts, some
-    // containers). Discovery continues: self-contained packages still load,
-    // and the ones that need the Platform report their own import failure.
+    // Independent bundled packages can still load; packages requiring the
+    // host dependency report their own import failure.
+    console.warn("The host package dependency link could not be created.");
   }
-}
+}).pipe(Effect.withSpan("linkPlatformPackage"))); }
 
 export async function discoverProductServices(
   options: ServiceDiscoveryOptions,
@@ -1784,7 +1810,7 @@ export interface LocalServiceSources {
    * Where a recipe package lies: the checkout copy in development, or the copy
    * the marketplace installed. What Projects are frozen from when it is not bundled.
    */
-  recipePackageDirectory?: (name: string) => Promise<string | undefined>;
+  recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined>;
   /** Whether the marketplace lets a recipe provide the runtime its Projects run under. */
   recipeRuntimeTrusted?: (name: string) => Promise<boolean>;
   serviceRegistry?: ZelavisServiceRegistryOptions;
@@ -1871,6 +1897,8 @@ export async function createLocalServiceSources(
     ...(marketplace?.gate ? { acquisitionGate: marketplace.gate } : {}),
   };
 
+  const packageInstaller = createLocalRuntimeServicePackageInstaller(installerOptions);
+
   return {
     ...(folderFrontends.size > 0
       ? {
@@ -1900,17 +1928,25 @@ export async function createLocalServiceSources(
       // embedded runtimes cannot affect each other.
       manifestResolver: createLocalRuntimeServiceManifestResolver(),
     },
-    servicePackages: createLocalRuntimeServicePackageInstaller(installerOptions),
+    servicePackages: packageInstaller,
     ...(marketplace ? { marketplace } : {}),
     ...(input.isProjectRuntime
       ? {}
       : {
-          recipePackageDirectory: async (name: string) =>
-            marketplace?.localPackages.get(name) ??
+          recipePackageDirectory: async (name: string, version?: string) =>
+            (marketplace?.localPackages.get(name) && (!version || JSON.parse(readFileSync(join(marketplace.localPackages.get(name)!, "package.json"), "utf8")).version === version) ? marketplace.localPackages.get(name) : undefined) ??
             (input.systemStore
-              ? await installedPackageDirectory(input.systemStore, name)
+              ? await installedPackageDirectory(input.systemStore, name, version)
+              : undefined) ??
+            // Offered by the allow-list but never installed: fetch exactly the locked version.
+            (version && marketplace?.gate
+              ? await acquireRecipePackage(packageInstaller, name, version)
               : undefined),
           ...(marketplace ? { recipeRuntimeTrusted: (name: string) => marketplace.runtimeTrusted(name) } : {}),
         }),
   };
 }
+
+const packageRecord = objectFields<ZelavisPackageManifest>({ name: isString, version: optional(isString), type: optional(isString),
+  exports: isUnknown, main: isUnknown, zelavis: optional(objectFields<NonNullable<ZelavisPackageManifest["zelavis"]>>({
+    kind: isString, namespace: optional(isString), capabilities: optional(arrayOf(isString)), marketplace: optional(recordOf(isUnknown)) })) });

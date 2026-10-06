@@ -20,6 +20,78 @@ before editing.
 
 ## Working rules
 
+- Follow [TigerStyle for TypeScript and Effect v4](../../references/tigerstyle-typescript.md). Apply bounded work, validated data, typed failures, scoped cleanup and invariant/fault tests. `pnpm check:tigerstyle` and `pnpm test:repo-rules` run in verification; the migrated TigerStyle gate has no debt allowances. Mechanical checks do not prove semantic safety.
+
+- Effect v4 is mandatory for asynchronous orchestration in the unified `zelavis`
+  package and trusted product/recipe runtimes. Use `Effect.fn`/`Effect.gen`, explicit
+  failure channels, scoped finalizers, and bounded Effect concurrency. Pure
+  synchronous calculations stay ordinary TypeScript. Public SDK/HTTP/CLI and
+  host integration contracts may present Promises; adapt individual external
+  calls at those boundaries, never wrap an entire async workflow in `tryPromise`.
+- `pnpm check:effect-usage` is part of `pnpm verify`. Its AST check rejects new or
+  changed async functions, Promise constructors and Promise coordination in
+  Platform code. `scripts/effect-migration-baseline.json` records unchanged
+  legacy occurrences outside the migrated lifecycle modules; this debt is not
+  permission to introduce or copy Promise orchestration. Its only maintenance
+  command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
+  entries. Never expand it to make a change pass. Migrate touched orchestration.
+- Project lifecycle, local/native runtime drivers, WordPress provisioning and
+  update orchestration are fully checked with no legacy allowances. Interruptions
+  must release coordination permits, stop partially acquired processes, preserve
+  frozen recipe rollback, and leave durable deletion checkpoints retryable.
+  Effect coordination does not replace persisted checkpoints, Fabric fencing,
+  authorization, or separately supervised production Agents.
+- Platform and App engines use the same Effect admission and handover primitives
+  under `core/runtime` and the Node host under `adapters/_node-runtime-*`.
+  Preparation must not acquire writable state. Drain before releasing the previous
+  owner, fence a failed candidate before rollback, and retain paused admission when
+  recovery cannot be proven. Flush durable journal checkpoints, hold its kernel
+  lock, and fence previous engines before granting a recovered generation. Never
+  reuse a candidate generation after an aborted attempt. Preserve immutable
+  recipe snapshots for rollback and external Gateway nonce history across engine
+  replacement; queued accepted callers receive fresh private worker authority.
+  The ordinary Node entrypoints share engine factories. Apps run through a
+  persistent host and qualified running recipe upgrades use a durable Project
+  update intent plus a host/Platform lock acknowledgement before traffic resumes.
+  Prepare an immutable candidate without replacing canonical files. Recover an
+  unfinished intent from proved host selection; deletion takes precedence. Stop
+  may fence failed ownership, but never erase the intent without proof. Re-key
+  surviving App hosts only over the authenticated Agent process pipe. Installed
+  Apps execute their exact engine/private Node and the updater retains qualified
+  engines. The main Platform uses the same persistent host, retains preview
+  listeners through its shared admission gate, and requires root acknowledgement
+  of the current link, private receipt and public version descriptor. Preserve
+  Fabric custody and separately supervised Project processes; qualify adoption
+  before releasing the old writer. New Apps and explicit App upgrades use the
+  latest qualified installed engine by default. Exact installed App engine selection
+  is public in dashboard, SDK, HTTP and CLI, including older qualified engines.
+  Freeze the selected engine's matching bundled App recipe; never couple it to
+  the parent's bundled version. Ordinary startup restores the fleet
+  asynchronously and must remain ready despite an unavailable Project. Persist
+  status refreshes under the Project lifecycle permit; Fabric fleet views remain
+  read-only so scheduling cannot re-enter its own Project permit.
+  Live updates refuse unsupported protocols. Future protocol evolution must ship
+  through Update now and pass the real previous-release update gate; do not
+  use a manual installer conversion as a release procedure.
+
+- Derive custom runtime classification and Project integration metadata from
+  the exact digest-verified frozen recipe manifest, never a catalogue summary.
+  Forward the verified definition through deployment-driver wrappers. Preserve
+  managed declarations in allow-list parsing/catalogues and release validation.
+
+- Managed third-party apps have an ordinary private Project Zelavis App by
+  default, under `.zelavis/integration`, with no separate Project card or opt-in
+  feature flags. Expose the normal setup `core` APIs and scoped HTTP/SDK/CLI
+  APIs. Persist service API usage independently of capability availability;
+  internal identity database access is not service usage. Persist workloads in
+  the same private runtime store. Bound engine convergence uses the shared
+  persistent host journal and preserves recipe locks and third-party processes;
+  native App engine pins remain unchanged on parent updates.
+  A managed third-party App's own database (for example WordPress's MariaDB)
+  belongs to that application. Its bound Zelavis database supports additional
+  features built by services and extensions; it does not store, replace, or
+  automatically mirror the application's tables. Keep APIs and storage distinct.
+
 - All bundled packages, including UI, load through `loadPluginPackage` using
   their `package.json` identity and static metadata. Exported metadata and raw
   `api` objects are rejected. Host options supply scope and package location.
@@ -118,9 +190,48 @@ before editing.
   operator surface. It intentionally has no HTTP/dashboard equivalent because
   it deletes the Platform, Agent, authority material, and all Project data.
   Require a dry run and exact acknowledgement; remove only provably
-  installer-owned resources and retain shared host/operator state. When an
-  installer starts owning a new resource, update the uninstall inventory,
+  installer-owned resources and retain shared host/operator state.
+  Debian owns only the incoming `/opt/zelavis/package` payload; immutable releases
+  and current links belong to the installer so upgrades preserve other instances.
+  When an installer starts owning a new resource, update the uninstall inventory,
   staged script, destructive-path tests, and docs together.
+- Native release installation has the same host-local boundary. The shell
+  installer and create bootstrap call `zelavis install --from-npm`, and a Debian
+  `postinst` calls `zelavis install --from-release`, with the release's private
+  Node. Distribution has no signatures, keys, CI secrets or GitHub releases: trust
+  is npm, nodejs.org and zelavis.com (AGENTS.md "Distribution Trust Model"). Keep planning in core runtime, host effects in
+  adapters, unit/configuration templates in the release tree, and pins/checksums
+  in distribution staging. A default system installation enables Traefik ingress on ports 80 and 443, with a canonical HTTP fallback for `http://<server-ip>/zelavis/`; no domain is needed for HTTP. Management listeners stay on loopback unless explicitly exposed with `--public`. Refuse foreign public-port owners, honor persisted listener configuration on updates, and retain persistent host/proxy processes. Never add compatibility aliases or version branches. Updating is a request the unprivileged
+  Platform drops for a root-owned `zelavis-update` path/service pair; the updater trusts
+  nothing in the request and rolls back a release that does not answer (AGENTS.md). Updates prepare then swap
+  (`--stage-only`, `--live`), acknowledge root inventory before resuming queued
+  traffic, and keep the host, preview listeners and separate Project Agent running.
+  Named instances own their update units and custody; user installs use the same
+  handover as their own user. System installs always enable the Project Agent.
+  An older installation without the protocol needs one full local installer
+  conversion; this is a known update UX gap, not a future release procedure.
+  Every future release must work through dashboard **Update now**, even when
+  runtime protocols or installation layouts change. Plan and qualify the updater
+  transition from the previous installed release before shipping; required host
+  changes use the existing trusted updater authority. Never require terminal
+  commands for a normal update or introduce permanent legacy runtime paths.
+  Preserve data, Project locks, access URLs and rollback guarantees.
+  Root artifacts must remain root-owned; archive extraction must not
+  preserve foreign archive UIDs. Create uses the same bootstrap and plan.
+  Create takes no folder argument. Its sudo bootstrap fetches its own Node and
+  package into a private root-owned directory; never execute user package-cache
+  files as root. User mode owns only its
+  `~/.local/share/zelavis` prefix and command link. Runtime checksum helpers
+  have one distribution source; shipped copies are generated at build time.
+  Install/removal take an exclusive prefix lock and share the Node/Bun Platform
+  data ownership guard; never bypass live data or port conflicts with `--force`.
+  Current receipts carry source, entry, version, mode, selected instance, port
+  and Edge ownership. Named system instances share immutable releases but own
+  separate current/receipt/runtime descriptors, data/config/accounts/ports/units.
+  Only default may own host Edge, enforced by a persistent record and kernel
+  reservation; secondary instances run with Edge off. Removing an instance retains
+  shared releases/commands/templates/package state until the last receipt is
+  removed. Doctor remains read-only and host-local.
 - Keep first-run setup as a presentation over the one durable first-owner
   bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
   dashboard `/setup` route must call the same endpoint and must not introduce
@@ -134,6 +245,13 @@ before editing.
   Updating the parent Platform must not silently upgrade or rewrite child
   Project locks. A driver may claim independent-version execution only after
   it can materialize and run the locked artifact.
+- Custom recipe runtimes use verified digest-specific module paths under the
+  Project root so ESM caches cannot retain relative imports from a previous
+  recipe. These copies are derived from the locked artifact. Failed upgrade
+  preparation restores the previous artifact and host descriptor. Record the
+  locked driver before provisioning so cleanup survives failure and restart. Early failure
+  without a descriptor still permits exact-Project cleanup through the trusted
+  driver or Agent; malformed descriptors and cleanup errors remain refused.
 - Keep one root Platform Fabric. It owns physical Nodes, provider authority,
   Project allocation, placement, routing, generation/fencing, and fleet policy.
   Authenticated Zelavis Agents execute its decisions; runtime drivers are
@@ -320,8 +438,9 @@ revalidate the deadline immediately before execution. The Node executor must
 re-prove artifact/parent inode identity at execution, spawn a private copy of
 the verified bytes rather than the registered path, and kill the operation's
 process group at the deadline and when its leader exits. Host operations are
-installed only with Ed25519 release-signed manifests verified against the
-operator trust store; scripts name their interpreter inside the signature.
+installed as plain manifests in a root-owned tree (the Agent refuses a manifest
+that is not a root-owned regular file when root ownership is required); scripts
+name their interpreter in the manifest.
 On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
 and never fall back from it silently. This does not substitute for pinned
 shared libraries or destination fencing.
@@ -329,12 +448,22 @@ shared libraries or destination fencing.
 Agent authority is Ed25519: only the Platform holds the private key, Agents
 trust its public file, and envelopes bind the exact arguments
 (`argumentsDigest`). The Platform issues authority only through the host
-operation broker, for installed operations whose release-signed manifest names
+operation broker, for installed operations whose manifest names
 the permission and scope, after recording an audit entry; there is no general
 command runner. Agents reach operations only over their local socket.
-Operation output is journaled only when the signed manifest declares a bounded
+Operation output is journaled only when the manifest declares a bounded
 JSON `result`; submissions are rate limited per actor, and audit reads never
 return argument values.
+`zelavis agent --operations-only` refuses every process protocol message and
+does not open/reclaim Project state. System installations ship a separate
+root-owned operation Agent with a group-limited endpoint; Project supervision
+remains unprivileged. Never turn
+the combined process Agent into a root package installer.
+`zelavis/recipe` is the initial Effect authoring contract, not yet connected to
+package admission or Project execution. Recipe revisions and software versions
+are separate. Select a named method at creation, persist it in the Project,
+and never reselect automatically at start. JS/OCI driver integration remains
+planned; RecipeHost is not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 
 Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
@@ -353,6 +482,27 @@ Endpoint-Backed Capability section. Code lives in `src/assistant*.ts`; read them
 before adding a tool, and give every tool an `access` requirement, an operator
 `describe` label, and a test. A tool that changes anything must declare
 `mutation` so it becomes an approval request.
+
+
+Managed third-party app recipe updates refresh Zelavis integration, not the app's
+software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
+their software updates. The native managed-runtime path must keep the service
+running, stage a verified integration recipe, persist its update intent, and
+commit metadata/artifact without provisioning, rewriting runtime configuration,
+or start/stop/restart. Activate SDK menus, operation discovery, REST/setup
+endpoints and disk-backed dashboard pages in a separate Project-scoped Zelavis
+integration runtime behind the existing Gateway. It uses the shared persistent
+host/Effect handover, its private state lives below the Project's `.zelavis/integration`,
+and it shares the workload's existing Agent/Fabric placement. Never mount recipe
+endpoints into the Platform or forward Platform authority to third-party software.
+Adopt integration hosts separately from app processes through the same Agent;
+keep the app supervisor serving. Recover an interrupted live update from proved
+host selection, including a missing canonical recipe; passive updates restore
+previous snapshots. Never claim activation from metadata-only tests. Preserve app identity, runtime
+entry, host package set and isolation intent; refuse changed deployment contracts
+without disturbing the existing app. Native Zelavis App upgrades and version
+switches replace the full engine through the same Effect handover as the outer
+Platform; Fabric authority remains with that outer control plane.
 
 ## Design checklist
 
@@ -376,3 +526,27 @@ pnpm --filter @zelavis/ui test
 pnpm --filter @zelavis/ecommerce test
 pnpm run docs:check
 ```
+
+
+System installations use a separate root `zelavis-host-agent` in operation-only
+mode for signed, fixed host operations. Its group-limited endpoint is configured
+through `ZELAVIS_HOST_OPERATIONS_ENDPOINT`, separate from Project supervision.
+Recipes declare bounded named `hostPackages` sets; create-project package approval
+requires `server.packages.install` independently of `projects.create`. Never add
+APT/sudo or root escalation to a Project recipe. The package operation preserves
+existing host service policy, suppresses only its APT process tree, and uninstall
+restores only its recorded policy; shared dependencies remain installed.
+
+Project preview ingress belongs to Zelavis Edge (`edge.previews` in the System
+Store), never the runtime driver's private URL. Node previews bind one stable
+HTTP port per local top-level Project, public on default system installations with Edge, otherwise following the Platform's listen host.
+Stop closes the listener; deletion removes its durable intent. Preserve the
+visitor Host, redirects and site cookies through host transport while stripping
+Platform cookies and authority headers. Cookie-authenticated mutations require
+the same browser origin; ports do not isolate cookies. Remote placements must
+not publish a local listener pointing at another Node's loopback address.
+
+Platform System Store inspection is read-only under `/runtime/system-store`,
+`client.runtime.systemStore` and `zelavis system-store`. Require system-scoped
+`server.database.inspect`, paginate in the store adapter and redact authority
+material before any transport. Never expose it as a Project database.

@@ -1,3 +1,5 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
 import { spawn } from "node:child_process";
 import { constants as fsConstants, type Stats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -6,14 +8,12 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   validateHostOperationRequest,
-  verifySignedHostOperationManifest,
+  validateHostOperationManifest,
   ZelavisHostOperationValidationError,
   type ZelavisHostOperationExecutor,
   type ZelavisHostOperationManifest,
   type ZelavisHostOperationRequest,
   type ZelavisHostOperationResult,
-  type ZelavisHostOperationTrustStore,
-  type ZelavisSignedHostOperationManifest,
 } from "../core/deployment/index.js";
 import {
   createCgroupV2OperationSupervisor,
@@ -22,8 +22,8 @@ import {
 } from "./_linux-cgroup-supervisor.js";
 
 export interface NodeHostOperationRegistration {
-  /** The release-signed manifest; verified against `trust` before anything else. */
-  readonly signed: ZelavisSignedHostOperationManifest;
+  /** The installed manifest; validated before anything else. */
+  readonly manifest: ZelavisHostOperationManifest;
   /** Artifact path relative to the operation root. */
   readonly file: string;
 }
@@ -35,8 +35,6 @@ export const HOST_OPERATION_ARTIFACT_FILE = "artifact";
 export interface NodeHostOperationExecutorOptions {
   readonly rootDirectory: string;
   readonly operations: readonly NodeHostOperationRegistration[];
-  /** Release keys the operator trusts. Unsigned or untrusted manifests are refused. */
-  readonly trust: ZelavisHostOperationTrustStore;
   readonly authorize: (request: Readonly<ZelavisHostOperationRequest>) => Promise<boolean>;
   readonly requireRootOwnedArtifacts?: boolean;
   readonly maxOutputBytes?: number;
@@ -46,6 +44,8 @@ export interface NodeHostOperationExecutorOptions {
    * Defaults to the OS temporary directory.
    */
   readonly stagingDirectory?: string;
+  /** Trusted Agent configuration, copied at registration. Request arguments cannot override it. */
+  readonly environment?: Readonly<Record<string, string>>;
   /**
    * How an operation's processes are contained. `process-group` (default) is
    * portable but a descendant starting a new session escapes it. `cgroup-v2`
@@ -123,36 +123,47 @@ async function proveInterpreter(
 
 /**
  * Reads installed operations from `<root>/<id>/<version>/`. Directory names
- * must match the manifest they hold; the signature is verified by the
- * executor, not here.
+ * must match the manifest they hold. Authority is the tree itself: the Agent
+ * requires it root-owned, and the executor re-proves every artifact's digest.
  */
-export async function loadInstalledHostOperations(
+export function loadInstalledHostOperations(
   rootDirectory: string,
-): Promise<readonly NodeHostOperationRegistration[]> {
+  options: { readonly requireRootOwned?: boolean } = {},
+): Promise<readonly NodeHostOperationRegistration[]> { return presentProtocol(Effect.gen(function* () {
   const registrations: NodeHostOperationRegistration[] = [];
-  for (const id of (await readdir(rootDirectory, { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
-    for (const version of (await readdir(join(rootDirectory, id.name), { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
+  for (const id of ((yield* integrationValue(readdir(rootDirectory, { withFileTypes: true })))).filter((entry) => entry.isDirectory())) {
+    for (const version of ((yield* integrationValue(readdir(join(rootDirectory, id.name), { withFileTypes: true })))).filter((entry) => entry.isDirectory())) {
       const relativeDirectory = join(id.name, version.name);
-      let signed: ZelavisSignedHostOperationManifest;
+      let manifest: ZelavisHostOperationManifest;
+      const manifestPath = join(rootDirectory, relativeDirectory, HOST_OPERATION_MANIFEST_FILE);
+      // The manifest names the digest and who may request the operation, so it
+      // is held to the artifact's standard: a regular file only root can change.
+      const manifestStats = (yield* integrationValue(lstat(manifestPath).catch(() => undefined)));
+      if (manifestStats && (
+        !manifestStats.isFile() || (manifestStats.mode & 0o022) !== 0 ||
+        options.requireRootOwned === true && manifestStats.uid !== 0
+      )) {
+        throw new ZelavisHostOperationValidationError(
+          `Installed host operation "${relativeDirectory}" manifest must be a regular${options.requireRootOwned ? " root-owned" : ""} file that is not group- or world-writable.`,
+        );
+      }
       try {
-        signed = JSON.parse(
-          await readFile(join(rootDirectory, relativeDirectory, HOST_OPERATION_MANIFEST_FILE), "utf8"),
-        ) as ZelavisSignedHostOperationManifest;
+        manifest = validateHostOperationManifest(JSON.parse(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(manifestPath, "utf8"))))));
       } catch {
         throw new ZelavisHostOperationValidationError(
           `Installed host operation "${relativeDirectory}" has no readable ${HOST_OPERATION_MANIFEST_FILE}.`,
         );
       }
-      if (signed?.manifest?.id !== id.name || signed.manifest.version !== version.name) {
+      if (manifest?.id !== id.name || manifest.version !== version.name) {
         throw new ZelavisHostOperationValidationError(
           `Installed host operation "${relativeDirectory}" does not match its manifest identity.`,
         );
       }
-      registrations.push({ signed, file: join(relativeDirectory, HOST_OPERATION_ARTIFACT_FILE) });
+      registrations.push({ manifest, file: join(relativeDirectory, HOST_OPERATION_ARTIFACT_FILE) });
     }
   }
-  return registrations;
-}
+  return (yield* integrationValue(registrations));
+}).pipe(Effect.withSpan("loadInstalledHostOperations"))); }
 
 function signalGroup(pid: number | undefined, signal: NodeJS.Signals) {
   if (!pid) return;
@@ -188,11 +199,12 @@ function requestFingerprint(request: ZelavisHostOperationRequest): string {
   })).digest("hex");
 }
 
-export async function createNodeHostOperationExecutor(
+export function createNodeHostOperationExecutor(
   options: NodeHostOperationExecutorOptions,
-): Promise<ZelavisHostOperationExecutor> {
+): Promise<ZelavisHostOperationExecutor> { return presentProtocol(Effect.gen(function* () {
+  const environment = Object.freeze({ ...options.environment });
   const requestedRoot = resolve(options.rootDirectory);
-  const rootStats = await lstat(requestedRoot);
+  const rootStats = (yield* integrationValue(lstat(requestedRoot)));
   if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
     throw new ZelavisHostOperationValidationError(
       "Host operation root must be a regular directory, not a symbolic link.",
@@ -208,8 +220,8 @@ export async function createNodeHostOperationExecutor(
       "Privileged host operation root must be owned by root.",
     );
   }
-  const rootDirectory = await realpath(requestedRoot);
-  const rootIdentity = identityOf(await lstat(rootDirectory));
+  const rootDirectory = (yield* integrationValue(realpath(requestedRoot)));
+  const rootIdentity = identityOf((yield* integrationValue(lstat(rootDirectory))));
   const registrations = new Map<string, {
     manifest: ZelavisHostOperationManifest;
     file: string;
@@ -218,7 +230,7 @@ export async function createNodeHostOperationExecutor(
     interpreter?: { readonly path: string; readonly chain: readonly ProvenPath[] };
   }>();
   const requestedStaging = resolve(options.stagingDirectory ?? tmpdir());
-  const stagingStats = await lstat(requestedStaging);
+  const stagingStats = (yield* integrationValue(lstat(requestedStaging)));
   if (!stagingStats.isDirectory() || stagingStats.isSymbolicLink()) {
     throw new ZelavisHostOperationValidationError(
       "Host operation staging directory must be a regular directory, not a symbolic link.",
@@ -230,7 +242,7 @@ export async function createNodeHostOperationExecutor(
     );
   }
   for (const registration of options.operations) {
-    const manifest = await verifySignedHostOperationManifest(registration.signed, options.trust);
+    const manifest = validateHostOperationManifest(registration.manifest);
     const requestedFile = resolve(rootDirectory, registration.file);
     const relativeRequestedFile = relative(rootDirectory, requestedFile);
     if (
@@ -258,7 +270,7 @@ export async function createNodeHostOperationExecutor(
       parent = next;
     }
     for (const directory of parents.reverse()) {
-      const directoryStats = await lstat(directory);
+      const directoryStats = (yield* integrationValue(lstat(directory)));
       parentIdentities.push({ path: directory, identity: identityOf(directoryStats) });
       if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) {
         throw new ZelavisHostOperationValidationError(
@@ -276,20 +288,20 @@ export async function createNodeHostOperationExecutor(
         );
       }
     }
-    const requestedStats = await lstat(requestedFile);
+    const requestedStats = (yield* integrationValue(lstat(requestedFile)));
     if (requestedStats.isSymbolicLink()) {
       throw new ZelavisHostOperationValidationError(
         "Host operation artifact must not be a symbolic link.",
       );
     }
-    const file = await realpath(requestedFile);
+    const file = (yield* integrationValue(realpath(requestedFile)));
     const relativeFile = relative(rootDirectory, file);
     if (!relativeFile || relativeFile.startsWith("..") || isAbsolute(relativeFile)) {
       throw new ZelavisHostOperationValidationError(
         "Host operation artifact must be a file below the configured operation root.",
       );
     }
-    const stats = await lstat(file);
+    const stats = (yield* integrationValue(lstat(file)));
     if (!stats.isFile() || stats.isSymbolicLink()) {
       throw new ZelavisHostOperationValidationError(
         "Host operation artifact must be a regular non-symlink file.",
@@ -310,21 +322,21 @@ export async function createNodeHostOperationExecutor(
         "Privileged host operation artifacts must be owned by root.",
       );
     }
-    const body = await readFile(file);
+    const body = (yield* integrationValue(readFile(file)));
     if (digest(body) !== manifest.sha256) {
       throw new ZelavisHostOperationValidationError(
         `Host operation artifact digest does not match "${manifest.id}" ${manifest.version}.`,
       );
     }
     // A shebang would let the host pick the interpreter by a path outside
-    // the signature; a script must name it in the signed manifest instead.
+    // the manifest; a script must name it there instead.
     if (!manifest.interpreter && body[0] === 0x23 && body[1] === 0x21) {
       throw new ZelavisHostOperationValidationError(
         `Host operation "${manifest.id}" is a script; its manifest must declare an interpreter.`,
       );
     }
     const interpreter = manifest.interpreter
-      ? await proveInterpreter(manifest.interpreter, options.requireRootOwnedArtifacts === true)
+      ? (yield* integrationValue(proveInterpreter(manifest.interpreter, options.requireRootOwnedArtifacts === true)))
       : undefined;
     if (registrations.has(manifest.id)) {
       throw new ZelavisHostOperationValidationError(
@@ -408,29 +420,29 @@ export async function createNodeHostOperationExecutor(
   }
 
   const cgroup = options.supervision?.kind === "cgroup-v2"
-    ? await createCgroupV2OperationSupervisor({
+    ? (yield* integrationValue(createCgroupV2OperationSupervisor({
         root: options.supervision.root,
         ...(options.supervision.limits ? { limits: options.supervision.limits } : {}),
-      })
+      })))
     : undefined;
   // The join shell runs before the operation, so it is proven like an
   // interpreter and re-proven before every run.
   const joinShell = cgroup
-    ? await proveInterpreter(cgroup.joinShell, options.requireRootOwnedArtifacts === true)
+    ? (yield* integrationValue(proveInterpreter(cgroup.joinShell, options.requireRootOwnedArtifacts === true)))
     : undefined;
 
   // Private to this executor: 0700 and owned by the executing identity, so
   // another local user cannot replace a staged copy between verify and exec.
-  const stagingDirectory = await mkdtemp(
-    join(await realpath(requestedStaging), "zelavis-host-operations-"),
-  );
+  const stagingDirectory = (yield* integrationValue(mkdtemp(
+    join(unwrapIntegrationResult(yield* Effect.result(integrationValue(realpath(requestedStaging)))), "zelavis-host-operations-"),
+  )));
 
   const completed = new Map<string, { fingerprint: string; result: ZelavisHostOperationResult }>();
   const active = new Map<string, { fingerprint: string; promise: Promise<ZelavisHostOperationResult> }>();
   const maxOutputBytes = Math.max(1_024, Math.min(options.maxOutputBytes ?? 256 * 1_024, 4 * 1_024 * 1_024));
 
   return {
-    async execute(request) {
+    execute(request: ZelavisHostOperationRequest) { return presentProtocol(Effect.gen(function* () {
       const registration = registrations.get(request.operation);
       if (!registration) {
         throw new ZelavisHostOperationValidationError(
@@ -439,7 +451,7 @@ export async function createNodeHostOperationExecutor(
       }
       request = validateHostOperationRequest(request, registration.manifest);
       const fingerprint = requestFingerprint(request);
-      if (!(await options.authorize(request))) {
+      if (!(unwrapIntegrationResult(yield* Effect.result(integrationValue(options.authorize(request)))))) {
         throw new ZelavisHostOperationValidationError(
           "Host operation authority was rejected.",
         );
@@ -451,7 +463,7 @@ export async function createNodeHostOperationExecutor(
             "Host operation id was already used for a different request.",
           );
         }
-        return finished.result;
+        return unwrapIntegrationResult(yield* Effect.result(integrationValue(finished.result)));
       }
       const running = active.get(request.operationId);
       if (running) {
@@ -460,15 +472,15 @@ export async function createNodeHostOperationExecutor(
             "Host operation id is active for a different request.",
           );
         }
-        return running.promise;
+        return unwrapIntegrationResult(yield* Effect.result(integrationValue(running.promise)));
       }
-      const promise = (async (): Promise<ZelavisHostOperationResult> => {
-        const body = await readVerifiedArtifact(registration);
+      const promise = ((): Promise<ZelavisHostOperationResult> => { return presentProtocol(Effect.gen(function* () {
+        const body = unwrapIntegrationResult(yield* Effect.result(integrationValue(readVerifiedArtifact(registration))));
         // Execute a private copy of the verified bytes, never the registered
         // path: the path can be replaced after the digest check, the copy
         // cannot be by anyone but this executor's own identity.
         const staged = join(stagingDirectory, `${randomUUID()}`);
-        await writeFile(staged, body, { mode: 0o500, flag: "wx" });
+        unwrapIntegrationResult(yield* Effect.result(integrationValue(writeFile(staged, body, { mode: 0o500, flag: "wx" }))));
         try {
           validateHostOperationRequest(request, registration.manifest);
           const startedAt = new Date().toISOString();
@@ -480,17 +492,18 @@ export async function createNodeHostOperationExecutor(
             detached: true,
             stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
             env: {
+              ...environment,
               PATH: "/usr/sbin:/usr/bin:/sbin:/bin",
               LANG: "C.UTF-8",
               LC_ALL: "C.UTF-8",
             },
           };
-          const scope: CgroupOperationScope | undefined = cgroup ? await cgroup.open() : undefined;
+          const scope: CgroupOperationScope | undefined = cgroup ? unwrapIntegrationResult(yield* Effect.result(integrationValue(cgroup.open()))) : undefined;
           const args = Object.entries(request.arguments)
             .sort(([left], [right]) => left.localeCompare(right))
             .flatMap(([name, value]) => [`--${name}`, value]);
           const running = new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolveRun, rejectRun) => {
-            // A script runs under the interpreter its signed manifest names,
+            // A script runs under the interpreter its manifest names,
             // never one resolved from a shebang.
             const direct = registration.interpreter
               ? { command: registration.interpreter.path, args: [staged, ...args] }
@@ -551,11 +564,11 @@ export async function createNodeHostOperationExecutor(
           });
           let result: Awaited<typeof running>;
           try {
-            result = await running;
+            result = unwrapIntegrationResult(yield* Effect.result(integrationValue(running)));
           } finally {
             // Everything the operation started, including descendants that
             // left its process group, is gone before the result is reported.
-            await scope?.close();
+            unwrapIntegrationResult(yield* Effect.result(integrationValue(scope?.close())));
           }
           const declared = registration.manifest.result;
           let parsedResult: Record<string, unknown> | undefined;
@@ -566,7 +579,7 @@ export async function createNodeHostOperationExecutor(
               resultError = `result exceeds ${declared.maxBytes} bytes`;
             } else {
               try {
-                const value = JSON.parse(text) as unknown;
+                const value = JSON.parse(text);
                 if (!value || typeof value !== "object" || Array.isArray(value)) {
                   resultError = "result is not a JSON object";
                 } else {
@@ -592,17 +605,17 @@ export async function createNodeHostOperationExecutor(
             finishedAt: new Date().toISOString(),
           };
           completed.set(request.operationId, { fingerprint, result: operationResult });
-          return operationResult;
+          return unwrapIntegrationResult(yield* Effect.result(integrationValue(operationResult)));
         } finally {
-          await rm(staged, { force: true });
+          unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(staged, { force: true }))));
         }
-      })();
+      }).pipe(Effect.withSpan("createNodeHostOperationExecutor/execute/promise/callback"))); })();
       active.set(request.operationId, { fingerprint, promise });
       try {
-        return await promise;
+        return unwrapIntegrationResult(yield* Effect.result(integrationValue(unwrapIntegrationResult(yield* Effect.result(integrationValue(promise))))));
       } finally {
         active.delete(request.operationId);
       }
-    },
+    }).pipe(Effect.withSpan("createNodeHostOperationExecutor/execute"))); },
   };
-}
+}).pipe(Effect.withSpan("createNodeHostOperationExecutor"))); }

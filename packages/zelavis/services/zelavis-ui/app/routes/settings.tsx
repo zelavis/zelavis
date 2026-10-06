@@ -8,6 +8,7 @@ import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { AssistantAuditCard } from '#/components/assistant-audit-card'
 import { AssistantProviderCard } from '#/components/assistant-provider-card'
+import { UpdateCard } from '#/components/update-card'
 import { Input } from '#/components/ui/input'
 import {
   Select,
@@ -247,6 +248,7 @@ function Settings() {
         </CardContent>
       </Card>
 
+      <UpdateCard runtime={runtime} />
       <AssistantProviderCard runtime={runtime} />
       <AssistantAuditCard runtime={runtime} />
 

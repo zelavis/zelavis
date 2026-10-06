@@ -1,0 +1,765 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+import SegmentedControl from '../components/SegmentedControl.astro';
+
+/**
+ * The one place that says how Zelavis is installed. Only what ships is marked
+ * available: today that is the shell installer and `npm create zelavis`. APT,
+ * the Debian package and Windows are planned and say so.
+ */
+type Method = {
+	id: string;
+	label: string;
+	status: 'available' | 'planned';
+	title: string;
+	blurb: string;
+	shell: string;
+	commands: { comment?: string; line: string }[];
+	notes: string[];
+};
+
+const methods: Method[] = [
+	{
+		id: 'curl',
+		label: 'curl',
+		status: 'available',
+		title: 'Shell installer',
+		blurb: 'One command on a fresh Linux server or a Mac. It installs everything Zelavis needs and nothing else.',
+		shell: 'bash',
+		commands: [
+			{ comment: 'Linux server (root, systemd)', line: 'curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha' },
+			{ comment: 'macOS, or Linux without root', line: 'curl -fsSL https://zelavis.com/install.sh | sh -s -- --channel alpha --user' },
+		],
+		notes: [
+			'Needs curl and tar. It downloads about 50 MB of Node plus the Zelavis package.',
+			'Read it first: zelavis.com/install.sh is one short, commented script.',
+			'Run it again later to upgrade the same installation.',
+		],
+	},
+	{
+		id: 'npm',
+		label: 'npm',
+		status: 'available',
+		title: 'npm, pnpm or Bun create',
+		blurb: 'The same installer for people who already have a JavaScript toolchain. It installs on this machine; it does not scaffold a folder.',
+		shell: 'bash',
+		commands: [
+			{ comment: 'Shows the plan and the exact command, changes nothing', line: 'npm create zelavis@alpha -- --dry-run' },
+			{ comment: 'Install (asks for sudo on Linux when it needs it)', line: 'npm create zelavis@alpha -- --yes' },
+			{ comment: 'Or with pnpm', line: 'pnpm create zelavis@alpha --yes' },
+			{ comment: 'Or with Bun', line: 'bun create zelavis@alpha --yes' },
+		],
+		notes: [
+			'Your Node only runs the small create program. Zelavis always runs on its own private Node.',
+			'Linux with sudo installs the full system service; macOS installs for your user.',
+			'Same paths, same units, same receipt as the shell installer.',
+		],
+	},
+	{
+		id: 'apt',
+		label: 'APT',
+		status: 'planned',
+		title: 'APT repository',
+		blurb: 'A signed apt.zelavis.com repository for Debian and Ubuntu is on the roadmap. It does not exist yet.',
+		shell: 'bash',
+		commands: [{ comment: 'Not available yet. Use the shell installer:', line: 'curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha' }],
+		notes: [
+			'When it ships it will install the same Platform through the same installer, then update with apt.',
+			'Until then the shell installer is the supported Linux path.',
+		],
+	},
+	{
+		id: 'deb',
+		label: '.deb',
+		status: 'planned',
+		title: 'Debian package',
+		blurb: 'A downloadable .deb is built from the same release tree but is not published yet.',
+		shell: 'bash',
+		commands: [{ comment: 'Not available yet. Use the shell installer:', line: 'curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha' }],
+		notes: [
+			'There is no download link on purpose: nothing is published to install from.',
+			'A package will run the same installer in its post-install step.',
+		],
+	},
+	{
+		id: 'powershell',
+		label: 'PowerShell',
+		status: 'planned',
+		title: 'Windows',
+		blurb: 'Native Windows is not supported. A PowerShell installer is planned; for now run Zelavis inside WSL 2.',
+		shell: 'powershell',
+		commands: [
+			{ comment: 'Today: inside a WSL 2 distribution with systemd enabled', line: 'curl -fsSL https://zelavis.com/install.sh | sudo sh -s -- --channel alpha' },
+		],
+		notes: [
+			'Enable systemd in your WSL distribution first (set systemd=true in /etc/wsl.conf).',
+			'Docker Desktop and native Windows services are not part of this yet.',
+		],
+	},
+];
+
+const steps = [
+	{ n: '1', title: 'Fetches a private Node', body: 'The Node version Zelavis is built for comes from nodejs.org and is checked against its published SHA-256. It never replaces the Node already on your machine.' },
+	{ n: '2', title: 'Installs the exact package from npm', body: 'The version you ask for, verified by npm against the registry digest. Dependency install scripts stay off, and nothing needs a compiler: it is all plain JavaScript.' },
+	{ n: '3', title: 'Lays out one installation', body: 'Releases under /opt/zelavis, data in /var/lib/zelavis, configuration in /etc/zelavis, a systemd service, a receipt, and a single zelavis command.' },
+	{ n: '4', title: 'Starts safely', body: 'It prints the address to open, plus a one-time first-owner token that decides who may claim the account. The Edge proxy and the Agent stay off until you turn them on.' },
+];
+
+const after = [
+	{ title: 'Open the dashboard', body: 'Open the address the installer printed and finish setup with the token. It is plain HTTP until you add a hostname with HTTPS in the wizard, so claim the account straight away.', code: 'http://YOUR-SERVER-IP:3000/zelavis' },
+	{ title: 'Check the installation', body: 'Read-only, changes nothing, and tells you what is wrong in plain words.', code: 'sudo zelavis doctor' },
+	{ title: 'Add a hostname and HTTPS', body: 'The setup wizard has an optional Platform hostname step that verifies DNS before enabling HTTPS through the Edge.', code: 'zelavis setup' },
+];
+---
+
+<MarketingLayout
+	title="Install Zelavis"
+	description="Install Zelavis with one command. Shell installer and npm create today; APT, the Debian package and PowerShell are planned."
+>
+	<section class="hero">
+		<div class="glow" aria-hidden="true"></div>
+		<div class="wrap hero-inner">
+			<p class="eyebrow" data-reveal>Install</p>
+			<h1 data-reveal style="--delay: 60">Install Zelavis.</h1>
+			<p class="lede" data-reveal style="--delay: 120">
+				One command, one installation. Whichever way you start it, you get the same paths, the same service and the
+				same uninstall.
+			</p>
+
+			<div class="switch" data-reveal style="--delay: 180">
+				<SegmentedControl
+					id="install-method"
+					label="Installation method"
+					variant="glass"
+					width="680px"
+					value="curl"
+					options={methods.map((method) => ({ value: method.id, label: method.label }))}
+				/>
+			</div>
+
+			<div class="stage" data-reveal style="--delay: 240">
+				{methods.map((method, index) => (
+					<article class="panel" data-panel={method.id} hidden={index !== 0}>
+						<header class="panel-head">
+							<div>
+								<h2>{method.title}</h2>
+								<p>{method.blurb}</p>
+							</div>
+							<span class:list={['badge', `badge--${method.status}`]}>
+								{method.status === 'available' ? 'Available' : 'Planned'}
+							</span>
+						</header>
+
+						<div class="term" role="group" aria-label={`${method.title} commands`}>
+							<div class="term-bar" aria-hidden="true">
+								<i></i><i></i><i></i><span>{method.shell}</span>
+							</div>
+							{method.commands.map((command) => (
+								<div class="cmd">
+									{command.comment && <p class="cmd-comment"># {command.comment}</p>}
+									<div class="cmd-row">
+										<pre><code>{command.line}</code></pre>
+										{method.status === 'available' && (
+											<button type="button" class="copy" data-copy={command.line} aria-label="Copy command">
+												<span class="copy-idle">Copy</span><span class="copy-done" aria-hidden="true">Copied</span>
+											</button>
+										)}
+									</div>
+								</div>
+							))}
+						</div>
+
+						<ul class="notes">
+							{method.notes.map((note) => <li>{note}</li>)}
+						</ul>
+					</article>
+				))}
+			</div>
+
+			<p class="alpha" data-reveal style="--delay: 300">
+				<strong>Alpha.</strong> The commands pick the newest alpha build. A stable channel arrives with the first stable release.
+			</p>
+		</div>
+	</section>
+
+	<section class="section" id="what-it-does">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2>What the installer does.</h2>
+				<p>
+					It trusts exactly two places: nodejs.org for the runtime and npm for the package. There are no release keys,
+					no bundles to unpack and no second download host.
+				</p>
+			</div>
+			<div class="steps">
+				{steps.map((step, index) => (
+					<article class="step" data-reveal style={`--delay: ${index * 70}`}>
+						<span class="step-n">{step.n}</span>
+						<h3>{step.title}</h3>
+						<p>{step.body}</p>
+					</article>
+				))}
+			</div>
+		</div>
+	</section>
+
+	<section class="section band" id="after">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2>After it finishes.</h2>
+				<p>Three things, in this order. None of them needs a configuration file.</p>
+			</div>
+			<div class="after">
+				{after.map((item, index) => (
+					<article class="after-card" data-reveal style={`--delay: ${index * 70}`}>
+						<h3>{item.title}</h3>
+						<p>{item.body}</p>
+						<pre><code>{item.code}</code></pre>
+					</article>
+				))}
+			</div>
+		</div>
+	</section>
+
+	<section class="section" id="manage">
+		<div class="wrap manage">
+			<div data-reveal>
+				<h2>Requirements</h2>
+				<ul class="plain">
+					<li><strong>Linux</strong> x64 or arm64 with systemd for a full server install.</li>
+					<li><strong>macOS</strong> on Apple silicon or Intel, installed for your user without system services.</li>
+					<li><code>curl</code>, <code>tar</code> and a normal internet connection during install.</li>
+					<li>Windows through WSL 2 for now; native Windows is planned.</li>
+				</ul>
+			</div>
+			<div data-reveal style="--delay: 80">
+				<h2>Upgrade and remove</h2>
+				<ul class="plain">
+					<li>On a server, press <strong>Update now</strong> in the dashboard when a new version appears, or run <code>zelavis update apply --wait</code>. Anywhere else, run the same command again. A downgrade needs <code>--allow-downgrade</code>.</li>
+					<li>Preview a full removal first, then confirm it. It removes only what the installer can prove it owns.</li>
+				</ul>
+				<pre class="remove"><code>zelavis uninstall --all --dry-run
+zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA</code></pre>
+				<p class="more">Every option and the full layout are in the <a href="/getting-started/installation">installation guide</a>.</p>
+			</div>
+		</div>
+	</section>
+
+	<script>
+		const methods = ['curl', 'npm', 'apt', 'deb', 'powershell'];
+		const control = document.getElementById('install-method');
+		const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-panel]'));
+
+		function show(id: string, push: boolean) {
+			const next = methods.includes(id) ? id : 'curl';
+			panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== next; });
+			if (push) {
+				try { history.replaceState(null, '', `#${next}`); } catch { /* the page still works without it */ }
+			}
+			return next;
+		}
+
+		control?.addEventListener('segmented-change', (event) => {
+			show((event as CustomEvent<{ value: string }>).detail.value, true);
+		});
+
+		// A shared link such as /install#npm opens that method.
+		const wanted = location.hash.slice(1);
+		if (methods.includes(wanted) && wanted !== 'curl') {
+			show(wanted, false);
+			const button = control?.querySelector<HTMLButtonElement>(`[data-segment-value="${wanted}"]`);
+			button?.click();
+		}
+
+		document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((button) => {
+			button.addEventListener('click', async () => {
+				const text = button.dataset.copy ?? '';
+				try {
+					await navigator.clipboard.writeText(text);
+				} catch {
+					const area = document.createElement('textarea');
+					area.value = text;
+					area.setAttribute('readonly', '');
+					area.style.position = 'fixed';
+					area.style.opacity = '0';
+					document.body.appendChild(area);
+					area.select();
+					try { document.execCommand('copy'); } finally { area.remove(); }
+				}
+				button.classList.add('is-copied');
+				setTimeout(() => button.classList.remove('is-copied'), 1600);
+			});
+		});
+	</script>
+
+	<style>
+		:global(body) {
+			background: #fff;
+			color: #15161b;
+		}
+
+		:global(.nav) {
+			position: absolute;
+			top: 0;
+			width: 100%;
+			background: transparent;
+			border: 0;
+			color: #fff;
+			z-index: 20;
+		}
+
+		:global(.nav.is-stuck) {
+			position: fixed;
+			background: transparent;
+		}
+
+		:global(.nav .nav-links),
+		:global(.nav .nav-actions) {
+			font-family: var(--font);
+			font-size: 16px;
+			font-weight: 500;
+		}
+
+		:global(.nav .nav-links a),
+		:global(.nav .nav-links button),
+		:global(.nav .nav-login),
+		:global(.nav .brand),
+		:global(.nav .brand-word) {
+			color: #fff;
+		}
+
+		:global(.nav .nav-cta) {
+			background: #fff;
+			color: #17181c;
+			box-shadow: none;
+		}
+
+		.hero {
+			position: relative;
+			overflow: clip;
+			border-radius: 0 0 34px 34px;
+			padding: clamp(116px, 16vh, 150px) 0 56px;
+			color: #fff;
+			background:
+				radial-gradient(circle at 84% 18%, rgba(255, 148, 143, 0.72), transparent 31%),
+				radial-gradient(circle at 48% 112%, rgba(78, 38, 156, 0.88), transparent 40%),
+				linear-gradient(118deg, #153b96 0%, #293b9f 35%, #6946ae 69%, #ad6085 100%);
+		}
+
+		.glow {
+			position: absolute;
+			top: -260px;
+			left: 50%;
+			width: 900px;
+			height: 650px;
+			transform: translateX(-50%);
+			background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.18), transparent 68%);
+			filter: blur(45px);
+			pointer-events: none;
+		}
+
+		.hero-inner {
+			position: relative;
+			text-align: center;
+		}
+
+		.eyebrow {
+			margin: 0 0 10px;
+			font-size: 13px;
+			font-weight: 650;
+			letter-spacing: 0.14em;
+			text-transform: uppercase;
+			color: rgba(255, 255, 255, 0.78);
+		}
+
+		h1 {
+			margin: 0;
+			font-size: clamp(2.4rem, 6vw, 4rem);
+			line-height: 1.04;
+			letter-spacing: -0.035em;
+			font-weight: 650;
+		}
+
+		.lede {
+			max-width: 640px;
+			margin: 18px auto 30px;
+			font-size: clamp(1rem, 1.6vw, 1.15rem);
+			color: rgba(255, 255, 255, 0.86);
+		}
+
+		.switch {
+			margin-bottom: 26px;
+		}
+
+		.switch :global(.segmented button) {
+			padding-inline: 12px;
+		}
+
+		.stage {
+			max-width: 760px;
+			margin: 0 auto;
+			text-align: left;
+		}
+
+		.panel {
+			padding: clamp(18px, 3vw, 28px);
+			border-radius: 22px;
+			background: rgba(14, 16, 34, 0.5);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			-webkit-backdrop-filter: blur(18px);
+			backdrop-filter: blur(18px);
+			box-shadow: 0 24px 60px rgba(9, 11, 31, 0.32);
+		}
+
+		.panel[hidden] {
+			display: none;
+		}
+
+		.panel-head {
+			display: flex;
+			gap: 16px;
+			align-items: flex-start;
+			justify-content: space-between;
+			margin-bottom: 18px;
+		}
+
+		.panel-head h2 {
+			margin: 0 0 4px;
+			font-size: 1.25rem;
+			font-weight: 650;
+			letter-spacing: -0.015em;
+		}
+
+		.panel-head p {
+			margin: 0;
+			color: rgba(255, 255, 255, 0.8);
+			font-size: 0.95rem;
+		}
+
+		.badge {
+			flex: none;
+			padding: 4px 11px;
+			border-radius: 999px;
+			font-size: 12px;
+			font-weight: 650;
+			letter-spacing: 0.02em;
+			white-space: nowrap;
+		}
+
+		.badge--available {
+			background: rgba(94, 234, 170, 0.18);
+			color: #9af2c9;
+			border: 1px solid rgba(94, 234, 170, 0.4);
+		}
+
+		.badge--planned {
+			background: rgba(255, 255, 255, 0.12);
+			color: rgba(255, 255, 255, 0.85);
+			border: 1px solid rgba(255, 255, 255, 0.28);
+		}
+
+		.term {
+			border-radius: 14px;
+			background: #0d0f1c;
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			overflow: hidden;
+		}
+
+		.term-bar {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			padding: 10px 14px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		}
+
+		.term-bar i {
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			background: rgba(255, 255, 255, 0.22);
+		}
+
+		.term-bar span {
+			margin-left: auto;
+			font-family: var(--mono);
+			font-size: 12px;
+			color: rgba(255, 255, 255, 0.5);
+		}
+
+		.cmd {
+			padding: 14px 14px 12px;
+		}
+
+		.cmd + .cmd {
+			border-top: 1px solid rgba(255, 255, 255, 0.06);
+		}
+
+		.cmd-comment {
+			margin: 0 0 6px;
+			font-family: var(--mono);
+			font-size: 12.5px;
+			color: rgba(255, 255, 255, 0.45);
+		}
+
+		.cmd-row {
+			display: flex;
+			align-items: flex-start;
+			gap: 12px;
+		}
+
+		.cmd-row pre {
+			flex: 1;
+			min-width: 0;
+			margin: 0;
+			font-family: var(--mono);
+			font-size: 13.5px;
+			line-height: 1.6;
+			color: #e9ecff;
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
+
+		.cmd-row code::before {
+			content: '$ ';
+			color: #ff9f6b;
+			user-select: none;
+		}
+
+		.copy {
+			flex: none;
+			position: relative;
+			min-width: 66px;
+			padding: 6px 12px;
+			border-radius: 8px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(255, 255, 255, 0.08);
+			color: #fff;
+			font: inherit;
+			font-size: 12.5px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: background 0.2s ease, border-color 0.2s ease;
+		}
+
+		.copy:hover {
+			background: rgba(255, 255, 255, 0.16);
+		}
+
+		.copy:focus-visible {
+			outline: 2px solid #fff;
+			outline-offset: 2px;
+		}
+
+		.copy .copy-done {
+			position: absolute;
+			inset: 0;
+			display: grid;
+			place-items: center;
+			opacity: 0;
+		}
+
+		.copy .copy-idle {
+			opacity: 1;
+		}
+
+		.copy.is-copied .copy-idle {
+			opacity: 0;
+		}
+
+		.copy.is-copied .copy-done {
+			opacity: 1;
+		}
+
+		.notes {
+			margin: 18px 2px 0;
+			padding: 0;
+			list-style: none;
+			display: grid;
+			gap: 8px;
+			font-size: 0.92rem;
+			color: rgba(255, 255, 255, 0.82);
+		}
+
+		.notes li {
+			position: relative;
+			padding-left: 20px;
+		}
+
+		.notes li::before {
+			content: '';
+			position: absolute;
+			left: 4px;
+			top: 0.62em;
+			width: 6px;
+			height: 6px;
+			border-radius: 50%;
+			background: rgba(255, 255, 255, 0.55);
+		}
+
+		.alpha {
+			max-width: 640px;
+			margin: 22px auto 0;
+			font-size: 0.9rem;
+			color: rgba(255, 255, 255, 0.8);
+		}
+
+		.section {
+			padding: clamp(56px, 9vw, 96px) 0;
+		}
+
+		.section.band {
+			background: #f6f7fb;
+		}
+
+		.section-head {
+			max-width: 680px;
+			margin-bottom: 36px;
+		}
+
+		.section-head h2,
+		.manage h2 {
+			margin: 0 0 10px;
+			font-size: clamp(1.7rem, 3.4vw, 2.4rem);
+			line-height: 1.12;
+			letter-spacing: -0.03em;
+			font-weight: 650;
+		}
+
+		.section-head p {
+			margin: 0;
+			font-size: 1.05rem;
+			color: #50525e;
+		}
+
+		.steps {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+			gap: 18px;
+		}
+
+		.step,
+		.after-card {
+			padding: 22px;
+			border-radius: 18px;
+			background: #fff;
+			border: 1px solid #e6e8f0;
+			box-shadow: 0 1px 0 rgba(20, 22, 40, 0.03);
+		}
+
+		.step-n {
+			display: inline-grid;
+			place-items: center;
+			width: 30px;
+			height: 30px;
+			margin-bottom: 14px;
+			border-radius: 50%;
+			background: #eef0ff;
+			color: #3a3fa8;
+			font-size: 14px;
+			font-weight: 700;
+		}
+
+		.step h3,
+		.after-card h3 {
+			margin: 0 0 6px;
+			font-size: 1.05rem;
+			font-weight: 650;
+			letter-spacing: -0.01em;
+		}
+
+		.step p,
+		.after-card p {
+			margin: 0;
+			font-size: 0.94rem;
+			color: #50525e;
+		}
+
+		.after {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+			gap: 18px;
+		}
+
+		.after-card pre,
+		.remove {
+			margin: 16px 0 0;
+			padding: 12px 14px;
+			overflow-x: auto;
+			border-radius: 12px;
+			background: #0d0f1c;
+			color: #e9ecff;
+			font-family: var(--mono);
+			font-size: 12.5px;
+			line-height: 1.65;
+		}
+
+		.manage {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+			gap: 40px;
+		}
+
+		.plain {
+			margin: 14px 0 0;
+			padding: 0;
+			list-style: none;
+			display: grid;
+			gap: 10px;
+			color: #3d3f4a;
+		}
+
+		.plain li {
+			position: relative;
+			padding-left: 22px;
+		}
+
+		.plain li::before {
+			content: '';
+			position: absolute;
+			left: 4px;
+			top: 0.7em;
+			width: 6px;
+			height: 6px;
+			border-radius: 50%;
+			background: #8a8fd8;
+		}
+
+		.plain code,
+		.more code {
+			padding: 1px 6px;
+			border-radius: 6px;
+			background: #f0f1f6;
+			font-family: var(--mono);
+			font-size: 0.88em;
+		}
+
+		.more {
+			margin: 16px 0 0;
+			color: #50525e;
+		}
+
+		.more a {
+			color: #3a3fa8;
+		}
+
+		@media (max-width: 640px) {
+			.panel-head {
+				flex-direction: column;
+			}
+
+			.switch :global(.segmented button) {
+				padding-inline: 4px;
+				font-size: 12px;
+			}
+
+			.cmd-row {
+				flex-direction: column;
+			}
+
+			.copy {
+				align-self: flex-end;
+			}
+		}
+	</style>
+</MarketingLayout>

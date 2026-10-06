@@ -1,9 +1,11 @@
+import { parseJson, isJsonValue } from "../core/json-validation.js";
+import { Effect } from "effect";
+import { integration, present } from "../core/runtime/effect-boundary.js";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   type ZelavisSystemStore,
   type ZelavisSystemStoreRecord,
-  type ZelavisSystemStoreValue,
 } from "../system-store.js";
 
 type BunStatement = {
@@ -19,11 +21,12 @@ type BunDatabase = {
   close?(): void;
 };
 
-export async function createBunSqliteSystemStore(options: {
+export function createBunSqliteSystemStore(options: {
   filename: string;
 }): Promise<ZelavisSystemStore> {
+  return present(Effect.gen(function* () {
   const moduleName = "bun:sqlite";
-  const { Database } = (await import(moduleName)) as {
+  const { Database } = (yield* integration(() => import(moduleName))) as {
     Database: new (filename: string, options?: { create?: boolean }) => BunDatabase;
   };
   const filename = resolve(options.filename);
@@ -41,6 +44,13 @@ export async function createBunSqliteSystemStore(options: {
       PRIMARY KEY (namespace, record_key)
     );
   `);
+
+  const namespacesStatement = database.query(
+    "SELECT namespace, COUNT(*) AS recordCount FROM zelavis_system_records GROUP BY namespace ORDER BY namespace",
+  );
+  const pageStatement = database.query(
+    "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND (? IS NULL OR record_key > ?) ORDER BY record_key LIMIT ?",
+  );
 
   const readStatement = database.query(
     "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
@@ -84,7 +94,7 @@ export async function createBunSqliteSystemStore(options: {
     return {
       namespace: value.namespace,
       key: value.record_key,
-      value: JSON.parse(value.value_json) as ZelavisSystemStoreValue,
+      value: parseJson(value.value_json, isJsonValue, "System Store value"),
       updatedAt: value.updated_at,
     };
   }
@@ -92,6 +102,17 @@ export async function createBunSqliteSystemStore(options: {
   let closed = false;
 
   return {
+    namespaces() {
+      return namespacesStatement.all().map(row => {
+        const value = row as { namespace: string; recordCount: number };
+        return { namespace: value.namespace, recordCount: Number(value.recordCount) };
+      });
+    },
+    page(namespace, { limit, after }) {
+      const rows = pageStatement.all(namespace, after ?? null, after ?? null, limit + 1).map(toRecord);
+      return { records: rows.slice(0, limit),
+        ...(rows.length > limit ? { next: rows[limit - 1]!.key } : {}) };
+    },
     get(namespace, key) {
       const row = readStatement.get(namespace, key);
       return row ? toRecord(row) : undefined;
@@ -148,4 +169,5 @@ export async function createBunSqliteSystemStore(options: {
       database.close?.();
     },
   };
+  }));
 }

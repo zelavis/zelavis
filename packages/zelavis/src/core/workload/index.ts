@@ -42,6 +42,10 @@ export interface ZelavisProjectDriverCapabilities
   extends ZelavisProjectWorkloadCapabilities {
   /** The driver can materialize and run the exact Zelavis version locked by a Project. */
   readonly independentRuntimeVersion: boolean;
+  /** Preserves availability through engine handover or an integration refresh, with durable rollback. */
+  readonly zeroDowntimeUpdates?: boolean;
+  /** What recipe updates replace: the Zelavis engine or a managed app's integration. */
+  readonly recipeUpdateMode?: "engine" | "integration";
   readonly secureIsolation: boolean;
   readonly runtimeOwnership: "platform-process" | "zelavis-agent";
   readonly survivesControlPlaneRestart: boolean;

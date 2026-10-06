@@ -1,5 +1,166 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.25
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.25
+
+## 1.1.0-alpha.24
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.24
+
+## 1.1.0-alpha.23
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.23
+
+## 1.1.0-alpha.22
+
+### Patch Changes
+
+- Fix managed Project Open routing using the exact verified frozen recipe definition. Preserve managed metadata in npm catalogues and reject stale release metadata. Existing WordPress Projects open through their private Zelavis runtime without changing recipe versions or interrupting the app. Overview loading leaves unused native API sections hidden.
+- Updated dependencies
+  - zelavis@2.0.0-alpha.22
+
+## 1.1.0-alpha.21
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.21
+
+## 1.1.0-alpha.20
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.20
+
+## 1.1.0-alpha.19
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.19
+
+## 1.1.0-alpha.18
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.18
+
+## 1.1.0-alpha.17
+
+### Patch Changes
+
+- Ship the published WordPress 7.1.3-alpha.2 recipe as the fresh-install default in the bundled allow-list. Refuse Platform releases whose shipped allow-list defaults differ from the qualified official service versions; publish changed services and refresh the snapshot before building the Platform.
+- Updated dependencies
+  - zelavis@2.0.0-alpha.17
+
+## 1.1.0-alpha.16
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.16
+
+## 1.1.0-alpha.15
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.15
+
+## 1.1.0-alpha.14
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.14
+
+## 1.1.0-alpha.13
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.13
+
+## 1.1.0-alpha.12
+
+### Patch Changes
+
+- Updated dependencies [bbe74e4]
+- Updated dependencies
+- Updated dependencies
+  - zelavis@2.0.0-alpha.12
+
+## 1.1.0-alpha.11
+
+### Patch Changes
+
+- Updated dependencies [4105a52]
+  - zelavis@2.0.0-alpha.11
+
+## 1.1.0-alpha.10
+
+### Patch Changes
+
+- Updated dependencies [587d43e]
+  - zelavis@2.0.0-alpha.10
+
+## 1.1.0-alpha.9
+
+### Patch Changes
+
+- Updated dependencies [5027eb8]
+  - zelavis@2.0.0-alpha.9
+
+## 1.1.0-alpha.8
+
+### Patch Changes
+
+- Updated dependencies [e2f9e9c]
+  - zelavis@2.0.0-alpha.8
+
+## 1.1.0-alpha.7
+
+### Patch Changes
+
+- Updated dependencies [02a8ba1]
+  - zelavis@2.0.0-alpha.7
+
+## 1.1.0-alpha.6
+
+### Minor Changes
+
+- 57ba50a: Distribute through npm alone. A release is the published `zelavis` package: `install.sh` and `npm create zelavis` fetch the Node version the release pins from nodejs.org (checked against its published SHA-256) and the exact package from npm, run `npm install` with install scripts off and rebuild only `better-sqlite3`, then run `zelavis install --from-npm`, which assembles the release tree from the package's own installation assets. There are no release archives, GitHub release workflow, APT repository build, GPG keys, signing keys or CI secrets, and `zelavis install --from package` and `--source` are replaced by `--from-npm`.
+
+  Host operations are plain manifests in the root-owned operations tree (the Agent refuses a manifest that is not a regular root-owned file that is not group- or world-writable when root ownership is required) and the Agent no longer takes `--operation-trust`. The marketplace allow-list is plain JSON served over https from `https://zelavis.com/allowlist.json`: the signed envelope, trusted keys and mirror sources are gone, while the sequence floor, expiry, https-only, no-redirect and size bounds stay. Release is `npm publish`; `pnpm allowlist publish` writes the list the website serves. The Platform-to-Agent authority key is unchanged. Receipts record entry `script` instead of `archive`, and the complete-uninstall inventory no longer covers an APT source or keyring.
+
+### Patch Changes
+
+- Updated dependencies [f22ba11]
+- Updated dependencies [9a51a3c]
+- Updated dependencies [15e0ed3]
+- Updated dependencies [57ba50a]
+- Updated dependencies [1c5ecbc]
+  - zelavis@2.0.0-alpha.6
+
+## 1.1.0-alpha.5
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.5
+
 ## 1.1.0-alpha.4
 
 ### Patch Changes
@@ -13,19 +174,19 @@
 
 - 28bde9d: Collapse the service kind taxonomy to `app`, `frontend`, and `plugin`, and
   enforce it at manifest validation.
-  
+
   `frontend` was missing from `ZelavisServiceKind` despite being the kind the
   Platform branches on most — it has its own load path, a `zelavis.frontend`
   manifest block, and Gateway routing. Meanwhile `core`, `web-app`, `website`,
   `dashboard-extension`, `provider`, and `template` were declared, documented,
   and never read by anything.
-  
+
   `core` is removed rather than kept: it described who shipped a service rather
   than what it is, which `scope` (`system` versus `extension`) already carries
   and which the dashboard now enforces. Every service the Platform composes is a
   `plugin`. A provider is discovered by its capability (`provider:auth`), never
   by a kind.
-  
+
   An unrecognised kind is now refused. It previously loaded fine and produced a
   service that silently never participated in anything, which is also how the
   union drifted out of date in the first place.

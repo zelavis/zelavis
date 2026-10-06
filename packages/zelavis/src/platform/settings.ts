@@ -1,3 +1,4 @@
+import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
 /**
  * Dashboard settings and service-registry persistence.
  *
@@ -487,16 +488,16 @@ export function createKeyValueDashboardSettingsStore(
   key = DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY,
 ): ZelavisDashboardSettingsStore {
   return {
-    async read() {
-      const value = await store.get(key);
+    read() { return presentProtocol(Effect.gen(function* () {
+      const value = (yield* integrationValue(store.get(key)));
       if (!value) {
         return undefined;
       }
 
-      return parseStoredDashboardSettingsUpdate(
-        readBodyObject(JSON.parse(value) as unknown),
-      );
-    },
+      return (yield* integrationValue(parseStoredDashboardSettingsUpdate(
+        readBodyObject(JSON.parse(value)),
+      )));
+    }).pipe(Effect.withSpan("createKeyValueDashboardSettingsStore/read"))); },
     async write(update) {
       const normalized = mergeDashboardSettingsUpdate(
         (await this.read()) ?? {},
@@ -593,7 +594,7 @@ export function createFileStorageServiceRegistryStore(
   options: { scope?: ZelavisFileStorageScope } = {},
 ): ZelavisServiceRegistryStore {
   const scope = options.scope ?? "distributed";
-  const decode = (body: Uint8Array) => JSON.parse(new TextDecoder().decode(body)) as unknown;
+  const decode = (body: Uint8Array) => JSON.parse(new TextDecoder().decode(body));
   const read = async () => {
     await requireFileStorageGuarantees(storage, scope);
     const file = await storage.get(path);

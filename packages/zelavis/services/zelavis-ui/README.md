@@ -1,6 +1,6 @@
 # @zelavis/ui
 
-Zelavis dashboard UI packaged as a React Router 7 SPA and a Zelavis system
+Zelavis dashboard UI packaged as a React Router 8 SPA and a Zelavis system
 service.
 
 The app is designed to be served either as a standalone dev server or mounted by

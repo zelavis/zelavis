@@ -1,5 +1,158 @@
 # @zelavis/app
 
+## 1.0.1-alpha.25
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.25
+
+## 1.0.1-alpha.24
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.24
+
+## 1.0.1-alpha.23
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.23
+
+## 1.0.1-alpha.22
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.22
+
+## 1.0.1-alpha.21
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.21
+
+## 1.0.1-alpha.20
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.20
+
+## 1.0.1-alpha.19
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.19
+
+## 1.0.1-alpha.18
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.18
+
+## 1.0.1-alpha.17
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.17
+
+## 1.0.1-alpha.16
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.16
+
+## 1.0.1-alpha.15
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.15
+
+## 1.0.1-alpha.14
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.14
+
+## 1.0.1-alpha.13
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.13
+
+## 1.0.1-alpha.12
+
+### Patch Changes
+
+- Updated dependencies [bbe74e4]
+- Updated dependencies
+- Updated dependencies
+  - zelavis@2.0.0-alpha.12
+
+## 1.0.1-alpha.11
+
+### Patch Changes
+
+- Updated dependencies [4105a52]
+  - zelavis@2.0.0-alpha.11
+
+## 1.0.1-alpha.10
+
+### Patch Changes
+
+- Updated dependencies [587d43e]
+  - zelavis@2.0.0-alpha.10
+
+## 1.0.1-alpha.9
+
+### Patch Changes
+
+- Updated dependencies [5027eb8]
+  - zelavis@2.0.0-alpha.9
+
+## 1.0.1-alpha.8
+
+### Patch Changes
+
+- Updated dependencies [e2f9e9c]
+  - zelavis@2.0.0-alpha.8
+
+## 1.0.1-alpha.7
+
+### Patch Changes
+
+- Updated dependencies [02a8ba1]
+  - zelavis@2.0.0-alpha.7
+
+## 1.0.1-alpha.6
+
+### Patch Changes
+
+- Updated dependencies [f22ba11]
+- Updated dependencies [9a51a3c]
+- Updated dependencies [15e0ed3]
+- Updated dependencies [57ba50a]
+- Updated dependencies [1c5ecbc]
+  - zelavis@2.0.0-alpha.6
+
+## 1.0.1-alpha.5
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.5
+
 ## 1.0.1-alpha.4
 
 ### Patch Changes

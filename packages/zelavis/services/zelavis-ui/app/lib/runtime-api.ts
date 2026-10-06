@@ -94,6 +94,7 @@ export interface RuntimeServiceRegistryEntry {
     tags?: readonly string[];
   };
   project?: {
+    hostPackages?: readonly string[];
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
   };
   menu?: RuntimeServiceRegistryMenuDefinition;
@@ -243,6 +244,10 @@ export interface RuntimeDeploymentBackendPolicy {
 }
 
 export interface RuntimeProject {
+  engineVersion?: string;
+  runtimeUpdate?: { id: string; error?: string };
+  deletion?: { status: "running" | "failed"; startedAt: string; updatedAt: string; participants: readonly string[]; completedParticipants: readonly string[]; currentParticipant?: string; error?: string };
+  preview?: { status: "ready" | "stopped" | "unavailable"; port?: number; error?: string };
   id: string;
   name: string;
   kind: string;
@@ -281,6 +286,9 @@ export interface RuntimeProjectDriverInfo {
 }
 
 export interface RuntimeProjectDriverCapabilities {
+  independentRuntimeVersion?: boolean;
+  zeroDowntimeUpdates?: boolean;
+  recipeUpdateMode?: "engine" | "integration";
   movable: boolean;
   liveMigration: boolean;
   secureIsolation: boolean;
@@ -387,6 +395,7 @@ export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject
 }
 
 export interface RuntimeProjectRecipe {
+  hostPackages?: readonly string[];
   name: string;
   title: string;
   version?: string;
@@ -449,7 +458,7 @@ export interface RuntimeServiceRegistryMutationResult {
 }
 
 export type RuntimeCapabilities = Readonly<
-  Record<string, { available: boolean }>
+  Record<string, { available: boolean; used?: boolean }>
 >;
 
 export interface RuntimeConfig {
@@ -538,21 +547,6 @@ export class RuntimeApiError extends Error {
     super(message);
     this.name = "RuntimeApiError";
   }
-}
-
-export const DATABASE_COLLECTION_CREATED_EVENT =
-  "zelavis:database-collection-created";
-
-function dispatchDatabaseCollectionCreated(collection: DatabaseCollection) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.dispatchEvent(
-    new CustomEvent<DatabaseCollection>(DATABASE_COLLECTION_CREATED_EVENT, {
-      detail: collection,
-    }),
-  );
 }
 
 export type DashboardThemeMode = "light" | "dark" | "auto";
@@ -1070,7 +1064,8 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
           "Zelavis API route was not found. If you are using the UI dev server, start the Node.js example and restart the UI dev server.";
       }
     } catch {
-      // Keep the status-only fallback when the response is not JSON.
+      // An HTML/non-JSON response still produces an explicit HTTP status error.
+      message = `Request failed: ${response.status}`;
     }
 
     throw new RuntimeApiError(`${message} (${path})`, response.status, path);
@@ -1315,16 +1310,18 @@ export function getRuntimeConfig(): Promise<RuntimeConfig> {
  *
  * After the root loader determines the correct runtime config (checking
  * project existence, running status, proxy resolution), it calls
- * `commitNavigationRuntime(config)` to resolve the deferred.
+ * the returned handle's `commit(config)` to resolve the deferred.
  *
  * Because React Router calls matched `clientLoader` functions synchronously
  * in route-match order (root first), the deferred is always created before
  * child loaders execute their synchronous body.
  */
+type ActiveRuntimeConfig = RuntimeConfig & { readonly project?: RuntimeProject };
+
 let _navigationDeferred: {
   projectId: string;
-  promise: Promise<RuntimeConfig>;
-  resolve: (config: RuntimeConfig) => void;
+  promise: Promise<ActiveRuntimeConfig>;
+  resolve: (config: ActiveRuntimeConfig) => void;
   reject: (error: unknown) => void;
 } | undefined;
 
@@ -1334,31 +1331,29 @@ let _navigationDeferred: {
  */
 export function beginNavigationRuntimeResolve(
   projectId: string | undefined,
-): void {
-  if (!projectId) {
-    _navigationDeferred = undefined;
-    return;
-  }
-  let resolve!: (config: RuntimeConfig) => void;
+  signal: AbortSignal,
+) {
+  let resolve!: (config: ActiveRuntimeConfig) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<RuntimeConfig>((r, fail) => {
+  const promise = new Promise<ActiveRuntimeConfig>((r, fail) => {
     resolve = r;
     reject = fail;
   });
   void promise.catch(() => undefined);
-  _navigationDeferred = { projectId, promise, resolve, reject };
-}
-
-/**
- * Resolve the navigation deferred with the final runtime config.
- * Called by the root loader after it determines the correct config.
- */
-export function commitNavigationRuntime(config: RuntimeConfig): void {
-  _navigationDeferred?.resolve(config);
-}
-
-export function rejectNavigationRuntime(error: unknown): void {
-  _navigationDeferred?.reject(error);
+  _navigationDeferred = projectId ? { projectId, promise, resolve, reject } : undefined;
+  const abort = () => reject(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return {
+    commit(config: RuntimeConfig, project?: RuntimeProject) {
+      signal.removeEventListener("abort", abort);
+      resolve({ ...config, ...(project ? { project } : {}) });
+    },
+    reject(error: unknown) {
+      signal.removeEventListener("abort", abort);
+      reject(error);
+    },
+  };
 }
 
 /**
@@ -1371,7 +1366,7 @@ export function rejectNavigationRuntime(error: unknown): void {
  */
 export async function getActiveRuntimeConfig(
   request: Request,
-): Promise<RuntimeConfig> {
+): Promise<ActiveRuntimeConfig> {
   const pathname = new URL(request.url).pathname;
   const match = pathname.match(/(?:^|\/)projects\/([^/]+)/);
   const projectId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
@@ -1385,7 +1380,11 @@ export async function getActiveRuntimeConfig(
   }
 
   const controlConfig = await getRuntimeConfig();
-  return getProjectRuntimeConfig(controlConfig, projectId);
+  const [config, project] = await Promise.all([
+    getProjectRuntimeConfig(controlConfig, projectId),
+    listProjects(controlConfig).then(result => result.projects.find(project => project.id === projectId)),
+  ]);
+  return { ...config, project };
 }
 
 export async function getDashboardAccess(
@@ -1606,7 +1605,7 @@ export async function* streamAssistantMessage(
       const body = (await response.json()) as { error?: unknown };
       if (typeof body.error === "string" && body.error) message = body.error;
     } catch {
-      // Keep the status-only message.
+      message = `Request failed: ${response.status}`;
     }
     throw new RuntimeApiError(`${message} (${path})`, response.status, path);
   }
@@ -1657,6 +1656,11 @@ export async function getProjectRuntimeConfig(
   );
   const projectApiBasePath = `${proxyRoot}${projectConfig.api.basePath}`;
 
+  const projectMenu = (menu: RuntimeServiceMenuDefinition, version?: string): RuntimeServiceMenuDefinition => ({ ...menu,
+    ...(menu.page ? { page: { ...menu.page, src: menu.page.src.startsWith(`${projectConfig.rootPath}/`)
+      ? `${proxyRoot}${menu.page.src}${version ? `${menu.page.src.includes("?") ? "&" : "?"}zelavisServiceVersion=${encodeURIComponent(version)}` : ""}` : menu.page.src } } : {}),
+    ...(menu.items ? { items: menu.items.map(item => projectMenu(item, version)) } : {}),
+  });
   const projectServices = normalizeRuntimeServices(
     (projectConfig.services ?? [])
       .filter(
@@ -1666,6 +1670,8 @@ export async function getProjectRuntimeConfig(
       )
       .map((service) => ({
         ...service,
+        ...(service.menu ? { menu: projectMenu(service.menu, projectConfig.serviceRegistry?.find(entry => entry.name === service.name)?.version) } : {}),
+        ...(service.menus ? { menus: service.menus.map(menu => projectMenu(menu, projectConfig.serviceRegistry?.find(entry => entry.name === service.name)?.version)) } : {}),
         apiPath: service.apiPath.startsWith(projectConfig.rootPath)
           ? `${proxyRoot}${service.apiPath}`
           : service.apiPath,
@@ -1687,7 +1693,7 @@ export async function getProjectRuntimeConfig(
     dashboard: controlConfig.dashboard,
     services: [...projectServices, ...platformProjectServices],
     serviceRegistry: normalizeRuntimeServiceRegistry(
-      projectConfig.serviceRegistry ?? [],
+      (projectConfig.serviceRegistry ?? []).map(entry => ({ ...entry, ...(entry.menu ? { menu: projectMenu(entry.menu, entry.version) } : {}) })),
     ),
   };
 }
@@ -1698,7 +1704,9 @@ export async function createProject(
     name: string;
     id?: string;
     recipeName?: string;
+    engineVersion?: string;
     start?: boolean;
+    installHostPackages?: boolean;
   },
 ): Promise<RuntimeProject> {
   const result = await readJson<{ project: RuntimeProject }>(
@@ -1718,6 +1726,24 @@ export async function setProjectRunning(
     { method: "POST", body: JSON.stringify({}) },
   );
   return normalizeRuntimeProject(result.project);
+}
+
+export interface RuntimeProjectVersions {
+  current?: string;
+  latest?: string;
+  selectable: boolean;
+  reason?: string;
+  versions: readonly { version: string; status: "available" | "unavailable"; error?: string; nodeVersion?: string }[];
+}
+
+export function getProjectVersions(config: RuntimeConfig, projectId?: string): Promise<RuntimeProjectVersions> {
+  const path = projectId ? `/runtime/projects/${encodeURIComponent(projectId)}/versions` : "/runtime/project-versions";
+  return readJson(`${config.api.basePath}${path}`);
+}
+
+export function switchProjectVersion(config: RuntimeConfig, projectId: string, version: string): Promise<RuntimeProject> {
+  return readJson<{ project: RuntimeProject }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/version`,
+    { method: "POST", body: JSON.stringify({ version }) }).then(result => normalizeRuntimeProject(result.project));
 }
 
 /** Re-locks a stopped Project to a recipe this Platform ships; its data is kept. */
@@ -1784,6 +1810,46 @@ export interface AssistantAuditRecord {
   arguments: string;
   decision: "allowed" | "denied" | "invalid" | "failed" | "pending_approval" | "executed";
   reason?: string;
+}
+
+/** Mirrors the runtime's update status; see `ZelavisUpdateStatus` in the `zelavis` package. */
+export type UpdateState = "idle" | "requested" | "running" | "succeeded" | "failed" | "rolled-back";
+
+export interface UpdateRun {
+  id: string;
+  state: Exclude<UpdateState, "idle" | "requested">;
+  from: string;
+  to?: string;
+  startedAt: string;
+  finishedAt?: string;
+  message?: string;
+  log?: readonly string[];
+}
+
+export interface UpdateStatus {
+  current: string;
+  channel?: "alpha" | "latest";
+  latest?: string;
+  available: boolean;
+  checkedAt?: string;
+  checkError?: string;
+  managed: boolean;
+  unmanagedReason?: string;
+  state: UpdateState;
+  run?: UpdateRun;
+  /** An update finished but the running process is still the old version. */
+}
+
+export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates`);
+}
+
+export async function checkForUpdate(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates/check`, { method: "POST" });
+}
+
+export async function applyUpdate(config: RuntimeConfig): Promise<UpdateStatus> {
+  return readJson(`${config.api.basePath}/runtime/updates/apply`, { method: "POST" });
 }
 
 export async function listAssistantAudit(
@@ -2340,6 +2406,27 @@ export async function listDatabaseCollections(
   );
 }
 
+export interface SystemStoreNamespace { namespace: string; recordCount: number }
+export interface SystemStorePage {
+  records: { namespace: string; key: string; value: unknown; updatedAt: string }[];
+  next?: string;
+}
+export async function listSystemStoreNamespaces(config: RuntimeConfig) {
+  return (await readJson<{ namespaces: SystemStoreNamespace[] }>(`${config.api.basePath}/runtime/system-store/namespaces`)).namespaces;
+}
+export function listSystemStoreRecords(config: RuntimeConfig, namespace: string, after?: string) {
+  const query = new URLSearchParams({ limit: "50" });
+  if (after !== undefined) query.set("after", after);
+  return readJson<SystemStorePage>(`${config.api.basePath}/runtime/system-store/namespaces/${encodeURIComponent(namespace)}/records?${query}`);
+}
+
+export async function listDatabaseTableMenu(config: RuntimeConfig) {
+  const result = await readJson<{ items: RuntimeServiceMenuDefinition[] }>(
+    `${config.api.basePath}/database/menu/tables`,
+  );
+  return result.items;
+}
+
 export async function queryDatabaseSystemView(
   config: RuntimeConfig,
   view: DatabaseSystemViewName,
@@ -2367,8 +2454,6 @@ export async function createDatabaseCollection(
       body: JSON.stringify(input),
     },
   );
-
-  dispatchDatabaseCollectionCreated(collection);
 
   return collection;
 }

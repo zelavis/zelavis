@@ -44,7 +44,7 @@ import {
   CgroupSupervisionUnavailableError,
   createCgroupV2OperationSupervisor,
 } from "../dist/adapters/_linux-cgroup-supervisor.js";
-import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+import { createAuthorityKey } from "./fixtures/authority-keys.mjs";
 
 const CGROUP_ROOT = process.env.ZELAVIS_TEST_CGROUP_ROOT;
 const linuxSkip = process.platform !== "linux"
@@ -52,7 +52,6 @@ const linuxSkip = process.platform !== "linux"
   : !CGROUP_ROOT
     ? "set ZELAVIS_TEST_CGROUP_ROOT to a delegated cgroup v2 directory"
     : false;
-const signer = await createReleaseSigner();
 const sha = (body) => createHash("sha256").update(body).digest("hex");
 let sequence = 0;
 
@@ -78,7 +77,6 @@ test("cgroup supervision refuses hosts and roots it cannot prove, never falling 
         createNodeHostOperationExecutor({
           rootDirectory: directory,
           stagingDirectory: directory,
-          trust: signer.trust,
           operations: [],
           authorize: async () => true,
           supervision: { kind: "cgroup-v2", root: "/sys/fs/cgroup/zelavis/operations" },
@@ -101,8 +99,7 @@ async function executorWith(t, body, { limits, declared = { pidfile: { required:
   const executor = await createNodeHostOperationExecutor({
     rootDirectory: root,
     stagingDirectory: directory,
-    trust: signer.trust,
-    operations: [{ file: "op", signed: await signer.sign(manifest) }],
+    operations: [{ file: "op", manifest: (manifest) }],
     authorize: async () => true,
     supervision: { kind: "cgroup-v2", root: CGROUP_ROOT, ...(limits ? { limits } : {}) },
   });
@@ -196,10 +193,8 @@ test("a delegated zelavis agent contains an escaping operation end to end", {
   await mkdir(installed, { recursive: true, mode: 0o700 });
   await writeFile(join(installed, "artifact"), body, { mode: 0o700 });
   const manifest = { id: "native.escape", version: "v1", sha256: sha(body), interpreter: "/bin/sh", arguments: { pidfile: { required: true, maxLength: 1024 } } };
-  await writeFile(join(installed, "manifest.json"), JSON.stringify(await signer.sign(manifest)));
-  const trust = join(root, "trust.json");
-  await writeFile(trust, JSON.stringify(signer.trust), { mode: 0o644 });
-  const platform = await createReleaseSigner({ keyId: "platform-qualification" });
+  await writeFile(join(installed, "manifest.json"), JSON.stringify((manifest)));
+  const platform = await createAuthorityKey({ keyId: "platform-qualification" });
   const platformAuthority = join(root, "platform-authority.json");
   await writeFile(platformAuthority, JSON.stringify(platform.trust), { mode: 0o644 });
 
@@ -207,7 +202,7 @@ test("a delegated zelavis agent contains an escaping operation end to end", {
   let ready;
   const readyPromise = new Promise((resolve) => { ready = resolve; });
   const running = runAgentCommand({
-    dataDirectory: join(root, "data"), operationsRoot: join(root, "operations"), operationTrust: trust, platformAuthority,
+    dataDirectory: join(root, "data"), operationsRoot: join(root, "operations"), platformAuthority,
     operationCgroup: "delegated", operationPidsMax: 64, signal: controller.signal, onReady: ready,
   });
   t.after(async () => { controller.abort(); await running.catch(() => undefined); });

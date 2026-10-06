@@ -928,3 +928,20 @@ test("JWT authentication verifies signature, issuer, audience, and algorithm all
   assert.equal(invalid.status, 401);
   assert.match(invalid.headers["www-authenticate"], /invalid_token/);
 });
+
+test('cookie mutations refuse a site preview origin on another port while Bearer remains explicit', async () => {
+  const auth = await createIdentity();
+  await auth.accounts.create({id:'preview-owner',username:'owner'});
+  const issued = await auth.sessions.create({accountId:'preview-owner',expiresAt:new Date(Date.now()+60_000)});
+  const runtime=await createServiceRuntime({endpointGroups:[defineAuthEndpointGroup(auth)]});
+  for(const headers of [
+    {cookie:`zelavis_session=${issued.token}`,origin:'http://localhost:42000'},
+    {cookie:`zelavis_session=${issued.token}`,'sec-fetch-site':'same-site'},
+  ]) {
+    const response=await runtime.fetch(new Request('http://localhost:3000/auth/session',{method:'DELETE',headers}));
+    assert.equal(response.status,401);
+    assert.ok(await auth.sessions.resolveToken(issued.token));
+  }
+  const response=await runtime.fetch(new Request('http://localhost:3000/auth/session',{method:'DELETE',headers:{authorization:`Bearer ${issued.token}`,origin:'http://localhost:42000'}}));
+  assert.equal(response.status,204);
+});

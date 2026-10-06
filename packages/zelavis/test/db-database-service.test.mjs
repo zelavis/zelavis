@@ -815,3 +815,14 @@ test("a caller's mistake is answered as one, not as a server fault", async (t) =
   assert.equal(badOp.status, 400);
   assert.match(String(badOp.body.error), /countDistinct/);
 });
+
+
+test("an empty database menu needs no fabricated Tenant and discovers later tables", async t => {
+  const { api } = await openTemporaryDatabase(t);
+  const route = routeOf(defineDatabaseService(api), "database.menu.tables");
+  assert.deepEqual((await call(route, { service: api })).body.items, []);
+  for (const tenant of ["a", "b"]) await api.forTenant(tenant).documents.createCollection({ name: "invoices" });
+  const items = (await call(route, { service: api })).body.items;
+  assert.deepEqual(items.filter(item => item.search.databaseTable).map(item => [item.title, item.search.databaseTenant]),
+    [["a · invoices", "a"], ["b · invoices", "b"]]);
+});

@@ -1,7 +1,9 @@
 [Unit]
 Description=Zelavis Platform OS
-After=network-online.target
+After=network-online.target zelavis.socket zelavis-agent.service
 Wants=network-online.target
+# systemd owns the listening socket across restarts; see zelavis.socket.
+Requires=zelavis.socket zelavis-agent.service
 
 [Service]
 Type=simple
@@ -10,7 +12,10 @@ Group=zelavis
 WorkingDirectory=/var/lib/zelavis
 Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis
 EnvironmentFile=-/etc/zelavis/zelavis.env
-ExecStart=/opt/zelavis/current/bin/zelavis serve --host 0.0.0.0 --port 3000
+ExecStart=/opt/zelavis/current/bin/zelavis serve --host 127.0.0.1 --port 3000
+# The host drains and releases its worker. Signal only the host first.
+KillMode=mixed
+TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

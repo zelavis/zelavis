@@ -1,3 +1,6 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
   link,
@@ -208,22 +211,22 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
     }
   }
 
-  async function readStoredMetadata(path: string): Promise<{
+  function readStoredMetadata(path: string): Promise<{
     contentType?: string;
     cacheControl?: string;
     contentDisposition?: string;
     metadata?: Record<string, string>;
     checksum?: string;
-  }> {
+  }> { return presentProtocol(Effect.gen(function* () {
     try {
-      const raw = await readFile(resolveMetadataPath(path), "utf8");
-      const parsed = JSON.parse(raw) as {
+      const raw = unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(resolveMetadataPath(path), "utf8"))));
+      const parsed = parseJson(raw, objectFields<{
         contentType?: unknown;
         cacheControl?: unknown;
         contentDisposition?: unknown;
         metadata?: unknown;
         checksum?: unknown;
-      };
+      }>({contentType: optional(isUnknown), cacheControl: optional(isUnknown), contentDisposition: optional(isUnknown), metadata: optional(isUnknown), checksum: optional(isUnknown)}));
 
       return {
         contentType:
@@ -247,7 +250,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
 
       throw error;
     }
-  }
+  }).pipe(Effect.withSpan("createLocalFileStorage/readStoredMetadata"))); }
 
   async function writeStoredMetadata(
     path: string,

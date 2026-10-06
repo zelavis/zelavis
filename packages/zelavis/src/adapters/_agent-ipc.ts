@@ -15,14 +15,8 @@
  * remote Agent needs; a second implementation changes the transport, not the
  * drivers above it.
  *
- * What this deliberately does not yet do is let Projects survive a Platform
- * restart. The Agent keeps running them, but a new Platform gets a new client
- * with no handles to processes an earlier client started: it cannot receive
- * their output, observe their readiness, or stop them through the contract.
- * Re-attachment needs the Agent to replay what it has buffered and the drivers
- * to re-derive readiness from it, which is its own piece of work. Until then
- * `survivesControlPlaneRestart` stays false, and it is false for a reason that
- * is written down rather than assumed.
+ * Re-attachment restores buffered output and exact execution identity. Drivers
+ * qualify readiness and placement before adopting surviving processes.
  *
  * The trust boundary is the filesystem. The socket lives in a directory the
  * Agent creates 0700 and the socket itself is 0600, so reaching it means being
@@ -32,9 +26,11 @@
  * rather than a threat model of its own.
  */
 import { createServer, connect, type Server, type Socket } from "node:net";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
+import { Deferred, Effect } from "effect";
+import { evaluate, integration, IntegrationFailure, present, presentOperations, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 
 import type {
   ZelavisAgentAttachedProcess,
@@ -95,16 +91,30 @@ export function agentTokenPath(directory: string): string {
  * socket: a window where either is readable is a window where the Agent can be
  * driven by whoever noticed.
  */
-async function ensureEndpoint(directory: string): Promise<string> {
+async function ensureEndpoint(directory: string, groupAccess = false): Promise<string> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700).catch(() => undefined);
+  const directoryStats = await lstat(directory);
+  if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink() ||
+      groupAccess && (directoryStats.uid !== 0 || directoryStats.gid !== process.getgid?.())) {
+    throw new Error("Privileged Agent endpoint must be a root-owned directory in the Agent's group.");
+  }
+  await chmod(directory, groupAccess ? 0o750 : 0o700);
 
   const tokenPath = agentTokenPath(directory);
-  const existing = await readFile(tokenPath, "utf8").catch(() => undefined);
+  const stats = await lstat(tokenPath).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return undefined;
+  });
+  if (stats && (!stats.isFile() || stats.isSymbolicLink() || groupAccess &&
+      (stats.uid !== 0 || stats.gid !== process.getgid?.() || (stats.mode & 0o027) !== 0))) {
+    throw new Error("Agent token must be a regular file owned by its Agent.");
+  }
+  const existing = stats ? await readFile(tokenPath, "utf8") : undefined;
+  if (stats) await chmod(tokenPath, groupAccess ? 0o640 : 0o600);
   if (existing && existing.trim()) return existing.trim();
 
   const token = randomBytes(32).toString("base64url");
-  await writeFile(tokenPath, `${token}\n`, { mode: 0o600 });
+  await writeFile(tokenPath, `${token}\n`, { mode: groupAccess ? 0o640 : 0o600, flag: stats ? "w" : "wx" });
   return token;
 }
 
@@ -195,6 +205,10 @@ export interface AgentProcessServerOptions {
   readonly directory: string;
   /** What actually runs processes. The local runner, in the shipped Agent. */
   readonly runner: ZelavisAgentProcessRunner;
+  /** Refuse all process messages. Used by a separately privileged operation Agent. */
+  readonly operationsOnly?: boolean;
+  /** Root operation Agent socket readable/connectable by its configured service group. */
+  readonly endpointGroupAccess?: boolean;
   /** When present, Project processes require current Platform placement. */
   readonly placement?: {
     readonly isProjectWorkload: (workloadId: string) => boolean;
@@ -202,7 +216,7 @@ export interface AgentProcessServerOptions {
     readonly checkIntervalMs?: number;
   };
   /**
-   * Signed host operations, when this Agent was started with an installed
+   * Host operations, when this Agent was started with an installed
    * operation tree. Each request still carries its own signed authority; the
    * socket token only proves the caller may talk to the Agent at all.
    */
@@ -225,7 +239,14 @@ export interface AgentProcessServerOptions {
 export async function createAgentProcessServer(
   options: AgentProcessServerOptions,
 ): Promise<AgentProcessServer> {
-  const token = await ensureEndpoint(options.directory);
+  const operationsOnly = options.operationsOnly === true;
+  if (operationsOnly && !options.operations) {
+    throw new Error("An operation-only Agent requires installed host operations.");
+  }
+  if (options.endpointGroupAccess && (!operationsOnly || process.getuid?.() !== 0)) {
+    throw new Error("Group-access endpoints require a root operation-only Agent.");
+  }
+  const token = await ensureEndpoint(options.directory, options.endpointGroupAccess);
   const socketPath = agentSocketPath(options.directory);
 
   // A socket file left by a crashed Agent is not a listener; removing it is
@@ -284,6 +305,13 @@ export async function createAgentProcessServer(
       }
 
       const id = typeof message.id === "string" ? message.id : undefined;
+
+      if (operationsOnly && ![
+        "operation.catalog", "operation.submit", "operation.get",
+      ].includes(String(message.type))) {
+        send(socket, { id, type: "failed", error: "This Agent executes installed host operations only; process commands are refused." });
+        return;
+      }
 
       try {
         if (message.type === "start") {
@@ -523,7 +551,7 @@ export async function createAgentProcessServer(
   // Only after it exists. Creating the socket and then narrowing it leaves a
   // window, which is why the directory is 0700 first — this is the second lock,
   // not the only one.
-  await chmod(socketPath, 0o600).catch(() => undefined);
+  await chmod(socketPath, options.endpointGroupAccess ? 0o660 : 0o600);
 
   return {
     socketPath,
@@ -570,20 +598,17 @@ export interface AgentProcessClientOptions {
  * are unchanged — which is the point of having put them behind the contract
  * first.
  */
-export async function createAgentProcessClient(
+const createAgentProcessClientProgram = Effect.fn("AgentIPC.connect")(function* (
   options: AgentProcessClientOptions,
-): Promise<ZelavisAgentProcessRunner & AgentHostOperationClient & { close(): Promise<void> }> {
+): Effect.fn.Return<ZelavisAgentProcessRunner & AgentHostOperationClient & { close(): Promise<void> }, TaggedFailure> {
   const socketPath = agentSocketPath(options.directory);
-  const token = options.token ?? (await readAgentToken(options.directory));
+  const token = options.token ?? (yield* integration(() => readAgentToken(options.directory)));
 
   const socket = connect(socketPath);
   socket.setNoDelay(true);
 
-  interface Pending {
-    resolve: (message: Record<string, unknown>) => void;
-    reject: (error: Error) => void;
-  }
-  const pending = new Map<string, Pending>();
+  const handshaken = Deferred.makeUnsafe<void, TaggedFailure>();
+  const pending = new Map<string, Deferred.Deferred<Record<string, unknown>, TaggedFailure>>();
   const listeners = new Map<
     string,
     {
@@ -596,7 +621,8 @@ export async function createAgentProcessClient(
 
   const abandon = (error: Error) => {
     disconnected ??= error;
-    for (const [, waiter] of pending) waiter.reject(error);
+    Deferred.doneUnsafe(handshaken, Effect.fail(new IntegrationFailure(error)));
+    for (const [, waiter] of pending) Deferred.doneUnsafe(waiter, Effect.fail(new IntegrationFailure(error)));
     pending.clear();
     for (const [, listener] of listeners) {
       // The process may well still be running on the Agent. This settles the
@@ -611,6 +637,7 @@ export async function createAgentProcessClient(
     "data",
     messageReader(
       (message) => {
+        if (message.type === "hello") { Deferred.doneUnsafe(handshaken, Effect.void); return; }
         if (message.type === "output") {
           const listener = listeners.get(String(message.processId));
           listener?.onOutput?.({
@@ -631,10 +658,10 @@ export async function createAgentProcessClient(
         if (!waiter) return;
         pending.delete(id!);
         if (message.type === "failed" || message.type === "error") {
-          waiter.reject(new Error(String(message.error ?? "Agent request failed.")));
+          Deferred.doneUnsafe(waiter, Effect.fail(new IntegrationFailure(new Error(String(message.error ?? "Agent request failed.")))));
           return;
         }
-        waiter.resolve(message);
+        Deferred.doneUnsafe(waiter, Effect.succeed(message));
       },
       (reason) => abandon(new Error(`Agent connection protocol error: ${reason}.`)),
     ),
@@ -645,51 +672,40 @@ export async function createAgentProcessClient(
     abandon(new Error("The Agent connection closed.")),
   );
 
-  await new Promise<void>((resolveConnect, rejectConnect) => {
-    const timer = setTimeout(
-      () => rejectConnect(new Error(`No Agent is listening at ${socketPath}.`)),
-      options.connectTimeoutMs ?? 5_000,
-    );
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      rejectConnect(error);
-    });
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      resolveConnect();
-    });
-  });
+  yield* Effect.callback<void, IntegrationFailure>((resume, signal) => {
+    const failed = (error: Error) => resume(Effect.fail(new IntegrationFailure(error)));
+    const connected = () => resume(Effect.void);
+    socket.once("error", failed); socket.once("connect", connected);
+    const aborted = () => socket.destroy(); signal.addEventListener("abort", aborted, { once: true });
+    return Effect.sync(() => { socket.off("error", failed); socket.off("connect", connected); signal.removeEventListener("abort", aborted); });
+  }).pipe(Effect.timeoutOrElse({ duration: options.connectTimeoutMs ?? 5_000,
+    orElse: () => Effect.fail(new IntegrationFailure(new Error(`No Agent is listening at ${socketPath}.`))),
+  }), Effect.onError(() => Effect.sync(() => socket.destroy())));
 
-  function request(message: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (disconnected) return Promise.reject(disconnected);
+  const request = Effect.fn("AgentIPC.request")(function* (message: Record<string, unknown>) {
+    if (disconnected) return yield* Effect.fail(new IntegrationFailure(disconnected));
+    if (pending.size >= 128) return yield* Effect.fail(new IntegrationFailure(new Error("Agent request capacity exceeded.")));
     const id = `r${(nextRequest += 1)}`;
-    return new Promise((resolveRequest, rejectRequest) => {
-      pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-      send(socket, { ...message, id });
-    });
-  }
+    const completion = Deferred.makeUnsafe<Record<string, unknown>, TaggedFailure>();
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => { pending.set(id, completion); }),
+      () => evaluate(() => send(socket, { ...message, id })).pipe(
+        Effect.andThen(Deferred.await(completion)),
+        Effect.timeoutOrElse({ duration: 120_000,
+          orElse: () => Effect.fail(new IntegrationFailure(new Error(`Agent ${String(message.type)} request timed out.`))),
+        }),
+      ),
+      () => Effect.sync(() => { pending.delete(id); }),
+    );
+  });
 
   // The handshake before anything else: an unauthenticated connection is
   // dropped by the server, and finding that out on the first `start` would
   // report it as a Project failure.
-  send(socket, { type: "hello", token });
-  await new Promise<void>((resolveHello, rejectHello) => {
-    const timer = setTimeout(
-      () => rejectHello(new Error("The Agent did not answer the handshake.")),
-      options.connectTimeoutMs ?? 5_000,
-    );
-    const onData = (chunk: Buffer) => {
-      if (!chunk.toString("utf8").includes('"hello"')) return;
-      clearTimeout(timer);
-      socket.removeListener("data", onData);
-      resolveHello();
-    };
-    socket.on("data", onData);
-    socket.once("close", () => {
-      clearTimeout(timer);
-      rejectHello(new Error("The Agent rejected the connection."));
-    });
-  });
+  yield* evaluate(() => send(socket, { type: "hello", token })).pipe(Effect.onError(() => Effect.sync(() => socket.destroy())));
+  yield* Deferred.await(handshaken).pipe(Effect.timeoutOrElse({ duration: options.connectTimeoutMs ?? 5_000,
+    orElse: () => Effect.fail(new IntegrationFailure(new Error("The Agent did not answer the handshake."))),
+  }), Effect.onError(() => Effect.sync(() => socket.destroy())));
 
   /** Builds the caller-facing handle for a process id the Agent gave us. */
   function track(
@@ -699,21 +715,38 @@ export async function createAgentProcessClient(
     placement?: AgentPlacementIdentity,
   ): ZelavisAgentProcess {
     let settled: ZelavisAgentProcessExit | undefined;
-    let settleExit: (exit: ZelavisAgentProcessExit) => void;
-    const exit = new Promise<ZelavisAgentProcessExit>((resolveExit) => {
-      settleExit = (value) => {
-        if (settled) return;
-        settled = value;
-        startOptions.onExit?.(value);
-        resolveExit(value);
-      };
-    });
+    const completion = Deferred.makeUnsafe<ZelavisAgentProcessExit>();
+    const exit = present(Deferred.await(completion));
+    const settleExit = (value: ZelavisAgentProcessExit) => {
+      if (settled) return;
+      settled = value;
+      Deferred.doneUnsafe(completion, Effect.succeed(value));
+      startOptions.onExit?.(value);
+    };
 
     listeners.set(processId, {
       ...(startOptions.onOutput ? { onOutput: startOptions.onOutput } : {}),
       settle: (value) => settleExit(value),
     });
 
+    const methods = presentOperations({
+        stop: Effect.fn("AgentIPC.stop")(function* (stopOptions?: { graceMs?: number }) {
+          if (settled) return settled;
+          yield* request({ type: "stop", processId, ...(placement ? { placement } : {}),
+            ...(stopOptions?.graceMs === undefined ? {} : { graceMs: stopOptions.graceMs }) });
+          return yield* Deferred.await(completion);
+        }),
+        write: Effect.fn("AgentIPC.write")(function* (data: string) {
+          if (settled) return false;
+          const result = yield* request({ type: "write", processId, data });
+          return result.accepted === true;
+        }),
+        signal: Effect.fn("AgentIPC.signal")(function* (signal: string) {
+          if (settled) return false;
+          const result = yield* request({ type: "signal", processId, signal });
+          return result.accepted === true;
+        }),
+      });
     return {
       id: processId,
       workloadId,
@@ -721,28 +754,7 @@ export async function createAgentProcessClient(
         return !settled;
       },
       exit,
-      async stop(stopOptions) {
-        if (settled) return settled;
-        await request({
-          type: "stop",
-          processId,
-          ...(placement ? { placement } : {}),
-          ...(stopOptions?.graceMs === undefined
-            ? {}
-            : { graceMs: stopOptions.graceMs }),
-        });
-        return exit;
-      },
-      async write(data) {
-        if (settled) return false;
-        const result = await request({ type: "write", processId, data });
-        return result.accepted === true;
-      },
-      async signal(signal) {
-        if (settled) return false;
-        const result = await request({ type: "signal", processId, signal });
-        return result.accepted === true;
-      },
+      ...methods,
       listen(onOutput: (output: ZelavisAgentProcessOutput) => void) {
         const existing = listeners.get(processId);
         if (existing) existing.onOutput = onOutput;
@@ -750,74 +762,68 @@ export async function createAgentProcessClient(
     } satisfies ZelavisAgentProcess;
   }
 
+  const starter = presentOperations({
+      start: Effect.fn("AgentIPC.start")(function* (command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) {
+        const started = yield* request({ type: "start", command });
+        return track(String(started.processId), command.workloadId, startOptions, command.placement);
+      }),
+    });
+  const operations = presentOperations({
+      hostOperationCatalog: Effect.fn("AgentIPC.operationCatalog")(function* () {
+        const result = yield* request({ type: "operation.catalog" });
+        return result.catalog as { agentId: string; operations: readonly ZelavisHostOperationManifest[] };
+      }),
+      submitHostOperation: Effect.fn("AgentIPC.submitOperation")(function* (operationRequest: ZelavisHostOperationRequest) {
+        const result = yield* request({ type: "operation.submit", request: operationRequest });
+        return result.operation as ZelavisAgentOperationSummary;
+      }),
+      getHostOperation: Effect.fn("AgentIPC.getOperation")(function* (operationId: string) {
+        const result = yield* request({ type: "operation.get", operationId });
+        return (result.operation ?? undefined) as ZelavisAgentOperationSummary | undefined;
+      }),
+      reclaim: Effect.fn("AgentIPC.reclaim")(function* (workloadId?: string, reclaimOptions?: { preservePrefixes?: readonly string[] }) {
+        const result = yield* request({ type: "reclaim", ...(workloadId === undefined ? {} : { workloadId }),
+          ...(reclaimOptions?.preservePrefixes?.length ? { preservePrefixes: reclaimOptions.preservePrefixes } : {}) });
+        return Number(result.count ?? 0);
+      }),
+      fencePlacement: Effect.fn("AgentIPC.fencePlacement")(function* (placement: AgentPlacementIdentity) {
+        const result = yield* request({ type: "fence.placement", placement });
+        return result.fenced === true;
+      }),
+      // Disconnecting transfers custody without stopping supervised Projects.
+      close: () => Effect.sync(() => { socket.destroy(); }),
+    });
   return {
     name: "agent-ipc",
     // A process the Agent runs outlives the Platform that asked for it, which
     // is the whole reason to run the Agent separately.
     survivesControlPlaneRestart: true,
 
-    async start(command, startOptions = {}) {
-      const started = await request({ type: "start", command });
-      return track(String(started.processId), command.workloadId, startOptions,
-        command.placement);
-    },
+    ...starter,
 
-    async attach(workloadId) {
-      const result = await request({ type: "attach", workloadId });
+    attach: workloadId => present(Effect.gen(function* () {
+      const result = yield* request({ type: "attach", workloadId });
       const entries = Array.isArray(result.processes) ? result.processes : [];
-
-      return entries.map((entry) => {
+      return yield* evaluate(() => entries.map((entry) => {
         const value = entry as {
           processId: string;
           command?: ZelavisAgentProcessCommand;
           replay?: readonly ZelavisAgentProcessOutput[];
         };
+        if (!value.command || value.command.workloadId !== workloadId || typeof value.command.executable !== "string" || typeof value.command.cwd !== "string") throw new Error("Agent adoption response has no exact execution identity.");
         return {
           // No listeners yet: the caller supplies them by re-registering
           // through `onOutput` on the handle it gets back, and the replay it
           // is handed here is what it missed.
           process: track(String(value.processId), workloadId, {}, value.command?.placement),
+          command: { workloadId, executable: value.command.executable, cwd: value.command.cwd,
+            ...(value.command.args ? { args: [...value.command.args] } : {}) },
           replay: value.replay ?? [],
         } satisfies ZelavisAgentAttachedProcess;
-      });
-    },
+      }));
+    })),
 
-    async hostOperationCatalog() {
-      const result = await request({ type: "operation.catalog" });
-      return result.catalog as { agentId: string; operations: readonly ZelavisHostOperationManifest[] };
-    },
-
-    async submitHostOperation(operationRequest) {
-      const result = await request({ type: "operation.submit", request: operationRequest });
-      return result.operation as ZelavisAgentOperationSummary;
-    },
-
-    async getHostOperation(operationId) {
-      const result = await request({ type: "operation.get", operationId });
-      return (result.operation ?? undefined) as ZelavisAgentOperationSummary | undefined;
-    },
-
-    async reclaim(workloadId, reclaimOptions) {
-      const result = await request({
-        type: "reclaim",
-        ...(workloadId === undefined ? {} : { workloadId }),
-        ...(reclaimOptions?.preservePrefixes?.length
-          ? { preservePrefixes: reclaimOptions.preservePrefixes }
-          : {}),
-      });
-      return Number(result.count ?? 0);
-    },
-
-    async fencePlacement(placement) {
-      const result = await request({ type: "fence.placement", placement });
-      return result.fenced === true;
-    },
-
-    async close() {
-      // Disconnects; it does not stop what the Agent is running. A Platform
-      // shutting down is not a reason to take an operator's Projects offline —
-      // that is what supervising the Agent separately buys.
-      socket.destroy();
-    },
+    ...operations,
   };
-}
+});
+export function createAgentProcessClient(options: AgentProcessClientOptions): Promise<ZelavisAgentProcessRunner & AgentHostOperationClient & { close(): Promise<void> }> { return present(createAgentProcessClientProgram(options)); }

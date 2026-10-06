@@ -18,20 +18,21 @@ import { DirectionProvider } from "#/components/ui/direction";
 import {
   beginNavigationRuntimeResolve,
   getAuthBootstrapStatus,
-  commitNavigationRuntime,
   getDashboardSettings,
   getDashboardAccess,
   getProjectRuntimeConfig,
   getRuntimeConfig,
   listDatabaseCollections,
+  listDatabaseTableMenu,
+  listSystemStoreNamespaces,
   listDatabaseSchemaCollections,
   listAssistantThreads,
   listProjects,
-  rejectNavigationRuntime,
   resolveRuntimeDynamicMenus,
   RuntimeApiError,
   ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
+import { canAccessDashboardItem } from "#/lib/dashboard-data";
 import { stripRouterBasename } from "#/lib/router-basename";
 import type { Route } from "./+types/root";
 import "@glideapps/glide-data-grid/dist/index.css";
@@ -50,12 +51,6 @@ function inferProjectIdFromRequestUrl(requestUrl: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-function hasRuntimeService(
-  runtime: { services?: readonly { name: string }[] },
-  serviceName: string,
-) {
-  return runtime.services?.some((service) => service.name === serviceName) ?? false;
-}
 
 export const SETUP_IN_PROGRESS_KEY = "zelavis.setup.in-progress";
 
@@ -75,120 +70,125 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
 
   // Set up the deferred promise SYNCHRONOUSLY (before any await) so that
   // child loaders running in parallel can find and await it.
-  beginNavigationRuntimeResolve(projectId);
+  const navigation = beginNavigationRuntimeResolve(projectId, request.signal);
 
-  const controlRuntime = await getRuntimeConfig();
-  const bootstrapStatus = await getAuthBootstrapStatus(controlRuntime);
-  if (bootstrapStatus.required && !isSetupRoute) {
-    throw redirect("/setup");
-  }
-  // Creating the owner is what ends "required", and the wizard still has its
-  // Edge step to show. Only the tab that just claimed the Platform may stay on
-  // /setup; every other visit to it is closed.
-  if (!bootstrapStatus.required && isSetupRoute && !setupInProgress()) {
-    throw redirect("/");
-  }
-  if (isLoginRoute || isSetupRoute) {
-    commitNavigationRuntime(controlRuntime);
-    const settings = await getDashboardSettings(controlRuntime);
-    return {
-      controlRuntime,
-      runtime: controlRuntime,
-      bootstrapStatus,
-      settings,
-      databaseCollections: [],
-      schemaCollections: [],
-      projects: [],
-      projectRuntime: undefined,
-      assistantThreads: [],
-      assistantResponder: "unavailable",
-    };
-  }
-
-  let access: Awaited<ReturnType<typeof getDashboardAccess>>;
   try {
-    access = await getDashboardAccess(controlRuntime);
-  } catch (error) {
-    if (error instanceof RuntimeApiError && error.status === 401) {
-      // `requestUrl.pathname` is the browser path and includes the router
-      // basename, but the login form resolves `returnTo` through `navigate()`,
-      // which prepends the basename itself. Store a router-relative path so a
-      // mounted dashboard does not redirect to `/zelavis/zelavis/`.
-      throw redirect(
-        `/login?returnTo=${encodeURIComponent(
-          `${stripRouterBasename(requestUrl.pathname)}${requestUrl.search}`,
-        )}`,
-      );
+    const controlRuntime = await getRuntimeConfig();
+    const bootstrapStatus = await getAuthBootstrapStatus(controlRuntime);
+    if (bootstrapStatus.required && !isSetupRoute) {
+      throw redirect("/setup");
     }
-    throw error;
-  }
+    // Creating the owner is what ends "required", and the wizard still has its
+    // Edge step to show. Only the tab that just claimed the Platform may stay on
+    // /setup; every other visit to it is closed.
+    if (!bootstrapStatus.required && isSetupRoute && !setupInProgress()) {
+      throw redirect("/");
+    }
+    if (isLoginRoute || isSetupRoute) {
+      navigation.commit(controlRuntime);
+      const settings = await getDashboardSettings(controlRuntime);
+      return {
+        controlRuntime,
+        runtime: controlRuntime,
+        bootstrapStatus,
+        settings,
+        databaseCollections: [],
+        databaseMenuItems: [],
+        systemStoreNamespaces: [],
+        schemaCollections: [],
+        projects: [],
+        projectRuntime: undefined,
+        assistantThreads: [],
+        assistantResponder: "unavailable",
+      };
+    }
 
-  const [projectResult, assistantResult] = await Promise.all([
-    listProjects(controlRuntime).catch(() => ({ runtime: undefined, projects: [] })),
-    listAssistantThreads(controlRuntime).catch(() => ({
-      responder: "unavailable",
-      threads: [],
-    })),
-  ]);
-  const selectedProject = projectId
-    ? projectResult.projects.find((project) => project.id === projectId)
-    : undefined;
-  if (projectId && !selectedProject) {
-    // `data()`, not `new Response`: this is handed to every loader waiting on the
-    // Project's runtime, and a thrown Response body can be read only once, so the
-    // second reader failed with "body stream already read" and the operator saw a
-    // "Dashboard error" instead of the reason.
-    const error = data(`Project "${projectId}" was not found.`, { status: 404 });
-    rejectNavigationRuntime(error);
-    throw error;
-  }
-  if (selectedProject && selectedProject.runtime.status !== "running") {
-    const error = data(`Project "${selectedProject.id}" is not running.`, {
-      status: 409,
-    });
-    rejectNavigationRuntime(error);
-    throw error;
-  }
-  let runtimeConfig = controlRuntime;
-  const isManagedProject = Boolean(selectedProject?.recipe.managed);
-  if (selectedProject && !isManagedProject) {
+    let access: Awaited<ReturnType<typeof getDashboardAccess>>;
     try {
-      runtimeConfig = await getProjectRuntimeConfig(controlRuntime, selectedProject.id);
+      access = await getDashboardAccess(controlRuntime);
     } catch (error) {
-      rejectNavigationRuntime(error);
+      if (error instanceof RuntimeApiError && error.status === 401) {
+        // `requestUrl.pathname` is the browser path and includes the router
+        // basename, but the login form resolves `returnTo` through `navigate()`,
+        // which prepends the basename itself. Store a router-relative path so a
+        // mounted dashboard does not redirect to `/zelavis/zelavis/`.
+        throw redirect(
+          `/login?returnTo=${encodeURIComponent(
+            `${stripRouterBasename(requestUrl.pathname)}${requestUrl.search}`,
+          )}`,
+        );
+      }
       throw error;
     }
+
+    const [projectResult, assistantResult] = await Promise.all([
+      listProjects(controlRuntime).catch(() => ({ runtime: undefined, projects: [] })),
+      listAssistantThreads(controlRuntime).catch(() => ({
+        responder: "unavailable",
+        threads: [],
+      })),
+    ]);
+    const selectedProject = projectId
+      ? projectResult.projects.find((project) => project.id === projectId)
+      : undefined;
+    if (projectId && !selectedProject) {
+      // `data()`, not `new Response`: this is handed to every loader waiting on the
+      // Project's runtime, and a thrown Response body can be read only once, so the
+      // second reader failed with "body stream already read" and the operator saw a
+      // "Dashboard error" instead of the reason.
+      const error = data(`Project "${projectId}" was not found.`, { status: 404 });
+      throw error;
+    }
+    if (selectedProject && selectedProject.runtime.status !== "running") {
+      const error = data(`Project "${selectedProject.id}" is not running.`, {
+        status: 409,
+      });
+      throw error;
+    }
+    let runtimeConfig = controlRuntime;
+    if (selectedProject) {
+      runtimeConfig = await getProjectRuntimeConfig(controlRuntime, selectedProject.id);
+    }
+
+    // Resolve the deferred so child loaders waiting on getActiveRuntimeConfig
+    // proceed with the correctly-scoped config.
+    navigation.commit(runtimeConfig, selectedProject);
+
+    const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
+    const hasDatabaseService = Boolean(selectedProject) && runtime.capabilities?.database?.available === true &&
+      (!selectedProject?.recipe.managed || runtime.capabilities.database.used === true);
+    const [settings, databaseCollections, schemaCollections, databaseMenuItems, systemStoreNamespaces] = await Promise.all([
+      getDashboardSettings(runtime),
+      hasDatabaseService
+        ? listDatabaseCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID)
+        : [],
+      hasDatabaseService ? listDatabaseSchemaCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID) : [],
+      hasDatabaseService ? listDatabaseTableMenu(runtime) : [],
+      !selectedProject && canAccessDashboardItem(access, { access: { permissions: ["server.database.inspect"], scope: { type: "system" } } })
+        ? listSystemStoreNamespaces(controlRuntime) : [],
+    ]);
+
+    return {
+      controlRuntime,
+      runtime: {
+        ...runtime,
+        access,
+      },
+      settings,
+      databaseCollections,
+      databaseMenuItems,
+      systemStoreNamespaces,
+      schemaCollections,
+      projects: projectResult.projects,
+      projectRuntime: projectResult.runtime,
+      assistantThreads: assistantResult.threads,
+      assistantResponder: assistantResult.responder,
+      bootstrapStatus,
+    };
+  } catch (error) {
+    navigation.reject(error);
+    throw error;
   }
-
-  // Resolve the deferred so child loaders waiting on getActiveRuntimeConfig
-  // proceed with the correctly-scoped config.
-  commitNavigationRuntime(runtimeConfig);
-
-  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
-  const hasDatabaseService = hasRuntimeService(runtime, "@zelavis/db");
-  const [settings, databaseCollections, schemaCollections] = await Promise.all([
-    getDashboardSettings(runtime),
-    hasDatabaseService
-      ? listDatabaseCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID)
-      : [],
-    hasDatabaseService ? listDatabaseSchemaCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID) : [],
-  ]);
-
-  return {
-    controlRuntime,
-    runtime: {
-      ...runtime,
-      access,
-    },
-    settings,
-    databaseCollections,
-    schemaCollections,
-    projects: projectResult.projects,
-    projectRuntime: projectResult.runtime,
-    assistantThreads: assistantResult.threads,
-    assistantResponder: assistantResult.responder,
-    bootstrapStatus,
-  };
 }
 
 clientLoader.hydrate = true as const;

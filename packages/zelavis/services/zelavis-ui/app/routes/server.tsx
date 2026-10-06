@@ -2,6 +2,7 @@ import {
   Activity,
   Archive,
   Boxes,
+  Database,
   Fingerprint,
   Globe2,
   ReceiptText,
@@ -27,6 +28,8 @@ export const handle = {
 } as const;
 
 const serverSections = [
+  { title: "Platform Database", path: "/server/database", icon: Database,
+    detail: "Read-only Platform backend tables and records." },
   {
     title: "Deployment backends",
     path: "/server/runtimes",

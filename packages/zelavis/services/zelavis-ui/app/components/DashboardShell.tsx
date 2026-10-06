@@ -3,6 +3,7 @@ import { Plus, Search } from "lucide-react";
 import { Link, useLocation, useMatches } from "react-router";
 
 import { AppSidebar } from "#/components/app-sidebar";
+import { UpdateBanner } from "#/components/update-banner";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -35,13 +36,12 @@ import type {
   DashboardSettings,
   DatabaseCollection,
   DatabaseSchemaCollectionSummary,
+  RuntimeServiceMenuDefinition,
+  SystemStoreNamespace,
   RuntimeConfig,
   RuntimeAssistantThread,
   RuntimeProject,
   RuntimeProjectDriverInfo,
-} from "#/lib/runtime-api";
-import {
-  DATABASE_COLLECTION_CREATED_EVENT,
 } from "#/lib/runtime-api";
 import { toProjectPath } from "#/lib/routing";
 import {
@@ -54,29 +54,14 @@ export type DashboardShellData = {
   runtime: RuntimeConfig;
   settings: DashboardSettings;
   databaseCollections: readonly DatabaseCollection[];
+  databaseMenuItems: readonly RuntimeServiceMenuDefinition[];
+  systemStoreNamespaces: readonly SystemStoreNamespace[];
   schemaCollections: readonly DatabaseSchemaCollectionSummary[];
   projects: readonly RuntimeProject[];
   projectRuntime?: RuntimeProjectDriverInfo;
   assistantThreads: readonly RuntimeAssistantThread[];
   assistantResponder: string;
 };
-
-function mergeDatabaseCollections(
-  left: readonly DatabaseCollection[],
-  right: readonly DatabaseCollection[],
-) {
-  const collectionsByKey = new Map(
-    left.map((item) => [`${item.tenantId}:${item.name}`, item]),
-  );
-
-  for (const collection of right) {
-    collectionsByKey.set(`${collection.tenantId}:${collection.name}`, collection);
-  }
-
-  return [...collectionsByKey.values()].sort((left, right) =>
-    left.name.localeCompare(right.name),
-  );
-}
 
 const projectHeaderSearchSchema = {
   q: parseAsString.withDefault(""),
@@ -256,7 +241,6 @@ export function DashboardShell({
   const { pathname } = useLocation();
   const direction = useDirection();
   const isMobile = useIsMobile();
-  const [activeDashboardData, setActiveDashboardData] = React.useState(dashboardData);
   const isLoginRoute = pathname === "/login" || pathname === "/login/";
   const isSetupRoute = pathname === "/setup" || pathname === "/setup/";
 
@@ -265,84 +249,6 @@ export function DashboardShell({
 
     return () => {
       delete document.documentElement.dataset.zelavisHydrated;
-    };
-  }, []);
-
-  React.useEffect(() => {
-    setActiveDashboardData(dashboardData);
-  }, [dashboardData]);
-
-  React.useEffect(() => {
-    function applyCreatedCollection(event: Event) {
-      if (!(event instanceof CustomEvent) || !event.detail) {
-        return;
-      }
-
-      const collection = event.detail as DatabaseCollection;
-      setActiveDashboardData((current) => {
-        if (!current) {
-          return current;
-        }
-
-        const nextDatabaseCollections = mergeDatabaseCollections(
-          current.databaseCollections,
-          [collection],
-        );
-
-        const nextServices = current.runtime?.services?.map((service) => {
-          if (service.name !== "database" || !service.menu) {
-            return service;
-          }
-
-          const existingItems = service.menu.items ?? [];
-          const hasExisting = existingItems.some(
-            (item) => item.search?.databaseTable === collection.name,
-          );
-
-          if (hasExisting) {
-            return service;
-          }
-
-          const newTableItem = {
-            title: collection.name,
-            path: "/database",
-            pageLabel: "Database",
-            search: { databaseTable: collection.name },
-          };
-
-          const nonDisabledItems = existingItems.filter(
-            (item) => item.title !== service.menu?.dynamicItems?.emptyTitle && !item.disabled,
-          );
-
-          return {
-            ...service,
-            menu: {
-              ...service.menu,
-              items: [...nonDisabledItems, newTableItem],
-            },
-          };
-        });
-
-        return {
-          ...current,
-          runtime: nextServices
-            ? { ...current.runtime, services: nextServices }
-            : current.runtime,
-          databaseCollections: nextDatabaseCollections,
-        };
-      });
-    }
-
-    window.addEventListener(
-      DATABASE_COLLECTION_CREATED_EVENT,
-      applyCreatedCollection,
-    );
-
-    return () => {
-      window.removeEventListener(
-        DATABASE_COLLECTION_CREATED_EVENT,
-        applyCreatedCollection,
-      );
     };
   }, []);
 
@@ -360,13 +266,15 @@ export function DashboardShell({
     <TooltipProvider>
       <SidebarProvider className="h-svh overflow-hidden">
         <AppSidebar
-          runtime={activeDashboardData?.runtime}
-          assistantConfig={activeDashboardData?.controlRuntime}
-          settings={activeDashboardData?.settings}
-          databaseCollections={activeDashboardData?.databaseCollections}
-          schemaCollections={activeDashboardData?.schemaCollections}
-          projects={activeDashboardData?.projects}
-          assistantThreads={activeDashboardData?.assistantThreads}
+          runtime={dashboardData?.runtime}
+          assistantConfig={dashboardData?.controlRuntime}
+          settings={dashboardData?.settings}
+          databaseCollections={dashboardData?.databaseCollections}
+          databaseMenuItems={dashboardData?.databaseMenuItems}
+          systemStoreNamespaces={dashboardData?.systemStoreNamespaces}
+          schemaCollections={dashboardData?.schemaCollections}
+          projects={dashboardData?.projects}
+          assistantThreads={dashboardData?.assistantThreads}
           mobileSlotContent={isMobile ? children : undefined}
           side={direction === "rtl" ? "right" : "left"}
           aria-label="Dashboard navigation"
@@ -374,7 +282,7 @@ export function DashboardShell({
         />
         {!isMobile ? (
           <SidebarInset className="hidden min-h-0 min-w-0 overflow-hidden lg:flex">
-            <UtilityHeader runtime={activeDashboardData?.runtime} />
+            <UtilityHeader runtime={dashboardData?.runtime} />
             <div
               data-dashboard-scroll="content"
               className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
@@ -382,7 +290,8 @@ export function DashboardShell({
               <div
                 className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4"
               >
-                <RestartRequiredBanner settings={activeDashboardData?.settings} />
+                <RestartRequiredBanner settings={dashboardData?.settings} />
+                <UpdateBanner runtime={dashboardData?.controlRuntime} />
                 {children}
               </div>
             </div>

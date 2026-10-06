@@ -204,7 +204,8 @@ const {
 	.segmented:not(.segmented--ready) button[aria-checked='true'] { background: #fff; }
 	.segmented button:hover { color: #2f3037; }
 	.segmented--glass button:hover { color: #fff; }
-	.segmented--glass button[aria-checked='true']:hover { color: #17181c; }
+	.segmented--glass button[aria-checked='true']:hover,
+	.segmented--glass button[aria-selected='true']:hover { color: #17181c; }
 	.segmented button:active { transform: scale(.97); }
 	.segmented button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 	.segmented small { margin-left: 3px; font-size: 11px; opacity: .78; }

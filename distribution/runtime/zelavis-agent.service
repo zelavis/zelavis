@@ -1,5 +1,5 @@
 [Unit]
-Description=Zelavis Agent (Project processes and signed host operations)
+Description=Zelavis Agent (Project processes and host operations)
 Documentation=https://zelavis.com/docs
 After=network-online.target
 Before=zelavis.service
@@ -15,7 +15,6 @@ Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis
 Delegate=yes
 ExecStart=/opt/zelavis/current/bin/zelavis agent \
   --operations-root /opt/zelavis/current/operations \
-  --operation-trust /etc/zelavis/operation-trust.json \
   --platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json \
   --require-root-owned-operations \
   --operation-cgroup delegated \

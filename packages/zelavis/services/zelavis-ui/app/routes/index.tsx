@@ -32,9 +32,12 @@ export const handle = {
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const runtime = await getActiveRuntimeConfig(request)
+  const managed = !!runtime.project?.recipe.managed
   const [databaseHealth, providers] = await Promise.all([
-    getDatabaseHealth(runtime).catch(() => undefined),
-    listAuthProviders(runtime).catch(() => [] as string[]),
+    (!managed || runtime.capabilities?.database?.used === true)
+      ? getDatabaseHealth(runtime).catch(() => undefined) : undefined,
+    (!managed || runtime.capabilities?.identity?.used === true)
+      ? listAuthProviders(runtime).catch(() => [] as string[]) : [],
   ])
   return { databaseHealth, providers }
 }
@@ -102,7 +105,7 @@ function ManagedProjectOverview({ kind, managed }: { kind: string; managed: { ad
 
       <ResourceNotice
         title="Different project surface"
-        description="Zelavis-native projects show auth, database, content, media, and plugins. Managed app projects show hosting controls because the application itself is not built on Zelavis primitives."
+        description="Manage the application through hosting controls. Zelavis API sections appear automatically when its integration uses them."
       />
     </section>
   );

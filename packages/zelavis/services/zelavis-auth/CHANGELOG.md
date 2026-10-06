@@ -1,5 +1,158 @@
 # @zelavis/auth
 
+## 1.1.0-alpha.25
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.25
+
+## 1.1.0-alpha.24
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.24
+
+## 1.1.0-alpha.23
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.23
+
+## 1.1.0-alpha.22
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.22
+
+## 1.1.0-alpha.21
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.21
+
+## 1.1.0-alpha.20
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.20
+
+## 1.1.0-alpha.19
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.19
+
+## 1.1.0-alpha.18
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.18
+
+## 1.1.0-alpha.17
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.17
+
+## 1.1.0-alpha.16
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.16
+
+## 1.1.0-alpha.15
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.15
+
+## 1.1.0-alpha.14
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.14
+
+## 1.1.0-alpha.13
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.13
+
+## 1.1.0-alpha.12
+
+### Patch Changes
+
+- Updated dependencies [bbe74e4]
+- Updated dependencies
+- Updated dependencies
+  - zelavis@2.0.0-alpha.12
+
+## 1.1.0-alpha.11
+
+### Patch Changes
+
+- Updated dependencies [4105a52]
+  - zelavis@2.0.0-alpha.11
+
+## 1.1.0-alpha.10
+
+### Patch Changes
+
+- Updated dependencies [587d43e]
+  - zelavis@2.0.0-alpha.10
+
+## 1.1.0-alpha.9
+
+### Patch Changes
+
+- Updated dependencies [5027eb8]
+  - zelavis@2.0.0-alpha.9
+
+## 1.1.0-alpha.8
+
+### Patch Changes
+
+- Updated dependencies [e2f9e9c]
+  - zelavis@2.0.0-alpha.8
+
+## 1.1.0-alpha.7
+
+### Patch Changes
+
+- Updated dependencies [02a8ba1]
+  - zelavis@2.0.0-alpha.7
+
+## 1.1.0-alpha.6
+
+### Patch Changes
+
+- Updated dependencies [f22ba11]
+- Updated dependencies [9a51a3c]
+- Updated dependencies [15e0ed3]
+- Updated dependencies [57ba50a]
+- Updated dependencies [1c5ecbc]
+  - zelavis@2.0.0-alpha.6
+
+## 1.1.0-alpha.5
+
+### Patch Changes
+
+- Updated dependencies
+  - zelavis@2.0.0-alpha.5
+
 ## 1.1.0-alpha.4
 
 ### Patch Changes
@@ -13,7 +166,7 @@
 
 - 313b7a2: Add the auth settings page as a product service, and stop a stale session
   cookie from locking people out.
-  
+
   `@zelavis/auth` is a page, not an auth implementation. Accounts, sessions,
   credentials, password verification and the OAuth flow stay in Zelavis, where an
   installation cannot run without them. What a package can usefully own is the
@@ -21,16 +174,16 @@
   configured for this installation, and a catalogue of the plugins that extend
   auth — scoped to `zelavis/auth`, because a general list of everything
   installable does not say which of it is a sign-in method.
-  
+
   Removing it costs the page, not the ability to sign in. It ships beside
   `@zelavis/ui` and `@zelavis/marketplace` and is loaded through the same plugin
   loader an installed third-party service goes through, so its menu reaches the
   dashboard through the ordinary extension path rather than a private one.
-  
+
   Core auth no longer contributes its own dashboard menu. With both contributing
   one, the sidebar carried two "Auth" entries and the one without a page led
   nowhere.
-  
+
   Fixes a lockout: a session cookie that no longer resolves — expired, revoked,
   or left over from another installation on the same host — made the request fail
   outright, so the public sign-in and bootstrap endpoints answered 401 and the
@@ -38,12 +191,12 @@
   the browser whether or not the caller meant to authenticate, so one that does
   not resolve now means "not signed in". A bearer token is an assertion the
   caller chose to make, and an invalid one is still an error.
-  
+
   Discovery failures also name the URL that could not be reached, rather than
   surfacing the transport's "fetch failed".
 - 3bf1481: Rename the auth core to identity, so it stops sharing a name with the package
   that configures it.
-  
+
   Three names collided. `zelavis/app/auth` was the import subpath for the engine —
   accounts, sessions, credentials, password verification, OAuth discovery and
   flow. `"zelavis/auth"` was that engine's service name and capability owner, a
@@ -52,9 +205,9 @@
   settings page and a catalogue of installable auth plugins. The engine's own
   source warned that the two were "close enough to confuse, and getting it wrong
   would produce a catalogue nothing ever appears in."
-  
+
   The engine is now identity:
-  
+
   - `zelavis/app/auth` → `zelavis/app/identity`, and the export subpath with it.
   - Service name and capability owner `"zelavis/auth"` → `"zelavis/identity"`, so
     the string and the import path finally agree. Extensions declare
@@ -66,12 +219,12 @@
     same for `AuthSubsystem`, `AuthContext`, `AuthRepositories`, `AuthEntity`,
     `AuthDocumentStore`, `AuthService*`, `AuthMethod*`, `AuthBootstrap*`,
     `AuthAuthorizationFlow*` and the domain errors.
-  
+
   Types whose subject is the act of signing in keep `Auth`, because they are about
   authentication rather than identity: `AuthAttemptState`, `AuthRateLimitError`,
   `AuthInvalidCredentialsError`, `AuthSecurityEvent` and their neighbours.
   `IdentityRateLimitError` would have been less accurate than what it replaced.
-  
+
   `@zelavis/auth` keeps its name. It is what a person opens to configure sign-in,
   and "Auth" is the word they look for; the subsystem gets the precise term and
   the page keeps the familiar one. Its extension-owner constant is renamed to
@@ -79,11 +232,11 @@
   `@zelavis/app-auth-oidc` declares against the new owner — without that change it
   would have gone on declaring against a capability nothing owns and silently
   vanished from the catalogue.
-  
+
   `.github/copilot-instructions.md` claimed "`@zelavis/auth` owns the auth core,"
   which was the inversion this rename exists to prevent. It now says which package
   owns what.
-  
+
   Pending changesets from earlier work still name `zelavis/auth`; they describe
   changes made under that name and are left as written.
 

@@ -8,6 +8,7 @@ import { Zelavis } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
 import { resolveBundledServiceDirectory } from "../dist/adapters/_local-runtime.js";
 import {
+  ensureRecipeArtifact,
   loadRecipeArtifact,
   materializeRecipeArtifact,
   digestArtifactDirectory,
@@ -93,6 +94,14 @@ test("a new Project freezes its recipe and keeps running it when the Platform's 
   );
   assert.equal(packaged.version, record.recipe.version);
 
+  // Change the synthetic historical fixture only after the ordinary lifecycle
+  // has stopped it. Editing a live lock bypasses its permit and races status
+  // reconciliation, which may persist the still-running selection over it.
+  const stopped = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/projects/frozen/stop", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+  }), OWNER);
+  assert.equal(stopped.status, 200);
+
   // Simulate the Platform having moved on since this Project was created: its
   // frozen recipe is an older release that the Platform no longer bundles. The
   // System Store's lock and the descriptor both say so.
@@ -104,7 +113,7 @@ test("a new Project freezes its recipe and keeps running it when the Platform's 
   record.recipe.artifact = { digest };
   record.engine = { createdWith: "0.0.9-engine" };
   await writeFile(projectFile, JSON.stringify(record, null, 2));
-  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const systemStore = zv.platform.resources.systemStore;
   const stored = await systemStore.get("projects", "frozen");
   await systemStore.set("projects", "frozen", {
     ...stored.value,
@@ -146,7 +155,12 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   });
   assert.equal(created.status, 201);
 
-  // What a Project created before recipes were frozen looks like.
+  // Stop before editing this fixture outside the lifecycle API. Otherwise
+  // reconciliation can legitimately persist the still-running recipe lock.
+  const stopped = await call("/legacy/stop", { method: "POST" });
+  assert.equal(stopped.status, 200, await stopped.clone().text());
+
+  // An unavailable recipe lock without a frozen artifact must be refused.
   const directory = join(data, "projects", "legacy");
   const projectFile = join(directory, "project.json");
   const record = JSON.parse(await readFile(projectFile, "utf8"));
@@ -154,7 +168,7 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   record.recipe.version = "0.0.1-old";
   await writeFile(projectFile, JSON.stringify(record, null, 2));
   await rm(join(directory, ".zelavis", "recipe"), { recursive: true, force: true });
-  const systemStore = (await nodeAdapter({ dataDirectory: data }).resolve({})).resources.systemStore;
+  const systemStore = zv.platform.resources.systemStore;
   const stored = await systemStore.get("projects", "legacy");
   const lock = { ...stored.value.recipe, version: "0.0.1-old" };
   delete lock.artifact;
@@ -169,4 +183,23 @@ test("a Project locked to a version this Platform no longer ships, with no froze
   assert.match(project.runtime.error, /cannot be prepared: this Platform ships/);
   assert.match(project.runtime.error, /delete and recreate the Project/);
   assert.doesNotMatch(project.runtime.error, /prepare the Project again/);
+});
+
+test("a recipe the marketplace offered but this install never installed is fetched at its exact locked version", async () => {
+  const root = await scratch();
+  const { directory, manifest } = await bundledApp();
+  const asked = [];
+  // Nothing local has it: the first (name-only) question finds nothing, the second names the version.
+  const supply = async (name, version) => { asked.push([name, version]); return version ? directory : undefined; };
+  const project = join(root, "p"); const data = join(project, ".zelavis");
+  await mkdir(data, { recursive: true });
+  // A name nothing bundles, so only a download can provide it.
+  const { digest } = await ensureRecipeArtifact({ name: "@acme/offered", version: manifest.version }, project, data, supply);
+  assert.match(digest, /^sha256:/);
+  assert.deepEqual(asked, [["@acme/offered", undefined], ["@acme/offered", manifest.version]], "local sources are asked first; the exact version is only asked for after");
+
+  // A supplier that hands back another version is refused rather than frozen.
+  const other = join(root, "q"); const otherData = join(other, ".zelavis");
+  await mkdir(otherData, { recursive: true });
+  await assert.rejects(() => ensureRecipeArtifact({ name: "@acme/offered", version: "9.9.9" }, other, otherData, supply), /cannot be prepared/);
 });

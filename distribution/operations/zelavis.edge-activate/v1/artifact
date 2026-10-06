@@ -41,10 +41,10 @@ if [ -f "$state_file" ]; then
 fi
 
 # Atomic exchange: write to temp file on same filesystem, then rename
-tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+tmp_file="$active_dir/traefik-dynamic.yml.tmp.$$"
 cp "$source_file" "$tmp_file" || { printf '{"status":"failed","error":"failed to copy to staging"}\n'; exit 1; }
 chmod 0644 "$tmp_file"
-mv -f "$tmp_file" "$active_dir/traefik-dynamic.json" || { printf '{"status":"failed","error":"atomic rename failed"}\n'; exit 1; }
+mv -f "$tmp_file" "$active_dir/traefik-dynamic.yml" || { printf '{"status":"failed","error":"atomic rename failed"}\n'; exit 1; }
 
 # Also copy manifest if present
 if [ -f "$gen_dir/manifest.json" ]; then

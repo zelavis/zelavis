@@ -99,6 +99,8 @@ export interface ZelavisAgentProcessStartOptions {
  */
 export interface ZelavisAgentAttachedProcess {
   readonly process: ZelavisAgentProcess;
+  /** Execution identity for adoption; environment and private keys are withheld. */
+  readonly command: Pick<ZelavisAgentProcessCommand, "workloadId" | "executable" | "args" | "cwd">;
   /** Output the Agent buffered while no client was listening, oldest first. */
   readonly replay: readonly ZelavisAgentProcessOutput[];
 }

@@ -107,7 +107,7 @@ test("SQLite: another process can supersede a paused writer; restart preserves t
       import { makeNodeSqliteStore } from './dist/db/engines/node-sqlite.js';
       await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
         const store = yield* makeNodeSqliteStore('acme', process.argv[1]);
-        console.log(store.generation);
+        process.stdout.write(String(store.generation));
       })));`;
     const child = yield* Effect.promise(() => promisify(execFile)(process.execPath, ["--input-type=module", "-e", code, dir], { cwd: new URL("..", import.meta.url) }));
     assert.equal(child.stdout.trim(), "2");
@@ -199,7 +199,7 @@ test("LMDB: another process fences a transaction prepared by the previous sessio
       import { makeLmdbStore } from './dist/db/engines/lmdb.js';
       await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
         const store = yield* makeLmdbStore('acme', process.argv[1]);
-        console.log(store.generation);
+        process.stdout.write(String(store.generation));
       })));`;
     const child = yield* Effect.promise(() => promisify(execFile)(process.execPath, ["--input-type=module", "-e", code, dir], { cwd: new URL("..", import.meta.url) }));
     assert.equal(child.stdout.trim(), "2");

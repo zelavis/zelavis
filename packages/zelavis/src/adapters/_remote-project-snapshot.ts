@@ -1,3 +1,6 @@
+import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { Effect } from "effect";
+import { isUnknown, isString, optional, objectFields, parseJson, literal, arrayOf } from "../core/json-validation.js";
 import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -41,6 +44,11 @@ async function collect(root: string, directory = root,
     if (!entry.isFile()) throw new Error("Remote Project snapshot contains a non-regular entry.");
     const relative = path.slice(root.length + 1).split(sep).join("/");
     if (!validPath(relative)) throw new Error("Remote Project snapshot contains an invalid path.");
+    // The Platform's handed-down cache may be atomically renamed during collection.
+    // Exclude its exact final/temporary names before opening either one.
+    const allowlist = `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`;
+    if (relative === allowlist || relative.startsWith(`${allowlist}.`) &&
+        /^[1-9]\d*\.tmp$/u.test(relative.slice(allowlist.length + 1))) continue;
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = await file.stat();
@@ -70,7 +78,6 @@ export async function packRemoteProjectSnapshot(
   // not Project data: it neither forks the Project nor travels with it (a remote
   // Node is handed the list separately).
   const files = (await collect(root))
-    .filter((file) => file.path !== `.zelavis/${HANDED_DOWN_ALLOWLIST_FILE}`)
     .sort((left, right) => left.path.localeCompare(right.path));
   // Only the frozen recipe travels. Anything else under `.zelavis` is Project
   // data (database, uploads, runtime state) that a copy would fork.
@@ -90,17 +97,17 @@ export async function packRemoteProjectSnapshot(
 }
 
 /** Install only a digest-verified first snapshot; never overwrite remote data. */
-export async function installRemoteProjectSnapshot(input: {
+export function installRemoteProjectSnapshot(input: {
   readonly projectsDirectory: string;
   readonly projectId: string;
   readonly body: Uint8Array;
   readonly digest: ZelavisArtifactDigest;
-}): Promise<void> {
+}): Promise<void> { return presentProtocol(Effect.gen(function* () {
   if (!validProjectId(input.projectId) || input.body.byteLength > MAX_BYTES ||
-      await createArtifactDigest(input.body) !== input.digest) {
+      (yield* integrationValue(createArtifactDigest(input.body))) !== input.digest) {
     throw new Error("Remote Project snapshot identity or digest is invalid.");
   }
-  const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input.body)) as ProjectSnapshot;
+  const snapshot = parseJson(new TextDecoder("utf-8", { fatal: true }).decode(input.body), objectFields<ProjectSnapshot>({ formatVersion: literal(1), projectId: validProjectId, engineVersion: isString, files: arrayOf(objectFields<{ path: string; body: string }>({ path: validPath, body: isString })) }));
   if (snapshot.formatVersion !== 1 || snapshot.projectId !== input.projectId ||
       snapshot.engineVersion !== ZELAVIS_VERSION ||
       !Array.isArray(snapshot.files) || snapshot.files.length < 2 ||
@@ -109,26 +116,26 @@ export async function installRemoteProjectSnapshot(input: {
   }
   const root = resolve(input.projectsDirectory);
   const destination = join(root, input.projectId);
-  const existing = await lstat(destination).catch((error: NodeJS.ErrnoException) => {
+  const existing = (yield* integrationValue(lstat(destination).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
-  });
+  })));
   if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) {
     throw new Error("Remote Project destination is unsafe.");
   }
-  const prepared = await readPreparedRemoteProjectDigest(root, input.projectId);
+  const prepared = (yield* integrationValue(readPreparedRemoteProjectDigest(root, input.projectId)));
   if (prepared) {
     if (prepared !== input.digest) throw new Error("Remote Project already owns different data.");
     return;
   }
   if (existing) throw new Error("Remote Project destination contains unmanaged data.");
-  await mkdir(root, { recursive: true });
+  (yield* integrationValue(mkdir(root, { recursive: true })));
   const lockPath = join(root, `.install-${input.projectId}.lock`);
-  const lockFile = await open(lockPath, "wx", 0o600);
+  const lockFile = (yield* integrationValue(open(lockPath, "wx", 0o600)));
   let staging: string | undefined;
   let installed = false;
   try {
-    staging = await mkdtemp(join(root, ".incoming-"));
+    staging = unwrapIntegrationResult(yield* Effect.result(integrationValue(mkdtemp(join(root, ".incoming-")))));
     const seen = new Set<string>();
     let total = 0;
     for (const entry of snapshot.files) {
@@ -142,58 +149,58 @@ export async function installRemoteProjectSnapshot(input: {
       total += bytes.byteLength;
       if (total > MAX_BYTES) throw new Error("Remote Project snapshot exceeds the unpacked limit.");
       const target = join(staging, ...entry.path.split("/"));
-      await mkdir(dirname(target), { recursive: true });
-      const file = await open(target, "wx", 0o600);
-      try { await file.writeFile(bytes); }
-      finally { await file.close(); }
+      unwrapIntegrationResult(yield* Effect.result(integrationValue(mkdir(dirname(target), { recursive: true }))));
+      const file = unwrapIntegrationResult(yield* Effect.result(integrationValue(open(target, "wx", 0o600))));
+      try { unwrapIntegrationResult(yield* Effect.result(integrationValue(file.writeFile(bytes)))); }
+      finally { unwrapIntegrationResult(yield* Effect.result(integrationValue(file.close()))); }
     }
     if (!seen.has("project.json")) throw new Error("Remote Project snapshot is missing project.json.");
-    const descriptor = JSON.parse(await readFile(join(staging, "project.json"), "utf8")) as {
+    const descriptor = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(staging, "project.json"), "utf8")))), objectFields<{
       id?: unknown; recipe?: { name?: unknown; version?: unknown; artifact?: { digest?: unknown } };
-    };
+    }>({id: optional(isUnknown), recipe: optional(objectFields<{ name?: unknown; version?: unknown; artifact?: { digest?: unknown } }>({name: optional(isUnknown), version: optional(isUnknown), artifact: optional(objectFields<{ digest?: unknown }>({digest: optional(isUnknown)}))}))}));
     const lock = descriptor.recipe;
     if (descriptor.id !== input.projectId || typeof lock?.name !== "string" ||
         typeof lock.version !== "string" || typeof lock.artifact?.digest !== "string") {
       throw new Error("Remote Project descriptor has no exact recipe lock.");
     }
     const packageDirectory = join(staging, ".zelavis", "recipe", "package");
-    if (await digestArtifactDirectory(packageDirectory) !== lock.artifact.digest) {
+    if (unwrapIntegrationResult(yield* Effect.result(integrationValue(digestArtifactDirectory(packageDirectory)))) !== lock.artifact.digest) {
       throw new Error("Remote Project recipe bytes differ from their lock.");
     }
-    const manifest = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8")) as {
+    const manifest = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(packageDirectory, "package.json"), "utf8")))), objectFields<{
       name?: unknown; version?: unknown;
-    };
+    }>({name: optional(isUnknown), version: optional(isUnknown)}));
     if (manifest.name !== lock.name || manifest.version !== lock.version) {
       throw new Error("Remote Project recipe identity differs from its lock.");
     }
-    await mkdir(join(staging, ".zelavis"), { recursive: true });
-    await writeFile(join(staging, MARKER), JSON.stringify({ digest: input.digest }), { mode: 0o600 });
-    await rename(staging, destination);
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(mkdir(join(staging, ".zelavis"), { recursive: true }))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(writeFile(join(staging, MARKER), JSON.stringify({ digest: input.digest }), { mode: 0o600 }))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(rename(staging, destination))));
     installed = true;
   } finally {
-    if (!installed && staging) await rm(staging, { recursive: true, force: true });
-    await lockFile.close();
-    await rm(lockPath, { force: true });
+    if (!installed && staging) unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(staging, { recursive: true, force: true }))));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(lockFile.close())));
+    unwrapIntegrationResult(yield* Effect.result(integrationValue(rm(lockPath, { force: true }))));
   }
-}
+}).pipe(Effect.withSpan("installRemoteProjectSnapshot"))); }
 
-export async function readPreparedRemoteProjectDigest(
+export function readPreparedRemoteProjectDigest(
   projectsDirectory: string,
   projectId: string,
-): Promise<ZelavisArtifactDigest | undefined> {
+): Promise<ZelavisArtifactDigest | undefined> { return presentProtocol(Effect.gen(function* () {
   if (!validProjectId(projectId)) return undefined;
   const marker = join(resolve(projectsDirectory), projectId, MARKER);
   try {
-    const file = await open(marker, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const file = unwrapIntegrationResult(yield* Effect.result(integrationValue(open(marker, constants.O_RDONLY | constants.O_NOFOLLOW))));
     let value: { digest?: unknown };
-    try { value = JSON.parse(await file.readFile("utf8")) as { digest?: unknown }; }
-    finally { await file.close(); }
+    try { value = parseJson(unwrapIntegrationResult(yield* Effect.result(integrationValue(file.readFile("utf8")))), objectFields<{ digest?: unknown }>({digest: optional(isUnknown)})); }
+    finally { unwrapIntegrationResult(yield* Effect.result(integrationValue(file.close()))); }
     if (typeof value.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value.digest)) {
       throw new Error("Remote Project install marker is invalid.");
     }
-    return value.digest as ZelavisArtifactDigest;
+    return unwrapIntegrationResult(yield* Effect.result(integrationValue(value.digest as ZelavisArtifactDigest)));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-}
+}).pipe(Effect.withSpan("readPreparedRemoteProjectDigest"))); }

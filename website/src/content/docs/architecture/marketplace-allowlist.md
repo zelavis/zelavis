@@ -65,25 +65,29 @@ SDK: `client.marketplace.allowlist()` and `client.marketplace.refresh()`.
 CLI: `zelavis marketplace allowlist` and `zelavis marketplace refresh`.
 
 Sources come from `services.marketplace.sources` or `ZELAVIS_ALLOWLIST_SOURCES`
-(comma separated). Trusted keys are the official ones plus
-`services.marketplace.keys`. A newer list applies to the catalogue at the next
-start. Until the official list and its signing key are published there are no
-default sources and the trusted-key list is empty, so only the shipped list counts.
+(comma separated). The default is `https://zelavis.com/allowlist.json`. There are
+no keys: the list is plain JSON and its https origin is the trust anchor, the same
+as for the installer. A newer list applies to the catalogue at the next start.
+Until that file is published, only the list shipped with the release counts.
 
 ## Publishing the list
 
-Releases run `pnpm allowlist update`, which rebuilds the list from the packages in
+Publish changed official services before building the Platform. Then run
+`pnpm allowlist update`, which rebuilds the list from the packages in
 `zelavis-services/*` and the digests npm serves for them, raises `sequence` and
-rewrites the list shipped with the release. `pnpm allowlist sign` then signs it
-with the release key (kept outside the repository) into the file every source
-hosts. By default installations fetch `https://zelavis.com/allowlist.json` and a
-mirror on GitHub; both hold the same signed file, so either one is enough.
+rewrites the list shipped with the release. `pnpm allowlist publish` then writes
+a plain copy with a fresh expiry to `website/public/allowlist.json`, which the next
+website deploy serves at `https://zelavis.com/allowlist.json`.
+`pnpm allowlist check` is part of release validation and refuses defaults that
+differ from the qualified service versions. A fresh runtime uses the shipped
+snapshot to compose its catalogue; background refreshes apply on its next start.
 
 ## Projects
 
 A Project has a marketplace of its own for the plugins and frontends installed into
 it, behind the same install gate. It never fetches the sources. The Platform hands
-its signed list to each Project (in the Project's data folder, on every refresh and
-whenever the Project starts), and the Project verifies it again with the keys it was
-built with on every read, so the handed-over file needs no trust and an edited one is
-refused. A Project that has been given nothing uses the list shipped with its release.
+its list to each Project (in the Project's data folder, on every refresh and
+whenever the Project starts), and the Project parses it again on every read, so a
+malformed file is refused. The Platform is the Project's parent authority and the
+folder is the Project's own, which is the same trust a Project already places in the
+Platform. A Project that has been given nothing uses the list shipped with its release.

@@ -6,15 +6,15 @@ The public `zelavis` command starts and operates the long-running Platform OS.
 Its endpoint-backed command implementation is `zelavis/cli`, importable on its
 own for tooling that wants the commands without the binary.
 
-Install the Platform package to get the complete command, including `serve`:
+Install the Platform on this machine to get the complete command, including `serve`:
 
 ```bash
-npm install --global zelavis
+npm create zelavis@latest -- --yes
 zelavis --help
 ```
 
-Operating-system packages expose the same executable without requiring a global
-Node installation:
+All installed release formats use a private Node. In user mode, start the
+Platform yourself:
 
 ```bash
 zelavis serve
@@ -48,8 +48,8 @@ command tree.
 - `bootstrap` creates the first Platform owner account non-interactively.
 - `bootstrap status` reports whether an owner still has to be created.
 - `agent` runs the separately supervised Agent that executes Project processes.
-  With `--operations-root <dir> --operation-trust <file> --platform-authority <file>`
-  it also runs installed, release-signed host operations the Platform requests
+  With `--operations-root <dir> --platform-authority <file>`
+  it also runs installed host operations the Platform requests
   over its local socket with Ed25519-signed, request-bound authority. `--operation-cgroup delegated` (Linux, cgroup v2,
   systemd `Delegate=yes`) contains each operation in its own cgroup, optionally
   limited by `--operation-pids-max` and `--operation-memory-max`; it refuses to
@@ -57,27 +57,48 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
-- `host-operations catalog|submit|get|audit` requests release-signed host operations
+- `update status|check|apply [--wait]` shows the running version and the newest one on
+  its channel, looks again, or asks the installation to update itself and, with
+  `--wait`, follows it to the end. It calls the same routes as the dashboard
+  (`client.updates`). `sudo zelavis update --run [--instance NAME]` is the other half, run by the
+  `zelavis-update` systemd unit and never by hand; `zelavis update --run --user` is the
+  same for a user-mode install, started by the Platform as the same user. It replaces
+  the installed release, so it has no HTTP route and a system update refuses to run
+  unless it is root. See
+  [Updating without downtime](../architecture/updates/).
+- `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,
   `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>
-  --arg name=value` needs the permission the operation's signed manifest names
+  --arg name=value` needs the permission the operation's installed manifest names
   for that Project (or system scope). An operation that declares a JSON result
   returns it in `get`. `audit [--project <id>] [--limit N]` lists issuance
   records (never argument values) with the audit permission. Submissions are
   rate limited per caller (HTTP 429 with `Retry-After`). Available when the
   Platform runs with an Agent.
-- `projects list|get|create|start|stop|restart|logs|remove` manages Projects,
+- `projects list|get|create|rename|start|stop|restart|upgrade|logs|remove` manages Projects,
   and `projects recipes` lists Project recipes. Each command calls the same
   route as the JavaScript client (`client.projects.*`) and
   `/zelavis/api/v1/runtime/projects`. With `--json` the output is the SDK
   result and failures are JSON with the HTTP status; a recipe whose required
   isolation the server cannot provide fails with
   `code: "project.isolation.unsatisfied"`. The backend is chosen by server
-  policy; there is no backend option.
+  policy; there is no backend option. `projects versions [id]` lists qualified
+  installed native App engines. `projects switch-version <id> --engine-version
+  <exact-version>` selects one with its matching App recipe. `create <name>` and
+  `upgrade <id>` also accept `--engine-version`; their default is the latest
+  qualified installed engine. Running qualified Apps switch through the shared
+  handover at their existing address. Source installations and unsupported
+  drivers report why independent selection is unavailable.
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;
   `--project <id>` adds the standard scoped Project operator grants.
+- `system-store namespaces|records <namespace>` inspects the Platform's own
+  backend tables through `client.runtime.systemStore` and
+  `/zelavis/api/v1/runtime/system-store/namespaces`. Use `--limit` (1–200),
+  `--after` with the returned next key, and `--json` for paginated records.
+  Inspection is read-only, redacts secrets, and requires the system-scoped
+  `server.database.inspect` permission. Supply `--token` for authentication.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.
@@ -86,7 +107,36 @@ command tree.
   complete removal owns. `uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA`
   then removes the Platform, Agent, releases, package records, Zelavis data and
   local configuration. It is a host-local adapter operation, not an HTTP
-  endpoint, and it refuses npm and source installations.
+  endpoint. A current installer receipt covers create/package installs; plain
+  npm/source copies without one use their originating lifecycle. The inventory
+  includes installer/data locks and the Platform ownership record.
+
+## Host-local install and doctor
+
+`zelavis install --from-release /absolute/release` uses a staged release, while
+`zelavis install --from package --version <exact-version>` acquires its matching
+verified prebuilt archive. Both use the same plan; `--dry-run` inspects it,
+`--user` selects user mode and `--json` selects structured output. Existing
+receipts identify the source, entry, mode, selected instance, port and Edge ownership. Foreign layouts,
+live data owners and occupied or reserved instance ports are refused. `--force` only permits
+command replacement; stop user processes before maintenance. A matching owned
+systemd Platform can be stopped and restarted for repair/upgrade.
+
+`zelavis doctor [--user|--system] [--json]` inspects PATH, receipt/current/private
+Node, data owner, service state, ports and Agent cgroup/delegation. Use sudo for
+root-readable system receipts. It writes no files, takes no locks and downloads
+nothing; errors return exit status 1. Install, doctor and complete removal are
+host-local commands with no HTTP/dashboard route. Use `--instance <name>` on install, serve, doctor and complete removal for a
+named Linux/systemd instance. A new install needs an explicit `--port` (1024–65535).
+User mode supports default only. The selected `current`/receipt/runtime descriptor
+live under `/opt/zelavis/instances/<name>`, with data/config/account/unit names
+scoped to the instance. Releases and the management command remain shared.
+Only default may own host Edge; secondary instances run with Edge off.
+`uninstall --instance <name> --all` removes all of that instance’s data and
+retains shared state needed by other receipts. The last instance removes shared
+releases, templates and package/APT state. Removing default releases its host
+Edge record/kernel lock. Use `--url` for endpoint-backed commands on a secondary
+Platform; `--instance` never changes a remote target.
 
 ## Runtime Operations
 

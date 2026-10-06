@@ -1,3 +1,4 @@
+import { parseJson, isJsonValue } from "../core/json-validation.js";
 /**
  * Primitives shared by the Platform composition and the modules split out of
  * it: typed domain errors and the request-body and path normalization used by
@@ -196,7 +197,7 @@ export function normalizeEditableRootPath(
 }
 
 export function toSystemStoreValue(value: unknown): ZelavisSystemStoreValue {
-  return JSON.parse(JSON.stringify(value)) as ZelavisSystemStoreValue;
+  return parseJson(JSON.stringify(value), isJsonValue, "System Store value");
 }
 
 /**

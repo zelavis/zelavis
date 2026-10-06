@@ -42,3 +42,17 @@ export interface ZelavisRecipeRuntimeContext {
 export type ZelavisRecipeRuntimeFactory = (
   context: ZelavisRecipeRuntimeContext,
 ) => ZelavisProjectRuntimeDriver;
+
+/** Effect implementations behind the Promise-based Project runtime protocol. */
+export { IntegrationFailure, unwrapFailure, type TaggedFailure, evaluate, integration, presentOperations, type EffectOperations } from "../core/runtime/effect-boundary.js";
+
+import { presentOperations, type EffectOperations } from "../core/runtime/effect-boundary.js";
+
+/** Native Effect implementation of the existing Project runtime driver protocol. */
+export type ZelavisEffectProjectRuntimeDriver = EffectOperations<ZelavisProjectRuntimeDriver>;
+
+/** Keep runtime effects native inside the Platform and expose Promises at the driver API boundary. */
+export function defineEffectProjectRuntime(driver: ZelavisEffectProjectRuntimeDriver): ZelavisProjectRuntimeDriver {
+  const { adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget, ...metadata } = driver;
+  return Object.assign(presentOperations({ adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget }), metadata);
+}

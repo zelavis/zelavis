@@ -148,3 +148,12 @@ test("a Project cannot set cookies on the Platform origin", () => {
   assert.equal(inbound.get("transfer-encoding"), null);
   assert.equal(inbound.get("content-type"), "text/html");
 });
+
+
+test("scoped package asset parameters remain encoded on the Project origin", () => {
+  const target = resolveProxyTarget("http://127.0.0.1:3000", "zelavis/api/v1/runtime/service-page-assets/%40acme%2Fsite/dashboard/index.html");
+  assert.equal(target?.pathname, "/zelavis/api/v1/runtime/service-page-assets/%40acme%2Fsite/dashboard/index.html");
+  for (const name of ["%40acme%2F..", "%40acme%2Fsite%2F..", "%40acme%2Fsite%5Cfile", "%2Fetc%2Fpasswd"]) {
+    assert.equal(resolveProxyTarget("http://127.0.0.1:3000", `zelavis/api/v1/runtime/service-page-assets/${name}/dashboard/index.html`), undefined);
+  }
+});

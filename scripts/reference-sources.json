@@ -1,0 +1,7 @@
+{
+  "effect": {
+    "url": "https://github.com/Effect-TS/effect.git",
+    "version": "4.0.0",
+    "commit": "67ba4e46a11ccda0b6761578bfd22c04ae00167d"
+  }
+}

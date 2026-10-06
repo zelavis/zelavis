@@ -1,12 +1,8 @@
-import { verifyAllowlistEnvelope, type AllowlistKeyResolver } from "./envelope.js";
-import {
-  ALLOWLIST_MAX_BYTES,
-  type Allowlist,
-  type AllowlistEnvelope,
-} from "./types.js";
+import { parseAllowlist } from "./parse.js";
+import { ALLOWLIST_MAX_BYTES, type Allowlist } from "./types.js";
 
 export interface CachedAllowlist {
-  readonly envelope: AllowlistEnvelope;
+  readonly allowlist: Allowlist;
   /** Where it came from, for diagnostics only. */
   readonly source: string;
   readonly fetchedAt: string;
@@ -84,15 +80,12 @@ async function readBounded(response: Response, limit: number): Promise<string> {
 /**
  * Keeps an installation's copy of the allow-list current.
  *
- * Several sources are listed because the list is signed: a copy from a mirror,
- * a gist or an API is exactly as trustworthy as one from the primary, so any of
- * them being reachable is enough. What a source can never do is move the
- * installation backwards. A list older than one already held is a replay, and is
- * ignored even though its signature is valid.
+ * Sources are tried in order and each is trusted as much as its https origin.
+ * What a source can never do is move the installation backwards: a list older
+ * than one already held is a replay and is ignored.
  */
 export function createAllowlistClient(options: {
   readonly sources: readonly string[];
-  readonly resolveKey: AllowlistKeyResolver;
   readonly cache?: AllowlistCache;
   /** The list shipped with this release. Trusted because it arrived with the code. */
   readonly bundled?: Allowlist;
@@ -115,15 +108,15 @@ export function createAllowlistClient(options: {
   async function cached(): Promise<AllowlistView | undefined> {
     const value = await options.cache?.read();
     if (!value) return undefined;
-    // Verified again on every read: a cache is a file someone could edit.
-    const verified = await verifyAllowlistEnvelope(value.envelope, { resolveKey: options.resolveKey });
-    if (!verified.ok) return undefined;
+    // Parsed again on every read: a cache is a file someone could edit.
+    let allowlist: Allowlist;
+    try { allowlist = parseAllowlist(value.allowlist); } catch { return undefined; }
     return {
-      allowlist: verified.allowlist,
+      allowlist,
       origin: "cache",
       source: value.source,
       fetchedAt: value.fetchedAt,
-      status: statusOf(verified.allowlist),
+      status: statusOf(allowlist),
     };
   }
 
@@ -138,7 +131,7 @@ export function createAllowlistClient(options: {
     return fromCache ?? fromBundle;
   }
 
-  async function fetchEnvelope(source: string): Promise<unknown> {
+  async function fetchList(source: string): Promise<unknown> {
     const url = new URL(source);
     if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost(url))) {
       throw new TypeError("An allow-list source must use https.");
@@ -150,8 +143,7 @@ export function createAllowlistClient(options: {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new Error(`The source answered ${response.status}.`);
-    // The payload is base64 inside JSON, so allow for its overhead.
-    return JSON.parse(await readBounded(response, Math.ceil(ALLOWLIST_MAX_BYTES * 1.5)));
+    return JSON.parse(await readBounded(response, ALLOWLIST_MAX_BYTES));
   }
 
   return {
@@ -163,7 +155,7 @@ export function createAllowlistClient(options: {
       for (const source of options.sources) {
         let body: unknown;
         try {
-          body = await fetchEnvelope(source);
+          body = await fetchList(source);
         } catch (error) {
           attempts.push({
             source,
@@ -172,26 +164,28 @@ export function createAllowlistClient(options: {
           });
           continue;
         }
-        const verified = await verifyAllowlistEnvelope(body, { resolveKey: options.resolveKey });
-        if (!verified.ok) {
-          attempts.push({ source, outcome: "invalid", detail: verified.reason });
+        let allowlist: Allowlist;
+        try {
+          allowlist = parseAllowlist(body);
+        } catch (error) {
+          attempts.push({ source, outcome: "invalid", detail: error instanceof Error ? error.message : "The allow-list could not be read." });
           continue;
         }
-        if (statusOf(verified.allowlist) === "expired") {
+        if (statusOf(allowlist) === "expired") {
           attempts.push({ source, outcome: "expired", detail: "The allow-list has expired." });
           continue;
         }
-        if (verified.allowlist.sequence < floor) {
+        if (allowlist.sequence < floor) {
           attempts.push({
             source,
             outcome: "stale",
-            detail: `Sequence ${verified.allowlist.sequence} is older than the ${floor} already held.`,
+            detail: `Sequence ${allowlist.sequence} is older than the ${floor} already held.`,
           });
           continue;
         }
         attempts.push({ source, outcome: "ok" });
         const fetchedAt = new Date(now()).toISOString();
-        await options.cache?.write({ envelope: body as AllowlistEnvelope, source, fetchedAt });
+        await options.cache?.write({ allowlist, source, fetchedAt });
         return { updated: true, attempts, view: await current() };
       }
       return { updated: false, attempts, view: held };

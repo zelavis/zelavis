@@ -1,3 +1,4 @@
+import { parseJson, objectFields, isFiniteNumber, isJsonObject, isString, recordOf, optional } from "../core/json-validation.js";
 import { Effect, Stream } from "effect";
 import type { DomainEvent } from "./domain-events.js";
 import { TimeSeriesNotFound } from "./errors.js";
@@ -339,7 +340,7 @@ export const timeSeriesFor = (
       const out: TimeSeriesPoint[] = [];
       for (const seq of seqs) {
         const object = yield* store.read(seq);
-        if (object !== undefined) out.push(JSON.parse(dec.decode(object.bytes)) as TimeSeriesPoint);
+        if (object !== undefined) out.push(parseJson(dec.decode(object.bytes), objectFields<TimeSeriesPoint>({ timestamp: isFiniteNumber, value: isFiniteNumber, tags: optional(recordOf(isString)), fields: optional(isJsonObject) })));
       }
       return out;
     }).pipe(Effect.orDie);

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, integration, present } from "../core/runtime/effect-boundary.js";
 import {
   createMappedJsonErrorResponse,
   type ZelavisPrincipal,
@@ -598,19 +600,19 @@ function defineDatabaseRootService(
           method: "GET",
           access: { permissions: ["database.inspect"] },
           path: "/menu/tables",
-          handler: async ({ service, query, principal }) => {
+          handler: ({ service, query, principal }) => present(Effect.gen(function* () {
             // Named, this is one Tenant's tables. Unnamed, it is every Tenant
             // holding data: a menu that silently showed one Tenant's tables is
             // how an App's own records became invisible in the dashboard.
             const requested = query.get("tenantId");
             const tenantIds = requested
-              ? [readTenantId(requested, principal)]
-              : await service.tenants();
+              ? [yield* evaluate(() => readTenantId(requested, principal))]
+              : yield* integration(() => service.tenants());
             const several = tenantIds.length > 1;
 
             const items = [];
             for (const tenantId of tenantIds) {
-              const collections = await service.forTenant(tenantId).documents.listCollections();
+              const collections = yield* integration(() => service.forTenant(tenantId).documents.listCollections());
               for (const collection of [...collections].sort((left, right) =>
                 left.name.localeCompare(right.name))) {
                 items.push({
@@ -624,7 +626,8 @@ function defineDatabaseRootService(
                 });
               }
             }
-            const viewTenant = tenantIds[0] ?? readTenantId(requested, principal);
+            const viewTenant = tenantIds[0] ?? readString(principal?.metadata?.tenantId);
+            if (!viewTenant) return { body: { items } };
             for (const view of service.forTenant(viewTenant).systemViews.list()) {
               items.push({
                 title: `System · ${view.title}`,
@@ -634,7 +637,7 @@ function defineDatabaseRootService(
               });
             }
             return { body: { items } };
-          },
+          })),
         },
         {
           id: "database.health",

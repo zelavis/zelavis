@@ -44,8 +44,6 @@ overrides:
   path-to-regexp: ^8.4.0
   postcss: ^8.5.23
   qs: ^6.16.0
-  react: 19.2.5
-  react-dom: 19.2.5
   sharp: ^0.35.3
   svgo: ^4.0.2
   valibot: ^1.4.2

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { integration, present } from "./effect-boundary.js";
 import type {
   ZelavisResolvedRoute,
   ZelavisServerDispatchResult,
@@ -124,10 +126,8 @@ export function createServerLifecycle<
         }
       };
     },
-    async emit(name, event) {
-      for (const hook of [...(hooks.get(name) ?? [])]) {
-        await hook(event);
-      }
+    emit(name, event) {
+      return present(Effect.forEach([...(hooks.get(name) ?? [])], hook => integration(() => hook(event)), { concurrency: 1, discard: true }));
     },
   };
 }

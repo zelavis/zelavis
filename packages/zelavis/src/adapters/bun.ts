@@ -1,3 +1,4 @@
+import { acquireLocalDataOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { join, resolve } from "node:path";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
 import {
@@ -47,13 +48,31 @@ export interface BunAdapterOptions {
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
   installAsyncPluginContextStorage();
+  let ownership: Promise<LocalOwnershipLease> | undefined;
+  let ownerOptions: ZelavisOptions | undefined;
+  const stores = new Set<{ close?(): void | Promise<void> }>();
   return defineAdapter({
     name: "bun",
+    async close(requester) {
+      if (requester && ownerOptions && requester !== ownerOptions) return;
+      await Promise.all([...stores].map((store) => store.close?.()));
+      stores.clear();
+      const lease = await ownership?.catch(() => undefined);
+      await lease?.release();
+      ownership = undefined;
+      ownerOptions = undefined;
+    },
     async resolve(
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const isProjectRuntime = options.role === "project";
+      if (!isProjectRuntime && options.systemStore !== false) {
+        if (ownerOptions && ownerOptions !== _constructorOptions) throw new Error("This adapter already owns a Platform; close it before creating another.");
+        ownerOptions = _constructorOptions;
+        ownership ??= acquireLocalDataOwnership(dataDirectory);
+        await ownership;
+      }
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextSubsystems: Record<string, unknown> = isProjectRuntime
@@ -80,6 +99,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
+      if (systemStore) stores.add(systemStore);
 
       if (databaseOptions !== false) {
         // One store implementation over SQLite. Bun has no `node:sqlite`, so the

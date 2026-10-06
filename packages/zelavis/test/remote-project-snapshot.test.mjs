@@ -27,6 +27,22 @@ test("the allow-list the Platform handed a Project does not travel with it, and 
   assert.ok(files.includes("project.json"));
 });
 
+test("an atomic handed-down allow-list write does not travel with or block the snapshot", async (t) => {
+  const { projects, root } = await preparedProject(t);
+  await writeFile(join(root, ".zelavis", `allowlist.json.${process.pid}.tmp`), "{}");
+
+  const files = paths(await packRemoteProjectSnapshot(projects, "p1"));
+  assert.ok(files.every((path) => !path.startsWith(".zelavis/allowlist.json")));
+  assert.ok(files.includes("project.json"));
+});
+
+test("a file resembling an allow-list temporary file still refuses the snapshot", async (t) => {
+  const { projects, root } = await preparedProject(t);
+  await writeFile(join(root, ".zelavis", "allowlist.json.project.tmp"), "project data");
+
+  await assert.rejects(packRemoteProjectSnapshot(projects, "p1"), /local runtime data/);
+});
+
 test("any other Project data under .zelavis still refuses the snapshot", async (t) => {
   const { projects, root } = await preparedProject(t);
   await mkdir(join(root, ".zelavis", "data"), { recursive: true });

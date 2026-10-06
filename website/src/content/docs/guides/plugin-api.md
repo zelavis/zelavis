@@ -798,6 +798,16 @@ const unsubscribe = zelavis.events.on(
 unsubscribe function. The exact meaningful event names are defined by the
 owning subsystem or plugin contract; do not invent a global event vocabulary.
 
+Managed app services, including WordPress recipes, receive an ordinary private
+Zelavis App behind their Project Gateway. The setup context exposes the same
+native `core.database`, `core.auth`, `core.storage` and `core.workloads` APIs.
+Using them automatically reveals their existing dashboard sections; merely
+receiving an API object does not. No feature enable switch or custom dashboard
+implementation is needed. Their data and usage persist in the bound App through
+recipe updates, while the third-party application's processes and files stay
+untouched. The bound App has no separate Project card and no parent Fabric
+privileges. Native Project HTTP/SDK/CLI APIs reach that same runtime.
+
 ## Mounting endpoints with `zelavis.setup`
 
 A package has exactly one identity. It cannot create child or sibling services:
