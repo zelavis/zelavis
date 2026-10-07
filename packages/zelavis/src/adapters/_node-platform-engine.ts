@@ -1,5 +1,6 @@
 import { isUnknown, optional, objectFields, recordOf, parseJson } from "../core/json-validation.js";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { Effect } from "effect";
 import { Zelavis, defineAdapter, type ZelavisPlatformResources } from "../index.js";
@@ -71,6 +72,8 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
           ...(options.installation ? { installation: options.installation, ...(!options.installation.edge ? { edge: false as const } : {}) } : {}),
           ...(options.servicesDirectory ? { services: { directory: options.servicesDirectory } } : {}),
           ...(options.enrollmentEndpoint ? { enrollmentEndpoint: options.enrollmentEndpoint } : {}),
+          ...(process.env.ZELAVIS_CLOUD_POLICY ? { cloud: { policyFile: resolve(process.env.ZELAVIS_CLOUD_POLICY),
+            bundlePath: fileURLToPath(new URL("../../services/zelavis-cloud/bundle/index.js", import.meta.url)) } } : {}),
           projects: { previewHost: options.custody ? false : options.host,
             ...(process.env.ZELAVIS_AGENT_ENDPOINT ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
             // A Platform that accepts machines dispatches to them: enrolled nodes arrive through the registry.

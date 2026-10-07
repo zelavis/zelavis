@@ -13,9 +13,11 @@ import {
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
 import { Cause, Effect, Exit, Option } from "effect";
-import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
 import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
+import { composeCloudCapacity, readCloudPolicy } from "../platform/cloud-engine.js";
+import type { CloudCapacityController } from "../platform/cloud-capacity.js";
 import { loadRemoteNodeSources } from "./_remote-node-sources.js";
 import { createHttpsProjectDispatcher } from "./_project-dispatch-https.js";
 import type { ZelavisProjectDispatcher } from "../project.js";
@@ -175,6 +177,12 @@ export interface NodeAdapterOptions {
   installation?: { prefix: string; instance: string; edge: boolean };
   /** Where machines enroll and the pin to use; published for operators when the host serves one. */
   enrollmentEndpoint?: { url: string; fingerprint: string };
+  /**
+   * Cloud capacity: the bundled engine and the operator's policy file (location, image, approved
+   * sizes, ceiling). Needs an enrollment endpoint, because a machine the Platform creates must be
+   * able to join it. Without both, connecting a provider answers 503.
+   */
+  cloud?: { bundlePath: string; policyFile: string };
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -510,6 +518,22 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         : undefined;
       if (edgePreviews) stores.add(edgePreviews);
 
+      let cloudCapacity: CloudCapacityController | undefined;
+      if (options.cloud && options.enrollmentEndpoint && systemStore && !isProjectRuntime) {
+        const cloud = options.cloud;
+        const endpoint = options.enrollmentEndpoint;
+        const store = systemStore;
+        const masterSecret = yield* integration(() => loadPlatformMasterSecret(store));
+        const policy = yield* readCloudPolicy(cloud.policyFile).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
+        // One stable id per installation: it labels every machine this Platform creates.
+        const platformId = yield* integration(() => store.setIfAbsent("fabric.cloud-platform.v1", "id", crypto.randomUUID()))
+          .pipe(Effect.map((result) => String(result.record.value)));
+        cloudCapacity = yield* composeCloudCapacity({
+          store, masterSecret, platformId, bundlePath: cloud.bundlePath, policy, endpoint,
+          workDir: join(dataDirectory, "system", "cloud"),
+        }).pipe(Effect.mapError((error) => new IntegrationFailure(error)));
+      }
+
       return {
         subsystems: nextSubsystems,
         role: isProjectRuntime ? "project" : "platform",
@@ -527,6 +551,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
           ...(hostOperations ? { hostOperations } : {}),
+          ...(cloudCapacity ? { cloudCapacity } : {}),
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),

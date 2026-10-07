@@ -198,7 +198,8 @@
     "services/zelavis-marketplace/dist",
     "services/zelavis-marketplace/allowlist.snapshot.json",
     "services/zelavis-ui/dist",
-    "services/zelavis-ui/build/client"
+    "services/zelavis-ui/build/client",
+    "services/zelavis-cloud/bundle"
   ],
   "publishConfig": {
     "access": "public"

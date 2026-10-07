@@ -173,8 +173,14 @@ by use (it must be able to list) before it is kept, is sealed with a key derived
 Platform master secret, and is never returned, logged or put in a machine's first-boot data.
 Every use is audited with the acting principal, and an action that cannot be recorded does
 not run. Disconnecting is refused while machines this Platform created still exist, because
-releasing them needs the token. The provisioning engine is composed in by the host
-(`cloudCapacity` option); an installation without one answers `503 cloud-unavailable`.
+releasing them needs the token. The provisioning engine is the bundled cloud service
+(`services/zelavis-cloud/bundle`, Alchemy and the Hetzner client inlined, nothing to install). The
+host loads it when `ZELAVIS_CLOUD_POLICY` names the operator's policy file (JSON: `location`, `image`,
+`maxNodes`, and `machineClasses` with `name`, `cpuCores`, `memoryBytes`, `diskBytes`; the Platform
+invents no defaults, because the right sizes are a property of the cloud) **and** the Platform serves an
+enrollment endpoint (`--enrollment-port`), since a machine it creates must be able to join. Without
+both, every route answers `503 cloud-unavailable`.
 A requested machine is created with first-boot data that installs the worker role and joins
 with a single-use token, and it is `ready` only after it has enrolled. This path is built
-and tested against a fake cloud; it has not yet been run against a real one.
+and tested against a fake cloud, through the bundle and the real enrollment authority; it has not
+yet been run against a real one.

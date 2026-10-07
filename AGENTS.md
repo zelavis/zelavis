@@ -211,7 +211,7 @@ OS timers, cleanup workflows, or reference-sync side effects.
 
 ## Cloud Capacity And Alchemy
 
-Decision (2026-10-06). The provisioning code, fenced state store and `CapacityProvider` exist in `packages/zelavis/services/zelavis-cloud` (private, not yet wired into the Platform) and pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
+Decision (2026-10-06). The provisioning code, fenced state store and `CapacityProvider` exist in `packages/zelavis/services/zelavis-cloud` (private; built into one bundle the Platform loads by path when `ZELAVIS_CLOUD_POLICY` names the operator's policy file and an enrollment endpoint is served) and pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
 measurements and open tests are in `.agents/references/alchemy-architecture-brief.md`.
 
 - Cloud capacity is a core capability. The capacity controller, provider
@@ -1642,6 +1642,23 @@ When creating a new core package, service package, or plugin package:
 - Optimize for embeddability inside apps, CMS systems, and larger commerce platforms.
 
 ## UI Package Rules
+
+`packages/zelavis/services/new-ui` is the experimental Fuzor frontend. Keep the
+React dashboard as the default until full feature parity and real embedded/dev
+desktop/mobile qualification are complete. Its README records implemented controls
+and open gates. Fuzor owns its routing and compiled server views; the React Router
+instructions below apply to `zelavis-ui`. Effect v4 remains mandatory for new
+asynchronous compiler/client/server/dashboard orchestration. Draft recovery is
+bounded tab-local storage partitioned by opaque session, Project, Tenant and table;
+retain original record versions, surface storage failures, clear saved/discarded
+entries and sign-out journals, and never journal authentication/provider credentials.
+See `.agents/skills/zelavis-dashboard-ui/SKILL.md` for the experimental workflow.
+Its service pages keep extension frames opaque and broker requests only within the
+owner's namespace through the exact Project proxy, with bounded requests and scoped
+cleanup. A new iframe document cannot inherit the old grant. Schema/typed record
+editors use public codecs and existing database operations; schema journals stay
+separate from record journals and retain source versions. Wildcard routes must leave
+asset and script/style requests to asset serving.
 
 `packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
 
