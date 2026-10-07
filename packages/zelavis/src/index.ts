@@ -72,6 +72,7 @@ import {
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
+import { createNodeRoutes } from "./platform/node-routes.js";
 import { createPlatformEndpointGroup } from "./platform/endpoints.js";
 import {
   createProjectForwarder,
@@ -4148,6 +4149,7 @@ function resolvePlatformEndpointGroup(
     routes: [
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
+        ...createNodeRoutes({ store: systemStore }),
         {
           id: "runtime.agent.read",
           spec: {

@@ -66,6 +66,11 @@ command tree.
   the installed release, so it has no HTTP route and a system update refuses to run
   unless it is root. See
   [Updating without downtime](../architecture/updates/).
+- `nodes list|enroll-token|enroll|remove` manages the machines that join this Platform
+  (`client.nodes`). `enroll-token <node-id>` issues a single-use credential and shows it
+  once; `enroll <node-id> --enrollment-token T --cert-file F --agent-url URL` is what the
+  joining machine runs, and `--trust-out FILE` saves the Platform's trust keys for its
+  Agent. See [Node Enrollment](../architecture/node-enrollment/).
 - `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,
   `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>

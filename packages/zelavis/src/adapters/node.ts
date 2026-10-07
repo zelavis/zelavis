@@ -1,7 +1,6 @@
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
-import { readFile } from "node:fs/promises";
 import { createZelavisEdgePreviews } from "../edge/previews.js";
 import { fetchNodeSite } from "./_node-site-fetch.js";
 import { createNodeEdgePreviewHost } from "./_node-edge-previews.js";
@@ -13,7 +12,12 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
-import { createHttpsProjectDispatcher, probeProjectAgent } from "./_project-dispatch-https.js";
+import { Cause, Effect, Exit } from "effect";
+import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
+import { publishAgentTrust } from "../platform/node-routes.js";
+import { loadRemoteNodeSources } from "./_remote-node-sources.js";
+import { createHttpsProjectDispatcher } from "./_project-dispatch-https.js";
 import type { ZelavisProjectDispatcher } from "../project.js";
 import type { FabricNode } from "../core/fabric/index.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
@@ -195,19 +199,20 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       edgeOwnership = undefined;
       ownerOptions = undefined;
     },
-    async resolve(
+    resolve(
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
+      return present(Effect.gen(function* () {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const isProjectRuntime = options.role === "project";
       if (!isProjectRuntime && options.systemStore !== false) {
         if (ownerOptions && ownerOptions !== _constructorOptions) throw new Error("This adapter already owns a Platform; close it before creating another.");
         ownerOptions = _constructorOptions;
-        ownership ??= acquireLocalDataOwnership(dataDirectory);
-        await ownership;
+        const pendingOwnership = (ownership ??= acquireLocalDataOwnership(dataDirectory));
+        yield* integration(() => pendingOwnership);
         if (options.installation?.edge && options.edge !== false) {
-          edgeOwnership ??= acquireLocalEdgeOwnership({ ...options.installation, dataDirectory });
-          await edgeOwnership;
+          const pendingEdgeOwnership = (edgeOwnership ??= acquireLocalEdgeOwnership({ ...options.installation, dataDirectory }));
+          yield* integration(() => pendingEdgeOwnership);
         }
       }
       const databaseOptions =
@@ -270,7 +275,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
-      const serviceSources = await createLocalServiceSources({
+      const serviceSources = yield* integration(() => createLocalServiceSources({
         dataDirectory,
         services: options.services,
         isProjectRuntime,
@@ -283,7 +288,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 : join(dataDirectory, "projects"),
             }
           : {}),
-      });
+      }));
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
@@ -291,17 +296,17 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let hostAgentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       if (options.hostOperationsEndpoint) {
         if (isProjectRuntime || !systemStore) throw new Error("A host operation endpoint requires a Platform System Store.");
-        platformAuthority = await readOrCreatePlatformAuthorityKey(join(dataDirectory, "system", "agent-authority"));
+        platformAuthority = yield* integration(() => readOrCreatePlatformAuthorityKey(join(dataDirectory, "system", "agent-authority")));
         // systemd starts the restricted Agent first; its journal/socket may still be opening.
         for (let attempt = 0; ; attempt++) {
-          try { hostAgentClient = await createAgentProcessClient({ directory: resolve(options.hostOperationsEndpoint) }); break; }
-          catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (attempt >= 39 || !["ENOENT", "ECONNREFUSED", "ECONNRESET"].includes(code ?? "")) throw error;
-            await new Promise((resolve) => setTimeout(resolve, 250));
-          }
+          const connected = yield* Effect.exit(integration(() => createAgentProcessClient({ directory: resolve(options.hostOperationsEndpoint!) })));
+          if (Exit.isSuccess(connected)) { hostAgentClient = connected.value; break; }
+          const error = unwrapFailure(Cause.squash(connected.cause));
+          const code = (error as NodeJS.ErrnoException).code;
+          if (attempt >= 39 || !["ENOENT", "ECONNREFUSED", "ECONNRESET"].includes(code ?? "")) throw error;
+          yield* Effect.sleep("250 millis");
         }
-        stores.add(hostAgentClient);
+        stores.add(hostAgentClient!);
       }
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
@@ -360,14 +365,14 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // started first finds the trust file as soon as the Platform starts.
         if (!platformAuthority && (projectOptions?.agentEndpoint || projectOptions?.remoteDispatch) &&
             systemStore && !isProjectRuntime) {
-          platformAuthority = await readOrCreatePlatformAuthorityKey(
+          platformAuthority = yield* integration(() => readOrCreatePlatformAuthorityKey(
             join(dataDirectory, "system", "agent-authority"),
-          );
+          ));
         }
         agentClient = projectOptions?.agentEndpoint
-          ? await createAgentProcessClient({
-              directory: resolve(projectOptions.agentEndpoint),
-            })
+          ? yield* integration(() => createAgentProcessClient({
+              directory: resolve(projectOptions.agentEndpoint!),
+            }))
           : undefined;
         runtimeOptions.agent = agentClient
           ? // Fails rather than falling back to in-process execution: a host
@@ -382,48 +387,33 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
         if (projectOptions?.remoteDispatch && platformAuthority) {
-          const destinations = Object.fromEntries(await Promise.all(
-            Object.entries(projectOptions.remoteDispatch.nodes).map(async ([nodeId, node]) => [
-              nodeId,
-              { url: node.url, agentId: node.agentId,
-                caPem: await readFile(resolve(node.caFile), "utf8") },
-            ] as const),
-          ));
+          const remote = projectOptions.remoteDispatch;
+          // Machines that enroll need the Platform's public keys; publishing them also turns enrollment on.
+          if (systemStore) yield* publishAgentTrust(systemStore, platformAuthority.trust);
+          const sources = yield* loadRemoteNodeSources({
+            localNodeId: remote.localNodeId,
+            staticNodes: remote.nodes,
+            ...(systemStore ? { registry: createNodeEnrollmentAuthority({ store: systemStore }) } : {}),
+          });
           projectDispatcher = createHttpsProjectDispatcher({
-            localNodeId: projectOptions.remoteDispatch.localNodeId,
+            localNodeId: remote.localNodeId,
             projectsDirectory: runtimeOptions.directory,
-            destinations,
+            destinations: sources.destinations,
+            ...(sources.resolveDestination ? { resolveDestination: sources.resolveDestination } : {}),
             keyId: platformAuthority.signer.keyId,
             privateKey: platformAuthority.signer.privateKey,
           });
-          const localNodeId = projectOptions.remoteDispatch.localNodeId;
-          if (!localNodeId || destinations[localNodeId]) {
-            throw new Error("Remote dispatch needs a distinct local Fabric Node id.");
-          }
           const localNode = {
-            id: localNodeId, status: "ready" as const,
+            id: remote.localNodeId, status: "ready" as const,
             roles: ["gateway", "control", "worker"] as const,
             runtimeEngine: "node", runtimeDriver: "local-project",
           };
           nextSubsystems.fabric = {
             localNode,
             inventory: {
-              nodes: async () => {
-                const entries = Object.entries(destinations);
-                const nodes: FabricNode[] = [localNode];
-                for (let offset = 0; offset < entries.length; offset += 8) {
-                  const batch = await Promise.all(entries.slice(offset, offset + 8)
-                    .map(async ([nodeId, target]) => ({
-                      id: nodeId,
-                      status: await probeProjectAgent(target, nodeId)
-                        ? "ready" as const : "unavailable" as const,
-                      roles: ["worker"] as const,
-                      runtimeEngine: "node", runtimeDriver: "local-project",
-                    })));
-                  nodes.push(...batch);
-                }
-                return nodes;
-              },
+              nodes: () => present(sources.inventoryNodes().pipe(
+                Effect.map((remoteNodes): FabricNode[] => [localNode, ...remoteNodes]),
+              )),
             },
           };
         }
@@ -433,18 +423,18 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // afterwards is what nothing can drive. Reclaiming first would stop
         // every Project on the host and then start them again, which is the
         // opposite of what running the Agent separately is for.
-        await projectRuntime.adopt?.().catch(() => undefined);
+        yield* integration(() => projectRuntime!.adopt?.()).pipe(Effect.catch(() => Effect.void));
 
         // What remains is unowned: processes from a crashed Platform that no
         // driver claimed. Reconciliation would reclaim the Projects it
         // restarts, but a Project the operator has since stopped is never
         // started again — and so would never be reclaimed at all.
-        await runtimeOptions.agent.reclaim?.(undefined, {
+        yield* integration(() => runtimeOptions.agent!.reclaim?.(undefined, {
           // Detached environment processes still have replayable pipes in the
           // Agent and are reclaimed by their persisted session, not as orphaned
           // Project runtimes during Platform boot.
           preservePrefixes: [REMOTE_ENVIRONMENT_WORKLOAD_PREFIX],
-        }).catch(() => undefined);
+        })).pipe(Effect.catch(() => Effect.void));
       }
       // Host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
@@ -463,7 +453,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let edgeCertificates: ZelavisCertificateController | undefined;
       if (options.edge !== false && options.installation?.edge !== false && !isProjectRuntime && systemStore) {
         edgeRoutes = createZelavisEdgeRouteStore({ store: systemStore });
-        const masterSecret = await loadPlatformMasterSecret(systemStore);
+        const masterSecret = yield* integration(() => loadPlatformMasterSecret(systemStore));
         edgeCertificates = createZelavisCertificateController({
           store: systemStore,
           masterSecret,
@@ -496,7 +486,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
               return current ? toPublicationSummary(current) : undefined;
             },
           });
-          await edgeManager.reconcile().catch(() => undefined);
+          yield* integration(() => edgeManager!.reconcile()).pipe(Effect.catch(() => Effect.void));
         }
       }
 
@@ -548,6 +538,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectRuntime ? { projectRuntime: projectRuntime.name } : {}),
         },
       };
+      }));
     },
   });
 }

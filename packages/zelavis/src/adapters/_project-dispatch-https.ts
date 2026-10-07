@@ -1,4 +1,4 @@
-import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integration, integrationValue, presentProtocol, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { createServer, request as httpsRequest, type Server } from "node:https";
@@ -185,7 +185,7 @@ export function createProjectDispatchHttpsServer(options: {
   };
 }).pipe(Effect.withSpan("createProjectDispatchHttpsServer"))); }
 
-interface Destination {
+export interface Destination {
   readonly url: string;
   readonly caPem: string;
   readonly agentId: string;
@@ -274,27 +274,31 @@ async function post(destination: Destination, path: string,
 export function createHttpsProjectDispatcher(options: {
   readonly localNodeId: string;
   readonly projectsDirectory: string;
+  /** Operator-configured nodes, pinned at startup. They win over `resolveDestination`. */
   readonly destinations: Readonly<Record<string, Destination>>;
+  /** Nodes registered at runtime (enrollment). Consulted when a node is not in `destinations`. */
+  readonly resolveDestination?: (nodeId: string) => Effect.Effect<Destination | undefined, IntegrationFailure>;
   readonly keyId: string;
   readonly privateKey: CryptoKey;
 }): ZelavisProjectDispatcher {
   const snapshots = new Map<string, { body: Uint8Array; digest: ZelavisArtifactDigest }>();
-  const destination = (nodeId: string) => {
-    const value = options.destinations[nodeId];
+  const destination = (nodeId: string) => Effect.gen(function* () {
+    const configured = options.destinations[nodeId];
+    const value = configured ?? (options.resolveDestination ? yield* options.resolveDestination(nodeId) : undefined);
     if (!value) throw new Error(`No Agent endpoint is configured for Node "${nodeId}".`);
     endpoint(value);
     return value;
-  };
+  });
   return {
     localNodeId: options.localNodeId,
-    async authorizeDispatch({ action, placement }) {
-      const target = destination(placement.nodeId);
+    authorizeDispatch: ({ action, placement }) => presentProtocol(Effect.gen(function* () {
+      const target = yield* destination(placement.nodeId);
       const now = Date.now();
       const snapshot = action === "start"
-        ? await packRemoteProjectSnapshot(options.projectsDirectory, placement.projectId)
+        ? yield* integration(() => packRemoteProjectSnapshot(options.projectsDirectory, placement.projectId))
         : undefined;
       if (snapshot) snapshots.set(`${placement.projectId}:${placement.epoch}`, snapshot);
-      return signProjectDispatchAuthority(options.privateKey, {
+      return yield* integration(() => signProjectDispatchAuthority(options.privateKey, {
         keyId: options.keyId,
         agentId: target.agentId,
         action,
@@ -306,41 +310,41 @@ export function createHttpsProjectDispatcher(options: {
         expiresAt: now + 30_000,
         nonce: crypto.randomUUID(),
         ...(snapshot ? { artifactDigest: snapshot.digest } : {}),
-      });
-    },
-    dispatchStartFenced: async ({ projectId, nodeId, placement, authority }) => {
-      const target = destination(nodeId);
+      }));
+    })),
+    dispatchStartFenced: ({ projectId, nodeId, placement, authority }) => presentProtocol(Effect.gen(function* () {
+      const target = yield* destination(nodeId);
       const snapshot = snapshots.get(`${projectId}:${placement.epoch}`);
       if (!snapshot) throw new Error("Project snapshot was not frozen for dispatch.");
       const now = Date.now();
-      const prepareAuthority = await signProjectDispatchAuthority(options.privateKey, {
+      const prepareAuthority = yield* integration(() => signProjectDispatchAuthority(options.privateKey, {
         keyId: options.keyId, agentId: target.agentId, action: "prepare",
         projectId, nodeId, ownerSession: placement.ownerSession,
         epoch: placement.epoch, issuedAt: now, expiresAt: now + 30_000,
         nonce: crypto.randomUUID(), artifactDigest: snapshot.digest,
-      });
-      try {
-        await post(target, `/v1/projects/${encodeURIComponent(projectId)}/prepare`, {
+      }));
+      yield* Effect.gen(function* () {
+        yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/prepare`, {
           authority: prepareAuthority, raw: snapshot.body,
-        });
-        await post(target, `/v1/projects/${encodeURIComponent(projectId)}/start`, { authority });
-      } finally {
-        snapshots.delete(`${projectId}:${placement.epoch}`);
-      }
-    },
-    dispatchStopFenced: async ({ projectId, nodeId, authority }) =>
-      post(destination(nodeId), `/v1/projects/${encodeURIComponent(projectId)}/stop`, { authority }),
-    dispatchLeaseFenced: async (placement) => {
-      const target = destination(placement.nodeId);
+        }));
+        yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/start`, { authority }));
+      }).pipe(Effect.ensuring(Effect.sync(() => { snapshots.delete(`${projectId}:${placement.epoch}`); })));
+    })),
+    dispatchStopFenced: ({ projectId, nodeId, authority }) => presentProtocol(Effect.gen(function* () {
+      const target = yield* destination(nodeId);
+      yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/stop`, { authority }));
+    })),
+    dispatchLeaseFenced: (placement) => presentProtocol(Effect.gen(function* () {
+      const target = yield* destination(placement.nodeId);
       const now = Date.now();
-      const grant = await signRemotePlacementGrant(options.privateKey, {
+      const grant = yield* integration(() => signRemotePlacementGrant(options.privateKey, {
         keyId: options.keyId,
         agentId: target.agentId,
         placement,
         issuedAt: now,
         expiresAt: now + 20_000,
-      });
-      await post(target, "/v1/placements", { grant });
-    },
+      }));
+      yield* integration(() => post(target, "/v1/placements", { grant }));
+    })),
   };
 }

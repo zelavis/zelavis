@@ -908,30 +908,6 @@
       "fingerprint": "1bc817670021a62dce0202cdfc223045225d7b5b6f2fdc305e957ca66ec6fffa"
     },
     {
-      "file": "packages/zelavis/src/adapters/_project-dispatch-https.ts",
-      "kind": "async-function",
-      "owner": "module/createHttpsProjectDispatcher/authorizeDispatch",
-      "fingerprint": "ec106daa0c23f493866608e1456f89f35f397fb040f380c14a46b584536c0581"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_project-dispatch-https.ts",
-      "kind": "async-function",
-      "owner": "module/createHttpsProjectDispatcher/dispatchStartFenced/callback",
-      "fingerprint": "021b6b98d9902b3d0008cd10396472ef040ccfe980584374450d0375c622321c"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_project-dispatch-https.ts",
-      "kind": "async-function",
-      "owner": "module/createHttpsProjectDispatcher/dispatchStopFenced/callback",
-      "fingerprint": "a5f6862e3ef3bba65b1d64d9de5b8f96f59ea00abf6af573a337b6f2d1ec98c5"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/_project-dispatch-https.ts",
-      "kind": "async-function",
-      "owner": "module/createHttpsProjectDispatcher/dispatchLeaseFenced/callback",
-      "fingerprint": "af78626537c8975e3fee7eaf59c0a203be6669f078362e4d065fd1a622f3226b"
-    },
-    {
       "file": "packages/zelavis/src/adapters/_recipe-artifact.ts",
       "kind": "async-function",
       "owner": "module/listFiles",
@@ -1132,50 +1108,8 @@
     {
       "file": "packages/zelavis/src/adapters/node.ts",
       "kind": "async-function",
-      "owner": "module/nodeAdapter/resolve",
-      "fingerprint": "a47b25c20dad94763069b891c6a1eb8dd89f0358acc86f39445e4531bb303f27"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "promise-constructor",
-      "owner": "module/nodeAdapter/resolve",
-      "fingerprint": "2a53bd63c18738faf86836cac0f9a14f773991fa60c4d192ab926d43f3bab6a7"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "async-function",
       "owner": "module/nodeAdapter/resolve/runtimeOptions/recipeRuntimes/trusted/callback",
       "fingerprint": "fdebc12ef94e4bf148fe32a4deb362edefec97a988ab802e96e40105b36ff613"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "promise-coordination",
-      "owner": "module/nodeAdapter/resolve/destinations",
-      "fingerprint": "0ea8020fe22ec3e4cfc8eddf4e175325abe162f17572b6482259d25f19277600"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "async-function",
-      "owner": "module/nodeAdapter/resolve/destinations/callback",
-      "fingerprint": "892aeed0cf5130727619731e5edbd04cf36853f0a114dfb4d3f380093ab213c2"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "async-function",
-      "owner": "module/nodeAdapter/resolve/inventory/nodes/callback",
-      "fingerprint": "d4dafd189f90685246f2986a62828fcc89291f9fafbf68677ddead12b3c634d1"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "promise-coordination",
-      "owner": "module/nodeAdapter/resolve/inventory/nodes/callback/batch",
-      "fingerprint": "86ec6f38615dbb89ad753d8af5f7a8901a690613d54051754d22e2949fec33fe"
-    },
-    {
-      "file": "packages/zelavis/src/adapters/node.ts",
-      "kind": "async-function",
-      "owner": "module/nodeAdapter/resolve/inventory/nodes/callback/batch/callback",
-      "fingerprint": "8dd5d31697c36abfe5b825d175063eeff1bf6bd5b7cdb3b95cbf9954f33fdbc2"
     },
     {
       "file": "packages/zelavis/src/adapters/node.ts",

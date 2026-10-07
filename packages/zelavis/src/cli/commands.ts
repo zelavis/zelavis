@@ -13,6 +13,7 @@ import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
+import { runNodesCommand } from "./nodes.js";
 import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
@@ -126,6 +127,7 @@ Usage:
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis nodes <list|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
@@ -574,6 +576,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "marketplace") {
       (yield* integration(() => runMarketplaceCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "nodes") {
+      (yield* integration(() => runNodesCommand(args.slice(1))));
       return;
     }
     if (args[0] === "update") {

@@ -16,7 +16,7 @@ It will implement the `CapacityProvider` contract (`zelavis/provider`) with Alch
 
 ## Not yet
 
-The capacity controller (policy, caps, demand), first-boot data and Agent enrollment tokens, the bundle build with its `import.meta.resolve` patch, and any run against a real cloud.
+The capacity controller (policy, caps, demand), first-boot data and Agent enrollment (blocked on Platform work: a worker install mode, a runtime node registry and an enrollment protocol; see `.agents/references/node-enrollment-design.md`), the bundle build with its `import.meta.resolve` patch, and any run against a real cloud.
 
 `alchemy` is a dev dependency: it is bundled at build time and never shipped as a dependency. Pin it exactly and re-verify the scenarios on every bump.
 

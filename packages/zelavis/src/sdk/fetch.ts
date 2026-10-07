@@ -285,6 +285,8 @@ export interface ZelavisClient {
   /** The marketplace allow-list, over `/runtime/marketplace`. Same contract as `zelavis marketplace`. */
   readonly marketplace: ZelavisMarketplaceClient;
   readonly updates: ZelavisUpdatesClient;
+  /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
+  readonly nodes: ZelavisNodesClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -598,6 +600,72 @@ export interface ZelavisUpdatesClient {
   apply(): Promise<ZelavisUpdateStatus>;
 }
 
+/** An enrolled node, without its certificate. */
+export interface ZelavisNode {
+  readonly nodeId: string;
+  readonly agentId: string;
+  readonly url: string;
+  /** SHA-256 of the Agent's certificate, which the Platform pins. */
+  readonly certSha256: string;
+  readonly enrolledAt: number;
+  readonly state: "active" | "revoked";
+  readonly revokedAt?: number;
+}
+
+/** An enrollment as an operator sees it: never its token. */
+export interface ZelavisNodeEnrollment {
+  readonly nodeId: string;
+  readonly origin: "cloud" | "operator";
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly state: "unused" | "consumed";
+}
+
+export interface ZelavisNodeList {
+  readonly nodes: readonly ZelavisNode[];
+  readonly enrollments: readonly ZelavisNodeEnrollment[];
+}
+
+export interface ZelavisNodeEnrollmentToken {
+  readonly nodeId: string;
+  /** Shown once. Only its hash is kept. */
+  readonly token: string;
+  readonly expiresAt: number;
+}
+
+export interface ZelavisNodeEnrollInput {
+  readonly nodeId: string;
+  readonly token: string;
+  /** The Agent's own certificate (PEM), generated on the machine; the Platform pins it. */
+  readonly certPem: string;
+  /** The Agent's HTTPS origin. */
+  readonly url: string;
+}
+
+export interface ZelavisNodeEnrollResult {
+  readonly nodeId: string;
+  readonly agentId: string;
+  /** The Platform's public keys, which the Agent trusts to verify what the Platform signs. */
+  readonly trust: { readonly keys: readonly { readonly keyId: string; readonly publicKey: string; readonly notBefore: string; readonly notAfter: string }[] };
+}
+
+export interface ZelavisNodesClient {
+  /** Enrolled nodes and pending enrollments; needs `server.nodes.view`. */
+  list(): Promise<ZelavisNodeList>;
+  /**
+   * Issues a single-use credential for a machine to join; needs `server.nodes.enroll`.
+   * `ttlMinutes` defaults to 60. The token is returned once.
+   */
+  createEnrollment(input: { readonly nodeId: string; readonly ttlMinutes?: number; readonly replace?: boolean }): Promise<ZelavisNodeEnrollmentToken>;
+  /**
+   * What a joining machine calls. The token is the credential, so no session is
+   * needed. Refused with 403 and no reason; 409 when this installation does not accept nodes.
+   */
+  enroll(input: ZelavisNodeEnrollInput): Promise<ZelavisNodeEnrollResult>;
+  /** Revokes a node; refused with 409 while Projects are placed on it; needs `server.nodes.manage`. */
+  remove(nodeId: string): Promise<{ readonly removed: boolean }>;
+}
+
 export interface ZelavisProjectsClient {
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
   switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
@@ -872,6 +940,12 @@ export function createZelavisClient(
       status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
       check: () => json<ZelavisUpdateStatus>("/runtime/updates/check", { method: "POST" }),
       apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
+    },
+    nodes: {
+      list: () => json<ZelavisNodeList>("/runtime/nodes"),
+      createEnrollment: (input) => json<ZelavisNodeEnrollmentToken>("/runtime/nodes/enrollments", { method: "POST", body: input }),
+      enroll: (input) => json<ZelavisNodeEnrollResult>("/runtime/nodes/enroll", { method: "POST", body: input }),
+      remove: (nodeId) => json<{ removed: boolean }>(`/runtime/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     data: (projectId) => createDataClient(json, projectId),
     auth: {
