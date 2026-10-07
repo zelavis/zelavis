@@ -271,8 +271,9 @@ The Agent starts by itself once the machine has joined (a systemd path unit wait
 the configuration `join` writes last), listens on port 8443, and the Platform must be
 able to reach it. The enrollment credential is never part of an install plan or a dry
 run. Running the installer again updates the worker: it selects the new release and
-restarts a running Agent. A worker is **not** updated from the dashboard, and
-`zelavis doctor` does not inspect workers yet.
+restarts a running Agent. A worker is **not** updated from the dashboard. `zelavis doctor`
+run on the worker reports its receipt, release, account, data ownership, join state, units
+and whether the Agent is listening.
 
 `sudo zelavis uninstall --all --dry-run` and `--confirm DELETE-ALL-ZELAVIS-DATA` work on
 a worker too, with its own inventory: its units, command links, `/var/lib/zelavis-worker`

@@ -1,5 +1,5 @@
-import { Effect } from "effect";
-import { isBoolean, isString, literal, objectFields, optional, parseJson } from "../json-validation.js";
+import { Cause, Effect } from "effect";
+import { isBoolean, isString, isUnknown, literal, objectFields, optional, parseJson } from "../json-validation.js";
 import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import {
   ZELAVIS_INSTALLATION_RETAINED_STATE,
@@ -9,9 +9,12 @@ import {
   type ZelavisHostInstallationPlan,
   type ZelavisInstallAction,
   type ZelavisInstallHost,
+  type ZelavisInstallPaths,
   type ZelavisInstallStep,
   type ZelavisWorkerReceipt,
 } from "./installation-plan.js";
+import type { ZelavisDoctorCheck, ZelavisDoctorReport, ZelavisInstallationProbeHost } from "./installation-health.js";
+import type { ZelavisInstallationIdentity } from "./installation.js";
 
 /**
  * The worker role: a machine that runs the Projects a Platform places on it.
@@ -260,4 +263,78 @@ export function planZelavisWorkerUninstall(input: {
     steps, warnings: [],
     retained: [...ZELAVIS_INSTALLATION_RETAINED_STATE, "The node's record on its Platform: remove it there with `zelavis nodes remove`"],
   };
+}
+
+
+/** Read-only health of a worker installation; mirrors `zelavis doctor` for a Platform. */
+export const inspectZelavisWorkerProgram = Effect.fn("WorkerInstallation.inspect")(function* (input: {
+  readonly host: ZelavisInstallationProbeHost;
+  readonly paths: ZelavisInstallPaths;
+  readonly installation: ZelavisInstallationIdentity;
+}): Effect.fn.Return<ZelavisDoctorReport, TaggedFailure> {
+  const { host, paths, installation } = input;
+  const checks: ZelavisDoctorCheck[] = [];
+  const check = Effect.fn("WorkerInstallation.inspectCheck")(function* (id: string, inspect: () => Effect.Effect<{ status: ZelavisDoctorCheck["status"]; detail: string }, TaggedFailure>) {
+    const result = yield* Effect.exit(Effect.suspend(inspect));
+    if (result._tag === "Success") checks.push({ id, ...result.value });
+    else { const error = Cause.squash(result.cause); checks.push({ id, status: "error", detail: error instanceof Error ? error.message : String(error) }); }
+  });
+
+  let receipt: ZelavisWorkerReceipt | undefined;
+  yield* check("receipt", () => Effect.gen(function* () {
+    receipt = yield* readWorkerReceiptProgram(host, paths.prefix);
+    if (!receipt) return { status: "error" as const, detail: `No installation receipt at ${installationReceiptPath(paths.prefix)}.` };
+    return { status: "ok" as const, detail: `worker role, ${receipt.installedBy}, version ${receipt.version}, data ${receipt.dataDirectory}.` };
+  }));
+  const current = `${paths.prefix}/current`;
+  yield* check("release", () => Effect.gen(function* () {
+    const manifest = yield* integration(() => host.read(`${current}/manifest.json`));
+    const version = manifest === undefined ? undefined
+      : (yield* evaluate(() => parseJson(manifest, objectFields<{ version?: string }>({ version: optional(isString) })))).version;
+    const node = yield* integration(() => host.exists(`${current}/runtime/node/bin/node`));
+    const ok = version !== undefined && version === receipt?.version && node;
+    return { status: ok ? "ok" as const : "error" as const, detail: `Selected release ${version ?? "missing"}; private Node ${node ? "present" : "missing"}.` };
+  }));
+  yield* check("account", () => Effect.gen(function* () {
+    const user = yield* integration(() => host.accountExists("user", WORKER_ACCOUNT));
+    return { status: user ? "ok" as const : "error" as const, detail: `The ${WORKER_ACCOUNT} account ${user ? "exists" : "is missing"}.` };
+  }));
+  yield* check("data", () => Effect.gen(function* () {
+    const owner = yield* integration(() => host.dataOwner(paths.dataDirectory, WORKER_ACCOUNT));
+    const wrong = owner?.expectedUid !== undefined && owner.uid !== owner.expectedUid;
+    return { status: !owner || wrong ? "error" as const : "ok" as const, detail: `${paths.dataDirectory}: ${owner ? `uid ${owner.uid}, expected ${owner.expectedUid ?? "unknown"}` : "absent"}.` };
+  }));
+
+  const configPath = `${paths.dataDirectory}/${WORKER_CONFIG_FILE}`;
+  let joined: { readonly nodeId?: string; readonly port?: number } | undefined;
+  yield* check("joined", () => Effect.gen(function* () {
+    const text = yield* integration(() => host.read(configPath));
+    if (text === undefined) return { status: "warning" as const, detail: `Not joined yet (no ${configPath}). Run: sudo -u ${WORKER_ACCOUNT} zelavis worker join --data-dir ${paths.dataDirectory} ...` };
+    const value = yield* evaluate(() => parseJson(text, objectFields<{ nodeId?: unknown; port?: unknown }>({ nodeId: optional(isUnknown), port: optional(isUnknown) })));
+    joined = { ...(typeof value.nodeId === "string" ? { nodeId: value.nodeId } : {}), ...(typeof value.port === "number" ? { port: value.port } : {}) };
+    return { status: "ok" as const, detail: `Joined${joined.nodeId ? ` as ${joined.nodeId}` : ""}; Agent configuration present.` };
+  }));
+
+  const unitChecks: Record<string, { present: boolean; enabled: boolean; active: boolean }> = {};
+  for (const unit of WORKER_UNITS) {
+    yield* check(`unit:${unit}`, () => Effect.gen(function* () {
+      const state = yield* integration(() => host.unitState(unit, paths));
+      unitChecks[unit] = state;
+      // The path unit is what starts the Agent after `join`, so it must be armed; the Agent itself must run once joined.
+      const expectActive = unit === "zelavis-worker.path" || joined !== undefined;
+      const bad = !state.present || (expectActive && !state.active);
+      return { status: bad ? "error" as const : "ok" as const, detail: `${unit}: ${state.present ? "present" : "absent"}, ${state.enabled ? "enabled" : "disabled"}, ${state.active ? "active" : "inactive"}${unit === "zelavis-worker.service" && joined === undefined ? " (expected until the machine has joined)" : ""}.` };
+    }));
+  }
+  if (joined?.port !== undefined && unitChecks["zelavis-worker.service"]?.active) {
+    const port = joined.port;
+    yield* check(`port:${port}`, () => Effect.gen(function* () {
+      const available = yield* integration(() => host.portAvailable(port));
+      return { status: available ? "error" as const : "ok" as const, detail: `Agent port ${port}: ${available ? "nothing is listening, so the Platform cannot reach this worker" : "listening"}. The Platform must also be able to reach it through the firewall.` };
+    }));
+  }
+  return { instance: "worker", installation, checks, healthy: checks.every((item) => item.status !== "error") };
+});
+export function inspectZelavisWorker(input: Parameters<typeof inspectZelavisWorkerProgram>[0]): Promise<ZelavisDoctorReport> {
+  return present(inspectZelavisWorkerProgram(input));
 }

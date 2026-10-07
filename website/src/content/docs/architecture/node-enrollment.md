@@ -85,7 +85,7 @@ Agent, the refusals, and complete removal.
 
 A worker is **not updated from the dashboard**: updating means running the installer again
 on it, and nothing checks that a worker and its Platform run compatible versions.
-`zelavis doctor` does not inspect workers. A default Platform install is HTTP-only until a
+`zelavis doctor` inspects a worker too (receipt, release, account, data ownership, whether it has joined, the path and Agent units, and that the Agent port is listening); it cannot tell whether the Platform can reach that port through a firewall. A default Platform install is HTTP-only until a
 hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
 only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that). Automatic
 provisioning of cloud machines (which would put the credential in first-boot data) is not

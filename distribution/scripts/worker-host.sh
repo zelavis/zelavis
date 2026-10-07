@@ -55,6 +55,7 @@ check "the release is owned by root" sh -c '[ "$(stat -c "%U" /opt/zelavis/relea
 check "the command link points into the prefix" sh -c 'readlink /usr/local/bin/zelavis | grep -q "^/opt/zelavis/"'
 check "the path unit is enabled and waiting" sh -c 'systemctl is-enabled zelavis-worker.path && systemctl is-active zelavis-worker.path'
 refute "the Agent is not running before the machine has joined" systemctl is-active zelavis-worker.service
+check "doctor reports a not-yet-joined worker as healthy with a warning" sh -c 'out=$(/usr/local/bin/zelavis doctor 2>&1) && echo "$out" | grep -q "^WARNING joined"'
 refute "the unit ran nothing, so no Platform unit exists" test -e /etc/systemd/system/zelavis.service
 check "the receipt records the worker role" grep -q '"role": "worker"' /opt/zelavis/installation.json
 unit=/etc/systemd/system/zelavis-worker.service
@@ -82,6 +83,7 @@ pass "the worker joins with the same credential after the refused attempt"
 check "the Agent's key is private and its own" sh -c '[ "$(stat -c "%a %U" /var/lib/zelavis-worker/worker/agent.key)" = "600 zelavis-worker" ]'
 check "the join output never contains the credential" sh -c '! grep -q "$0" /tmp/join.log' "$token"
 wait_for "systemd starts the Agent by itself once the machine has joined" 60 systemctl is-active zelavis-worker.service
+wait_for "doctor reports the joined worker healthy, Agent listening" 60 sh -c '/usr/local/bin/zelavis doctor 2>&1 | tee /tmp/doctor.txt | grep -q "^OK port:" && ! grep -q "^ERROR" /tmp/doctor.txt'
 pid=$(systemctl show -p MainPID --value zelavis-worker.service)
 [ "$(stat -c %U "/proc/$pid")" = zelavis-worker ] && pass "the Agent runs as the worker, not root" || fail "the Agent runs as the worker, not root"
 wait_for "the Platform's own inventory reports the node ready" 90 sh -c '[ "$(cat /tmp/node-status 2>/dev/null)" = ready ]'
