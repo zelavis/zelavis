@@ -50,6 +50,8 @@ export interface ZelavisCliServeOptions {
   dataDirectory?: string;
   /** Where the Platform finds and installs services; defaults to `<data>/services`. */
   servicesDirectory?: string;
+  /** Serve a narrow HTTPS enrollment listener so machines can join a Platform reached by IP. */
+  enrollment?: { port: number; addresses: readonly string[] };
 }
 
 export interface ZelavisCliRuntime {
@@ -86,6 +88,8 @@ interface ParsedArgs {
   port?: number;
   dataDirectory?: string;
   servicesDirectory?: string;
+  enrollmentPort?: number;
+  enrollmentAddresses?: string[];
   url?: string;
   specifier?: string;
   source?: RuntimeServiceSource;
@@ -123,7 +127,7 @@ Usage:
   zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
-  zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
+  zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>] [--enrollment-port <port> [--enrollment-address <ip-or-host>]...]
   zelavis install --from-release <path> | --from-npm <path> [--instance <name> --port <port>] [--user] [--dry-run]
   zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
@@ -289,6 +293,16 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--data-dir=")) {
       parsed.dataDirectory = arg.slice("--data-dir=".length);
+    } else if (arg === "--enrollment-port") {
+      parsed.enrollmentPort = parsePort(readValue(args, index, arg));
+      index += 1;
+    } else if (arg.startsWith("--enrollment-port=")) {
+      parsed.enrollmentPort = parsePort(arg.slice("--enrollment-port=".length));
+    } else if (arg === "--enrollment-address") {
+      (parsed.enrollmentAddresses ??= []).push(readValue(args, index, arg));
+      index += 1;
+    } else if (arg.startsWith("--enrollment-address=")) {
+      (parsed.enrollmentAddresses ??= []).push(arg.slice("--enrollment-address=".length));
     } else if (arg === "--services-dir") {
       parsed.servicesDirectory = readValue(args, index, arg);
       index += 1;
@@ -647,6 +661,9 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
         ...((parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)
           ? { servicesDirectory: (parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)! }
           : {}),
+        ...(parsed.enrollmentPort !== undefined
+          ? { enrollment: { port: parsed.enrollmentPort, addresses: parsed.enrollmentAddresses ?? [] } }
+          : parsed.enrollmentAddresses ? (() => { throw new Error("--enrollment-address requires --enrollment-port."); })() : {}),
       })));
       return;
     }

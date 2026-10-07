@@ -58,8 +58,18 @@ dashboard, API or Project. The host publishes where it listens and the certifica
 (`GET /runtime/nodes/platform`, `client.nodes.platform()`, `zelavis nodes platform`; needs
 `server.nodes.view`), which is what `worker join --platform-fingerprint` pins. Tested over real
 TLS: enrolling with the right pin, a wrong pin sending nothing, only the enrollment path being
-forwarded, and an oversized body refused. **Not wired into the Platform host yet:** nothing
-starts the listener, or publishes its endpoint, in a running installation.
+forwarded, and an oversized body refused.
+
+Turn it on with `zelavis serve --enrollment-port 8444 [--enrollment-address <ip-or-host>]...`
+(a port from 1024; addresses default to the machine's first routable IPv4 and `localhost`, and
+become the certificate's names). The **persistent host** serves it, so it survives an engine
+replacement and drains with the engine; it forwards only
+`POST /zelavis/api/v1/runtime/nodes/enroll` to the engine and answers 404 to everything else
+without admitting the request. The engine publishes the endpoint, and enabling it also turns
+remote dispatch on, so enrolled nodes receive Projects. Open the port in the firewall yourself:
+nothing here changes the host firewall. Tested through the real host and engine (a machine
+joins by pinning the published fingerprint; the dashboard, bootstrap and every other path are
+unreachable on that port).
 
 ## Installing the worker role
 
@@ -77,7 +87,7 @@ A worker is **not updated from the dashboard**: updating means running the insta
 on it, and nothing checks that a worker and its Platform run compatible versions.
 `zelavis doctor` does not inspect workers. A default Platform install is HTTP-only until a
 hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
-only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that, but is not started by a running installation yet). Automatic
+only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that). Automatic
 provisioning of cloud machines (which would put the credential in first-boot data) is not
 shipped. Trust keys are delivered once, at enrollment; the Platform's signing keys rotate
 before they expire, so a refresh path is needed and is not built. The caller's address is

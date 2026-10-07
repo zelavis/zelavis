@@ -1,3 +1,4 @@
+import { createServer as createHttpsServer } from "node:https";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
 import { Effect, Fiber } from "effect";
@@ -11,6 +12,10 @@ const HOP_HEADERS = new Set(["connection", "keep-alive", "proxy-authenticate", "
 function endToEndHeaders(input: IncomingHttpHeaders): IncomingHttpHeaders {
   const connection = String(input.connection ?? "").toLowerCase().split(",").map(value => value.trim());
   return Object.fromEntries(Object.entries(input).filter(([name]) => !HOP_HEADERS.has(name) && !connection.includes(name)));
+}
+function pathOf(path: string | undefined): string | undefined {
+  try { return new URL(path ?? "/", "http://ingress.invalid").pathname; }
+  catch { return undefined; }
 }
 function privateReadiness(path: string | undefined): boolean {
   try { return new URL(path ?? "/", "http://ingress.invalid").pathname === NODE_RUNTIME_READY_PATH; }
@@ -26,6 +31,10 @@ export function createNodeRuntimeIngress(options: {
   /** Platform preview listeners share the engine's one drain boundary. */
   readonly admission?: RuntimeAdmission;
   readonly target: () => string;
+  /** Serve TLS with this certificate instead of plain HTTP. */
+  readonly tls?: { readonly keyPem: string; readonly certPem: string };
+  /** When set, only these request paths are forwarded; every other path is a 404 that never reaches the engine. */
+  readonly allowPath?: (pathname: string) => boolean;
   /** Authenticate before queuing, then mint private headers for the selected
    * engine after admission. A nonce is consumed once by the stable supervisor. */
   readonly headers?: (headers: IncomingHttpHeaders) => Effect.Effect<() => Effect.Effect<IncomingHttpHeaders, TaggedFailure>, TaggedFailure>;
@@ -88,18 +97,22 @@ export function createNodeRuntimeIngress(options: {
     }
     incoming.pipe(upstream);
   }
-  const server = createServer((incoming, outgoing) => {
+  const handler = (incoming: IncomingMessage, outgoing: ServerResponse) => {
     if (privateReadiness(incoming.url)) { outgoing.writeHead(404); outgoing.end(); return; }
+    if (options.allowPath && !options.allowPath(pathOf(incoming.url) ?? "")) { outgoing.writeHead(404); outgoing.end(); return; }
     incoming.pause();
     acquire(incoming.socket, incoming.headers, (release, headers) => forward(incoming, outgoing, release, headers), () => {
       if (!outgoing.destroyed) { outgoing.writeHead(503, { "retry-after": "1" }); outgoing.end("Runtime admission unavailable."); }
     });
-  });
+  };
+  const server = options.tls
+    ? createHttpsServer({ key: options.tls.keyPem, cert: options.tls.certPem, minVersion: "TLSv1.2" }, handler)
+    : createServer(handler);
   Object.assign(server, ZELAVIS_NODE_HTTP_TIMEOUTS);
   server.requestTimeout = 0;
   server.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
   server.on("upgrade", (incoming, client, head) => {
-    if (privateReadiness(incoming.url)) { client.destroy(); return; }
+    if (privateReadiness(incoming.url) || options.allowPath) { client.destroy(); return; }
     client.pause();
     acquire(client as Socket, incoming.headers, (release, headers) => {
       const target = new URL(options.target());

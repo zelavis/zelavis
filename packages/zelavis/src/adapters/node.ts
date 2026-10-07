@@ -15,7 +15,7 @@ import { createAgentProcessClient } from "./_agent-ipc.js";
 import { Cause, Effect, Exit, Option } from "effect";
 import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
-import { publishAgentTrust } from "../platform/node-routes.js";
+import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
 import { loadRemoteNodeSources } from "./_remote-node-sources.js";
 import { createHttpsProjectDispatcher } from "./_project-dispatch-https.js";
 import type { ZelavisProjectDispatcher } from "../project.js";
@@ -173,6 +173,8 @@ export interface NodeAdapterOptions {
   edge?: false;
   /** Installer-selected host authority, never inferred from an HTTP request. */
   installation?: { prefix: string; instance: string; edge: boolean };
+  /** Where machines enroll and the pin to use; published for operators when the host serves one. */
+  enrollmentEndpoint?: { url: string; fingerprint: string };
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -396,6 +398,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           const remote = projectOptions.remoteDispatch;
           // Machines that enroll need the Platform's public keys; publishing them also turns enrollment on.
           if (systemStore) yield* publishAgentTrust(systemStore, platformAuthority.trust);
+          if (systemStore && options.enrollmentEndpoint) yield* publishEnrollmentEndpoint(systemStore, options.enrollmentEndpoint);
           const sources = yield* loadRemoteNodeSources({
             localNodeId: remote.localNodeId,
             staticNodes: remote.nodes,

@@ -91,6 +91,7 @@ const serveFor = (installationPath: string | undefined) => (options: ZelavisCliS
     const host = yield* createNodePlatformHost({ dataDirectory, host: options.host, initial, environment,
       authorizedInitial: true,
       configuration: { servicesDirectory: options.servicesDirectory,
+        ...(options.enrollment ? { enrollment: options.enrollment } : {}),
         ...(installed ? { installation: { prefix: installed.prefix, instance: installed.instance, edge: installed.edge } } : {}) },
       ...(catalog ? { select: catalog.select, versions: catalog.list() } : {}),
       resolve: (selected, configuration, selectedEnvironment) => catalog ? catalog.resolve(selected, "platform", configuration, selectedEnvironment) : evaluate(() => {

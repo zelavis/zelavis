@@ -20,6 +20,11 @@ Platform yourself:
 zelavis serve
 ```
 
+`zelavis serve --enrollment-port 8444 [--enrollment-address <ip-or-host>]...` also serves a
+narrow HTTPS listener (self-signed, pinned) through which worker machines enroll; see
+[Node Enrollment](../architecture/node-enrollment/). `zelavis nodes platform` prints its URL
+and the fingerprint to pin.
+
 ## Commands
 
 Plugin-owned operations use the plural namespace consistently:

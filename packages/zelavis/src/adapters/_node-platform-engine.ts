@@ -24,7 +24,8 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
     return { dataDirectory: resolve(configuration.dataDirectory), host: configuration.host,
       servicesDirectory: typeof configuration.servicesDirectory === "string" ? resolve(configuration.servicesDirectory) : undefined,
       custody: configuration.custody as { ownerSession: string; endpoint: string; token: string; preserveOnShutdown: boolean } | undefined,
-      installation: configuration.installation as { prefix: string; instance: string; edge: boolean } | undefined };
+      installation: configuration.installation as { prefix: string; instance: string; edge: boolean } | undefined,
+      enrollmentEndpoint: configuration.enrollmentEndpoint as { url: string; fingerprint: string } | undefined };
   });
   const frontend = yield* integration(() => resolveBundledFrontend({ bundledDirectory: name => {
     const directory = resolveBundledServiceDirectory(name);
@@ -69,9 +70,11 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
           ...(process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT ? { hostOperationsEndpoint: process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT } : {}),
           ...(options.installation ? { installation: options.installation, ...(!options.installation.edge ? { edge: false as const } : {}) } : {}),
           ...(options.servicesDirectory ? { services: { directory: options.servicesDirectory } } : {}),
+          ...(options.enrollmentEndpoint ? { enrollmentEndpoint: options.enrollmentEndpoint } : {}),
           projects: { previewHost: options.custody ? false : options.host,
             ...(process.env.ZELAVIS_AGENT_ENDPOINT ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
-            ...(remoteDispatch ? { remoteDispatch } : {}),
+            // A Platform that accepts machines dispatches to them: enrolled nodes arrive through the registry.
+            ...(remoteDispatch ? { remoteDispatch } : options.enrollmentEndpoint ? { remoteDispatch: { localNodeId: "local", nodes: {} } } : {}),
           },
       });
       const ownedAdapter = defineAdapter({ name: adapter.name,
