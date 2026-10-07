@@ -1,0 +1,26 @@
+[Unit]
+Description=Zelavis worker Agent (runs the Projects a Platform places on this node)
+Documentation=https://zelavis.com/docs
+After=network-online.target
+Wants=network-online.target
+# The unit is started by zelavis-worker.path once `zelavis worker join` has written
+# this file; the condition keeps a manual start before then from failing noisily.
+ConditionPathExists=/var/lib/zelavis-worker/worker/remote-project.json
+
+[Service]
+Type=simple
+User=zelavis-worker
+Group=zelavis-worker
+WorkingDirectory=/var/lib/zelavis-worker
+Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis-worker
+ExecStart=/opt/zelavis/current/bin/zelavis agent \
+  --data-dir /var/lib/zelavis-worker \
+  --remote-project-config /var/lib/zelavis-worker/worker/remote-project.json
+KillMode=control-group
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

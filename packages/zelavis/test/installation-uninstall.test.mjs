@@ -6,7 +6,7 @@ import test from "node:test";
 import { ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION, assertCompleteUninstallConfirmation } from "../dist/core/runtime/installation.js";
 import { createNodeInstallationUninstaller } from "../dist/adapters/node.js";
 
-const receipt = (paths, overrides = {}) => ({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: false, ownsGroup: false, ...overrides });
+const receipt = (paths, overrides = {}) => ({ schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: false, ownsGroup: false, ...overrides });
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-api-"));

@@ -80,7 +80,7 @@ test("fresh install plans the existing inventory, without mutations or secret ma
     assert.ok(host.actions.some(action => action.command === "chown" && action.args.join(" ") === `root:zelavis ${path}`));
   }
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-agent.service"));
-  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
+  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
 
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {

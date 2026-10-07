@@ -14,6 +14,7 @@ import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
 import { runNodesCommand } from "./nodes.js";
+import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
@@ -127,6 +128,7 @@ Usage:
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
   zelavis nodes <list|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
@@ -417,142 +419,122 @@ function formatUninstallPlan(plan: ZelavisInstallationUninstallPlan): string {
   return lines.join("\n");
 }
 
-async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
+const refuse = (message: string) => new IntegrationFailure(new Error(message));
+
+const runServicesCommand = Effect.fn("CLI.services")(function* (parsed: ParsedArgs): Effect.fn.Return<void, TaggedFailure> {
   const clientOptions = {
     url: parsed.url,
     headers: parsed.token ? { authorization: `Bearer ${parsed.token}` } : undefined,
   };
   if (parsed.target === "sources") {
-    const sources = await listRuntimeServiceSources(clientOptions);
+    const sources = yield* integration(() => listRuntimeServiceSources(clientOptions));
     console.log(JSON.stringify({ sources }, null, 2));
     return;
   }
   if (parsed.target === "list") {
-    const services = await listRuntimeServices(clientOptions);
+    const services = yield* integration(() => listRuntimeServices(clientOptions));
     console.log(formatRuntimeServiceList(services));
     return;
   }
 
   if (parsed.target === "install" || parsed.target === "enable") {
-    if (!parsed.name) throw new Error("services install requires a service name.");
-    const result = await updateRuntimeService(
-      parsed.name,
-      { status: "installed" },
-      clientOptions,
-    );
-    console.log(`Installed ${parsed.name}.`);
+    if (!parsed.name) return yield* refuse("services install requires a service name.");
+    const name = parsed.name;
+    const result = yield* integration(() => updateRuntimeService(name, { status: "installed" }, clientOptions));
+    console.log(`Installed ${name}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
   if (parsed.target === "disable" || parsed.target === "uninstall") {
-    if (!parsed.name) throw new Error("services disable requires a service name.");
-    const result = await updateRuntimeService(
-      parsed.name,
-      { status: "available" },
-      clientOptions,
-    );
-    console.log(`Disabled ${parsed.name}.`);
+    if (!parsed.name) return yield* refuse("services disable requires a service name.");
+    const name = parsed.name;
+    const result = yield* integration(() => updateRuntimeService(name, { status: "available" }, clientOptions));
+    console.log(`Disabled ${name}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
   if (parsed.target === "register") {
-    if (!parsed.specifier) throw new Error("services register requires --specifier.");
-    const result = await registerRuntimeService(
+    if (!parsed.specifier) return yield* refuse("services register requires --specifier.");
+    const specifier = parsed.specifier;
+    const result = yield* integration(() => registerRuntimeService(
       {
-        specifier: parsed.specifier,
+        specifier,
         name: parsed.name,
         source: parsed.source,
         order: parsed.order,
         status: parsed.install ? "installed" : "available",
       },
       clientOptions,
-    );
-    const service = result.services.find(
-      (entry) => entry.name === parsed.name,
-    );
-    console.log(`Registered ${service?.name ?? parsed.specifier}.`);
+    ));
+    const service = result.services.find((entry) => entry.name === parsed.name);
+    console.log(`Registered ${service?.name ?? specifier}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
-  throw new Error(
-    `Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`,
-  );
-}
+  return yield* refuse(`Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`);
+});
 
 // The provider Zelavis ships with. An installation that replaced it names
 // its own with --provider.
 const DEFAULT_BOOTSTRAP_PROVIDER = "password";
 
-async function resolveBootstrapPassword(parsed: ParsedArgs): Promise<string> {
+const resolveBootstrapPassword = Effect.fn("CLI.bootstrapPassword")(function* (parsed: ParsedArgs): Effect.fn.Return<string, TaggedFailure> {
   if (parsed.passwordStdin) {
-    const piped = await readAllStdin();
-    if (!piped) {
-      throw new Error("--password-stdin was given but standard input was empty.");
-    }
+    const piped = yield* integration(() => readAllStdin());
+    if (!piped) return yield* refuse("--password-stdin was given but standard input was empty.");
     return piped;
   }
 
-  const password = await promptSecret("Owner password: ");
-  const confirmation = await promptSecret("Confirm password: ");
-  if (password !== confirmation) {
-    throw new Error("The passwords did not match.");
-  }
+  const password = yield* integration(() => promptSecret("Owner password: "));
+  const confirmation = yield* integration(() => promptSecret("Confirm password: "));
+  if (password !== confirmation) return yield* refuse("The passwords did not match.");
   return password;
-}
+});
 
-async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
+const runBootstrapCommand = Effect.fn("CLI.bootstrap")(function* (parsed: ParsedArgs): Effect.fn.Return<void, TaggedFailure> {
   if (parsed.target === "status") {
-    console.log(formatBootstrapStatus(await readBootstrapStatus({ url: parsed.url })));
+    console.log(formatBootstrapStatus(yield* integration(() => readBootstrapStatus({ url: parsed.url }))));
     return;
   }
   if (parsed.target) {
-    throw new Error(
-      `Unknown bootstrap command "${parsed.target}". Expected status, or no argument to create the owner.`,
-    );
+    return yield* refuse(`Unknown bootstrap command "${parsed.target}". Expected status, or no argument to create the owner.`);
   }
 
   const token = parsed.token ?? process.env.ZELAVIS_BOOTSTRAP_TOKEN;
   if (!token) {
-    throw new Error(
-      "A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.",
-    );
+    return yield* refuse("A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.");
   }
-  if (!parsed.email && !parsed.username) {
-    throw new Error("bootstrap requires --email or --username.");
-  }
+  if (!parsed.email && !parsed.username) return yield* refuse("bootstrap requires --email or --username.");
 
   // Checked before the password is asked for, so an operator is not made to
   // type a secret into a Platform that was never going to accept it.
-  const status = await readBootstrapStatus({ url: parsed.url });
-  if (!status.required) {
-    throw new Error("This Platform already has an owner.");
-  }
+  const status = yield* integration(() => readBootstrapStatus({ url: parsed.url }));
+  if (!status.required) return yield* refuse("This Platform already has an owner.");
   const provider = parsed.provider ?? DEFAULT_BOOTSTRAP_PROVIDER;
   if (!status.enrollmentProviders.includes(provider)) {
-    throw new Error(
-      status.enrollmentProviders.length
-        ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
-        : "This Platform has no credential provider installed, so no owner can be enrolled.",
-    );
+    return yield* refuse(status.enrollmentProviders.length
+      ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
+      : "This Platform has no credential provider installed, so no owner can be enrolled.");
   }
 
-  const result = await bootstrapPlatformOwner(
+  const password = yield* resolveBootstrapPassword(parsed);
+  const result = yield* integration(() => bootstrapPlatformOwner(
     {
       bootstrapToken: token,
       provider,
-      password: await resolveBootstrapPassword(parsed),
+      password,
       ...(parsed.email ? { email: parsed.email } : {}),
       ...(parsed.username ? { username: parsed.username } : {}),
       ...(parsed.displayName ? { displayName: parsed.displayName } : {}),
     },
     { url: parsed.url },
-  );
+  ));
 
   // The session token is deliberately not printed. It is a live owner
   // credential, and stdout is redirected into logs far too often.
@@ -560,7 +542,7 @@ async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
     `Created Platform owner ${result.account.email ?? result.account.username ?? result.account.id}.`,
   );
   console.log("Sign in from the dashboard, or with the auth API, to continue.");
-}
+});
 
 const runCliProgram = Effect.fn("CLI.dispatch")(function* (
   args: readonly string[] = process.argv.slice(2),
@@ -576,6 +558,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "marketplace") {
       (yield* integration(() => runMarketplaceCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "worker") {
+      (yield* integration(() => runWorkerCommand(args.slice(1))));
       return;
     }
     if (args[0] === "nodes") {
@@ -741,7 +727,7 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       return;
     }
     if (parsed.command === "bootstrap") {
-      (yield* integration(() => runBootstrapCommand(parsed)));
+      yield* runBootstrapCommand(parsed);
       return;
     }
     if (parsed.command === "setup") {
@@ -755,7 +741,7 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       return;
     }
     if (parsed.command === "services") {
-      (yield* integration(() => runServicesCommand(parsed)));
+      yield* runServicesCommand(parsed);
       return;
     }
     return yield* new IntegrationFailure(new Error(`Unknown command "${parsed.command}".`));

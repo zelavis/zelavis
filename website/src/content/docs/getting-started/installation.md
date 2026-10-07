@@ -244,6 +244,43 @@ instance, including its Projects; it does not remove every instance on the host.
 The instance directories, incoming Debian payload, descriptors, template units
 and Edge ownership files are covered by the destructive uninstall inventory and tests.
 
+## Installing a worker
+
+A worker is a machine that runs the Projects a Platform places on it. It has no
+dashboard, no ingress, no database of its own and no update socket: it is the same
+release, one dedicated `zelavis-worker` account, and one unit that runs the Agent.
+A machine is **either a Platform or a worker**; each installer refuses the other's
+machine.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://zelavis.com/install.sh | sudo sh -s -- --role worker
+```
+
+It needs Linux, systemd and root, and refuses the Platform-only flags (`--user`,
+`--instance`, `--port`, `--public`, `--live`) by name. Then enroll it into a Platform
+(see [Node Enrollment](../../architecture/node-enrollment/)): issue a credential with
+`zelavis nodes enroll-token <node-id>` on the Platform, and on the worker run, as its own
+account, so the Agent's key is created and owned by the account that uses it:
+
+```bash
+sudo -u zelavis-worker /usr/local/bin/zelavis worker join --data-dir /var/lib/zelavis-worker \
+  --platform-url https://panel.example.com --node-id worker-1 --enrollment-token <token>
+```
+
+The Agent starts by itself once the machine has joined (a systemd path unit waits for
+the configuration `join` writes last), listens on port 8443, and the Platform must be
+able to reach it. The enrollment credential is never part of an install plan or a dry
+run. Running the installer again updates the worker: it selects the new release and
+restarts a running Agent. A worker is **not** updated from the dashboard, and
+`zelavis doctor` does not inspect workers yet.
+
+`sudo zelavis uninstall --all --dry-run` and `--confirm DELETE-ALL-ZELAVIS-DATA` work on
+a worker too, with its own inventory: its units, command links, `/var/lib/zelavis-worker`
+(the Agent's key, certificate, trust keys and every Project run there), the `zelavis-worker`
+user and group only when the receipt records that the installer created them, and
+`/opt/zelavis`. The node's record on its Platform is not removed from there: run
+`zelavis nodes remove <node-id>` on the Platform.
+
 ## Installation ownership and health
 
 The current receipt records the source, entry point, version, paths and

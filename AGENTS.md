@@ -853,7 +853,8 @@ algorithms and must preserve reproducible seeds and traces.
   legacy occurrences outside the migrated lifecycle modules; this debt is not
   permission to introduce or copy Promise orchestration. Its only maintenance
   command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
-  entries. Never expand it to make a change pass. Migrate touched orchestration.
+  entries. Never expand it to make a change pass, and never route around it (a wrapper, a parallel module, an
+  untouched legacy statement): migrate touched orchestration, and add the file to `migratedFiles` so it cannot regain debt.
 - Project lifecycle, local/native runtime drivers, WordPress provisioning and
   update orchestration are fully checked with no legacy allowances. Interruptions
   must release coordination permits, stop partially acquired processes, preserve
@@ -1541,6 +1542,21 @@ and development Agent state, and Linux Project `runtime-sockets`. Whenever
 an installer starts owning another resource, update the complete-uninstall
 inventory, staged program, isolated destructive-path tests, and public docs in
 the same change.
+
+The worker role (`zelavis install --role worker`, Linux/systemd/root only) is a
+second, deliberately smaller installation role: the release tree, a dedicated
+`zelavis-worker` account, `zelavis-worker.service` and `zelavis-worker.path`, and data
+in `<data>-worker`. It shares the installation receipt (`<prefix>/installation.json`,
+`schemaVersion: 3`) with the Platform role, told apart by `role`: a machine is a
+Platform or a worker by construction, every reader chooses by role first
+(`readInstallationRoleProgram`), and each role's reader refuses the other's receipt. One
+role-aware uninstaller (`adapters/_node-installation-uninstaller.ts`) plans each role's
+own inventory. The worker plan carries no enrollment credential; `zelavis worker join`
+runs as the worker account. Its inventory is in
+`core/runtime/worker-installation-plan.ts` and is qualified by
+`distribution/scripts/qualify-worker.sh` (Docker, Debian/systemd); update that inventory,
+the staged release assets and the docs together whenever the worker installer owns
+another resource.
 
 Each package should remain independently useful and focused.
 

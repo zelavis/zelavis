@@ -1,0 +1,4 @@
+FROM debian:bookworm-slim
+ENV container=docker
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus ca-certificates curl tar gzip xz-utils procps util-linux && rm -rf /var/lib/apt/lists/*
+CMD ["/sbin/init"]

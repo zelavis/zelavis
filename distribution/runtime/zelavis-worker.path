@@ -1,0 +1,11 @@
+[Unit]
+Description=Start the Zelavis worker Agent once it has joined a Platform
+
+[Path]
+# `zelavis worker join` writes this file last, so its presence means the machine
+# has enrolled and holds its key, certificate and the Platform's trust keys.
+PathExists=/var/lib/zelavis-worker/worker/remote-project.json
+Unit=zelavis-worker.service
+
+[Install]
+WantedBy=multi-user.target

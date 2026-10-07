@@ -15,15 +15,59 @@ configured (`projects.remoteDispatch`, which may have an empty `nodes` map). Wit
 it the Platform does not publish its trust keys and answers `409 nodes-disabled`,
 so no credential is issued that no machine could use.
 
+## Joining from a machine
+
+`zelavis worker join` makes the machine you run it on a Node of an existing Platform.
+It is host-local, so it has no HTTP route of its own; the enrollment it performs is
+the route below. It:
+
+1. generates the Agent's key and a self-signed certificate on the machine, with the
+   addresses the Platform will dial it by (no `openssl` needed); the key never leaves;
+2. **authenticates the Platform before sending anything**: over `https` only, with
+   either ordinary verification (`--platform-ca-file` for a private CA, otherwise
+   Node's public roots) or a pinned certificate (`--platform-fingerprint sha256:...`,
+   for a self-signed Platform). A pin is checked on the connection before a single
+   request byte is written, and nothing is followed on redirect;
+3. enrolls with the token and certificate, and writes the Agent's configuration, then
+   prints the one command that starts it.
+
+```txt
+zelavis worker join --platform-url https://panel.example.com --node-id worker-1 \
+  --enrollment-token <token> --address 203.0.113.11 [--port 8443]
+zelavis agent --data-dir <dir> --remote-project-config <dir>/worker/remote-project.json
+```
+
+Joining is retryable: the key and certificate are kept, so repeating the command after a
+crash or a lost response enrolls the same certificate, which the Platform lets finish. A
+machine joins one Platform as one node; joining elsewhere means removing its `worker`
+directory on purpose. The Agent must be reachable from the Platform on its port.
+
+A Platform that has no hostname yet answers on plain HTTP only, and `worker join`
+refuses that: the credential and the trust keys would cross an unauthenticated link.
+Give the Platform a hostname with HTTPS first, or pin its self-signed certificate.
+
+## Installing the worker role
+
+`install.sh --role worker` installs a worker: one dedicated account, one unit that runs the
+Agent once the machine has joined, and the same installation receipt as a Platform, with `role: "worker"`,
+which complete removal reads. See [Installation](../../getting-started/installation/).
+`zelavis worker join`, run as that account, does the enrollment. Qualified in a disposable
+Debian/systemd container: the real installer, accounts and units, a real enrollment into a
+real Platform runtime with the node reported `ready`, an update that restarts the running
+Agent, the refusals, and complete removal.
+
 ## What does not exist yet
 
-A worker install mode, so a fresh machine cannot yet be enrolled by running the
-installer: it needs the enrollment call and a hand-started Agent. Automatic
-provisioning of cloud machines (which would put the credential in first-boot data)
-is not shipped. Trust keys are delivered once, at enrollment; the Platform's signing
-keys rotate before they expire, so a refresh path is needed and is not built. The
-caller's address is not known to the route (a proxy may sit in front), so the
-credential is not bound to a source address.
+A worker is **not updated from the dashboard**: updating means running the installer again
+on it, and nothing checks that a worker and its Platform run compatible versions.
+`zelavis doctor` does not inspect workers. A default Platform install is HTTP-only until a
+hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
+only a Platform with HTTPS or one whose self-signed certificate it pins. Automatic
+provisioning of cloud machines (which would put the credential in first-boot data) is not
+shipped. Trust keys are delivered once, at enrollment; the Platform's signing keys rotate
+before they expire, so a refresh path is needed and is not built. The caller's address is
+not known to the route (a proxy may sit in front), so the credential is not bound to a
+source address.
 
 ## How it works
 

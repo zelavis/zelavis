@@ -1,5 +1,7 @@
+import { Effect } from "effect";
+import { IntegrationFailure, evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { acquireNodeInstallerLock } from "./_local-ownership.js";
-import { preflightZelavisDataMaintenance } from "../core/runtime/installation-health.js";
+import { preflightZelavisDataMaintenanceProgram } from "../core/runtime/installation-health.js";
 import {
   assertCompleteUninstallConfirmation,
   type ZelavisInstallationIdentity,
@@ -8,11 +10,14 @@ import {
 } from "../core/runtime/installation.js";
 import {
   assertInstallationPath,
-  executeZelavisInstallationPlan,
+  executeZelavisInstallationPlanProgram,
   planZelavisUninstall,
-  readNativeInstallationReceipt,
+  readInstallationRoleProgram,
+  readNativeInstallationReceiptProgram,
+  type ZelavisHostInstallationPlan,
   type ZelavisInstallPaths,
 } from "../core/runtime/installation-plan.js";
+import { planZelavisWorkerUninstall, readWorkerReceiptProgram } from "../core/runtime/worker-installation-plan.js";
 import { assertNodeInstallationPrivilege, createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths } from "./_install-host.js";
 
 export interface NodeInstallationUninstallerOptions {
@@ -24,7 +29,17 @@ export interface NodeInstallationUninstallerOptions {
   readonly skipHostCommands?: boolean;
 }
 
-/** Executes the inspected TypeScript plan directly; no script or remote route. */
+const refuse = (message: string) => new IntegrationFailure(new Error(message));
+
+/**
+ * Complete removal of a packaged installation, a Platform or a worker, chosen
+ * by the role its receipt records. The inspected plan is executed directly; no
+ * script and no remote route, because removing an installation destroys the
+ * authority and the server that would authorize it.
+ *
+ * It removes only what that role's receipt and inventory name. Each role's
+ * planner owns its own inventory; this only resolves, describes and executes.
+ */
 export function createNodeInstallationUninstaller(options: NodeInstallationUninstallerOptions): ZelavisInstallationUninstaller {
   if (!options.installation.root) {
     throw new TypeError("Complete host uninstall is available only to a packaged Zelavis installation. Use the package manager that installed npm or source copies.");
@@ -35,30 +50,42 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
   if (!options.installation.path.startsWith(`${prefix}/`)) throw new Error("The running Zelavis CLI is outside the packaged installation root.");
   const host = createNodeInstallHost();
   const skip = options.skipHostCommands ?? process.env.ZELAVIS_UNINSTALL_SKIP_HOST_COMMANDS === "1";
-  const resolvePlan = async () => {
+
+  interface Resolved {
+    readonly role: "platform" | "worker";
+    readonly paths: ZelavisInstallPaths;
+    readonly plan: ZelavisHostInstallationPlan;
+    readonly user: boolean;
+  }
+
+  const resolvePlatform = Effect.fn("InstallationUninstall.resolvePlatform")(function* (): Effect.fn.Return<Resolved, TaggedFailure> {
     for (const value of [process.env.ZELAVIS_UNINSTALL_OWNS_USER, process.env.ZELAVIS_UNINSTALL_OWNS_GROUP]) {
-      if (value !== undefined && value !== "0" && value !== "1") throw new Error("Refusing invalid installer account ownership receipt.");
+      if (value !== undefined && value !== "0" && value !== "1") return yield* refuse("Refusing invalid installer account ownership receipt.");
     }
-    const receipt = await readNativeInstallationReceipt(host, prefix, options.instance);
-    if (!receipt) throw new Error("Complete uninstall requires a current installer receipt. npm/source copies without one must use their originating lifecycle.");
+    const receipt = yield* readNativeInstallationReceiptProgram(host, prefix, options.instance);
+    if (!receipt) return yield* refuse("Complete uninstall requires a current installer receipt. npm/source copies without one must use their originating lifecycle.");
     if (options.dataDirectory !== undefined) {
-      assertInstallationPath(options.dataDirectory, "data directory");
-      if (options.dataDirectory !== receipt.dataDirectory) throw new Error("Requested data directory does not match the installer receipt; refusing removal outside its inventory.");
+      yield* evaluate(() => assertInstallationPath(options.dataDirectory!, "data directory"));
+      if (options.dataDirectory !== receipt.dataDirectory) return yield* refuse("Requested data directory does not match the installer receipt; refusing removal outside its inventory.");
     }
     const user = receipt.mode === "user";
     const base = options.paths ?? (user ? nodeUserInstallationPaths() : nodeInstallationPaths(process.env, options.instance));
-    if (user && (prefix !== base.prefix || receipt.dataDirectory !== base.dataDirectory || receipt.commandPath !== base.commandPath || options.dataDirectory !== undefined && options.dataDirectory !== base.dataDirectory)) throw new Error("User receipt does not match this user's installation inventory.");
-    const paths = {
+    if (user && (prefix !== base.prefix || receipt.dataDirectory !== base.dataDirectory || receipt.commandPath !== base.commandPath || options.dataDirectory !== undefined && options.dataDirectory !== base.dataDirectory)) {
+      return yield* refuse("User receipt does not match this user's installation inventory.");
+    }
+    const paths: ZelavisInstallPaths = {
       ...base,
       prefix,
       instance: receipt.instance,
       configDirectory: receipt.configDirectory,
-      dataDirectory: options.dataDirectory ?? receipt?.dataDirectory ?? base.dataDirectory,
-      commandPath: receipt?.commandPath ?? base.commandPath,
+      dataDirectory: options.dataDirectory ?? receipt.dataDirectory,
+      commandPath: receipt.commandPath,
     };
-    const otherInstances = (await host.listInstances?.(prefix) ?? []).filter((name) => name !== receipt.instance);
-    for (const name of otherInstances) await readNativeInstallationReceipt(host, prefix, name);
-    const plan = planZelavisUninstall({
+    const listed = yield* integration(() => Promise.resolve(host.listInstances?.(prefix)));
+    const otherInstances = (listed ?? []).filter((name) => name !== receipt.instance);
+    // Reading each validates it: a malformed neighbour must stop removal, not be skipped.
+    yield* Effect.forEach(otherInstances, (name) => readNativeInstallationReceiptProgram(host, prefix, name), { concurrency: 1 });
+    const plan = yield* evaluate(() => planZelavisUninstall({
       paths,
       retainShared: otherInstances.length > 0,
       // A Debian install after an archive may leave the archive command link.
@@ -66,38 +93,64 @@ export function createNodeInstallationUninstaller(options: NodeInstallationUnins
       additionalCommandPaths: [base.commandPath],
       user,
       hostCommands: !user && !skip && process.getuid?.() === 0,
-      ownsUser: receipt?.ownsUser ?? process.env.ZELAVIS_UNINSTALL_OWNS_USER === "1",
-      ownsGroup: receipt?.ownsGroup ?? process.env.ZELAVIS_UNINSTALL_OWNS_GROUP === "1",
-    });
-    return { paths, plan, user };
-  };
-  const describe = async (plan: Awaited<ReturnType<typeof resolvePlan>>["plan"]) => {
-    const targets: ZelavisInstallationRemovalTarget[] = await Promise.all(plan.steps.map(async (step) => {
+      ownsUser: receipt.ownsUser,
+      ownsGroup: receipt.ownsGroup,
+    }));
+    return { role: "platform", paths, plan, user };
+  });
+
+  const resolveWorker = Effect.fn("InstallationUninstall.resolveWorker")(function* (): Effect.fn.Return<Resolved, TaggedFailure> {
+    const receipt = yield* readWorkerReceiptProgram(host, prefix);
+    if (!receipt) return yield* refuse("Complete uninstall requires a current installer receipt.");
+    if (options.dataDirectory !== undefined && options.dataDirectory !== receipt.dataDirectory) {
+      return yield* refuse("Requested data directory does not match the installer receipt; refusing removal outside its inventory.");
+    }
+    const base = options.paths ?? nodeInstallationPaths(process.env);
+    const paths: ZelavisInstallPaths = { ...base, prefix, configDirectory: receipt.dataDirectory, dataDirectory: receipt.dataDirectory, commandPath: receipt.commandPath };
+    const plan = yield* evaluate(() => planZelavisWorkerUninstall({ paths, receipt, hostCommands: !skip && process.getuid?.() === 0 }));
+    return { role: "worker", paths, plan, user: false };
+  });
+
+  const resolve = Effect.fn("InstallationUninstall.resolve")(function* (): Effect.fn.Return<Resolved, TaggedFailure> {
+    const role = yield* readInstallationRoleProgram(host, prefix, options.instance);
+    if (role === undefined) return yield* refuse("Complete uninstall requires a current installer receipt. npm/source copies without one must use their originating lifecycle.");
+    return role === "worker" ? yield* resolveWorker() : yield* resolvePlatform();
+  });
+
+  const describe = Effect.fn("InstallationUninstall.describe")(function* (plan: ZelavisHostInstallationPlan) {
+    const targets = yield* Effect.forEach(plan.steps, (step) => Effect.gen(function* () {
       const action = step.action;
       const path = "path" in action ? action.path : undefined;
-      return {
+      const target: ZelavisInstallationRemovalTarget = {
         id: action.kind === "remove" && path === plan.dataDirectory ? "data" : step.id,
         kind: action.kind === "remove-link" ? "command" : action.kind === "purge-packages" ? "package" : action.kind === "remove-account" ? "account" : action.kind === "remove" ? "directory" : "service",
         description: step.description,
-        ...(path ? { path, exists: await host.exists(path) } : {}),
+        ...(path ? { path, exists: yield* integration(() => host.exists(path)) } : {}),
       };
-    }));
+      return target;
+    }), { concurrency: 4 });
     return { adapter: "node", installation: options.installation, dataDirectory: plan.dataDirectory, targets, retained: plan.retained, steps: plan.steps };
-  };
+  });
+
   return {
-    async plan() { return describe((await resolvePlan()).plan); },
-    async uninstall(input) {
-      assertCompleteUninstallConfirmation(input.confirmation);
-      const initial = await resolvePlan();
-      await assertNodeInstallationPrivilege(initial.paths, skip || initial.user);
-      const lock = await acquireNodeInstallerLock(prefix);
-      try {
-        const { paths, plan, user } = await resolvePlan();
-        await preflightZelavisDataMaintenance({ host, paths, system: !user && !skip });
-        const described = await describe(plan);
-        const output = await executeZelavisInstallationPlan(host, plan, input.confirmation);
-        return { removed: true, plan: described, output: [...output, "Zelavis installation, configuration and data removed."].join("\n") };
-      } finally { await lock.release(); }
-    },
+    plan: () => present(Effect.gen(function* () {
+      return yield* describe((yield* resolve()).plan);
+    })),
+    uninstall: (input) => present(Effect.scoped(Effect.gen(function* () {
+      yield* evaluate(() => assertCompleteUninstallConfirmation(input.confirmation));
+      const initial = yield* resolve();
+      yield* integration(() => assertNodeInstallationPrivilege(initial.paths, skip || initial.user));
+      yield* Effect.acquireRelease(integration(() => acquireNodeInstallerLock(prefix)), (lock) => integration(() => lock.release()).pipe(Effect.orDie));
+      // Resolved again under the lock: what was inspected is what is removed.
+      const { role, paths, plan, user } = yield* resolve();
+      if (role === "platform") yield* preflightZelavisDataMaintenanceProgram({ host, paths, system: !user && !skip });
+      const described = yield* describe(plan);
+      const output = yield* executeZelavisInstallationPlanProgram(host, plan, input.confirmation);
+      return {
+        removed: true as const,
+        plan: described,
+        output: [...output, role === "worker" ? "Zelavis worker, its configuration and data removed." : "Zelavis installation, configuration and data removed."].join("\n"),
+      };
+    }))),
   };
 }

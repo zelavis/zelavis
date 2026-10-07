@@ -66,6 +66,11 @@ command tree.
   the installed release, so it has no HTTP route and a system update refuses to run
   unless it is root. See
   [Updating without downtime](../architecture/updates/).
+- `worker join --platform-url URL --node-id ID --enrollment-token T` makes this machine a Node
+  of a Platform: it generates the Agent's key and certificate locally, authenticates the
+  Platform (https only; `--platform-ca-file` or `--platform-fingerprint` for a private or
+  self-signed one), enrolls, and writes the Agent configuration. Host-local; the enrollment
+  it makes is `client.nodes.enroll`. See [Node Enrollment](../architecture/node-enrollment/).
 - `nodes list|enroll-token|enroll|remove` manages the machines that join this Platform
   (`client.nodes`). `enroll-token <node-id>` issues a single-use credential and shows it
   once; `enroll <node-id> --enrollment-token T --cert-file F --agent-url URL` is what the

@@ -13,26 +13,25 @@ import { runInstallationDoctor } from "./cli/install/doctor.js";
 import { runReleaseInstall } from "./cli/install/index.js";
 import { createNodeInstallationUninstaller } from "./adapters/node.js";
 import { shutdownOnSignals } from "./runtimes/node.js";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Exit, Option, Scope } from "effect";
 import { evaluate, integration, IntegrationFailure, present } from "./core/runtime/effect-boundary.js";
 import { createNodePlatformHost } from "./adapters/_node-platform-host.js";
 import { createNodeRuntimeCatalog } from "./adapters/_node-runtime-catalog.js";
+import { isUnknown, objectFields, optional, parseJson } from "./core/json-validation.js";
 import { ZELAVIS_VERSION } from "./version.js";
 
 /** Real path of this CLI, symlinks resolved; undefined if it cannot be read. */
-async function resolveInstallationPath(): Promise<string | undefined> {
-  try {
-    return await realpath(fileURLToPath(import.meta.url));
-  } catch {
-    return undefined;
-  }
-}
+const resolveInstallationPath: Effect.Effect<string | undefined> = integration(() => realpath(fileURLToPath(import.meta.url))).pipe(
+  Effect.option,
+  Effect.map(Option.getOrUndefined),
+);
 
-async function readVersion(): Promise<string> {
-  const source = await readFile(new URL("../package.json", import.meta.url), "utf8");
-  const manifest = JSON.parse(source) as { version?: unknown };
-  return typeof manifest.version === "string" ? manifest.version : "unknown";
-}
+const readVersion = integration(() => readFile(new URL("../package.json", import.meta.url), "utf8")).pipe(
+  Effect.flatMap((source) => evaluate(() => {
+    const manifest = parseJson(source, objectFields<{ version?: unknown }>({ version: optional(isUnknown) }));
+    return typeof manifest.version === "string" ? manifest.version : "unknown";
+  })),
+);
 
 /**
  * Loads the dashboard if this installation still has it.
@@ -43,7 +42,7 @@ async function readVersion(): Promise<string> {
  * path says no frontend is installed, which is the whole point of the split.
  */
 
-function serve(options: ZelavisCliServeOptions): Promise<void> {
+const serveFor = (installationPath: string | undefined) => (options: ZelavisCliServeOptions): Promise<void> => {
   const scope = Scope.makeUnsafe();
   return present(Scope.use(Effect.gen(function* () {
     const identity = installationPath ? describeInstallation(installationPath) : undefined;
@@ -106,40 +105,44 @@ function serve(options: ZelavisCliServeOptions): Promise<void> {
     const inherited = takeInheritedSocket();
     yield* host.listen(inherited ? { fd: inherited.fd } : { port: options.port, host: options.host });
     process.title = "zelavis";
-    console.log(`Zelavis ${yield* integration(() => readVersion())} listening on http://${options.host}:${options.port}/zelavis`);
+    console.log(`Zelavis ${yield* readVersion} listening on http://${options.host}:${options.port}/zelavis`);
     console.log(`Platform data: ${dataDirectory}`);
     return yield* host.failure;
   }), scope));
-}
+};
 
-const installationPath = await resolveInstallationPath();
-
-await runCli(process.argv.slice(2), {
-  version: await readVersion(),
-  // Resolved, not the raw argv path: /usr/local/bin/zelavis is a symlink, and
-  // what it points at is exactly the thing worth reporting.
-  installationPath,
-  runtime: {
-    serve,
-    install: runReleaseInstall,
-    async doctor(args) {
-      if (!installationPath) throw new Error("The running CLI path could not be resolved.");
-      await runInstallationDoctor(args, installationPath);
+const main = Effect.gen(function* () {
+  const installationPath = yield* resolveInstallationPath;
+  const version = yield* readVersion;
+  // runCli reports its own failures and sets the exit code.
+  yield* integration(() => runCli(process.argv.slice(2), {
+    version,
+    // Resolved, not the raw argv path: /usr/local/bin/zelavis is a symlink, and
+    // what it points at is exactly the thing worth reporting.
+    installationPath,
+    runtime: {
+      serve: serveFor(installationPath),
+      install: runReleaseInstall,
+      doctor: (args) => present(Effect.gen(function* () {
+        if (!installationPath) return yield* new IntegrationFailure(new Error("The running CLI path could not be resolved."));
+        yield* integration(() => runInstallationDoctor(args, installationPath));
+      })),
+      createInstallationUninstaller({ dataDirectory, instance }) {
+        if (!installationPath) {
+          throw new Error("The running Zelavis installation path could not be resolved.");
+        }
+        const installation = describeInstallation(installationPath);
+        return createNodeInstallationUninstaller({
+          installation,
+          instance,
+          dataDirectory: dataDirectory ?? (installation.kind === "packaged" ? undefined : resolveCliDataDirectory()),
+        });
+      },
     },
-    createInstallationUninstaller({ dataDirectory, instance }) {
-      if (!installationPath) {
-        throw new Error("The running Zelavis installation path could not be resolved.");
-      }
-      const installation = describeInstallation(installationPath);
-      return createNodeInstallationUninstaller({
-        installation,
-        instance,
-        dataDirectory:
-          dataDirectory ??
-          (installation.kind === "packaged"
-            ? undefined
-            : resolveCliDataDirectory()),
-      });
-    },
-  },
+  }));
 });
+
+Effect.runFork(main.pipe(Effect.match({
+  onSuccess: () => undefined,
+  onFailure: (error) => { console.error(error.message); process.exitCode = 1; },
+})));

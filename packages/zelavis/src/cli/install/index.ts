@@ -1,10 +1,11 @@
 import { Effect, Scope } from "effect";
 import { integration, IntegrationFailure, present, type TaggedFailure } from "../../core/runtime/effect-boundary.js";
 import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "../../core/runtime/installation-instance.js";
+import { runWorkerInstallProgram } from "./worker.js";
 import { acquireNodeInstallerLock } from "../../adapters/_local-ownership.js";
 import { preflightZelavisInstallProgram } from "../../core/runtime/installation-health.js";
 import { createNodeInstallHost, nodeInstallationPaths, nodeUserInstallationPaths, assertNodeInstallationPrivilege } from "../../adapters/_install-host.js";
-import { networkInterfaces } from "node:os";
+import { firstRoutableAddress } from "../../adapters/_host-address.js";
 import { assembleNpmReleaseTreeProgram } from "../../adapters/_release-tree.js";
 import { executeZelavisInstallationPlanProgram, planZelavisReleaseInstallProgram, validateInstallationPaths, readNativeInstallationReceiptProgram, type ZelavisNativeInstallationReceipt } from "../../core/runtime/installation-plan.js";
 
@@ -14,6 +15,8 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
   let instance = "default", port: number | undefined;
   let source: string | undefined, npmPrepared: string | undefined;
   let dryRun = false, json = false, allowDowngrade = false, user = false, live = false, stageOnly = false;
+  let role: "platform" | "worker" = "platform";
+  const platformOnly: string[] = [];
   // The management listener is private unless the operator explicitly exposes it.
   let publicBind: boolean | undefined;
   let installedBy: ZelavisNativeInstallationReceipt["installedBy"] = "cli";
@@ -26,8 +29,13 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--instance") instance = value(++i, arg);
-    else if (arg === "--port") port = Number(value(++i, arg));
+    if (arg === "--role") {
+      const chosen = value(++i, arg);
+      if (chosen !== "platform" && chosen !== "worker") return yield* new IntegrationFailure(new Error("--role must be platform or worker."));
+      role = chosen;
+    }
+    else if (arg === "--instance") { instance = value(++i, arg); platformOnly.push(arg); }
+    else if (arg === "--port") { port = Number(value(++i, arg)); platformOnly.push(arg); }
     else if (arg === "--from-release") source = value(++i, arg);
     else if (arg === "--invoking-home") invokingHome = value(++i, arg);
     else if (arg === "--invoking-path") invokingPath = value(++i, arg);
@@ -37,15 +45,18 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
       if (!["cli", "script", "deb", "create"].includes(origin)) return yield* new IntegrationFailure(new Error("Invalid installation entry point."));
       installedBy = origin as typeof installedBy;
     }
-    else if (arg === "--user") user = true;
+    else if (arg === "--user") { user = true; platformOnly.push(arg); }
     else if (arg === "--dry-run") dryRun = true;
     else if (arg === "--json") json = true;
     else if (arg === "--force") force = true;
-    else if (arg === "--public") publicBind = true;
-    else if (arg === "--live") live = true;
-    else if (arg === "--stage-only") stageOnly = true;
+    else if (arg === "--public") { publicBind = true; platformOnly.push(arg); }
+    else if (arg === "--live") { live = true; platformOnly.push(arg); }
+    else if (arg === "--stage-only") { stageOnly = true; platformOnly.push(arg); }
     else if (arg === "--allow-downgrade") allowDowngrade = true;
     else return yield* new IntegrationFailure(new Error(`Unknown install option: ${arg}`));
+  }
+  if (role === "worker") {
+    return yield* runWorkerInstallProgram({ source, npmPrepared, dryRun, json, force, allowDowngrade, installedBy: (["script", "create", "cli"] as const).find((origin) => origin === (installedBy as string)) ?? "cli", invokingPath, platformOnly });
   }
   if (source && npmPrepared) return yield* new IntegrationFailure(new Error("Choose either --from-release <path> or --from-npm <path>."));
   if (stageOnly && !npmPrepared) return yield* new IntegrationFailure(new Error("--stage-only prepares a release from --from-npm; there is nothing to prepare from a staged tree."));
@@ -114,14 +125,7 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
 export function runReleaseInstall(args: readonly string[]): Promise<void> { return present(Effect.scoped(runReleaseInstallProgram(args))); }
 
 /** The server's first routable IPv4 address, for the URL to open; a placeholder when there is none. */
-function serverAddress(): string {
-  for (const addresses of Object.values(networkInterfaces())) {
-    for (const entry of addresses ?? []) {
-      if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) return entry.address;
-    }
-  }
-  return "<server-ip>";
-}
+const serverAddress = (): string => firstRoutableAddress() ?? "<server-ip>";
 
 /**
  * Where an installation came from. A release tree that is already one of this installation's

@@ -48,7 +48,7 @@ for (const failedActivation of [false, true]) test(`Platform ${failedActivation 
     const prefix = join(directory, "installation");
     for (const release of [old, next]) await mkdir(join(prefix, "releases", release.version), { recursive: true });
     await symlink(join(prefix, "releases", old.version), join(prefix, "current"));
-    await writeFile(join(prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, instance: "default", mode: "user", prefix, dataDirectory: directory, version: old.version }));
+    await writeFile(join(prefix, "installation.json"), JSON.stringify({ schemaVersion: 3, role: "platform", port: 3000, edge: false, mode: "user", source: "release", instance: "default", installedBy: "cli", version: old.version, prefix, configDirectory: join(prefix, "config"), dataDirectory: directory, commandPath: join(prefix, "bin", "zelavis"), ownsUser: false, ownsGroup: false }));
     await writeFile(join(prefix, "runtime.json"), JSON.stringify({ schemaVersion: 1, instance: "default", prefix, dataDirectory: directory, version: old.version }));
     const host = await Effect.runPromise(createNodePlatformHost({ dataDirectory: directory, host: "127.0.0.1", initial: old,
       select: version => Effect.succeed(version === old.version ? old : next),

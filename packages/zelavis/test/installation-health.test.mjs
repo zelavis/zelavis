@@ -3,7 +3,7 @@ import test from "node:test";
 import { inspectZelavisInstallation, preflightZelavisInstall } from "../dist/core/runtime/installation-health.js";
 
 const paths = { prefix: "/opt/zelavis", dataDirectory: "/var/lib/zelavis", configDirectory: "/etc/zelavis", commandPath: "/usr/local/bin/zelavis", systemCommandPath: "/usr/bin/zelavis", systemdDirectories: ["/etc/systemd/system", "/lib/systemd/system"] };
-const receipt = { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
+const receipt = { schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "package", instance: "default", installedBy: "create", version: "1.2.3", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true };
 const installation = { kind: "packaged", path: "/opt/zelavis/current/platform/dist/cli.js", root: paths.prefix };
 class Probe {
   files = new Map([["/opt/zelavis/installation.json", JSON.stringify(receipt)], ["/opt/zelavis/current/manifest.json", '{"version":"1.2.3"}'], ["/etc/systemd/system/zelavis.service", "ExecStart=/opt/zelavis/current/bin/zelavis\nEnvironment=ZELAVIS_DATA_DIR=/var/lib/zelavis"]]);

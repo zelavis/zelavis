@@ -56,7 +56,7 @@ async function installation(t) {
   ]) {
     await mkdir(path, { recursive: true });
   }
-  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
+  await writeFile(join(paths.prefix, "installation.json"), JSON.stringify({ schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.etc, dataDirectory: paths.data, commandPath: join(paths.bin, "zelavis"), ownsUser: false, ownsGroup: false }));
   await writeFile(join(paths.data, "project.sqlite"), "data");
   await mkdir(join(paths.prefix, "package"));
   await writeFile(join(paths.prefix, "package", "incoming-payload"), "Debian payload");
