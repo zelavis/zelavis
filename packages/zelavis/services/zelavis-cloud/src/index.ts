@@ -5,3 +5,4 @@ export * from "./capacity-provider.js";
 export * from "./cloud-port.js";
 export * from "./hetzner-cloud.js";
 export * from "./provisioning-state.js";
+export * from "./first-boot.js";
