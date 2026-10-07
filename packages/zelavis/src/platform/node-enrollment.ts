@@ -1,5 +1,6 @@
 import { Data, Effect } from "effect";
 import { integration } from "../core/runtime/effect-boundary.js";
+import { compareInstallationVersions } from "../core/runtime/installation-plan.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 /**
@@ -56,6 +57,7 @@ export type NodeEnrollmentCode =
   | "node-exists"
   | "enrollment-pending"
   | "refused"
+  | "worker-newer"
   | "contention";
 
 /** Why a `refused` enrollment was refused. For audit; never shown to the caller. */
@@ -98,6 +100,23 @@ export interface NodeRecord {
   readonly enrolledAt: number;
   readonly state: "active" | "revoked";
   readonly revokedAt?: number;
+  /** The Zelavis version the machine reported when it joined. */
+  readonly version?: string;
+}
+
+/** How a node's reported version relates to this Platform's. */
+export type NodeCompatibility = "current" | "behind" | "unknown";
+
+const VERSION = /^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u;
+
+/**
+ * A worker may be the Platform's version or older (flagged `behind`), never newer: a newer
+ * worker can speak a protocol this Platform does not know, so it is refused at enrollment.
+ * A node that reported no version is `unknown`.
+ */
+export function nodeCompatibility(platformVersion: string | undefined, nodeVersion: string | undefined): NodeCompatibility {
+  if (platformVersion === undefined || nodeVersion === undefined || !VERSION.test(platformVersion) || !VERSION.test(nodeVersion)) return "unknown";
+  return compareInstallationVersions(nodeVersion, platformVersion) === 0 ? "current" : "behind";
 }
 
 /** An enrollment as an operator may see it: never the token or its hash. */
@@ -143,6 +162,8 @@ export interface CompleteEnrollmentInput {
   readonly url: string;
   /** The address the request came from, only when the connection was direct. */
   readonly sourceAddress?: string;
+  /** The Zelavis version the joining machine runs. */
+  readonly version?: string;
 }
 
 export interface CompletedEnrollment {
@@ -242,6 +263,8 @@ function requireNodeId(nodeId: string): void {
 export function createNodeEnrollmentAuthority(options: {
   readonly store: ZelavisSystemStore;
   readonly now?: () => number;
+  /** This Platform's version; when set, a joining machine newer than it is refused. */
+  readonly platformVersion?: string;
 }) {
   const { store } = options;
   const now = options.now ?? (() => Date.now());
@@ -334,6 +357,7 @@ export function createNodeEnrollmentAuthority(options: {
         if (input.sourceAddress !== undefined && input.sourceAddress.length > MAX_ADDRESS_CHARS) {
           throw invalid("The source address is not valid.");
         }
+        if (input.version !== undefined && (typeof input.version !== "string" || !VERSION.test(input.version))) throw invalid("The version is not valid.");
         return { url: validateAgentUrl(input.url), cert: parseCertificate(input.certPem) };
       },
       catch: (error) => error as NodeEnrollmentError,
@@ -350,6 +374,11 @@ export function createNodeEnrollmentAuthority(options: {
       // The token comes first: nothing else about a node is revealed to a caller who does not hold it.
       if (!constantTimeEqual(record.tokenHash, tokenHash)) return yield* refuse("bad-token");
       if (now() > record.expiresAt) return yield* refuse("expired");
+      // After the token, so only its holder learns versions; before consumption, so the same token works once the Platform is updated.
+      if (options.platformVersion !== undefined && input.version !== undefined && VERSION.test(options.platformVersion) &&
+          compareInstallationVersions(input.version, options.platformVersion) > 0) {
+        return yield* new NodeEnrollmentError({ code: "worker-newer", message: `This machine runs Zelavis ${input.version}, newer than this Platform (${options.platformVersion}). Update the Platform first, or install the Platform's version on the worker.` });
+      }
       if (record.state === "consumed") {
         if (record.certSha256 !== certSha256) return yield* refuse("already-consumed");
         resumed = true;
@@ -377,6 +406,7 @@ export function createNodeEnrollmentAuthority(options: {
       certSha256,
       enrolledAt: now(),
       state: "active",
+      ...(input.version === undefined ? {} : { version: input.version }),
     };
     const created = yield* integration(() =>
       store.setIfAbsent(NODE_REGISTRY_NAMESPACE, input.nodeId, node as unknown as ZelavisSystemStoreValue));

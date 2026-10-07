@@ -73,6 +73,7 @@ import {
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
+import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
 import { createCloudRoutes } from "./platform/cloud-routes.js";
 import type { CloudCapacityController } from "./platform/cloud-capacity.js";
 import { createPlatformEndpointGroup } from "./platform/endpoints.js";
@@ -4154,7 +4155,7 @@ function resolvePlatformEndpointGroup(
     routes: [
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
-        ...createNodeRoutes({ store: systemStore }),
+        ...createNodeRoutes({ store: systemStore, platformVersion: PLATFORM_VERSION }),
         ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",

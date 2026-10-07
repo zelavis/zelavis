@@ -84,7 +84,7 @@ Agent, the refusals, and complete removal.
 ## What does not exist yet
 
 A worker is **not updated from the dashboard**: updating means running the installer again
-on it, and nothing checks that a worker and its Platform run compatible versions.
+on it, and the Platform only checks the worker's version when it joins (see Versions).
 `zelavis doctor` inspects a worker too (receipt, release, account, data ownership, whether it has joined, the path and Agent units, and that the Agent port is listening); it cannot tell whether the Platform can reach that port through a firewall. A default Platform install is HTTP-only until a
 hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
 only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that). Automatic
@@ -135,6 +135,18 @@ node-in-use` while any Project is placed on the node, and leaves a tombstone, so
 node id is not silently reused. Enrollment attempts are limited to 120 a minute across
 the Platform, which bounds the work an anonymous caller can cause; the tokens are
 unguessable, so the limit protects resources, not secrecy.
+
+## Versions
+
+A joining machine reports the Zelavis version it runs (`version`, required). The Platform refuses a
+machine **newer** than itself with `409 worker-newer` (it may speak a protocol this Platform does
+not know) and says both versions, but only after the token has been verified, and without
+spending the token, so the same credential works once the Platform is updated. A machine at the
+same version is `current`; an older one is accepted and listed as `behind`
+(`compatibility` in `GET /runtime/nodes`, `client.nodes.list()` and `zelavis nodes list`); one that
+reported no version is `unknown`. This is a join-time check against the version the machine
+reported: nothing re-checks it after a worker is updated in place, and a worker is not updated from
+the dashboard.
 
 ## Not a secret store
 

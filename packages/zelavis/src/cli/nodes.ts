@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { Data, Effect } from "effect";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
+import { ZELAVIS_VERSION } from "../version.js";
 
 const usage =
   "zelavis nodes <list|platform|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] " +
@@ -98,7 +99,7 @@ export function runNodesCommand(args: readonly string[]): Promise<void> {
       case "list": {
         const result = yield* integration(() => client.nodes.list());
         print(result, () => [
-          ...result.nodes.map((node) => `${node.nodeId}  ${node.state}  ${node.url}  enrolled ${new Date(node.enrolledAt).toISOString()}`),
+          ...result.nodes.map((node) => `${node.nodeId}  ${node.state}  ${node.url}  ${node.version ?? "unknown version"}${node.compatibility === "behind" ? " (behind the Platform)" : ""}  enrolled ${new Date(node.enrolledAt).toISOString()}`),
           ...result.enrollments.filter((e) => e.state === "unused").map((e) => `${e.nodeId}  pending  expires ${new Date(e.expiresAt).toISOString()}`),
         ].join("\n") || "No nodes.");
         return;
@@ -127,7 +128,7 @@ export function runNodesCommand(args: readonly string[]): Promise<void> {
         const certFile = yield* need(parsed.certFile, "--cert-file");
         const agentUrl = yield* need(parsed.agentUrl, "--agent-url");
         const certPem = yield* integration(() => readFile(certFile, "utf8"));
-        const result = yield* integration(() => client.nodes.enroll({ nodeId, token, certPem, url: agentUrl }));
+        const result = yield* integration(() => client.nodes.enroll({ nodeId, token, certPem, url: agentUrl, version: ZELAVIS_VERSION }));
         if (parsed.trustOut) {
           yield* integration(() => writeFile(parsed.trustOut!, `${JSON.stringify(result.trust, null, 2)}\n`, { mode: 0o644 }));
         }

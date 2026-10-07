@@ -6,6 +6,7 @@ import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-stor
 import {
   NodeEnrollmentError,
   createNodeEnrollmentAuthority,
+  nodeCompatibility,
 } from "./node-enrollment.js";
 
 /**
@@ -93,6 +94,7 @@ function answerFor(error: NodeEnrollmentError) {
   switch (error.code) {
     case "refused": return { status: 403, headers: noStore, body: { error: "Enrollment refused." } };
     case "invalid-request": return { status: 400, headers: noStore, body: { error: error.message } };
+    case "worker-newer": return { status: 409, headers: noStore, body: { error: error.message, code: "worker-newer" } };
     case "node-exists": return { status: 409, headers: noStore, body: { error: error.message, code: "node-exists" } };
     case "enrollment-pending": return { status: 409, headers: noStore, body: { error: error.message, code: "enrollment-pending" } };
     case "contention": return { status: 503, headers: { ...noStore, "retry-after": "1" }, body: { error: error.message } };
@@ -102,12 +104,14 @@ function answerFor(error: NodeEnrollmentError) {
 export function createNodeRoutes(options: {
   readonly store?: ZelavisSystemStore;
   readonly now?: () => number;
+  /** This Platform's version: workers newer than it are refused, older ones are flagged. */
+  readonly platformVersion?: string;
 }): readonly ZelavisServerRoute<any>[] {
   const { store } = options;
   const now = options.now ?? (() => Date.now());
   const unavailable = { status: 503, body: { error: "System Store is unavailable." } };
   const notAccepting = { status: 409, headers: noStore, body: { error: "This installation does not accept nodes.", code: "nodes-disabled" } };
-  const authority = store ? createNodeEnrollmentAuthority({ store, now }) : undefined;
+  const authority = store ? createNodeEnrollmentAuthority({ store, now, ...(options.platformVersion === undefined ? {} : { platformVersion: options.platformVersion }) }) : undefined;
   const admit = createAttemptLimiter({ limit: ENROLL_ATTEMPTS_PER_WINDOW, windowMs: ENROLL_WINDOW_MS, now });
   const system = { type: "system" as const };
 
@@ -119,7 +123,8 @@ export function createNodeRoutes(options: {
         responses: { 200: { description: "Nodes and enrollments, without credentials" } } },
       handler: () => present(Effect.gen(function* () {
         if (!authority) return unavailable;
-        const nodes = (yield* authority.nodes()).map(({ caPem: _certificate, v: _version, ...node }) => node);
+        const nodes = (yield* authority.nodes()).map(({ caPem: _certificate, v: _version, ...node }) =>
+          ({ ...node, compatibility: nodeCompatibility(options.platformVersion, node.version) }));
         return { headers: noStore, body: { nodes, enrollments: yield* authority.enrollments() } };
       })),
     },
@@ -172,12 +177,12 @@ export function createNodeRoutes(options: {
         if (trust === undefined) return notAccepting;
         if (!admit()) return { status: 429, headers: { ...noStore, "retry-after": "60" }, body: { error: "Too many enrollment attempts." } };
         if (!isObject(body) || typeof body.nodeId !== "string" || typeof body.token !== "string" ||
-            typeof body.certPem !== "string" || typeof body.url !== "string") {
-          return bad("nodeId, token, certPem and url are required.");
+            typeof body.certPem !== "string" || typeof body.url !== "string" || typeof body.version !== "string") {
+          return bad("nodeId, token, certPem, url and version are required.");
         }
         // The peer address is not known here (a proxy may sit in front, and a
         // forwarded header is caller-controlled), so no source binding is applied.
-        return yield* authority.complete({ nodeId: body.nodeId, token: body.token, certPem: body.certPem, url: body.url }).pipe(
+        return yield* authority.complete({ nodeId: body.nodeId, token: body.token, certPem: body.certPem, url: body.url, version: body.version }).pipe(
           Effect.map(({ node }) => ({ status: 200, headers: noStore, body: { nodeId: node.nodeId, agentId: node.agentId, trust } })),
           Effect.catchTag("NodeEnrollmentError", (error) => Effect.succeed(answerFor(error))),
         );

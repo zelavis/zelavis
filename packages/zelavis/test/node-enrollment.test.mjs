@@ -295,3 +295,25 @@ test("destination returns one active node, and nothing for unknown, malformed or
   await go(authority.revoke("node-a"));
   assert.equal(await go(authority.destination("node-a")), undefined);
 });
+
+test("a worker newer than the Platform is refused without spending its token; equal and older are accepted and flagged", async () => {
+  const { nodeCompatibility } = await import("../dist/platform/node-enrollment.js");
+  const store = createMemorySystemStore();
+  const authority = createNodeEnrollmentAuthority({ store, now: () => 1_000_000, platformVersion: "1.2.0" });
+  const minted = await go(authority.mint({ nodeId: "node-a", origin: "cloud" }));
+  const complete = (version, token = minted.token) => go(authority.complete({ nodeId: "node-a", token, certPem: certA, url: URL_A, version }));
+
+  const newer = await failure(authority.complete({ nodeId: "node-a", token: minted.token, certPem: certA, url: URL_A, version: "1.3.0" }));
+  assert.equal(newer.code, "worker-newer");
+  assert.match(newer.message, /1\.3\.0.*1\.2\.0/);
+  const wrongToken = await failure(authority.complete({ nodeId: "node-a", token: "A".repeat(43), certPem: certA, url: URL_A, version: "1.3.0" }));
+  assert.equal(wrongToken.code, "refused", "a caller without the token learns nothing about versions");
+
+  const joined = await complete("1.1.9");
+  assert.equal(joined.node.version, "1.1.9", "the token was not spent by the refusal");
+  assert.equal(nodeCompatibility("1.2.0", "1.1.9"), "behind");
+  assert.equal(nodeCompatibility("1.2.0", "1.2.0"), "current");
+  assert.equal(nodeCompatibility("1.2.0", undefined), "unknown");
+  assert.equal(nodeCompatibility("1.2.0-alpha.3", "1.2.0-alpha.2"), "behind");
+  assert.equal((await failure(authority.complete({ nodeId: "node-a", token: minted.token, certPem: certA, url: URL_A, version: "not-a-version" }))).code, "invalid-request");
+});

@@ -3,6 +3,7 @@ import { mkdtemp, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ZELAVIS_VERSION } from "../dist/version.js";
 import { Effect } from "effect";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 import { createEnrollmentListener } from "../dist/adapters/_enrollment-listener.js";
@@ -47,7 +48,7 @@ test("a machine enrolls over TLS by pinning the Platform's own certificate", asy
   const agent = generateAgentCertificate({ names: ["203.0.113.9"] });
   const response = await pinned(`${base}${ENROLL}`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ nodeId: "node-a", token, certPem: agent.certPem, url: "https://203.0.113.9:8443" }),
+    body: JSON.stringify({ nodeId: "node-a", token, certPem: agent.certPem, url: "https://203.0.113.9:8443", version: ZELAVIS_VERSION }),
   });
   assert.equal(response.status, 200, await response.clone().text());
   assert.deepEqual(await response.json(), { nodeId: "node-a", agentId: "agent-node-a", trust: TRUST });

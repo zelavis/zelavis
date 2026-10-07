@@ -17,6 +17,7 @@ import { AGENT_TRUST_NAMESPACE, createNodeRoutes, publishAgentTrust } from "../d
 
 const run = promisify(execFile);
 const OWNER = { id: "owner", type: "user", permissions: ["*"] };
+import { ZELAVIS_VERSION as VERSION } from "../dist/version.js";
 const AGENT_URL = "https://127.0.0.1:9";
 const TRUST = { keys: [{
   keyId: "platform-a", publicKey: Buffer.alloc(32, 7).toString("base64"),
@@ -74,15 +75,16 @@ test("the whole flow over HTTP: issue, enroll anonymously, list without credenti
 
   as(undefined);
   const enrolled = await json(await send("POST", "/runtime/nodes/enroll",
-    { nodeId: "node-a", token: issued.body.token, certPem, url: AGENT_URL }));
+    { nodeId: "node-a", token: issued.body.token, certPem, url: AGENT_URL, version: VERSION }));
   assert.equal(enrolled.status, 200, JSON.stringify(enrolled.body));
   assert.deepEqual(enrolled.body, { nodeId: "node-a", agentId: "agent-node-a", trust: TRUST });
 
   as(OWNER);
   const listed = await json(await send("GET", "/runtime/nodes"));
   assert.equal(listed.status, 200);
-  assert.deepEqual(shape(listed.body.nodes[0]), ["agentId", "certSha256", "enrolledAt", "nodeId", "state", "url"],
+  assert.deepEqual(shape(listed.body.nodes[0]), ["agentId", "certSha256", "compatibility", "enrolledAt", "nodeId", "state", "url", "version"],
     "no certificate, no internal version");
+  assert.deepEqual([listed.body.nodes[0].version, listed.body.nodes[0].compatibility], [VERSION, "current"]);
   assert.deepEqual(listed.body.enrollments.map((e) => [e.nodeId, e.state]), [["node-a", "consumed"]]);
   assert.ok(!JSON.stringify(listed.body).includes(issued.body.token));
   assert.ok(!JSON.stringify(listed.body).toLowerCase().includes("tokenhash"));
@@ -95,12 +97,12 @@ test("HTTP, the SDK and the CLI return the same results for the same operations"
   const { send, client, cli } = await platform(t);
   const viaHttp = async (nodeId) => {
     const issued = (await json(await send("POST", "/runtime/nodes/enrollments", { nodeId }))).body;
-    const enrolled = (await json(await send("POST", "/runtime/nodes/enroll", { nodeId, token: issued.token, certPem, url: AGENT_URL }))).body;
+    const enrolled = (await json(await send("POST", "/runtime/nodes/enroll", { nodeId, token: issued.token, certPem, url: AGENT_URL, version: VERSION }))).body;
     return { issued, enrolled, removed: (await json(await send("DELETE", `/runtime/nodes/${nodeId}`))).body };
   };
   const viaSdk = async (nodeId) => {
     const issued = await client.nodes.createEnrollment({ nodeId });
-    const enrolled = await client.nodes.enroll({ nodeId, token: issued.token, certPem, url: AGENT_URL });
+    const enrolled = await client.nodes.enroll({ nodeId, token: issued.token, certPem, url: AGENT_URL, version: VERSION });
     return { issued, enrolled, removed: await client.nodes.remove(nodeId) };
   };
   const viaCli = async (nodeId) => {
@@ -127,7 +129,7 @@ test("the same failures, with the same status and message, on all three surfaces
   await store.set("fabric.project-ownership.v1", "project-a", { projectId: "project-a", nodeId: "busy", state: "active" });
   const enrolledBusy = await (async () => {
     const issued = (await json(await send("POST", "/runtime/nodes/enrollments", { nodeId: "busy" }))).body;
-    return send("POST", "/runtime/nodes/enroll", { nodeId: "busy", token: issued.token, certPem, url: AGENT_URL });
+    return send("POST", "/runtime/nodes/enroll", { nodeId: "busy", token: issued.token, certPem, url: AGENT_URL, version: VERSION });
   })();
   assert.equal(enrolledBusy.status, 200);
 
@@ -140,12 +142,12 @@ test("the same failures, with the same status and message, on all three surfaces
       http: () => send("POST", "/runtime/nodes/enrollments", { nodeId: "Not Valid" }),
       sdk: () => client.nodes.createEnrollment({ nodeId: "Not Valid" }), cli: () => cli("enroll-token", "Not Valid") },
     { name: "wrong token", status: 403,
-      http: () => send("POST", "/runtime/nodes/enroll", { nodeId: "taken", token: wrongToken, certPem, url: AGENT_URL }),
-      sdk: () => client.nodes.enroll({ nodeId: "taken", token: wrongToken, certPem, url: AGENT_URL }),
+      http: () => send("POST", "/runtime/nodes/enroll", { nodeId: "taken", token: wrongToken, certPem, url: AGENT_URL, version: VERSION }),
+      sdk: () => client.nodes.enroll({ nodeId: "taken", token: wrongToken, certPem, url: AGENT_URL, version: VERSION }),
       cli: () => cli("enroll", "taken", "--enrollment-token", wrongToken, "--cert-file", certFile, "--agent-url", AGENT_URL) },
     { name: "unknown node", status: 403,
-      http: () => send("POST", "/runtime/nodes/enroll", { nodeId: "ghost", token: wrongToken, certPem, url: AGENT_URL }),
-      sdk: () => client.nodes.enroll({ nodeId: "ghost", token: wrongToken, certPem, url: AGENT_URL }),
+      http: () => send("POST", "/runtime/nodes/enroll", { nodeId: "ghost", token: wrongToken, certPem, url: AGENT_URL, version: VERSION }),
+      sdk: () => client.nodes.enroll({ nodeId: "ghost", token: wrongToken, certPem, url: AGENT_URL, version: VERSION }),
       cli: () => cli("enroll", "ghost", "--enrollment-token", wrongToken, "--cert-file", certFile, "--agent-url", AGENT_URL) },
     { name: "remove an unknown node", status: 404,
       http: () => send("DELETE", "/runtime/nodes/ghost"), sdk: () => client.nodes.remove("ghost"), cli: () => cli("remove", "ghost") },
@@ -177,7 +179,7 @@ test("a refused enrollment says nothing about why, whatever the reason", async (
   ];
   const bodies = [];
   for (const attempt of attempts) {
-    const answered = await json(await send("POST", "/runtime/nodes/enroll", { ...attempt, certPem, url: AGENT_URL }));
+    const answered = await json(await send("POST", "/runtime/nodes/enroll", { ...attempt, certPem, url: AGENT_URL, version: VERSION }));
     assert.equal(answered.status, 403);
     bodies.push(JSON.stringify(answered.body));
   }
@@ -207,7 +209,7 @@ test("an installation that has not published trust keys does not accept nodes", 
   const { send, client } = await platform(t, { trust: false });
   const issued = await json(await send("POST", "/runtime/nodes/enrollments", { nodeId: "node-a" }));
   assert.deepEqual([issued.status, issued.body.code], [409, "nodes-disabled"]);
-  const enroll = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-a", token: "A".repeat(43), certPem, url: AGENT_URL }));
+  const enroll = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-a", token: "A".repeat(43), certPem, url: AGENT_URL, version: VERSION }));
   assert.deepEqual([enroll.status, enroll.body.code], [409, "nodes-disabled"]);
   assert.deepEqual(await client.nodes.list(), { nodes: [], enrollments: [] });
 });
@@ -215,7 +217,7 @@ test("an installation that has not published trust keys does not accept nodes", 
 test("a node with Projects placed on it cannot be removed until they are released", async (t) => {
   const { store, send } = await platform(t);
   const issued = (await json(await send("POST", "/runtime/nodes/enrollments", { nodeId: "busy" }))).body;
-  await send("POST", "/runtime/nodes/enroll", { nodeId: "busy", token: issued.token, certPem, url: AGENT_URL });
+  await send("POST", "/runtime/nodes/enroll", { nodeId: "busy", token: issued.token, certPem, url: AGENT_URL, version: VERSION });
   await store.set("fabric.project-ownership.v1", "project-a", { projectId: "project-a", nodeId: "busy", state: "active" });
   await store.set("fabric.project-ownership.v1", "project-b", { projectId: "project-b", nodeId: "other", state: "active" });
   const refused = await json(await send("DELETE", "/runtime/nodes/busy"));
@@ -229,7 +231,7 @@ test("enrollment attempts are bounded, and the window reopens", async () => {
   await Effect.runPromise(publishAgentTrust(store, TRUST));
   const clock = { now: 1_000_000 };
   const enroll = createNodeRoutes({ store, now: () => clock.now }).find((route) => route.id === "runtime.nodes.enroll");
-  const attempt = () => enroll.handler({ body: { nodeId: "node-a", token: "A".repeat(43), certPem, url: AGENT_URL } });
+  const attempt = () => enroll.handler({ body: { nodeId: "node-a", token: "A".repeat(43), certPem, url: AGENT_URL, version: VERSION } });
   for (let index = 0; index < 120; index++) assert.equal((await attempt()).status, 403, `attempt ${index + 1}`);
   const limited = await attempt();
   assert.equal(limited.status, 429);
@@ -267,4 +269,16 @@ test("the CLI writes trust keys for the Agent, and refuses missing or unknown op
   await assert.rejects(() => cli("list", "--bogus", "1"), /Unknown nodes option/);
   await assert.rejects(() => cli("enroll-token", "node-b", "--ttl-minutes", "0"), /whole number/);
   await assert.rejects(() => cli("frobnicate"), /Unknown nodes command/);
+});
+
+test("a worker newer than the Platform gets 409 worker-newer, and the credential still works afterwards", async (t) => {
+  const { send, as } = await platform(t);
+  const issued = await json(await send("POST", "/runtime/nodes/enrollments", { nodeId: "node-new" }));
+  as(undefined);
+  const newer = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-new", token: issued.body.token, certPem, url: AGENT_URL, version: "999.0.0" }));
+  assert.deepEqual([newer.status, newer.body.code], [409, "worker-newer"]);
+  const missing = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-new", token: issued.body.token, certPem, url: AGENT_URL }));
+  assert.equal(missing.status, 400, "a version is required");
+  const joined = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-new", token: issued.body.token, certPem, url: AGENT_URL, version: VERSION }));
+  assert.equal(joined.status, 200);
 });

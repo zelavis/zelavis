@@ -614,6 +614,10 @@ export interface ZelavisNode {
   readonly enrolledAt: number;
   readonly state: "active" | "revoked";
   readonly revokedAt?: number;
+  /** The Zelavis version the machine reported when it joined. */
+  readonly version?: string;
+  /** `behind` when older than this Platform, `unknown` when it reported no version. Newer machines are refused at enrollment. */
+  readonly compatibility: "current" | "behind" | "unknown";
 }
 
 /** An enrollment as an operator sees it: never its token. */
@@ -644,6 +648,8 @@ export interface ZelavisNodeEnrollInput {
   readonly certPem: string;
   /** The Agent's HTTPS origin. */
   readonly url: string;
+  /** The Zelavis version the machine runs. A machine newer than the Platform is refused with 409 `worker-newer`. */
+  readonly version: string;
 }
 
 export interface ZelavisNodeEnrollResult {

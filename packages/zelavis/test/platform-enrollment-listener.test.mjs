@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ZELAVIS_VERSION } from "../dist/version.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -52,7 +53,7 @@ test("the persistent host serves the enrollment listener: machines pin its certi
     const agent = generateAgentCertificate({ names: ["203.0.113.9"] });
     const joined = await pinned(`${endpoint.url}/zelavis/api/v1/runtime/nodes/enroll`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ nodeId: "node-a", token: issued.token, certPem: agent.certPem, url: "https://203.0.113.9:8443" }),
+      body: JSON.stringify({ nodeId: "node-a", token: issued.token, certPem: agent.certPem, url: "https://203.0.113.9:8443", version: ZELAVIS_VERSION }),
     });
     assert.equal(joined.status, 200, await joined.clone().text());
     assert.equal((await joined.json()).agentId, "agent-node-a");

@@ -8,6 +8,7 @@ import { firstRoutableAddress } from "../adapters/_host-address.js";
 import { createPinnedFetch, normalizeFingerprint } from "../adapters/_pinned-fetch.js";
 import { createZelavisClient, ZelavisClientHttpError } from "../sdk/fetch.js";
 import { defaultCliDataDirectory } from "./data-directory.js";
+import { ZELAVIS_VERSION } from "../version.js";
 
 const usage =
   "zelavis worker join --platform-url https://HOST[/zelavis] --node-id ID --enrollment-token TOKEN " +
@@ -247,7 +248,7 @@ export function runWorkerCommand(args: readonly string[]): Promise<void> {
         ...(caPem === undefined ? {} : { caPem }),
       }),
     });
-    const enrolled = yield* integration(() => client.nodes.enroll({ nodeId, token, certPem: certPem!, url: agentUrl })).pipe(
+    const enrolled = yield* integration(() => client.nodes.enroll({ nodeId, token, certPem: certPem!, url: agentUrl, version: ZELAVIS_VERSION })).pipe(
       Effect.catch((failure) => {
         const cause = failure.cause;
         if (cause instanceof ZelavisClientHttpError) {
