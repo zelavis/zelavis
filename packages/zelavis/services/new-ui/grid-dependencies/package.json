@@ -1,0 +1,19 @@
+{
+  "name": "zelavis-new-ui-grid-dependencies",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Isolated, pinned MIT grid dependencies for the new-ui experiment",
+  "dependencies": {
+    "@glideapps/glide-data-grid": "6.0.3",
+    "tabulator-tables": "6.6.1",
+    "@visactor/vtable": "1.26.8",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@types/react": "18.3.1",
+    "@types/react-dom": "18.3.1",
+    "@types/tabulator-tables": "6.3.1",
+    "lodash": "4.17.21",
+    "marked": "4.3.0",
+    "react-responsive-carousel": "3.2.23"
+  }
+}
