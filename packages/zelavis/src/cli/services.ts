@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 export type RuntimeServiceStatus = "installed" | "available";
 export type RuntimeServiceSource = "official" | "community";
 
@@ -51,11 +53,12 @@ export function resolveRuntimeApiBase(url = DEFAULT_RUNTIME_URL): string {
   return `${normalized}/api/v1`;
 }
 
-async function readJson<TBody>(
+function readJson<TBody>(
   response: Response,
   url: string,
 ): Promise<TBody> {
-  const text = await response.text();
+    return present(Effect.gen(function* (): Effect.fn.Return<TBody, IntegrationFailure> {
+  const text = (yield* integrationValue(response.text()));
   const body = text ? JSON.parse(text) as unknown : undefined;
 
   if (!response.ok) {
@@ -71,85 +74,96 @@ async function readJson<TBody>(
   }
 
   return body as TBody;
-}
+}));
+  }
 
-async function requestJson<TBody>(
+function requestJson<TBody>(
   path: string,
   options: RuntimeServicesClientOptions & {
     method?: string;
     body?: unknown;
   } = {},
 ): Promise<TBody> {
+    return present(Effect.gen(function* (): Effect.fn.Return<TBody, IntegrationFailure> {
   const fetcher = options.fetch ?? fetch;
   const apiBase = resolveRuntimeApiBase(options.url);
   const url = `${apiBase}${path}`;
   const headers = new Headers(options.headers);
   if (options.body) headers.set("content-type", "application/json");
-  const response = await fetcher(url, {
+  const response = (yield* integrationValue(fetcher(url, {
     method: options.method,
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  })));
 
-  return readJson<TBody>(response, url);
-}
+  return (yield* integrationValue(readJson<TBody>(response, url)));
+}));
+  }
 
-export async function listRuntimeServices(
+export function listRuntimeServices(
   options: RuntimeServicesClientOptions = {},
 ): Promise<RuntimeServiceRegistryEntry[]> {
-  const body = await requestJson<{ services: RuntimeServiceRegistryEntry[] }>(
+    return present(Effect.gen(function* (): Effect.fn.Return<RuntimeServiceRegistryEntry[], IntegrationFailure> {
+  const body = (yield* integrationValue(requestJson<{ services: RuntimeServiceRegistryEntry[] }>(
     "/runtime/services",
     options,
-  );
+  )));
 
   return body.services;
-}
+}));
+  }
 
-export async function listRuntimeServiceSources(
+export function listRuntimeServiceSources(
   options: RuntimeServicesClientOptions = {},
 ): Promise<readonly ServiceSourceDiagnostic[]> {
-  const body = await requestJson<{ sources: readonly ServiceSourceDiagnostic[] }>(
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly ServiceSourceDiagnostic[], IntegrationFailure> {
+  const body = (yield* integrationValue(requestJson<{ sources: readonly ServiceSourceDiagnostic[] }>(
     "/runtime/services/sources", options,
-  );
+  )));
   return body.sources;
-}
+}));
+  }
 
-export async function registerRuntimeService(
+export function registerRuntimeService(
   input: RuntimeServiceRegistryCreateInput,
   options: RuntimeServicesClientOptions = {},
 ): Promise<RuntimeServiceRegistryMutationResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<RuntimeServiceRegistryMutationResult, IntegrationFailure> {
   if (!input.specifier.trim()) {
     throw new Error("Service registration requires a specifier.");
   }
 
-  return requestJson<RuntimeServiceRegistryMutationResult>(
+  return (yield* integrationValue(requestJson<RuntimeServiceRegistryMutationResult>(
     "/runtime/services",
     {
       ...options,
       method: "POST",
       body: input,
     },
-  );
-}
+  )));
+}));
+  }
 
-export async function updateRuntimeService(
+export function updateRuntimeService(
   name: string,
   input: RuntimeServiceRegistryUpdateInput,
   options: RuntimeServicesClientOptions = {},
 ): Promise<RuntimeServiceRegistryMutationResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<RuntimeServiceRegistryMutationResult, IntegrationFailure> {
   if (!name.trim()) {
     throw new Error("Service name is required.");
   }
 
-  return requestJson<RuntimeServiceRegistryMutationResult>(
+  return (yield* integrationValue(requestJson<RuntimeServiceRegistryMutationResult>(
     `/runtime/services/${encodeURIComponent(name)}`,
     {
       ...options,
       method: "PATCH",
       body: input,
     },
-  );
-}
+  )));
+}));
+  }
 
 export function formatRuntimeServiceList(
   services: readonly RuntimeServiceRegistryEntry[],
@@ -202,19 +216,21 @@ export interface RuntimeExtensionPoint {
  * plugin it extends rather than in a general catalogue, where a payment
  * provider sitting next to a dashboard theme tells nobody anything.
  */
-export async function listRuntimeExtensions(
+export function listRuntimeExtensions(
   options: RuntimeServicesClientOptions & { owner?: string } = {},
 ): Promise<RuntimeExtensionPoint[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<RuntimeExtensionPoint[], IntegrationFailure> {
   const query = options.owner
     ? `?owner=${encodeURIComponent(options.owner)}`
     : "";
-  const body = await requestJson<{ extensionPoints: RuntimeExtensionPoint[] }>(
+  const body = (yield* integrationValue(requestJson<{ extensionPoints: RuntimeExtensionPoint[] }>(
     `/runtime/extensions${query}`,
     options,
-  );
+  )));
 
   return body.extensionPoints;
-}
+}));
+  }
 
 export function formatRuntimeExtensions(
   points: readonly RuntimeExtensionPoint[],

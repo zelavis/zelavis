@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type {
   ZelavisEdgeCapability,
   ZelavisEdgeHostname,
@@ -59,7 +61,8 @@ function parsePublication(value: string): Pick<ZelavisEdgePublication, "id" | "r
 }
 
 /** `zelavis edge` uses the same client contract as the dashboard and API. */
-export async function runEdgeCommand(args: readonly string[]): Promise<void> {
+export function runEdgeCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
@@ -164,7 +167,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
 
   if (action === "status") {
     if (subArgs.length > 0) throw new Error(`edge status does not accept arguments. ${usage}`);
-    const status = await client.edge.status();
+    const status = (yield* integrationValue(client.edge.status()));
     print(status, () => [
       `Active adapter: ${status.policy.activeAdapterId ?? "none"}`,
       `Desired adapter: ${status.policy.desiredAdapterId}`,
@@ -179,7 +182,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
 
   if (action === "publish") {
     if (subArgs.length > 0) throw new Error(`edge publish does not accept arguments. ${usage}`);
-    const pub = await client.edge.publish();
+    const pub = (yield* integrationValue(client.edge.publish()));
     print(pub, () =>
       `Published Edge revision ${pub.revision} (${pub.routeCount} routes, ${pub.requiredCapabilities.length} capabilities).`);
     return;
@@ -190,11 +193,11 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
     if (extra.length > 0) throw new Error(`Unexpected argument "${extra[0]}". ${usage}`);
 
     if (routeAction === "list") {
-      const result = await client.edge.routes({
+      const result = (yield* integrationValue(client.edge.routes({
         ...(scopeFlag ? { scope: scopeFlag } : {}),
         ...(projectIdFlag ? { projectId: projectIdFlag } : {}),
         ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
-      });
+      })));
       print(result, () => [
         `Current publication: ${result.publication ? `rev ${result.publication.revision} (${result.publication.routeCount} routes)` : "none"}`,
         "",
@@ -213,7 +216,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
 
     if (routeAction === "delete") {
       if (!routeId) throw new Error(`edge routes delete requires a route id.`);
-      const deleted = await client.edge.deleteRoute(routeId);
+      const deleted = (yield* integrationValue(client.edge.deleteRoute(routeId)));
       print({ deleted }, () =>
         deleted ? `Deleted Edge route "${routeId}".` : `Edge route "${routeId}" was not found.`);
       return;
@@ -252,10 +255,10 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
         };
       }
 
-      const result = await client.edge.putRoute({
+      const result = (yield* integrationValue(client.edge.putRoute({
         route,
         ...(hostname ? { hostname } : {}),
-      });
+      })));
       print(result, () =>
         `Stored Edge route "${result.route.id}" (${result.route.hostname}${result.route.pathPrefix}).`);
       return;
@@ -281,7 +284,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
     },
   };
   if (action === "plan") {
-    const plan = await client.edge.plan(input);
+    const plan = (yield* integrationValue(client.edge.plan(input)));
     print({ plan }, () => plan.ready
       ? `Edge switch to ${plan.targetAdapterId} is ready.`
       : `Edge switch to ${plan.targetAdapterId} is not ready: ${[
@@ -292,7 +295,8 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
         ].filter(Boolean).join("; ") || plan.detection.state}`);
     return;
   }
-  const edgeSwitch = await client.edge.switch(input);
+  const edgeSwitch = (yield* integrationValue(client.edge.switch(input)));
   print({ edgeSwitch }, () =>
     `Edge switch ${edgeSwitch.id} completed with ${edgeSwitch.targetAdapterId}.`);
-}
+}));
+  }

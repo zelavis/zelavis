@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 /**
  * How long a claim is honoured with no entity behind it. A creator writes its
  * entity within milliseconds of claiming, so a claim this old has no live
@@ -66,16 +68,16 @@ export function credentialKeys(credential: Pick<Credential, "provider" | "identi
   }];
 }
 
-export async function claimAll(
+const claimAllProgram = (
   backend: ClaimBackend,
   keys: readonly UniqueKey[],
   owner: string,
   ownerExists: (owner: string) => Promise<boolean>,
-): Promise<void> {
+): Effect.Effect<void, IntegrationFailure> => Effect.gen(function* () {
   const claimed: UniqueKey[] = [];
-  try {
+  yield* Effect.gen(function* () {
     for (const unique of keys) {
-      const result = await backend.claim(unique.key, owner);
+      const result = yield* integration(() => backend.claim(unique.key, owner));
       if (result.claimed) {
         claimed.push(unique);
         continue;
@@ -87,26 +89,42 @@ export async function claimAll(
       }
       if (
         Date.now() - result.at > ORPHAN_CLAIM_GRACE_MS &&
-        !(await ownerExists(result.owner)) &&
-        (await backend.takeover(unique.key, result.owner, owner))
+        !(yield* integration(() => ownerExists(result.owner))) &&
+        (yield* integration(() => backend.takeover(unique.key, result.owner, owner)))
       ) {
         claimed.push(unique);
         continue;
       }
       throw new IdentityConflictError(unique.field, unique.message);
     }
-  } catch (error) {
-    await Promise.all(claimed.map((unique) => backend.release(unique.key, owner)));
-    throw error;
-  }
+  }).pipe(Effect.onError(() => releaseAllProgram(backend, claimed, owner).pipe(Effect.orDie)));
+});
+
+const releaseAllProgram = (
+  backend: ClaimBackend,
+  keys: readonly UniqueKey[],
+  owner: string,
+): Effect.Effect<void, IntegrationFailure> => Effect.forEach(
+  keys,
+  (unique) => integration(() => backend.release(unique.key, owner)),
+  { concurrency: Math.max(1, keys.length), discard: true },
+);
+
+export function claimAll(
+  backend: ClaimBackend,
+  keys: readonly UniqueKey[],
+  owner: string,
+  ownerExists: (owner: string) => Promise<boolean>,
+): Promise<void> {
+  return present(claimAllProgram(backend, keys, owner, ownerExists));
 }
 
-export async function releaseAll(
+export function releaseAll(
   backend: ClaimBackend,
   keys: readonly UniqueKey[],
   owner: string,
 ): Promise<void> {
-  await Promise.all(keys.map((unique) => backend.release(unique.key, owner)));
+  return present(releaseAllProgram(backend, keys, owner));
 }
 
 function difference(from: readonly UniqueKey[], without: readonly UniqueKey[]): UniqueKey[] {
@@ -119,7 +137,9 @@ export function withUniqueAccounts(
   inner: AccountRepository,
   backend: ClaimBackend,
 ): AccountRepository {
-  const exists = async (id: string) => (await inner.findById(id)) !== null;
+  const exists = (id: string) => present(Effect.gen(function* () {
+    return ((yield* integrationValue(inner.findById(id)))) !== null;
+  }));
   return {
     // Delegated one by one: a repository may be a class instance, whose
     // methods a spread would silently drop.
@@ -127,33 +147,31 @@ export function withUniqueAccounts(
     findByEmail: (email) => inner.findByEmail(email),
     findByUsername: (username) => inner.findByUsername(username),
     list: () => inner.list(),
-    async create(account) {
-      const keys = accountKeys(account);
-      await claimAll(backend, keys, account.id, exists);
-      try {
-        return await inner.create(account);
-      } catch (error) {
-        await releaseAll(backend, keys, account.id);
-        throw error;
-      }
+    create(account) {
+      return present(Effect.gen(function* () {
+        const keys = accountKeys(account);
+        yield* claimAllProgram(backend, keys, account.id, exists);
+        return yield* integration(() => inner.create(account)).pipe(
+          Effect.onError(() => releaseAllProgram(backend, keys, account.id).pipe(Effect.orDie)),
+        );
+      }));
     },
-    async update(account) {
-      const before = await inner.findById(account.id);
-      const oldKeys = before ? accountKeys(before) : [];
-      const newKeys = accountKeys(account);
-      const added = difference(newKeys, oldKeys);
-      await claimAll(backend, added, account.id, exists);
-      try {
-        const written = await inner.update(account);
-        await releaseAll(backend, difference(oldKeys, newKeys), account.id);
-        return written;
-      } catch (error) {
-        await releaseAll(backend, added, account.id);
-        throw error;
-      }
+    update(account) {
+      return present(Effect.gen(function* () {
+        const before = yield* integration(() => inner.findById(account.id));
+        const oldKeys = before ? accountKeys(before) : [];
+        const newKeys = accountKeys(account);
+        const added = difference(newKeys, oldKeys);
+        yield* claimAllProgram(backend, added, account.id, exists);
+        return yield* Effect.gen(function* () {
+          const written = yield* integration(() => inner.update(account));
+          yield* releaseAllProgram(backend, difference(oldKeys, newKeys), account.id);
+          return written;
+        }).pipe(Effect.onError(() => releaseAllProgram(backend, added, account.id).pipe(Effect.orDie)));
+      }));
     },
-    async mutate(id, mutation) {
-      return inner.mutate(id, (current) => {
+    mutate(id, mutation) {
+    return present(integration(() => inner.mutate(id, (current) => {
         const next = mutation(current);
         if (
           current && next &&
@@ -165,14 +183,16 @@ export function withUniqueAccounts(
           );
         }
         return next;
-      });
-    },
-    async delete(id) {
-      const before = await inner.findById(id);
-      const deleted = await inner.delete(id);
-      if (before) await releaseAll(backend, accountKeys(before), id);
+      })));
+  },
+    delete(id) {
+    return present(Effect.gen(function* () {
+      const before = (yield* integrationValue(inner.findById(id)));
+      const deleted = (yield* integrationValue(inner.delete(id)));
+      if (before) (yield* integrationValue(releaseAll(backend, accountKeys(before), id)));
       return deleted;
-    },
+    }));
+  },
   };
 }
 
@@ -181,42 +201,44 @@ export function withUniqueCredentials(
   inner: CredentialRepository,
   backend: ClaimBackend,
 ): CredentialRepository {
-  const exists = async (id: string) => (await inner.findById(id)) !== null;
+  const exists = (id: string) => present(Effect.gen(function* () {
+    return ((yield* integrationValue(inner.findById(id)))) !== null;
+  }));
   return {
     findById: (id) => inner.findById(id),
     findByProviderIdentifier: (provider, identifier) =>
       inner.findByProviderIdentifier(provider, identifier),
     listByAccountId: (accountId) => inner.listByAccountId(accountId),
-    async create(credential) {
-      const keys = credentialKeys(credential);
-      await claimAll(backend, keys, credential.id, exists);
-      try {
-        return await inner.create(credential);
-      } catch (error) {
-        await releaseAll(backend, keys, credential.id);
-        throw error;
-      }
+    create(credential) {
+      return present(Effect.gen(function* () {
+        const keys = credentialKeys(credential);
+        yield* claimAllProgram(backend, keys, credential.id, exists);
+        return yield* integration(() => inner.create(credential)).pipe(
+          Effect.onError(() => releaseAllProgram(backend, keys, credential.id).pipe(Effect.orDie)),
+        );
+      }));
     },
-    async update(credential) {
-      const before = await inner.findById(credential.id);
-      const oldKeys = before ? credentialKeys(before) : [];
-      const newKeys = credentialKeys(credential);
-      const added = difference(newKeys, oldKeys);
-      await claimAll(backend, added, credential.id, exists);
-      try {
-        const written = await inner.update(credential);
-        await releaseAll(backend, difference(oldKeys, newKeys), credential.id);
-        return written;
-      } catch (error) {
-        await releaseAll(backend, added, credential.id);
-        throw error;
-      }
+    update(credential) {
+      return present(Effect.gen(function* () {
+        const before = yield* integration(() => inner.findById(credential.id));
+        const oldKeys = before ? credentialKeys(before) : [];
+        const newKeys = credentialKeys(credential);
+        const added = difference(newKeys, oldKeys);
+        yield* claimAllProgram(backend, added, credential.id, exists);
+        return yield* Effect.gen(function* () {
+          const written = yield* integration(() => inner.update(credential));
+          yield* releaseAllProgram(backend, difference(oldKeys, newKeys), credential.id);
+          return written;
+        }).pipe(Effect.onError(() => releaseAllProgram(backend, added, credential.id).pipe(Effect.orDie)));
+      }));
     },
-    async delete(id) {
-      const before = await inner.findById(id);
-      const deleted = await inner.delete(id);
-      if (before) await releaseAll(backend, credentialKeys(before), id);
+    delete(id) {
+    return present(Effect.gen(function* () {
+      const before = (yield* integrationValue(inner.findById(id)));
+      const deleted = (yield* integrationValue(inner.delete(id)));
+      if (before) (yield* integrationValue(releaseAll(backend, credentialKeys(before), id)));
       return deleted;
-    },
+    }));
+  },
   };
 }

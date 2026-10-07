@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Signed authority envelope for the Project Gateway.
  *
@@ -84,31 +86,33 @@ function canonicalClaims(claims: ZelavisGatewayAuthorityClaims): string {
   ]);
 }
 
-async function importSigningKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+function importSigningKey(secret: string): Promise<CryptoKey> {
+    return present(integration(() => crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
-  );
-}
+  )));
+  }
 
 /** Signs claims into a `payload.signature` token. */
-export async function signGatewayAuthority(
+export function signGatewayAuthority(
   secret: string,
   claims: ZelavisGatewayAuthorityClaims,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const payload = canonicalClaims(claims);
-  const signature = await crypto.subtle.sign(
+  const signature = (yield* integrationValue(crypto.subtle.sign(
     "HMAC",
-    await importSigningKey(secret),
+    (yield* integrationValue(importSigningKey(secret))),
     new TextEncoder().encode(payload),
-  );
+  )));
   return `${base64UrlEncode(new TextEncoder().encode(payload))}.${base64UrlEncode(
     new Uint8Array(signature),
   )}`;
-}
+}));
+  }
 
 export interface VerifyGatewayAuthorityOptions {
   /** Only envelopes issued for this Project are accepted. */
@@ -123,11 +127,12 @@ export interface VerifyGatewayAuthorityOptions {
  * failure — a malformed token, a bad signature, the wrong Project, an expired
  * envelope, or a replayed nonce are all simply "not authorized".
  */
-export async function verifyGatewayAuthority(
+export function verifyGatewayAuthority(
   secret: string,
   token: string,
   options: VerifyGatewayAuthorityOptions,
 ): Promise<ZelavisGatewayAuthorityClaims | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisGatewayAuthorityClaims | undefined, IntegrationFailure> {
   const separator = token.indexOf(".");
   if (separator <= 0 || separator === token.length - 1) return undefined;
 
@@ -144,12 +149,12 @@ export async function verifyGatewayAuthority(
   }
 
   // `crypto.subtle.verify` is constant-time with respect to the signature.
-  const valid = await crypto.subtle.verify(
+  const valid = (yield* integrationValue(crypto.subtle.verify(
     "HMAC",
-    await importSigningKey(secret),
+    (yield* integrationValue(importSigningKey(secret))),
     signatureBytes,
     payloadBytes,
-  );
+  )));
   if (!valid) return undefined;
 
   let decoded: unknown;
@@ -218,7 +223,8 @@ export async function verifyGatewayAuthority(
     expiresAt,
     nonce,
   };
-}
+}));
+  }
 
 /**
  * Bounded single-use nonce tracker for one Project runtime.

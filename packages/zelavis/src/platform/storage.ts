@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Platform file storage: object metadata, checksums, file references, and the
  * storage subsystem routes.
@@ -50,18 +52,21 @@ function readStorageMetadataHeaders(
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-async function readRequestBytes(
+function readRequestBytes(
   request: Request | undefined,
 ): Promise<Uint8Array> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Uint8Array, IntegrationFailure> {
   if (!request) {
     return new Uint8Array();
   }
 
-  const body = await request.arrayBuffer();
+  const body = (yield* integrationValue(request.arrayBuffer()));
   return new Uint8Array(body);
-}
+}));
+  }
 
-async function computeSha256Hex(body: Uint8Array): Promise<string> {
+function computeSha256Hex(body: Uint8Array): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   if (
     typeof crypto === "undefined" ||
     !crypto.subtle ||
@@ -76,11 +81,12 @@ async function computeSha256Hex(body: Uint8Array): Promise<string> {
     body.byteOffset,
     body.byteOffset + body.byteLength,
   ) as ArrayBuffer;
-  const digest = await crypto.subtle.digest("SHA-256", view);
-  return [...new Uint8Array(digest)]
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", view)));
+  return (yield* integrationValue([...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+    .join("")));
+}));
+  }
 
 function readStorageChecksum(
   entry: Pick<ZelavisFileStorageEntry, "checksum" | "metadata">,
@@ -135,7 +141,7 @@ export function createFileReference(
 }
 
 
-export async function resolveStorageEndpointGroup(
+export function resolveStorageEndpointGroup(
   option: ZelavisStorageOptions | undefined,
   context: {
     rootPath: string;
@@ -143,6 +149,7 @@ export async function resolveStorageEndpointGroup(
     apiVersion: string;
   },
 ): Promise<ZelavisEndpointGroup<any> | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<any> | undefined, IntegrationFailure> {
   const storageOption = option ?? false;
 
   if (storageOption === false) {
@@ -170,10 +177,9 @@ export async function resolveStorageEndpointGroup(
           method: "GET",
           path: "/files",
           access: { permissions: ["storage.read"] },
-          handler: async ({ query }) => {
-            try {
-              const prefix = query.get("prefix") ?? undefined;
-              const files = storage.list ? await storage.list(prefix) : [];
+          handler: ({ query }) => present(Effect.gen(function* () {
+                          const prefix = query.get("prefix") ?? undefined;
+              const files = storage.list ? yield* integration(() => storage.list!(prefix)) : [];
               return {
                 status: 200,
                 body: {
@@ -187,23 +193,19 @@ export async function resolveStorageEndpointGroup(
                   ),
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "storage.files.read",
           method: "GET",
           path: "/files/*path",
-          handler: async ({ params, query }) => {
-            try {
-              const path = params.path ?? "";
+          handler: ({ params, query }) => present(Effect.gen(function* () {
+                          const path = params.path ?? "";
               if (!path) {
                 throw new ZelavisValidationError("Storage file path is required.");
               }
 
-              const file = await storage.get(path);
+              const file = yield* integration(() => storage.get(path));
               if (!file) {
                 throw new ZelavisValidationError("Storage file not found.");
               }
@@ -254,25 +256,21 @@ export async function resolveStorageEndpointGroup(
                 },
                 body: file.body,
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
         },
         {
           id: "storage.files.write",
           method: "PUT",
           path: "/files/*path",
           access: { permissions: ["storage.write"] },
-          handler: async ({ params, request, requestHeaders }) => {
-            try {
-              const path = params.path ?? "";
+          handler: ({ params, request, requestHeaders }) => present(Effect.gen(function* () {
+                          const path = params.path ?? "";
               if (!path) {
                 throw new ZelavisValidationError("Storage file path is required.");
               }
 
-              const body = await readRequestBytes(request);
-              const checksum = await computeSha256Hex(body);
+              const body = yield* integration(() => readRequestBytes(request));
+              const checksum = yield* integration(() => computeSha256Hex(body));
               const metadata = createStorageMetadata(
                 readStorageMetadataHeaders(requestHeaders),
                 checksum,
@@ -283,14 +281,14 @@ export async function resolveStorageEndpointGroup(
                 requestHeaders?.get("cache-control") ?? undefined;
               const contentDisposition =
                 requestHeaders?.get("content-disposition") ?? undefined;
-              const storedEntry = await storage.put({
+              const storedEntry = yield* integration(() => storage.put({
                 path,
                 body,
                 contentType,
                 cacheControl,
                 contentDisposition,
                 metadata,
-              });
+              }));
               const entry: ZelavisFileStorageEntry = {
                 ...storedEntry,
                 checksum: readStorageChecksum(storedEntry) ?? checksum,
@@ -317,24 +315,20 @@ export async function resolveStorageEndpointGroup(
                   }),
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "storage.files.delete",
           method: "DELETE",
           path: "/files/*path",
           access: { permissions: ["storage.write"] },
-          handler: async ({ params }) => {
-            try {
-              const path = params.path ?? "";
+          handler: ({ params }) => present(Effect.gen(function* () {
+                          const path = params.path ?? "";
               if (!path) {
                 throw new ZelavisValidationError("Storage file path is required.");
               }
 
-              const deleted = await storage.delete(path);
+              const deleted = yield* integration(() => storage.delete(path));
               if (!deleted) {
                 throw new ZelavisValidationError("Storage file not found.");
               }
@@ -346,12 +340,10 @@ export async function resolveStorageEndpointGroup(
                   path,
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
         },
       ],
     },
   };
-}
+}));
+  }

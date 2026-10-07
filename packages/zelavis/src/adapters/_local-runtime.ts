@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { evaluate, integrationValue, unwrapIntegrationResult, presentProtocol, present, integration, unwrapFailure, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { isString, optional, objectFields, parseJson, isUnknown, recordOf, arrayOf } from "../core/json-validation.js";
 /**
  * Shared service package infrastructure for local JS runtimes (Node.js, Bun).
@@ -395,21 +395,24 @@ function resolvePackageFilePath(root: string, path: string): string {
 // ESM import with mtime-based cache busting
 // ---------------------------------------------------------------------------
 
-async function importFilePath(filePath: string) {
+function importFilePath(filePath: string) {
+    return present(Effect.gen(function* () {
   const resolvedPath = resolve(filePath);
-  const fileStat = await stat(resolvedPath);
-  return import(`${pathToFileURL(resolvedPath).href}?mtime=${fileStat.mtimeMs}`);
-}
+  const fileStat = (yield* integrationValue(stat(resolvedPath)));
+  return (yield* integrationValue(import(`${pathToFileURL(resolvedPath).href}?mtime=${fileStat.mtimeMs}`)));
+}));
+  }
 
 // ---------------------------------------------------------------------------
 // Remote service download (https:// specifiers)
 // ---------------------------------------------------------------------------
 
-async function downloadRemoteService(
+function downloadRemoteService(
   specifier: string,
   serviceDirectory: string,
 ): Promise<string> {
-  const response = await fetch(specifier);
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
+  const response = (yield* integrationValue(fetch(specifier)));
 
   if (!response.ok) {
     throw new Error(
@@ -417,12 +420,12 @@ async function downloadRemoteService(
     );
   }
 
-  const source = await response.text();
+  const source = (yield* integrationValue(response.text()));
   const sourceHash = createHash("sha256").update(source).digest("hex");
   const specifierHash = createHash("sha256").update(specifier).digest("hex");
   const servicePath = join(serviceDirectory, specifierHash, `${sourceHash}.mjs`);
 
-  await writeFile(servicePath, source, { flag: "wx" }).catch(async (error) => {
+  (yield* integrationValue(writeFile(servicePath, source, { flag: "wx" }).catch((error) => present(Effect.gen(function* () {
     if (
       typeof error === "object" &&
       error !== null &&
@@ -430,7 +433,7 @@ async function downloadRemoteService(
       error.code === "ENOENT"
     ) {
       mkdirSync(dirname(servicePath), { recursive: true });
-      await writeFile(servicePath, source, { flag: "wx" }).catch((nextError) => {
+      (yield* integrationValue(writeFile(servicePath, source, { flag: "wx" }).catch((nextError) => {
         if (
           typeof nextError === "object" &&
           nextError !== null &&
@@ -440,7 +443,7 @@ async function downloadRemoteService(
           return;
         }
         throw nextError;
-      });
+      })));
       return;
     }
 
@@ -454,10 +457,11 @@ async function downloadRemoteService(
     }
 
     throw error;
-  });
+  })))));
 
   return servicePath;
-}
+}));
+  }
 
 // ---------------------------------------------------------------------------
 // Public service options interface (shared by node + bun)
@@ -610,17 +614,17 @@ const materializePackage = Effect.fn("materializePackage")(function* (
   );
 
   yield* Effect.tryPromise({
-    try: async () => {
-      await rm(temporaryDirectory, { recursive: true, force: true });
-      await mkdir(temporaryDirectory, { recursive: true });
+    try: () => present(Effect.gen(function* () {
+      (yield* integrationValue(rm(temporaryDirectory, { recursive: true, force: true })));
+      (yield* integrationValue(mkdir(temporaryDirectory, { recursive: true })));
       for (const entry of entries) {
         const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
-        await mkdir(dirname(filePath), { recursive: true });
-        await writeFile(filePath, entry.body);
+        (yield* integrationValue(mkdir(dirname(filePath), { recursive: true })));
+        (yield* integrationValue(writeFile(filePath, entry.body)));
       }
-      await mkdir(dirname(packageDirectory), { recursive: true });
+      (yield* integrationValue(mkdir(dirname(packageDirectory), { recursive: true })));
       renameSync(temporaryDirectory, packageDirectory);
-    },
+    })),
     catch: (cause) => {
       const raced =
         typeof cause === "object" && cause !== null && "code" in cause
@@ -646,10 +650,11 @@ const materializePackage = Effect.fn("materializePackage")(function* (
  * service would break a lazy import it makes later. `.tmp` holds installs that
  * were interrupted. Anything that cannot be read as a registry is left alone.
  */
-export async function pruneServicePackages(options: {
+export function pruneServicePackages(options: {
   readonly directory: string;
   readonly referencedSpecifiers: readonly string[];
 }): Promise<{ readonly removed: readonly string[] }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ readonly removed: readonly string[] }, IntegrationFailure> {
   const root = resolve(options.directory);
   const packages = join(root, "packages");
   const referenced = new Set<string>();
@@ -663,19 +668,20 @@ export async function pruneServicePackages(options: {
 
   const removed: string[] = [];
   if (existsSync(packages)) {
-    for (const entry of await readdir(packages, { withFileTypes: true })) {
+    for (const entry of (yield* integrationValue(readdir(packages, { withFileTypes: true })))) {
       if (!entry.isDirectory() || referenced.has(entry.name)) continue;
-      await rm(join(packages, entry.name), { recursive: true, force: true });
+      (yield* integrationValue(rm(join(packages, entry.name), { recursive: true, force: true })));
       removed.push(join("packages", entry.name));
     }
   }
   const temporary = join(root, ".tmp");
   if (existsSync(temporary)) {
-    await rm(temporary, { recursive: true, force: true });
+    (yield* integrationValue(rm(temporary, { recursive: true, force: true })));
     removed.push(".tmp");
   }
   return { removed };
-}
+}));
+  }
 
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
@@ -696,7 +702,7 @@ export function createLocalRuntimeServicePackageInstaller(
     input: ZelavisServicePackageAcquireInput,
   ) {
     const acquired = yield* Effect.tryPromise({
-      try: async () => {
+      try: () => present(Effect.gen(function* () {
         const gate = options.acquisitionGate;
         const ref = gate
           ? parsePackageSourceRef(input.reference, {
@@ -706,28 +712,28 @@ export function createLocalRuntimeServicePackageInstaller(
         // Before anything is fetched: the package and the exact version must
         // be on the list. A tag or a range is never a listed version.
         if (gate && ref?.kind === "npm") {
-          await gate.authorize({ name: ref.name, version: ref.version });
+          (yield* integrationValue(gate.authorize({ name: ref.name, version: ref.version })));
         } else if (gate && ref && !options.sources?.archives && !options.sources?.git) {
           throw new ZelavisValidationError(
             "Only packages on the marketplace allow-list can be installed from a source reference.",
           );
         }
-        const result = await acquirePackage(input.reference, {
+        const result = (yield* integrationValue(acquirePackage(input.reference, {
           policy: acquisitionPolicy,
           defaultRegistry: options.defaultRegistry,
-        });
+        })));
         // After the bytes arrived: they must be the bytes that were vouched for.
         if (gate && ref?.kind === "npm") {
           const resolved = result.resolved.replace(/^npm:/, "");
           const at = resolved.lastIndexOf("@");
-          await gate.verifyAcquired({
+          (yield* integrationValue(gate.verifyAcquired({
             name: resolved.slice(0, at),
             version: resolved.slice(at + 1),
             integrity: result.integrity,
-          });
+          })));
         }
         return result;
-      },
+      })),
       // Validation is the policy talking: an unallowed registry, a range
       // where an exact version is required, a name that is not a name.
       catch: (cause) =>
@@ -856,9 +862,9 @@ export function createLocalRuntimeServicePackageInstaller(
     const outputDirectory = join(runDirectory, "out");
 
     const entries = yield* Effect.tryPromise({
-      try: async () => {
-        await mkdir(outputDirectory, { recursive: true });
-        await runCreatePackage({
+      try: () => present(Effect.gen(function* () {
+        (yield* integrationValue(mkdir(outputDirectory, { recursive: true })));
+        (yield* integrationValue(runCreatePackage({
           packageDirectory: createDirectory,
           binPath,
           outputDirectory,
@@ -867,9 +873,9 @@ export function createLocalRuntimeServicePackageInstaller(
           ...(options.scaffoldTimeoutMs === undefined
             ? {}
             : { timeoutMs: options.scaffoldTimeoutMs }),
-        });
-        return readScaffoldOutput(outputDirectory);
-      },
+        })));
+        return (yield* integrationValue(readScaffoldOutput(outputDirectory)));
+      })),
       catch: (cause) =>
         unusable(cause instanceof Error ? cause.message : String(cause)),
     });
@@ -1007,7 +1013,7 @@ export function createLocalFrontendDirectoryResolver(
 ) => Promise<string> {
   const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
 
-  return async (_project, recipe) => {
+  return (_project, recipe) => present(Effect.gen(function* () {
     const specifier = recipe.specifier;
     if (!specifier || !specifier.startsWith("/")) {
       throw new Error(
@@ -1041,7 +1047,7 @@ export function createLocalFrontendDirectoryResolver(
     throw new Error(
       `Frontend "${recipe.name}" has no package.json under ${root}; its recipe lock does not point at an installed package.`,
     );
-  };
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,10 +1077,10 @@ export function createLocalRuntimeServiceImporter(
     );
   };
 
-  return async (specifier) => {
+  return (specifier) => present(Effect.gen(function* (): Effect.fn.Return<unknown, IntegrationFailure> {
     if (isDataSpecifier(specifier)) {
       if (!sources.data) refuse("data:", "data");
-      return import(specifier);
+      return yield* integrationValue(import(specifier));
     }
 
     if (isRemoteSpecifier(specifier)) {
@@ -1086,9 +1092,9 @@ export function createLocalRuntimeServiceImporter(
         refuse("Remote https:", "https");
       }
 
-      return importFilePath(
-        await downloadRemoteService(specifier, serviceDirectory),
-      );
+      return yield* integrationValue(importFilePath(
+        yield* integrationValue(downloadRemoteService(specifier, serviceDirectory)),
+      ));
     }
 
     // Code the Platform itself installed into its managed service directory is
@@ -1104,14 +1110,14 @@ export function createLocalRuntimeServiceImporter(
       const physicalUrl = pathToFileURL(realpathSync(fileURLToPath(originalUrl)));
       physicalUrl.search = originalUrl.search;
       physicalUrl.hash = originalUrl.hash;
-      return import(physicalUrl.href);
+      return yield* integrationValue(import(physicalUrl.href));
     }
 
     if (looksLikePathSpecifier(specifier)) {
       if (!sources.filesystem && !isManaged(specifier)) {
         refuse("Filesystem path", "filesystem");
       }
-      return importFilePath(realpathSync(specifier));
+      return yield* integrationValue(importFilePath(realpathSync(specifier)));
     }
 
     // A bare package specifier resolves through the host's own installed
@@ -1119,28 +1125,26 @@ export function createLocalRuntimeServiceImporter(
     // nothing is installed under that name, a core service bundled in this
     // distribution answers instead — the same trust again, since it shipped
     // as part of the host.
-    try {
-      return await import(specifier);
-    } catch (error) {
+    return yield* integrationValue(import(specifier)).pipe(Effect.catch((failure) => {
       // Only a resolution failure falls through. A package that is installed
       // but throws while loading must surface its own error, not be quietly
       // replaced by the bundled copy of the same name.
-      const code = (error as { code?: string } | undefined)?.code;
+      const code = (unwrapFailure(failure) as { code?: string } | undefined)?.code;
 
       if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") {
-        throw error;
+        return Effect.fail(failure);
       }
 
       const bundled = resolveBundledServiceDirectory(specifier);
       const entry = bundled ? bundledServiceEntry(bundled) : undefined;
 
       if (!entry) {
-        throw error;
+        return Effect.fail(failure);
       }
 
-      return import(pathToFileURL(entry).href);
-    }
-  };
+      return integrationValue(import(pathToFileURL(entry).href));
+    }));
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,17 +1262,19 @@ export function resolveBundledServiceDirectory(
  * The directory of a package the marketplace installed, from the registry's own
  * record of it (the registry stores the path of its entry file).
  */
-async function installedPackageDirectory(
+function installedPackageDirectory(
   store: ZelavisSystemStore,
   name: string,
   version?: string,
 ): Promise<string | undefined> {
-  const entries = await createSystemStoreServiceRegistryStore(store).read();
+    return present(Effect.gen(function* (): Effect.fn.Return<string | undefined, IntegrationFailure> {
+  const entries = (yield* integrationValue(createSystemStoreServiceRegistryStore(store).read()));
   const specifier = entries.find((entry) => entry.name === name)?.specifier;
   if (!specifier || !isAbsolute(specifier)) return undefined;
   const directory = packageDirectoryOf(specifier, name);
   return directory && (!version || JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).version === version) ? directory : undefined;
-}
+}));
+  }
 
 /** Walks up from a package's entry file to the folder whose package.json names it. */
 function packageDirectoryOf(entryFile: string, name: string): string | undefined {
@@ -1292,21 +1298,25 @@ function packageDirectoryOf(entryFile: string, name: string): string | undefined
  * so the allow-list authorizes the exact version before any fetch and checks
  * the digest after; a Project can never be frozen from anything else.
  */
-async function acquireRecipePackage(
+function acquireRecipePackage(
   installer: ZelavisServicePackageInstaller,
   name: string,
   version: string,
 ): Promise<string> {
-  if (!installer.acquire) throw new Error(`Cannot install ${name}@${version}: this installation does not fetch packages.`);
-  try {
-    const result = await Effect.runPromise(Effect.scoped(installer.acquire({ reference: `npm:${name}@${version}` })));
-    const directory = packageDirectoryOf(result.specifier, name);
-    if (!directory) throw new Error("the downloaded package has no package.json naming it");
-    return directory;
-  } catch (cause) {
-    const reason = (cause as { reason?: string; message?: string })?.reason ?? (cause as Error)?.message ?? String(cause);
-    throw new Error(`Project recipe ${name}@${version} could not be installed from the marketplace allow-list: ${reason}`);
-  }
+  return present(Effect.gen(function* (): Effect.fn.Return<string, Error> {
+    const { acquire } = installer;
+    if (!acquire) return yield* Effect.fail(new IntegrationFailure(new Error(`Cannot install ${name}@${version}: this installation does not fetch packages.`)));
+    return yield* Effect.scoped(acquire({ reference: `npm:${name}@${version}` })).pipe(
+      Effect.flatMap((result) => {
+        const directory = packageDirectoryOf(result.specifier, name);
+        return directory ? Effect.succeed(directory) : Effect.fail(new IntegrationFailure(new Error("the downloaded package has no package.json naming it")));
+      }),
+      Effect.mapError((cause) => {
+        const reason = (cause as { reason?: string; message?: string })?.reason ?? (cause as Error)?.message ?? String(cause);
+        return new IntegrationFailure(new Error(`Project recipe ${name}@${version} could not be installed from the marketplace allow-list: ${reason}`));
+      }),
+    );
+  }));
 }
 
 /**
@@ -1314,17 +1324,19 @@ async function acquireRecipePackage(
  * materialized and verified) through the ordinary package loader. Trust comes
  * from that host-side selection, never from anything the package exports.
  */
-export async function loadSystemPackage(
+export function loadSystemPackage(
   manifest: ZelavisPackageManifest & { packageDir: string },
 ) {
+    return present(Effect.gen(function* () {
   provideHostPackagesTo(manifest.packageDir);
-  return loadPluginPackage({
+  return (yield* integrationValue(loadPluginPackage({
     manifest,
     packageDir: manifest.packageDir,
     scope: "system",
     importer: (entry) => import(pathToFileURL(entry).href),
-  });
-}
+  })));
+}));
+  }
 
 export interface BundledServiceCatalogSelection {
   readonly name: string;
@@ -1336,11 +1348,12 @@ export interface BundledServiceCatalogSelection {
  * Loads official distribution packages through the ordinary package loader.
  * Their trust comes from this host-selected immutable source, never an export.
  */
-export async function loadBundledServiceCatalog(
+export function loadBundledServiceCatalog(
   selections: readonly BundledServiceCatalogSelection[],
 ): Promise<readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]> {
-  return Promise.all(
-    selections.map(async (selection) => {
+  return present(Effect.forEach(
+    selections,
+    (selection) => Effect.gen(function* () {
       const directory = resolveBundledServiceDirectory(selection.name);
       const manifest = resolveLocalPackageManifest(directory ?? selection.name);
       if (!manifest) {
@@ -1349,18 +1362,19 @@ export async function loadBundledServiceCatalog(
         );
       }
 
-      const service = await loadSystemPackage(manifest);
+      const service = (yield* integrationValue(loadSystemPackage(manifest)));
 
-      return Object.freeze({
+      return (yield* integrationValue(Object.freeze({
         service,
         specifier: selection.name,
         status: selection.status,
         source: "official" as const,
         ...(selection.order === undefined ? {} : { order: selection.order }),
         manifest,
-      });
+      })));
     }),
-  );
+    { concurrency: Math.max(1, selections.length) },
+  ));
 }
 
 /**
@@ -1368,15 +1382,15 @@ export async function loadBundledServiceCatalog(
  * distribution bundles. Everything else officially maintained (WordPress, and
  * the rest of `zelavis-services`) comes through the marketplace.
  */
-export async function loadOfficialServiceCatalog(): Promise<
+export function loadOfficialServiceCatalog(): Promise<
   readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[]
 > {
-  return loadBundledServiceCatalog([
+    return present(integration(() => loadBundledServiceCatalog([
     { name: "@zelavis/app", status: "available", order: 0 },
     { name: "@zelavis/marketplace", status: "installed", order: 10 },
     { name: "@zelavis/auth", status: "installed", order: 20 },
-  ]);
-}
+  ])));
+  }
 
 const BUNDLE_CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -1412,20 +1426,20 @@ export function createPackageDirectoryBundleStore(
   packageDirectories: ReadonlyMap<string, string>,
   fallback?: BundleStore,
 ): BundleStore {
-  const read = async (scope: BundleScope, path: string): Promise<BundleAsset | undefined> => {
+  const read = (scope: BundleScope, path: string): Promise<BundleAsset | undefined> => {
     const packageDirectory = packageDirectories.get(scope.serviceName);
-    if (!packageDirectory) return fallback?.read(scope, path);
+    if (!packageDirectory) return Promise.resolve(fallback?.read(scope, path));
 
     const bundleRoot = resolve(packageDirectory, scope.bundle);
     const target = resolve(bundleRoot, path.replace(/^\/+/, ""));
-    if (!isPathWithin(target, bundleRoot)) return undefined;
+    if (!isPathWithin(target, bundleRoot)) return Promise.resolve(undefined);
 
-    try {
+    return present(Effect.gen(function* (): Effect.fn.Return<BundleAsset | undefined, IntegrationFailure> {
       const physical = realpathSync(target);
       // A symlink inside the bundle must not lead out of the package.
       if (!isPathWithin(physical, realpathSync(bundleRoot))) return undefined;
-      if (!(await stat(physical)).isFile()) return undefined;
-      const body = new Uint8Array(await readFile(physical));
+      if (!(yield* integrationValue(stat(physical))).isFile()) return undefined;
+      const body = new Uint8Array(yield* integrationValue(readFile(physical)));
       const extension = physical.slice(physical.lastIndexOf(".")).toLowerCase();
       return {
         path,
@@ -1433,9 +1447,7 @@ export function createPackageDirectoryBundleStore(
         size: body.byteLength,
         contentType: BUNDLE_CONTENT_TYPES[extension] ?? "application/octet-stream",
       };
-    } catch {
-      return undefined;
-    }
+    }).pipe(Effect.catchCause(() => Effect.succeed(undefined))));
   };
 
   return {
@@ -1576,9 +1588,7 @@ export function resolveLocalPackageManifest(
  * because filesystem plugin scanning is an explicit core non-goal.
  */
 export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManifestResolver {
-  return async (specifier) => {
-    return resolveLocalPackageManifest(specifier);
-  };
+  return (specifier) => present(integration(() => resolveLocalPackageManifest(specifier)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1600,18 +1610,16 @@ export interface ServiceDiscoveryOptions {
   onSkipped?: (name: string, reason: string) => void;
 }
 
-async function readDirectoryEntries(directory: string): Promise<string[]> {
-  try {
-    const { readdir } = await import("node:fs/promises");
-    return (await readdir(directory, { withFileTypes: true }))
+function readDirectoryEntries(directory: string): Promise<string[]> {
+  return present(integrationValue(readdir(directory, { withFileTypes: true })).pipe(
+    Effect.map((entries) => entries
       .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
       .map((entry) => entry.name)
-      .filter((name) => !name.startsWith(".") && name !== "node_modules");
-  } catch {
+      .filter((name) => !name.startsWith(".") && name !== "node_modules")),
     // A missing folder is the normal case for an installation nobody has added
     // anything to, not an error.
-    return [];
-  }
+    Effect.orElseSucceed((): string[] => []),
+  ));
 }
 
 /**
@@ -1620,24 +1628,26 @@ async function readDirectoryEntries(directory: string): Promise<string[]> {
  * Scoped packages live one level deeper, exactly as they do in node_modules,
  * so `@acme/theme` is the directory `@acme/theme` rather than a flattened name.
  */
-async function listProductServicePackages(directory: string): Promise<string[]> {
+function listProductServicePackages(directory: string): Promise<string[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string[], IntegrationFailure> {
   const packages: string[] = [];
-  for (const name of await readDirectoryEntries(directory)) {
+  for (const name of (yield* integrationValue(readDirectoryEntries(directory)))) {
     // Managed install/upload artifacts are addressed by registry state below
     // this directory; the directory itself is not a manually dropped package.
     if (name === "packages") {
       continue;
     }
     if (name.startsWith("@")) {
-      for (const scoped of await readDirectoryEntries(join(directory, name))) {
+      for (const scoped of (yield* integrationValue(readDirectoryEntries(join(directory, name))))) {
         packages.push(join(name, scoped));
       }
       continue;
     }
     packages.push(name);
   }
-  return packages.sort();
-}
+  return (yield* integrationValue(packages.sort()));
+}));
+  }
 
 /**
  * Discovers installable services from a folder on this server.
@@ -1685,28 +1695,31 @@ export function linkPlatformPackage(folder: string): Promise<void> { return pres
   }
 }).pipe(Effect.withSpan("linkPlatformPackage"))); }
 
-export async function discoverProductServices(
+export function discoverProductServices(
   options: ServiceDiscoveryOptions,
 ): Promise<ZelavisServiceRegistryModuleEntry[]> {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisServiceRegistryModuleEntry[], IntegrationFailure> {
   const root = resolve(options.directory);
   const skip = (name: string, reason: string) => options.onSkipped?.(name, reason);
   const discovered: ZelavisServiceRegistryModuleEntry[] = [];
-  const packageNames = await listProductServicePackages(root);
+  const packageNames = yield* integrationValue(listProductServicePackages(root));
   if (packageNames.length > 0) {
-    await linkPlatformPackage(root);
+    yield* integrationValue(linkPlatformPackage(root));
   }
 
   for (const packageName of packageNames) {
     const packageDirectory = join(root, packageName);
-    let manifest;
-    try {
-      manifest = validatePluginPackageManifest(
-        JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8")),
-      );
-    } catch (error) {
-      skip(packageName, error instanceof Error ? error.message : String(error));
-      continue;
-    }
+    const loaded = yield* integrationValue(readFile(join(packageDirectory, "package.json"), "utf8")).pipe(
+      Effect.flatMap((text) => evaluate(() => validatePluginPackageManifest(JSON.parse(text)))),
+      Effect.map((value) => ({ value })),
+      Effect.catch((failure) => {
+        const error = unwrapFailure(failure);
+        skip(packageName, error instanceof Error ? error.message : String(error));
+        return Effect.succeed(undefined);
+      }),
+    );
+    if (!loaded) continue;
+    const manifest = loaded.value;
 
     // A frontend may be files with no JavaScript entry. It is discovered by its
     // directory: there is nothing to import, and the package loader serves it
@@ -1771,6 +1784,7 @@ export async function discoverProductServices(
   }
 
   return discovered;
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1827,9 +1841,10 @@ export interface LocalServiceSources {
  * Project or the Platform loads from its own `services` folder is the same on
  * either. Only filesystem and module-loading APIs both hosts provide are used.
  */
-export async function createLocalServiceSources(
+export function createLocalServiceSources(
   input: LocalServiceSourcesInput,
 ): Promise<LocalServiceSources> {
+    return present(Effect.gen(function* (): Effect.fn.Return<LocalServiceSources, IntegrationFailure> {
   if (input.services === false) return {};
 
   const serviceOptions = input.services;
@@ -1843,26 +1858,26 @@ export async function createLocalServiceSources(
   // Platform's is `<data>/services`, and a Project's is the `services` folder
   // of its own `.zelavis` data root, so what a Project installs belongs to that
   // Project and to no other.
-  const discovered = await discoverProductServices({
+  const discovered = (yield* integrationValue(discoverProductServices({
     directory: productServiceDirectory,
     onSkipped: (name, reason) => {
       // Reported rather than swallowed: a package that silently fails to load
       // looks identical to one nobody installed.
       console.warn(`Zelavis skipped product service "${name}": ${reason}`);
     },
-  });
+  })));
 
   // What the registry no longer points at is removed, once, before anything is
   // loaded. Best effort: a registry that cannot be read leaves everything in place.
   if (input.systemStore) {
     const store = input.systemStore;
-    void (async () => {
-      const entries = await createSystemStoreServiceRegistryStore(store).read();
-      await pruneServicePackages({
+    void (() => present(Effect.gen(function* () {
+      const entries = (yield* integrationValue(createSystemStoreServiceRegistryStore(store).read()));
+      (yield* integrationValue(pruneServicePackages({
         directory: productServiceDirectory,
         referencedSpecifiers: entries.flatMap((entry) => (entry.specifier ? [entry.specifier] : [])),
-      });
-    })().catch(() => undefined);
+      })));
+    })))().catch(() => undefined);
   }
 
   // Static frontends dropped into this runtime's services folder are served
@@ -1877,20 +1892,20 @@ export async function createLocalServiceSources(
     ),
   );
 
-  const official = input.isProjectRuntime ? [] : await loadOfficialServiceCatalog();
+  const official = input.isProjectRuntime ? [] : (yield* integrationValue(loadOfficialServiceCatalog()));
   // The marketplace: what its allow-list offers, the gate that decides what may
   // be installed, and (in a development checkout) the official services on disk.
   // A Project has one too, for what may be installed into it: the same list and
   // the same gate, offering plugins and frontends (an app is a Project, not
   // something installed into one).
-  const marketplace = await createLocalMarketplace({
+  const marketplace = (yield* integrationValue(createLocalMarketplace({
     options: serviceOptions?.marketplace,
     systemStore: input.systemStore,
     bundledNames: new Set(official.map((entry) => entry.service.name)),
     role: input.isProjectRuntime ? "project" : "platform",
     dataDirectory: input.dataDirectory,
     ...(input.projectsDirectory ? { projectsDirectory: input.projectsDirectory } : {}),
-  });
+  })));
   const installerOptions = {
     directory: serviceDirectory,
     ...(serviceOptions ?? {}),
@@ -1933,19 +1948,22 @@ export async function createLocalServiceSources(
     ...(input.isProjectRuntime
       ? {}
       : {
-          recipePackageDirectory: async (name: string, version?: string) =>
-            (marketplace?.localPackages.get(name) && (!version || JSON.parse(readFileSync(join(marketplace.localPackages.get(name)!, "package.json"), "utf8")).version === version) ? marketplace.localPackages.get(name) : undefined) ??
+          recipePackageDirectory: (name: string, version?: string) =>
+            present(Effect.gen(function* () {
+    return (marketplace?.localPackages.get(name) && (!version || JSON.parse(readFileSync(join(marketplace.localPackages.get(name)!, "package.json"), "utf8")).version === version) ? marketplace.localPackages.get(name) : undefined) ??
             (input.systemStore
-              ? await installedPackageDirectory(input.systemStore, name, version)
+              ? (yield* integrationValue(installedPackageDirectory(input.systemStore, name, version)))
               : undefined) ??
             // Offered by the allow-list but never installed: fetch exactly the locked version.
             (version && marketplace?.gate
-              ? await acquireRecipePackage(packageInstaller, name, version)
-              : undefined),
+              ? (yield* integrationValue(acquireRecipePackage(packageInstaller, name, version)))
+              : undefined);
+  })),
           ...(marketplace ? { recipeRuntimeTrusted: (name: string) => marketplace.runtimeTrusted(name) } : {}),
         }),
   };
-}
+}));
+  }
 
 const packageRecord = objectFields<ZelavisPackageManifest>({ name: isString, version: optional(isString), type: optional(isString),
   exports: isUnknown, main: isUnknown, zelavis: optional(objectFields<NonNullable<ZelavisPackageManifest["zelavis"]>>({

@@ -1,5 +1,5 @@
-import { Effect } from "effect";
-import { evaluate, integration, present } from "../core/runtime/effect-boundary.js";
+import { Cause, Effect } from "effect";
+import { evaluate, integration, present, integrationValue, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import {
   createMappedJsonErrorResponse,
   type ZelavisPrincipal,
@@ -583,9 +583,11 @@ function defineDatabaseRootService(
           method: "GET",
           access: { permissions: ["database.inspect"] },
           path: "/tenants",
-          handler: async ({ service }) => ({
-            body: { tenants: await service.tenants() },
-          }),
+          handler: ({ service }) => present(Effect.gen(function* () {
+    return {
+            body: { tenants: (yield* integrationValue(service.tenants())) },
+          };
+  })),
         },
         {
           id: "database.menu.tables",
@@ -769,17 +771,13 @@ export function defineDatabaseKeyValueService(
             queryParams: { tenantId: { type: "string", required: true } },
             responses: { 200: { description: "Entry" }, 404: { description: "Missing key" } },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
-              const entry = await service.forTenant(readTenantId(query.get("tenantId"), principal))
-                .kv.get(params.namespace, params.key);
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
+              const entry = yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal))
+                .kv.get(params.namespace, params.key));
               return entry === undefined
                 ? { status: 404, body: { error: "Key not found." } }
                 : { body: entry };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.kv.set",
@@ -797,12 +795,12 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: true, schema: { type: "object" } },
             responses: { 200: { description: "Stored entry" }, 409: { description: "Version conflict" } },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenant = tenantOf(service, input, principal);
               return {
-                body: await tenant.kv.set(params.namespace, params.key, readJsonObject(input.value), {
+                body: yield* integration(() => tenant.kv.set(params.namespace, params.key, readJsonObject(input.value), {
                   ...readIdempotencyKey(input),
                   ...(input.ifAbsent === true ? { ifAbsent: true } : {}),
                   ...(typeof input.expectedVersion === "number"
@@ -810,12 +808,10 @@ export function defineDatabaseKeyValueService(
                     : {}),
                   ...(typeof input.expiresAt === "string" ? { expiresAt: input.expiresAt } : {}),
                   ...(typeof input.ttlMs === "number" ? { ttlMs: input.ttlMs } : {}),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.kv.has",
@@ -833,18 +829,14 @@ export function defineDatabaseKeyValueService(
             queryParams: { tenantId: { type: "string", required: true } },
             responses: { 200: { description: "Existence" } },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               return {
                 body: {
-                  exists: await service.forTenant(readTenantId(query.get("tenantId"), principal))
-                    .kv.has(params.namespace, params.key),
+                  exists: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal))
+                    .kv.has(params.namespace, params.key)),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.kv.remove",
@@ -862,12 +854,12 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: false, schema: { type: "object" } },
             responses: { 200: { description: "Whether a key was removed" }, 409: { description: "Version conflict" } },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 body: {
-                  deleted: await tenantOf(service, input, principal).kv.remove(
+                  deleted: yield* integration(() => tenantOf(service, input, principal).kv.remove(
                     params.namespace,
                     params.key,
                     {
@@ -876,13 +868,11 @@ export function defineDatabaseKeyValueService(
                         ? { expectedVersion: input.expectedVersion }
                         : {}),
                     },
-                  ),
+                  )),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.kv.scan",
@@ -897,11 +887,11 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: true, schema: { type: "object" } },
             responses: { 200: { description: "Entries and an optional continuation" } },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               return {
-                body: await tenantOf(service, input, principal).kv.scan(params.namespace, {
+                body: yield* integration(() => tenantOf(service, input, principal).kv.scan(params.namespace, {
                   ...(typeof input.prefix === "string" ? { prefix: input.prefix } : {}),
                   ...(typeof input.lower === "string" ? { lower: input.lower } : {}),
                   ...(typeof input.upper === "string" ? { upper: input.upper } : {}),
@@ -910,12 +900,10 @@ export function defineDatabaseKeyValueService(
                     : {}),
                   ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
                   ...(typeof input.after === "string" ? { after: input.after as KvCursor } : {}),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.kv.changes",
@@ -930,21 +918,19 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: true, schema: { type: "object" } },
             responses: { 200: { description: "Ordered key changes" } },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 body: {
-                  changes: await tenantOf(service, input, principal).kv.changes(params.namespace, {
+                  changes: yield* integration(() => tenantOf(service, input, principal).kv.changes(params.namespace, {
                     ...(typeof input.after === "string" ? { after: input.after as never } : {}),
                     ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.kv.write",
@@ -959,23 +945,21 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: true, schema: { type: "object" } },
             responses: { 200: { description: "Ordered write results" }, 409: { description: "Conflict" } },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               if (!Array.isArray(input.operations)) throw new TypeError("operations must be a list.");
               return {
                 body: {
-                  written: await tenantOf(service, input, principal).kv.write(
+                  written: yield* integration(() => tenantOf(service, input, principal).kv.write(
                     params.namespace,
                     input.operations as ReadonlyArray<KeyValueWrite>,
                     readIdempotencyKey(input),
-                  ),
+                  )),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.kv.size",
@@ -990,18 +974,14 @@ export function defineDatabaseKeyValueService(
             queryParams: { tenantId: { type: "string", required: true } },
             responses: { 200: { description: "Key count" } },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               return {
                 body: {
-                  size: await service.forTenant(readTenantId(query.get("tenantId"), principal))
-                    .kv.size(params.namespace),
+                  size: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal))
+                    .kv.size(params.namespace)),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.kv.clear",
@@ -1016,17 +996,13 @@ export function defineDatabaseKeyValueService(
             requestBody: { required: false, schema: { type: "object" } },
             responses: { 200: { description: "Number removed" } },
           },
-          handler: async ({ service, params, body, principal }) => {
-            try {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
               return {
                 body: {
-                  removed: await tenantOf(service, readBodyObject(body), principal).kv.clear(params.namespace),
+                  removed: yield* integration(() => tenantOf(service, readBodyObject(body), principal).kv.clear(params.namespace)),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
       ],
     },
@@ -1077,21 +1053,17 @@ export function defineDatabaseMaintenanceService(
           method: "GET",
           path: "/system/views/:view",
           access: { permissions: ["database.inspect"] },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               return {
-                body: await service
+                body: yield* integration(() => service
                   .forTenant(readTenantId(query.get("tenantId"), principal))
                   .systemViews.query({
                   name: params.view,
                   limit: readQueryNumber(query.get("limit")),
                   after: query.get("after") ?? undefined,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.documents.rewrite",
@@ -1119,19 +1091,17 @@ export function defineDatabaseMaintenanceService(
               404: { description: "No such collection" },
             },
           },
-          handler: async ({ service, body, principal }) => {
+          handler: ({ service, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service.forTenant(tenantId).documents.rewrite(
+                body: yield* integration(() => service.forTenant(tenantId).documents.rewrite(
                   typeof input.collection === "string" ? { collection: input.collection } : undefined,
-                ),
+                )),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.backups.export",
@@ -1147,16 +1117,12 @@ export function defineDatabaseMaintenanceService(
           method: "POST",
           path: "/backups/export",
           access: { permissions: ["database.backup"] },
-          handler: async ({ service, body, principal }) => {
-            try {
+          handler: ({ service, body, principal })  => present(Effect.gen(function* () {
               const input = readBodyObject(body);
               return {
-                body: await tenantOf(service, input, principal).backups.exportTenant(),
+                body: yield* integration(() => tenantOf(service, input, principal).backups.exportTenant()),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.backups.restore",
@@ -1172,8 +1138,7 @@ export function defineDatabaseMaintenanceService(
           method: "POST",
           path: "/backups/restore",
           access: { permissions: ["database.restore"] },
-          handler: async ({ service, body, principal }) => {
-            try {
+          handler: ({ service, body, principal })  => present(Effect.gen(function* () {
               const input = readBodyObject(body);
               if (!input.backup || typeof input.backup !== "object" || Array.isArray(input.backup)) {
                 throw new TypeError("A database backup object is required.");
@@ -1184,14 +1149,11 @@ export function defineDatabaseMaintenanceService(
               // meaningful; one that does not gets the Tenant the backup was
               // taken from, which is what the replaced route did.
               return {
-                body: await service
+                body: yield* integration(() => service
                   .forTenant(readTenantId(input.tenantId ?? backup.tenantId, principal))
-                  .backups.restoreTenant(backup as never),
+                  .backups.restoreTenant(backup as never)),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
       ],
     },
@@ -1224,20 +1186,16 @@ export function defineDatabaseDocumentsService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, query, principal }) => {
-            try {
+          handler: ({ service, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
-                  collections: await service
+                  collections: yield* integration(() => service
                     .forTenant(tenantId)
-                    .documents.listCollections(),
+                    .documents.listCollections()),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.collections.modalities",
@@ -1252,16 +1210,12 @@ export function defineDatabaseDocumentsService(
             queryParams: { tenantId: { type: "string", required: true } },
             responses: { 200: { description: "Modality readiness" }, 404: { description: "Collection not found" } },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               return {
-                body: await service.forTenant(readTenantId(query.get("tenantId"), principal))
-                  .documents.modalities(params.collection),
+                body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal))
+                  .documents.modalities(params.collection)),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.collections.create",
@@ -1299,7 +1253,7 @@ export function defineDatabaseDocumentsService(
               409: { description: "Conflict" },
             },
           },
-          handler: async ({ service, body, principal }) => {
+          handler: ({ service, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
             const name = readString(input.name);
             if (!name) {
@@ -1311,11 +1265,11 @@ export function defineDatabaseDocumentsService(
               };
             }
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
-                body: await service.forTenant(tenantId).documents.createCollection({
+                body: yield* integration(() => service.forTenant(tenantId).documents.createCollection({
                   name,
                   surface: readCollectionSurface(input.surface),
                   metadata:
@@ -1348,12 +1302,10 @@ export function defineDatabaseDocumentsService(
                   measures: Array.isArray(input.measures)
                     ? (input.measures as ReadonlyArray<MeasureDefinition>)
                     : undefined,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 409);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 409))));
+})),
         },
         {
           id: "database.collections.drop",
@@ -1375,21 +1327,19 @@ export function defineDatabaseDocumentsService(
               409: { description: "Another collection still references it" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  dropped: await service.forTenant(tenantId).documents.dropCollection({
+                  dropped: yield* integration(() => service.forTenant(tenantId).documents.dropCollection({
                     name: params.collection,
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.write",
@@ -1421,25 +1371,23 @@ export function defineDatabaseDocumentsService(
               409: { description: "A conflict, which refuses the whole batch" },
             },
           },
-          handler: async ({ service, body, principal }) => {
+          handler: ({ service, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               if (!Array.isArray(input.operations)) {
                 throw new TypeError("operations must be a list of changes.");
               }
               return {
                 body: {
-                  written: await service.forTenant(tenantId).documents.write({
+                  written: yield* integration(() => service.forTenant(tenantId).documents.write({
                     ...readIdempotencyKey(input),
                     operations: input.operations as ReadonlyArray<DocumentWrite>,
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.documents.insert",
@@ -1471,23 +1419,21 @@ export function defineDatabaseDocumentsService(
               409: { description: "Conflict or revision mismatch" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
-                body: await service.forTenant(tenantId).documents.insert({
+                body: yield* integration(() => service.forTenant(tenantId).documents.insert({
                   collection: params.collection,
                   ...readIdempotencyKey(input),
                   id: readString(input.id),
                   data: readJsonObject(input.data),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.documents.get",
@@ -1511,19 +1457,17 @@ export function defineDatabaseDocumentsService(
               404: { description: "Document not found" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            let document;
-            try {
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+            const found = yield* Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
-              document = await service.forTenant(tenantId).documents.findById({
+              return { document: yield* integration(() => service.forTenant(tenantId).documents.findById({
                 collection: params.collection,
                 id: params.id,
-              });
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
+              })) };
+            }).pipe(Effect.catchCause((cause) => Effect.succeed({ failure: databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400) })));
+            if ("failure" in found) return found.failure;
 
-            if (!document) {
+            if (!found.document) {
               return {
                 status: 404,
                 body: {
@@ -1532,8 +1476,8 @@ export function defineDatabaseDocumentsService(
               };
             }
 
-            return { body: document };
-          },
+            return { body: found.document };
+          })),
         },
         {
           id: "database.documents.query",
@@ -1574,13 +1518,13 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  documents: await service.forTenant(tenantId).documents.findMany({
+                  documents: yield* integration(() => service.forTenant(tenantId).documents.findMany({
                     collection: params.collection,
                     ...readQueryClauses(input),
                     ...(input.similar && typeof input.similar === "object"
@@ -1589,13 +1533,11 @@ export function defineDatabaseDocumentsService(
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
                     offset: readNumber(input.offset, 0),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.page",
@@ -1636,9 +1578,9 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               const limit = readNumber(input.limit, 50);
               if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
@@ -1648,18 +1590,16 @@ export function defineDatabaseDocumentsService(
                 throw new TypeError("after must be the next cursor from a previous page.");
               }
               return {
-                body: await service.forTenant(tenantId).documents.findPage({
+                body: yield* integration(() => service.forTenant(tenantId).documents.findPage({
                   collection: params.collection,
                   ...readQueryClauses(input),
                   orderBy: readSort(input.orderBy),
                   limit,
                   ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.traverse",
@@ -1695,12 +1635,12 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found or unknown edge" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service.forTenant(tenantId).documents.traverse({
+                body: yield* integration(() => service.forTenant(tenantId).documents.traverse({
                   collection: params.collection,
                   id: String(input.id ?? ""),
                   edge: String(input.edge ?? ""),
@@ -1711,12 +1651,10 @@ export function defineDatabaseDocumentsService(
                   ...(typeof input.maxDepth === "number" ? { maxDepth: input.maxDepth } : {}),
                   ...(typeof input.maxVisits === "number" ? { maxVisits: input.maxVisits } : {}),
                   ...(Array.isArray(input.where) ? { where: readFilters(input.where) } : {}),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.summarize",
@@ -1753,22 +1691,20 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service.forTenant(tenantId).documents.summarize({
+                body: yield* integration(() => service.forTenant(tenantId).documents.summarize({
                   collection: params.collection,
                   measure: readMeasureName(input.measure),
                   op: readMeasureOperation(input.op),
                   ...readQueryClauses(input),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.summarizeBy",
@@ -1807,15 +1743,15 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               const groupBy = readString(input.groupBy);
               if (!groupBy) throw new TypeError("A field to group by is required.");
               return {
                 body: {
-                  groups: await service.forTenant(tenantId).documents.summarizeBy({
+                  groups: yield* integration(() => service.forTenant(tenantId).documents.summarizeBy({
                     collection: params.collection,
                     measure: readMeasureName(input.measure),
                     op: readMeasureOperation(input.op),
@@ -1824,13 +1760,11 @@ export function defineDatabaseDocumentsService(
                       ? {}
                       : { groups: readRequiredNumber(input.groups, "groups") }),
                     ...readQueryClauses(input),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.collections.exists",
@@ -1852,18 +1786,14 @@ export function defineDatabaseDocumentsService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
-                  exists: await service.forTenant(tenantId).documents.collectionExists(params.collection),
+                  exists: yield* integration(() => service.forTenant(tenantId).documents.collectionExists(params.collection)),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.documents.related",
@@ -1894,13 +1824,13 @@ export function defineDatabaseDocumentsService(
               404: { description: "A reference the collection does not declare" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  documents: await service.forTenant(tenantId).documents.withRelated({
+                  documents: yield* integration(() => service.forTenant(tenantId).documents.withRelated({
                     collection: params.collection,
                     documents: Array.isArray(input.documents)
                       ? (input.documents as ReadonlyArray<Document>)
@@ -1908,13 +1838,11 @@ export function defineDatabaseDocumentsService(
                     ...(Array.isArray(input.references)
                       ? { references: input.references as ReadonlyArray<string> }
                       : {}),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.analyzer",
@@ -1945,23 +1873,21 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               if (!input.analyzer || typeof input.analyzer !== "object") {
                 throw new TypeError("An analyzer is required.");
               }
               return {
-                body: await service.forTenant(tenantId).documents.analyze({
+                body: yield* integration(() => service.forTenant(tenantId).documents.analyze({
                   collection: params.collection,
                   analyzer: input.analyzer as Analyzer,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.documents.geometry",
@@ -1992,23 +1918,21 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               if (!input.spatial || typeof input.spatial !== "object") {
                 throw new TypeError("A spatial index is required.");
               }
               return {
-                body: await service.forTenant(tenantId).documents.locate({
+                body: yield* integration(() => service.forTenant(tenantId).documents.locate({
                   collection: params.collection,
                   spatial: input.spatial as SpatialIndex,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.documents.embedding",
@@ -2039,23 +1963,21 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               if (!input.embedding || typeof input.embedding !== "object") {
                 throw new TypeError("An embedding is required.");
               }
               return {
-                body: await service.forTenant(tenantId).documents.embed({
+                body: yield* integration(() => service.forTenant(tenantId).documents.embed({
                   collection: params.collection,
                   embedding: input.embedding as EmbeddingIndex,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.indexes.create",
@@ -2088,22 +2010,20 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken by an index over other fields" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
-                body: await service.forTenant(tenantId).documents.createIndex({
+                body: yield* integration(() => service.forTenant(tenantId).documents.createIndex({
                   collection: params.collection,
                   name: typeof input.name === "string" ? input.name : "",
                   fields: Array.isArray(input.fields) ? (input.fields as ReadonlyArray<IndexField>) : [],
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.indexes.drop",
@@ -2127,21 +2047,17 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
-                  dropped: await service.forTenant(tenantId).documents.dropIndex({
+                  dropped: yield* integration(() => service.forTenant(tenantId).documents.dropIndex({
                     collection: params.collection,
                     name: params.name,
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.checks.add",
@@ -2174,22 +2090,20 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
-                body: await service.forTenant(tenantId).documents.addCheck({
+                body: yield* integration(() => service.forTenant(tenantId).documents.addCheck({
                   collection: params.collection,
                   name: typeof input.name === "string" ? input.name : "",
                   where: readFilters(input.where),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.checks.drop",
@@ -2213,21 +2127,17 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
-                  dropped: await service.forTenant(tenantId).documents.dropCheck({
+                  dropped: yield* integration(() => service.forTenant(tenantId).documents.dropCheck({
                     collection: params.collection,
                     name: params.name,
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.references.add",
@@ -2262,13 +2172,13 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken, or a document names nothing" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
-                body: await service.forTenant(tenantId).documents.addReference({
+                body: yield* integration(() => service.forTenant(tenantId).documents.addReference({
                   from: params.collection,
                   name: typeof input.name === "string" ? input.name : "",
                   path: typeof input.path === "string" ? input.path : "",
@@ -2276,12 +2186,10 @@ export function defineDatabaseDocumentsService(
                   ...(typeof input.onDelete === "string"
                     ? { onDelete: input.onDelete as ReferenceConstraint["onDelete"] }
                     : {}),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.references.drop",
@@ -2305,21 +2213,17 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
-                  dropped: await service.forTenant(tenantId).documents.dropReference({
+                  dropped: yield* integration(() => service.forTenant(tenantId).documents.dropReference({
                     collection: params.collection,
                     name: params.name,
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.documents.update",
@@ -2353,12 +2257,12 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service.forTenant(tenantId).documents.update({
+                body: yield* integration(() => service.forTenant(tenantId).documents.update({
                   collection: params.collection,
                   ...readIdempotencyKey(input),
                   id: params.id,
@@ -2366,12 +2270,10 @@ export function defineDatabaseDocumentsService(
                   mode: input.mode === "replace" ? "replace" : "merge",
                   ...(typeof input.expectedVersion === "number" ? { expectedVersion: input.expectedVersion } : {}),
                   ...(Array.isArray(input.precondition) ? { precondition: readFilters(input.precondition) } : {}),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.documents.delete",
@@ -2400,25 +2302,21 @@ export function defineDatabaseDocumentsService(
               409: { description: "The document is not as the caller expected" },
             },
           },
-          handler: async ({ service, params, query, principal }) => {
-            try {
+          handler: ({ service, params, query, principal })  => present(Effect.gen(function* () {
               const tenantId = readTenantId(query.get("tenantId"), principal);
               const expectedVersion = readQueryNumber(query.get("expectedVersion"));
               const precondition = readFilterQuery(query.get("precondition"));
               return {
                 body: {
-                  deleted: await service.forTenant(tenantId).documents.delete({
+                  deleted: yield* integration(() => service.forTenant(tenantId).documents.delete({
                     collection: params.collection,
                     id: params.id,
                     ...(expectedVersion === undefined ? {} : { expectedVersion }),
                     ...(precondition === undefined ? {} : { precondition }),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
       ],
     },
@@ -2447,13 +2345,15 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schemas" },
             },
           },
-          handler: async ({ service, query, principal }) => ({
+          handler: ({ service, query, principal }) => present(Effect.gen(function* () {
+    return {
             body: {
-              collections: await service
+              collections: (yield* integrationValue(service
                 .forTenant(readTenantId(query.get("tenantId"), principal))
-                .schemas.listCollections(),
+                .schemas.listCollections())),
             },
-          }),
+          };
+  })),
         },
         {
           id: "database.schemas.versions.list",
@@ -2471,14 +2371,16 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schema versions" },
             },
           },
-          handler: async ({ service, params, query, principal }) => ({
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+    return {
             body: {
               collection: params.collection,
-              schemas: await service
+              schemas: (yield* integrationValue(service
                 .forTenant(readTenantId(query.get("tenantId"), principal))
-                .schemas.listVersions(params.collection),
+                .schemas.listVersions(params.collection))),
             },
-          }),
+          };
+  })),
         },
         {
           id: "database.schemas.save",
@@ -2509,9 +2411,9 @@ export function defineDatabaseSchemasService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               const fields = input.fields;
               if (!Array.isArray(fields)) {
                 return {
@@ -2521,17 +2423,15 @@ export function defineDatabaseSchemasService(
               }
               return {
                 status: 201,
-                body: await tenantOf(service, input, principal).schemas.save({
+                body: yield* integration(() => tenantOf(service, input, principal).schemas.save({
                   collection: params.collection,
                   version: readRequiredNumber(input.version, "Schema version"),
                   activate: input.activate === true,
                   fields: fields as never,
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
         {
           id: "database.schemas.activate",
@@ -2560,19 +2460,17 @@ export function defineDatabaseSchemasService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               return {
-                body: await tenantOf(service, input, principal).schemas.activate(
+                body: yield* integration(() => tenantOf(service, input, principal).schemas.activate(
                   params.collection,
                   readRequiredNumber(input.version, "Schema version"),
-                ),
+                )),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.schemas.validate",
@@ -2601,19 +2499,17 @@ export function defineDatabaseSchemasService(
               400: { description: "Validation failed" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            try {
+ return yield* Effect.gen(function* () {
               return {
-                body: await tenantOf(service, input, principal).schemas.validate(
+                body: yield* integration(() => tenantOf(service, input, principal).schemas.validate(
                   params.collection,
                   readJsonObject(input.data),
-                ),
+                )),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
         },
       ],
     },
@@ -2649,19 +2545,15 @@ export function defineDatabaseTimeSeriesService(
           // A series belongs to a Tenant here, where the replaced database kept
           // definitions outside the Tenant boundary. Listing therefore has to
           // say whose series it wants.
-          handler: async ({ service, query, principal }) => {
-            try {
+          handler: ({ service, query, principal })  => present(Effect.gen(function* () {
               return {
                 body: {
-                  series: await service
+                  series: yield* integration(() => service
                     .forTenant(readTenantId(query.get("tenantId"), principal))
-                    .timeSeries.list(),
+                    .timeSeries.list()),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.timeseries.range",
@@ -2695,14 +2587,14 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  points: await service
+                  points: yield* integration(() => service
                     .forTenant(tenantId)
                     .timeSeries.range(params.series, {
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
@@ -2710,13 +2602,11 @@ export function defineDatabaseTimeSeriesService(
                     limit: readNumber(input.limit, 100),
                     order: readTimeSeriesOrder(input.order),
                     tags: readOptionalTagFilter(input.tags),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.aggregate",
@@ -2750,14 +2640,14 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  value: await service
+                  value: yield* integration(() => service
                     .forTenant(tenantId)
                     .timeSeries.aggregate(params.series, {
                     op: readTimeSeriesAggregateOperation(input.op),
@@ -2765,13 +2655,11 @@ export function defineDatabaseTimeSeriesService(
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
                     tags: readOptionalTagFilter(input.tags),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.windows",
@@ -2808,14 +2696,14 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  buckets: await service
+                  buckets: yield* integration(() => service
                     .forTenant(tenantId)
                     .timeSeries.windows(params.series, {
                     interval: readRequiredNumber(input.interval, "interval"),
@@ -2826,13 +2714,11 @@ export function defineDatabaseTimeSeriesService(
                     fill: readOptionalTimeSeriesFill(input.fill),
                     ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
                     tags: readOptionalTagFilter(input.tags),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.moving",
@@ -2870,14 +2756,14 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  points: await service
+                  points: yield* integration(() => service
                     .forTenant(tenantId)
                     .timeSeries.moving(params.series, {
                     window: readMovingWindow(input.window),
@@ -2886,13 +2772,11 @@ export function defineDatabaseTimeSeriesService(
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
                     tags: readOptionalTagFilter(input.tags),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.histogram",
@@ -2929,13 +2813,13 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service
+                body: yield* integration(() => service
                   .forTenant(tenantId)
                   .timeSeries.histogram(params.series, {
                   ...(input.bins === undefined ? {} : { bins: readRequiredNumber(input.bins, "bins") }),
@@ -2946,12 +2830,10 @@ export function defineDatabaseTimeSeriesService(
                   start: readOptionalTimeSeriesBoundary(input.start, "start"),
                   end: readOptionalTimeSeriesBoundary(input.end, "end"),
                   tags: readOptionalTagFilter(input.tags),
-                }),
+                })),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.interpolate",
@@ -2985,14 +2867,14 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
-                  points: await service
+                  points: yield* integration(() => service
                     .forTenant(tenantId)
                     .timeSeries.interpolate(params.series, {
                     step: readRequiredNumber(input.step, "step"),
@@ -3000,13 +2882,11 @@ export function defineDatabaseTimeSeriesService(
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     tags: readOptionalTagFilter(input.tags),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
         {
           id: "database.timeseries.ingest",
@@ -3035,20 +2915,18 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body, principal }) => {
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
 
-            try {
+ return yield* Effect.gen(function* () {
               const tenantId = readTenantId(input.tenantId, principal);
               return {
-                body: await service
+                body: yield* integration(() => service
                   .forTenant(tenantId)
-                  .timeSeries.ingest(params.series),
+                  .timeSeries.ingest(params.series)),
               };
-            } catch (error) {
-              return databaseErrorResponse(error, 404);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
+})),
         },
       ],
     },

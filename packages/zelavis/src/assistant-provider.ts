@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * Where the Admin Agent's model comes from, resolved on every request.
  *
@@ -132,8 +134,9 @@ export function createAssistantProviderConfig(options: {
   const secretFor = (scope: AssistantProviderScope | undefined) =>
     `${options.masterSecret}\u0000${keyOf(scope)}`;
 
-  async function stored(scope?: AssistantProviderScope): Promise<StoredConfig | undefined> {
-    const record = await options.store.get(NAMESPACE, keyOf(scope));
+  function stored(scope?: AssistantProviderScope): Promise<StoredConfig | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<StoredConfig | undefined, IntegrationFailure> {
+    const record = (yield* integrationValue(options.store.get(NAMESPACE, keyOf(scope))));
     const value = record?.value as unknown;
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const config = value as StoredConfig;
@@ -141,6 +144,7 @@ export function createAssistantProviderConfig(options: {
       typeof config.model === "string" && config.apiKey
       ? config
       : undefined;
+  }));
   }
 
   const environment = () => {
@@ -151,12 +155,13 @@ export function createAssistantProviderConfig(options: {
     return { provider, apiKey, model };
   };
 
-  async function platformStatus(): Promise<AssistantProviderStatus> {
+  function platformStatus(): Promise<AssistantProviderStatus> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AssistantProviderStatus, IntegrationFailure> {
     const fromEnv = environment();
     if (fromEnv) {
       return { mode: "model", provider: fromEnv.provider, model: fromEnv.model, hasApiKey: true, source: "environment" };
     }
-    const config = await stored();
+    const config = (yield* integrationValue(stored()));
     if (config) {
       return {
         mode: "model", provider: config.provider, model: config.model,
@@ -164,11 +169,13 @@ export function createAssistantProviderConfig(options: {
       };
     }
     return { mode: "local-router", hasApiKey: false, source: "none" };
+  }));
   }
 
-  async function status(scope?: AssistantProviderScope): Promise<AssistantProviderStatus> {
-    if (!scope?.projectId) return platformStatus();
-    const own = await stored(scope);
+  function status(scope?: AssistantProviderScope): Promise<AssistantProviderStatus> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AssistantProviderStatus, IntegrationFailure> {
+    if (!scope?.projectId) return (yield* integrationValue(platformStatus()));
+    const own = (yield* integrationValue(stored(scope)));
     if (own) {
       return {
         mode: "model", provider: own.provider, model: own.model,
@@ -176,8 +183,9 @@ export function createAssistantProviderConfig(options: {
       };
     }
     // Inherited: only whether an answer would come from a model, never whose.
-    const inherited = await platformStatus();
+    const inherited = (yield* integrationValue(platformStatus()));
     return { mode: inherited.mode, hasApiKey: false, source: inherited.mode === "model" ? "platform" : "none" };
+  }));
   }
 
   function refuseWhileEnvironmentControls(scope: AssistantProviderScope | undefined) {
@@ -199,7 +207,8 @@ export function createAssistantProviderConfig(options: {
 
   return {
     status,
-    async set(scope, input, updatedBy) {
+    set(scope, input, updatedBy) {
+    return present(Effect.gen(function* () {
       refuseWhileEnvironmentControls(scope);
       const provider = validProvider(input.provider ?? "openrouter");
       const model = validModel(input.model);
@@ -211,30 +220,37 @@ export function createAssistantProviderConfig(options: {
         updatedAt: new Date().toISOString(),
         updatedBy,
       };
-      await options.store.set(NAMESPACE, keyOf(scope), config as unknown as ZelavisSystemStoreValue);
-      return status(scope);
-    },
-    async clear(scope) {
+      (yield* integrationValue(options.store.set(NAMESPACE, keyOf(scope), config as unknown as ZelavisSystemStoreValue)));
+      return (yield* integrationValue(status(scope)));
+    }));
+  },
+    clear(scope) {
+    return present(Effect.gen(function* () {
       refuseWhileEnvironmentControls(scope);
-      await options.store.delete(NAMESPACE, keyOf(scope));
-      return status(scope);
-    },
-    async removeProject(projectId) {
-      await options.store.delete(NAMESPACE, keyOf({ projectId }));
-    },
-    async resolveModel(projectId) {
+      (yield* integrationValue(options.store.delete(NAMESPACE, keyOf(scope))));
+      return (yield* integrationValue(status(scope)));
+    }));
+  },
+    removeProject(projectId) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(options.store.delete(NAMESPACE, keyOf({ projectId }))));
+    }));
+  },
+    resolveModel(projectId) {
+    return present(Effect.gen(function* () {
       if (projectId) {
-        const own = await stored({ projectId });
+        const own = (yield* integrationValue(stored({ projectId })));
         if (own) {
-          return build(own.provider, decryptSecret(own.apiKey, secretFor({ projectId })), own.model);
+          return (yield* integrationValue(build(own.provider, decryptSecret(own.apiKey, secretFor({ projectId })), own.model)));
         }
       }
       const fromEnv = environment();
-      if (fromEnv) return build(fromEnv.provider, fromEnv.apiKey, fromEnv.model);
-      const config = await stored();
+      if (fromEnv) return (yield* integrationValue(build(fromEnv.provider, fromEnv.apiKey, fromEnv.model)));
+      const config = (yield* integrationValue(stored()));
       if (!config) return undefined;
-      return build(config.provider, decryptSecret(config.apiKey, secretFor(undefined)), config.model);
-    },
+      return (yield* integrationValue(build(config.provider, decryptSecret(config.apiKey, secretFor(undefined)), config.model)));
+    }));
+  },
   };
 }
 
@@ -251,22 +267,26 @@ export function createConfiguredAssistantResponder(options: {
   const local = createLocalAssistantResponder();
   return {
     name: "zelavis-assistant",
-    async respond(input) {
-      const model = await options.provider.resolveModel(input.thread.projectId);
-      if (!model) return { ...(await local.respond(input)), provider: "local-router" };
-      return createModelAssistantResponder({
+    respond(input) {
+    return present(Effect.gen(function* () {
+      const model = (yield* integrationValue(options.provider.resolveModel(input.thread.projectId)));
+      if (!model) return { ...((yield* integrationValue(local.respond(input)))), provider: "local-router" };
+      return (yield* integrationValue(createModelAssistantResponder({
         model,
         ...(options.toolbox ? { toolbox: options.toolbox } : {}),
         ...(options.system ? { system: options.system } : {}),
-      }).respond(input);
-    },
+      }).respond(input)));
+    }));
+  },
   };
 }
 
 /** Removes a deleted Project's own provider, without needing a running config. */
-export async function removeProjectAssistantProvider(
+export function removeProjectAssistantProvider(
   store: ZelavisSystemStore,
   projectId: string,
 ): Promise<void> {
-  await store.delete(NAMESPACE, `project:${projectId}`);
-}
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+  (yield* integrationValue(store.delete(NAMESPACE, `project:${projectId}`)));
+}));
+  }

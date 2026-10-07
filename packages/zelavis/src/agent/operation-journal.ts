@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type {
   ZelavisAgentIdentity,
   ZelavisAgentOperationEvent,
@@ -96,7 +98,8 @@ function toSummary(operation: StoredAgentOperation): ZelavisAgentOperationSummar
   };
 }
 
-async function requestFingerprint(request: ZelavisHostOperationRequest): Promise<string> {
+function requestFingerprint(request: ZelavisHostOperationRequest): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const body = JSON.stringify([
     request.operation,
     request.version,
@@ -104,11 +107,12 @@ async function requestFingerprint(request: ZelavisHostOperationRequest): Promise
     Object.entries(request.arguments).sort(([left], [right]) => left.localeCompare(right)),
     request.projectId ?? null,
   ]);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-  return [...new Uint8Array(digest)]
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))));
+  return (yield* integrationValue([...new Uint8Array(digest)]
     .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-}
+    .join("")));
+}));
+  }
 
 function appendEvent(
   operation: StoredAgentOperation,
@@ -126,27 +130,30 @@ function appendEvent(
   ];
 }
 
-async function resolveIdentity(store: ZelavisSystemStore): Promise<ZelavisAgentIdentity> {
+function resolveIdentity(store: ZelavisSystemStore): Promise<ZelavisAgentIdentity> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisAgentIdentity, IntegrationFailure> {
   const now = new Date().toISOString();
-  const created = await store.setIfAbsent(IDENTITY_NAMESPACE, IDENTITY_KEY, {
+  const created = (yield* integrationValue(store.setIfAbsent(IDENTITY_NAMESPACE, IDENTITY_KEY, {
     id: crypto.randomUUID(),
     createdAt: now,
-  });
+  })));
   const value = created.record.value as unknown as ZelavisAgentIdentity;
   if (!value || typeof value.id !== "string" || typeof value.createdAt !== "string") {
     throw new TypeError("Stored Agent identity is invalid.");
   }
-  return Object.freeze({ id: value.id, createdAt: value.createdAt });
-}
+  return (yield* integrationValue(Object.freeze({ id: value.id, createdAt: value.createdAt })));
+}));
+  }
 
 /**
  * Creates the durable local Agent journal. The caller should run this manager in
  * a separately supervised Agent process; no Platform route can submit commands.
  */
-export async function createAgentOperationManager(options: {
+export function createAgentOperationManager(options: {
   readonly store: ZelavisSystemStore;
 } & ZelavisAgentOperationManagerOptions): Promise<ZelavisAgentOperationManager> {
-  const identity = await resolveIdentity(options.store);
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisAgentOperationManager, IntegrationFailure> {
+  const identity = (yield* integrationValue(resolveIdentity(options.store)));
   const ownerId = `${identity.id}:${crypto.randomUUID()}`;
   const concurrency = Math.max(1, Math.min(options.concurrency ?? 2, 32));
   const discoveryLimit = Math.max(1, Math.min(options.discoveryLimit ?? 100, 1_000));
@@ -164,12 +171,13 @@ export async function createAgentOperationManager(options: {
 
   function waitForIdle(): Promise<void> {
     if (active.size === 0 && pending.length === 0) return Promise.resolve();
-    return new Promise((resolveIdle) => idleWaiters.add(resolveIdle));
+    return present(Effect.callback<void>((resume) => { idleWaiters.add(() => resume(Effect.void)); }));
   }
 
-  async function claim(operationId: string): Promise<StoredAgentOperation | undefined> {
+  function claim(operationId: string): Promise<StoredAgentOperation | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<StoredAgentOperation | undefined, IntegrationFailure> {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const record = await options.store.get(OPERATIONS_NAMESPACE, operationId);
+      const record = (yield* integrationValue(options.store.get(OPERATIONS_NAMESPACE, operationId)));
       if (!record) return undefined;
       const operation = parseStoredOperation(record);
       const expired = operation.status === "running" &&
@@ -189,26 +197,28 @@ export async function createAgentOperationManager(options: {
         events: appendEvent(operation, expired ? "recovered" : "claimed", ownerId),
         updatedAt,
       };
-      const changed = await options.store.compareAndSet(
+      const changed = (yield* integrationValue(options.store.compareAndSet(
         OPERATIONS_NAMESPACE,
         operationId,
         record.updatedAt,
         storeValue(next),
-      );
+      )));
       if (changed) return next;
     }
     return undefined;
+  }));
   }
 
-  async function finish(
+  function finish(
     operation: StoredAgentOperation,
     result?: ZelavisHostOperationResult,
   ): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const record = await options.store.get(
+      const record = (yield* integrationValue(options.store.get(
         OPERATIONS_NAMESPACE,
         operation.request.operationId,
-      );
+      )));
       if (!record) return;
       const current = parseStoredOperation(record);
       if (current.status !== "running" || current.lease?.ownerId !== ownerId) return;
@@ -235,24 +245,25 @@ export async function createAgentOperationManager(options: {
         events: appendEvent(current, succeeded ? "succeeded" : "failed", ownerId),
         updatedAt,
       };
-      if (await options.store.compareAndSet(
+      if ((yield* integrationValue(options.store.compareAndSet(
         OPERATIONS_NAMESPACE,
         current.request.operationId,
         record.updatedAt,
         storeValue(next),
-      )) return;
+      )))) return;
     }
+  }));
   }
 
-  async function execute(operationId: string): Promise<void> {
-    const operation = await claim(operationId);
-    if (!operation) return;
-    try {
-      const result = await options.executor.execute(operation.request);
-      await finish(operation, result);
-    } catch {
-      await finish(operation);
-    }
+  function execute(operationId: string): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+      const operation = yield* integrationValue(claim(operationId));
+      if (!operation) return;
+      yield* integration(() => options.executor.execute(operation.request)).pipe(
+        Effect.flatMap((result) => integrationValue(finish(operation, result))),
+        Effect.catch(() => integrationValue(finish(operation))),
+      );
+    }));
   }
 
   function drain() {
@@ -279,25 +290,30 @@ export async function createAgentOperationManager(options: {
 
   return {
     identity,
-    async get(operationId) {
-      const record = await options.store.get(OPERATIONS_NAMESPACE, operationId);
+    get(operationId) {
+    return present(Effect.gen(function* () {
+      const record = (yield* integrationValue(options.store.get(OPERATIONS_NAMESPACE, operationId)));
       return record ? toSummary(parseStoredOperation(record)) : undefined;
-    },
-    async list(listOptions = {}) {
+    }));
+  },
+    list(listOptions = {}) {
+    return present(Effect.gen(function* () {
       const limit = Math.max(1, Math.min(listOptions.limit ?? 100, 500));
-      return (await options.store.list(OPERATIONS_NAMESPACE))
+      return (yield* integrationValue(((yield* integrationValue(options.store.list(OPERATIONS_NAMESPACE))))
         .map(parseStoredOperation)
         .filter((operation) =>
           listOptions.status ? operation.status === listOptions.status : true
         )
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, limit)
-        .map(toSummary);
-    },
-    async submit(request) {
+        .map(toSummary)));
+    }));
+  },
+    submit(request) {
+    return present(Effect.gen(function* () {
       if (closed) throw new Error("Agent operation manager is closed.");
       request = validateHostOperationRequestShape(request);
-      const fingerprint = await requestFingerprint(request);
+      const fingerprint = (yield* integrationValue(requestFingerprint(request)));
       const now = new Date().toISOString();
       const operation: StoredAgentOperation = {
         schemaVersion: 1,
@@ -310,11 +326,11 @@ export async function createAgentOperationManager(options: {
         createdAt: now,
         updatedAt: now,
       };
-      const claimed = await options.store.setIfAbsent(
+      const claimed = (yield* integrationValue(options.store.setIfAbsent(
         OPERATIONS_NAMESPACE,
         request.operationId,
         storeValue(operation),
-      );
+      )));
       const stored = parseStoredOperation(claimed.record);
       if (!claimed.created && stored.fingerprint !== fingerprint) {
         throw new ZelavisAgentOperationConflictError(
@@ -322,11 +338,13 @@ export async function createAgentOperationManager(options: {
         );
       }
       if (stored.status === "queued") schedule(request.operationId);
-      return toSummary(stored);
-    },
-    async reconcile() {
+      return (yield* integrationValue(toSummary(stored)));
+    }));
+  },
+    reconcile() {
+    return present(Effect.gen(function* () {
       if (closed) throw new Error("Agent operation manager is closed.");
-      const records = (await options.store.list(OPERATIONS_NAMESPACE))
+      const records = ((yield* integrationValue(options.store.list(OPERATIONS_NAMESPACE))))
         .map(parseStoredOperation)
         .filter((operation) =>
           operation.status === "queued" ||
@@ -335,13 +353,17 @@ export async function createAgentOperationManager(options: {
         )
         .slice(0, discoveryLimit);
       for (const operation of records) schedule(operation.request.operationId);
-      await waitForIdle();
-    },
-    async close() {
+      (yield* integrationValue(waitForIdle()));
+    }));
+  },
+    close() {
+    return present(Effect.gen(function* () {
       closed = true;
       pending.length = 0;
       pendingSet.clear();
-      await waitForIdle();
-    },
+      (yield* integrationValue(waitForIdle()));
+    }));
+  },
   };
-}
+}));
+  }

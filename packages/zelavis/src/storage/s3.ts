@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type {
   ZelavisFileStorage,
   ZelavisFileStorageEntry,
@@ -85,14 +87,17 @@ function toArrayBuffer(bytes: Uint8Array) {
   ) as ArrayBuffer;
 }
 
-async function sha256Hex(value: string | Uint8Array) {
+function sha256Hex(value: string | Uint8Array) {
+    return present(Effect.gen(function* () {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-  const digest = await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes));
-  return toHex(new Uint8Array(digest));
-}
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", toArrayBuffer(bytes))));
+  return (yield* integrationValue(toHex(new Uint8Array(digest))));
+}));
+  }
 
-async function hmacSha256(key: Uint8Array, value: string) {
-  const cryptoKey = await crypto.subtle.importKey(
+function hmacSha256(key: Uint8Array, value: string) {
+    return present(Effect.gen(function* () {
+  const cryptoKey = (yield* integrationValue(crypto.subtle.importKey(
     "raw",
     toArrayBuffer(key),
     {
@@ -101,26 +106,29 @@ async function hmacSha256(key: Uint8Array, value: string) {
     },
     false,
     ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
+  )));
+  const signature = (yield* integrationValue(crypto.subtle.sign(
     "HMAC",
     cryptoKey,
     toArrayBuffer(new TextEncoder().encode(value)),
-  );
+  )));
   return new Uint8Array(signature);
-}
+}));
+  }
 
-async function deriveSigningKey(
+function deriveSigningKey(
   secretAccessKey: string,
   dateStamp: string,
   region: string,
 ) {
+    return present(Effect.gen(function* () {
   const secret = new TextEncoder().encode(`AWS4${secretAccessKey}`);
-  const dateKey = await hmacSha256(secret, dateStamp);
-  const regionKey = await hmacSha256(dateKey, region);
-  const serviceKey = await hmacSha256(regionKey, "s3");
-  return hmacSha256(serviceKey, "aws4_request");
-}
+  const dateKey = (yield* integrationValue(hmacSha256(secret, dateStamp)));
+  const regionKey = (yield* integrationValue(hmacSha256(dateKey, region)));
+  const serviceKey = (yield* integrationValue(hmacSha256(regionKey, "s3")));
+  return (yield* integrationValue(hmacSha256(serviceKey, "aws4_request")));
+}));
+  }
 
 function encodePath(path: string) {
   return path
@@ -182,11 +190,12 @@ function collectCustomMetadata(headers: Headers) {
     : undefined;
 }
 
-async function toBytes(
+function toBytes(
   body: ZelavisFileStoragePutInput["body"],
 ): Promise<Uint8Array> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Uint8Array, IntegrationFailure> {
   if (typeof body === "string") {
-    return new TextEncoder().encode(body);
+    return (yield* integrationValue(new TextEncoder().encode(body)));
   }
 
   if (body instanceof Uint8Array) {
@@ -198,7 +207,7 @@ async function toBytes(
   }
 
   if (typeof Blob !== "undefined" && body instanceof Blob) {
-    return new Uint8Array(await body.arrayBuffer());
+    return new Uint8Array((yield* integrationValue(body.arrayBuffer())));
   }
 
   if (
@@ -215,7 +224,7 @@ async function toBytes(
   let total = 0;
 
   while (true) {
-    const next = await reader.read();
+    const next = (yield* integrationValue(reader.read()));
     if (next.done) {
       break;
     }
@@ -232,9 +241,10 @@ async function toBytes(
   }
 
   return result;
-}
+}));
+  }
 
-async function signedFetch(
+function signedFetch(
   options: S3CompatibleFileStorageOptions,
   input: {
     method: string;
@@ -244,6 +254,7 @@ async function signedFetch(
     body?: Uint8Array;
   },
 ) {
+    return present(Effect.gen(function* () {
   const prefix = normalizeStoragePrefix(options.prefix);
   const objectPath = input.path ? joinStoragePath(prefix, input.path) : prefix;
   const endpoint = options.endpoint
@@ -270,7 +281,7 @@ async function signedFetch(
     endpoint.searchParams.append(key, value as string);
   }
 
-  const bodyHash = input.body ? await sha256Hex(input.body) : EMPTY_BODY_SHA256;
+  const bodyHash = input.body ? (yield* integrationValue(sha256Hex(input.body))) : EMPTY_BODY_SHA256;
   const now = new Date();
   const { dateTime, dateStamp } = formatAmzDate(now);
   const headers = new Headers(input.headers);
@@ -315,15 +326,15 @@ async function signedFetch(
     "AWS4-HMAC-SHA256",
     dateTime,
     credentialScope,
-    await sha256Hex(canonicalRequest),
+    (yield* integrationValue(sha256Hex(canonicalRequest))),
   ].join("\n");
 
-  const signingKey = await deriveSigningKey(
+  const signingKey = (yield* integrationValue(deriveSigningKey(
     options.secretAccessKey,
     dateStamp,
     options.region,
-  );
-  const signature = toHex(await hmacSha256(signingKey, stringToSign));
+  )));
+  const signature = toHex((yield* integrationValue(hmacSha256(signingKey, stringToSign))));
 
   headers.set(
     "authorization",
@@ -335,21 +346,23 @@ async function signedFetch(
   );
 
   const fetchImpl = options.fetch ?? fetch;
-  return fetchImpl(endpoint, {
+  return (yield* integrationValue(fetchImpl(endpoint, {
     method: input.method,
     headers,
     body: input.body ? toArrayBuffer(input.body) : undefined,
-  });
-}
+  })));
+}));
+  }
 
-async function headObject(
+function headObject(
   options: S3CompatibleFileStorageOptions,
   path: string,
 ) {
-  const response = await signedFetch(options, {
+    return present(Effect.gen(function* () {
+  const response = (yield* integrationValue(signedFetch(options, {
     method: "HEAD",
     path,
-  });
+  })));
 
   if (response.status === 404) {
     return undefined;
@@ -362,7 +375,8 @@ async function headObject(
   }
 
   return response;
-}
+}));
+  }
 
 export function createS3CompatibleFileStorage(
   options: S3CompatibleFileStorageOptions,
@@ -372,11 +386,12 @@ export function createS3CompatibleFileStorage(
   options = { ...options, defaultHeaders: options.defaultHeaders && { ...options.defaultHeaders } };
   return {
     capabilities: Object.freeze({ conditionalCreate: "distributed", conditionalReplace: "distributed" }),
-    async get(path): Promise<ZelavisFileStorageObject | undefined> {
-      const response = await signedFetch(options, {
+    get(path): Promise<ZelavisFileStorageObject | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisFileStorageObject | undefined, IntegrationFailure> {
+      const response = (yield* integrationValue(signedFetch(options, {
         method: "GET",
         path,
-      });
+      })));
 
       if (response.status === 404) {
         return undefined;
@@ -388,7 +403,7 @@ export function createS3CompatibleFileStorage(
 
       return {
         path: normalizeStoragePath(path),
-        body: new Uint8Array(await response.arrayBuffer()),
+        body: new Uint8Array((yield* integrationValue(response.arrayBuffer()))),
         size: Number(response.headers.get("content-length") ?? "0") || undefined,
         updatedAt: response.headers.get("last-modified")
           ? new Date(response.headers.get("last-modified") as string)
@@ -400,9 +415,11 @@ export function createS3CompatibleFileStorage(
         metadata: collectCustomMetadata(response.headers),
         etag: response.headers.get("etag") ?? undefined,
       };
-    },
-    async put(input): Promise<ZelavisFileStorageEntry> {
-      const body = await toBytes(input.body);
+    }));
+  },
+    put(input): Promise<ZelavisFileStorageEntry> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisFileStorageEntry, IntegrationFailure> {
+      const body = (yield* integrationValue(toBytes(input.body)));
       const headers = new Headers();
       const defaultHeaders = options.defaultHeaders;
       const resolvedCacheControl =
@@ -441,12 +458,12 @@ export function createS3CompatibleFileStorage(
         }
       }
 
-      const response = await signedFetch(options, {
+      const response = (yield* integrationValue(signedFetch(options, {
         method: "PUT",
         path: input.path,
         headers,
         body,
-      });
+      })));
 
       // An object that is gone cannot match the version a caller read, and a
       // 404 on a PUT wrote nothing, so for `ifMatch` it is the same clean
@@ -483,31 +500,35 @@ export function createS3CompatibleFileStorage(
             : {}),
         },
       };
-    },
-    async delete(path) {
-      const existing = await headObject(options, path);
+    }));
+  },
+    delete(path) {
+    return present(Effect.gen(function* () {
+      const existing = (yield* integrationValue(headObject(options, path)));
       if (!existing) {
         return false;
       }
 
-      const response = await signedFetch(options, {
+      const response = (yield* integrationValue(signedFetch(options, {
         method: "DELETE",
         path,
-      });
+      })));
 
       if (!response.ok) {
         throw new Error(`Failed to delete S3 object "${path}" (${response.status}).`);
       }
 
       return true;
-    },
-    async list(prefix) {
+    }));
+  },
+    list(prefix) {
+    return present(Effect.gen(function* () {
       const normalizedPrefix = prefix ? normalizeStoragePath(prefix) : undefined;
       const entries: ZelavisFileStorageEntry[] = [];
       let continuationToken: string | undefined;
 
       while (true) {
-        const response = await signedFetch(options, {
+        const response = (yield* integrationValue(signedFetch(options, {
           method: "GET",
           query: {
             "list-type": "2",
@@ -516,13 +537,13 @@ export function createS3CompatibleFileStorage(
               : normalizeStoragePrefix(options.prefix) || undefined,
             "continuation-token": continuationToken,
           },
-        });
+        })));
 
         if (!response.ok) {
           throw new Error(`Failed to list S3 objects (${response.status}).`);
         }
 
-        const payload = parseS3ListXml(await response.text());
+        const payload = parseS3ListXml((yield* integrationValue(response.text())));
         entries.push(
           ...payload.entries.map((entry) => ({
             path: stripStoragePrefix(entry.key, normalizeStoragePrefix(options.prefix)),
@@ -538,7 +559,8 @@ export function createS3CompatibleFileStorage(
         continuationToken = payload.nextToken;
       }
 
-      return entries.sort((left, right) => left.path.localeCompare(right.path));
-    },
+      return (yield* integrationValue(entries.sort((left, right) => left.path.localeCompare(right.path))));
+    }));
+  },
   };
 }

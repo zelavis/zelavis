@@ -59,7 +59,7 @@ import {
   type ZelavisPlatformFrontend,
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import { Scope } from "effect";
 import {
   AcquisitionFailed,
@@ -1118,18 +1118,7 @@ function readDashboardServiceRegistryUpdate(
   return update;
 }
 
-/**
- * Runs one installer step from a Promise-shaped caller.
- *
- * Scoped, because every installer method writes through a temporary directory
- * that the scope is responsible for removing. The typed failure is re-raised
- * as itself so the platform's status rules can tell a refused source from a
- * failed fetch.
- */
-const runInstallerStep = <A, E>(step: Effect.Effect<A, E, Scope.Scope>): Promise<A> =>
-  Effect.runPromise(Effect.scoped(step).pipe(Effect.catch((failure) => Effect.die(failure))));
-
-async function readDashboardServiceRegistryCreate(
+function readDashboardServiceRegistryCreate(
   body: unknown,
   options: {
     importer?: ZelavisServiceLoadOptions["importer"];
@@ -1137,6 +1126,7 @@ async function readDashboardServiceRegistryCreate(
     packageInstaller?: ZelavisServicePackageInstaller;
   } = {},
 ): Promise<ZelavisServiceRegistryStateEntry> {
+  return present(Effect.gen(function* () {
   const input = readBodyObject(body);
   const explicitName = typeof input.name === "string" ? input.name.trim() : "";
   let specifier =
@@ -1150,12 +1140,12 @@ async function readDashboardServiceRegistryCreate(
 
   if (!specifier && sourceReference) {
     if (!options.packageInstaller?.acquire) {
-      throw new ZelavisValidationError(
+      return yield* new IntegrationFailure(new ZelavisValidationError(
         "This installation cannot acquire packages from remote sources.",
-      );
+      ));
     }
 
-    const acquired = await runInstallerStep(
+    const acquired = yield* Effect.scoped(
       options.packageInstaller.acquire({ reference: sourceReference }),
     );
     specifier = acquired.specifier;
@@ -1166,12 +1156,12 @@ async function readDashboardServiceRegistryCreate(
   // flow that would have to repeat the loading and naming below.
   if (!specifier && scaffoldReference) {
     if (!options.packageInstaller?.scaffold) {
-      throw new ZelavisValidationError(
+      return yield* new IntegrationFailure(new ZelavisValidationError(
         "This installation cannot scaffold a frontend from a create package.",
-      );
+      ));
     }
 
-    const scaffolded = await runInstallerStep(
+    const scaffolded = yield* Effect.scoped(
       options.packageInstaller.scaffold({
       reference: scaffoldReference,
       ...(typeof input.scaffoldCommand === "string" && input.scaffoldCommand.trim()
@@ -1190,10 +1180,10 @@ async function readDashboardServiceRegistryCreate(
   }
 
   if (!specifier && isServiceUploadFile(uploadedFile)) {
-    const bytes = new Uint8Array(await uploadedFile.arrayBuffer());
+    const bytes = new Uint8Array(yield* integration(() => uploadedFile.arrayBuffer()));
 
     if (options.packageInstaller) {
-      const installed = await runInstallerStep(
+      const installed = yield* Effect.scoped(
         options.packageInstaller.install({
         fileName:
           typeof uploadedFile.name === "string" && uploadedFile.name.trim()
@@ -1213,25 +1203,27 @@ async function readDashboardServiceRegistryCreate(
   }
 
   if (!specifier) {
-    throw new ZelavisValidationError(
+    return yield* new IntegrationFailure(new ZelavisValidationError(
       "Service module file or ESM specifier is required.",
-    );
+    ));
   }
 
   let serviceName = explicitName;
 
   if (!serviceName) {
-    try {
-      const service = await loadService<ZelavisServiceSetupContext>(specifier, {
-        importer: options.importer,
-        manifestResolver: options.manifestResolver,
-      });
-      serviceName = service.name;
-    } catch (error) {
-      throw new ZelavisValidationError(
-        `Service module could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const loadedSpecifier = specifier;
+    serviceName = yield* integration(() => loadService<ZelavisServiceSetupContext>(loadedSpecifier, {
+      importer: options.importer,
+      manifestResolver: options.manifestResolver,
+    })).pipe(
+      Effect.map((service) => service.name),
+      Effect.mapError((failure) => {
+        const error = unwrapFailure(failure);
+        return new IntegrationFailure(new ZelavisValidationError(
+          `Service module could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+      }),
+    );
   }
 
   return parseStoredServiceRegistryStateEntry({
@@ -1241,6 +1233,7 @@ async function readDashboardServiceRegistryCreate(
     source: input.source ?? "community",
     ...(input.order !== undefined ? { order: input.order } : {}),
   });
+  }));
 }
 
 const defaultDashboardServiceRegistry = createServiceRegistry<ZelavisServiceSetupContext>([]);
@@ -1281,7 +1274,7 @@ function asExtensionScoped<T extends { service?: any }>(registryEntry: T): T {
   }) as T;
 }
 
-async function loadStoredServiceRegistryModules(
+function loadStoredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryStateEntry[] | undefined,
   importer?: ZelavisServiceLoadOptions["importer"],
   manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
@@ -1296,29 +1289,29 @@ async function loadStoredServiceRegistryModules(
     }));
 
   if (moduleEntries.length === 0) {
-    return [];
+    return Promise.resolve([]);
   }
 
-  const resolvedEntries: Readonly<
-    ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
-  >[] = [];
+  return present(Effect.gen(function* () {
+    const resolvedEntries: Readonly<
+      ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
+    >[] = [];
 
-  for (const entry of moduleEntries) {
-    try {
-      const loaded = await loadServiceRegistry<ZelavisServiceSetupContext>(
+    for (const entry of moduleEntries) {
+      // A stored entry that cannot be loaded is left out; the rest still load.
+      const scoped = yield* integration(() => loadServiceRegistry<ZelavisServiceSetupContext>(
         [entry],
         { importer, ...(manifestResolver ? { manifestResolver } : {}) },
+      )).pipe(
+        Effect.map((loaded) => loaded.map(asExtensionScoped)),
+        Effect.orElseSucceed((): Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] => []),
       );
 
-      const scoped = loaded.map(asExtensionScoped);
-
       resolvedEntries.push(...scoped);
-    } catch {
-      continue;
     }
-  }
 
-  return resolvedEntries;
+    return resolvedEntries;
+  }));
 }
 
 /**
@@ -1334,11 +1327,12 @@ async function loadStoredServiceRegistryModules(
  * identity, but the package is installed for the application, not for
  * `zelavis`, so importing it from here would fail.
  */
-async function loadConfiguredServiceRegistryModules(
+function loadConfiguredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
   importer?: ZelavisServiceLoadOptions["importer"],
   manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
+  return present(Effect.gen(function* () {
   const resolved: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] = [];
 
   for (const entry of entries) {
@@ -1355,21 +1349,24 @@ async function loadConfiguredServiceRegistryModules(
       continue;
     }
 
-    let loaded: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>> | undefined;
-    try {
-      [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
-        [
-          {
-            specifier: entry.specifier,
-            status: entry.status,
-            source: entry.source,
-            ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
-            ...(entry.order !== undefined ? { order: entry.order } : {}),
-          },
-        ],
-        { importer, ...(manifestResolver ? { manifestResolver } : {}) },
-      );
-    } catch (error) {
+    const specifier = entry.specifier;
+    const attempt = yield* integration(() => loadServiceRegistry<ZelavisServiceSetupContext>(
+      [
+        {
+          specifier,
+          status: entry.status,
+          source: entry.source,
+          ...(entry.maintainer ? { maintainer: entry.maintainer } : {}),
+          ...(entry.order !== undefined ? { order: entry.order } : {}),
+        },
+      ],
+      { importer, ...(manifestResolver ? { manifestResolver } : {}) },
+    )).pipe(
+      Effect.map(([first]) => ({ loaded: first as Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>> | undefined })),
+      Effect.catch((failure) => Effect.succeed({ failure: unwrapFailure(failure) })),
+    );
+    if ("failure" in attempt) {
+      const error = attempt.failure;
       // A caller-supplied live instance stands in when the specifier cannot be
       // loaded as a module. Anything other than "not resolvable" is reported,
       // because a refused or throwing package replaced by its placeholder
@@ -1392,6 +1389,7 @@ async function loadConfiguredServiceRegistryModules(
       continue;
     }
 
+    const loaded = attempt.loaded as Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>;
     resolved.push(
       entry.service.scope === undefined
         ? loaded
@@ -1406,6 +1404,7 @@ async function loadConfiguredServiceRegistryModules(
   }
 
   return createServiceRegistry(resolved);
+  }));
 }
 
 function createServiceSetupPlatformContext(
@@ -1461,24 +1460,26 @@ interface ResolvedDatabaseSubsystem {
  * filesystem — and the composition entry point stays runtime-neutral. A host
  * that opens its own instance never loads it.
  */
-async function resolveDatabaseCoreService(
+function resolveDatabaseCoreService(
   option: ZelavisDatabaseOptions | undefined,
 ): Promise<ResolvedDatabaseSubsystem | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ResolvedDatabaseSubsystem | undefined, IntegrationFailure> {
   if (option === undefined || option === false) {
     return undefined;
   }
 
-  const resolved = await option;
+  const resolved = (yield* integrationValue(option));
   if (isDatabaseRuntimeApi(resolved)) {
     return { api: resolved };
   }
 
-  const { openNodeDatabase } = await import("./db/node-host.js");
-  const opened = await openNodeDatabase(resolved);
+  const { openNodeDatabase } = (yield* integrationValue(import("./db/node-host.js")));
+  const opened = (yield* integrationValue(openNodeDatabase(resolved)));
   return { api: opened.api, close: opened.close };
-}
+}));
+  }
 
-async function resolveAuthCoreService(
+function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
   methods: readonly IdentityMethodPlugin[] = [],
   systemStore?: ZelavisSystemStore,
@@ -1489,6 +1490,7 @@ async function resolveAuthCoreService(
   rootPath = "/zelavis",
   bootstrapToken?: string,
 ): Promise<ZelavisEndpointGroup<IdentityApi> | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<IdentityApi> | undefined, IntegrationFailure> {
   const authOption = option ?? true;
 
   if (authOption === false) {
@@ -1513,7 +1515,7 @@ async function resolveAuthCoreService(
     },
     oauth.method,
   ];
-  const auth = configured.auth ?? await createIdentity({
+  const auth = configured.auth ?? (yield* integrationValue(createIdentity({
     ...(configured.authOptions ?? {}),
     repositories: {
       ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
@@ -1534,9 +1536,9 @@ async function resolveAuthCoreService(
         ? { store: createServiceStore(systemStore, methodServiceNames.get(method) ?? method.name) }
         : {}),
     }),
-  });
+  })));
 
-  return createIdentityEndpointGroup({
+  return (yield* integrationValue(createIdentityEndpointGroup({
     ...configured,
     auth,
     methods: [],
@@ -1553,8 +1555,9 @@ async function resolveAuthCoreService(
             ...(configured.definition?.sessionCookie ?? {}),
           },
     },
-  });
-}
+  })));
+}));
+  }
 
 /** The capability a credential provider declares to extend Platform auth. */
 export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
@@ -1734,15 +1737,15 @@ function resolveRuntimeManagementCore(
         .filter((route: string) => route !== "/"),
     ),
   ];
-  const readResolvedServiceRegistry = async (
+  const readResolvedServiceRegistry = (
     entries?: readonly ZelavisServiceRegistryStateEntry[],
-  ) => {
-    const storedEntries = entries ?? await context.serviceRegistryStore.read();
-    const storedServiceRegistry = await loadStoredServiceRegistryModules(
+  ) => present(Effect.gen(function* () {
+    const storedEntries = entries ?? (yield* integrationValue(context.serviceRegistryStore.read()));
+    const storedServiceRegistry = (yield* integrationValue(loadStoredServiceRegistryModules(
       storedEntries,
       context.serviceImporter,
       context.serviceManifestResolver,
-    );
+    )));
 
     // Static services (passed directly to zelavis()) are system-scoped — they
     // can use any dashboard surface. Runtime-installed services are already
@@ -1766,8 +1769,8 @@ function resolveRuntimeManagementCore(
       ),
     ]);
 
-    return applyServiceRegistryState(completeServiceRegistry, storedEntries);
-  };
+    return (yield* integrationValue(applyServiceRegistryState(completeServiceRegistry, storedEntries)));
+  }));
   const serializeServiceMenuForDashboard = (
     serviceName: string,
     menu: ZelavisServiceMenuDefinition | undefined,
@@ -1999,8 +2002,8 @@ function resolveRuntimeManagementCore(
     });
     return [...fromServices, ...fromEndpointGroups];
   };
-  const createDashboardRuntimeConfig = async () => {
-    const serviceRegistry = await readResolvedServiceRegistry();
+  const createDashboardRuntimeConfig = () => present(Effect.gen(function* () {
+    const serviceRegistry = (yield* integrationValue(readResolvedServiceRegistry()));
     const serializedServices = serviceRegistry.map((entry) => ({
       ...publicServiceRegistryIdentity(entry),
       marketplace: entry.service.marketplace,
@@ -2088,10 +2091,10 @@ function resolveRuntimeManagementCore(
             },
       },
     };
-  };
-  const serializeServiceRegistryForDashboard = async () =>
-    {
-      const serviceRegistry = await readResolvedServiceRegistry();
+  }));
+  const serializeServiceRegistryForDashboard = () =>
+    present(Effect.gen(function* () {
+      const serviceRegistry = (yield* integrationValue(readResolvedServiceRegistry()));
       const serialized = serviceRegistry.map((entry) => ({
         ...publicServiceRegistryIdentity(entry),
         // The trust boundary a client needs to render this service's page
@@ -2124,7 +2127,7 @@ function resolveRuntimeManagementCore(
         ),
       }));
       const seen = new Set(serialized.map((entry) => entry.name));
-      const storedEntries = await context.serviceRegistryStore.read();
+      const storedEntries = (yield* integrationValue(context.serviceRegistryStore.read()));
 
       return [
         ...serialized,
@@ -2134,7 +2137,7 @@ function resolveRuntimeManagementCore(
             ...publicServiceRegistryIdentity(entry),
           })),
       ];
-    };
+    }));
   /**
    * Changes the registry and activates the result, or leaves neither changed.
    *
@@ -2179,14 +2182,14 @@ function resolveRuntimeManagementCore(
   ) =>
     Effect.gen(function* () {
       const before = yield* Effect.tryPromise({
-        try: async () => context.serviceRegistryStore.read(),
+        try: () => present(integration(() => context.serviceRegistryStore.read())),
         catch: (cause) => new RegistryUnavailable({ cause }),
       });
       const entries = yield* mutateServiceRegistryEffect(context.serviceRegistryStore, mutation);
       const request = describe(entries);
 
       const activation = yield* Effect.tryPromise({
-        try: async () => activateServiceRegistryChange(request, entries),
+        try: () => present(integration(() => activateServiceRegistryChange(request, entries))),
         catch: (cause) =>
           new ActivationFailed({
             serviceName: request.serviceName,
@@ -2205,10 +2208,10 @@ function resolveRuntimeManagementCore(
       return { entries, activation };
     });
 
-  const activateServiceRegistryChange = async (
+  const activateServiceRegistryChange = (
     request: Omit<ZelavisServiceActivationRequest, "registry">,
     registry: readonly ZelavisServiceRegistryStateEntry[],
-  ): Promise<ZelavisServiceActivationResult> => {
+  ): Promise<ZelavisServiceActivationResult> => present(Effect.gen(function* (): Effect.fn.Return<ZelavisServiceActivationResult, IntegrationFailure> {
     if (!context.serviceActivation) {
       return {
         status: "pending",
@@ -2217,14 +2220,14 @@ function resolveRuntimeManagementCore(
       };
     }
 
-    return context.serviceActivation.activate({
+    return (yield* integrationValue(context.serviceActivation.activate({
       ...request,
       registry,
-    });
-  };
-  const readDashboardSettings = async (): Promise<ZelavisDashboardSettings> => {
+    })));
+  }));
+  const readDashboardSettings = (): Promise<ZelavisDashboardSettings> => present(Effect.gen(function* (): Effect.fn.Return<ZelavisDashboardSettings, IntegrationFailure> {
     const stored = parseStoredDashboardSettingsUpdate(
-      readBodyObject((await settingsStore.read()) ?? {}),
+      readBodyObject(((yield* integrationValue(settingsStore.read()))) ?? {}),
     );
     const storedRootPath = normalizeEditableRootPath(stored.rootPath);
     const pendingRootPath =
@@ -2266,7 +2269,7 @@ function resolveRuntimeManagementCore(
       },
       restartRequired: Boolean(pendingRootPath) || runtimeEngineRestartRequired,
     };
-  };
+  }));
   const routes: ZelavisServerRoute<any>[] = [
         {
           id: "runtime.config",
@@ -2284,10 +2287,12 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/config",
           ),
-          handler: async () => ({
+          handler: () => present(Effect.gen(function* () {
+    return {
             status: 200,
-            body: await createDashboardRuntimeConfig(),
-          }),
+            body: (yield* integrationValue(createDashboardRuntimeConfig())),
+          };
+  })),
         },
         {
           id: "runtime.plugin-operations.list",
@@ -2308,13 +2313,13 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/plugin-operations",
           ),
-          handler: async ({ request }: { request: Request }) => {
+          handler: ({ request }: { request: Request }) => present(Effect.gen(function* () {
             const operations = listPluginOperations();
             const serialized = JSON.stringify(operations);
-            const digest = await crypto.subtle.digest(
+            const digest = (yield* integrationValue(crypto.subtle.digest(
               "SHA-256",
               new TextEncoder().encode(serialized),
-            );
+            )));
             const revision = [...new Uint8Array(digest)]
               .map((value) => value.toString(16).padStart(2, "0"))
               .join("");
@@ -2327,7 +2332,7 @@ function resolveRuntimeManagementCore(
               return { status: 304, headers };
             }
             return { status: 200, headers, body: { revision, operations } };
-          },
+          })),
         },
         {
           id: "runtime.services.read",
@@ -2345,18 +2350,14 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/services",
           ),
-          handler: async () => {
-            try {
+          handler: ()  => present(Effect.gen(function* () {
               return {
                 status: 200,
                 body: {
-                  services: await serializeServiceRegistryForDashboard(),
+                  services: yield* integration(() => serializeServiceRegistryForDashboard()),
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "runtime.services.sources",
@@ -2369,10 +2370,10 @@ function resolveRuntimeManagementCore(
             tags: ["runtime"],
             responses: { 200: { description: "Administrative source diagnostics" } },
           },
-          handler: async () => {
-            const registry = await readResolvedServiceRegistry();
+          handler: () => present(Effect.gen(function* () {
+            const registry = (yield* integrationValue(readResolvedServiceRegistry()));
             const names = new Set(registry.map((entry) => entry.service.name));
-            const stored = await context.serviceRegistryStore.read();
+            const stored = (yield* integrationValue(context.serviceRegistryStore.read()));
             return {
               status: 200,
               headers: { "cache-control": "no-store" },
@@ -2382,7 +2383,7 @@ function resolveRuntimeManagementCore(
                   .map((entry) => ({ ...publicServiceRegistryIdentity(entry), specifier: entry.specifier })),
               ] },
             };
-          },
+          })),
         },
         {
           id: "runtime.marketplace.allowlist.read",
@@ -2395,7 +2396,7 @@ function resolveRuntimeManagementCore(
             tags: ["marketplace"],
             responses: { 200: { description: "Allow-list status" }, 404: { description: "This installation has no marketplace" } },
           },
-          handler: async () => {
+          handler: () => present(Effect.gen(function* () {
             if (!context.marketplace) {
               return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
             }
@@ -2405,10 +2406,10 @@ function resolveRuntimeManagementCore(
               body: {
                 gated: context.marketplace.gated,
                 sources: context.marketplace.sources,
-                ...(await context.marketplace.status()),
+                ...((yield* integrationValue(context.marketplace.status()))),
               },
             };
-          },
+          })),
         },
         {
           id: "runtime.marketplace.allowlist.refresh",
@@ -2421,12 +2422,12 @@ function resolveRuntimeManagementCore(
             tags: ["marketplace"],
             responses: { 200: { description: "What each source answered" }, 404: { description: "This installation has no marketplace" } },
           },
-          handler: async () => {
+          handler: () => present(Effect.gen(function* () {
             if (!context.marketplace) {
               return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
             }
-            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.marketplace.refresh() };
-          },
+            return { status: 200, headers: { "cache-control": "no-store" }, body: (yield* integrationValue(context.marketplace.refresh())) };
+          })),
         },
         {
           id: "runtime.updates.read",
@@ -2439,10 +2440,10 @@ function resolveRuntimeManagementCore(
             tags: ["runtime"],
             responses: { 200: { description: "Update status" }, 404: { description: "This runtime does not manage updates" } },
           },
-          handler: async () => {
+          handler: () => present(Effect.gen(function* () {
             if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
-            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.updates.status() };
-          },
+            return { status: 200, headers: { "cache-control": "no-store" }, body: (yield* integrationValue(context.updates.status())) };
+          })),
         },
         {
           id: "runtime.updates.check",
@@ -2455,10 +2456,10 @@ function resolveRuntimeManagementCore(
             tags: ["runtime"],
             responses: { 200: { description: "Update status after the lookup" }, 404: { description: "This runtime does not manage updates" } },
           },
-          handler: async () => {
+          handler: () => present(Effect.gen(function* () {
             if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
-            return { status: 200, headers: { "cache-control": "no-store" }, body: await context.updates.check() };
-          },
+            return { status: 200, headers: { "cache-control": "no-store" }, body: (yield* integrationValue(context.updates.check())) };
+          })),
         },
         {
           id: "runtime.updates.apply",
@@ -2475,15 +2476,17 @@ function resolveRuntimeManagementCore(
               409: { description: "Cannot update: unmanaged, already newest, unchecked, or one is in progress" },
             },
           },
-          handler: async ({ principal }) => {
-            if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
-            try {
-              return { status: 202, headers: { "cache-control": "no-store" }, body: await context.updates.apply(principal?.id ?? "unknown") };
-            } catch (error) {
+          handler: ({ principal })  => present(Effect.gen(function* () {
+            const updates = context.updates;
+            if (!updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
+ return yield* Effect.gen(function* () {
+              return { status: 202, headers: { "cache-control": "no-store" }, body: yield* integration(() => updates.apply(principal?.id ?? "unknown")) };
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               if (error instanceof ZelavisUpdateRefusal) return { status: 409, body: { error: error.message, code: error.code } };
               throw error;
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.extensions.read",
@@ -2508,10 +2511,9 @@ function resolveRuntimeManagementCore(
               200: { description: "Extension points and the services declaring them" },
             },
           },
-          handler: async ({ request }: { request: Request }) => {
-            try {
+          handler: ({ request }: { request: Request })  => present(Effect.gen(function* () {
               const wanted = new URL(request.url).searchParams.get("owner") ?? undefined;
-              const services = await serializeServiceRegistryForDashboard();
+              const services = yield* integration(() => serializeServiceRegistryForDashboard());
               // Composed services and native subsystems count as present. A
               // subsystem such as `zelavis/identity` never appears in the
               // registry, so a listing built from that alone would report the
@@ -2573,10 +2575,7 @@ function resolveRuntimeManagementCore(
                     .sort((left, right) => left.owner.localeCompare(right.owner)),
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "runtime.services.create",
@@ -2597,19 +2596,18 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/services",
           ),
-          handler: async ({ body }: { body: unknown }) => {
-            try {
-              const created = await readDashboardServiceRegistryCreate(body, {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
+              const created = yield* integration(() => readDashboardServiceRegistryCreate(body, {
                 importer: context.serviceImporter,
                 manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
-              });
+              }));
               // An official identity is selected by the host from the
               // distribution and changes state through PATCH; registering a
               // package under its name would silently replace it.
               if (
                 protectedOfficialPackageNames(
-                  await readResolvedServiceRegistry(),
+                  yield* integration(() => readResolvedServiceRegistry()),
                   context.frontendServiceName,
                 ).has(created.name)
               ) {
@@ -2617,7 +2615,7 @@ function resolveRuntimeManagementCore(
                   `"${created.name}" is an official package identity and cannot be registered from another source.`,
                 );
               }
-              const { activation } = await runServiceRegistryChange(
+              const { activation } = yield* integration(() => runServiceRegistryChange(
                 applyServiceRegistryChange(
                   (entries) => [
                     ...entries.filter((entry) => entry.name !== created.name),
@@ -2629,19 +2627,16 @@ function resolveRuntimeManagementCore(
                     specifier: created.specifier,
                   }),
                 ),
-              );
+              ));
 
               return {
                 status: 201,
                 body: {
-                  services: await serializeServiceRegistryForDashboard(),
+                  services: yield* integration(() => serializeServiceRegistryForDashboard()),
                   activation,
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           // Linked by service pages, which render in their own document and so
@@ -2725,12 +2720,11 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/service-page-assets/:service/:bundle/*path",
           ),
-          handler: async ({
+          handler: ({
             params,
           }: {
             params: Record<string, string>;
-          }) => {
-            try {
+          })  => present(Effect.gen(function* () {
               const serviceName = params.service?.trim();
               const bundle = params.bundle?.trim();
               const assetPath = params.path?.trim();
@@ -2740,15 +2734,12 @@ function resolveRuntimeManagementCore(
                 );
               }
 
-              return await renderServicePageAsset(
+              return yield* integration(() => renderServicePageAsset(
                 serviceName,
                 bundle,
                 assetPath,
-              );
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+              ));
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "runtime.services.update",
@@ -2769,16 +2760,15 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/services/:name",
           ),
-          handler: async ({ body, params }: { body: unknown; params: Record<string, string> }) => {
-            try {
+          handler: ({ body, params }: { body: unknown; params: Record<string, string> })  => present(Effect.gen(function* () {
               const serviceName = params.name?.trim();
               if (!serviceName) {
                 throw new ZelavisValidationError("Service name is required.");
               }
 
               const update = readDashboardServiceRegistryUpdate(body);
-              const { activation } = await runServiceRegistryChange(applyServiceRegistryChange(async (currentEntries) => {
-                const currentRegistry = await readResolvedServiceRegistry(currentEntries);
+              const { activation } = yield* integration(() => runServiceRegistryChange(applyServiceRegistryChange((currentEntries) => present(Effect.gen(function* () {
+                const currentRegistry = (yield* integrationValue(readResolvedServiceRegistry(currentEntries)));
                 const nextRegistry = createServiceRegistry(
                   currentRegistry.map((entry) =>
                     entry.service.name === serviceName
@@ -2872,7 +2862,7 @@ function resolveRuntimeManagementCore(
                   }
                 }
                 return nextState;
-              }, (entries) => ({
+              })), (entries) => ({
                 serviceName,
                 action:
                   update.status === "installed"
@@ -2881,19 +2871,16 @@ function resolveRuntimeManagementCore(
                       ? "uninstall"
                       : "update",
                 specifier: entries.find((entry) => entry.name === serviceName)?.specifier,
-              })));
+              }))));
 
               return {
                 status: 200,
                 body: {
-                  services: await serializeServiceRegistryForDashboard(),
+                  services: yield* integration(() => serializeServiceRegistryForDashboard()),
                   activation,
                 },
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "runtime.settings.read",
@@ -2912,16 +2899,12 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/settings",
           ),
-          handler: async () => {
-            try {
+          handler: ()  => present(Effect.gen(function* () {
               return {
                 status: 200,
-                body: await readDashboardSettings(),
+                body: yield* integration(() => readDashboardSettings()),
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "runtime.settings.update",
@@ -2941,19 +2924,15 @@ function resolveRuntimeManagementCore(
             context.apiVersion,
             "runtime/settings",
           ),
-          handler: async ({ body }: { body: unknown }) => {
-            try {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
               const update = readDashboardSettingsUpdate(body);
-              await settingsStore.write(update);
+              yield* integration(() => settingsStore.write(update));
 
               return {
                 status: 200,
-                body: await readDashboardSettings(),
+                body: yield* integration(() => readDashboardSettings()),
               };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         // Served at both `runtime/openapi` and `runtime/openapi.json`. The
         // extensionless path is what a reader tries first, and answering it
@@ -3053,19 +3032,20 @@ function readFrontendTitle(
   return readFrontendOptions(option).title;
 }
 
-async function resolvePlatformFrontend(
+function resolvePlatformFrontend(
   option: ZelavisFrontendInput | undefined,
   context: {
     rootPath: string;
     createRuntimeConfig: () => Promise<unknown>;
   },
 ): Promise<ZelavisPlatformFrontend | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisPlatformFrontend | undefined, IntegrationFailure> {
   const options = readFrontendOptions(option);
   if (!options.factory) {
     return undefined;
   }
 
-  return options.factory({
+  return (yield* integrationValue(options.factory({
     rootPath: context.rootPath,
     ...(options.title ? { title: options.title } : {}),
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
@@ -3076,20 +3056,23 @@ async function resolvePlatformFrontend(
       return devServerUrl ? { devServerUrl } : {};
     })(),
     createRuntimeConfig: context.createRuntimeConfig,
-  });
-}
+  })));
+}));
+  }
 
-async function resolveWorkloadsCoreService(
+function resolveWorkloadsCoreService(
   option: ZelavisWorkloadsOptions | undefined,
 ): Promise<ZelavisEndpointGroup<any> | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEndpointGroup<any> | undefined, IntegrationFailure> {
   const workloadsOption = option ?? true;
 
   if (workloadsOption === false) {
     return undefined;
   }
 
-  return workloadsEndpointGroup(workloadsOption === true ? {} : workloadsOption);
-}
+  return (yield* integrationValue(workloadsEndpointGroup(workloadsOption === true ? {} : workloadsOption)));
+}));
+  }
 
 /**
  * Projects a Project runtime status onto a Fabric placement state.
@@ -3148,20 +3131,25 @@ function resolveFabricCoreService(
   const configured = fabricOption === true ? {} : fabricOption;
   const localNodeId = configured.localNode?.id ?? "local";
   const platformScopeId = configured.authority?.scopeId ?? "local-platform";
-  const projectPlacements = async (): Promise<
+  const projectPlacements = (): Promise<
     readonly FabricProjectPlacement[]
-  > => {
+  > => present(Effect.gen(function* (): Effect.fn.Return<readonly FabricProjectPlacement[], IntegrationFailure> {
     if (!context.projects) {
       return [];
     }
     const projects = context.projects;
 
-    return Promise.all((await projects.list()).map((project) => toPlacement(project)));
-  };
-  const toPlacement = async (
+    const listed = yield* integration(() => projects.list());
+    return yield* Effect.forEach(
+      listed,
+      (project) => integrationValue(toPlacement(project)),
+      { concurrency: Math.max(1, listed.length) },
+    );
+  }));
+  const toPlacement = (
     project: ZelavisProjectRecord,
-  ): Promise<FabricProjectPlacement> => {
-    const committed = await context.placementAuthority?.current(project.id);
+  ): Promise<FabricProjectPlacement> => present(Effect.gen(function* (): Effect.fn.Return<FabricProjectPlacement, IntegrationFailure> {
+    const committed = (yield* integrationValue(context.placementAuthority?.current(project.id)));
     const active = committed?.state === "active" && committed.leaseExpiresAt > Date.now();
     const nodeId = committed?.nodeId ?? project.placement?.nodeId ?? localNodeId;
     return {
@@ -3182,13 +3170,13 @@ function resolveFabricCoreService(
     state: active ? placementStateFromRuntimeStatus(project.runtime.status) : "unavailable",
     runtimeStatus: project.runtime.status,
     };
-  };
-  const projectPlacement = async (
+  }));
+  const projectPlacement = (
     projectId: string,
-  ): Promise<FabricProjectPlacement | undefined> => {
-    const project = await context.projects?.get(projectId);
-    return project ? await toPlacement(project) : undefined;
-  };
+  ): Promise<FabricProjectPlacement | undefined> => present(Effect.gen(function* (): Effect.fn.Return<FabricProjectPlacement | undefined, IntegrationFailure> {
+    const project = (yield* integrationValue(context.projects?.get(projectId)));
+    return project ? (yield* integrationValue(toPlacement(project))) : undefined;
+  }));
 
   return createFabricEndpointGroup({
     ...configured,
@@ -3265,14 +3253,15 @@ function hostOperationRoutes(
       method: "GET",
       path: "/host-operations",
       access: { authenticated: true },
-      handler: async ({ principal }: Context) => {
+      handler: ({ principal }: Context)  => present(Effect.gen(function* () {
         if (!broker) return unavailable();
-        try {
-          return { status: 200, body: { operations: await broker.catalog(principal) } };
-        } catch (error) {
+ return yield* Effect.gen(function* () {
+          return { status: 200, body: { operations: yield* integration(() => broker.catalog(principal)) } };
+        }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
           return hostOperationErrorResponse(error);
-        }
-      },
+        })));
+})),
     },
     {
       id: "runtime.host-operations.submit",
@@ -3290,9 +3279,9 @@ function hostOperationRoutes(
       method: "POST",
       path: "/host-operations",
       access: { authenticated: true },
-      handler: async ({ principal, body }: Context) => {
+      handler: ({ principal, body }: Context)  => present(Effect.gen(function* () {
         if (!broker) return unavailable();
-        try {
+ return yield* Effect.gen(function* () {
           const input = (body && typeof body === "object" && !Array.isArray(body)
             ? body
             : {}) as Record<string, unknown>;
@@ -3304,18 +3293,19 @@ function hostOperationRoutes(
           ) {
             throw new ZelavisHostOperationValidationError("arguments must be an object of strings.");
           }
-          const operation = await broker.submit({
+          const operation = yield* integration(() => broker.submit({
             operation: typeof input.operation === "string" ? input.operation : "",
             ...(typeof input.version === "string" ? { version: input.version } : {}),
             ...(typeof input.projectId === "string" ? { projectId: input.projectId } : {}),
             ...(args ? { arguments: args as Record<string, string> } : {}),
             ...(typeof input.deadlineMs === "number" ? { deadlineMs: input.deadlineMs } : {}),
-          }, principal);
+          }, principal));
           return { status: 202, body: { operation } };
-        } catch (error) {
+        }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
           return hostOperationErrorResponse(error);
-        }
-      },
+        })));
+})),
     },
     {
       id: "runtime.host-operations.audit",
@@ -3328,24 +3318,25 @@ function hostOperationRoutes(
       method: "GET",
       path: "/host-operations/audit",
       access: { authenticated: true },
-      handler: async ({ principal, query }: Context) => {
+      handler: ({ principal, query }: Context)  => present(Effect.gen(function* () {
         if (!broker) return unavailable();
-        try {
+ return yield* Effect.gen(function* () {
           const limit = query.get("limit");
           const projectId = query.get("projectId");
           return {
             status: 200,
             body: {
-              records: await broker.audit({
+              records: yield* integration(() => broker.audit({
                 ...(projectId ? { projectId } : {}),
                 ...(limit !== null ? { limit: Number(limit) } : {}),
-              }, principal),
+              }, principal)),
             },
           };
-        } catch (error) {
+        }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
           return hostOperationErrorResponse(error);
-        }
-      },
+        })));
+})),
     },
     {
       id: "runtime.host-operations.get",
@@ -3358,14 +3349,15 @@ function hostOperationRoutes(
       method: "GET",
       path: "/host-operations/:operationId",
       access: { authenticated: true },
-      handler: async ({ principal, params }: Context) => {
+      handler: ({ principal, params }: Context)  => present(Effect.gen(function* () {
         if (!broker) return unavailable();
-        try {
-          return { status: 200, body: { operation: await broker.get(params.operationId ?? "", principal) } };
-        } catch (error) {
+ return yield* Effect.gen(function* () {
+          return { status: 200, body: { operation: yield* integration(() => broker.get(params.operationId ?? "", principal)) } };
+        }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
           return hostOperationErrorResponse(error);
-        }
-      },
+        })));
+})),
     },
   ];
 }
@@ -3382,28 +3374,26 @@ function remoteEnvironmentRoutes(
     const claimed = principal.metadata?.tenantId;
     return typeof claimed === "string" && claimed.trim() ? claimed : principal.id;
   };
-  const ensureCollection = async (tenantId: string, name: string) => {
+  const ensureCollection = (tenantId: string, name: string): Promise<void> => present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
     if (!database) return;
     const tenant = database.forTenant(tenantId);
-    if (await tenant.documents.collectionExists(name)) return;
-    try {
-      await tenant.documents.createCollection({ name, surface: "database" });
-    } catch (error) {
-      if (!(error instanceof CollectionExists)) throw error;
-    }
-  };
-  const readSession = async (tenantId: string, sessionId: string) => {
+    if (yield* integration(() => tenant.documents.collectionExists(name))) return;
+    yield* integration(() => tenant.documents.createCollection({ name, surface: "database" })).pipe(
+      Effect.catchIf((failure) => unwrapFailure(failure) instanceof CollectionExists, () => Effect.void),
+    );
+  }));
+  const readSession = (tenantId: string, sessionId: string) => present(Effect.gen(function* () {
     if (!database) return undefined;
-    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_sessions", id: sessionId });
-  };
-  const readProcess = async (tenantId: string, processId: string) => {
+    return (yield* integrationValue(database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_sessions", id: sessionId })));
+  }));
+  const readProcess = (tenantId: string, processId: string) => present(Effect.gen(function* () {
     if (!database) return undefined;
-    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_processes", id: processId });
-  };
-  const readUsage = async (tenantId: string, usageId: string) => {
+    return (yield* integrationValue(database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_processes", id: processId })));
+  }));
+  const readUsage = (tenantId: string, usageId: string) => present(Effect.gen(function* () {
     if (!database) return undefined;
-    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_usage", id: usageId });
-  };
+    return (yield* integrationValue(database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_usage", id: usageId })));
+  }));
   const sessionFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readSession>>>): ZelavisEnvironmentSession => {
     const data = record.data as Record<string, unknown>;
     return {
@@ -3443,20 +3433,21 @@ function remoteEnvironmentRoutes(
     version: record.version,
     ...(record.data as unknown as Omit<ZelavisEnvironmentUsageRecord, "id" | "version">),
   });
-  const reconcilePersistedProcesses = async (tenantId: string, sessionId: string) => {
+  const reconcilePersistedProcesses = (tenantId: string, sessionId: string): Promise<void> => present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
     if (!database || !environment?.listProcesses) return;
-    const attached = (await environment.listProcesses(sessionId))
+    const listProcesses = environment.listProcesses;
+    const attached = (yield* integration(() => listProcesses(sessionId)))
       .filter((process) => process.sessionId === sessionId);
     const documents = database.forTenant(tenantId).documents;
-    const collectionExists = await documents.collectionExists("zelavis_agent_processes");
+    const collectionExists = yield* integration(() => documents.collectionExists("zelavis_agent_processes"));
     const persisted = collectionExists
-      ? await documents.findMany({
+      ? yield* integration(() => documents.findMany({
           collection: "zelavis_agent_processes",
           where: [{ path: "sessionId", value: sessionId }],
-        })
+        }))
       : [];
     if (!collectionExists && attached.length > 0) {
-      await ensureCollection(tenantId, "zelavis_agent_processes");
+      yield* integrationValue(ensureCollection(tenantId, "zelavis_agent_processes"));
     }
 
     const persistedById = new Map(persisted.map((record) => [record.id, record]));
@@ -3464,15 +3455,13 @@ function remoteEnvironmentRoutes(
     for (const process of attached) {
       const record = persistedById.get(process.id);
       if (!record) {
-        try {
-          await documents.insert({
-            collection: "zelavis_agent_processes",
-            id: process.id,
-            data: processData(process),
-          });
-        } catch (error) {
-          if (!(error instanceof DocumentConflict)) throw error;
-        }
+        yield* integration(() => documents.insert({
+          collection: "zelavis_agent_processes",
+          id: process.id,
+          data: processData(process),
+        })).pipe(
+          Effect.catchIf((failure) => unwrapFailure(failure) instanceof DocumentConflict, () => Effect.void),
+        );
         continue;
       }
       const current = processFromRecord(record);
@@ -3481,12 +3470,12 @@ function remoteEnvironmentRoutes(
         || current.startedAt !== process.startedAt
         || current.exitCode !== process.exitCode
       ) {
-        await documents.update({
+        yield* integration(() => documents.update({
           collection: "zelavis_agent_processes",
           id: process.id,
           data: processData(process),
           mode: "merge",
-        });
+        }));
       }
     }
 
@@ -3494,23 +3483,23 @@ function remoteEnvironmentRoutes(
       if (attachedById.has(record.id)) continue;
       const process = processFromRecord(record);
       if (process.status !== "starting" && process.status !== "running") continue;
-      await documents.update({
+      yield* integration(() => documents.update({
         collection: "zelavis_agent_processes",
         id: record.id,
         data: { status: "failed", exitCode: null },
         mode: "merge",
-      });
+      }));
     }
-  };
-  const resumePersistedSession = async (
+  }));
+  const resumePersistedSession = (
     tenantId: string,
     record: NonNullable<Awaited<ReturnType<typeof readSession>>>,
-  ) => {
+  ) => present(Effect.gen(function* () {
     const session = sessionFromRecord(record);
-    const resumed = environment?.resumeSession ? await environment.resumeSession(session) : session;
-    if (session.status === "active") await reconcilePersistedProcesses(tenantId, session.id);
+    const resumed = environment?.resumeSession ? (yield* integrationValue(environment.resumeSession(session))) : session;
+    if (session.status === "active") (yield* integrationValue(reconcilePersistedProcesses(tenantId, session.id)));
     return resumed;
-  };
+  }));
   return [
     {
       id: "runtime.environment.identity",
@@ -3518,9 +3507,11 @@ function remoteEnvironmentRoutes(
       path: "/environment",
       access: { authenticated: true },
       spec: { operationId: "getEnvironment", summary: "Read remote environment identity", tags: ["environment"] },
-      handler: async () => environment
-        ? { status: 200, body: { environment: typeof environment.identity === "function" ? await environment.identity() : environment.identity } }
-        : unavailable(),
+      handler: () => present(Effect.gen(function* () {
+    return environment
+        ? { status: 200, body: { environment: typeof environment.identity === "function" ? (yield* integrationValue(environment.identity())) : environment.identity } }
+        : unavailable();
+  })),
     },
     {
       id: "runtime.environment.health",
@@ -3528,9 +3519,11 @@ function remoteEnvironmentRoutes(
       path: "/environment/health",
       access: { authenticated: true },
       spec: { operationId: "getEnvironmentHealth", summary: "Read remote environment health", tags: ["environment"] },
-      handler: async () => environment
-        ? { status: 200, body: await environment.health() }
-        : unavailable(),
+      handler: () => present(Effect.gen(function* () {
+    return environment
+        ? { status: 200, body: (yield* integrationValue(environment.health())) }
+        : unavailable();
+  })),
     },
     {
       id: "runtime.environment.sessions.create",
@@ -3601,13 +3594,13 @@ function remoteEnvironmentRoutes(
       path: "/environment/sessions/:sessionId",
       access: { authenticated: true },
       spec: { operationId: "updateEnvironmentSession", summary: "Update an agent session projection", tags: ["environment"] },
-      handler: async ({ params, body, principal }) => {
+      handler: ({ params, body, principal })  => present(Effect.gen(function* () {
         if (!environment) return unavailable();
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
         const tenantId = principalTenant(principal);
         const sessionId = params.sessionId ?? "";
-        const current = await readSession(tenantId, sessionId);
+        const current = yield* integration(() => readSession(tenantId, sessionId));
         if (!current) return { status: 404, body: { error: "Environment session was not found." } };
         if (current.data.status === "closed") {
           return { status: 409, body: { error: "Environment session is closed." } };
@@ -3621,22 +3614,23 @@ function remoteEnvironmentRoutes(
         if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
           return { status: 400, body: { error: "Session metadata must be an object." } };
         }
-        try {
-          const updated = await database.forTenant(tenantId).documents.update({
+ return yield* Effect.gen(function* () {
+          const updated = yield* integration(() => database.forTenant(tenantId).documents.update({
             collection: "zelavis_agent_sessions",
             id: sessionId,
             data: { metadata: input.metadata as JsonObject },
             mode: "merge",
             expectedVersion: Number(input.expectedVersion),
-          });
+          }));
           return { status: 200, body: { session: sessionFromRecord(updated) } };
-        } catch (error) {
+        }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
           if (error instanceof DocumentConflict) {
             return { status: 409, body: { error: "Environment session changed concurrently." } };
           }
           throw error;
-        }
-      },
+        })));
+})),
     },
     {
       id: "runtime.environment.sessions.get",
@@ -3644,15 +3638,15 @@ function remoteEnvironmentRoutes(
       path: "/environment/sessions/:sessionId",
       access: { authenticated: true },
       spec: { operationId: "getEnvironmentSession", summary: "Read an agent session", tags: ["environment"] },
-      handler: async ({ params, principal }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, principal }) => present(Effect.gen(function* () {
+        if (!environment) return (yield* integrationValue(unavailable()));
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
-        const session = await readSession(principalTenant(principal), params.sessionId ?? "");
+        const session = (yield* integrationValue(readSession(principalTenant(principal), params.sessionId ?? "")));
         if (!session) return { status: 404, body: { error: "Environment session was not found." } };
-        const resumed = await resumePersistedSession(principalTenant(principal), session);
+        const resumed = (yield* integrationValue(resumePersistedSession(principalTenant(principal), session)));
         return { status: 200, body: { session: resumed } };
-      },
+      })),
     },
     {
       id: "runtime.environment.sessions.usage.record",
@@ -3660,13 +3654,13 @@ function remoteEnvironmentRoutes(
       path: "/environment/sessions/:sessionId/usage",
       access: { authenticated: true },
       spec: { operationId: "recordEnvironmentSessionUsage", summary: "Record usage for an agent run", tags: ["environment"] },
-      handler: async ({ params, body, principal }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, body, principal }) => present(Effect.gen(function* () {
+        if (!environment) return yield* integrationValue(unavailable());
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         if (!database) return { status: 503, body: { error: "Environment usage persistence is unavailable." } };
         const tenantId = principalTenant(principal);
         const sessionId = params.sessionId ?? "";
-        const session = await readSession(tenantId, sessionId);
+        const session = yield* integrationValue(readSession(tenantId, sessionId));
         if (!session) return { status: 404, body: { error: "Environment session was not found." } };
         const input = body && typeof body === "object" && !Array.isArray(body)
           ? body as Record<string, unknown>
@@ -3727,31 +3721,35 @@ function remoteEnvironmentRoutes(
           recordedAt: new Date().toISOString(),
           ...metrics,
         };
-        await ensureCollection(tenantId, "zelavis_agent_usage");
+        yield* integrationValue(ensureCollection(tenantId, "zelavis_agent_usage"));
         const documents = database.forTenant(tenantId).documents;
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          const current = await readUsage(tenantId, usageId);
-          try {
-            const stored = current
-              ? await documents.update({
-                  collection: "zelavis_agent_usage",
-                  id: usageId,
-                  data: usageData,
-                  mode: "merge",
-                  expectedVersion: current.version,
-                })
-              : await documents.insert({
-                  collection: "zelavis_agent_usage",
-                  id: usageId,
-                  data: usageData,
-                });
-            return { status: current ? 200 : 201, body: { usage: usageFromRecord(stored) } };
-          } catch (error) {
-            if (!(error instanceof DocumentConflict) || attempt === 2) throw error;
+          const current = yield* integrationValue(readUsage(tenantId, usageId));
+          const outcome = yield* integration(() => current
+            ? documents.update({
+                collection: "zelavis_agent_usage",
+                id: usageId,
+                data: usageData,
+                mode: "merge",
+                expectedVersion: current.version,
+              })
+            : documents.insert({
+                collection: "zelavis_agent_usage",
+                id: usageId,
+                data: usageData,
+              })).pipe(
+            Effect.map((stored) => ({ stored })),
+            Effect.catch((failure) => {
+              if (!(unwrapFailure(failure) instanceof DocumentConflict) || attempt === 2) return Effect.fail(failure);
+              return Effect.succeed(undefined);
+            }),
+          );
+          if (outcome) {
+            return { status: current ? 200 : 201, body: { usage: usageFromRecord(outcome.stored) } };
           }
         }
         throw new Error("Environment usage persistence retry exhausted.");
-      },
+      })),
     },
     {
       id: "runtime.environment.sessions.close",
@@ -3759,25 +3757,25 @@ function remoteEnvironmentRoutes(
       path: "/environment/sessions/:sessionId",
       access: { authenticated: true },
       spec: { operationId: "closeEnvironmentSession", summary: "Close an agent session", tags: ["environment"] },
-      handler: async ({ params, principal }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, principal }) => present(Effect.gen(function* () {
+        if (!environment) return (yield* integrationValue(unavailable()));
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         const tenantId = principalTenant(principal);
         const sessionId = params.sessionId ?? "";
-        const session = await readSession(tenantId, sessionId);
+        const session = (yield* integrationValue(readSession(tenantId, sessionId)));
         if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
-        if (session) await resumePersistedSession(tenantId, session);
-        if (environment.closeSession) await environment.closeSession(sessionId);
+        if (session) (yield* integrationValue(resumePersistedSession(tenantId, session)));
+        if (environment.closeSession) (yield* integrationValue(environment.closeSession(sessionId)));
         if (database && session) {
-          await database.forTenant(tenantId).documents.update({
+          (yield* integrationValue(database.forTenant(tenantId).documents.update({
             collection: "zelavis_agent_sessions",
             id: sessionId,
             data: { status: "closed", closedAt: new Date().toISOString() },
             mode: "merge",
-          });
+          })));
         }
         return { status: 200, body: { closed: true } };
-      },
+      })),
     },
     {
       id: "runtime.environment.sessions.events",
@@ -3785,15 +3783,15 @@ function remoteEnvironmentRoutes(
       path: "/environment/sessions/:sessionId/events",
       access: { authenticated: true },
       spec: { operationId: "readEnvironmentSessionEvents", summary: "Replay agent process events", tags: ["environment"] },
-      handler: async ({ params, principal, request }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, principal, request }) => present(Effect.gen(function* () {
+        if (!environment) return (yield* integrationValue(unavailable()));
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         if (!environment.readEvents) return { status: 503, body: { error: "Environment event replay is unavailable." } };
         if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
         const sessionId = params.sessionId ?? "";
-        const session = await readSession(principalTenant(principal), sessionId);
+        const session = (yield* integrationValue(readSession(principalTenant(principal), sessionId)));
         if (!session) return { status: 404, body: { error: "Environment session was not found." } };
-        await resumePersistedSession(principalTenant(principal), session);
+        (yield* integrationValue(resumePersistedSession(principalTenant(principal), session)));
         const search = new URL(request.url).searchParams;
         const after = search.get("after") ?? undefined;
         const rawLimit = search.get("limit");
@@ -3808,8 +3806,8 @@ function remoteEnvironmentRoutes(
           ...(after === undefined ? {} : { after }),
           ...(limit === undefined ? {} : { limit }),
         };
-        return { status: 200, body: await environment.readEvents(sessionId, options) };
-      },
+        return { status: 200, body: (yield* integrationValue(environment.readEvents(sessionId, options))) };
+      })),
     },
     {
       id: "runtime.environment.processes.start",
@@ -3888,15 +3886,15 @@ function remoteEnvironmentRoutes(
       path: "/environment/processes/:processId",
       access: { authenticated: true },
       spec: { operationId: "getEnvironmentProcess", summary: "Read an agent process", tags: ["environment"] },
-      handler: async ({ params, principal }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, principal }) => present(Effect.gen(function* () {
+        if (!environment) return (yield* integrationValue(unavailable()));
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         if (!database) return { status: 503, body: { error: "Environment process persistence is unavailable." } };
-        const process = await readProcess(principalTenant(principal), params.processId ?? "");
+        const process = (yield* integrationValue(readProcess(principalTenant(principal), params.processId ?? "")));
         return process
           ? { status: 200, body: { process: processFromRecord(process) } }
           : { status: 404, body: { error: "Environment process was not found." } };
-      },
+      })),
     },
     {
       id: "runtime.environment.processes.operate",
@@ -3904,15 +3902,15 @@ function remoteEnvironmentRoutes(
       path: "/environment/processes/:processId/operations",
       access: { authenticated: true },
       spec: { operationId: "operateEnvironmentProcess", summary: "Send an operation to an agent process", tags: ["environment"] },
-      handler: async ({ params, body, principal }) => {
-        if (!environment) return unavailable();
+      handler: ({ params, body, principal }) => present(Effect.gen(function* () {
+        if (!environment) return (yield* integrationValue(unavailable()));
         if (!principal) return { status: 401, body: { error: "Authentication required" } };
         const tenantId = principalTenant(principal);
-        const processRecord = await readProcess(tenantId, params.processId ?? "");
+        const processRecord = (yield* integrationValue(readProcess(tenantId, params.processId ?? "")));
         if (database && !processRecord) return { status: 404, body: { error: "Environment process was not found." } };
         if (processRecord && database) {
-          const session = await readSession(tenantId, String(processRecord.data.sessionId ?? ""));
-          if (session) await resumePersistedSession(tenantId, session);
+          const session = (yield* integrationValue(readSession(tenantId, String(processRecord.data.sessionId ?? ""))));
+          if (session) (yield* integrationValue(resumePersistedSession(tenantId, session)));
         }
         const operation = body && typeof body === "object" && !Array.isArray(body)
           ? body as Record<string, unknown>
@@ -3928,12 +3926,12 @@ function remoteEnvironmentRoutes(
           type: operationType,
           ...(typeof operation.data === "string" ? { data: operation.data } : {}),
         };
-        const result = await environment.operateProcess(
+        const result = (yield* integrationValue(environment.operateProcess(
           params.processId ?? "",
           operationInput,
-        );
+        )));
         if (database && processRecord) {
-          await database.forTenant(tenantId).documents.update({
+          (yield* integrationValue(database.forTenant(tenantId).documents.update({
             collection: "zelavis_agent_processes",
             id: params.processId ?? "",
             data: {
@@ -3941,10 +3939,10 @@ function remoteEnvironmentRoutes(
               exitCode: result.process.exitCode ?? null,
             },
             mode: "merge",
-          });
+          })));
         }
         return { status: 202, body: { result } };
-      },
+      })),
     },
   ];
 }
@@ -4163,18 +4161,20 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/agent",
           access: { permissions: ["server.agents.view"] },
-          handler: async () => agentOperations
+          handler: () => present(Effect.gen(function* () {
+    return agentOperations
             ? {
                 status: 200,
                 body: {
                   identity: agentOperations.identity,
-                  operations: await agentOperations.list({ limit: 100 }),
+                  operations: (yield* integrationValue(agentOperations.list({ limit: 100 }))),
                 },
               }
             : {
                 status: 503,
                 body: { error: "Agent operation journal is unavailable." },
-              },
+              };
+  })),
         },
         {
           id: "runtime.agent.operations.list",
@@ -4189,15 +4189,17 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/agent/operations",
           access: { permissions: ["server.agents.view"] },
-          handler: async () => agentOperations
+          handler: () => present(Effect.gen(function* () {
+    return agentOperations
             ? {
                 status: 200,
-                body: { operations: await agentOperations.list({ limit: 100 }) },
+                body: { operations: (yield* integrationValue(agentOperations.list({ limit: 100 }))) },
               }
             : {
                 status: 503,
                 body: { error: "Agent operation journal is unavailable." },
-              },
+              };
+  })),
         },
         {
           id: "runtime.agent.operations.get",
@@ -4213,15 +4215,15 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/agent/operations/:operationId",
           access: { permissions: ["server.agents.view"] },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
             if (!agentOperations) {
               return { status: 503, body: { error: "Agent operation journal is unavailable." } };
             }
-            const operation = await agentOperations.get(params.operationId ?? "");
+            const operation = (yield* integrationValue(agentOperations.get(params.operationId ?? "")));
             return operation
               ? { status: 200, body: { operation } }
               : { status: 404, body: { error: "Agent operation was not found." } };
-          },
+          })),
         },
         ...hostOperationRoutes(hostOperations),
         ...remoteEnvironmentRoutes(remoteEnvironment, database),
@@ -4239,19 +4241,21 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/edge",
           access: { permissions: ["server.edge.view"] },
-          handler: async () => edge
+          handler: () => present(Effect.gen(function* () {
+    return edge
             ? {
                 status: 200,
                 body: {
-                  policy: await edge.getPolicy(),
-                  adapters: await edge.listAdapters(),
-                  activeSwitch: await edge.getActiveSwitch(),
+                  policy: (yield* integrationValue(edge.getPolicy())),
+                  adapters: (yield* integrationValue(edge.listAdapters())),
+                  activeSwitch: (yield* integrationValue(edge.getActiveSwitch())),
                 },
               }
             : {
                 status: 503,
                 body: { error: "Edge management is unavailable." },
-              },
+              };
+  })),
         },
         ...(["plan", "switch"] as const).map((action) => ({
           id: `runtime.edge.${action}`,
@@ -4271,38 +4275,39 @@ function resolvePlatformEndpointGroup(
           method: "POST" as const,
           path: `/edge/${action}`,
           access: { permissions: ["server.edge.manage"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
             if (!edge) {
               return {
                 status: 503,
                 body: { error: "Edge management is unavailable." },
               };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readEdgeSwitchInput(body);
               return action === "plan"
                 ? {
                     status: 200,
                     body: {
-                      plan: await edge.planSwitch(
+                      plan: yield* integration(() => edge.planSwitch(
                         input.adapterId,
                         input.publication,
-                      ),
+                      )),
                     },
                   }
                 : {
                     status: 200,
                     body: {
-                      edgeSwitch: await edge.switchAdapter(
+                      edgeSwitch: yield* integration(() => edge.switchAdapter(
                         input.adapterId,
                         input.publication,
-                      ),
+                      )),
                     },
                   };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         })),
         {
           id: "runtime.edge.routes.list",
@@ -4318,37 +4323,38 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/edge/routes",
           access: { permissions: ["server.edge.view"] },
-          handler: async ({ query }: { query: URLSearchParams }) => {
+          handler: ({ query }: { query: URLSearchParams })  => present(Effect.gen(function* () {
             if (!edgeRoutes) {
               return {
                 status: 503,
                 body: { error: "Edge route management is unavailable." },
               };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const scope = query.get("scope") ?? undefined;
               const projectId = query.get("projectId") ?? undefined;
               const hostname = query.get("hostname") ?? undefined;
-              const [routes, hostnames, publication] = await Promise.all([
-                edgeRoutes.listRoutes({
+              const [routes, hostnames, publication] = yield* Effect.all([
+                integration(() => edgeRoutes.listRoutes({
                   ...(scope === "platform" || scope === "project" ? { scope } : {}),
                   ...(projectId ? { projectId } : {}),
                   ...(hostname ? { hostname } : {}),
-                }),
-                edgeRoutes.listHostnames({
+                })),
+                integration(() => edgeRoutes.listHostnames({
                   ...(scope === "platform" || scope === "project" ? { scope } : {}),
                   ...(projectId ? { projectId } : {}),
-                }),
-                edgeRoutes.getCurrentPublication(),
-              ]);
+                })),
+                integration(() => edgeRoutes.getCurrentPublication()),
+              ], { concurrency: 3 });
               return {
                 status: 200,
                 body: { routes, hostnames, publication },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.routes.put",
@@ -4365,14 +4371,14 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/edge/routes",
           access: { permissions: ["server.edge.manage"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
             if (!edgeRoutes) {
               return {
                 status: 503,
                 body: { error: "Edge route management is unavailable." },
               };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
               const routeInput = "route" in input ? (input.route as ZelavisEdgeRoute) : (input as unknown as ZelavisEdgeRoute);
               const hostnameInput = "hostname" in input && input.hostname && typeof input.hostname === "object"
@@ -4380,9 +4386,9 @@ function resolvePlatformEndpointGroup(
                 : undefined;
               let storedHostname: ZelavisEdgeHostname | undefined;
               if (hostnameInput) {
-                storedHostname = await edgeRoutes.putHostname(hostnameInput);
+                storedHostname = yield* integration(() => edgeRoutes.putHostname(hostnameInput));
               }
-              const storedRoute = await edgeRoutes.putRoute(routeInput);
+              const storedRoute = yield* integration(() => edgeRoutes.putRoute(routeInput));
               return {
                 status: 200,
                 body: {
@@ -4390,10 +4396,11 @@ function resolvePlatformEndpointGroup(
                   ...(storedHostname ? { hostname: storedHostname } : {}),
                 },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.routes.delete",
@@ -4410,22 +4417,23 @@ function resolvePlatformEndpointGroup(
           method: "DELETE",
           path: "/edge/routes/:routeId",
           access: { permissions: ["server.edge.manage"] },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!edgeRoutes) {
               return {
                 status: 503,
                 body: { error: "Edge route management is unavailable." },
               };
             }
-            try {
-              const deleted = await edgeRoutes.deleteRoute(params.routeId);
+ return yield* Effect.gen(function* () {
+              const deleted = yield* integration(() => edgeRoutes.deleteRoute(params.routeId));
               return deleted
                 ? { status: 200, body: { deleted: true } }
                 : { status: 404, body: { error: `Route "${params.routeId}" was not found.` } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.publish",
@@ -4441,23 +4449,24 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/edge/publish",
           access: { permissions: ["server.edge.manage"] },
-          handler: async () => {
+          handler: ()  => present(Effect.gen(function* () {
             if (!edgeRoutes) {
               return {
                 status: 503,
                 body: { error: "Edge route management is unavailable." },
               };
             }
-            try {
-              const publication = await edgeRoutes.compile();
+ return yield* Effect.gen(function* () {
+              const publication = yield* integration(() => edgeRoutes.compile());
               return {
                 status: 200,
                 body: { publication },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.onboard.preflight",
@@ -4472,11 +4481,11 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/edge/onboard/preflight",
           access: { permissions: ["server.edge.view"] },
-          handler: async ({ query }: { query: URLSearchParams }) => {
+          handler: ({ query }: { query: URLSearchParams }) => present(Effect.gen(function* () {
             const hostname = query.get("hostname") ?? "";
-            const result = await preflightHostname(hostname);
+            const result = (yield* integrationValue(preflightHostname(hostname)));
             return { status: 200, body: result };
-          },
+          })),
         },
         {
           id: "runtime.edge.onboard",
@@ -4493,31 +4502,32 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/edge/onboard",
           access: { permissions: ["server.edge.manage"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
             if (!edgeRoutes) {
               return {
                 status: 503,
                 body: { error: "Edge route management is unavailable." },
               };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body) as unknown as ZelavisEdgeOnboardingRequest;
-              const result = await performEdgeOnboarding(
+              const result = yield* integration(() => performEdgeOnboarding(
                 {
                   routeStore: edgeRoutes,
                   edgeManager: edge,
                   certificateController: edgeCertificates,
                 },
                 input,
-              );
+              ));
               return {
                 status: result.status === "failed" ? 400 : 200,
                 body: result,
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.certificates.list",
@@ -4533,20 +4543,21 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/edge/certificates",
           access: { permissions: ["server.edge.view"] },
-          handler: async () => {
+          handler: ()  => present(Effect.gen(function* () {
             if (!edgeCertificates) {
               return {
                 status: 503,
                 body: { error: "Certificate management is unavailable." },
               };
             }
-            try {
-              const certificates = await edgeCertificates.listCertificates();
+ return yield* Effect.gen(function* () {
+              const certificates = yield* integration(() => edgeCertificates.listCertificates());
               return { status: 200, body: { certificates } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.edge.certificates.renew",
@@ -4563,31 +4574,32 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/edge/certificates/renew",
           access: { permissions: ["server.edge.manage"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
             if (!edgeCertificates) {
               return {
                 status: 503,
                 body: { error: "Certificate management is unavailable." },
               };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
               const hostname = typeof input.hostname === "string" ? input.hostname : undefined;
               if (hostname) {
-                const certificate = await edgeCertificates.orderCertificate({
+                const certificate = yield* integration(() => edgeCertificates.orderCertificate({
                   hostname,
                   forceRenew: true,
-                });
+                }));
                 return { status: 200, body: { renewed: [certificate.ref], certificate } };
               }
-              const result = await edgeCertificates.checkRenewals({
+              const result = yield* integration(() => edgeCertificates.checkRenewals({
                 renewIfWithinDays: typeof input.renewIfWithinDays === "number" ? input.renewIfWithinDays : undefined,
-              });
+              }));
               return { status: 200, body: result };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return edgeErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.deployment-backends.list",
@@ -4602,18 +4614,20 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/deployment-backends",
           access: { permissions: ["server.backends.view"] },
-          handler: async () => deploymentBackends
+          handler: () => present(Effect.gen(function* () {
+    return deploymentBackends
             ? {
                 status: 200,
                 body: {
-                  policy: await deploymentBackends.getPolicy(),
-                  backends: await deploymentBackends.list(),
+                  policy: (yield* integrationValue(deploymentBackends.getPolicy())),
+                  backends: (yield* integrationValue(deploymentBackends.list())),
                 },
               }
             : {
                 status: 503,
                 body: { error: "Deployment backend management is unavailable." },
-              },
+              };
+  })),
         },
         {
           id: "runtime.deployment-backends.detect",
@@ -4628,24 +4642,25 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/deployment-backends/detect",
           access: { permissions: ["server.backends.manage"] },
-          handler: async ({ body }: { body: unknown }) => {
+          handler: ({ body }: { body: unknown })  => present(Effect.gen(function* () {
             if (!deploymentBackends) {
               return { status: 503, body: { error: "Deployment backend management is unavailable." } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
               return {
                 status: 200,
                 body: {
-                  backends: await deploymentBackends.detect(
+                  backends: yield* integration(() => deploymentBackends.detect(
                     typeof input.id === "string" ? input.id : undefined,
-                  ),
+                  )),
                 },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return deploymentBackendErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         ...(["enable", "disable", "default"] as const).map((action) => ({
           id: `runtime.deployment-backends.${action}`,
@@ -4674,22 +4689,23 @@ function resolvePlatformEndpointGroup(
               503: { description: "Deployment backend management is unavailable" },
             },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!deploymentBackends) {
               return { status: 503, body: { error: "Deployment backend management is unavailable." } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const backendId = params.backendId ?? "";
               const policy = action === "enable"
-                ? await deploymentBackends.enable(backendId)
+                ? yield* integration(() => deploymentBackends.enable(backendId))
                 : action === "disable"
-                  ? await deploymentBackends.disable(backendId)
-                  : await deploymentBackends.setDefault(backendId);
+                  ? yield* integration(() => deploymentBackends.disable(backendId))
+                  : yield* integration(() => deploymentBackends.setDefault(backendId));
               return { status: 200, body: { policy } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return deploymentBackendErrorResponse(error);
-            }
-          },
+            })));
+})),
         })),
         {
           id: "runtime.access",
@@ -4763,29 +4779,30 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/audit",
           access: { permissions: ["server.assistant.audit"] },
-          handler: async ({ query }: { query: URLSearchParams }) => {
+          handler: ({ query }: { query: URLSearchParams })  => present(Effect.gen(function* () {
             if (!assistantAudit) {
               return { status: 503, body: { error: "Assistant audit requires the Platform System Store." } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const limit = query.get("limit");
               return {
                 status: 200,
-                body: await assistantAudit.list({
+                body: yield* integration(() => assistantAudit.list({
                   ...(limit === null ? {} : { limit: Number(limit) }),
                   ...(query.get("before") ? { before: query.get("before")! } : {}),
                   ...(query.get("principalId") ? { principalId: query.get("principalId")! } : {}),
                   ...(query.get("tool") ? { tool: query.get("tool")! } : {}),
                   ...(query.get("decision") ? { decision: query.get("decision")! } : {}),
-                }),
+                })),
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               if (error instanceof AssistantAuditQueryError) {
                 return { status: 400, body: { error: error.message } };
               }
               throw error;
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.provider.get",
@@ -4798,14 +4815,16 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/provider",
           access: { permissions: ["system.settings.manage"] },
-          handler: async () =>
-            assistantProvider
-              ? { status: 200, body: await assistantProvider.status({}) }
+          handler: () =>
+            present(Effect.gen(function* () {
+    return assistantProvider
+              ? { status: 200, body: (yield* integrationValue(assistantProvider.status({}))) }
               : {
                   status: 200,
                   body: { mode: assistant ? "model" : "local-router", hasApiKey: false, source: "none",
                     managed: false },
-                },
+                };
+  })),
         },
         {
           id: "runtime.assistant.provider.set",
@@ -4822,35 +4841,36 @@ function resolvePlatformEndpointGroup(
           method: "PUT",
           path: "/assistant/provider",
           access: { permissions: ["system.settings.manage"] },
-          handler: async ({
+          handler: ({
             body,
             principal,
           }: {
             body: unknown;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistantProvider || !systemStore) {
               return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
-              const result = await assistantProvider.set({}, input, principal?.id ?? "unknown");
+              const result = yield* integration(() => assistantProvider.set({}, input, principal?.id ?? "unknown"));
               // Recorded without the key; the model name is enough to review it.
-              await createAssistantToolAudit(systemStore)({
+              yield* integration(() => createAssistantToolAudit(systemStore)({
                 id: crypto.randomUUID(), at: new Date().toISOString(),
                 principalId: principal?.id ?? "unknown",
                 tool: "assistant.provider.set",
                 arguments: JSON.stringify({ provider: result.provider, model: result.model }),
                 decision: "allowed",
-              });
+              }));
               return { status: 200, body: result };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               if (error instanceof AssistantProviderConfigError) {
                 return { status: error.status, body: { error: error.message } };
               }
               throw error;
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.provider.clear",
@@ -4863,25 +4883,26 @@ function resolvePlatformEndpointGroup(
           method: "DELETE",
           path: "/assistant/provider",
           access: { permissions: ["system.settings.manage"] },
-          handler: async ({ principal }: { principal?: ZelavisPrincipal }) => {
+          handler: ({ principal }: { principal?: ZelavisPrincipal })  => present(Effect.gen(function* () {
             if (!assistantProvider || !systemStore) {
               return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
             }
-            try {
-              const result = await assistantProvider.clear({});
-              await createAssistantToolAudit(systemStore)({
+ return yield* Effect.gen(function* () {
+              const result = yield* integration(() => assistantProvider.clear({}));
+              yield* integration(() => createAssistantToolAudit(systemStore)({
                 id: crypto.randomUUID(), at: new Date().toISOString(),
                 principalId: principal?.id ?? "unknown",
                 tool: "assistant.provider.clear", arguments: "{}", decision: "allowed",
-              });
+              }));
               return { status: 200, body: result };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               if (error instanceof AssistantProviderConfigError) {
                 return { status: error.status, body: { error: error.message } };
               }
               throw error;
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.project-provider.get",
@@ -4897,10 +4918,12 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.settings.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) =>
-            assistantProvider
-              ? { status: 200, body: await assistantProvider.status({ projectId: params.projectId ?? "" }) }
-              : { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } },
+          handler: ({ params }: { params: Record<string, string> }) =>
+            present(Effect.gen(function* () {
+    return assistantProvider
+              ? { status: 200, body: (yield* integrationValue(assistantProvider.status({ projectId: params.projectId ?? "" }))) }
+              : { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
+  })),
         },
         {
           id: "runtime.assistant.project-provider.set",
@@ -4920,7 +4943,7 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.settings.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({
+          handler: ({
             body,
             params,
             principal,
@@ -4928,33 +4951,34 @@ function resolvePlatformEndpointGroup(
             body: unknown;
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistantProvider || !systemStore) {
               return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const projectId = params.projectId ?? "";
               // A key for a Project that does not exist would be stored with
               // nothing to delete it later.
-              if (!projects || !(await projects.get(projectId))) {
+              if (!projects || !(yield* integration(() => projects.get(projectId)))) {
                 return { status: 404, body: { error: `Project "${projectId}" was not found.` } };
               }
-              const result = await assistantProvider.set({ projectId }, readBodyObject(body), principal?.id ?? "unknown");
-              await createAssistantToolAudit(systemStore)({
+              const result = yield* integration(() => assistantProvider.set({ projectId }, readBodyObject(body), principal?.id ?? "unknown"));
+              yield* integration(() => createAssistantToolAudit(systemStore)({
                 id: crypto.randomUUID(), at: new Date().toISOString(),
                 principalId: principal?.id ?? "unknown",
                 tool: "assistant.provider.set",
                 arguments: JSON.stringify({ projectId, provider: result.provider, model: result.model }),
                 decision: "allowed",
-              });
+              }));
               return { status: 200, body: result };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               if (error instanceof AssistantProviderConfigError) {
                 return { status: error.status, body: { error: error.message } };
               }
               throw error;
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.project-provider.clear",
@@ -4970,26 +4994,26 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.settings.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({
+          handler: ({
             params,
             principal,
           }: {
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          }) => present(Effect.gen(function* () {
             if (!assistantProvider || !systemStore) {
               return { status: 503, body: { error: "The Assistant provider is configured in code on this installation." } };
             }
             const projectId = params.projectId ?? "";
-            const result = await assistantProvider.clear({ projectId });
-            await createAssistantToolAudit(systemStore)({
+            const result = (yield* integrationValue(assistantProvider.clear({ projectId })));
+            (yield* integrationValue(createAssistantToolAudit(systemStore)({
               id: crypto.randomUUID(), at: new Date().toISOString(),
               principalId: principal?.id ?? "unknown",
               tool: "assistant.provider.clear",
               arguments: JSON.stringify({ projectId }), decision: "allowed",
-            });
+            })));
             return { status: 200, body: result };
-          },
+          })),
         },
         {
           id: "runtime.assistant.threads.list",
@@ -5004,13 +5028,13 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             query,
             principal,
           }: {
             query: URLSearchParams;
             principal?: ZelavisPrincipal;
-          }) => {
+          }) => present(Effect.gen(function* () {
             if (!assistant) {
               return {
                 status: 503,
@@ -5027,10 +5051,10 @@ function resolvePlatformEndpointGroup(
               status: 200,
               body: {
                 responder: assistant.responder,
-                threads: await assistant.list(principal.id, projectId),
+                threads: (yield* integrationValue(assistant.list(principal.id, projectId))),
               },
             };
-          },
+          })),
         },
         {
           id: "runtime.assistant.threads.create",
@@ -5046,20 +5070,20 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             body,
             principal,
           }: {
             body: unknown;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
             if (!principal) {
               return { status: 401, body: { error: "Authentication required" } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
               const denied = assistantProjectDenied(
                 principal,
@@ -5069,18 +5093,19 @@ function resolvePlatformEndpointGroup(
               return {
                 status: 201,
                 body: {
-                  thread: await assistant.create(principal.id, {
+                  thread: yield* integration(() => assistant.create(principal.id, {
                     ...(typeof input.title === "string" ? { title: input.title } : {}),
                     ...(typeof input.projectId === "string"
                       ? { projectId: input.projectId }
                       : {}),
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return assistantErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.threads.get",
@@ -5096,21 +5121,21 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/assistant/threads/:threadId",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             params,
             principal,
           }: {
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
             if (!principal) {
               return { status: 401, body: { error: "Authentication required" } };
             }
-            try {
-              const thread = await assistant.get(params.threadId ?? "", principal.id);
+ return yield* Effect.gen(function* () {
+              const thread = yield* integration(() => assistant.get(params.threadId ?? "", principal.id));
               if (!thread) {
                 throw new ZelavisAssistantNotFoundError(
                   `Assistant thread "${params.threadId ?? ""}" was not found.`,
@@ -5122,13 +5147,14 @@ function resolvePlatformEndpointGroup(
                 status: 200,
                 body: {
                   thread,
-                  approvals: (await assistantApprovals?.listForThread(thread.id)) ?? [],
+                  approvals: (yield* integration(() => assistantApprovals?.listForThread(thread.id))) ?? [],
                 },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return assistantErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.messages.create",
@@ -5144,7 +5170,7 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/assistant/threads/:threadId/messages",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             body,
             params,
             principal,
@@ -5152,16 +5178,16 @@ function resolvePlatformEndpointGroup(
             body: unknown;
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
             if (!principal) {
               return { status: 401, body: { error: "Authentication required" } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
-              const thread = await assistant.get(params.threadId ?? "", principal.id);
+              const thread = yield* integration(() => assistant.get(params.threadId ?? "", principal.id));
               const denied = assistantProjectDenied(principal, thread?.projectId);
               if (denied) return denied;
               const turn = assistantTurns.acquire(principal.id);
@@ -5171,19 +5197,20 @@ function resolvePlatformEndpointGroup(
               try {
                 return {
                   status: 201,
-                  body: await assistant.appendMessage(
+                  body: yield* integration(() => assistant.appendMessage(
                     params.threadId ?? "",
                     typeof input.content === "string" ? input.content : "",
                     principal,
-                  ),
+                  )),
                 };
               } finally {
                 turn.permit.release();
               }
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return assistantErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.threads.delete",
@@ -5196,13 +5223,13 @@ function resolvePlatformEndpointGroup(
           method: "DELETE",
           path: "/assistant/threads/:threadId",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             params,
             principal,
           }: {
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          }) => present(Effect.gen(function* () {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
@@ -5210,14 +5237,14 @@ function resolvePlatformEndpointGroup(
               return { status: 401, body: { error: "Authentication required" } };
             }
             const threadId = params.threadId ?? "";
-            if (!(await assistant.delete(threadId, principal.id))) {
-              return assistantErrorResponse(
+            if (!((yield* integrationValue(assistant.delete(threadId, principal.id))))) {
+              return (yield* integrationValue(assistantErrorResponse(
                 new ZelavisAssistantNotFoundError(`Assistant thread "${threadId}" was not found.`),
-              );
+              )));
             }
-            await assistantApprovals?.deleteForThread(threadId);
+            (yield* integrationValue(assistantApprovals?.deleteForThread(threadId)));
             return { status: 200, body: { deleted: true } };
-          },
+          })),
         },
         {
           id: "runtime.assistant.approvals.decide",
@@ -5235,7 +5262,7 @@ function resolvePlatformEndpointGroup(
           method: "POST",
           path: "/assistant/threads/:threadId/approvals/:approvalId",
           access: { permissions: ["assistant.use"] },
-          handler: async ({
+          handler: ({
             body,
             params,
             principal,
@@ -5243,50 +5270,52 @@ function resolvePlatformEndpointGroup(
             body: unknown;
             params: Record<string, string>;
             principal?: ZelavisPrincipal;
-          }) => {
+          })  => present(Effect.gen(function* () {
             if (!assistant || !assistantToolbox) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
             }
             if (!principal) {
               return { status: 401, body: { error: "Authentication required" } };
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
               if (input.decision !== "approve" && input.decision !== "deny") {
                 throw new ZelavisAssistantValidationError('decision must be "approve" or "deny".');
               }
               const threadId = params.threadId ?? "";
-              const thread = await assistant.get(threadId, principal.id);
+              const thread = yield* integration(() => assistant.get(threadId, principal.id));
               if (!thread) {
                 throw new ZelavisAssistantNotFoundError(`Assistant thread "${threadId}" was not found.`);
               }
               const denied = assistantProjectDenied(principal, thread.projectId);
               if (denied) return denied;
 
-              const result = await assistantToolbox.resolveApproval(principal, {
+              const decision = input.decision;
+              const result = yield* integration(() => assistantToolbox.resolveApproval(principal, {
                 approvalId: params.approvalId ?? "",
                 threadId,
-                decision: input.decision,
+                decision,
                 ...(typeof input.confirm === "string" ? { confirm: input.confirm } : {}),
-              });
+              }));
               if (!result.ok) {
                 const status = result.code === "not_found" ? 404
                   : result.code === "forbidden" ? 403
                   : result.code === "audit_unavailable" || result.code === "failed" ? 500
                   : 409;
                 // A decided request still tells the thread what happened.
-                if (result.approval && result.approval.status !== "pending" &&
+                const decided = result.approval;
+                if (decided && decided.status !== "pending" &&
                     (result.code === "failed" || result.code === "forbidden")) {
-                  await assistant.recordOutcome(threadId, principal.id, {
-                    content: result.approval.outcome ?? result.message,
-                    activity: [{ label: result.approval.label, status: "refused" }],
-                  });
+                  yield* integration(() => assistant.recordOutcome(threadId, principal.id, {
+                    content: decided.outcome ?? result.message,
+                    activity: [{ label: decided.label, status: "refused" }],
+                  }));
                 }
                 return { status, body: { error: result.message, code: result.code,
                   ...(result.approval ? { approval: result.approval } : {}) } };
               }
               const approval = result.approval;
-              const recorded = await assistant.recordOutcome(threadId, principal.id, {
+              const recorded = yield* integration(() => assistant.recordOutcome(threadId, principal.id, {
                 content: approval.status === "denied"
                   ? `Understood. I did not ${approval.label.charAt(0).toLowerCase()}${approval.label.slice(1)}.`
                   : `${approval.outcome ?? "Done."}`,
@@ -5294,12 +5323,13 @@ function resolvePlatformEndpointGroup(
                   label: approval.label,
                   status: approval.status === "executed" ? "done" : "refused",
                 }],
-              });
+              }));
               return { status: 200, body: { approval, message: recorded.message } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return assistantErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.assistant.messages.stream",
@@ -5434,16 +5464,18 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/projects",
           access: { permissions: ["projects.list"] },
-          handler: async () =>
-            projects
+          handler: () =>
+            present(Effect.gen(function* () {
+    return projects
               ? {
                   status: 200,
                   body: {
                     runtime: projects.runtime,
-                    projects: await projects.list(),
+                    projects: (yield* integrationValue(projects.list())),
                   },
                 }
-              : unavailableProjectsResponse(),
+              : unavailableProjectsResponse();
+  })),
         },
         {
           id: "runtime.projects.versions.catalog",
@@ -5555,22 +5587,23 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.view"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
-              const project = await projects.get(params.projectId ?? "");
+ return yield* Effect.gen(function* () {
+              const project = yield* integration(() => projects.get(params.projectId ?? ""));
               if (!project) {
                 throw new ZelavisProjectNotFoundError(
                   `Project "${params.projectId ?? ""}" was not found.`,
                 );
               }
               return { status: 200, body: { project } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.projects.update",
@@ -5590,24 +5623,25 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.settings.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params, body }: { params: Record<string, string>; body: unknown }) => {
+          handler: ({ params, body }: { params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
+ return yield* Effect.gen(function* () {
               const input = readBodyObject(body);
               return {
                 status: 200,
                 body: {
-                  project: await projects.update(params.projectId ?? "", {
+                  project: yield* integration(() => projects.update(params.projectId ?? "", {
                     name: typeof input.name === "string" ? input.name : "",
-                  }),
+                  })),
                 },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.projects.start",
@@ -5626,19 +5660,20 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.runtime.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 status: 200,
-                body: { project: await projects.start(params.projectId ?? "") },
+                body: { project: yield* integration(() => projects.start(params.projectId ?? "")) },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.projects.stop",
@@ -5657,19 +5692,20 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.runtime.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 status: 200,
-                body: { project: await projects.stop(params.projectId ?? "") },
+                body: { project: yield* integration(() => projects.stop(params.projectId ?? "")) },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.projects.restart",
@@ -5688,19 +5724,20 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.runtime.manage"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 status: 200,
-                body: { project: await projects.restart(params.projectId ?? "") },
+                body: { project: yield* integration(() => projects.restart(params.projectId ?? "")) },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         {
           id: "runtime.projects.upgrade",
@@ -5774,19 +5811,20 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.logs.read"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
+ return yield* Effect.gen(function* () {
               return {
                 status: 200,
-                body: { logs: await projects.logs(params.projectId ?? "") },
+                body: { logs: yield* integration(() => projects.logs(params.projectId ?? "")) },
               };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
         ...createProjectGatewayRoutes({
           projects,
@@ -5811,22 +5849,23 @@ function resolvePlatformEndpointGroup(
             permissions: ["project.delete"],
             scope: { type: "project", projectIdParam: "projectId" },
           },
-          handler: async ({ params }: { params: Record<string, string> }) => {
+          handler: ({ params }: { params: Record<string, string> })  => present(Effect.gen(function* () {
             if (!projects) {
               return unavailableProjectsResponse();
             }
-            try {
-              const deleted = await projects.remove(params.projectId ?? "");
+ return yield* Effect.gen(function* () {
+              const deleted = yield* integration(() => projects.remove(params.projectId ?? ""));
               if (!deleted) {
                 throw new ZelavisProjectNotFoundError(
                   `Project "${params.projectId ?? ""}" was not found.`,
                 );
               }
               return { status: 200, body: { deleted: true } };
-            } catch (error) {
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+ const error = unwrapFailure(Cause.squash(cause));
               return projectErrorResponse(error);
-            }
-          },
+            })));
+})),
         },
     ],
   });
@@ -5834,21 +5873,23 @@ function resolvePlatformEndpointGroup(
   }));
 }
 
-async function synthesizeFrontendAppService(
+function synthesizeFrontendAppService(
   frontend: ZelavisPlatformFrontend,
 ): Promise<ZelavisRuntimeService | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisRuntimeService | undefined, IntegrationFailure> {
   // A frontend that ships no assets serves everything from its own routes, so
   // there is nothing to mount.
   if (!frontend.bundleStore) {
     return undefined;
   }
 
-  return synthesizeServiceAppService({
+  return (yield* integrationValue(synthesizeServiceAppService({
     service: frontend.service as any,
     bundleStore: frontend.bundleStore,
     effectiveMount: "/",
-  });
-}
+  })));
+}));
+  }
 
 function stripFrontendServiceFields(
   frontendService: ZelavisRuntimeService<any>,
@@ -7139,14 +7180,14 @@ function createRuntimeServiceApiProxy<TService>(
       if (path.length === 0 && property === "forTenant") {
         return (tenantId: string) =>
           createRuntimeServiceApiProxy(
-            async () => {
-              const service = await resolve();
+            () => present(Effect.gen(function* () {
+              const service = (yield* integrationValue(resolve()));
               const method = (service as Record<string, unknown>).forTenant;
               if (typeof method !== "function") {
                 throw new TypeError("Zelavis service member `forTenant` is not callable.");
               }
-              return method.call(service, tenantId) as TService;
-            },
+              return (yield* integrationValue(method.call(service, tenantId) as TService));
+            })),
             () => {
               const service = resolved();
               if (!service) return undefined;
@@ -7295,19 +7336,23 @@ function mergePlatformMetadata(
   };
 }
 
-async function resolvePlatformState(
+function resolvePlatformState(
   options: ZelavisOptions,
 ): Promise<{
   serverOptions: ZelavisRuntimeCompositionOptions;
   context: ZelavisPlatformContext;
 }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{
+  serverOptions: ZelavisRuntimeCompositionOptions;
+  context: ZelavisPlatformContext;
+}, IntegrationFailure> {
   let resolved: ZelavisRuntimeCompositionOptions = {};
   let resources: ZelavisPlatformResources = {};
   let metadata: Record<string, unknown> = {};
   const presets: string[] = [];
 
   if (options.adapter?.resolve) {
-    const next = await options.adapter.resolve(options);
+    const next = (yield* integrationValue(options.adapter.resolve(options)));
     presets.push(options.adapter.name);
     resolved = mergeZelavisServerOptions(resolved, next);
     resources = mergePlatformResources(resources, next.resources);
@@ -7323,7 +7368,8 @@ async function resolvePlatformState(
       metadata,
     },
   };
-}
+}));
+  }
 
 function applyPlatformResourceDefaults(
   options: ZelavisRuntimeCompositionOptions,
@@ -7434,13 +7480,15 @@ export class Zelavis {
     this.resolvedDatabaseApi = undefined;
   }
 
-  async runtime(): Promise<ZelavisRuntime> {
-    if (this.closed) {
+  runtime(): Promise<ZelavisRuntime> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisRuntime, IntegrationFailure> {
+    if (self.closed) {
       throw new Error("This Zelavis runtime has been closed.");
     }
 
-    this.runtimePromise ??= (async () => {
-      const resolved = await resolvePlatformState(this.options);
+    self.runtimePromise ??= (() => present(Effect.gen(function* () {
+      const resolved = (yield* integrationValue(resolvePlatformState(self.options)));
       const platformResources: ZelavisPlatformResources = {
         ...resolved.context.resources,
         services:
@@ -7464,8 +7512,8 @@ export class Zelavis {
               description:
                 "Recomposes the in-process Zelavis runtime graph after service registry changes.",
             },
-            activate: async (request) => {
-              this.invalidateRuntime();
+            activate: (request) => present(Effect.gen(function* () {
+              self.invalidateRuntime();
               // An install adds code; an update or uninstall leaves the previous
               // module loaded, which is worth saying.
               const leavesCodeLoaded = request.action === "update" || request.action === "uninstall";
@@ -7476,10 +7524,10 @@ export class Zelavis {
                   : "Service registry state changed. Zelavis will recompose the runtime for the next request.",
                 ...(leavesCodeLoaded ? { restartRecommended: true } : {}),
               };
-            },
+            })),
           },
       };
-      this.resolvedPlatformContext = {
+      self.resolvedPlatformContext = {
         ...resolved.context,
         resources: platformResources,
       };
@@ -7489,7 +7537,7 @@ export class Zelavis {
       );
       const serviceRegistry = {
         ...(serverOptions.serviceRegistry ?? {}),
-        store: serverOptions.serviceRegistry?.store ?? this.serviceRegistryStore,
+        store: serverOptions.serviceRegistry?.store ?? self.serviceRegistryStore,
       };
       // Default bundle store: wrap the adapter's file storage when present.
       // Explicit user-provided `bundleStore` always wins. Without either,
@@ -7517,79 +7565,100 @@ export class Zelavis {
           serviceContext: {
             ...resolved.serverOptions.serviceContext,
             platform: createServiceSetupPlatformContext(
-              this.resolvedPlatformContext,
+              self.resolvedPlatformContext,
             ),
           },
         };
-      const runtime = await zelavis(runtimeOptions);
-      this.activeRuntimes.add(runtime);
+      const runtime = (yield* integrationValue(zelavis(runtimeOptions)));
+      self.activeRuntimes.add(runtime);
       return runtime;
-    })().catch(async (error) => {
-      if (!this.activeRuntimes.size) await this.options.adapter?.close?.(this.options);
+    })))().catch((error) => present(Effect.gen(function* () {
+      if (!self.activeRuntimes.size) (yield* integrationValue(self.options.adapter?.close?.(self.options)));
       throw error;
-    });
+    })));
 
-    return this.runtimePromise;
+    return (yield* integrationValue(self.runtimePromise));
+  }));
   }
 
-  async resolveAuthApi(): Promise<IdentityApi> {
-    if (this.resolvedAuthApi) {
-      return this.resolvedAuthApi;
+  resolveAuthApi(): Promise<IdentityApi> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<IdentityApi, IntegrationFailure> {
+    if (self.resolvedAuthApi) {
+      return self.resolvedAuthApi;
     }
 
-    const runtime = await this.runtime();
+    const runtime = (yield* integrationValue(self.runtime()));
     const service = runtime.auth ?? runtime.services["zelavis/identity"]?.service;
     assertResolvedServiceApi<IdentityApi>(service, "zelavis/identity");
-    this.resolvedAuthApi = service;
+    self.resolvedAuthApi = service;
     return service;
+  }));
   }
 
-  async resolveDatabaseApi(): Promise<DatabaseRuntimeApi> {
-    if (this.resolvedDatabaseApi) {
-      return this.resolvedDatabaseApi;
+  resolveDatabaseApi(): Promise<DatabaseRuntimeApi> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<DatabaseRuntimeApi, IntegrationFailure> {
+    if (self.resolvedDatabaseApi) {
+      return self.resolvedDatabaseApi;
     }
 
-    const runtime = await this.runtime();
+    const runtime = (yield* integrationValue(self.runtime()));
     const service = runtime.database ?? runtime.services["@zelavis/db"]?.service;
     assertResolvedServiceApi<DatabaseRuntimeApi>(service, "@zelavis/db");
-    this.resolvedDatabaseApi = service;
+    self.resolvedDatabaseApi = service;
     return service;
+  }));
   }
 
-  async fetch(
+  fetch(
     request: Request,
     context?: ZelavisServerExecutionContext,
   ): Promise<Response> {
-    const runtime = await this.runtime();
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<Response, IntegrationFailure> {
+    const runtime = (yield* integrationValue(self.runtime()));
     const handler = runtime.fetch as ZelavisServerFetchHandler<unknown>;
-    return handler(request, context);
+    return (yield* integrationValue(handler(request, context)));
+  }));
   }
 
-  async dispatch(
+  dispatch(
     request: Request,
     context?: ZelavisServerExecutionContext,
   ) {
-    const runtime = await this.runtime();
+    const self = this;
+    return present(Effect.gen(function* () {
+    const runtime = (yield* integrationValue(self.runtime()));
     const handler = runtime.dispatch as ZelavisServerDispatchHandler<unknown>;
-    return handler(request, context);
+    return (yield* integrationValue(handler(request, context)));
+  }));
   }
 
-  async plain(request: Parameters<ZelavisServerPlainHandler<unknown>>[0]) {
-    const runtime = await this.runtime();
+  plain(request: Parameters<ZelavisServerPlainHandler<unknown>>[0]) {
+    const self = this;
+    return present(Effect.gen(function* () {
+    const runtime = (yield* integrationValue(self.runtime()));
     const handler = runtime.plain as ZelavisServerPlainHandler<unknown>;
-    return handler(request);
+    return (yield* integrationValue(handler(request)));
+  }));
   }
 
   close(): Promise<void> {
-    this.closePromise ??= (async () => {
-      this.closed = true;
-      await this.runtimePromise?.catch(() => undefined);
+    const self = this;
+    this.closePromise ??= present(Effect.gen(function* () {
+      self.closed = true;
+      yield* integrationValue(self.runtimePromise).pipe(Effect.orElseSucceed(() => undefined));
       // A failed runtime shutdown must retain its host reservation: releasing
       // it while resources still run would allow a second owner.
-      await Promise.all([...this.activeRuntimes].map((runtime) => runtime.close()));
-      this.activeRuntimes.clear();
-      await this.options.adapter?.close?.(this.options);
-    })();
+      yield* Effect.forEach(
+        [...self.activeRuntimes],
+        (runtime) => integration(() => runtime.close()),
+        { concurrency: Math.max(1, self.activeRuntimes.size), discard: true },
+      );
+      self.activeRuntimes.clear();
+      yield* integration(() => self.options.adapter?.close?.(self.options));
+    }));
     return this.closePromise;
   }
 }

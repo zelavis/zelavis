@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 /**
  * Forwards public traffic on a verified domain to the Project that owns it.
@@ -63,41 +63,45 @@ export interface PublicDomainForwarderOptions {
  * Returns `undefined` when the host is unbound or the binding is unverified, so
  * the caller falls through to whatever it would otherwise serve.
  */
-export async function resolveVerifiedBinding(
+export function resolveVerifiedBinding(
   bindings: DomainBindingStore,
   host: string,
 ): Promise<DomainBinding | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding | undefined, IntegrationFailure> {
   // A trailing dot is the same DNS name; the store normalizes it away, so a
   // lookup that kept it would let `example.com.` reach the dashboard.
   const normalized = (host.toLowerCase().split(":")[0] ?? "").replace(/\.+$/, "");
   if (!normalized) return undefined;
 
-  const binding = await bindings.get(normalized).catch(() => undefined);
+  const binding = (yield* integrationValue(bindings.get(normalized).catch(() => undefined)));
   if (!binding || !binding.verifiedAt || !binding.projectId) return undefined;
   return binding;
-}
+}));
+  }
 
-async function boundedBody(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
-  if (!body) return new Uint8Array();
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  try {
-    for (;;) {
-      const item = await reader.read();
-      if (item.done) break;
-      bytes += item.value.byteLength;
-      if (bytes > MAX_PUBLIC_BODY_BYTES) {
-        await reader.cancel();
-        throw new RangeError("Site body exceeds its ingress limit.");
+function boundedBody(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
+  return present(Effect.gen(function* (): Effect.fn.Return<Uint8Array, IntegrationFailure> {
+    if (!body) return new Uint8Array();
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    yield* Effect.gen(function* () {
+      for (;;) {
+        const item = yield* integration(() => reader.read());
+        if (item.done) break;
+        bytes += item.value.byteLength;
+        if (bytes > MAX_PUBLIC_BODY_BYTES) {
+          yield* integration(() => reader.cancel());
+          return yield* Effect.fail(new IntegrationFailure(new RangeError("Site body exceeds its ingress limit.")));
+        }
+        chunks.push(item.value);
       }
-      chunks.push(item.value);
-    }
-  } finally { reader.releaseLock(); }
-  const result = new Uint8Array(bytes);
-  let offset = 0;
-  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
-  return result;
+    }).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())));
+    const result = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+    return result;
+  }));
 }
 
 function publicResponseHeaders(source: Headers): Headers {
@@ -110,23 +114,25 @@ function publicResponseHeaders(source: Headers): Headers {
  * Forwards one public request, or returns `undefined` when the host is not a
  * verified binding and the caller should serve its own response.
  */
-export async function forwardPublicRequest(
+export function forwardPublicRequest(
   options: PublicDomainForwarderOptions,
   request: Request,
 ): Promise<ZelavisRouteResponse | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisRouteResponse | undefined, IntegrationFailure> {
   const { domainBindings } = options;
   const projects = options.projects?.();
   if (!domainBindings || !projects) return undefined;
 
   const url = new URL(request.url);
-  const binding = await resolveVerifiedBinding(domainBindings, url.host);
+  const binding = (yield* integrationValue(resolveVerifiedBinding(domainBindings, url.host)));
   if (!binding?.projectId) return undefined;
 
-  const project = await projects.get(binding.projectId).catch(() => undefined);
+  const project = (yield* integrationValue(projects.get(binding.projectId).catch(() => undefined)));
   if (!project) return undefined;
 
-  return forwardProjectSiteRequest({ projects, project, protectedCookieNames: options.protectedCookieNames, fetchSite: options.fetchSite }, request);
-}
+  return (yield* integrationValue(forwardProjectSiteRequest({ projects, project, protectedCookieNames: options.protectedCookieNames, fetchSite: options.fetchSite }, request)));
+}));
+  }
 
 /** Shared anonymous site ingress for verified hostnames and per-Project previews. */
 export function forwardProjectSiteRequest(
@@ -271,11 +277,12 @@ export function forwardProjectSiteRequest(
  *
  * Returns `undefined` when the request should proceed normally.
  */
-export async function guardControlPlaneHost(
+export function guardControlPlaneHost(
   options: PublicDomainForwarderOptions,
   request: Request,
   rootPath: string,
 ): Promise<Response | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Response | undefined, IntegrationFailure> {
   const { domainBindings } = options;
   if (!domainBindings) return undefined;
 
@@ -285,7 +292,7 @@ export async function guardControlPlaneHost(
     path === rootPath || path.startsWith(`${rootPath}/`);
   if (!withinControlPlane) return undefined;
 
-  const binding = await resolveVerifiedBinding(domainBindings, url.host);
+  const binding = (yield* integrationValue(resolveVerifiedBinding(domainBindings, url.host)));
   if (!binding) return undefined;
 
   // 404 rather than 403: on this host the control plane does not exist, and
@@ -297,4 +304,5 @@ export async function guardControlPlaneHost(
       "cache-control": "no-store",
     },
   });
-}
+}));
+  }

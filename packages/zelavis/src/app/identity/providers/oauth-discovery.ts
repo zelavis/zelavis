@@ -1,4 +1,6 @@
 import type { OAuthProviderDefinition } from "./oauth-contract.js";
+import { Effect } from "effect";
+import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 
 /**
  * Builds a provider definition from an issuer's own metadata.
@@ -45,58 +47,49 @@ function assertHttps(url: URL, label: string): void {
   }
 }
 
-export async function discoverOidcProvider(
+export function discoverOidcProvider(
   issuer: string,
   options: OidcDiscoveryOptions = {},
 ): Promise<OAuthProviderDefinition> {
-  let issuerUrl: URL;
-  try {
-    issuerUrl = new URL(issuer);
-  } catch {
-    throw new TypeError("The issuer must be an absolute URL.");
-  }
+  return present(Effect.gen(function* (): Effect.fn.Return<OAuthProviderDefinition, TypeError> {
+  const issuerUrl = yield* evaluate(() => new URL(issuer)).pipe(
+    Effect.mapError(() => new IntegrationFailure(new TypeError("The issuer must be an absolute URL."))),
+  );
   assertHttps(issuerUrl, "The issuer");
 
   const base = issuerUrl.href.replace(/\/+$/u, "");
   const requestFetch = options.fetch ?? globalThis.fetch;
   const configurationUrl = `${base}${WELL_KNOWN}`;
-  let response: Response;
-  try {
-    response = await requestFetch(configurationUrl, {
-      headers: { accept: "application/json" },
-    });
-  } catch (cause) {
+  const response = yield* integration(() => requestFetch(configurationUrl, {
+    headers: { accept: "application/json" },
+  })).pipe(Effect.mapError((failure) =>
     // A transport failure surfaces as "fetch failed", which tells an operator
     // nothing about which URL was tried or why they are seeing it.
-    throw new TypeError(
+    new IntegrationFailure(new TypeError(
       `Could not reach ${configurationUrl}. Check the issuer URL is correct and reachable from this server.`,
-      { cause },
-    );
-  }
+      { cause: unwrapFailure(failure) },
+    ))));
   if (!response.ok) {
-    throw new TypeError(
+    return yield* new IntegrationFailure(new TypeError(
       `Reading the OpenID configuration for ${base} failed with status ${response.status}.`,
-    );
+    ));
   }
 
-  let document: Record<string, unknown>;
-  try {
-    document = (await response.json()) as Record<string, unknown>;
-  } catch (cause) {
-    throw new TypeError(
+  const document = yield* integration(() => response.json() as Promise<Record<string, unknown>>).pipe(
+    Effect.mapError((failure) => new IntegrationFailure(new TypeError(
       `${configurationUrl} did not return an OpenID configuration document.`,
-      { cause },
-    );
-  }
+      { cause: unwrapFailure(failure) },
+    ))),
+  );
 
   // The document names its own issuer, and it must be the one that was asked
   // for. Without this a redirect could hand back another provider's metadata
   // and tokens would then be verified against the wrong keys.
   const declaredIssuer = readString(document, "issuer").replace(/\/+$/u, "");
   if (declaredIssuer !== base) {
-    throw new TypeError(
+    return yield* new IntegrationFailure(new TypeError(
       `The OpenID configuration at ${base} declares a different issuer, so it cannot be trusted for it.`,
-    );
+    ));
   }
 
   const authorizationEndpoint = readString(document, "authorization_endpoint");
@@ -128,4 +121,5 @@ export async function discoverOidcProvider(
     // anything else is refused rather than merely unexpected.
     ...(algorithms?.length ? { algorithms } : {}),
   });
+  }));
 }

@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "./effect-boundary.js";
 import {
   createErrorCorrelationId,
   genericErrorBody,
@@ -303,10 +305,11 @@ function appendFormValue(
   result[key] = [existing, value];
 }
 
-async function parseFormDataBody(
+function parseFormDataBody(
   request: Request,
 ): Promise<Record<string, FormDataEntryValue | FormDataEntryValue[]>> {
-  const formData = await request.formData();
+    return present(Effect.gen(function* (): Effect.fn.Return<Record<string, FormDataEntryValue | FormDataEntryValue[]>, IntegrationFailure> {
+  const formData = (yield* integrationValue(request.formData()));
   const result: Record<string, FormDataEntryValue | FormDataEntryValue[]> = {};
 
   for (const [key, value] of formData.entries()) {
@@ -314,12 +317,14 @@ async function parseFormDataBody(
   }
 
   return result;
-}
+}));
+  }
 
-async function parseFormDataResponse(
+function parseFormDataResponse(
   response: Response,
 ): Promise<Record<string, FormDataEntryValue | FormDataEntryValue[]>> {
-  const formData = await response.formData();
+    return present(Effect.gen(function* (): Effect.fn.Return<Record<string, FormDataEntryValue | FormDataEntryValue[]>, IntegrationFailure> {
+  const formData = (yield* integrationValue(response.formData()));
   const result: Record<string, FormDataEntryValue | FormDataEntryValue[]> = {};
 
   for (const [key, value] of formData.entries()) {
@@ -327,7 +332,8 @@ async function parseFormDataResponse(
   }
 
   return result;
-}
+}));
+  }
 
 export function toResponseHeaderEntries(
   headers: Headers,
@@ -382,10 +388,10 @@ export class ZelavisRequestBodyTooLargeError extends Error {
  * claim: the stream is also measured as it is consumed so a lying or absent
  * header cannot bypass the budget.
  */
-async function readBoundedBody(
+const readBoundedBody = (
   request: Request,
   limitBytes: number,
-): Promise<Uint8Array<ArrayBuffer> | undefined> {
+): Effect.Effect<Uint8Array<ArrayBuffer> | undefined, IntegrationFailure> => Effect.gen(function* () {
   const declared = Number(request.headers.get("content-length") ?? "");
   if (Number.isFinite(declared) && declared > limitBytes) {
     throw new ZelavisRequestBodyTooLargeError(limitBytes);
@@ -393,7 +399,7 @@ async function readBoundedBody(
 
   const body = request.body;
   if (!body) {
-    const buffer = await request.arrayBuffer();
+    const buffer = yield* integration(() => request.arrayBuffer());
     if (buffer.byteLength > limitBytes) {
       throw new ZelavisRequestBodyTooLargeError(limitBytes);
     }
@@ -405,9 +411,9 @@ async function readBoundedBody(
   const chunks: Uint8Array<ArrayBufferLike>[] = [];
   let total = 0;
   const reader = body.getReader();
-  try {
+  yield* Effect.gen(function* () {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = yield* integration(() => reader.read());
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
@@ -416,9 +422,7 @@ async function readBoundedBody(
       }
       chunks.push(value);
     }
-  } finally {
-    reader.releaseLock();
-  }
+  }).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())));
 
   if (total === 0) return undefined;
   const merged = new Uint8Array(new ArrayBuffer(total));
@@ -428,18 +432,19 @@ async function readBoundedBody(
     offset += chunk.byteLength;
   }
   return merged;
-}
+});
 
-async function parseRequestBody(
+function parseRequestBody(
   request: Request,
   limitBytes: number = ZELAVIS_DEFAULT_MAX_REQUEST_BODY_BYTES,
 ): Promise<unknown> {
+    return present(Effect.gen(function* (): Effect.fn.Return<unknown, IntegrationFailure> {
   if (!canHaveBody(request.method.toUpperCase())) {
     return undefined;
   }
 
   // Measure the body once, then re-present it to the shape-specific parsers.
-  const raw = await readBoundedBody(request.clone(), limitBytes);
+  const raw = yield* readBoundedBody(request.clone(), limitBytes);
   const clone = new Request(request.url, {
     method: request.method,
     headers: request.headers,
@@ -448,26 +453,27 @@ async function parseRequestBody(
   const contentType = clone.headers.get("content-type")?.toLowerCase() ?? "";
 
   if (contentType.includes("application/json")) {
-    const text = await clone.text();
+    const text = (yield* integrationValue(clone.text()));
     return text ? JSON.parse(text) : undefined;
   }
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
-    return parseFormDataBody(clone);
+    return (yield* integrationValue(parseFormDataBody(clone)));
   }
 
   if (contentType.includes("multipart/form-data")) {
-    return parseFormDataBody(clone);
+    return (yield* integrationValue(parseFormDataBody(clone)));
   }
 
   if (!contentType || isTextualContentType(contentType)) {
-    const text = await clone.text();
+    const text = (yield* integrationValue(clone.text()));
     return text || undefined;
   }
 
-  const body = await clone.arrayBuffer();
+  const body = (yield* integrationValue(clone.arrayBuffer()));
   return body.byteLength > 0 ? new Uint8Array(body) : undefined;
-}
+}));
+  }
 
 function toBodyInit(body: unknown, headers: Headers): BodyInit | undefined {
   if (body === undefined || body === null) {
@@ -538,7 +544,8 @@ export function toResponse(payload: ZelavisRouteResponse): Response {
   return new Response(JSON.stringify(payload.body), { status, headers });
 }
 
-async function parseResponseBody(response: Response): Promise<unknown> {
+function parseResponseBody(response: Response): Promise<unknown> {
+    return present(Effect.gen(function* (): Effect.fn.Return<unknown, IntegrationFailure> {
   if ([204, 205, 304].includes(response.status)) {
     return undefined;
   }
@@ -547,25 +554,26 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = clone.headers.get("content-type")?.toLowerCase() ?? "";
 
   if (contentType.includes("application/json")) {
-    return clone.json();
+    return (yield* integrationValue(clone.json()));
   }
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
-    return parseFormDataResponse(clone);
+    return (yield* integrationValue(parseFormDataResponse(clone)));
   }
 
   if (contentType.includes("multipart/form-data")) {
-    return parseFormDataResponse(clone);
+    return (yield* integrationValue(parseFormDataResponse(clone)));
   }
 
   if (!contentType || isTextualContentType(contentType)) {
-    const text = await clone.text();
+    const text = (yield* integrationValue(clone.text()));
     return text || undefined;
   }
 
-  const body = await clone.arrayBuffer();
+  const body = (yield* integrationValue(clone.arrayBuffer()));
   return body.byteLength > 0 ? new Uint8Array(body) : undefined;
-}
+}));
+  }
 
 function isAuthenticated(principal: ZelavisPrincipal | undefined): boolean {
   return principal !== undefined && principal.type !== "anonymous";
@@ -736,7 +744,17 @@ function defaultAccessDecision(
   };
 }
 
-async function checkRouteAccess<TService = unknown>(
+type RouteAccess =
+  | {
+      allowed: true;
+      principal?: ZelavisPrincipal;
+    }
+  | {
+      allowed: false;
+      response: Response;
+    };
+
+const checkRouteAccess = <TService = unknown>(
   resolvedRoute: ZelavisResolvedRoute<TService>,
   request: Request,
   params: Record<string, string>,
@@ -745,16 +763,7 @@ async function checkRouteAccess<TService = unknown>(
     "authorize" | "resolvePrincipal"
   >,
   context?: ZelavisServerExecutionContext,
-): Promise<
-  | {
-      allowed: true;
-      principal?: ZelavisPrincipal;
-    }
-  | {
-      allowed: false;
-      response: Response;
-    }
-> {
+): Effect.Effect<RouteAccess, IntegrationFailure> => Effect.gen(function* () {
   const requirements = resolvedRoute.route.access
     ? Array.isArray(resolvedRoute.route.access)
       ? resolvedRoute.route.access
@@ -763,22 +772,27 @@ async function checkRouteAccess<TService = unknown>(
 
   let principal = context?.principal;
   if (!principal) {
-    try {
-      principal = await options.resolvePrincipal?.({
-        request,
-        platform: context?.platform,
-        resolvedRoute,
-        params,
-      });
-    } catch (error) {
-      if (error instanceof ZelavisAuthenticationError) {
-        return {
-          allowed: false,
-          response: toResponse(unauthorizedResponse(error.challenge)),
-        };
-      }
-      throw error;
+    const resolved = yield* integration(() => options.resolvePrincipal?.({
+      request,
+      platform: context?.platform,
+      resolvedRoute,
+      params,
+    })).pipe(
+      Effect.map((value) => ({ value })),
+      Effect.catch((failure) => {
+        const error = unwrapFailure(failure);
+        return error instanceof ZelavisAuthenticationError
+          ? Effect.succeed({ unauthorized: error })
+          : Effect.fail(failure);
+      }),
+    );
+    if ("unauthorized" in resolved) {
+      return {
+        allowed: false as const,
+        response: toResponse(unauthorizedResponse(resolved.unauthorized.challenge)),
+      };
     }
+    principal = resolved.value;
   }
 
   if (!cookieMutationIsSameOrigin(request, principal)) {
@@ -794,14 +808,14 @@ async function checkRouteAccess<TService = unknown>(
 
   for (const requirement of requirements) {
     const rawDecision =
-      (await options.authorize?.({
+      (yield* integration(() => options.authorize?.({
         request,
         platform: context?.platform,
         resolvedRoute,
         params,
         principal,
         requirement,
-      })) ?? defaultAccessDecision(principal, requirement, params);
+      }))) ?? defaultAccessDecision(principal, requirement, params);
     const decision =
       typeof rawDecision === "boolean"
         ? ({ allowed: rawDecision } satisfies ZelavisAccessDecision)
@@ -820,12 +834,12 @@ async function checkRouteAccess<TService = unknown>(
   }
 
   return {
-    allowed: true,
+    allowed: true as const,
     principal,
   };
-}
+});
 
-async function executeResolvedRoute<TService = unknown>(
+const executeResolvedRoute = <TService = unknown>(
   resolvedRoute: ZelavisResolvedRoute<TService>,
   request: Request,
   params: Record<string, string>,
@@ -834,9 +848,9 @@ async function executeResolvedRoute<TService = unknown>(
     "authorize" | "onError" | "resolvePrincipal"
   >,
   context?: ZelavisServerExecutionContext,
-): Promise<ZelavisServerDispatchResult<TService>> {
-  try {
-    const access = await checkRouteAccess(
+): Effect.Effect<ZelavisServerDispatchResult<TService>, IntegrationFailure> => Effect.gen(function* () {
+  return yield* Effect.gen(function* (): Effect.fn.Return<ZelavisServerDispatchResult<TService>, IntegrationFailure> {
+    const access = yield* checkRouteAccess(
       resolvedRoute,
       request,
       params,
@@ -851,39 +865,41 @@ async function executeResolvedRoute<TService = unknown>(
       };
     }
 
-    const result = await resolvedRoute.route.handler({
+    const body = yield* integrationValue(parseRequestBody(request));
+    const result = yield* integration(() => resolvedRoute.route.handler({
       service: resolvedRoute.endpointGroup.context,
       params,
       query: new URL(request.url).searchParams,
-      body: await parseRequestBody(request),
+      body,
       headers: toHeaderMap(request.headers),
       requestHeaders: request.headers,
       request,
       principal: access.principal,
       platform: context?.platform,
-    });
+    }));
 
     return {
       matched: true,
       response: toResponse(result),
       resolvedRoute,
     };
-  } catch (error) {
+  }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+    const error = unwrapFailure(Cause.squash(cause));
     const payload =
-      (await options.onError?.({
+      (yield* integration(() => options.onError?.({
         error,
         request,
         executionContext: context,
         resolvedRoute,
-      })) ?? defaultErrorResponse(error);
+      }))) ?? defaultErrorResponse(error);
 
     return {
-      matched: true,
+      matched: true as const,
       response: toResponse(payload),
       resolvedRoute,
     };
-  }
-}
+  })));
+});
 
 export function createZelavisDispatcher<TService = unknown>(
   routes: readonly ZelavisResolvedRoute<TService>[],
@@ -892,7 +908,7 @@ export function createZelavisDispatcher<TService = unknown>(
     "authorize" | "onError" | "resolvePrincipal"
   > = {},
 ): ZelavisServerDispatchHandler<TService> {
-  return async (request, context) => {
+  return (request, context) => present(Effect.gen(function* () {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
     const requestHost = url.host.toLowerCase();
@@ -938,7 +954,7 @@ export function createZelavisDispatcher<TService = unknown>(
     }
 
     if (matched) {
-      return executeResolvedRoute(
+      return yield* executeResolvedRoute(
         matched.resolvedRoute,
         request,
         matched.params,
@@ -951,16 +967,16 @@ export function createZelavisDispatcher<TService = unknown>(
       matched: false,
       response: toResponse(notFoundResponse()),
     };
-  };
+  }));
 }
 
 export function createZelavisFetchHandler<TService = unknown>(
   dispatch: ZelavisServerDispatchHandler<TService>,
 ): ZelavisServerFetchHandler<TService> {
-  return async (request, context) => {
-    const result = await dispatch(request, context);
+  return (request, context) => present(Effect.gen(function* () {
+    const result = (yield* integrationValue(dispatch(request, context)));
     return result.response;
-  };
+  }));
 }
 
 export function createRequestFromPlainInput(
@@ -995,12 +1011,12 @@ export function createRequestFromPlainInput(
 export function createZelavisPlainHandler<TService = unknown>(
   dispatch: ZelavisServerDispatchHandler<TService>,
 ): ZelavisServerPlainHandler<TService> {
-  return async (input) => {
+  return (input) => present(Effect.gen(function* () {
     const request = createRequestFromPlainInput(input);
-    const result = await dispatch(request, {
+    const result = (yield* integrationValue(dispatch(request, {
       principal: input.principal,
       platform: input.platform,
-    });
+    })));
 
     return {
       matched: result.matched,
@@ -1008,9 +1024,9 @@ export function createZelavisPlainHandler<TService = unknown>(
       headers: toHeaderRecord(toResponseHeaderEntries(result.response.headers)),
       headerEntries: toResponseHeaderEntries(result.response.headers),
       responseHeaders: result.response.headers,
-      body: await parseResponseBody(result.response),
+      body: (yield* integrationValue(parseResponseBody(result.response))),
       response: result.response,
       resolvedRoute: result.resolvedRoute,
     } as ZelavisPlainResponse<TService>;
-  };
+  }));
 }

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present } from "../core/runtime/effect-boundary.js";
 /**
  * What the Platform needs from whatever serves its root path.
  *
@@ -257,7 +259,7 @@ export function createMissingPlatformFrontendService(options: {
           // No access requirement: this is the installation's front door, seen
           // by whoever opens it, including someone who has not signed in
           // because there is no page to sign in on.
-          handler: async ({ request }: { request: Request }) => {
+          handler: ({ request }: { request: Request }) => present(Effect.gen(function* () {
             const pathname = new URL(request.url).pathname;
             if (isReserved(pathname)) {
               return { status: 404, body: { error: "Not found" } };
@@ -279,7 +281,7 @@ export function createMissingPlatformFrontendService(options: {
               }),
               body,
             };
-          },
+          })),
         },
       ],
     },

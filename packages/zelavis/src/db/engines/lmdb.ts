@@ -1,3 +1,4 @@
+import { present, integrationValue } from "../../core/runtime/effect-boundary.js";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
@@ -27,13 +28,13 @@ interface LmdbDatabase {
 }
 
 const loadLmdb = Effect.tryPromise({
-  try: async () => {
+  try: () => present(Effect.gen(function* () {
     const specifier = "lmdb";
-    const mod = (await import(specifier)) as {
+    const mod = ((yield* integrationValue(import(specifier)))) as {
       open: (options: Record<string, unknown>) => LmdbDatabase;
     };
     return mod.open;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "lmdb.load",

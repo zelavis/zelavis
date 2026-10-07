@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, integration, present } from "../runtime/effect-boundary.js";
 export interface ZelavisHostOperationArgumentDefinition {
   readonly required?: boolean;
   readonly pattern?: string;
@@ -120,11 +122,12 @@ function fromBase64(value: string): Uint8Array {
  * Returns `undefined` for an unknown, duplicated, revoked or out-of-window key
  * and for a malformed public key, so every caller refuses the same cases.
  */
-export async function resolveTrustedEd25519Key(
+export function resolveTrustedEd25519Key(
   trust: ZelavisHostOperationTrustStore,
   keyId: string,
   at: number,
 ): Promise<CryptoKey | undefined> {
+  return present(Effect.gen(function* (): Effect.fn.Return<CryptoKey | undefined> {
   if (typeof keyId !== "string" || !KEY_ID_PATTERN.test(keyId)) return undefined;
   if (trust.revokedKeyIds?.includes(keyId)) return undefined;
   const matching = trust.keys.filter((key) => key.keyId === keyId);
@@ -133,13 +136,13 @@ export async function resolveTrustedEd25519Key(
   const notBefore = Date.parse(key.notBefore);
   const notAfter = Date.parse(key.notAfter);
   if (!Number.isFinite(at) || !(at >= notBefore && at <= notAfter)) return undefined;
-  try {
-    const raw = fromBase64(key.publicKey);
-    if (raw.byteLength !== 32) return undefined;
-    return await crypto.subtle.importKey("raw", raw as BufferSource, { name: "Ed25519" }, false, ["verify"]);
-  } catch {
-    return undefined;
-  }
+  return yield* evaluate(() => fromBase64(key.publicKey)).pipe(
+    Effect.flatMap((raw) => raw.byteLength !== 32
+      ? Effect.succeed(undefined)
+      : integration(() => crypto.subtle.importKey("raw", raw as BufferSource, { name: "Ed25519" }, false, ["verify"]))),
+    Effect.orElseSucceed(() => undefined),
+  );
+  }));
 }
 
 export function validateHostOperationRequestShape(

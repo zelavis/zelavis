@@ -12,7 +12,7 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
-import { Cause, Effect, Exit } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
 import { publishAgentTrust } from "../platform/node-routes.js";
@@ -188,16 +188,21 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
   return defineAdapter({
     name: "node",
-    async close(requester) {
-      if (requester && ownerOptions && requester !== ownerOptions) return;
-      await Promise.all([...stores].map((store) => store.close?.()));
-      stores.clear();
-      const lease = await ownership?.catch(() => undefined);
-      await lease?.release();
-      ownership = undefined;
-      await (await edgeOwnership?.catch(() => undefined))?.release();
-      edgeOwnership = undefined;
-      ownerOptions = undefined;
+    close(requester) {
+      return present(Effect.gen(function* () {
+        if (requester && ownerOptions && requester !== ownerOptions) return;
+        yield* Effect.forEach([...stores], (store) => integration(() => Promise.resolve(store.close?.())), { concurrency: 8 });
+        stores.clear();
+        // A failed acquisition left nothing to release, so it is not a failure to close.
+        const releaseOwnership = (pending: Promise<LocalOwnershipLease> | undefined) => Effect.option(integration(() => Promise.resolve(pending))).pipe(
+          Effect.flatMap((lease) => Option.isSome(lease) && lease.value ? integration(() => lease.value!.release()) : Effect.void),
+        );
+        yield* releaseOwnership(ownership);
+        ownership = undefined;
+        yield* releaseOwnership(edgeOwnership);
+        edgeOwnership = undefined;
+        ownerOptions = undefined;
+      }));
     },
     resolve(
       _constructorOptions: ZelavisOptions,
@@ -332,9 +337,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             ...(serviceSources.recipePackageDirectory
               ? { packageDirectory: serviceSources.recipePackageDirectory }
               : {}),
-            trusted: async (name: string) =>
-              projectOptions?.recipeRuntimes?.[name] !== undefined ||
-              ((await serviceSources.recipeRuntimeTrusted?.(name)) ?? false),
+            trusted: (name: string) => present(Effect.gen(function* () {
+              if (projectOptions?.recipeRuntimes?.[name] !== undefined) return true;
+              return (yield* integration(() => Promise.resolve(serviceSources.recipeRuntimeTrusted?.(name)))) ?? false;
+            })),
           },
           ...(projectOptions?.recipeRuntimes
             ? { recipeRuntimeOptions: projectOptions.recipeRuntimes }
@@ -470,10 +476,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           });
           const traefikCerts = createTraefikCertificateDistributor({
             invoker,
-            certificateResolver: async (ref) => {
-              const resolved = await edgeCertificates?.resolveCertificate(ref);
+            certificateResolver: (ref) => present(Effect.gen(function* () {
+              const resolved = yield* integration(() => Promise.resolve(edgeCertificates?.resolveCertificate(ref)));
               return resolved ? { certPem: resolved.certPem, keyPem: resolved.keyPem } : undefined;
-            },
+            })),
           });
           const routeStore = edgeRoutes;
           edgeManager = createZelavisEdgeManager({
@@ -481,10 +487,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             defaultAdapterId: "traefik",
             adapters: [traefikAdapter],
             certificates: traefikCerts,
-            getPublication: async () => {
-              const current = await routeStore.getCurrentPublication();
+            getPublication: () => present(Effect.gen(function* () {
+              const current = yield* integration(() => routeStore.getCurrentPublication());
               return current ? toPublicationSummary(current) : undefined;
-            },
+            })),
           });
           yield* integration(() => edgeManager!.reconcile()).pipe(Effect.catch(() => Effect.void));
         }

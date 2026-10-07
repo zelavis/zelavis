@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { IntegrationFailure, integration, present, unwrapFailure } from "./effect-boundary.js";
 import {
   createRemoteJWKSet,
   jwtVerify,
@@ -36,21 +38,22 @@ export function createJwtAuthenticator(
   };
   return {
     name: options.name ?? "jwt",
-    async authenticate(context) {
-      const token = readAuthorizationCredential(context.request, "Bearer");
-      if (!token) return undefined;
-      if (token.split(".").length !== 3) return undefined;
-      try {
-        const verified = await jwtVerify(token, options.key, verifyOptions);
-        const principal = await options.mapPrincipal(verified.payload, verified.protectedHeader);
-        if (!principal) throw new Error("JWT does not resolve to a principal.");
-        return principal;
-      } catch (cause) {
-        throw new ZelavisAuthenticationError("Invalid bearer token.", {
-          challenge: { scheme: "Bearer", parameters: { error: "invalid_token" } },
-          cause,
-        });
-      }
+    authenticate(context) {
+      return present(Effect.gen(function* () {
+        const token = readAuthorizationCredential(context.request, "Bearer");
+        if (!token) return undefined;
+        if (token.split(".").length !== 3) return undefined;
+        return yield* integration(() => jwtVerify(token, options.key, verifyOptions)).pipe(
+          Effect.flatMap((verified) => integration(() => options.mapPrincipal(verified.payload, verified.protectedHeader))),
+          Effect.flatMap((principal) => principal
+            ? Effect.succeed(principal)
+            : Effect.fail(new IntegrationFailure(new Error("JWT does not resolve to a principal.")))),
+          Effect.mapError((failure) => new IntegrationFailure(new ZelavisAuthenticationError("Invalid bearer token.", {
+            challenge: { scheme: "Bearer", parameters: { error: "invalid_token" } },
+            cause: unwrapFailure(failure),
+          }))),
+        );
+      }));
     },
   };
 }

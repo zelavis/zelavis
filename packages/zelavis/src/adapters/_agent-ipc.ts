@@ -29,8 +29,8 @@ import { createServer, connect, type Server, type Socket } from "node:net";
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import { Deferred, Effect } from "effect";
-import { evaluate, integration, IntegrationFailure, present, presentOperations, type TaggedFailure } from "../core/runtime/effect-boundary.js";
+import { Cause, Deferred, Effect } from "effect";
+import { evaluate, integration, IntegrationFailure, present, presentOperations, type TaggedFailure, integrationValue, unwrapFailure } from "../core/runtime/effect-boundary.js";
 
 import type {
   ZelavisAgentAttachedProcess,
@@ -91,40 +91,44 @@ export function agentTokenPath(directory: string): string {
  * socket: a window where either is readable is a window where the Agent can be
  * driven by whoever noticed.
  */
-async function ensureEndpoint(directory: string, groupAccess = false): Promise<string> {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryStats = await lstat(directory);
+function ensureEndpoint(directory: string, groupAccess = false): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
+  (yield* integrationValue(mkdir(directory, { recursive: true, mode: 0o700 })));
+  const directoryStats = (yield* integrationValue(lstat(directory)));
   if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink() ||
       groupAccess && (directoryStats.uid !== 0 || directoryStats.gid !== process.getgid?.())) {
     throw new Error("Privileged Agent endpoint must be a root-owned directory in the Agent's group.");
   }
-  await chmod(directory, groupAccess ? 0o750 : 0o700);
+  (yield* integrationValue(chmod(directory, groupAccess ? 0o750 : 0o700)));
 
   const tokenPath = agentTokenPath(directory);
-  const stats = await lstat(tokenPath).catch((error) => {
+  const stats = (yield* integrationValue(lstat(tokenPath).catch((error) => {
     if (error.code !== "ENOENT") throw error;
     return undefined;
-  });
+  })));
   if (stats && (!stats.isFile() || stats.isSymbolicLink() || groupAccess &&
       (stats.uid !== 0 || stats.gid !== process.getgid?.() || (stats.mode & 0o027) !== 0))) {
     throw new Error("Agent token must be a regular file owned by its Agent.");
   }
-  const existing = stats ? await readFile(tokenPath, "utf8") : undefined;
-  if (stats) await chmod(tokenPath, groupAccess ? 0o640 : 0o600);
-  if (existing && existing.trim()) return existing.trim();
+  const existing = stats ? (yield* integrationValue(readFile(tokenPath, "utf8"))) : undefined;
+  if (stats) (yield* integrationValue(chmod(tokenPath, groupAccess ? 0o640 : 0o600)));
+  if (existing && existing.trim()) return (yield* integrationValue(existing.trim()));
 
   const token = randomBytes(32).toString("base64url");
-  await writeFile(tokenPath, `${token}\n`, { mode: groupAccess ? 0o640 : 0o600, flag: stats ? "w" : "wx" });
+  (yield* integrationValue(writeFile(tokenPath, `${token}\n`, { mode: groupAccess ? 0o640 : 0o600, flag: stats ? "w" : "wx" })));
   return token;
-}
+}));
+  }
 
-export async function readAgentToken(directory: string): Promise<string> {
-  const token = (await readFile(agentTokenPath(directory), "utf8")).trim();
+export function readAgentToken(directory: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
+  const token = ((yield* integrationValue(readFile(agentTokenPath(directory), "utf8")))).trim();
   if (!token) {
     throw new Error(`The Agent token at ${agentTokenPath(directory)} is empty.`);
   }
   return token;
-}
+}));
+  }
 
 /** Constant-time comparison that does not leak length through an exception. */
 function tokensMatch(left: string, right: string): boolean {
@@ -236,9 +240,10 @@ export interface AgentProcessServerOptions {
  * is the entire point. What ends them is an explicit stop, or the Agent itself
  * shutting down.
  */
-export async function createAgentProcessServer(
+export function createAgentProcessServer(
   options: AgentProcessServerOptions,
 ): Promise<AgentProcessServer> {
+  return present(Effect.gen(function* (): Effect.fn.Return<AgentProcessServer, IntegrationFailure> {
   const operationsOnly = options.operationsOnly === true;
   if (operationsOnly && !options.operations) {
     throw new Error("An operation-only Agent requires installed host operations.");
@@ -246,12 +251,12 @@ export async function createAgentProcessServer(
   if (options.endpointGroupAccess && (!operationsOnly || process.getuid?.() !== 0)) {
     throw new Error("Group-access endpoints require a root operation-only Agent.");
   }
-  const token = await ensureEndpoint(options.directory, options.endpointGroupAccess);
+  const token = yield* integrationValue(ensureEndpoint(options.directory, options.endpointGroupAccess));
   const socketPath = agentSocketPath(options.directory);
 
   // A socket file left by a crashed Agent is not a listener; removing it is
   // what makes a restart work rather than fail with EADDRINUSE.
-  await rm(socketPath, { force: true });
+  yield* integrationValue(rm(socketPath, { force: true }));
 
   /**
    * Live processes, and which connection asked for each.
@@ -289,7 +294,9 @@ export async function createAgentProcessServer(
       socket.destroy();
     };
 
-    const handle = async (message: Record<string, unknown>) => {
+    const handle = (message: Record<string, unknown>): Effect.Effect<void> => {
+      const id = typeof message.id === "string" ? message.id : undefined;
+      return Effect.gen(function* () {
       if (!authenticated) {
         if (
           message.type !== "hello" ||
@@ -304,8 +311,6 @@ export async function createAgentProcessServer(
         return;
       }
 
-      const id = typeof message.id === "string" ? message.id : undefined;
-
       if (operationsOnly && ![
         "operation.catalog", "operation.submit", "operation.get",
       ].includes(String(message.type))) {
@@ -313,7 +318,6 @@ export async function createAgentProcessServer(
         return;
       }
 
-      try {
         if (message.type === "start") {
           const processId = `p${(nextProcessId += 1)}`;
           const command = message.command as ZelavisAgentProcessCommand;
@@ -332,16 +336,14 @@ export async function createAgentProcessServer(
               identity: command.placement,
               read: options.placement.read,
               checkIntervalMs: options.placement.checkIntervalMs,
-              onFence: async () => { await childForFence?.stop(); },
+              onFence: () => present(Effect.gen(function* () { (yield* integrationValue(childForFence?.stop())); })),
             });
-            if (!(await lease.start())) {
+            if (!(yield* integrationValue(lease.start()))) {
               send(socket, { id, type: "failed", error: "Project placement authority is absent or stale." });
               return;
             }
           }
-          let child: ZelavisAgentProcess;
-          try {
-            child = await options.runner.start(command, {
+          const child: ZelavisAgentProcess = yield* integrationValue(options.runner.start(command, {
             onOutput: (output) => {
               const entry = processes.get(processId);
               if (entry) {
@@ -362,14 +364,10 @@ export async function createAgentProcessServer(
               processes.delete(processId);
               if (entry?.socket) send(entry.socket, { type: "exit", processId, exit });
             },
-            });
-          } catch (error) {
-            lease?.close();
-            throw error;
-          }
+          })).pipe(Effect.tapError(() => Effect.sync(() => lease?.close())));
           childForFence = child;
           if (lease?.fenced) {
-            await child.stop();
+            yield* integrationValue(child.stop());
             send(socket, { id, type: "failed", error: "Project placement expired during start." });
             return;
           }
@@ -418,11 +416,11 @@ export async function createAgentProcessServer(
           entry?.lease?.close();
           const child = entry?.child;
           const exit = child
-            ? await child.stop(
+            ? yield* integrationValue(child.stop(
                 typeof message.graceMs === "number"
                   ? { graceMs: message.graceMs }
                   : undefined,
-              )
+              ))
             : undefined;
           send(socket, { id, type: "stopped", exit });
           return;
@@ -437,14 +435,14 @@ export async function createAgentProcessServer(
             return;
           }
           const placement = claim as AgentPlacementIdentity;
-          const current = await options.placement.read(placement.projectId);
+          const current = yield* integrationValue(options.placement.read(placement.projectId));
           if (!current || current.state !== "active" ||
               current.leaseExpiresAt > current.authorityNow ||
               !samePlacement(placement, current)) {
             send(socket, { id, type: "failed", error: "The prior placement is not expired and current." });
             return;
           }
-          const fenced = await options.runner.fencePlacement(placement);
+          const fenced = yield* integrationValue(options.runner.fencePlacement(placement));
           send(socket, { id, type: "fenced", fenced });
           return;
         }
@@ -455,7 +453,7 @@ export async function createAgentProcessServer(
             send(socket, { id, type: "failed", error: "Process input must be a string." });
             return;
           }
-          const accepted = child?.write ? await child.write(message.data) : false;
+          const accepted = child?.write ? yield* integrationValue(child.write(message.data)) : false;
           send(socket, { id, type: "written", accepted });
           return;
         }
@@ -466,7 +464,7 @@ export async function createAgentProcessServer(
             send(socket, { id, type: "failed", error: "Process signal is invalid." });
             return;
           }
-          const accepted = child?.signal ? await child.signal(message.signal) : false;
+          const accepted = child?.signal ? yield* integrationValue(child.signal(message.signal)) : false;
           send(socket, { id, type: "signalled", accepted });
           return;
         }
@@ -488,13 +486,13 @@ export async function createAgentProcessServer(
             if (workloadId !== undefined && entry.workloadId !== workloadId) continue;
             if (workloadId === undefined && preservePrefixes.some((prefix) => entry.workloadId.startsWith(prefix))) continue;
             processes.delete(processId);
-            await entry.child.stop().catch(() => undefined);
+            yield* integrationValue(entry.child.stop()).pipe(Effect.orElseSucceed(() => undefined));
             count += 1;
           }
 
           // Then the durable records, which cover what an earlier *Agent* left
           // behind rather than an earlier Platform.
-          count += (await options.runner.reclaim?.(workloadId)) ?? 0;
+          count += (yield* integrationValue(options.runner.reclaim?.(workloadId))) ?? 0;
           send(socket, { id, type: "reclaimed", count });
           return;
         }
@@ -514,61 +512,66 @@ export async function createAgentProcessServer(
             return;
           }
           const operation = message.type === "operation.submit"
-            ? await options.operations.submit(message.request as ZelavisHostOperationRequest)
-            : await options.operations.get(String(message.operationId));
+            ? yield* integrationValue(options.operations.submit(message.request as ZelavisHostOperationRequest))
+            : yield* integrationValue(options.operations.get(String(message.operationId)));
           send(socket, { id, type: "operation", operation: operation ?? null });
           return;
         }
 
         fail(`unknown message type "${String(message.type)}"`);
-      } catch (error) {
+      }).pipe(Effect.catchCause((cause) => Effect.sync(() => {
+        const error = unwrapFailure(Cause.squash(cause));
         send(socket, {
           id,
           type: "failed",
           error: error instanceof Error ? error.message : String(error),
         });
-      }
+      })));
     };
 
     socket.on(
       "data",
       messageReader(
-        (message) => void handle(message),
+        (message) => { Effect.runFork(handle(message)); },
         (reason) => fail(reason),
       ),
     );
     socket.on("error", () => socket.destroy());
   });
 
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
+  yield* Effect.callback<void, IntegrationFailure>((resume) => {
+    const refuse = (cause: Error) => resume(Effect.fail(new IntegrationFailure(cause)));
+    server.once("error", refuse);
     server.listen(socketPath, () => {
-      server.removeListener("error", rejectListen);
-      resolveListen();
+      server.removeListener("error", refuse);
+      resume(Effect.void);
     });
   });
 
   // Only after it exists. Creating the socket and then narrowing it leaves a
   // window, which is why the directory is 0700 first — this is the second lock,
   // not the only one.
-  await chmod(socketPath, options.endpointGroupAccess ? 0o660 : 0o600);
+  yield* integrationValue(chmod(socketPath, options.endpointGroupAccess ? 0o660 : 0o600));
 
   return {
     socketPath,
     token,
-    async close() {
-      await options.operations?.close?.();
-      await options.runner.close();
+    close() {
+      return present(Effect.gen(function* () {
+      yield* integrationValue(options.operations?.close?.());
+      yield* integrationValue(options.runner.close());
       // `server.close` stops accepting and then waits for open connections. An
       // Agent shutting down cannot wait for a Platform to notice: the
       // connections are dropped, which is what the Platform sees anyway when
       // the Agent goes away.
       for (const socket of connections) socket.destroy();
       connections.clear();
-      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-      await rm(socketPath, { force: true }).catch(() => undefined);
+      yield* Effect.callback<void>((resume) => { server.close(() => resume(Effect.void)); });
+      yield* integrationValue(rm(socketPath, { force: true })).pipe(Effect.orElseSucceed(() => undefined));
+      }));
     },
   };
+  }));
 }
 
 // ---------------------------------------------------------------------------

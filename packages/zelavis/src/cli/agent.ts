@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { evaluate, integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * `zelavis agent` — run the Agent as its own process.
  *
@@ -67,9 +69,10 @@ export type RunAgentCommandReady = (agent: {
   readonly operations?: AgentHostOperationService;
 }) => void;
 
-export async function runAgentCommand(
+export function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   if (options.operationsOnly && (!options.operationsRoot || !options.platformAuthority)) {
     throw new Error("--operations-only requires --operations-root and --platform-authority.");
@@ -81,9 +84,9 @@ export async function runAgentCommand(
     if (!options.operationsOnly || !options.requireRootOwnedOperations || process.getuid?.() !== 0) {
       throw new Error("--endpoint-group-access requires a root --operations-only Agent with --require-root-owned-operations.");
     }
-    await mkdir(dataDirectory, { recursive: true, mode: 0o750 });
+    yield* integrationValue(mkdir(dataDirectory, { recursive: true, mode: 0o750 }));
     for (let path = dataDirectory; ; path = dirname(path)) {
-      const stats = await lstat(path);
+      const stats = yield* integrationValue(lstat(path));
       if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== 0 || (stats.mode & 0o022) !== 0) {
         throw new Error("Privileged Agent state and its ancestors must be root-owned and not group/world-writable.");
       }
@@ -96,7 +99,9 @@ export async function runAgentCommand(
       throw new Error("Remote Project Agent config cannot be combined with local Agent options.");
     }
     const file = resolve(options.remoteProjectConfig);
-    const config = JSON.parse(await readFile(file, "utf8")) as {
+    const config = (yield* integrationValue(readFile(file, "utf8")).pipe(
+      Effect.flatMap((text) => evaluate(() => JSON.parse(text))),
+    )) as {
       host?: unknown; port?: unknown; keyFile?: unknown; certFile?: unknown;
       trustFile?: unknown; agentId?: unknown; nodeId?: unknown;
     };
@@ -107,30 +112,28 @@ export async function runAgentCommand(
       throw new Error("Remote Project Agent config needs host, port, keyFile, certFile, trustFile, agentId and nodeId.");
     }
     const relativeFile = (path: string) => resolve(dirname(file), path);
-    const [keyPem, certPem, trustText] = await Promise.all([
-      readFile(relativeFile(config.keyFile), "utf8"),
-      readFile(relativeFile(config.certFile), "utf8"),
-      readFile(relativeFile(config.trustFile), "utf8"),
-    ]);
-    const trust = JSON.parse(trustText) as ZelavisHostOperationTrustStore;
+    const [keyPem, certPem, trustText] = yield* Effect.all([
+      integration(() => readFile(relativeFile(config.keyFile as string), "utf8")),
+      integration(() => readFile(relativeFile(config.certFile as string), "utf8")),
+      integration(() => readFile(relativeFile(config.trustFile as string), "utf8")),
+    ], { concurrency: 3 });
+    const trust = (yield* evaluate(() => JSON.parse(trustText))) as ZelavisHostOperationTrustStore;
     if (!Array.isArray(trust.keys) || trust.keys.length === 0) {
       throw new Error("Remote Project Agent trust file has no Platform keys.");
     }
-    const remote = await createRemoteProjectAgent({
+    const remote = yield* integrationValue(createRemoteProjectAgent({
       dataDirectory, host: config.host, port: config.port,
       keyPem, certPem, trust, agentId: config.agentId, nodeId: config.nodeId,
-    });
+    }));
     console.log(`Zelavis Project Agent listening on ${remote.address}`);
-    if (options.signal) {
-      if (!options.signal.aborted) {
-        await new Promise<void>((resolveAborted) => options.signal!.addEventListener(
-          "abort", () => resolveAborted(), { once: true }));
-      }
-      await remote.close();
+    const signal = options.signal;
+    if (signal) {
+      if (!signal.aborted) yield* untilAborted(signal);
+      yield* integrationValue(remote.close());
       return;
     }
-    await new Promise<void>((resolveStopped) => {
-      const stop = () => { void remote.close().finally(resolveStopped); };
+    yield* Effect.callback<void>((resume) => {
+      const stop = () => { void remote.close().finally(() => resume(Effect.void)); };
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
     });
@@ -140,8 +143,8 @@ export async function runAgentCommand(
 
   const runner: ZelavisAgentProcessRunner = options.operationsOnly ? {
     name: "host-operations-only",
-    start: async () => { throw new Error("This Agent executes installed host operations only."); },
-    close: async () => {},
+    start: () => present(Effect.gen(function* () { throw new Error("This Agent executes installed host operations only."); })),
+    close: () => present(Effect.gen(function* () {})),
   } : createLocalAgentProcessRunner({
     // The same records the in-process runner keeps, in the same place, so an
     // installation that switches between the two does not lose track of what
@@ -152,7 +155,7 @@ export async function runAgentCommand(
   // Anything a previous Agent or Platform left running is stopped before this
   // one starts accepting work, so the first Project start does not race a
   // leftover holding its port.
-  const reclaimed = (await runner.reclaim?.()) ?? 0;
+  const reclaimed = (yield* integration(() => runner.reclaim?.())) ?? 0;
   if (reclaimed > 0) {
     console.log(`Reclaimed ${reclaimed} process(es) left by an earlier run.`);
   }
@@ -169,14 +172,14 @@ export async function runAgentCommand(
       ...(options.operationPidsMax !== undefined ? { pidsMax: options.operationPidsMax } : {}),
     };
     const cgroupRoot = options.operationCgroup === "delegated"
-      ? (await prepareDelegatedCgroupLayout({
+      ? (yield* integrationValue(prepareDelegatedCgroupLayout({
           controllers: [
             ...(limits.memoryMaxBytes !== undefined ? ["memory" as const] : []),
             ...(limits.pidsMax !== undefined ? ["pids" as const] : []),
           ],
-        })).operations
+        }))).operations
       : options.operationCgroup;
-    operations = await createAgentHostOperationService({
+    operations = yield* integrationValue(createAgentHostOperationService({
       directory: join(dataDirectory, "agent-operations"),
       operationsRoot: resolve(options.operationsRoot),
       platformAuthorityFile: resolve(options.platformAuthority),
@@ -186,8 +189,11 @@ export async function runAgentCommand(
       ...(cgroupRoot
         ? { supervision: { kind: "cgroup-v2" as const, root: cgroupRoot, limits } }
         : {}),
-    });
-    const platformAuthorityPresent = await access(resolve(options.platformAuthority)).then(() => true, () => false);
+    }));
+    const platformAuthorityPresent = yield* integration(() => access(resolve(options.platformAuthority!))).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
     if (!platformAuthorityPresent) {
       console.log(
         `Platform authority file ${options.platformAuthority} does not exist yet; every operation request is refused until the Platform creates it.`,
@@ -203,7 +209,7 @@ export async function runAgentCommand(
   const placementStore = options.operationsOnly ? undefined : createLocalSqliteSystemStore({
     filename: resolve(options.placementStore ?? join(dataDirectory, "system", "zelavis.sqlite")),
   });
-  const server = await createAgentProcessServer({
+  const server = yield* integrationValue(createAgentProcessServer({
     directory: endpointDirectory,
     runner,
     operationsOnly: options.operationsOnly,
@@ -213,47 +219,42 @@ export async function runAgentCommand(
       isProjectWorkload: (id: string) => !id.startsWith(REMOTE_ENVIRONMENT_WORKLOAD_PREFIX),
       read: (projectId: string) => readLocalProjectPlacementLease(placementStore, projectId),
     } } : {}),
-  });
+  }));
 
   console.log(`Zelavis Agent listening on ${server.socketPath}`);
   options.onReady?.({ socketPath: server.socketPath, ...(operations ? { operations } : {}) });
 
   let closing: Promise<void> | undefined;
   const shutdown = () => {
-    closing ??= server.close().finally(
-      async () => { await placementStore?.close?.(); },
-    ).then(
-      () => undefined,
-      (error) => {
+    closing ??= present(integration(() => server.close()).pipe(
+      Effect.ensuring(integration(() => placementStore?.close?.()).pipe(Effect.orDie)),
+      Effect.catchCause((cause) => Effect.sync(() => {
+        const error = unwrapFailure(Cause.squash(cause));
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
-      },
-    );
+      })),
+    ));
     return closing;
   };
 
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
 
-  if (options.signal) {
-    if (options.signal.aborted) {
-      await shutdown();
-      return;
-    }
-    await new Promise<void>((resolveAborted) => {
-      options.signal!.addEventListener("abort", () => resolveAborted(), {
-        once: true,
-      });
-    });
-    await shutdown();
+  const stopSignal = options.signal;
+  if (stopSignal) {
+    if (!stopSignal.aborted) yield* untilAborted(stopSignal);
+    yield* integrationValue(shutdown());
     return;
   }
 
-  await new Promise<void>((resolveClosed) => {
-    const poll = setInterval(() => {
-      if (!closing) return;
-      clearInterval(poll);
-      void closing.then(() => resolveClosed());
-    }, 100);
-  });
+  while (!closing) yield* Effect.sleep(100);
+  yield* integrationValue(closing);
+  }));
 }
+
+/** Completes when the signal aborts; a listener left behind by an interrupted wait is removed. */
+const untilAborted = (signal: AbortSignal): Effect.Effect<void> => Effect.callback<void>((resume) => {
+  const onAbort = () => resume(Effect.void);
+  signal.addEventListener("abort", onAbort, { once: true });
+  return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+});

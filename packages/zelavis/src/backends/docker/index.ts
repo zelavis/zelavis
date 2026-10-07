@@ -1,18 +1,21 @@
+import { Effect } from "effect";
+import { IntegrationFailure, evaluate, integrationValue, present, unwrapFailure } from "../../core/runtime/effect-boundary.js";
 import type { ZelavisBackendHostProbes } from "../host.js";
 import type {
   ZelavisDeploymentBackendAdapter,
   ZelavisDeploymentBackendDetection,
 } from "../registry.js";
 
-async function detectDockerBackend(
+function detectDockerBackend(
   host: ZelavisBackendHostProbes,
 ): Promise<ZelavisDeploymentBackendDetection> {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendDetection, IntegrationFailure> {
   const checkedAt = new Date().toISOString();
-  const result = await host.runProbeCommand("docker", [
+  const result = yield* integrationValue(host.runProbeCommand("docker", [
     "version",
     "--format",
     "{{json .}}",
-  ]);
+  ]));
   if (result.missing) {
     return {
       state: "unavailable",
@@ -40,20 +43,20 @@ async function detectDockerBackend(
       error: result.stderr.trim().slice(0, 1_000) || "Docker Engine is not reachable.",
     };
   }
-  try {
-    const value = JSON.parse(result.stdout) as {
+  return yield* Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendDetection, IntegrationFailure> {
+    const value = yield* evaluate(() => JSON.parse(result.stdout) as {
       Server?: { Version?: unknown; ApiVersion?: unknown; Os?: unknown; Arch?: unknown };
-    };
+    });
     if (!value.Server || typeof value.Server.Version !== "string") {
-      throw new Error("Docker did not report a server version.");
+      return yield* Effect.fail(new IntegrationFailure(new Error("Docker did not report a server version.")));
     }
-    const info = await host.runProbeCommand("docker", [
+    const info = yield* integrationValue(host.runProbeCommand("docker", [
       "info",
       "--format",
       "{{json .SecurityOptions}}",
-    ]);
+    ]));
     const securityOptions = info.code === 0
-      ? JSON.parse(info.stdout) as unknown
+      ? yield* evaluate(() => JSON.parse(info.stdout) as unknown)
       : [];
     const rootless = Array.isArray(securityOptions) &&
       securityOptions.some((option) => String(option).includes("rootless"));
@@ -72,15 +75,17 @@ async function detectDockerBackend(
         arch: typeof value.Server.Arch === "string" ? value.Server.Arch : "unknown",
       },
     };
-  } catch (error) {
-    return {
-      state: "degraded",
+  }).pipe(Effect.catch((failure) => {
+    const error = unwrapFailure(failure);
+    return Effect.succeed({
+      state: "degraded" as const,
       installed: true,
       healthy: false,
       checkedAt,
       error: error instanceof Error ? error.message : String(error),
-    };
-  }
+    });
+  }));
+  }));
 }
 
 /** Built-in read-only Docker adapter. It advertises no Project driver yet. */

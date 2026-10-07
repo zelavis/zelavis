@@ -1,3 +1,4 @@
+import { present, integrationValue, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Context, Effect, Layer, LayerMap, type Scope } from "effect";
@@ -24,10 +25,10 @@ export class DbRoot extends Context.Service<DbRoot, { readonly directory: string
  * is unchanged: only the handle differs. Loaded lazily, by specifier, because
  * a static import of the other host's module fails to resolve on load.
  */
-const openSqliteHandle = async (file: string): Promise<SqliteHandle> => {
+const openSqliteHandle = (file: string): Promise<SqliteHandle> => present(Effect.gen(function* (): Effect.fn.Return<SqliteHandle, IntegrationFailure> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     const specifier = "bun:sqlite";
-    const { Database } = (await import(specifier)) as {
+    const { Database } = ((yield* integrationValue(import(specifier)))) as {
       Database: new (file: string) => {
         prepare(sql: string): {
           get(...params: ReadonlyArray<unknown>): unknown;
@@ -53,9 +54,9 @@ const openSqliteHandle = async (file: string): Promise<SqliteHandle> => {
       close: () => db.close(),
     };
   }
-  const { DatabaseSync } = await import("node:sqlite");
+  const { DatabaseSync } = (yield* integrationValue(import("node:sqlite")));
   return new DatabaseSync(file);
-};
+}));
 
 /** The default engine: the host's own SQLite, so nothing has to be installed. */
 export const makeNodeSqliteEngine = (
@@ -64,13 +65,13 @@ export const makeNodeSqliteEngine = (
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.tryPromise({
-      try: async () => {
+      try: () => present(Effect.gen(function* () {
         if (directory !== ":memory:") mkdirSync(directory, { recursive: true });
-        const db = await openSqliteHandle(
+        const db = (yield* integrationValue(openSqliteHandle(
           directory === ":memory:" ? ":memory:" : join(directory, `${partition}.sqlite`),
-        );
-        return sqliteKvEngineOver(db);
-      },
+        )));
+        return (yield* integrationValue(sqliteKvEngineOver(db)));
+      })),
       catch: (cause) => new StoreError({ op: "node-sqlite.open", cause }),
     }),
     (engine) => Effect.orDie(engine.close),

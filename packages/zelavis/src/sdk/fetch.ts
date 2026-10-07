@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
 import type { ZelavisUpdateStatus } from "../updates.js";
@@ -850,10 +852,11 @@ export function createZelavisClient(
   const apiVersion = options.apiVersion ?? (sandboxed ? "" : "v1");
   if (apiVersion && !/^[a-zA-Z0-9_-]+$/.test(apiVersion)) throw new TypeError("Invalid API version.");
 
-  async function resolveHeaders(headers?: HeadersInit): Promise<Headers> {
+  function resolveHeaders(headers?: HeadersInit): Promise<Headers> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Headers, IntegrationFailure> {
     const resolved = new Headers(
       typeof options.headers === "function"
-        ? await options.headers()
+        ? (yield* integrationValue(options.headers()))
         : options.headers,
     );
     const next = new Headers(headers);
@@ -861,14 +864,16 @@ export function createZelavisClient(
       resolved.set(key, value);
     });
     return resolved;
+  }));
   }
 
-  async function request(
+  function request(
     path: string,
     requestOptions: ZelavisClientRequestOptions = {},
   ): Promise<Response> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Response, IntegrationFailure> {
     const { body, headers: requestHeaders, ...fetchOptions } = requestOptions;
-    const headers = await resolveHeaders(requestHeaders);
+    const headers = (yield* integrationValue(resolveHeaders(requestHeaders)));
     const init: RequestInit = {
       ...fetchOptions,
       headers,
@@ -888,46 +893,51 @@ export function createZelavisClient(
       .join("")
       .replace(/\/+/g, "/");
     const fullPath = `${prefix}${normalizedPath}`.replace(/\/+/g, "/");
-    return resolvedFetch(new URL(fullPath, baseUrl), init);
+    return (yield* integrationValue(resolvedFetch(new URL(fullPath, baseUrl), init)));
+  }));
   }
 
-  async function json<T = unknown>(
+  function json<T = unknown>(
     path: string,
     requestOptions?: ZelavisClientRequestOptions,
   ): Promise<T> {
-    const response = await request(path, requestOptions);
+    return present(Effect.gen(function* (): Effect.fn.Return<T, IntegrationFailure> {
+    const response = (yield* integrationValue(request(path, requestOptions)));
     if (!response.ok) {
-      const body = await response.clone().json().catch(() => undefined);
+      const body = (yield* integrationValue(response.clone().json().catch(() => undefined)));
       throw new ZelavisClientHttpError(response, body);
     }
     if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    return (yield* integrationValue(response.json() as Promise<T>));
+  }));
   }
 
   // The last catalogue and its ETag. Every discovery still asks the server,
   // so revocation is immediate; an unchanged catalogue answers 304 and is not
   // transferred again.
   let catalogue: { etag: string; operations: readonly PluginOperation[] } | undefined;
-  async function discoverPluginOperations(): Promise<readonly PluginOperation[]> {
-    const response = await request("/runtime/plugin-operations", {
+  function discoverPluginOperations(): Promise<readonly PluginOperation[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly PluginOperation[], IntegrationFailure> {
+    const response = (yield* integrationValue(request("/runtime/plugin-operations", {
       headers: catalogue ? { "if-none-match": catalogue.etag } : {},
-    });
+    })));
     if (response.status === 304 && catalogue) return catalogue.operations;
     if (!response.ok) {
-      const body = await response.clone().json().catch(() => undefined);
+      const body = (yield* integrationValue(response.clone().json().catch(() => undefined)));
       throw new ZelavisClientHttpError(response, body);
     }
-    const body = await response.json() as { operations?: readonly PluginOperation[] };
+    const body = (yield* integrationValue(response.json())) as { operations?: readonly PluginOperation[] };
     const operations = body.operations ?? [];
     const etag = response.headers.get("etag");
     catalogue = etag ? { etag, operations } : undefined;
     return operations;
+  }));
   }
 
   return {
     plugins: createPluginClients(
       discoverPluginOperations,
-      async (path, method, body) => json(path, { method, body: body as object | undefined }),
+      (path, method, body) => present(integration(() => json(path, { method, body: body as object | undefined }))),
     ),
     pluginOperations: discoverPluginOperations,
     projects: createProjectsClient(json),
@@ -990,23 +1000,29 @@ export function createZelavisClient(
         ),
       signOut: () => json<void>("/auth/session", { method: "DELETE" }),
       admin: {
-        oauthConnections: async () =>
-          (await json<{ readonly providers: readonly ZelavisOAuthConnection[] }>(
+        oauthConnections: () =>
+          present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ readonly providers: readonly ZelavisOAuthConnection[] }>(
             "/auth/oauth/connections",
-          )).providers,
-        configureOAuth: async (provider, input) =>
-          (await json<{ readonly connection: ZelavisOAuthConnection }>(
+          )))).providers;
+  })),
+        configureOAuth: (provider, input) =>
+          present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ readonly connection: ZelavisOAuthConnection }>(
             `/auth/oauth/connections/${encodeURIComponent(provider)}`,
             { method: "PUT", body: input },
-          )).connection,
+          )))).connection;
+  })),
         removeOAuth: (provider) =>
           json<void>(`/auth/oauth/connections/${encodeURIComponent(provider)}`, {
             method: "DELETE",
           }),
-        serviceAccounts: async () =>
-          (await json<{ readonly serviceAccounts: readonly ZelavisAuthAccount[] }>(
+        serviceAccounts: () =>
+          present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ readonly serviceAccounts: readonly ZelavisAuthAccount[] }>(
             "/auth/service-accounts",
-          )).serviceAccounts,
+          )))).serviceAccounts;
+  })),
         createServiceAccount: (input) =>
           json<{
             readonly serviceAccount: ZelavisAuthAccount;
@@ -1021,11 +1037,13 @@ export function createZelavisClient(
               body: expiresInDays === undefined ? {} : { expiresInDays },
             },
           ),
-        setServiceAccountTenant: async (accountId, tenantId) =>
-          (await json<{ serviceAccount: ZelavisAuthAccount }>(
+        setServiceAccountTenant: (accountId, tenantId) =>
+          present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ serviceAccount: ZelavisAuthAccount }>(
             `/auth/service-accounts/${encodeURIComponent(accountId)}`,
             { method: "PATCH", body: { tenantId } },
-          )).serviceAccount,
+          )))).serviceAccount;
+  })),
         revokeServiceAccount: (accountId) =>
           json<void>(`/auth/service-accounts/${encodeURIComponent(accountId)}`, {
             method: "DELETE",
@@ -1034,165 +1052,172 @@ export function createZelavisClient(
     },
     edge: {
       status: () => json<ZelavisEdgeStatusResponse>("/runtime/edge"),
-      plan: async (input) =>
-        (await json<{ plan: ZelavisEdgeSwitchPlan }>("/runtime/edge/plan", {
+      plan: (input) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ plan: ZelavisEdgeSwitchPlan }>("/runtime/edge/plan", {
           method: "POST",
           body: input,
-        })).plan,
-      switch: async (input) =>
-        (await json<{ edgeSwitch: ZelavisEdgeSwitchRecord }>(
+        })))).plan;
+  })),
+      switch: (input) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ edgeSwitch: ZelavisEdgeSwitchRecord }>(
           "/runtime/edge/switch",
           { method: "POST", body: input },
-        )).edgeSwitch,
-      routes: async (filter = {}) => {
+        )))).edgeSwitch;
+  })),
+      routes: (filter = {}) => present(Effect.gen(function* () {
         const search = new URLSearchParams();
         if (filter.scope) search.set("scope", filter.scope);
         if (filter.projectId) search.set("projectId", filter.projectId);
         if (filter.hostname) search.set("hostname", filter.hostname);
         const suffix = search.size ? `?${search}` : "";
-        return json<ZelavisEdgeRoutesResponse>(`/runtime/edge/routes${suffix}`);
-      },
-      putRoute: async (input) => {
+        return (yield* integrationValue(json<ZelavisEdgeRoutesResponse>(`/runtime/edge/routes${suffix}`)));
+      })),
+      putRoute: (input) => present(Effect.gen(function* () {
         const body = "id" in input ? { route: input } : input;
-        return json<ZelavisEdgePutRouteResponse>("/runtime/edge/routes", {
+        return (yield* integrationValue(json<ZelavisEdgePutRouteResponse>("/runtime/edge/routes", {
           method: "POST",
           body,
-        });
-      },
-      deleteRoute: async (routeId) => {
-        try {
-          const response = await json<{ deleted?: boolean }>(
-            `/runtime/edge/routes/${encodeURIComponent(routeId)}`,
-            { method: "DELETE" },
-          );
-          return Boolean(response.deleted);
-        } catch (error) {
-          if (error instanceof ZelavisClientHttpError && error.status === 404) {
-            return false;
-          }
-          throw error;
-        }
-      },
-      publish: async () =>
-        (await json<{ publication: ZelavisEdgeCompiledPublication }>(
+        })));
+      })),
+      deleteRoute: (routeId) => present(integration(() => json<{ deleted?: boolean }>(
+        `/runtime/edge/routes/${encodeURIComponent(routeId)}`,
+        { method: "DELETE" },
+      )).pipe(
+        Effect.map((response) => Boolean(response.deleted)),
+        Effect.catchIf(isNotFound, () => Effect.succeed(false)),
+      )),
+      publish: () =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ publication: ZelavisEdgeCompiledPublication }>(
           "/runtime/edge/publish",
           { method: "POST" },
-        )).publication,
-      preflightHostname: async (hostname) =>
-        json<ZelavisEdgeOnboardingPreflightResult>(
+        )))).publication;
+  })),
+      preflightHostname: (hostname) =>
+        present(integration(() => json<ZelavisEdgeOnboardingPreflightResult>(
           `/runtime/edge/onboard/preflight?hostname=${encodeURIComponent(hostname)}`,
-        ),
-      onboardHostname: async (input) =>
-        json<ZelavisEdgeOnboardingResult>("/runtime/edge/onboard", {
+        ))),
+      onboardHostname: (input) =>
+        present(integration(() => json<ZelavisEdgeOnboardingResult>("/runtime/edge/onboard", {
           method: "POST",
           body: input,
-        }),
-      certificates: async () =>
-        json<ZelavisEdgeCertificatesResponse>("/runtime/edge/certificates"),
-      renewCertificates: async (input = {}) =>
-        json<ZelavisEdgeRenewCertificatesResponse>(
+        }))),
+      certificates: () =>
+        present(integration(() => json<ZelavisEdgeCertificatesResponse>("/runtime/edge/certificates"))),
+      renewCertificates: (input = {}) =>
+        present(integration(() => json<ZelavisEdgeRenewCertificatesResponse>(
           "/runtime/edge/certificates/renew",
           {
             method: "POST",
             body: input,
           },
-        ),
+        ))),
     },
     hostOperations: {
-      catalog: async () =>
-        (await json<{ operations: readonly ZelavisHostOperationCatalogEntry[] }>("/runtime/host-operations")).operations,
-      submit: async (input) =>
-        (await json<{ operation: ZelavisHostOperationRecord }>("/runtime/host-operations", {
+      catalog: () =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ operations: readonly ZelavisHostOperationCatalogEntry[] }>("/runtime/host-operations")))).operations;
+  })),
+      submit: (input) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ operation: ZelavisHostOperationRecord }>("/runtime/host-operations", {
           method: "POST",
           body: input,
-        })).operation,
-      audit: async (query = {}) => {
+        })))).operation;
+  })),
+      audit: (query = {}) => present(Effect.gen(function* () {
         const search = new URLSearchParams();
         if (query.projectId !== undefined) search.set("projectId", query.projectId);
         if (query.limit !== undefined) search.set("limit", String(query.limit));
         const suffix = search.size ? `?${search}` : "";
-        return (await json<{ records: readonly ZelavisHostOperationRecord[] }>(
+        return ((yield* integrationValue(json<{ records: readonly ZelavisHostOperationRecord[] }>(
           `/runtime/host-operations/audit${suffix}`,
-        )).records;
-      },
-      get: async (operationId) => {
+        )))).records;
+      })),
+      get: (operationId) => present(Effect.gen(function* () {
         if (typeof operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(operationId)) {
           throw new TypeError("Invalid host operation id.");
         }
-        return (await json<{ operation: ZelavisHostOperationRecord }>(
+        return ((yield* integrationValue(json<{ operation: ZelavisHostOperationRecord }>(
           `/runtime/host-operations/${operationId}`,
-        )).operation;
-      },
+        )))).operation;
+      })),
     },
     environment: {
-      identity: async () =>
-        (await json<{ environment: ZelavisEnvironmentIdentity }>("/runtime/environment")).environment,
+      identity: () =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ environment: ZelavisEnvironmentIdentity }>("/runtime/environment")))).environment;
+  })),
       health: () => json<ZelavisEnvironmentHealth>("/runtime/environment/health"),
-      createSession: async (input = {}) =>
-        (await json<{ session: ZelavisEnvironmentSession }>("/runtime/environment/sessions", {
+      createSession: (input = {}) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ session: ZelavisEnvironmentSession }>("/runtime/environment/sessions", {
           method: "POST",
           body: input,
-        })).session,
-      updateSession: async (sessionId, update) => {
+        })))).session;
+  })),
+      updateSession: (sessionId, update) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
         if (!Number.isSafeInteger(update.expectedVersion) || update.expectedVersion < 0) {
           throw new TypeError("Environment session expectedVersion must be a non-negative integer.");
         }
-        return (await json<{ session: ZelavisEnvironmentSession }>(
+        return ((yield* integrationValue(json<{ session: ZelavisEnvironmentSession }>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
           { method: "PATCH", body: update },
-        )).session;
-      },
-      getSession: async (sessionId) => {
+        )))).session;
+      })),
+      getSession: (sessionId) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
-        return (await json<{ session: ZelavisEnvironmentSession }>(
+        return ((yield* integrationValue(json<{ session: ZelavisEnvironmentSession }>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
-        )).session;
-      },
-      closeSession: async (sessionId) => {
+        )))).session;
+      })),
+      closeSession: (sessionId) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
-        return json<{ readonly closed: boolean }>(
+        return (yield* integrationValue(json<{ readonly closed: boolean }>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
           { method: "DELETE" },
-        );
-      },
-      recordUsage: async (sessionId, input) => {
+        )));
+      })),
+      recordUsage: (sessionId, input) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
-        return (await json<{ usage: ZelavisEnvironmentUsageRecord }>(
+        return ((yield* integrationValue(json<{ usage: ZelavisEnvironmentUsageRecord }>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/usage`,
           { method: "POST", body: input },
-        )).usage;
-      },
-      startProcess: async (sessionId, input) => {
+        )))).usage;
+      })),
+      startProcess: (sessionId, input) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
-        return (await json<{ process: ZelavisEnvironmentProcess }>(
+        return ((yield* integrationValue(json<{ process: ZelavisEnvironmentProcess }>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/processes`,
           { method: "POST", body: input },
-        )).process;
-      },
-      getProcess: async (processId) => {
+        )))).process;
+      })),
+      getProcess: (processId) => present(Effect.gen(function* () {
         if (!processId || processId === "." || processId === "..") throw new TypeError("Invalid environment process id.");
-        return (await json<{ process: ZelavisEnvironmentProcess }>(
+        return ((yield* integrationValue(json<{ process: ZelavisEnvironmentProcess }>(
           `/runtime/environment/processes/${encodeURIComponent(processId)}`,
-        )).process;
-      },
-      operateProcess: async (processId, input) => {
+        )))).process;
+      })),
+      operateProcess: (processId, input) => present(Effect.gen(function* () {
         if (!processId || processId === "." || processId === "..") throw new TypeError("Invalid environment process id.");
-        return (await json<{ result: ZelavisEnvironmentOperationResult }>(
+        return ((yield* integrationValue(json<{ result: ZelavisEnvironmentOperationResult }>(
           `/runtime/environment/processes/${encodeURIComponent(processId)}/operations`,
           { method: "POST", body: input },
-        )).result;
-      },
-      readEvents: async (sessionId, options = {}) => {
+        )))).result;
+      })),
+      readEvents: (sessionId, options = {}) => present(Effect.gen(function* () {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
         const search = new URLSearchParams();
         if (options.after !== undefined) search.set("after", options.after);
         if (options.limit !== undefined) search.set("limit", String(options.limit));
         const suffix = search.size ? `?${search}` : "";
-        return json<ZelavisEnvironmentEventPage>(
+        return (yield* integrationValue(json<ZelavisEnvironmentEventPage>(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/events${suffix}`,
-        );
-      },
+        )));
+      })),
     },
     baseUrl,
     rootPath,
@@ -1265,49 +1290,52 @@ function createDataClient(
     json<T>(dataPath(projectId, path), { method: "POST", body });
   return {
     collections: {
-      list: async () =>
-        (await json<{ collections: readonly ZelavisDataCollection[] }>(
+      list: () =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ collections: readonly ZelavisDataCollection[] }>(
           dataPath(projectId, "documents/collections"),
-        )).collections,
+        )))).collections;
+  })),
       modalities: (collection) => json<ZelavisDataCollectionModalities>(dataPath(
         projectId,
         `documents/collections/${dataName(collection, "collection name")}/modalities`,
       )),
       create: (input) => post<ZelavisDataCollection>("documents/collections", input),
-      exists: async (collection) =>
-        (await json<{ exists: boolean }>(
+      exists: (collection) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ exists: boolean }>(
           dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}/exists`),
-        )).exists,
-      drop: async (collection) =>
-        (await json<{ dropped: boolean }>(
+        )))).exists;
+  })),
+      drop: (collection) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ dropped: boolean }>(
           dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}`),
           { method: "DELETE", body: {} },
-        )).dropped,
+        )))).dropped;
+  })),
     },
     documents: {
       insert: (collection, input) =>
         post<ZelavisDataDocument>(`documents/${dataName(collection, "collection name")}`, input),
-      get: async (collection, id) => {
+      get: (collection, id) => present(Effect.gen(function* () {
         const path = dataPath(
           projectId,
           `documents/${dataName(collection, "collection name")}/${dataName(id, "document id")}`,
         );
-        try {
-          return await json<ZelavisDataDocument>(path);
-        } catch (error) {
+        return yield* integration(() => json<ZelavisDataDocument>(path)).pipe(
           // A document that is not there is an answer, not a failure: callers
           // read before writing and would otherwise wrap every read in a try.
-          if (error instanceof ZelavisClientHttpError && error.status === 404) {
-            return undefined;
-          }
-          throw error;
-        }
-      },
-      query: async (collection, input = {}) =>
-        (await post<{ documents: readonly ZelavisDataDocument[] }>(
+          Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
+        );
+      })),
+      query: (collection, input = {}) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(post<{ documents: readonly ZelavisDataDocument[] }>(
           `documents/${dataName(collection, "collection name")}/query`,
           input,
-        )).documents,
+        )))).documents;
+  })),
       page: (collection, input = {}) =>
         post<ZelavisDataPage>(`documents/${dataName(collection, "collection name")}/page`, input),
       update: (collection, id, input) =>
@@ -1318,65 +1346,79 @@ function createDataClient(
           ),
           { method: "PATCH", body: input },
         ),
-      delete: async (collection, id, input = {}) =>
-        (await json<{ deleted: boolean }>(
+      delete: (collection, id, input = {}) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ deleted: boolean }>(
           dataPath(
             projectId,
             `documents/${dataName(collection, "collection name")}/${dataName(id, "document id")}`,
           ),
           { method: "DELETE", body: input },
-        )).deleted,
-      write: async (input) =>
-        (await post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)).written,
+        )))).deleted;
+  })),
+      write: (input) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)))).written;
+  })),
     },
     kv: {
-      get: async (namespace, key) => {
-        try {
-          return await json<ZelavisDataKeyValueEntry>(dataPath(
-            projectId,
-            `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
-          ));
-        } catch (error) {
-          if (error instanceof ZelavisClientHttpError && error.status === 404) return undefined;
-          throw error;
-        }
-      },
-      has: async (namespace, key) =>
-        (await json<{ exists: boolean }>(dataPath(
+      get: (namespace, key) => present(Effect.gen(function* () {
+        const path = dataPath(
+          projectId,
+          `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
+        );
+        return yield* integration(() => json<ZelavisDataKeyValueEntry>(path)).pipe(
+          Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
+        );
+      })),
+      has: (namespace, key) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ exists: boolean }>(dataPath(
           projectId,
           `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}/exists`,
-        ))).exists,
+        ))))).exists;
+  })),
       set: (namespace, key, value, options = {}) =>
         json<ZelavisDataKeyValueEntry>(dataPath(
           projectId,
           `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
         ), { method: "PUT", body: { value, ...options } }),
-      remove: async (namespace, key, options = {}) =>
-        (await json<{ deleted: boolean }>(dataPath(
+      remove: (namespace, key, options = {}) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ deleted: boolean }>(dataPath(
           projectId,
           `kv/${dataName(namespace, "KV namespace")}/${dataName(key, "KV key")}`,
-        ), { method: "DELETE", body: options })).deleted,
+        ), { method: "DELETE", body: options })))).deleted;
+  })),
       scan: (namespace, options = {}) =>
         post<ZelavisDataKeyValuePage>(`kv/${dataName(namespace, "KV namespace")}/scan`, options),
-      changes: async (namespace, options = {}) =>
-        (await post<{ changes: ReadonlyArray<ZelavisDataKeyValueChange> }>(
+      changes: (namespace, options = {}) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(post<{ changes: ReadonlyArray<ZelavisDataKeyValueChange> }>(
           `kv/${dataName(namespace, "KV namespace")}/changes`,
           options,
-        )).changes,
-      write: async (namespace, input) =>
-        (await post<{
+        )))).changes;
+  })),
+      write: (namespace, input) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(post<{
           written: ReadonlyArray<ZelavisDataKeyValueEntry | { readonly key: string; readonly deleted: boolean }>;
-        }>(`kv/${dataName(namespace, "KV namespace")}/write`, input)).written,
-      size: async (namespace) =>
-        (await json<{ size: number }>(dataPath(
+        }>(`kv/${dataName(namespace, "KV namespace")}/write`, input)))).written;
+  })),
+      size: (namespace) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ size: number }>(dataPath(
           projectId,
           `kv/${dataName(namespace, "KV namespace")}`,
-        ))).size,
-      clear: async (namespace) =>
-        (await json<{ removed: number }>(dataPath(
+        ))))).size;
+  })),
+      clear: (namespace) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ removed: number }>(dataPath(
           projectId,
           `kv/${dataName(namespace, "KV namespace")}`,
-        ), { method: "DELETE", body: {} })).removed,
+        ), { method: "DELETE", body: {} })))).removed;
+  })),
     },
   };
 }
@@ -1395,35 +1437,54 @@ function createProjectsClient(
 ): ZelavisProjectsClient {
   type ProjectBody = { project: ZelavisProjectRecord };
   const lifecycle = (action: "start" | "stop" | "restart") =>
-    async (projectId: string) =>
-      (await json<ProjectBody>(projectPath(projectId, action), { method: "POST" })).project;
+    (projectId: string) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId, action), { method: "POST" })))).project;
+  }));
   return {
     versions: projectId => json<ZelavisProjectVersions>(projectId === undefined ? "/runtime/project-versions" : projectPath(projectId, "versions")),
     switchVersion: (projectId, version) => json<ProjectBody>(projectPath(projectId, "version"), { method: "POST", body: { version } }).then(result => result.project),
     list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
-    get: async (projectId) => (await json<ProjectBody>(projectPath(projectId))).project,
-    create: async (input) =>
-      (await json<ProjectBody>("/runtime/projects", { method: "POST", body: input })).project,
-    update: async (projectId, input) =>
-      (await json<ProjectBody>(projectPath(projectId), { method: "PATCH", body: input })).project,
+    get: (projectId) => present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId))))).project;
+  })),
+    create: (input) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<ProjectBody>("/runtime/projects", { method: "POST", body: input })))).project;
+  })),
+    update: (projectId, input) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId), { method: "PATCH", body: input })))).project;
+  })),
     start: lifecycle("start"),
     stop: lifecycle("stop"),
     restart: lifecycle("restart"),
-    upgrade: async (projectId, input) =>
-      (await json<ProjectBody>(projectPath(projectId, "upgrade"), {
+    upgrade: (projectId, input) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId, "upgrade"), {
         method: "POST",
         body: input ?? {},
-      })).project,
-    logs: async (projectId) =>
-      (await json<{ logs: readonly ZelavisProjectLogEntry[] }>(projectPath(projectId, "logs"))).logs,
+      })))).project;
+  })),
+    logs: (projectId) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ logs: readonly ZelavisProjectLogEntry[] }>(projectPath(projectId, "logs"))))).logs;
+  })),
     remove: (projectId) =>
       json<{ deleted: boolean }>(projectPath(projectId), { method: "DELETE" }),
-    recipes: async () =>
-      (await json<{ projectRecipes: readonly ZelavisProjectRecipeSummary[] }>(
+    recipes: () =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ projectRecipes: readonly ZelavisProjectRecipeSummary[] }>(
         "/runtime/project-recipes",
-      )).projectRecipes,
+      )))).projectRecipes;
+  })),
   };
 }
+
+const isNotFound = (failure: IntegrationFailure): boolean => {
+  const error = unwrapFailure(failure);
+  return error instanceof ZelavisClientHttpError && error.status === 404;
+};
 
 export class ZelavisClientHttpError extends Error {
   readonly response: Response;

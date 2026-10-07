@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type { IdentityApi, IdentityMethodContext, IdentityMethodPlugin } from "../core/types.js";
 import { IdentityValidationError } from "../core/errors.js";
 import {
@@ -47,10 +49,10 @@ export function createOAuthProviderRuntime(
       }
     | undefined;
 
-  const register = async (
+  const register = (
     api: IdentityApi,
     context: IdentityMethodContext | undefined,
-  ): Promise<void> => {
+  ): Promise<void> => present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
     const definitions = new Map<string, OAuthProviderDefinition>();
     for (const entry of context?.registry ?? []) {
       if (entry.status !== "installed") continue;
@@ -75,7 +77,7 @@ export function createOAuthProviderRuntime(
       ? createConnectionStore(context.store as never)
       : undefined;
     const active = new Map<string, OAuthConnection>();
-    for (const stored of (await connections?.list()) ?? []) {
+    for (const stored of ((yield* integrationValue(connections?.list()))) ?? []) {
       active.set(stored.provider, stored);
       if (!definitions.has(stored.provider) && stored.discovered) {
         definitions.set(
@@ -134,18 +136,19 @@ export function createOAuthProviderRuntime(
       active,
       register: registerDefinition,
     };
-  };
+  }));
 
   const connections: OAuthConnectionAdmin = {
-    async configure(provider, input) {
+    configure(provider, input) {
+    return present(Effect.gen(function* () {
       if (!state) return undefined;
       const body = (input ?? {}) as Partial<OAuthConnection>;
       let discovered: OAuthProviderDefinition | undefined;
       if (typeof body.issuer === "string" && body.issuer.trim()) {
-        discovered = await discoverOidcProvider(body.issuer.trim(), {
+        discovered = (yield* integrationValue(discoverOidcProvider(body.issuer.trim(), {
           name: provider,
           ...(options.fetch ? { fetch: options.fetch } : {}),
-        });
+        })));
         state.definitions.set(provider, discovered);
         state.register(discovered);
       }
@@ -174,7 +177,7 @@ export function createOAuthProviderRuntime(
         );
       }
 
-      const existing = await state.connections.read(provider);
+      const existing = (yield* integrationValue(state.connections.read(provider)));
       const connection: OAuthConnection = {
         provider,
         clientId: body.clientId.trim(),
@@ -197,14 +200,16 @@ export function createOAuthProviderRuntime(
         enabled: body.enabled !== false,
         updatedAt: new Date().toISOString(),
       };
-      await state.connections.write(connection);
+      (yield* integrationValue(state.connections.write(connection)));
       state.active.set(provider, connection);
-      return publicConnection(connection);
-    },
+      return (yield* integrationValue(publicConnection(connection)));
+    }));
+  },
 
-    async list() {
+    list() {
+    return present(Effect.gen(function* () {
       if (!state) return [];
-      return [...state.definitions].map(([name, definition]) => {
+      return (yield* integrationValue([...state.definitions].map(([name, definition]) => {
         const connection = state!.active.get(name);
         return {
           ...(connection
@@ -220,18 +225,21 @@ export function createOAuthProviderRuntime(
           ...(definition.title ? { title: definition.title } : {}),
           configured: Boolean(connection),
         };
-      });
-    },
+      })));
+    }));
+  },
 
-    async remove(provider) {
+    remove(provider) {
+    return present(Effect.gen(function* () {
       if (!state) return;
-      await state.connections?.remove(provider);
+      (yield* integrationValue(state.connections?.remove(provider)));
       const fallback = options.environmentConnections
         ? environmentConnection(provider)
         : undefined;
       if (fallback) state.active.set(provider, fallback);
       else state.active.delete(provider);
-    },
+    }));
+  },
   };
 
   return {

@@ -1,4 +1,4 @@
-import { integration, integrationValue, presentProtocol, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { IntegrationFailure, evaluate, integration, presentProtocol } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { createServer, request as httpsRequest, type Server } from "node:https";
@@ -27,21 +27,47 @@ const MAX_CONTROL_BYTES = 16 * 1024;
 const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
-async function readBounded(request: IncomingMessage, limit = MAX_CONTROL_BYTES): Promise<Buffer> {
-  const declared = Number(request.headers["content-length"]);
-  if (!Number.isFinite(declared) || declared > limit) {
-    throw new Error("Request exceeds the dispatch limit.");
-  }
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > limit) throw new Error("Request exceeds the dispatch limit.");
-    chunks.push(bytes);
-  }
-  return Buffer.concat(chunks);
-}
+const limitExceeded = () => new IntegrationFailure(new Error("Request exceeds the dispatch limit."));
+
+/** Reads a request body up to `limit`, destroying the stream the moment it is exceeded. */
+const readBounded = (request: IncomingMessage, limit = MAX_CONTROL_BYTES) =>
+  Effect.callback<Buffer, IntegrationFailure>((resume) => {
+    const declared = Number(request.headers["content-length"]);
+    if (!Number.isFinite(declared) || declared > limit) {
+      resume(Effect.fail(limitExceeded()));
+      return Effect.void;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const onData = (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.length;
+      if (size > limit) {
+        settle(Effect.fail(limitExceeded()));
+        request.destroy();
+        return;
+      }
+      chunks.push(bytes);
+    };
+    const onEnd = () => settle(Effect.succeed(Buffer.concat(chunks)));
+    const onError = (error: Error) => settle(Effect.fail(new IntegrationFailure(error)));
+    const cleanup = () => {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+    };
+    function settle(outcome: Effect.Effect<Buffer, IntegrationFailure>): void {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(outcome);
+    }
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+    return Effect.sync(cleanup);
+  });
 
 function reply(response: ServerResponse, status: number, body: string): void {
   response.writeHead(status, {
@@ -83,105 +109,109 @@ export function createProjectDispatchHttpsServer(options: {
     throw new TypeError("A TLS certificate, private key, host and port are required.");
   }
   const nonces = createProjectDispatchNonceConsumer(options.nonceStore, options.agentId);
+  const badRequest = (response: ServerResponse) => reply(response, 400, '{"error":"invalid request"}');
+  const jsonBody = <T>(request: IncomingMessage, fields: Parameters<typeof objectFields<T>>[0], limit?: number) =>
+    readBounded(request, limit).pipe(Effect.flatMap((raw) => evaluate(() => parseJson(raw.toString("utf8"), objectFields<T>(fields)))));
+
+  /** One request. Any failure, typed or a defect, is a refusal; nothing about why is sent. */
+  const handle = (request: IncomingMessage, response: ServerResponse) => Effect.gen(function* () {
+    if (request.method === "GET" && request.url === "/v1/health") {
+      reply(response, 200, JSON.stringify({ agentId: options.agentId, nodeId: options.nodeId, ready: options.isReady?.() ?? true }));
+      return;
+    }
+    if (request.method === "POST" && request.url === "/v1/placements") {
+      const body = yield* jsonBody<{ grant?: unknown }>(request, { grant: optional(isUnknown) });
+      if (!body || typeof body.grant !== "string") return badRequest(response);
+      const grant = body.grant;
+      yield* integration(() => options.acceptLease(grant));
+      reply(response, 200, '{"ok":true}');
+      return;
+    }
+    const prepare = /^\/v1\/projects\/([^/]+)\/prepare$/.exec(request.url ?? "");
+    if (request.method === "POST" && prepare) {
+      const projectId = decodeURIComponent(prepare[1]!);
+      const authority = request.headers["x-zelavis-authority"];
+      if (typeof authority !== "string") return badRequest(response);
+      yield* integration(() => receiveProjectDispatch({
+        trust: options.trust, token: authority,
+        agentId: options.agentId, action: "prepare", projectId,
+        nodeId: options.nodeId, readPlacement: options.readPlacement,
+        consumeNonce: nonces.consume,
+        execute: (claims) => presentProtocol(Effect.gen(function* () {
+          // Only a verified, single-use authority may make this Agent buffer a body.
+          const snapshot = new Uint8Array(yield* readBounded(request, MAX_SNAPSHOT_BYTES));
+          const digest = yield* integration(() => createArtifactDigest(snapshot));
+          if (claims.artifactDigest !== digest) {
+            return yield* new IntegrationFailure(new Error("Signed Project artifact digest differs from delivered bytes."));
+          }
+          yield* integration(() => options.prepareArtifact(projectId, snapshot, digest));
+        })),
+      }));
+      reply(response, 200, '{"ok":true}');
+      return;
+    }
+    const match = /^\/v1\/projects\/([^/]+)\/(start|stop)$/.exec(request.url ?? "");
+    if (request.method !== "POST" || !match) {
+      reply(response, 404, '{"error":"not found"}');
+      return;
+    }
+    const projectId = decodeURIComponent(match[1]!);
+    const action = match[2] as "start" | "stop";
+    const body = yield* jsonBody<{ authority?: unknown }>(request, { authority: optional(isUnknown) });
+    if (!body || typeof body.authority !== "string") return badRequest(response);
+    const token = body.authority;
+    const claims = yield* integration(() => receiveProjectDispatch({
+      trust: options.trust,
+      token,
+      agentId: options.agentId,
+      action,
+      projectId,
+      nodeId: options.nodeId,
+      readPlacement: options.readPlacement,
+      consumeNonce: nonces.consume,
+      execute: (value) => presentProtocol(Effect.gen(function* () {
+        if (action === "start" &&
+            (!value.artifactDigest ||
+              (yield* integration(() => options.preparedDigest(projectId))) !== value.artifactDigest)) {
+          return yield* new IntegrationFailure(new Error("Project runtime artifact has not been prepared."));
+        }
+        yield* integration(() => (action === "start" ? options.start : options.stop)(value));
+        return value;
+      })),
+    }));
+    if (action === "stop" && !(yield* integration(() => options.releaseLease(claims)))) {
+      return yield* new IntegrationFailure(new Error("Project placement changed during stop."));
+    }
+    reply(response, 200, '{"ok":true}');
+  }).pipe(
+    Effect.withSpan("createProjectDispatchHttpsServer/server/callback"),
+    Effect.catchCause(() => Effect.sync(() => {
+      if (!response.headersSent) reply(response, 403, '{"error":"dispatch refused"}');
+      else response.destroy();
+    })),
+  );
+
   const server: Server = createServer({ key: options.keyPem, cert: options.certPem },
-    (request, response) => {
-      void (() => { return presentProtocol(Effect.gen(function* () {
-        if (request.method === "GET" && request.url === "/v1/health") {
-          reply(response, 200, JSON.stringify({ agentId: options.agentId,
-            nodeId: options.nodeId, ready: options.isReady?.() ?? true }));
-          return;
-        }
-        if (request.method === "POST" && request.url === "/v1/placements") {
-          const body = parseJson(((yield* integrationValue(readBounded(request)))).toString("utf8"), objectFields<{ grant?: unknown }>({grant: optional(isUnknown)}));
-          if (!body || typeof body.grant !== "string") {
-            reply(response, 400, '{"error":"invalid request"}');
-            return;
-          }
-          (yield* integrationValue(options.acceptLease(body.grant)));
-          reply(response, 200, '{"ok":true}');
-          return;
-        }
-        const prepare = /^\/v1\/projects\/([^/]+)\/prepare$/.exec(request.url ?? "");
-        if (request.method === "POST" && prepare) {
-          const projectId = decodeURIComponent(prepare[1]!);
-          const authority = request.headers["x-zelavis-authority"];
-          if (typeof authority !== "string") {
-            reply(response, 400, '{"error":"invalid request"}');
-            return;
-          }
-          (yield* integrationValue(receiveProjectDispatch({
-            trust: options.trust, token: authority,
-            agentId: options.agentId, action: "prepare", projectId,
-            nodeId: options.nodeId, readPlacement: options.readPlacement,
-            consumeNonce: nonces.consume,
-            execute: async (claims) => {
-              // Only a verified, single-use authority may make this Agent buffer a body.
-              const snapshot = new Uint8Array(await readBounded(request, MAX_SNAPSHOT_BYTES));
-              const digest = await createArtifactDigest(snapshot);
-              if (claims.artifactDigest !== digest) {
-                throw new Error("Signed Project artifact digest differs from delivered bytes.");
-              }
-              await options.prepareArtifact(projectId, snapshot, digest);
-            },
-          })));
-          reply(response, 200, '{"ok":true}');
-          return;
-        }
-        const match = /^\/v1\/projects\/([^/]+)\/(start|stop)$/.exec(request.url ?? "");
-        if (request.method !== "POST" || !match) {
-          reply(response, 404, '{"error":"not found"}');
-          return;
-        }
-        const projectId = decodeURIComponent(match[1]!);
-        const action = match[2] as "start" | "stop";
-        const body = parseJson(((yield* integrationValue(readBounded(request)))).toString("utf8"), objectFields<{ authority?: unknown }>({authority: optional(isUnknown)}));
-        if (!body || typeof body.authority !== "string") {
-          reply(response, 400, '{"error":"invalid request"}');
-          return;
-        }
-        const claims = (yield* integrationValue(receiveProjectDispatch({
-          trust: options.trust,
-          token: body.authority,
-          agentId: options.agentId,
-          action,
-          projectId,
-          nodeId: options.nodeId,
-          readPlacement: options.readPlacement,
-          consumeNonce: nonces.consume,
-          execute: async (value) => {
-            if (action === "start" &&
-                (!value.artifactDigest ||
-                  await options.preparedDigest(projectId) !== value.artifactDigest)) {
-              throw new Error("Project runtime artifact has not been prepared.");
-            }
-            await (action === "start" ? options.start : options.stop)(value);
-            return value;
-          },
-        })));
-        if (action === "stop" && !((yield* integrationValue(options.releaseLease(claims))))) {
-          throw new Error("Project placement changed during stop.");
-        }
-        reply(response, 200, '{"ok":true}');
-      }).pipe(Effect.withSpan("createProjectDispatchHttpsServer/server/callback/callback"))); })().catch(() => {
-        if (!response.headersSent) reply(response, 403, '{"error":"dispatch refused"}');
-        else response.destroy();
-      });
-    });
-  (yield* integrationValue(new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    (request, response) => { Effect.runFork(handle(request, response)); });
+  yield* Effect.callback<void, IntegrationFailure>((resume) => {
+    const failed = (error: Error) => resume(Effect.fail(new IntegrationFailure(error)));
+    server.once("error", failed);
     server.listen(options.port, options.host, () => {
-      server.removeListener("error", reject);
-      resolve();
+      server.removeListener("error", failed);
+      resume(Effect.void);
     });
-  })));
+    return Effect.sync(() => { server.removeListener("error", failed); });
+  });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Agent TLS listener has no address.");
+  if (!address || typeof address === "string") return yield* new IntegrationFailure(new Error("Agent TLS listener has no address."));
+  const closeServer = Effect.callback<void, IntegrationFailure>((resume) => {
+    server.close((error) => resume(error ? Effect.fail(new IntegrationFailure(error)) : Effect.void));
+    server.closeAllConnections();
+    return Effect.void;
+  });
   return {
     address: `https://${options.host}:${address.port}`,
-    close: () => new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-      server.closeAllConnections();
-    }),
+    close: () => presentProtocol(closeServer),
   };
 }).pipe(Effect.withSpan("createProjectDispatchHttpsServer"))); }
 
@@ -235,13 +265,12 @@ function endpoint(destination: Destination): URL {
   return url;
 }
 
-async function post(destination: Destination, path: string,
-  bodyValue: Readonly<Record<string, string>> | { readonly authority: string; readonly raw: Uint8Array }):
-  Promise<void> {
-  const url = endpoint(destination);
-  const raw = "raw" in bodyValue;
-  const body = raw ? Buffer.from(bodyValue.raw) : JSON.stringify(bodyValue);
-  await new Promise<void>((resolve, reject) => {
+const post = (destination: Destination, path: string,
+  bodyValue: Readonly<Record<string, string>> | { readonly authority: string; readonly raw: Uint8Array }) =>
+  evaluate(() => endpoint(destination)).pipe(Effect.flatMap((url) => Effect.callback<void, IntegrationFailure>((resume) => {
+    const raw = "raw" in bodyValue;
+    const body = raw ? Buffer.from(bodyValue.raw) : JSON.stringify(bodyValue);
+    const fail = (error: Error) => resume(Effect.fail(new IntegrationFailure(error)));
     const request = httpsRequest({
       hostname: url.hostname,
       port: url.port,
@@ -262,13 +291,13 @@ async function post(destination: Destination, path: string,
         if (size > MAX_RESPONSE_BYTES) request.destroy(new Error("Agent response exceeded the limit."));
       });
       response.once("end", () => response.statusCode === 200
-        ? resolve() : reject(new Error(`Project Agent refused dispatch (${response.statusCode ?? 0}).`)));
+        ? resume(Effect.void) : fail(new Error(`Project Agent refused dispatch (${response.statusCode ?? 0}).`)));
     });
     request.once("timeout", () => request.destroy(new Error("Project Agent dispatch timed out.")));
-    request.once("error", reject);
+    request.once("error", fail);
     request.end(body);
-  });
-}
+    return Effect.sync(() => { request.destroy(); });
+  })));
 
 /** Platform side: node identity selects one pinned TLS Agent and signed audience. */
 export function createHttpsProjectDispatcher(options: {
@@ -324,15 +353,15 @@ export function createHttpsProjectDispatcher(options: {
         nonce: crypto.randomUUID(), artifactDigest: snapshot.digest,
       }));
       yield* Effect.gen(function* () {
-        yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/prepare`, {
+        yield* post(target, `/v1/projects/${encodeURIComponent(projectId)}/prepare`, {
           authority: prepareAuthority, raw: snapshot.body,
-        }));
-        yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/start`, { authority }));
+        });
+        yield* post(target, `/v1/projects/${encodeURIComponent(projectId)}/start`, { authority });
       }).pipe(Effect.ensuring(Effect.sync(() => { snapshots.delete(`${projectId}:${placement.epoch}`); })));
     })),
     dispatchStopFenced: ({ projectId, nodeId, authority }) => presentProtocol(Effect.gen(function* () {
       const target = yield* destination(nodeId);
-      yield* integration(() => post(target, `/v1/projects/${encodeURIComponent(projectId)}/stop`, { authority }));
+      yield* post(target, `/v1/projects/${encodeURIComponent(projectId)}/stop`, { authority });
     })),
     dispatchLeaseFenced: (placement) => presentProtocol(Effect.gen(function* () {
       const target = yield* destination(placement.nodeId);
@@ -344,7 +373,7 @@ export function createHttpsProjectDispatcher(options: {
         issuedAt: now,
         expiresAt: now + 20_000,
       }));
-      yield* integration(() => post(target, "/v1/placements", { grant }));
+      yield* post(target, "/v1/placements", { grant });
     })),
   };
 }

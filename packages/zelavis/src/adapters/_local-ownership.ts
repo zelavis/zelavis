@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect } from "effect";
+import { Deferred, Effect } from "effect";
 import { describeInstallation } from "../cli/installation.js";
 import { evaluate, integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 
@@ -18,12 +18,14 @@ export interface LocalDataOwner {
   readonly purpose: "platform" | "maintenance";
 }
 
-async function openSqlite(path: string): Promise<{ exec(sql: string): void; close(): void }> {
+function openSqlite(path: string): Promise<{ exec(sql: string): void; close(): void }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ exec(sql: string): void; close(): void }, IntegrationFailure> {
   // Node and Bun use the same on-disk lock and SQLite's process-death semantics.
   const moduleName = "Bun" in globalThis ? "bun:sqlite" : "node:sqlite";
-  const sqlite = await import(moduleName) as { DatabaseSync?: new (path: string) => { exec(sql: string): void; close(): void }; Database?: new (path: string, options: { create: boolean }) => { exec(sql: string): void; close(): void } };
+  const sqlite = (yield* integrationValue(import(moduleName))) as { DatabaseSync?: new (path: string) => { exec(sql: string): void; close(): void }; Database?: new (path: string, options: { create: boolean }) => { exec(sql: string): void; close(): void } };
   return sqlite.DatabaseSync ? new sqlite.DatabaseSync(path) : new sqlite.Database!(path, { create: true });
-}
+}));
+  }
 
 /**
  * Gives a reservation file its database header once, by whoever may write beside it.
@@ -33,15 +35,18 @@ async function openSqlite(path: string): Promise<{ exec(sql: string): void; clos
  * installation prefix, which the service user cannot write, so the installer
  * (root) initializes it and the service then only ever takes the lock.
  */
-async function initializeReservationFile(path: string): Promise<void> {
-  const db = await openSqlite(path);
+function initializeReservationFile(path: string): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+  const db = (yield* integrationValue(openSqlite(path)));
   try { db.exec("CREATE TABLE IF NOT EXISTS zelavis_reservation (id INTEGER)"); }
   finally { db.close(); }
-}
+}));
+  }
 
 /** Kernel-released reservation; no PID-only stale-lock takeover. */
-async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
-  const db = await openSqlite(path);
+function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
+    return present(Effect.gen(function* (): Effect.fn.Return<LocalOwnershipLease, IntegrationFailure> {
+  const db = (yield* integrationValue(openSqlite(path)));
   try { db.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); }
   catch (error) {
     db.close();
@@ -55,31 +60,53 @@ async function sqliteReservation(path: string): Promise<LocalOwnershipLease> {
     throw new Error(`Local ownership could not be reserved at ${path} (${reason}). Check that this user can read and write the file.`, { cause: error });
   }
   let released = false;
-  return { async release() { if (!released) { released = true; db.close(); } } };
-}
-
-export async function acquireNodeInstallerLock(prefix: string): Promise<LocalOwnershipLease> {
-  await mkdir(prefix, { recursive: true });
-  const path = join(prefix, ".install.lock");
-  try { if ((await lstat(path)).isSymbolicLink()) throw new Error("Refusing a symlinked installer lock."); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  if (process.platform !== "linux") {
-    const lease = await sqliteReservation(path);
-    try { await chmod(path, 0o600); } catch (error) { await lease.release(); throw error; }
-    return lease;
+  return { release() {
+    return present(Effect.gen(function* () { if (!released) { released = true; db.close(); } }));
+  } };
+}));
   }
-  // flock inherits its lock into the shell; EOF on the parent's pipe releases
-  // it even if the installing Node is killed outright. Never unlink this inode.
-  const child = spawn("flock", ["--exclusive", "--nonblock", "--no-fork", path, "/bin/sh", "-c", "printf 'locked\\n'; cat >/dev/null"], { stdio: ["pipe", "pipe", "pipe"] });
-  const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
-  await new Promise<void>((resolveLock, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => reject(new Error(`Installer lock ${path} is busy or flock is unavailable (exit ${code}). On Linux install util-linux; otherwise wait for the current installer.`)));
-    child.stdout.once("data", () => resolveLock());
-  });
-  try { await chmod(path, 0o600); } catch (error) { child.stdin.end(); await exited; throw error; }
-  let released = false;
-  return { async release() { if (!released) { released = true; child.stdin.end(); await exited; } } };
+
+/** A missing path is the expected first state; every other failure is real. */
+const isMissing = (failure: IntegrationFailure): boolean => (unwrapFailure(failure) as NodeJS.ErrnoException).code === "ENOENT";
+
+const refuseSymlink = (path: string, message: string): Effect.Effect<void, IntegrationFailure> =>
+  integration(() => lstat(path)).pipe(
+    Effect.catchIf(isMissing, () => Effect.succeed(undefined)),
+    Effect.flatMap((stat) => stat?.isSymbolicLink() ? Effect.fail(new IntegrationFailure(new Error(message))) : Effect.void),
+  );
+
+const releaseQuietly = (lease: LocalOwnershipLease): Effect.Effect<void> =>
+  integration(() => lease.release()).pipe(Effect.orDie);
+
+export function acquireNodeInstallerLock(prefix: string): Promise<LocalOwnershipLease> {
+  return present(Effect.gen(function* (): Effect.fn.Return<LocalOwnershipLease, IntegrationFailure> {
+    yield* integrationValue(mkdir(prefix, { recursive: true }));
+    const path = join(prefix, ".install.lock");
+    yield* refuseSymlink(path, "Refusing a symlinked installer lock.");
+    if (process.platform !== "linux") {
+      const lease = yield* integrationValue(sqliteReservation(path));
+      yield* integrationValue(chmod(path, 0o600)).pipe(Effect.tapError(() => releaseQuietly(lease)));
+      return lease;
+    }
+    // flock inherits its lock into the shell; EOF on the parent's pipe releases
+    // it even if the installing Node is killed outright. Never unlink this inode.
+    const child = spawn("flock", ["--exclusive", "--nonblock", "--no-fork", path, "/bin/sh", "-c", "printf 'locked\\n'; cat >/dev/null"], { stdio: ["pipe", "pipe", "pipe"] });
+    const exited = Deferred.makeUnsafe<void>();
+    child.once("exit", () => Deferred.doneUnsafe(exited, Effect.void));
+    yield* Effect.callback<void, IntegrationFailure>((resume) => {
+      child.once("error", (cause) => resume(Effect.fail(new IntegrationFailure(cause))));
+      child.once("exit", (code) => resume(Effect.fail(new IntegrationFailure(new Error(`Installer lock ${path} is busy or flock is unavailable (exit ${code}). On Linux install util-linux; otherwise wait for the current installer.`)))));
+      child.stdout.once("data", () => resume(Effect.void));
+    });
+    yield* integrationValue(chmod(path, 0o600)).pipe(Effect.tapError(() => Effect.gen(function* () {
+      child.stdin.end();
+      yield* Deferred.await(exited);
+    })));
+    let released = false;
+    return { release() {
+      return present(Effect.gen(function* () { if (!released) { released = true; child.stdin.end(); yield* Deferred.await(exited); } }));
+    } };
+  }));
 }
 
 /** One guard for runtime startup and installer maintenance of the same data. */
@@ -123,57 +150,75 @@ export function readLocalDataOwner(directory: string): Promise<LocalDataOwner | 
 
 
 export interface LocalEdgeSelection { readonly prefix: string; readonly instance: string; readonly dataDirectory: string }
-/** The prefix installer lock serializes persistent host Edge claims. */
-export async function claimLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
-  if (selection.instance !== "default") throw new Error("Only the default instance may own host Edge.");
-  const file = join(selection.prefix, "edge-owner.json");
-  const current = await readEdgeOwner(selection.prefix);
-  if (current && (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory)) throw new Error(`Host Edge belongs to instance ${current.instance} at ${current.dataDirectory}.`);
-  const lock = join(selection.prefix, ".edge-owner.lock");
-  await refuseEdgeSymlink(lock);
-  await initializeReservationFile(lock);
-  const lease = await sqliteReservation(lock);
-  try {
-    // The default service can reserve the existing inode, but cannot alter its
-    // root-owned parent or the persistent ownership record.
-    await chmod(lock, 0o660);
-    const temporary = `${file}.${randomUUID()}`;
-    try { await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, ...selection })}\n`, { mode: 0o644, flag: "wx" }); await chmod(temporary, 0o644); await rename(temporary, file); }
-    finally { await rm(temporary, { force: true }); }
-  } finally { await lease.release(); }
-}
-async function refuseEdgeSymlink(path: string) {
-  try { if ((await lstat(path)).isSymbolicLink()) throw new Error("Refusing a symlinked Edge ownership path."); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-}
-export async function readEdgeOwner(prefix: string): Promise<LocalEdgeSelection | undefined> {
+
+const readEdgeOwnerProgram = Effect.fn("LocalOwnership.readEdgeOwner")(function* (prefix: string): Effect.fn.Return<LocalEdgeSelection | undefined, IntegrationFailure> {
   const file = join(prefix, "edge-owner.json");
-  await refuseEdgeSymlink(file);
-  let content: string;
-  try { content = await readFile(file, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  const value = JSON.parse(content);
-  if (value.schemaVersion !== 1 || value.prefix !== prefix || typeof value.instance !== "string" || typeof value.dataDirectory !== "string") throw new Error("Malformed host Edge ownership record.");
-  return value;
+  yield* refuseSymlink(file, "Refusing a symlinked Edge ownership path.");
+  const content = yield* integration(() => readFile(file, "utf8")).pipe(Effect.catchIf(isMissing, () => Effect.succeed(undefined)));
+  if (content === undefined) return undefined;
+  const value = yield* evaluate(() => JSON.parse(content));
+  if (value.schemaVersion !== 1 || value.prefix !== prefix || typeof value.instance !== "string" || typeof value.dataDirectory !== "string") {
+    return yield* Effect.fail(new IntegrationFailure(new Error("Malformed host Edge ownership record.")));
+  }
+  return value as LocalEdgeSelection;
+});
+
+/** The prefix installer lock serializes persistent host Edge claims. */
+export function claimLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    if (selection.instance !== "default") return yield* Effect.fail(new IntegrationFailure(new Error("Only the default instance may own host Edge.")));
+    const file = join(selection.prefix, "edge-owner.json");
+    const current = yield* readEdgeOwnerProgram(selection.prefix);
+    if (current && (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory)) {
+      return yield* Effect.fail(new IntegrationFailure(new Error(`Host Edge belongs to instance ${current.instance} at ${current.dataDirectory}.`)));
+    }
+    const lock = join(selection.prefix, ".edge-owner.lock");
+    yield* refuseSymlink(lock, "Refusing a symlinked Edge ownership path.");
+    yield* integrationValue(initializeReservationFile(lock));
+    const lease = yield* integrationValue(sqliteReservation(lock));
+    yield* Effect.gen(function* () {
+      // The default service can reserve the existing inode, but cannot alter its
+      // root-owned parent or the persistent ownership record.
+      yield* integrationValue(chmod(lock, 0o660));
+      const temporary = `${file}.${randomUUID()}`;
+      yield* Effect.gen(function* () {
+        yield* integrationValue(writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, ...selection })}\n`, { mode: 0o644, flag: "wx" }));
+        yield* integrationValue(chmod(temporary, 0o644));
+        yield* integrationValue(rename(temporary, file));
+      }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
+    }).pipe(Effect.ensuring(releaseQuietly(lease)));
+  }));
+}
+export function readEdgeOwner(prefix: string): Promise<LocalEdgeSelection | undefined> {
+  return present(readEdgeOwnerProgram(prefix));
 }
 /** Held until Platform.close; process death releases the kernel reservation. */
-export async function acquireLocalEdgeOwnership(selection: LocalEdgeSelection): Promise<LocalOwnershipLease> {
-  const current = await readEdgeOwner(selection.prefix);
+export function acquireLocalEdgeOwnership(selection: LocalEdgeSelection): Promise<LocalOwnershipLease> {
+    return present(Effect.gen(function* (): Effect.fn.Return<LocalOwnershipLease, IntegrationFailure> {
+  const current = yield* readEdgeOwnerProgram(selection.prefix);
   if (selection.instance !== "default" || !current || current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory) throw new Error("This instance has no host Edge ownership; secondary instances must run with Edge off.");
   const lock = join(selection.prefix, ".edge-owner.lock");
-  await refuseEdgeSymlink(lock);
+  yield* refuseSymlink(lock, "Refusing a symlinked Edge ownership path.");
   // Runtime never creates a missing root-owned reservation.
-  await lstat(lock);
-  return sqliteReservation(lock);
-}
-export async function releaseLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
-  const current = await readEdgeOwner(selection.prefix);
-  if (!current) return;
-  if (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory) throw new Error(`Refusing to release Edge owned by ${current.instance}.`);
-  const lock = join(selection.prefix, ".edge-owner.lock");
-  await refuseEdgeSymlink(lock);
-  const lease = await sqliteReservation(lock);
-  try { await rm(join(selection.prefix, "edge-owner.json"), { force: true }); await rm(lock, { force: true }); }
-  finally { await lease.release(); }
+  (yield* integrationValue(lstat(lock)));
+  return (yield* integrationValue(sqliteReservation(lock)));
+}));
+  }
+export function releaseLocalEdgeOwner(selection: LocalEdgeSelection): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    const current = yield* readEdgeOwnerProgram(selection.prefix);
+    if (!current) return;
+    if (current.instance !== selection.instance || current.dataDirectory !== selection.dataDirectory) {
+      return yield* Effect.fail(new IntegrationFailure(new Error(`Refusing to release Edge owned by ${current.instance}.`)));
+    }
+    const lock = join(selection.prefix, ".edge-owner.lock");
+    yield* refuseSymlink(lock, "Refusing a symlinked Edge ownership path.");
+    const lease = yield* integrationValue(sqliteReservation(lock));
+    yield* Effect.gen(function* () {
+      yield* integrationValue(rm(join(selection.prefix, "edge-owner.json"), { force: true }));
+      yield* integrationValue(rm(lock, { force: true }));
+    }).pipe(Effect.ensuring(releaseQuietly(lease)));
+  }));
 }
 
 const ownerRecord = objectFields<LocalDataOwner>({ pid: isPositiveInteger, startedAt: isTimestamp, session: isString, installationRoot: optional(isString), purpose: literal("platform", "maintenance") });

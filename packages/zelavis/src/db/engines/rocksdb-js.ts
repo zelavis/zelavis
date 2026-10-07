@@ -1,7 +1,8 @@
+import { present, integrationValue } from "../../core/runtime/effect-boundary.js";
 import { isUnknown, recordOf, parseJson } from "../../core/json-validation.js";
 import { existsSync, mkdirSync, realpathSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Array as Arr, Effect, Stream, type Scope } from "effect";
+import { Effect, Option, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
@@ -63,15 +64,17 @@ interface RocksdbJsTransaction {
 }
 
 const loadRocksdbJs = Effect.tryPromise({
-  try: async () =>
-    (await import("@harperfast/rocksdb-js")) as unknown as {
+  try: () =>
+    present(Effect.gen(function* () {
+    return ((yield* integrationValue(import("@harperfast/rocksdb-js")))) as unknown as {
       RocksDatabase: new (
         path: string,
         options: Record<string, unknown>,
       ) => RocksdbJsDatabase;
       /** The binding's version and the RocksDB it was built against. */
       versions: Readonly<Record<string, string>>;
-    },
+    };
+  })),
   catch: (cause) => new StoreError({ op: "rocksdb-js.load", cause }),
 });
 
@@ -178,32 +181,32 @@ export const makeRocksdbJsEngine = (
       return exclusiveKvEngine({
         get: (key) =>
           Effect.tryPromise({
-            try: async () => {
-              const value = await db.get(buf(key));
+            try: () => present(Effect.gen(function* () {
+              const value = (yield* integrationValue(db.get(buf(key))));
               return value === undefined ? undefined : new Uint8Array(value);
-            },
+            })),
             catch: fail("rocksdb-js.get"),
           }),
 
         scan: (prefix, options) =>
-          Stream.fromAsyncIterable(
-            (async function* (): AsyncGenerator<Arr.NonEmptyArray<KvEntry>> {
-              const { lo, hi, empty } = scanRange(prefix, options);
-              let left = options?.limit ?? Infinity;
-              if (empty || left <= 0) return;
-              const reverse = options?.reverse === true;
-              // An empty bound is omitted rather than passed. The binding
-              // rejects a zero-length key outright, and this store asks for
-              // exactly that whenever it scans a whole tag — or, at the top,
-              // the entire keyspace. Omitting the bound is what "from the
-              // beginning" and "to the end" mean here.
-              //
-              // In reverse the binding reads `start` as an inclusive upper
-              // bound and `end` as an exclusive lower one — the opposite of
-              // the half-open range asked for. So a reverse scan starts at
-              // `hi`, passes over `hi` itself, and stops at the first key below
-              // `lo`: the same entries as the forward scan, read backwards.
-              const entries = db
+          Stream.unwrap(Effect.gen(function* () {
+            const { lo, hi, empty } = scanRange(prefix, options);
+            let left = options?.limit ?? Infinity;
+            if (empty || left <= 0) return Stream.empty;
+            const reverse = options?.reverse === true;
+            // An empty bound is omitted rather than passed. The binding
+            // rejects a zero-length key outright, and this store asks for
+            // exactly that whenever it scans a whole tag — or, at the top,
+            // the entire keyspace. Omitting the bound is what "from the
+            // beginning" and "to the end" mean here.
+            //
+            // In reverse the binding reads `start` as an inclusive upper
+            // bound and `end` as an exclusive lower one — the opposite of
+            // the half-open range asked for. So a reverse scan starts at
+            // `hi`, passes over `hi` itself, and stops at the first key below
+            // `lo`: the same entries as the forward scan, read backwards.
+            const entries = yield* Effect.try({
+              try: () => db
                 .getRange(
                   reverse
                     ? { ...(hi === undefined || hi.length === 0 ? {} : { start: buf(hi) }), reverse: true }
@@ -212,51 +215,49 @@ export const makeRocksdbJsEngine = (
                         ...(hi === undefined || hi.length === 0 ? {} : { end: buf(hi) }),
                       },
                 )
-                [Symbol.iterator]();
-              // Entries leave in batches, not one at a time. Each step of an
-              // async generator is a promise and a trip through the stream, and
-              // per entry that cost more than RocksDB did: a 100k-key scan took
-              // half again as long as the binding's own iterator. The binding
-              // reads synchronously anyway, so a batch costs one step.
-              //
-              // `return` runs when the consumer stops early too — the stream
-              // calls it on scope close — and closes the native iterator, which
-              // would otherwise hold its snapshot until garbage collection.
-              try {
-                for (;;) {
-                  const batch: Array<KvEntry> = [];
-                  let finished = false;
-                  while (batch.length < SCAN_BATCH) {
-                    const step = entries.next();
-                    if (step.done) {
-                      finished = true;
-                      break;
-                    }
-                    if (reverse) {
-                      if (hi !== undefined && compareKeys(step.value.key, hi) >= 0) continue;
-                      if (compareKeys(step.value.key, lo) < 0) {
-                        finished = true;
-                        break;
-                      }
-                    }
-                    batch.push({
-                      key: new Uint8Array(step.value.key),
-                      value: new Uint8Array(step.value.value),
-                    });
-                    if (--left <= 0) {
+                [Symbol.iterator](),
+              catch: (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
+            });
+            // Closing the native iterator releases its snapshot. The stream's
+            // scope runs this when the scan ends or the consumer stops early,
+            // which would otherwise hold the snapshot until garbage collection.
+            yield* Effect.addFinalizer(() => Effect.sync(() => { entries.return?.(); }));
+            // Entries leave in batches, not one at a time. Each step of a
+            // stream is a trip through the runtime, and per entry that cost
+            // more than RocksDB did: a 100k-key scan took half again as long
+            // as the binding's own iterator. The binding reads synchronously
+            // anyway, so a batch costs one step.
+            return Stream.paginate(undefined, () => Effect.try({
+              try: (): readonly [ReadonlyArray<KvEntry>, Option.Option<undefined>] => {
+                const batch: Array<KvEntry> = [];
+                let finished = false;
+                while (batch.length < SCAN_BATCH) {
+                  const step = entries.next();
+                  if (step.done) {
+                    finished = true;
+                    break;
+                  }
+                  if (reverse) {
+                    if (hi !== undefined && compareKeys(step.value.key, hi) >= 0) continue;
+                    if (compareKeys(step.value.key, lo) < 0) {
                       finished = true;
                       break;
                     }
                   }
-                  if (Arr.isArrayNonEmpty(batch)) yield batch;
-                  if (finished) return;
+                  batch.push({
+                    key: new Uint8Array(step.value.key),
+                    value: new Uint8Array(step.value.value),
+                  });
+                  if (--left <= 0) {
+                    finished = true;
+                    break;
+                  }
                 }
-              } finally {
-                entries.return?.();
-              }
-            })(),
-            (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
-          ).pipe(Stream.flattenArray),
+                return [batch, finished ? Option.none() : Option.some(undefined)];
+              },
+              catch: (cause) => new StoreError({ op: "rocksdb-js.scan", cause }),
+            }));
+          })),
 
         write: (writes: ReadonlyArray<KvWrite>) =>
           Effect.tryPromise({

@@ -1,3 +1,4 @@
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
 import { makeDatabase, type DatabaseApi } from "./database.js";
@@ -109,16 +110,16 @@ const openShardWith = (
  * closed by that hook rather than wrapping the whole platform in a scoped
  * effect it has no way to express.
  */
-export const openNodeDatabase = async (
+export const openNodeDatabase = (
   options: OpenNodeDatabaseOptions,
-): Promise<OpenNodeDatabase> => {
+): Promise<OpenNodeDatabase> => present(Effect.gen(function* (): Effect.fn.Return<OpenNodeDatabase, IntegrationFailure> {
   const engine = options.engine?.name ?? "sqlite";
-  const scope = await Effect.runPromise(Scope.make());
+  const scope = (yield* integrationValue(Effect.runPromise(Scope.make())));
   const fallback = partitionMapFor(options.shards ?? DEFAULT_LOCAL_SHARDS, {
     ...(options.virtualRanges === undefined ? {} : { virtualRanges: options.virtualRanges }),
   });
 
-  const database = await Effect.runPromise(
+  const database = (yield* integrationValue(Effect.runPromise(
     Scope.provide(
       makeDatabase({
         partitionMap: fallback,
@@ -127,7 +128,7 @@ export const openNodeDatabase = async (
       }),
       scope,
     ),
-  );
+  )));
 
   return {
     database,
@@ -138,7 +139,7 @@ export const openNodeDatabase = async (
     engine,
     close: () => Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))),
   };
-};
+}));
 
 /** The file a SQLite-family shard occupies, for hosts that report storage. */
 export const shardFilePath = (directory: string, shard: ShardId): string =>

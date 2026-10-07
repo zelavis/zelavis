@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { IntegrationFailure, integration, present, integrationValue, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { Server } from "node:http";
 import { createNodeHttpServer } from "../core/runtime/node-http.js";
 import type { Zelavis } from "../index.js";
@@ -8,21 +10,23 @@ export interface CloseNodeServerOptions {
   gracePeriodMs?: number;
 }
 
-export async function createNodeServer(zelavis: Zelavis): Promise<Server> {
-  const runtime = await zelavis.runtime();
-  return createNodeHttpServer(runtime);
-}
+export function createNodeServer(zelavis: Zelavis): Promise<Server> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Server, IntegrationFailure> {
+  const runtime = (yield* integrationValue(zelavis.runtime()));
+  return (yield* integrationValue(createNodeHttpServer(runtime)));
+}));
+  }
 
-export async function closeNodeServer(
+export function closeNodeServer(
   server: Server,
   options: CloseNodeServerOptions = {},
 ): Promise<void> {
   if (!server.listening) {
-    return;
+    return Promise.resolve();
   }
 
   const gracePeriodMs = Math.max(0, options.gracePeriodMs ?? 10_000);
-  await new Promise<void>((resolveClose, rejectClose) => {
+  return present(Effect.callback<void, IntegrationFailure>((resume) => {
     const forceTimer = setTimeout(() => {
       server.closeAllConnections();
     }, gracePeriodMs);
@@ -30,13 +34,13 @@ export async function closeNodeServer(
     server.close((error) => {
       clearTimeout(forceTimer);
       if (error) {
-        rejectClose(error);
+        resume(Effect.fail(new IntegrationFailure(error)));
       } else {
-        resolveClose();
+        resume(Effect.void);
       }
     });
     server.closeIdleConnections();
-  });
+  }));
 }
 
 export interface ShutdownOnSignalsOptions {
@@ -73,24 +77,24 @@ export function shutdownOnSignals(
   let running: Promise<void> | undefined;
 
   const run = (): Promise<void> => {
-    running ??= (async () => {
+    running ??= present(Effect.gen(function* () {
       const force = setTimeout(() => {
         log(`Shutdown did not finish within ${forceAfterMs} ms; exiting.`);
         target.exit(1);
       }, forceAfterMs);
       force.unref?.();
       let code = 0;
-      try {
-        await shutdown();
-      } catch (error) {
-        log(error instanceof Error ? (error.stack ?? error.message) : String(error));
-        code = 1;
-      } finally {
-        clearTimeout(force);
-      }
+      yield* integration(() => shutdown()).pipe(
+        Effect.catch((failure) => Effect.sync(() => {
+          const error = unwrapFailure(failure);
+          log(error instanceof Error ? (error.stack ?? error.message) : String(error));
+          code = 1;
+        })),
+        Effect.ensuring(Effect.sync(() => clearTimeout(force))),
+      );
       if (!options.keepAlive) target.exit(code);
       else if (code !== 0) process.exitCode = code;
-    })();
+    }));
     return running;
   };
 

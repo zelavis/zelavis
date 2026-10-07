@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { randomUUID } from "node:crypto";
 
 import type {
@@ -157,14 +159,14 @@ export function createAgentRemoteEnvironment(
     });
   };
 
-  const attach = async (session: SessionState) => {
+  const attach = (session: SessionState) => present(Effect.gen(function* () {
     if (!options.runner.attach) return;
-    const attached = await options.runner.attach(`${REMOTE_ENVIRONMENT_WORKLOAD_PREFIX}${session.record.id}`);
+    const attached = (yield* integrationValue(options.runner.attach(`${REMOTE_ENVIRONMENT_WORKLOAD_PREFIX}${session.record.id}`)));
     for (const entry of attached) {
       const id = `${session.record.id}:${entry.process.id ?? randomUUID()}`;
       registerProcess(session, id, entry.process, entry.replay);
     }
-  };
+  }));
 
   return {
     identity: {
@@ -180,7 +182,8 @@ export function createAgentRemoteEnvironment(
       message: `Process runner: ${options.runner.name}`,
     }),
 
-    async createSession(input: ZelavisEnvironmentSessionInput) {
+    createSession(input: ZelavisEnvironmentSessionInput) {
+    return present(Effect.gen(function* () {
       const id = randomUUID();
       const record: ZelavisEnvironmentSession = {
         id,
@@ -198,9 +201,11 @@ export function createAgentRemoteEnvironment(
         droppedThrough: 0,
       });
       return record;
-    },
+    }));
+  },
 
-    async resumeSession(record) {
+    resumeSession(record) {
+    return present(Effect.gen(function* () {
       if (record.status !== "active") return record;
       let session = sessions.get(record.id);
       if (!session) {
@@ -213,28 +218,32 @@ export function createAgentRemoteEnvironment(
           droppedThrough: 0,
         };
         sessions.set(record.id, session);
-        await attach(session);
+        (yield* integrationValue(attach(session)));
       }
       return session.record;
-    },
+    }));
+  },
 
-    async closeSession(sessionId) {
+    closeSession(sessionId) {
+    return present(Effect.gen(function* () {
       const session = requireSession(sessionId);
       for (const processId of session.processes) {
         const process = processes.get(processId);
-        if (process?.handle.running) await process.handle.stop().catch(() => undefined);
+        if (process?.handle.running) (yield* integrationValue(process.handle.stop().catch(() => undefined)));
       }
       session.record = { ...session.record, status: "closed" };
-    },
+    }));
+  },
 
-    async startProcess(sessionId: string, input: ZelavisEnvironmentProcessInput) {
+    startProcess(sessionId: string, input: ZelavisEnvironmentProcessInput) {
+    return present(Effect.gen(function* () {
       const session = requireSession(sessionId);
       if (session.record.status !== "active") throw new Error("Environment session is closed.");
       const pendingOutput: ZelavisAgentProcessOutput[] = [];
       let outputListener: ((entry: ZelavisAgentProcessOutput) => void) | undefined;
       let pendingExit: ZelavisAgentProcessExit | undefined;
       let exitListener: ((exit: ZelavisAgentProcessExit) => void) | undefined;
-      const handle = await options.runner.start({
+      const handle = (yield* integrationValue(options.runner.start({
         workloadId: `${REMOTE_ENVIRONMENT_WORKLOAD_PREFIX}${sessionId}`,
         executable: input.command,
         args: input.args,
@@ -244,41 +253,47 @@ export function createAgentRemoteEnvironment(
       }, {
         onOutput: (entry) => outputListener ? outputListener(entry) : pendingOutput.push(entry),
         onExit: (exit) => exitListener ? exitListener(exit) : (pendingExit = exit),
-      });
+      })));
       const processId = `${sessionId}:${handle.id ?? randomUUID()}`;
       const state = registerProcess(session, processId, handle, pendingOutput);
       outputListener = (entry) => appendEvent(session, { processId, type: entry.stream, data: entry.line });
       exitListener = (exit) => settleProcess(session, state, exit);
       if (pendingExit) settleProcess(session, state, pendingExit);
       return state.record;
-    },
+    }));
+  },
 
-    async listProcesses(sessionId) {
+    listProcesses(sessionId) {
+    return present(Effect.gen(function* () {
       const session = requireSession(sessionId);
-      return [...session.processes].flatMap((processId) => {
+      return (yield* integrationValue([...session.processes].flatMap((processId) => {
         const process = processes.get(processId);
         return process ? [process.record] : [];
-      });
-    },
+      })));
+    }));
+  },
 
-    async operateProcess(processId: string, input: ZelavisEnvironmentOperationInput): Promise<ZelavisEnvironmentOperationResult> {
+    operateProcess(processId: string, input: ZelavisEnvironmentOperationInput): Promise<ZelavisEnvironmentOperationResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEnvironmentOperationResult, IntegrationFailure> {
       const process = processes.get(processId);
       if (!process) throw new Error(`Environment process ${processId} is not attached.`);
       let accepted = false;
       if (input.type === "stdin") {
         if (typeof input.data !== "string") throw new Error("Process stdin requires data.");
-        accepted = process.handle.write ? await process.handle.write(input.data) : false;
+        accepted = process.handle.write ? (yield* integrationValue(process.handle.write(input.data))) : false;
       } else if (input.type === "signal") {
         if (!input.data || !ALLOWED_SIGNALS.has(input.data)) throw new Error("Process signal is not allowed.");
-        accepted = process.handle.signal ? await process.handle.signal(input.data) : false;
+        accepted = process.handle.signal ? (yield* integrationValue(process.handle.signal(input.data))) : false;
       } else {
-        if (process.handle.running) await process.handle.stop();
+        if (process.handle.running) (yield* integrationValue(process.handle.stop()));
         accepted = true;
       }
       return { accepted, process: process.record };
-    },
+    }));
+  },
 
-    async readEvents(sessionId: string, readOptions: ZelavisEnvironmentEventReadOptions = {}): Promise<ZelavisEnvironmentEventPage> {
+    readEvents(sessionId: string, readOptions: ZelavisEnvironmentEventReadOptions = {}): Promise<ZelavisEnvironmentEventPage> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEnvironmentEventPage, IntegrationFailure> {
       const session = requireSession(sessionId);
       const suppliedCursor = readOptions.after;
       const parsedAfter = suppliedCursor === undefined ? 0 : cursorSequence(suppliedCursor, session);
@@ -294,6 +309,7 @@ export function createAgentRemoteEnvironment(
         hasMore: available.length > events.length,
         ...(truncated ? { truncated: true } : {}),
       };
-    },
+    }));
+  },
   };
 }

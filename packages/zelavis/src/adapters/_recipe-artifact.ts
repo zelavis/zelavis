@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { isString, optional, objectFields, parseJson } from "../core/json-validation.js";
 /**
@@ -32,32 +32,36 @@ const PACKAGE_DIRECTORY = "package";
 /** What of a package ships as its runnable artifact. */
 const ARTIFACT_ENTRIES = ["package.json", "dist", "dashboard"] as const;
 
-async function listFiles(root: string, directory = root): Promise<string[]> {
+function listFiles(root: string, directory = root): Promise<string[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string[], IntegrationFailure> {
   const files: string[] = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
+  for (const entry of (yield* integrationValue(readdir(directory, { withFileTypes: true })))) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await listFiles(root, path)));
+      files.push(...((yield* integrationValue(listFiles(root, path)))));
     } else if (entry.isFile()) {
       files.push(path);
     }
   }
   return files;
-}
+}));
+  }
 
 /** Digest of every file's path and bytes, independent of directory order. */
-export async function digestArtifactDirectory(directory: string): Promise<string> {
+export function digestArtifactDirectory(directory: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const hash = createHash("sha256");
-  const files = (await listFiles(directory))
+  const files = ((yield* integrationValue(listFiles(directory))))
     .map((path) => ({ path, name: relative(directory, path).split(sep).join("/") }))
     .sort((left, right) => left.name.localeCompare(right.name));
   for (const file of files) {
     hash.update(`${file.name}\0`);
-    hash.update(await readFile(file.path));
+    hash.update((yield* integrationValue(readFile(file.path))));
     hash.update("\0");
   }
   return `sha256:${hash.digest("hex")}`;
-}
+}));
+  }
 
 /**
  * Copies the bundled recipe package into the Project and returns its digest.
@@ -66,30 +70,29 @@ export async function digestArtifactDirectory(directory: string): Promise<string
  * failure part-way (or an upgrade that cannot finish) never leaves a Project
  * without the artifact it was running.
  */
-export async function materializeRecipeArtifact(
+export function materializeRecipeArtifact(
   sourceDirectory: string,
   dataDirectory: string,
 ): Promise<{ digest: string }> {
   const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
   const incoming = `${destination}.incoming`;
   const target = join(incoming, PACKAGE_DIRECTORY);
-  await rm(incoming, { recursive: true, force: true });
-  try {
-    await mkdir(target, { recursive: true });
-    for (const entry of ARTIFACT_ENTRIES) {
-      const from = join(sourceDirectory, entry);
-      if (existsSync(from)) {
-        await cp(from, join(target, entry), { recursive: true });
+  return present(Effect.gen(function* (): Effect.fn.Return<{ digest: string }, IntegrationFailure> {
+    yield* integrationValue(rm(incoming, { recursive: true, force: true }));
+    return yield* Effect.gen(function* () {
+      yield* integrationValue(mkdir(target, { recursive: true }));
+      for (const entry of ARTIFACT_ENTRIES) {
+        const from = join(sourceDirectory, entry);
+        if (existsSync(from)) {
+          yield* integrationValue(cp(from, join(target, entry), { recursive: true }));
+        }
       }
-    }
-    const digest = await digestArtifactDirectory(target);
-    await rm(destination, { recursive: true, force: true });
-    await rename(incoming, destination);
-    return { digest };
-  } catch (error) {
-    await rm(incoming, { recursive: true, force: true });
-    throw error;
-  }
+      const digest = yield* integrationValue(digestArtifactDirectory(target));
+      yield* integrationValue(rm(destination, { recursive: true, force: true }));
+      yield* integrationValue(rename(incoming, destination));
+      return { digest };
+    }).pipe(Effect.onError(() => integrationValue(rm(incoming, { recursive: true, force: true })).pipe(Effect.orDie)));
+  }));
 }
 
 export class RecipeArtifactError extends Error {
@@ -103,10 +106,11 @@ export class RecipeArtifactError extends Error {
  * Loads the Project's own recipe after proving it is the one that was locked:
  * same content digest, same package name, same version.
  */
-export async function loadRecipeArtifact(
+export function loadRecipeArtifact(
   dataDirectory: string,
   lock: { name: string; version: string; digest: string },
 ) {
+    return present(Effect.gen(function* () {
   const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
   const target = join(destination, PACKAGE_DIRECTORY);
   if (!existsSync(target)) {
@@ -115,7 +119,7 @@ export async function loadRecipeArtifact(
     );
   }
 
-  const actual = await digestArtifactDirectory(target);
+  const actual = (yield* integrationValue(digestArtifactDirectory(target)));
   if (actual !== lock.digest) {
     throw new RecipeArtifactError(
       `Project recipe ${lock.name}@${lock.version} does not match its locked digest; refusing to run modified code.`,
@@ -130,9 +134,10 @@ export async function loadRecipeArtifact(
   }
 
   // Lets the artifact resolve `zelavis/sdk` against the Platform running it.
-  await linkPlatformPackage(destination);
-  return { service: await loadSystemPackage(manifest), manifest };
-}
+  (yield* integrationValue(linkPlatformPackage(destination)));
+  return { service: (yield* integrationValue(loadSystemPackage(manifest))), manifest };
+}));
+  }
 
 /**
  * Freezes the Project's recipe, once.

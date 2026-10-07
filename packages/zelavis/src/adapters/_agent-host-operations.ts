@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, present, integrationValue, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Host operations inside the supervised Agent process.
  *
@@ -82,39 +84,38 @@ export interface AgentHostOperationService {
  * not group- or world-writable, root-owned when required, bounded, and
  * structurally valid. Keys are not trusted merely for parsing.
  */
-export async function readHostOperationTrustStore(
+export function readHostOperationTrustStore(
   path: string,
   options: { readonly requireRootOwned?: boolean } = {},
 ): Promise<ZelavisHostOperationTrustStore> {
-  const stats = await lstat(path).catch(() => undefined);
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisHostOperationTrustStore, IntegrationFailure | ZelavisHostOperationValidationError> {
+  const stats = yield* integrationValue(lstat(path)).pipe(Effect.orElseSucceed(() => undefined));
   if (!stats || !stats.isFile() || stats.isSymbolicLink()) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} must be a regular file.`,
-    );
+    ));
   }
   if ((stats.mode & 0o022) !== 0) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} must not be group- or world-writable.`,
-    );
+    ));
   }
   if (options.requireRootOwned && stats.uid !== 0) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} must be owned by root.`,
-    );
+    ));
   }
   if (stats.size > MAX_TRUST_FILE_BYTES) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} exceeds ${MAX_TRUST_FILE_BYTES} bytes.`,
-    );
+    ));
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    throw new ZelavisHostOperationValidationError(
+  const parsed = yield* integrationValue(readFile(path, "utf8")).pipe(
+    Effect.flatMap((text) => evaluate((): unknown => JSON.parse(text))),
+    Effect.mapError(() => new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} is not valid JSON.`,
-    );
-  }
+    ))),
+  );
   const value = parsed as Record<string, unknown>;
   const validTime = (time: unknown) =>
     typeof time === "string" && Number.isFinite(Date.parse(time));
@@ -141,15 +142,15 @@ export async function readHostOperationTrustStore(
       (!Array.isArray(value.revokedKeyIds) ||
         value.revokedKeyIds.some((keyId: unknown) => typeof keyId !== "string")))
   ) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} has an invalid structure.`,
-    );
+    ));
   }
   const keyIds = (value.keys as { keyId: string }[]).map((key) => key.keyId);
   if (new Set(keyIds).size !== keyIds.length) {
-    throw new ZelavisHostOperationValidationError(
+    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
       `Host operation trust store ${path} lists a key id more than once.`,
-    );
+    ));
   }
   return Object.freeze({
     keys: Object.freeze((value.keys as ZelavisHostOperationTrustStore["keys"]).map((key) =>
@@ -158,54 +159,50 @@ export async function readHostOperationTrustStore(
       ? { revokedKeyIds: Object.freeze([...(value.revokedKeyIds as string[])]) }
       : {}),
   });
+  }));
 }
 
-export async function createAgentHostOperationService(
+export function createAgentHostOperationService(
   options: AgentHostOperationServiceOptions,
 ): Promise<AgentHostOperationService> {
+  return present(Effect.gen(function* (): Effect.fn.Return<AgentHostOperationService, IntegrationFailure> {
   const directory = resolve(options.directory);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700).catch(() => undefined);
-  const operations = await loadInstalledHostOperations(resolve(options.operationsRoot), {
+  yield* integrationValue(mkdir(directory, { recursive: true, mode: 0o700 }));
+  yield* integrationValue(chmod(directory, 0o700)).pipe(Effect.orElseSucceed(() => undefined));
+  const operations = yield* integrationValue(loadInstalledHostOperations(resolve(options.operationsRoot), {
     requireRootOwned: options.requireRootOwned === true,
-  });
+  }));
   const consumeNonce = createAgentNonceTracker();
   // The journal resolves the durable Agent identity; the executor's authority
   // check reads it once the journal exists, before any operation can run.
   let agentId: string | undefined;
-  const executor = await createNodeHostOperationExecutor({
+  const executor = yield* integrationValue(createNodeHostOperationExecutor({
     rootDirectory: options.operationsRoot,
     operations,
     requireRootOwnedArtifacts: options.requireRootOwned === true,
     environment: options.environment,
     ...(options.stagingDirectory ? { stagingDirectory: options.stagingDirectory } : {}),
     ...(options.supervision ? { supervision: options.supervision } : {}),
-    authorize: async (request) => {
+    authorize: (request) => present(Effect.gen(function* () {
       if (!agentId) return false;
       // Read per authorization: a rotated Platform key is honoured without an
       // Agent restart, and a missing or invalid file authorizes nothing.
-      const platformAuthority = await readHostOperationTrustStore(options.platformAuthorityFile)
-        .catch(() => undefined);
+      const platformAuthority = (yield* integrationValue(readHostOperationTrustStore(options.platformAuthorityFile)
+        .catch(() => undefined)));
       if (!platformAuthority) return false;
-      const claims = await verifyAgentAuthority(platformAuthority, request.authority, request, {
+      const claims = (yield* integrationValue(verifyAgentAuthority(platformAuthority, request.authority, request, {
         audienceAgentId: agentId,
         consumeNonce,
-      });
+      })));
       return claims !== undefined;
-    },
-  });
+    })),
+  }));
   const store = createLocalSqliteSystemStore({ filename: join(directory, JOURNAL_FILE) });
-  let manager: ZelavisAgentOperationManager;
-  try {
-    manager = await createAgentOperationManager({
-      store,
-      executor,
-      ...(options.concurrency ? { concurrency: options.concurrency } : {}),
-    });
-  } catch (error) {
-    await store.close?.();
-    throw error;
-  }
+  const manager: ZelavisAgentOperationManager = yield* integrationValue(createAgentOperationManager({
+    store,
+    executor,
+    ...(options.concurrency ? { concurrency: options.concurrency } : {}),
+  })).pipe(Effect.tapError(() => integrationValue(store.close?.()).pipe(Effect.orElseSucceed(() => undefined))));
   agentId = manager.identity.id;
   // Operations queued before a restart, or whose lease lapsed with a crashed
   // Agent, are picked up now. Not awaited: readiness does not wait on them.
@@ -223,9 +220,12 @@ export async function createAgentHostOperationService(
     }),
     submit: (request) => manager.submit(request),
     get: (operationId) => manager.get(operationId),
-    async close() {
-      await manager.close();
-      await store.close?.();
+    close() {
+      return present(Effect.gen(function* () {
+        (yield* integrationValue(manager.close()));
+        (yield* integrationValue(store.close?.()));
+      }));
     },
   };
+  }));
 }

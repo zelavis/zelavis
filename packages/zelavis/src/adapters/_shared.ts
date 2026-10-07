@@ -1,5 +1,5 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
-import { Effect } from "effect";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { Effect, Semaphore } from "effect";
 import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -28,6 +28,9 @@ const STORAGE_METADATA_SUFFIX = ".zelavis-meta.json";
 /** Marks the private file a conditional write stages its bytes in. */
 const STORAGE_TEMP_MARKER = ".zelavis-tmp-";
 
+/** Entries read at once when listing: a large store must not open a descriptor per object. */
+const LIST_CONCURRENCY = 32;
+
 const sha256Hex = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -40,22 +43,24 @@ const sha256Hex = (bytes: Uint8Array): string =>
  * and delete of an object takes its turn here, keyed by absolute path so two
  * storage instances over one directory share the queue.
  */
-const localWriteQueues = new Map<string, Promise<unknown>>();
+const localWriteGates = new Map<string, { readonly semaphore: Semaphore.Semaphore; users: number }>();
 
-async function serializeLocalWrite<A>(key: string, run: () => Promise<A>): Promise<A> {
-  const previous = localWriteQueues.get(key) ?? Promise.resolve();
-  const current = previous.then(run, run);
-  const settled = current.then(
-    () => undefined,
-    () => undefined,
+function serializeLocalWrite<A, E>(key: string, run: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const entry = localWriteGates.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+      entry.users += 1;
+      localWriteGates.set(key, entry);
+      return entry;
+    }),
+    (entry) => entry.semaphore.withPermit(run),
+    (entry) => Effect.sync(() => { if ((entry.users -= 1) === 0) localWriteGates.delete(key); }),
   );
-  localWriteQueues.set(key, settled);
-  try {
-    return await current;
-  } finally {
-    if (localWriteQueues.get(key) === settled) localWriteQueues.delete(key);
-  }
 }
+
+/** The errno a failed filesystem call carried, whatever wrapped it on the way. */
+const errnoOf = (failure: IntegrationFailure): string | undefined =>
+  (unwrapFailure(failure) as NodeJS.ErrnoException | undefined)?.code;
 
 function normalizeStoragePath(path: string): string {
   if (path.includes("\0")) {
@@ -82,11 +87,12 @@ function isReadableByteStream(
   );
 }
 
-async function toBytes(
+function toBytes(
   body: ZelavisFileStoragePutInput["body"],
 ): Promise<Uint8Array> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Uint8Array, IntegrationFailure> {
   if (typeof body === "string") {
-    return new TextEncoder().encode(body);
+    return (yield* integrationValue(new TextEncoder().encode(body)));
   }
 
   if (body instanceof Uint8Array) {
@@ -98,7 +104,7 @@ async function toBytes(
   }
 
   if (isBlobLike(body)) {
-    return new Uint8Array(await body.arrayBuffer());
+    return new Uint8Array((yield* integrationValue(body.arrayBuffer())));
   }
 
   if (!isReadableByteStream(body)) {
@@ -110,7 +116,7 @@ async function toBytes(
   let total = 0;
 
   while (true) {
-    const next = await reader.read();
+    const next = (yield* integrationValue(reader.read()));
     if (next.done) {
       break;
     }
@@ -127,7 +133,8 @@ async function toBytes(
   }
 
   return result;
-}
+}));
+  }
 
 export function createMemoryKeyValueStore(): ZelavisKeyValueStore {
   const store = new Map<string, string>();
@@ -150,14 +157,15 @@ export function createMemoryKeyValueStore(): ZelavisKeyValueStore {
   };
 }
 
-async function walkFiles(root: string, current = root): Promise<string[]> {
-  const entries = await readdir(current, { withFileTypes: true });
+function walkFiles(root: string, current = root): Promise<string[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string[], IntegrationFailure> {
+  const entries = (yield* integrationValue(readdir(current, { withFileTypes: true })));
   const files: string[] = [];
 
   for (const entry of entries) {
     const nextPath = join(current, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await walkFiles(root, nextPath)));
+      files.push(...((yield* integrationValue(walkFiles(root, nextPath)))));
       continue;
     }
 
@@ -173,7 +181,8 @@ async function walkFiles(root: string, current = root): Promise<string[]> {
   }
 
   return files;
-}
+}));
+  }
 
 export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorage {
   const rootPath = resolve(rootDirectory);
@@ -191,25 +200,22 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
     return `${resolvePath(path)}${STORAGE_METADATA_SUFFIX}`;
   }
 
-  async function pruneEmptyParents(path: string): Promise<void> {
+  const pruneEmptyParents = (path: string): Effect.Effect<void, IntegrationFailure> => Effect.gen(function* () {
     let current = dirname(resolvePath(path));
     while (current !== rootPath && current.startsWith(`${rootPath}${sep}`)) {
-      try {
-        await rmdir(current);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") {
-          current = dirname(current);
-          continue;
-        }
-        if (code === "ENOTEMPTY" || code === "EEXIST") {
-          return;
-        }
-        throw error;
-      }
+      const occupied = yield* integrationValue(rmdir(current)).pipe(
+        Effect.as(false),
+        Effect.catch((failure) => {
+          const code = errnoOf(failure);
+          if (code === "ENOENT") return Effect.succeed(false);
+          if (code === "ENOTEMPTY" || code === "EEXIST") return Effect.succeed(true);
+          return Effect.fail(failure);
+        }),
+      );
+      if (occupied) return;
       current = dirname(current);
     }
-  }
+  });
 
   function readStoredMetadata(path: string): Promise<{
     contentType?: string;
@@ -252,7 +258,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
     }
   }).pipe(Effect.withSpan("createLocalFileStorage/readStoredMetadata"))); }
 
-  async function writeStoredMetadata(
+  const writeStoredMetadata = (
     path: string,
     value: {
       contentType?: string;
@@ -261,7 +267,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       metadata?: Record<string, string>;
       checksum?: string;
     },
-  ): Promise<void> {
+  ): Effect.Effect<void, IntegrationFailure> => Effect.gen(function* () {
     const metadataPath = resolveMetadataPath(path);
 
     if (
@@ -271,19 +277,13 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       !value.metadata &&
       !value.checksum
     ) {
-      try {
-        await rm(metadataPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw error;
-        }
-      }
+      yield* integrationValue(rm(metadataPath)).pipe(Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.void));
       return;
     }
 
-    await mkdir(dirname(metadataPath), { recursive: true });
-    await writeFile(metadataPath, JSON.stringify(value, null, 2));
-  }
+    yield* integrationValue(mkdir(dirname(metadataPath), { recursive: true }));
+    yield* integrationValue(writeFile(metadataPath, JSON.stringify(value, null, 2)));
+  });
 
   /**
    * A write that happens only if its condition holds.
@@ -297,66 +297,48 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
    * a condition shared between processes or hosts belongs on an object store
    * that passes `probeFileStorageGuarantees`.
    */
-  async function writeConditionally(
+  const writeConditionally = (
     filePath: string,
     path: string,
     bytes: Uint8Array,
     condition: ZelavisFileStorageCondition,
-  ): Promise<void> {
+  ): Effect.Effect<void, IntegrationFailure | ZelavisStorageConditionError> => Effect.gen(function* () {
     const staged = `${filePath}${STORAGE_TEMP_MARKER}${randomBytes(8).toString("hex")}`;
-    await writeFile(staged, bytes);
-    try {
+    yield* integrationValue(writeFile(staged, bytes));
+    yield* Effect.gen(function* () {
       if ("ifAbsent" in condition) {
-        try {
-          await link(staged, filePath);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-            throw new ZelavisStorageConditionError(path, condition);
-          }
-          throw error;
-        }
+        yield* integrationValue(link(staged, filePath)).pipe(
+          Effect.catchIf((failure) => errnoOf(failure) === "EEXIST", () => Effect.fail(new ZelavisStorageConditionError(path, condition))),
+        );
         return;
       }
-      const current = await readFile(filePath).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return undefined;
-        throw error;
-      });
+      const current = yield* integrationValue(readFile(filePath)).pipe(
+        Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.succeed(undefined)),
+      );
       if (current === undefined || sha256Hex(current) !== condition.ifMatch) {
-        throw new ZelavisStorageConditionError(path, condition);
+        return yield* Effect.fail(new ZelavisStorageConditionError(path, condition));
       }
-      await rename(staged, filePath);
-    } finally {
-      await rm(staged, { force: true });
-      await pruneEmptyParents(path);
-    }
-  }
+      yield* integrationValue(rename(staged, filePath));
+    }).pipe(Effect.ensuring(Effect.gen(function* () {
+      yield* integrationValue(rm(staged, { force: true }));
+      yield* pruneEmptyParents(path);
+    }).pipe(Effect.orDie)));
+  });
 
-  async function removeStored(path: string): Promise<boolean> {
-    try {
-      await Promise.all([
-        rm(resolvePath(path)),
-        rm(resolveMetadataPath(path)).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") {
-            throw error;
-          }
-        }),
-      ]);
-      await pruneEmptyParents(path);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return false;
-      }
+  const removeStored = (path: string): Effect.Effect<boolean, IntegrationFailure> => Effect.gen(function* () {
+    yield* Effect.all([
+      integrationValue(rm(resolvePath(path))),
+      integrationValue(rm(resolveMetadataPath(path))).pipe(Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.void)),
+    ], { concurrency: 2 });
+    yield* pruneEmptyParents(path);
+    return true;
+  }).pipe(Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.succeed(false)));
 
-      throw error;
-    }
-  }
-
-  async function createEntry(path: string): Promise<ZelavisFileStorageEntry> {
-    const [info, stored] = await Promise.all([
-      stat(resolvePath(path)),
-      readStoredMetadata(path),
-    ]);
+  const createEntry = (path: string): Effect.Effect<ZelavisFileStorageEntry, IntegrationFailure> => Effect.gen(function* () {
+    const [info, stored] = yield* Effect.all([
+      integrationValue(stat(resolvePath(path))),
+      integrationValue(readStoredMetadata(path)),
+    ], { concurrency: 2 });
 
     return {
       path: normalizeStoragePath(path),
@@ -368,19 +350,19 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       metadata: stored.metadata,
       checksum: stored.checksum,
     };
-  }
+  });
 
   return {
     capabilities: Object.freeze({ conditionalCreate: "host", conditionalReplace: "process" }),
-    async get(path): Promise<ZelavisFileStorageObject | undefined> {
-      const normalized = normalizeStoragePath(path);
-      try {
+    get(path): Promise<ZelavisFileStorageObject | undefined> {
+      return present(Effect.gen(function* (): Effect.fn.Return<ZelavisFileStorageObject | undefined, IntegrationFailure> {
+        const normalized = normalizeStoragePath(path);
         const filePath = resolvePath(normalized);
-        const [body, info, stored] = await Promise.all([
-          readFile(filePath),
-          stat(filePath),
-          readStoredMetadata(normalized),
-        ]);
+        const [body, info, stored] = yield* Effect.all([
+          integrationValue(readFile(filePath)),
+          integrationValue(stat(filePath)),
+          integrationValue(readStoredMetadata(normalized)),
+        ], { concurrency: 3 });
 
         return {
           path: normalized,
@@ -394,36 +376,31 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
           checksum: stored.checksum,
           etag: sha256Hex(body),
         };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          return undefined;
-        }
-
-        throw error;
-      }
+      }).pipe(Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.succeed(undefined))));
     },
-    async put(input) {
+    put(input) {
+    return present(Effect.gen(function* () {
       const normalized = normalizeStoragePath(input.path);
       const filePath = resolvePath(normalized);
-      const bytes = await toBytes(input.body);
+      const bytes = (yield* integrationValue(toBytes(input.body)));
 
-      await serializeLocalWrite(filePath, async () => {
-        await mkdir(dirname(filePath), { recursive: true });
+      yield* serializeLocalWrite(filePath, Effect.gen(function* () {
+        yield* integrationValue(mkdir(dirname(filePath), { recursive: true }));
         if (input.condition) {
-          await writeConditionally(filePath, normalized, bytes, input.condition);
+          yield* writeConditionally(filePath, normalized, bytes, input.condition);
         } else {
-          await writeFile(filePath, bytes);
+          yield* integrationValue(writeFile(filePath, bytes));
         }
-        await writeStoredMetadata(normalized, {
+        yield* writeStoredMetadata(normalized, {
           contentType: input.contentType,
           cacheControl: input.cacheControl,
           contentDisposition: input.contentDisposition,
           metadata: input.metadata,
           checksum: input.metadata?.["checksum-sha256"],
         });
-      });
+      }));
 
-      const info = await stat(filePath);
+      const info = (yield* integrationValue(stat(filePath)));
 
       return {
         path: normalized,
@@ -436,30 +413,29 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
         checksum: input.metadata?.["checksum-sha256"],
         etag: sha256Hex(bytes),
       };
-    },
-    async delete(path) {
-      return serializeLocalWrite(resolvePath(path), () => removeStored(path));
-    },
-    async list(prefix) {
-      try {
-        const files = await walkFiles(rootPath);
+    }));
+  },
+    delete(path) {
+    return present(Effect.suspend(() => serializeLocalWrite(resolvePath(path), removeStored(path))));
+  },
+    list(prefix) {
+      return present(Effect.gen(function* (): Effect.fn.Return<ZelavisFileStorageEntry[], IntegrationFailure> {
+        const files = yield* integrationValue(walkFiles(rootPath)).pipe(
+          Effect.catchIf((failure) => errnoOf(failure) === "ENOENT", () => Effect.succeed(undefined)),
+        );
+        if (!files) return [];
         const normalizedPrefix = prefix ? normalizeStoragePath(prefix) : undefined;
 
-        return Promise.all(
+        return yield* Effect.forEach(
           files
             .filter((path) =>
               normalizedPrefix ? path.startsWith(normalizedPrefix) : true,
             )
-            .sort((left, right) => left.localeCompare(right))
-            .map((path) => createEntry(path)),
+            .sort((left, right) => left.localeCompare(right)),
+          (path) => createEntry(path),
+          { concurrency: LIST_CONCURRENCY },
         );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          return [];
-        }
-
-        throw error;
-      }
+      }));
     },
   };
 }

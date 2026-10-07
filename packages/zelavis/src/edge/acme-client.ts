@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import {
   calculateP256JwkThumbprint,
@@ -112,43 +112,49 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
   const publicJwk = exportP256Jwk(accountKey.publicKey);
   const keyThumbprint = calculateP256JwkThumbprint(publicJwk);
 
-  async function getDirectory(): Promise<AcmeDirectory> {
+  function getDirectory(): Promise<AcmeDirectory> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeDirectory, IntegrationFailure> {
     if (cachedDirectory) {
       return cachedDirectory;
     }
-    const response = await customFetch(directoryUrl, {
+    const response = (yield* integrationValue(customFetch(directoryUrl, {
       method: "GET",
       headers: { Accept: "application/json" },
-    });
+    })));
     if (!response.ok) {
       throw new AcmeError(
         `Failed to fetch ACME directory from ${directoryUrl}`,
         response.status,
       );
     }
-    cachedDirectory = (await response.json()) as AcmeDirectory;
+    cachedDirectory = ((yield* integrationValue(response.json()))) as AcmeDirectory;
     return cachedDirectory;
+  }));
   }
 
-  async function fetchNonce(): Promise<string> {
-    const dir = await getDirectory();
-    const response = await customFetch(dir.newNonce, {
+  function fetchNonce(): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
+    const dir = (yield* integrationValue(getDirectory()));
+    const response = (yield* integrationValue(customFetch(dir.newNonce, {
       method: "HEAD",
-    });
+    })));
     const nonce = response.headers.get("replay-nonce");
     if (!nonce) {
       throw new AcmeError("Failed to obtain Replay-Nonce from ACME server", 500);
     }
     return nonce;
+  }));
   }
 
-  async function getNonce(): Promise<string> {
+  function getNonce(): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
     if (cachedNonce) {
       const n = cachedNonce;
       cachedNonce = undefined;
       return n;
     }
-    return fetchNonce();
+    return (yield* integrationValue(fetchNonce()));
+  }));
   }
 
   function postJws(
@@ -222,8 +228,9 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
       return keyThumbprint;
     },
 
-    async createOrGetAccount(accountOptions = {}): Promise<AcmeAccountDetails> {
-      const dir = await getDirectory();
+    createOrGetAccount(accountOptions = {}): Promise<AcmeAccountDetails> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeAccountDetails, IntegrationFailure> {
+      const dir = (yield* integrationValue(getDirectory()));
       const payload: Record<string, unknown> = {
         termsOfServiceAgreed: accountOptions.termsOfServiceAgreed !== false,
       };
@@ -231,7 +238,7 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         payload.contact = [`mailto:${accountOptions.contactEmail}`];
       }
 
-      const response = await postJws(dir.newAccount, payload);
+      const response = (yield* integrationValue(postJws(dir.newAccount, payload)));
       const location = response.headers.get("location");
       if (!location) {
         throw new AcmeError("ACME newAccount response did not include Location header", 500);
@@ -243,10 +250,12 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         keyThumbprint,
         jwk: publicJwk,
       };
-    },
+    }));
+  },
 
-    async createOrder(identifiers: readonly string[]): Promise<AcmeOrder> {
-      const dir = await getDirectory();
+    createOrder(identifiers: readonly string[]): Promise<AcmeOrder> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeOrder, IntegrationFailure> {
+      const dir = (yield* integrationValue(getDirectory()));
       const payload = {
         identifiers: identifiers.map((id) => ({
           type: "dns" as const,
@@ -254,13 +263,13 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         })),
       };
 
-      const response = await postJws(dir.newOrder, payload);
+      const response = (yield* integrationValue(postJws(dir.newOrder, payload)));
       const orderUrl = response.headers.get("location");
       if (!orderUrl) {
         throw new AcmeError("ACME newOrder response did not include Location header", 500);
       }
 
-      const orderData = (await response.json()) as {
+      const orderData = ((yield* integrationValue(response.json()))) as {
         status: AcmeOrder["status"];
         identifiers: AcmeIdentifier[];
         authorizations: string[];
@@ -276,12 +285,14 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         finalize: orderData.finalize,
         certificate: orderData.certificate,
       };
-    },
+    }));
+  },
 
-    async getAuthorization(authzUrl: string): Promise<AcmeAuthorization> {
+    getAuthorization(authzUrl: string): Promise<AcmeAuthorization> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeAuthorization, IntegrationFailure> {
       // POST-as-GET with empty payload string per RFC 8555 Section 6.3
-      const response = await postJws(authzUrl, "");
-      const data = (await response.json()) as {
+      const response = (yield* integrationValue(postJws(authzUrl, "")));
+      const data = ((yield* integrationValue(response.json()))) as {
         status: AcmeAuthorization["status"];
         identifier: AcmeIdentifier;
         challenges: AcmeChallenge[];
@@ -291,23 +302,28 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         identifier: data.identifier,
         challenges: data.challenges,
       };
-    },
+    }));
+  },
 
-    async notifyChallenge(challengeUrl: string): Promise<AcmeChallenge> {
-      const response = await postJws(challengeUrl, {});
-      return (await response.json()) as AcmeChallenge;
-    },
+    notifyChallenge(challengeUrl: string): Promise<AcmeChallenge> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeChallenge, IntegrationFailure> {
+      const response = (yield* integrationValue(postJws(challengeUrl, {})));
+      return ((yield* integrationValue(response.json()))) as AcmeChallenge;
+    }));
+  },
 
-    async pollAuthorization(
+    pollAuthorization(
       authzUrl: string,
       pollOptions = {},
     ): Promise<AcmeAuthorization> {
+      const self = this;
+      return present(Effect.gen(function* (): Effect.fn.Return<AcmeAuthorization, IntegrationFailure> {
       const maxWaitMs = pollOptions.maxWaitMs ?? 30000;
       const pollIntervalMs = pollOptions.pollIntervalMs ?? 500;
       const deadline = Date.now() + maxWaitMs;
 
       while (Date.now() < deadline) {
-        const authz = await this.getAuthorization(authzUrl);
+        const authz = yield* integrationValue(self.getAuthorization(authzUrl));
         if (authz.status === "valid") {
           return authz;
         }
@@ -320,7 +336,7 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
             failedChal?.error ? JSON.stringify(failedChal.error) : undefined,
           );
         }
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        yield* Effect.sleep(pollIntervalMs);
       }
 
       throw new AcmeError(
@@ -328,17 +344,19 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         408,
         "ACME_TIMEOUT",
       );
+      }));
     },
 
-    async finalizeOrder(
+    finalizeOrder(
       finalizeUrl: string,
       csrDer: Buffer | Uint8Array,
     ): Promise<AcmeOrder> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcmeOrder, IntegrationFailure> {
       const payload = {
         csr: toBase64Url(csrDer),
       };
-      const response = await postJws(finalizeUrl, payload);
-      const data = (await response.json()) as {
+      const response = (yield* integrationValue(postJws(finalizeUrl, payload)));
+      const data = ((yield* integrationValue(response.json()))) as {
         status: AcmeOrder["status"];
         identifiers: AcmeIdentifier[];
         authorizations: string[];
@@ -353,19 +371,21 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         finalize: data.finalize,
         certificate: data.certificate,
       };
-    },
+    }));
+  },
 
-    async pollOrder(
+    pollOrder(
       orderUrl: string,
       pollOptions = {},
     ): Promise<AcmeOrder> {
+      return present(Effect.gen(function* (): Effect.fn.Return<AcmeOrder, IntegrationFailure> {
       const maxWaitMs = pollOptions.maxWaitMs ?? 30000;
       const pollIntervalMs = pollOptions.pollIntervalMs ?? 500;
       const deadline = Date.now() + maxWaitMs;
 
       while (Date.now() < deadline) {
-        const response = await postJws(orderUrl, "");
-        const data = (await response.json()) as {
+        const response = yield* integrationValue(postJws(orderUrl, ""));
+        const data = (yield* integrationValue(response.json())) as {
           status: AcmeOrder["status"];
           identifiers: AcmeIdentifier[];
           authorizations: string[];
@@ -392,7 +412,7 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
           );
         }
 
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        yield* Effect.sleep(pollIntervalMs);
       }
 
       throw new AcmeError(
@@ -400,11 +420,14 @@ export function createAcmeClient(options: CreateAcmeClientOptions): AcmeClient {
         408,
         "ACME_TIMEOUT",
       );
+      }));
     },
 
-    async downloadCertificate(certificateUrl: string): Promise<string> {
-      const response = await postJws(certificateUrl, "");
-      return response.text();
-    },
+    downloadCertificate(certificateUrl: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
+      const response = (yield* integrationValue(postJws(certificateUrl, "")));
+      return (yield* integrationValue(response.text()));
+    }));
+  },
   };
 }

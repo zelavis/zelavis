@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, integration, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { spawn } from "node:child_process";
 import { constants as fsConstants, type Stats } from "node:fs";
@@ -88,15 +88,16 @@ interface ProvenPath {
  * the identities to re-prove at execution. Shared libraries it loads are not
  * covered.
  */
-async function proveInterpreter(
+function proveInterpreter(
   path: string,
   requireRootOwned: boolean,
 ): Promise<{ readonly path: string; readonly chain: readonly ProvenPath[] }> {
-  const resolved = await realpath(path).catch(() => {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ readonly path: string; readonly chain: readonly ProvenPath[] }, IntegrationFailure> {
+  const resolved = (yield* integrationValue(realpath(path).catch(() => {
     throw new ZelavisHostOperationValidationError(
       `Host operation interpreter "${path}" does not exist.`,
     );
-  });
+  })));
   const ancestors: string[] = [];
   for (let current = dirname(resolved); ; current = dirname(current)) {
     ancestors.unshift(current);
@@ -104,7 +105,7 @@ async function proveInterpreter(
   }
   const chain: ProvenPath[] = [];
   for (const entry of [...ancestors, resolved]) {
-    const stats = await lstat(entry);
+    const stats = (yield* integrationValue(lstat(entry)));
     const directory = entry !== resolved;
     if (
       stats.isSymbolicLink() ||
@@ -119,7 +120,8 @@ async function proveInterpreter(
     chain.push({ path: entry, identity: identityOf(stats), directory });
   }
   return { path: resolved, chain };
-}
+}));
+  }
 
 /**
  * Reads installed operations from `<root>/<id>/<version>/`. Directory names
@@ -361,7 +363,7 @@ export function createNodeHostOperationExecutor(
    * no-follow handle whose identity is checked, so the digest describes the
    * file that was proven rather than whatever the path names a moment later.
    */
-  async function readVerifiedArtifact(
+  function readVerifiedArtifact(
     registration: NonNullable<ReturnType<typeof registrations.get>>,
   ): Promise<Buffer> {
     const unsafe = (stats: Stats, expected: ArtifactIdentity) =>
@@ -369,54 +371,43 @@ export function createNodeHostOperationExecutor(
       !sameIdentity(identityOf(stats), expected) ||
       (stats.mode & 0o022) !== 0 ||
       (options.requireRootOwnedArtifacts === true && stats.uid !== 0);
-    for (const parent of registration.parents) {
-      const stats = await lstat(parent.path).catch(() => undefined);
-      if (!stats || !stats.isDirectory() || unsafe(stats, parent.identity)) {
-        throw new ZelavisHostOperationValidationError(
-          "Host operation artifact parent changed after registration.",
-        );
+    const changed = (message: string) => new ZelavisHostOperationValidationError(message);
+    return present(Effect.gen(function* (): Effect.fn.Return<Buffer, IntegrationFailure | ZelavisHostOperationValidationError> {
+      for (const parent of registration.parents) {
+        const stats = yield* integrationValue(lstat(parent.path)).pipe(Effect.orElseSucceed(() => undefined));
+        if (!stats || !stats.isDirectory() || unsafe(stats, parent.identity)) {
+          return yield* Effect.fail(changed("Host operation artifact parent changed after registration."));
+        }
       }
-    }
-    for (const entry of [
-      ...(registration.interpreter?.chain ?? []),
-      ...(joinShell?.chain ?? []),
-    ]) {
-      const stats = await lstat(entry.path).catch(() => undefined);
-      if (
-        !stats ||
-        (entry.directory ? !stats.isDirectory() : !stats.isFile()) ||
-        unsafe(stats, entry.identity)
-      ) {
-        throw new ZelavisHostOperationValidationError(
-          "Host operation interpreter changed after registration.",
-        );
+      for (const entry of [
+        ...(registration.interpreter?.chain ?? []),
+        ...(joinShell?.chain ?? []),
+      ]) {
+        const stats = yield* integrationValue(lstat(entry.path)).pipe(Effect.orElseSucceed(() => undefined));
+        if (
+          !stats ||
+          (entry.directory ? !stats.isDirectory() : !stats.isFile()) ||
+          unsafe(stats, entry.identity)
+        ) {
+          return yield* Effect.fail(changed("Host operation interpreter changed after registration."));
+        }
       }
-    }
-    const handle = await open(
-      registration.file,
-      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
-    ).catch(() => {
-      throw new ZelavisHostOperationValidationError(
-        "Host operation artifact changed after registration.",
-      );
-    });
-    try {
-      const stats = await handle.stat();
-      if (!stats.isFile() || unsafe(stats, registration.identity) || (stats.mode & 0o100) === 0) {
-        throw new ZelavisHostOperationValidationError(
-          "Host operation artifact changed after registration.",
-        );
-      }
-      const body = await handle.readFile();
-      if (digest(body) !== registration.manifest.sha256) {
-        throw new ZelavisHostOperationValidationError(
-          "Host operation artifact changed after registration.",
-        );
-      }
-      return body;
-    } finally {
-      await handle.close();
-    }
+      const handle = yield* integrationValue(open(
+        registration.file,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+      )).pipe(Effect.mapError(() => changed("Host operation artifact changed after registration.")));
+      return yield* Effect.gen(function* () {
+        const stats = yield* integrationValue(handle.stat());
+        if (!stats.isFile() || unsafe(stats, registration.identity) || (stats.mode & 0o100) === 0) {
+          return yield* Effect.fail(changed("Host operation artifact changed after registration."));
+        }
+        const body = yield* integrationValue(handle.readFile());
+        if (digest(body) !== registration.manifest.sha256) {
+          return yield* Effect.fail(changed("Host operation artifact changed after registration."));
+        }
+        return body;
+      }).pipe(Effect.ensuring(integration(() => handle.close()).pipe(Effect.orDie)));
+    }));
   }
 
   const cgroup = options.supervision?.kind === "cgroup-v2"
@@ -502,7 +493,7 @@ export function createNodeHostOperationExecutor(
           const args = Object.entries(request.arguments)
             .sort(([left], [right]) => left.localeCompare(right))
             .flatMap(([name, value]) => [`--${name}`, value]);
-          const running = new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>((resolveRun, rejectRun) => {
+          const running = Effect.callback<{ code: number; stdout: string; stderr: string; timedOut: boolean }, IntegrationFailure>((resume) => {
             // A script runs under the interpreter its manifest names,
             // never one resolved from a shebang.
             const direct = registration.interpreter
@@ -526,7 +517,7 @@ export function createNodeHostOperationExecutor(
               Buffer.concat([current, chunk]).subarray(0, maxOutputBytes);
             child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
             child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
-            child.once("error", rejectRun);
+            child.once("error", (cause) => resume(Effect.fail(new IntegrationFailure(cause))));
             let timedOut = false;
             let drainTimer: ReturnType<typeof setTimeout> | undefined;
             // A descendant that left the group (a new session) can hold the
@@ -554,22 +545,21 @@ export function createNodeHostOperationExecutor(
             child.once("close", (code) => {
               clearTimeout(timer);
               if (drainTimer) clearTimeout(drainTimer);
-              resolveRun({
+              resume(Effect.succeed({
                 code: code ?? 1,
                 stdout: stdout.toString("utf8"),
                 stderr: stderr.toString("utf8"),
                 timedOut,
-              });
+              }));
+            });
+            return Effect.sync(() => {
+              clearTimeout(timer);
+              if (drainTimer) clearTimeout(drainTimer);
             });
           });
-          let result: Awaited<typeof running>;
-          try {
-            result = unwrapIntegrationResult(yield* Effect.result(integrationValue(running)));
-          } finally {
-            // Everything the operation started, including descendants that
-            // left its process group, is gone before the result is reported.
-            unwrapIntegrationResult(yield* Effect.result(integrationValue(scope?.close())));
-          }
+          // Everything the operation started, including descendants that
+          // left its process group, is gone before the result is reported.
+          const result = yield* running.pipe(Effect.ensuring(integration(() => scope?.close()).pipe(Effect.orDie)));
           const declared = registration.manifest.result;
           let parsedResult: Record<string, unknown> | undefined;
           let resultError: string | undefined;

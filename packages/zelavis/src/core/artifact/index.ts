@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import { defineCompatibilityDate } from "../runtime/compatibility.js";
 
 export const ZELAVIS_RUNTIME_ARTIFACT_V1 = "ZELAVIS_RUNTIME_ARTIFACT_V1" as const;
@@ -168,9 +170,10 @@ export function defineRuntimeBuildProfile(
 }
 
 /** Produce the canonical digest used by manifests and ArtifactStore keys. */
-export async function createArtifactDigest(
+export function createArtifactDigest(
   input: string | Uint8Array | ArrayBuffer,
 ): Promise<ZelavisArtifactDigest> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisArtifactDigest, IntegrationFailure> {
   const bytes =
     typeof input === "string"
       ? new TextEncoder().encode(input)
@@ -179,12 +182,13 @@ export async function createArtifactDigest(
         : new Uint8Array(input);
   const digestInput = new Uint8Array(bytes.byteLength);
   digestInput.set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", digestInput.buffer);
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", digestInput.buffer)));
   const hex = [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
   return `sha256:${hex}`;
-}
+}));
+  }
 
 /** Digest the canonical manifest and its file digests, excluding digest/signature. */
 export function createRuntimeArtifactManifestDigest(
@@ -194,43 +198,46 @@ export function createRuntimeArtifactManifestDigest(
 }
 
 /** Attach a portable Ed25519 signature to a validated runtime artifact. */
-export async function signRuntimeArtifact(
+export function signRuntimeArtifact(
   manifest: ZelavisRuntimeArtifactManifest,
   options: SignRuntimeArtifactOptions,
 ): Promise<Readonly<ZelavisRuntimeArtifactManifest>> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Readonly<ZelavisRuntimeArtifactManifest>, IntegrationFailure> {
   if (!options.keyId?.trim()) throw new TypeError("Artifact signing keyId is required.");
   const unsigned = defineRuntimeArtifact(manifest);
-  const digest = await createRuntimeArtifactManifestDigest(unsigned);
+  const digest = (yield* integrationValue(createRuntimeArtifactManifestDigest(unsigned)));
   if (unsigned.digest && unsigned.digest !== digest) {
     throw new TypeError(
       `Runtime artifact manifest digest mismatch: expected ${unsigned.digest}, received ${digest}.`,
     );
   }
-  const value = base64Url(new Uint8Array(await crypto.subtle.sign(
+  const value = base64Url(new Uint8Array((yield* integrationValue(crypto.subtle.sign(
     "Ed25519",
     options.privateKey,
     new TextEncoder().encode(canonicalJson({
       ...artifactSigningData(unsigned),
       digest,
     })),
-  )));
-  return defineRuntimeArtifact({
+  )))));
+  return (yield* integrationValue(defineRuntimeArtifact({
     ...unsigned,
     digest,
     signature: { algorithm: "Ed25519", keyId: options.keyId, value },
-  });
-}
+  })));
+}));
+  }
 
 /** Verify the digest and Ed25519 signature of a runtime artifact manifest. */
-export async function verifyRuntimeArtifactSignature(
+export function verifyRuntimeArtifactSignature(
   manifest: ZelavisRuntimeArtifactManifest,
   publicKey: CryptoKey,
 ): Promise<boolean> {
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
   const artifact = defineRuntimeArtifact(manifest);
   if (!artifact.digest || artifact.signature?.algorithm !== "Ed25519") return false;
-  const digest = await createRuntimeArtifactManifestDigest(artifact);
+  const digest = (yield* integrationValue(createRuntimeArtifactManifestDigest(artifact)));
   if (digest !== artifact.digest) return false;
-  return crypto.subtle.verify(
+  return (yield* integrationValue(crypto.subtle.verify(
     "Ed25519",
     publicKey,
     fromBase64Url(artifact.signature.value) as BufferSource,
@@ -238,8 +245,9 @@ export async function verifyRuntimeArtifactSignature(
       ...artifactSigningData(artifact),
       digest,
     })),
-  );
-}
+  )));
+}));
+  }
 
 /** Define a portable, serializable description of a built runtime artifact. */
 export function defineRuntimeArtifact(
@@ -342,18 +350,23 @@ export function createMemoryArtifactStore(): ArtifactStore {
   const objects = new Map<ZelavisArtifactDigest, ZelavisArtifactStoreObject>();
 
   return {
-    async has(digest) {
+    has(digest) {
+    return present(Effect.gen(function* () {
       assertDigest(digest, "ArtifactStore digest");
-      return objects.has(digest);
-    },
-    async get(digest) {
+      return (yield* integrationValue(objects.has(digest)));
+    }));
+  },
+    get(digest) {
+    return present(Effect.gen(function* () {
       assertDigest(digest, "ArtifactStore digest");
       const object = objects.get(digest);
       return object ? cloneArtifactObject(object) : undefined;
-    },
-    async put(input) {
+    }));
+  },
+    put(input) {
+    return present(Effect.gen(function* () {
       assertDigest(input.digest, "ArtifactStore digest");
-      const actualDigest = await createArtifactDigest(input.body);
+      const actualDigest = (yield* integrationValue(createArtifactDigest(input.body)));
       if (actualDigest !== input.digest) {
         throw new TypeError(
           `ArtifactStore content digest mismatch: expected ${input.digest}, received ${actualDigest}.`,
@@ -361,7 +374,7 @@ export function createMemoryArtifactStore(): ArtifactStore {
       }
       const existing = objects.get(input.digest);
       if (existing) {
-        return cloneArtifactObject(existing);
+        return (yield* integrationValue(cloneArtifactObject(existing)));
       }
       const object: ZelavisArtifactStoreObject = {
         digest: input.digest,
@@ -370,7 +383,8 @@ export function createMemoryArtifactStore(): ArtifactStore {
         metadata: input.metadata ? { ...input.metadata } : undefined,
       };
       objects.set(input.digest, object);
-      return cloneArtifactObject(object);
-    },
+      return (yield* integrationValue(cloneArtifactObject(object)));
+    }));
+  },
   };
 }

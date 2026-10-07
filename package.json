@@ -47,6 +47,7 @@
     "distribution:stage": "node distribution/scripts/build-stage.mjs",
     "distribution:deb": "node distribution/scripts/build-deb.mjs",
     "distribution:test": "node --test distribution/test/*.test.mjs",
+    "distribution:qualify:worker": "bash distribution/scripts/qualify-worker.sh",
     "website:dev": "pnpm --filter @zelavis/website dev",
     "website:typecheck": "pnpm --filter @zelavis/website build",
     "test": "pnpm -r --if-present --workspace-concurrency=1 test",

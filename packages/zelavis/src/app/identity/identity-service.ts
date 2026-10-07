@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import type { PasswordProviderOptions } from "./providers/password.js";
 import {
   createMappedJsonErrorResponse,
@@ -245,10 +247,12 @@ export function defineAuthEndpointGroup(
               200: { description: "List of accounts" },
             },
           },
-          handler: async ({ service }) => ({
+          handler: ({ service }) => present(Effect.gen(function* () {
+    return {
             status: 200,
-            body: await service.accounts.list(),
-          }),
+            body: (yield* integrationValue(service.accounts.list())),
+          };
+  })),
         },
         {
           id: "auth.accounts.create",
@@ -268,18 +272,14 @@ export function defineAuthEndpointGroup(
               400: { description: "Validation error" },
             },
           },
-          handler: async ({ service, body }) => {
-            try {
+          handler: ({ service, body })  => present(Effect.gen(function* () {
               return {
                 status: 201,
-                body: await service.accounts.create(
+                body: yield* integration(() => service.accounts.create(
                   body as Parameters<IdentityApi["accounts"]["create"]>[0],
-                ),
+                )),
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.credentials.create",
@@ -299,18 +299,14 @@ export function defineAuthEndpointGroup(
               400: { description: "Validation error" },
             },
           },
-          handler: async ({ service, body }) => {
-            try {
+          handler: ({ service, body })  => present(Effect.gen(function* () {
               return {
                 status: 201,
-                body: publicCredential(await service.credentials.create(
+                body: publicCredential(yield* integration(() => service.credentials.create(
                   body as Parameters<IdentityApi["credentials"]["create"]>[0],
-                )),
+                ))),
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.providers.list",
@@ -344,35 +340,36 @@ export function defineAuthEndpointGroup(
                     400: { description: "Registration failed" },
                   },
                 },
-                handler: async ({ service, params, body, request }: { service: IdentityApi; params: Record<string, string>; body: unknown; request: Request }) => {
+                handler: ({ service, params, body, request }: { service: IdentityApi; params: Record<string, string>; body: unknown; request: Request })  => present(Effect.gen(function* () {
                   let accountId: string | undefined;
-                  try {
+                  return yield* Effect.gen(function* () {
                     const input = (body ?? {}) as Record<string, unknown>;
-                    const prepared = await service.authentication.prepareCredential(
+                    const prepared = yield* integration(() => service.authentication.prepareCredential(
                       params.provider,
                       input as Parameters<IdentityApi["authentication"]["prepareCredential"]>[1],
-                    );
-                    accountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
-                    const account = await service.accounts.create({
-                      id: accountId,
+                    ));
+                    const newAccountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
+                    accountId = newAccountId;
+                    const account = yield* integration(() => service.accounts.create({
+                      id: newAccountId,
                       ...prepared.accountIdentity,
                       ...(typeof input.displayName === "string" && input.displayName.trim()
                         ? { displayName: input.displayName.trim() }
                         : {}),
-                    });
-                    const credential = await service.credentials.create({
+                    }));
+                    const credential = yield* integration(() => service.credentials.create({
                       id: `credential_${crypto.randomUUID().replaceAll("-", "")}`,
                       accountId: account.id,
                       provider: params.provider,
                       identifier: prepared.identifier,
                       secretHash: prepared.secretHash,
                       metadata: prepared.metadata,
-                    });
-                    const session = await service.sessions.create({
+                    }));
+                    const session = yield* integration(() => service.sessions.create({
                       accountId: account.id,
                       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
                       metadata: { provider: params.provider, authentication: "registration" },
-                    });
+                    }));
                     const sessionCookie = cookieOptions
                       ? browserSessionCookieHeader(
                           session.token,
@@ -390,11 +387,15 @@ export function defineAuthEndpointGroup(
                         session: { token: session.token, session: publicSession(session.session) },
                       },
                     };
-                  } catch (error) {
-                    if (accountId) await service.repositories.accounts.delete(accountId).catch(() => false);
+                  }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+  const error = unwrapFailure(Cause.squash(cause));
+                    const created = accountId;
+                    if (created) {
+                      yield* integration(() => service.repositories.accounts.delete(created)).pipe(Effect.orElseSucceed(() => false));
+                    }
                     return authErrorResponse(error, 400);
-                  }
-                },
+                  })));
+})),
               },
             ]
           : []),
@@ -445,18 +446,14 @@ export function defineAuthEndpointGroup(
           },
           method: "POST",
           path: "/oauth/:provider/start",
-          handler: async ({ service, params }) => {
-            try {
+          handler: ({ service, params })  => present(Effect.gen(function* () {
               return {
                 status: 200,
-                body: await service.authentication.beginAuthorizationCode(
+                body: yield* integration(() => service.authentication.beginAuthorizationCode(
                   params.provider,
-                ),
+                )),
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.authorizationCode.link.start",
@@ -473,19 +470,15 @@ export function defineAuthEndpointGroup(
           method: "POST",
           path: "/oauth/:provider/link/start",
           access: { authenticated: true },
-          handler: async ({ service, params, principal }) => {
-            try {
+          handler: ({ service, params, principal })  => present(Effect.gen(function* () {
               return {
                 status: 200,
-                body: await service.authentication.beginAuthorizationCode(
+                body: yield* integration(() => service.authentication.beginAuthorizationCode(
                   params.provider,
                   { mode: "link", accountId: principal!.id },
-                ),
+                )),
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.authorizationCode.callback",
@@ -500,21 +493,20 @@ export function defineAuthEndpointGroup(
           },
           method: "GET",
           path: "/oauth/:provider/callback",
-          handler: async ({ service, params, query, request }) => {
-            try {
+          handler: ({ service, params, query, request })  => present(Effect.gen(function* () {
               const providerError = query.get("error");
               if (providerError) {
                 throw new IdentityValidationError(
                   `Authorization provider returned ${providerError}.`,
                 );
               }
-              const result = await service.authentication.completeAuthorizationCode(
+              const result = yield* integration(() => service.authentication.completeAuthorizationCode(
                 params.provider,
                 {
                   state: query.get("state") ?? "",
                   code: query.get("code") ?? "",
                 },
-              );
+              ));
               const sessionCookie =
                 cookieOptions && result.session && request
                   ? sessionCookieHeader(
@@ -540,10 +532,7 @@ export function defineAuthEndpointGroup(
                     : undefined,
                 },
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.recovery.begin",
@@ -555,19 +544,15 @@ export function defineAuthEndpointGroup(
             tags: ["auth"],
             responses: { 202: { description: "Recovery request accepted" } },
           },
-          handler: async ({ service, params, body }) => {
-            try {
+          handler: ({ service, params, body })  => present(Effect.gen(function* () {
               return {
                 status: 202,
-                body: await service.authentication.beginRecovery(
+                body: yield* integration(() => service.authentication.beginRecovery(
                   params.provider,
                   body as Parameters<IdentityApi["authentication"]["beginRecovery"]>[1],
-                ),
+                )),
               };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.recovery.complete",
@@ -582,17 +567,13 @@ export function defineAuthEndpointGroup(
               400: { description: "Invalid or expired recovery" },
             },
           },
-          handler: async ({ service, params, body }) => {
-            try {
-              await service.authentication.completeRecovery(
+          handler: ({ service, params, body })  => present(Effect.gen(function* () {
+              yield* integration(() => service.authentication.completeRecovery(
                 params.provider,
                 body as Parameters<IdentityApi["authentication"]["completeRecovery"]>[1],
-              );
+              ));
               return { status: 204 };
-            } catch (error) {
-              return authErrorResponse(error, 400);
-            }
-          },
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.authenticate",
@@ -614,23 +595,24 @@ export function defineAuthEndpointGroup(
               404: { description: "Provider not found or auth failed" },
             },
           },
-          handler: async ({ service, params, body, request }) => {
-            let attempt;
-            try {
-              attempt = await service.security.beginAuthentication(
+          handler: ({ service, params, body, request })  => present(Effect.gen(function* () {
+            let attempt: Awaited<ReturnType<IdentityApi["security"]["beginAuthentication"]>> | undefined;
+            return yield* Effect.gen(function* () {
+              const began = yield* integration(() => service.security.beginAuthentication(
                 params.provider,
                 body,
-              );
-              const result = await service.authentication.authenticate(
+              ));
+              attempt = began;
+              const result = yield* integration(() => service.authentication.authenticate(
                 params.provider,
                 body as Parameters<
                   IdentityApi["authentication"]["authenticate"]
                 >[1],
-              );
-              await service.security.authenticationSucceeded(
-                attempt,
+              ));
+              yield* integration(() => service.security.authenticationSucceeded(
+                began,
                 result.account.id,
-              );
+              ));
               const sessionCookie = result.session && cookieOptions
                 ? browserSessionCookieHeader(
                     result.session.token,
@@ -655,9 +637,11 @@ export function defineAuthEndpointGroup(
                     }
                   : result,
               };
-            } catch (error) {
-              if (attempt && !(error instanceof AuthRateLimitError)) {
-                await service.security.authenticationFailed(attempt);
+            }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+  const error = unwrapFailure(Cause.squash(cause));
+              const begun = attempt;
+              if (begun && !(error instanceof AuthRateLimitError)) {
+                yield* integration(() => service.security.authenticationFailed(begun));
               }
               if (error instanceof AuthRateLimitError) {
                 return {
@@ -668,8 +652,8 @@ export function defineAuthEndpointGroup(
                 };
               }
               return authErrorResponse(error, 404);
-            }
-          },
+            })));
+})),
         },
         {
           id: "auth.securityEvents.list",
@@ -682,10 +666,12 @@ export function defineAuthEndpointGroup(
             tags: ["auth", "security"],
             responses: { 200: { description: "Authentication security events" } },
           },
-          handler: async ({ service }) => ({
+          handler: ({ service }) => present(Effect.gen(function* () {
+    return {
             status: 200,
-            body: { events: await service.security.listEvents() },
-          }),
+            body: { events: (yield* integrationValue(service.security.listEvents())) },
+          };
+  })),
         },
         {
           id: "auth.sessions.listByAccountId",
@@ -703,10 +689,12 @@ export function defineAuthEndpointGroup(
               200: { description: "List of sessions" },
             },
           },
-          handler: async ({ service, params }) => ({
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+    return {
             status: 200,
-            body: (await service.sessions.listByAccountId(params.accountId)).map(publicSession),
-          }),
+            body: ((yield* integrationValue(service.sessions.listByAccountId(params.accountId)))).map(publicSession),
+          };
+  })),
         },
         {
           id: "auth.session.current",
@@ -734,15 +722,17 @@ export function defineAuthEndpointGroup(
             tags: ["auth"],
             responses: { 200: { description: "Current account sessions" } },
           },
-          handler: async ({ service, principal }) => ({
+          handler: ({ service, principal }) => present(Effect.gen(function* () {
+    return {
             status: 200,
             body: {
               sessions: (
-                await service.sessions.listByAccountId(principal!.id)
+                (yield* integrationValue(service.sessions.listByAccountId(principal!.id)))
               ).map(publicSession),
               currentSessionId: principal?.metadata?.sessionId,
             },
-          }),
+          };
+  })),
         },
         {
           id: "auth.sessions.revokeCurrentAccountSession",
@@ -758,14 +748,14 @@ export function defineAuthEndpointGroup(
               404: { description: "Session not found" },
             },
           },
-          handler: async ({ service, principal, params }) => {
-            const session = await service.sessions.findById(params.sessionId);
+          handler: ({ service, principal, params }) => present(Effect.gen(function* () {
+            const session = (yield* integrationValue(service.sessions.findById(params.sessionId)));
             if (!session || session.accountId !== principal!.id) {
               return { status: 404, body: { error: "Session not found" } };
             }
-            await service.sessions.revoke(session.id);
+            (yield* integrationValue(service.sessions.revoke(session.id)));
             return { status: 204 };
-          },
+          })),
         },
         {
           id: "auth.sessions.revokeManagedSession",
@@ -781,14 +771,14 @@ export function defineAuthEndpointGroup(
               404: { description: "Session not found" },
             },
           },
-          handler: async ({ service, params }) => {
-            const session = await service.sessions.findById(params.sessionId);
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            const session = (yield* integrationValue(service.sessions.findById(params.sessionId)));
             if (!session || session.accountId !== params.accountId) {
               return { status: 404, body: { error: "Session not found" } };
             }
-            await service.sessions.revoke(session.id);
+            (yield* integrationValue(service.sessions.revoke(session.id)));
             return { status: 204 };
-          },
+          })),
         },
         {
           id: "auth.sessions.revokeManagedAccountSessions",
@@ -801,14 +791,16 @@ export function defineAuthEndpointGroup(
             tags: ["auth"],
             responses: { 200: { description: "Sessions revoked" } },
           },
-          handler: async ({ service, params }) => ({
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+    return {
             status: 200,
             body: {
               revoked: (
-                await service.sessions.revokeAll(params.accountId)
+                (yield* integrationValue(service.sessions.revokeAll(params.accountId)))
               ).map(publicSession),
             },
-          }),
+          };
+  })),
         },
         {
           id: "auth.session.rotateCurrent",
@@ -825,12 +817,12 @@ export function defineAuthEndpointGroup(
               404: { description: "Session not found or expired" },
             },
           },
-          handler: async ({ service, principal, request }) => {
+          handler: ({ service, principal, request }) => present(Effect.gen(function* () {
             const sessionId = principal?.metadata?.sessionId;
             if (typeof sessionId !== "string") {
               return { status: 400, body: { error: "The current authentication method is not a rotatable session." } };
             }
-            const rotated = await service.sessions.rotate(sessionId);
+            const rotated = (yield* integrationValue(service.sessions.rotate(sessionId)));
             if (!rotated) {
               return { status: 404, body: { error: "Session not found or expired" } };
             }
@@ -852,7 +844,7 @@ export function defineAuthEndpointGroup(
                 session: publicSession(rotated.session),
               },
             };
-          },
+          })),
         },
         {
           id: "auth.session.revokeCurrent",
@@ -869,12 +861,12 @@ export function defineAuthEndpointGroup(
               404: { description: "Session not found" },
             },
           },
-          handler: async ({ service, principal, request }) => {
+          handler: ({ service, principal, request }) => present(Effect.gen(function* () {
             const sessionId = principal?.metadata?.sessionId;
             if (typeof sessionId !== "string") {
               return { status: 400, body: { error: "The current authentication method is not a revocable session." } };
             }
-            const revoked = await service.sessions.revoke(sessionId);
+            const revoked = (yield* integrationValue(service.sessions.revoke(sessionId)));
             const expiredCookie = cookieOptions
               ? expiredSessionCookieHeader(request, cookieOptions)
               : undefined;
@@ -886,7 +878,7 @@ export function defineAuthEndpointGroup(
                     : undefined,
                 }
               : { status: 404, body: { error: "Session not found" } };
-          },
+          })),
         },
         ...(options.authority === "platform"
           ? [
@@ -901,14 +893,16 @@ export function defineAuthEndpointGroup(
                   tags: ["auth", "service-accounts"],
                   responses: { 200: { description: "Service accounts" } },
                 },
-                handler: async ({ service }: { service: IdentityApi }) => ({
+                handler: ({ service }: { service: IdentityApi }) => present(Effect.gen(function* () {
+    return {
                   status: 200,
                   body: {
-                    serviceAccounts: (await service.accounts.list()).filter(
+                    serviceAccounts: ((yield* integrationValue(service.accounts.list()))).filter(
                       (account) => account.metadata?.principalType === "service",
                     ),
                   },
-                }),
+                };
+  })),
               },
               {
                 id: "auth.serviceAccounts.create",
@@ -924,8 +918,7 @@ export function defineAuthEndpointGroup(
                     400: { description: "Invalid service account" },
                   },
                 },
-                handler: async ({ service, body }: { service: IdentityApi; body: unknown }) => {
-                  try {
+                handler: ({ service, body }: { service: IdentityApi; body: unknown })  => present(Effect.gen(function* () {
                     const input = (body ?? {}) as Record<string, unknown>;
                     const name = typeof input.name === "string" ? input.name.trim() : "";
                     if (!name || name.length > 100) {
@@ -937,7 +930,7 @@ export function defineAuthEndpointGroup(
                     }
                     const tenantId = readTenantIdInput(input.tenantId);
                     const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
-                    const account = await service.accounts.create({
+                    const account = yield* integration(() => service.accounts.create({
                       id,
                       username: id,
                       displayName: name,
@@ -954,12 +947,12 @@ export function defineAuthEndpointGroup(
                         serviceAccount: true,
                         ...(tenantId ? { tenantId } : {}),
                       },
-                    });
-                    const issued = await service.sessions.create({
+                    }));
+                    const issued = yield* integration(() => service.sessions.create({
                       accountId: account.id,
                       expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
                       metadata: { authentication: "service-token", serviceAccount: true },
-                    });
+                    }));
                     return {
                       status: 201,
                       body: {
@@ -968,10 +961,7 @@ export function defineAuthEndpointGroup(
                         session: publicSession(issued.session),
                       },
                     };
-                  } catch (error) {
-                    return authErrorResponse(error, 400);
-                  }
-                },
+                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.setTenant",
@@ -988,9 +978,8 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: async ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown }) => {
-                  try {
-                    const account = await service.accounts.findById(params.accountId);
+                handler: ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
+                    const account = yield* integration(() => service.accounts.findById(params.accountId));
                     if (!account || account.metadata?.principalType !== "service") {
                       return { status: 404, body: { error: "Service account not found" } };
                     }
@@ -1002,15 +991,12 @@ export function defineAuthEndpointGroup(
                     // Records already written under the old Tenant stay where
                     // they are: this names who the account is from now on, and
                     // moving data is a separate, deliberate act.
-                    const updated = await service.accounts.setMetadata(account.id, {
+                    const updated = yield* integration(() => service.accounts.setMetadata(account.id, {
                       ...(account.metadata ?? {}),
                       tenantId,
-                    });
+                    }));
                     return { status: 200, body: { serviceAccount: updated } };
-                  } catch (error) {
-                    return authErrorResponse(error, 400);
-                  }
-                },
+                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.rotateToken",
@@ -1026,9 +1012,8 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: async ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown }) => {
-                  try {
-                    const account = await service.accounts.findById(params.accountId);
+                handler: ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
+                    const account = yield* integration(() => service.accounts.findById(params.accountId));
                     if (!account || account.metadata?.principalType !== "service") {
                       return { status: 404, body: { error: "Service account not found" } };
                     }
@@ -1037,20 +1022,17 @@ export function defineAuthEndpointGroup(
                     if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
                       throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
                     }
-                    await service.sessions.revokeAll(account.id);
-                    const issued = await service.sessions.create({
+                    yield* integration(() => service.sessions.revokeAll(account.id));
+                    const issued = yield* integration(() => service.sessions.create({
                       accountId: account.id,
                       expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
                       metadata: { authentication: "service-token", serviceAccount: true },
-                    });
+                    }));
                     return {
                       status: 200,
                       body: { token: issued.token, session: publicSession(issued.session) },
                     };
-                  } catch (error) {
-                    return authErrorResponse(error, 400);
-                  }
-                },
+                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.serviceAccounts.revoke",
@@ -1066,15 +1048,15 @@ export function defineAuthEndpointGroup(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: async ({ service, params }: { service: IdentityApi; params: Record<string, string> }) => {
-                  const account = await service.accounts.findById(params.accountId);
+                handler: ({ service, params }: { service: IdentityApi; params: Record<string, string> }) => present(Effect.gen(function* () {
+                  const account = (yield* integrationValue(service.accounts.findById(params.accountId)));
                   if (!account || account.metadata?.principalType !== "service") {
                     return { status: 404, body: { error: "Service account not found" } };
                   }
-                  await service.sessions.revokeAll(account.id);
-                  await service.repositories.accounts.delete(account.id);
+                  (yield* integrationValue(service.sessions.revokeAll(account.id)));
+                  (yield* integrationValue(service.repositories.accounts.delete(account.id)));
                   return { status: 204 };
-                },
+                })),
               },
             ]
           : []),
@@ -1091,10 +1073,12 @@ export function defineAuthEndpointGroup(
                   tags: ["auth"],
                   responses: { 200: { description: "Installed providers" } },
                 },
-                handler: async () => ({
+                handler: () => present(Effect.gen(function* () {
+    return {
                   status: 200,
-                  body: { providers: await options.oauthConnections!.list() },
-                }),
+                  body: { providers: (yield* integrationValue(options.oauthConnections!.list())) },
+                };
+  })),
               },
               {
                 id: "auth.oauth.connections.configure",
@@ -1118,12 +1102,11 @@ export function defineAuthEndpointGroup(
                     404: { description: "No such provider is installed" },
                   },
                 },
-                handler: async ({ params, body }: { params: Record<string, string>; body: unknown }) => {
-                  try {
-                    const saved = await options.oauthConnections!.configure(
+                handler: ({ params, body }: { params: Record<string, string>; body: unknown })  => present(Effect.gen(function* () {
+                    const saved = yield* integration(() => options.oauthConnections!.configure(
                       params.provider,
                       body,
-                    );
+                    ));
                     return saved
                       ? { status: 200, body: { connection: saved } }
                       : {
@@ -1132,10 +1115,7 @@ export function defineAuthEndpointGroup(
                             error: `No installed plugin defines "${params.provider}".`,
                           },
                         };
-                  } catch (error) {
-                    return authErrorResponse(error, 400);
-                  }
-                },
+                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
               {
                 id: "auth.oauth.connections.remove",
@@ -1151,10 +1131,10 @@ export function defineAuthEndpointGroup(
                   },
                   responses: { 204: { description: "Connection removed" } },
                 },
-                handler: async ({ params }: { params: Record<string, string> }) => {
-                  await options.oauthConnections!.remove(params.provider);
+                handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+                  (yield* integrationValue(options.oauthConnections!.remove(params.provider)));
                   return { status: 204 };
-                },
+                })),
               },
             ]
           : []),
@@ -1170,14 +1150,16 @@ export function defineAuthEndpointGroup(
                   tags: ["auth"],
                   responses: { 200: { description: "Bootstrap status" } },
                 },
-                handler: async () => ({
+                handler: () => present(Effect.gen(function* () {
+    return {
                   status: 200,
                   body: {
-                    ...(await options.bootstrap!.status()),
+                    ...((yield* integrationValue(options.bootstrap!.status()))),
                     available: Boolean(bootstrapToken),
                     tokenRequired: true,
                   },
-                }),
+                };
+  })),
               },
               {
                 id: "auth.bootstrap.createOwner",
@@ -1196,8 +1178,7 @@ export function defineAuthEndpointGroup(
                     400: { description: "Invalid or completed bootstrap" },
                   },
                 },
-                handler: async ({ body, request }: { body: unknown; request: Request }) => {
-                  try {
+                handler: ({ body, request }: { body: unknown; request: Request })  => present(Effect.gen(function* () {
                     if (!bootstrapToken) {
                       return {
                         status: 503,
@@ -1219,9 +1200,9 @@ export function defineAuthEndpointGroup(
                         body: { error: "Invalid Platform bootstrap token." },
                       };
                     }
-                    const result = await options.bootstrap!.bootstrap(
+                    const result = yield* integration(() => options.bootstrap!.bootstrap(
                       body as Parameters<IdentityBootstrapCapability["bootstrap"]>[0],
-                    );
+                    ));
                     const sessionCookie = cookieOptions
                       ? browserSessionCookieHeader(
                           result.session.token,
@@ -1243,10 +1224,7 @@ export function defineAuthEndpointGroup(
                         },
                       },
                     };
-                  } catch (error) {
-                    return authErrorResponse(error, 400);
-                  }
-                },
+                  }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
               },
             ]
           : []),
@@ -1314,28 +1292,32 @@ export interface IdentityServiceOptions {
   definition?: DefineAuthServiceOptions;
 }
 
-export async function createIdentitySubsystem(
+export function createIdentitySubsystem(
   options: IdentityServiceOptions = {},
 ): Promise<IdentitySubsystem> {
+    return present(Effect.gen(function* (): Effect.fn.Return<IdentitySubsystem, IntegrationFailure> {
   const auth =
     options.auth ??
-    (await createIdentity({
+    ((yield* integrationValue(createIdentity({
       ...(options.authOptions ?? {}),
       methods: [
         ...(options.authOptions?.methods ?? []),
         ...(options.methods ?? []),
       ],
-    }));
+    }))));
 
-  return defineAuthSubsystem(auth, {
+  return (yield* integrationValue(defineAuthSubsystem(auth, {
     ...(options.definition ?? {}),
     ...(options.registration === undefined ? {} : { registration: options.registration }),
-  });
-}
+  })));
+}));
+  }
 
-export async function identityEndpointGroup(
+export function identityEndpointGroup(
   options: IdentityServiceOptions = {},
 ): Promise<IdentityEndpointGroup> {
-  const subsystem = await createIdentitySubsystem(options);
+    return present(Effect.gen(function* (): Effect.fn.Return<IdentityEndpointGroup, IntegrationFailure> {
+  const subsystem = (yield* integrationValue(createIdentitySubsystem(options)));
   return subsystem.endpointGroup;
-}
+}));
+  }

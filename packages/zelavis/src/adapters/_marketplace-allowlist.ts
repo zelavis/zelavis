@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { normalizeProjectHostPackages } from "../project-host-packages.js";
 /**
  * The marketplace allow-list, wired into a local host.
@@ -125,17 +127,17 @@ export interface LocalMarketplace {
 /** The file a Platform hands its allow-list to a Project in. */
 export const HANDED_DOWN_ALLOWLIST_FILE = "allowlist.json";
 
-async function writeHandedDown(directory: string, value: unknown): Promise<void> {
+function writeHandedDown(directory: string, value: unknown): Promise<void> {
   const file = join(directory, HANDED_DOWN_ALLOWLIST_FILE);
   const temporary = `${file}.${process.pid}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-    await rename(temporary, file);
-  } catch {
+  return present(Effect.gen(function* () {
+    yield* integrationValue(writeFile(temporary, JSON.stringify(value), { mode: 0o600 }));
+    yield* integrationValue(rename(temporary, file));
+  }).pipe(
     // A Project that is gone, or a folder that cannot be written, must not stop
     // the Platform from refreshing its own list. It keeps the one it has.
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
+    Effect.catch(() => integrationValue(rm(temporary, { force: true })).pipe(Effect.orElseSucceed(() => undefined))),
+  ));
 }
 
 const CACHE_NAMESPACE = "marketplace-allowlist";
@@ -157,10 +159,11 @@ interface LocalOfficialService {
   directory: string;
 }
 
-async function readLocalPackage(directory: string): Promise<LocalOfficialService | undefined> {
+function readLocalPackage(directory: string): Promise<LocalOfficialService | undefined> {
+  return present(Effect.gen(function* (): Effect.fn.Return<LocalOfficialService | undefined, IntegrationFailure> {
   const file = join(directory, "package.json");
   if (!existsSync(file)) return undefined;
-  let manifest: {
+  type Manifest = {
     name?: unknown;
     version?: unknown;
     zelavis?: {
@@ -169,11 +172,13 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
       project?: { runtimeKinds?: unknown; runtime?: unknown; hostPackages?: unknown };
     };
   };
-  try {
-    manifest = JSON.parse(await readFile(file, "utf8"));
-  } catch {
-    return undefined;
-  }
+  const parsed = yield* integrationValue(readFile(file, "utf8")).pipe(
+    Effect.flatMap((text) => evaluate((): Manifest => JSON.parse(text))),
+    Effect.map((value) => ({ value })),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (!parsed) return undefined;
+  const manifest = parsed.value;
   const kind = manifest.zelavis?.kind;
   if (typeof manifest.name !== "string" || typeof manifest.version !== "string" ||
       (kind !== "app" && kind !== "plugin" && kind !== "frontend")) {
@@ -199,41 +204,48 @@ async function readLocalPackage(directory: string): Promise<LocalOfficialService
     ...(typeof manifest.zelavis?.project?.runtime === "string" ? { providesRuntime: true } : {}),
     directory: resolve(directory),
   };
+  }));
 }
 
 /** The officially maintained services in a `zelavis-services` checkout: each one, and each one's `plugins/*`. */
-export async function discoverLocalOfficialServices(root: string): Promise<readonly LocalOfficialService[]> {
+export function discoverLocalOfficialServices(root: string): Promise<readonly LocalOfficialService[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly LocalOfficialService[], IntegrationFailure> {
   if (!existsSync(root)) return [];
   const found: LocalOfficialService[] = [];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
+  for (const entry of (yield* integrationValue(readdir(root, { withFileTypes: true })))) {
     if (!entry.isDirectory() || entry.name === "node_modules") continue;
     const directory = join(root, entry.name);
-    const top = await readLocalPackage(directory);
+    const top = (yield* integrationValue(readLocalPackage(directory)));
     if (top) found.push(top);
     const nested = join(directory, "plugins");
     if (!existsSync(nested)) continue;
-    for (const child of await readdir(nested, { withFileTypes: true })) {
+    for (const child of (yield* integrationValue(readdir(nested, { withFileTypes: true })))) {
       if (!child.isDirectory()) continue;
-      const service = await readLocalPackage(join(nested, child.name));
+      const service = (yield* integrationValue(readLocalPackage(join(nested, child.name))));
       if (service) found.push(service);
     }
   }
-  return found.sort((left, right) => left.name.localeCompare(right.name));
-}
+  return (yield* integrationValue(found.sort((left, right) => left.name.localeCompare(right.name))));
+}));
+  }
 
-async function loadMarketplaceModule(): Promise<MarketplaceModule | undefined> {
+function loadMarketplaceModule(): Promise<MarketplaceModule | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<MarketplaceModule | undefined, IntegrationFailure> {
   const directory = resolveBundledServiceDirectory("@zelavis/marketplace");
   const entry = directory && join(directory, "dist", "allowlist", "index.js");
   if (!entry || !existsSync(entry)) return undefined;
-  return (await import(pathToFileURL(entry).href)) as MarketplaceModule;
-}
+  return ((yield* integrationValue(import(pathToFileURL(entry).href)))) as MarketplaceModule;
+}));
+  }
 
-async function readSnapshot(module: MarketplaceModule): Promise<unknown | undefined> {
+function readSnapshot(module: MarketplaceModule): Promise<unknown | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<unknown | undefined, IntegrationFailure> {
   const directory = resolveBundledServiceDirectory("@zelavis/marketplace");
   const file = directory && join(directory, "allowlist.snapshot.json");
   if (!file || !existsSync(file)) return undefined;
-  return module.parseAllowlist(JSON.parse(await readFile(file, "utf8")));
-}
+  return (yield* integrationValue(module.parseAllowlist(JSON.parse((yield* integrationValue(readFile(file, "utf8")))))));
+}));
+  }
 
 /**
  * Builds a local host's view of the marketplace: the allow-list client and its
@@ -241,7 +253,7 @@ async function readSnapshot(module: MarketplaceModule): Promise<unknown | undefi
  * or unreachable source must not delay composition); a refresh is started in
  * the background and the newer list applies from the next start.
  */
-export async function createLocalMarketplace(input: {
+export function createLocalMarketplace(input: {
   readonly options: MarketplaceOptions | undefined;
   readonly systemStore: ZelavisSystemStore | undefined;
   /** Packages the registry already offers, which the marketplace does not repeat. */
@@ -258,8 +270,9 @@ export async function createLocalMarketplace(input: {
   /** The Platform's Projects folder, where a refreshed list is handed down to every Project. */
   readonly projectsDirectory?: string;
 }): Promise<LocalMarketplace | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<LocalMarketplace | undefined, IntegrationFailure> {
   const options = input.options ?? {};
-  const module = await loadMarketplaceModule();
+  const module = (yield* integrationValue(loadMarketplaceModule()));
   if (!module) return undefined;
 
   const sources = options.sources ??
@@ -268,12 +281,14 @@ export async function createLocalMarketplace(input: {
   const store = input.systemStore;
   const projectsDirectory = input.projectsDirectory;
 
-  async function handDownToEveryProject(value: unknown) {
+  function handDownToEveryProject(value: unknown) {
+    return present(Effect.gen(function* () {
     if (!projectsDirectory || !existsSync(projectsDirectory)) return;
-    for (const entry of await readdir(projectsDirectory, { withFileTypes: true }).catch(() => [])) {
+    for (const entry of (yield* integrationValue(readdir(projectsDirectory, { withFileTypes: true }).catch(() => [])))) {
       const data = join(projectsDirectory, entry.name, ".zelavis");
-      if (entry.isDirectory() && existsSync(data)) await writeHandedDown(data, value);
+      if (entry.isDirectory() && existsSync(data)) (yield* integrationValue(writeHandedDown(data, value)));
     }
+  }));
   }
 
   // A Platform keeps the list in its System Store. A Project keeps none of its
@@ -282,31 +297,36 @@ export async function createLocalMarketplace(input: {
   const handedDown = join(input.dataDirectory, HANDED_DOWN_ALLOWLIST_FILE);
   const cache = input.role === "project"
     ? {
-        async read() {
-          try {
-            return JSON.parse(await readFile(handedDown, "utf8"));
-          } catch {
-            return undefined;
-          }
+        read() {
+          return present(integrationValue(readFile(handedDown, "utf8")).pipe(
+            Effect.flatMap((text) => evaluate((): unknown => JSON.parse(text))),
+            Effect.orElseSucceed(() => undefined),
+          ));
         },
-        async write() {},
+        write() {
+    return present(Effect.gen(function* () {}));
+  },
       }
     : store
       ? {
-          async read() {
-            return (await store.get(CACHE_NAMESPACE, CACHE_KEY))?.value;
-          },
-          async write(value: unknown) {
-            await store.set(CACHE_NAMESPACE, CACHE_KEY, value as never);
-            await handDownToEveryProject(value);
-          },
+          read() {
+    return present(Effect.gen(function* () {
+            return ((yield* integrationValue(store.get(CACHE_NAMESPACE, CACHE_KEY))))?.value;
+          }));
+  },
+          write(value: unknown) {
+    return present(Effect.gen(function* () {
+            (yield* integrationValue(store.set(CACHE_NAMESPACE, CACHE_KEY, value as never)));
+            (yield* integrationValue(handDownToEveryProject(value)));
+          }));
+  },
         }
       : undefined;
 
   const client = module.createAllowlistClient({
     sources,
     ...(cache ? { cache } : {}),
-    bundled: await readSnapshot(module),
+    bundled: (yield* integrationValue(readSnapshot(module))),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
 
@@ -315,7 +335,7 @@ export async function createLocalMarketplace(input: {
     setInterval(() => void client.refresh().catch(() => undefined), REFRESH_INTERVAL_MS).unref?.();
   }
 
-  const view = await client.current();
+  const view = (yield* integrationValue(client.current()));
   const listed = ((view?.allowlist as { services?: readonly unknown[] } | undefined)?.services ?? []) as readonly {
     name: string;
   }[];
@@ -325,7 +345,7 @@ export async function createLocalMarketplace(input: {
   // Development: an official service in the operator's own checkout stands in
   // for its npm copy, so it can be tried without publishing anything.
   const directory = options.officialServicesDirectory ?? process.env.ZELAVIS_OFFICIAL_SERVICES_DIR;
-  const local = directory ? await discoverLocalOfficialServices(resolve(directory)) : [];
+  const local = directory ? (yield* integrationValue(discoverLocalOfficialServices(resolve(directory)))) : [];
   const localNames = new Set(local.map((entry) => entry.name));
   const localCatalog = local
     .filter((entry) => !input.bundledNames.has(entry.name))
@@ -373,24 +393,32 @@ export async function createLocalMarketplace(input: {
     client,
     gate,
     localPackages: new Map(local.map((entry) => [entry.name, entry.directory])),
-    async handDown(projectDataDirectory) {
-      const held = await cache?.read();
-      if (held) await writeHandedDown(projectDataDirectory, held);
-    },
-    async runtimeTrusted(name) {
+    handDown(projectDataDirectory) {
+    return present(Effect.gen(function* () {
+      const held = (yield* integrationValue(cache?.read()));
+      if (held) (yield* integrationValue(writeHandedDown(projectDataDirectory, held)));
+    }));
+  },
+    runtimeTrusted(name) {
+    return present(Effect.gen(function* () {
       if (localRuntimes.has(name)) return true;
-      const held = await client.current();
+      const held = (yield* integrationValue(client.current()));
       const services = (held?.allowlist.services ?? []) as readonly { name: string; projectRuntime?: boolean }[];
-      return services.some((entry) => entry.name === name && entry.projectRuntime === true);
-    },
+      return (yield* integrationValue(services.some((entry) => entry.name === name && entry.projectRuntime === true)));
+    }));
+  },
     control: {
       gated: gate !== undefined,
       sources: sources.length,
-      status: async () => summarize(await client.current()),
-      async refresh() {
-        const report = await client.refresh();
+      status: () => present(Effect.gen(function* () {
+    return (yield* integrationValue(summarize((yield* integrationValue(client.current())))));
+  })),
+      refresh() {
+    return present(Effect.gen(function* () {
+        const report = (yield* integrationValue(client.refresh()));
         return { updated: report.updated, attempts: report.attempts, ...summarize(report.view) };
-      },
+      }));
+  },
     },
     catalog: [
       ...localCatalog,
@@ -398,4 +426,5 @@ export async function createLocalMarketplace(input: {
     ],
     managedDirectories: directory ? [resolve(directory)] : [],
   };
-}
+}));
+  }

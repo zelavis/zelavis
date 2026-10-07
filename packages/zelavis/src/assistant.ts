@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "./core/index.js";
 import type {
   ZelavisSystemStore,
@@ -183,65 +185,78 @@ export function createAssistantManager(options: {
   const { store } = options;
   const responder = options.responder ?? createLocalAssistantResponder();
 
-  async function read(id: string): Promise<ZelavisAssistantThread | undefined> {
+  function read(id: string): Promise<ZelavisAssistantThread | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisAssistantThread | undefined, IntegrationFailure> {
     const normalizedId = normalizeOptionalText(id);
     if (!normalizedId) {
       throw new ZelavisAssistantValidationError("Assistant thread id is required.");
     }
-    const record = await store.get(ASSISTANT_THREADS_NAMESPACE, normalizedId);
+    const record = (yield* integrationValue(store.get(ASSISTANT_THREADS_NAMESPACE, normalizedId)));
     return record ? parseStoredThread(record.value) : undefined;
+  }));
   }
 
-  async function readOwned(id: string, ownerId: string) {
-    const thread = await read(id);
+  function readOwned(id: string, ownerId: string) {
+    return present(Effect.gen(function* () {
+    const thread = (yield* integrationValue(read(id)));
     return thread && thread.ownerId === ownerId ? thread : undefined;
+  }));
   }
 
-  async function write(thread: ZelavisAssistantThread) {
-    await store.set(ASSISTANT_THREADS_NAMESPACE, thread.id, toStoreValue(thread));
+  function write(thread: ZelavisAssistantThread) {
+    return present(Effect.gen(function* () {
+    (yield* integrationValue(store.set(ASSISTANT_THREADS_NAMESPACE, thread.id, toStoreValue(thread))));
     return thread;
+  }));
   }
 
   return {
     responder: responder.name,
-    async list(ownerId, projectId) {
+    list(ownerId, projectId) {
+    return present(Effect.gen(function* () {
       const normalizedProjectId = normalizeOptionalText(projectId);
-      const records = await store.list(ASSISTANT_THREADS_NAMESPACE);
-      return records
+      const records = (yield* integrationValue(store.list(ASSISTANT_THREADS_NAMESPACE)));
+      return (yield* integrationValue(records
         .map((record) => parseStoredThread(record.value))
         .filter(
           (thread) =>
             thread.ownerId === ownerId &&
             (normalizedProjectId === undefined || thread.projectId === normalizedProjectId),
         )
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    },
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))));
+    }));
+  },
     get: readOwned,
-    async delete(id, ownerId) {
-      const thread = await readOwned(id, ownerId);
-      return thread ? store.delete(ASSISTANT_THREADS_NAMESPACE, thread.id) : false;
-    },
-    async deleteProjectThreads(projectId, onDeleted) {
+    delete(id, ownerId) {
+    return present(Effect.gen(function* () {
+      const thread = (yield* integrationValue(readOwned(id, ownerId)));
+      return thread ? (yield* integrationValue(store.delete(ASSISTANT_THREADS_NAMESPACE, thread.id))) : false;
+    }));
+  },
+    deleteProjectThreads(projectId, onDeleted) {
+    return present(Effect.gen(function* () {
       const normalizedProjectId = normalizeOptionalText(projectId);
       if (!normalizedProjectId) {
         throw new ZelavisAssistantValidationError("Project id is required.");
       }
-      const records = await store.list(ASSISTANT_THREADS_NAMESPACE);
+      const records = (yield* integrationValue(store.list(ASSISTANT_THREADS_NAMESPACE)));
       let deleted = 0;
       for (const record of records) {
         const thread = parseStoredThread(record.value);
         if (
           thread.projectId === normalizedProjectId &&
-          await store.delete(ASSISTANT_THREADS_NAMESPACE, record.key)
+          (yield* integrationValue(store.delete(ASSISTANT_THREADS_NAMESPACE, record.key)))
         ) {
           deleted += 1;
-          await onDeleted?.(thread.id);
+          (yield* integrationValue(onDeleted?.(thread.id)));
         }
       }
       return deleted;
-    },
-    async recordOutcome(id, ownerId, outcome) {
-      const current = await readOwned(id, ownerId);
+    }));
+  },
+    recordOutcome(id, ownerId, outcome) {
+    return present(Effect.gen(function* () {
+      const current = (yield* integrationValue(readOwned(id, ownerId)));
       if (!current) {
         throw new ZelavisAssistantNotFoundError(`Assistant thread "${id}" was not found.`);
       }
@@ -252,18 +267,20 @@ export function createAssistantManager(options: {
         ...(outcome.activity?.length ? { activity: outcome.activity } : {}),
         createdAt: new Date().toISOString(),
       };
-      const thread = await write({
+      const thread = (yield* integrationValue(write({
         ...current,
         messages: [...current.messages, message],
         updatedAt: message.createdAt,
-      });
+      })));
       return { thread, message };
-    },
-    async create(ownerId, input = {}) {
+    }));
+  },
+    create(ownerId, input = {}) {
+    return present(Effect.gen(function* () {
       if (!normalizeOptionalText(ownerId)) {
         throw new ZelavisAssistantValidationError("An Assistant thread needs an owner.");
       }
-      const owned = (await store.list(ASSISTANT_THREADS_NAMESPACE))
+      const owned = ((yield* integrationValue(store.list(ASSISTANT_THREADS_NAMESPACE))))
         .map((record) => parseStoredThread(record.value))
         .filter((thread) => thread.ownerId === ownerId).length;
       if (owned >= ASSISTANT_MAX_THREADS_PER_OWNER) {
@@ -272,7 +289,7 @@ export function createAssistantManager(options: {
         );
       }
       const timestamp = new Date().toISOString();
-      return write({
+      return (yield* integrationValue(write({
         id: createId("thread"),
         ownerId,
         title: normalizeOptionalText(input.title) ?? "New chat",
@@ -282,9 +299,11 @@ export function createAssistantManager(options: {
         messages: [],
         createdAt: timestamp,
         updatedAt: timestamp,
-      });
-    },
-    async appendMessage(id, prompt, principal, callOptions) {
+      })));
+    }));
+  },
+    appendMessage(id, prompt, principal, callOptions) {
+    return present(Effect.gen(function* () {
       const normalizedPrompt = prompt.trim();
       if (!normalizedPrompt) {
         throw new ZelavisAssistantValidationError("Assistant prompt is required.");
@@ -294,7 +313,7 @@ export function createAssistantManager(options: {
           `A message may be at most ${ASSISTANT_MAX_PROMPT_CHARS} characters.`,
         );
       }
-      const current = await readOwned(id, principal.id);
+      const current = (yield* integrationValue(readOwned(id, principal.id)));
       if (current && current.messages.length >= ASSISTANT_MAX_MESSAGES_PER_THREAD) {
         throw new ZelavisAssistantValidationError(
           "This chat is full. Start a new one to keep going.",
@@ -322,7 +341,7 @@ export function createAssistantManager(options: {
         updatedAt: userMessage.createdAt,
       };
       let streamedText = false;
-      const reply = await responder.respond({
+      const reply = (yield* integrationValue(responder.respond({
         thread: withUser,
         prompt: normalizedPrompt,
         principal,
@@ -335,7 +354,7 @@ export function createAssistantManager(options: {
             }
           : {}),
         ...(callOptions?.signal ? { signal: callOptions.signal } : {}),
-      });
+      })));
       // A responder that cannot stream still reaches a streaming caller.
       if (callOptions?.onEvent && !streamedText && reply.content) {
         callOptions.onEvent({ type: "text", delta: reply.content });
@@ -350,13 +369,14 @@ export function createAssistantManager(options: {
         provider: reply.provider ?? responder.name,
         createdAt: new Date().toISOString(),
       };
-      const thread = await write({
+      const thread = (yield* integrationValue(write({
         ...withUser,
         messages: [...withUser.messages, assistantMessage],
         updatedAt: assistantMessage.createdAt,
-      });
+      })));
       return { thread, userMessage, assistantMessage };
-    },
+    }));
+  },
   };
 }
 

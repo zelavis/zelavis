@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present } from "../../core/runtime/effect-boundary.js";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
@@ -50,12 +50,12 @@ const toBytes = (value: unknown): Uint8Array => {
 };
 
 const loadClient = Effect.tryPromise({
-  try: async () => {
-    const mod = (await import("@libsql/client")) as unknown as {
+  try: () => present(Effect.gen(function* () {
+    const mod = ((yield* integrationValue(import("@libsql/client")))) as unknown as {
       createClient: (options: { url: string; authToken?: string }) => RemoteClient;
     };
     return mod.createClient;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "libsql-remote.load",
@@ -120,7 +120,7 @@ export const makeLibsqlRemoteEngine = (
           scan: (prefix, scanOptions) =>
             Stream.fromIterableEffect(
               Effect.tryPromise({
-                try: async () => {
+                try: () => present(Effect.gen(function* () {
                   const { lo, hi, empty } = scanRange(prefix, scanOptions);
                   const limit = scanOptions?.limit;
                   if (empty || limit === 0) return [] as Array<KvEntry>;
@@ -131,23 +131,23 @@ export const makeLibsqlRemoteEngine = (
                     ? `SELECT key, value FROM ${table} WHERE key >= ? ORDER BY key ${order} LIMIT ?`
                     : `SELECT key, value FROM ${table} WHERE key >= ? AND key < ? ORDER BY key ${order} LIMIT ?`;
                   const args = hi === undefined ? [lo, limit ?? -1] : [lo, hi, limit ?? -1];
-                  const result = await client.execute({ sql, args });
-                  return result.rows.map((row): KvEntry => ({
+                  const result = (yield* integrationValue(client.execute({ sql, args })));
+                  return (yield* integrationValue(result.rows.map((row): KvEntry => ({
                     key: toBytes(row.key),
                     value: toBytes(row.value),
-                  }));
-                },
+                  }))));
+                })),
                 catch: fail("libsql-remote.scan"),
               }),
             ),
 
           write: (writes: ReadonlyArray<KvWrite>) =>
             Effect.tryPromise({
-              try: async () => {
+              try: () => present(Effect.gen(function* () {
                 if (writes.length === 0) return;
                 // One batch in write mode: every statement lands or none does,
                 // which is the whole transaction mechanism this contract asks for.
-                await client.batch(
+                (yield* integrationValue(client.batch(
                   writes.map((write) =>
                     write.op === "put"
                       ? {
@@ -156,8 +156,8 @@ export const makeLibsqlRemoteEngine = (
                       }
                       : { sql: `DELETE FROM ${table} WHERE key = ?`, args: [write.key] }),
                   "write",
-                );
-              },
+                )));
+              })),
               catch: fail("libsql-remote.write"),
             }),
 

@@ -9,7 +9,7 @@ import type {
 } from "../project.js";
 import { ZelavisProjectRuntimeError } from "../project.js";
 import { Effect } from "effect";
-import { effectOperations, evaluate, presentOperations } from "../core/runtime/effect-boundary.js";
+import { effectOperations, evaluate, presentOperations, present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 
 export type ZelavisDeploymentBackendFeatureState =
   | "available"
@@ -185,15 +185,16 @@ export function createDeploymentBackendManager(options: {
     return result;
   }
 
-  async function readPolicy(): Promise<ZelavisDeploymentBackendPolicy> {
-    const stored = await options.store.get(STORE_NAMESPACE, POLICY_KEY);
+  function readPolicy(): Promise<ZelavisDeploymentBackendPolicy> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendPolicy, IntegrationFailure> {
+    const stored = (yield* integrationValue(options.store.get(STORE_NAMESPACE, POLICY_KEY)));
     if (!stored) {
       const policy: ZelavisDeploymentBackendPolicy = {
         defaultBackend: NATIVE_BACKEND,
         enabledBackends: [NATIVE_BACKEND],
         updatedAt: new Date().toISOString(),
       };
-      await options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy));
+      (yield* integrationValue(options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy))));
       return policy;
     }
     if (!isRecord(stored.value)) {
@@ -228,12 +229,14 @@ export function createDeploymentBackendManager(options: {
           ? stored.value.updatedAt
           : stored.updatedAt,
     };
+  }));
   }
 
-  async function writePolicy(input: {
+  function writePolicy(input: {
     defaultBackend: string;
     enabledBackends: readonly string[];
   }): Promise<ZelavisDeploymentBackendPolicy> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendPolicy, IntegrationFailure> {
     const policy: ZelavisDeploymentBackendPolicy = {
       defaultBackend: normalizeBackendId(input.defaultBackend),
       enabledBackends: Object.freeze([
@@ -241,46 +244,51 @@ export function createDeploymentBackendManager(options: {
       ]),
       updatedAt: new Date().toISOString(),
     };
-    await options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy));
+    (yield* integrationValue(options.store.set(STORE_NAMESPACE, POLICY_KEY, toStoreValue(policy))));
     return policy;
+  }));
   }
 
-  async function detectDefinition(
+  function detectDefinition(
     definition: ZelavisDeploymentBackendAdapter,
   ): Promise<ZelavisDeploymentBackendDetection> {
-    let detection: ZelavisDeploymentBackendDetection;
-    try {
-      detection = normalizeDetection(await definition.detect());
-    } catch (error) {
-      detection = {
-        state: "unavailable",
-        installed: false,
-        healthy: false,
-        checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-    await options.store.set(
-      STORE_NAMESPACE,
-      `${DETECTION_PREFIX}${definition.id}`,
-      toStoreValue(detection),
-    );
-    return detection;
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendDetection, IntegrationFailure> {
+      const detection = yield* integration(() => definition.detect()).pipe(
+        Effect.flatMap((detected) => evaluate(() => normalizeDetection(detected))),
+        Effect.catch((failure): Effect.Effect<ZelavisDeploymentBackendDetection> => {
+          const error = unwrapFailure(failure);
+          return Effect.succeed({
+            state: "unavailable",
+            installed: false,
+            healthy: false,
+            checkedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      );
+      yield* integrationValue(options.store.set(
+        STORE_NAMESPACE,
+        `${DETECTION_PREFIX}${definition.id}`,
+        toStoreValue(detection),
+      ));
+      return detection;
+    }));
   }
 
-  async function snapshot(
+  function snapshot(
     definition: ZelavisDeploymentBackendAdapter,
     policy: ZelavisDeploymentBackendPolicy,
     refresh: boolean,
   ): Promise<ZelavisDeploymentBackendSnapshot> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendSnapshot, IntegrationFailure> {
     const detectionRecord = refresh
       ? undefined
-      : await options.store.get(
+      : (yield* integrationValue(options.store.get(
           STORE_NAMESPACE,
           `${DETECTION_PREFIX}${definition.id}`,
-        );
+        )));
     const detection = readDetection(detectionRecord?.value) ??
-      await detectDefinition(definition);
+      (yield* integrationValue(detectDefinition(definition)));
     return {
       id: definition.id,
       title: definition.title,
@@ -290,16 +298,18 @@ export function createDeploymentBackendManager(options: {
       capabilities: definition.capabilities,
       detection,
     };
+  }));
   }
 
-  async function requireReadyExecutable(id: string) {
+  function requireReadyExecutable(id: string) {
+    return present(Effect.gen(function* () {
     const definition = definitions.get(normalizeBackendId(id));
     if (!definition) {
       throw new ZelavisDeploymentBackendValidationError(
         `Deployment backend "${id}" is not registered.`,
       );
     }
-    const detection = await detectDefinition(definition);
+    const detection = (yield* integrationValue(detectDefinition(definition)));
     if (detection.state !== "ready") {
       throw new ZelavisDeploymentBackendConflictError(
         `Deployment backend "${definition.id}" is not healthy on this server.`,
@@ -311,19 +321,23 @@ export function createDeploymentBackendManager(options: {
       );
     }
     return definition;
+  }));
   }
 
   return {
-    async list(listOptions = {}) {
-      const policy = await readPolicy();
-      return Promise.all(
-        [...definitions.values()].map((definition) =>
-          snapshot(definition, policy, listOptions.refresh === true),
-        ),
-      );
+    list(listOptions = {}) {
+      return present(Effect.gen(function* () {
+        const policy = yield* integrationValue(readPolicy());
+        return yield* Effect.forEach(
+          [...definitions.values()],
+          (definition) => integrationValue(snapshot(definition, policy, listOptions.refresh === true)),
+          { concurrency: Math.max(1, definitions.size) },
+        );
+      }));
     },
-    async detect(id) {
-      const policy = await readPolicy();
+    detect(id) {
+      return present(Effect.gen(function* () {
+      const policy = yield* integrationValue(readPolicy());
       const selected = id
         ? [definitions.get(normalizeBackendId(id))].filter(
             (definition): definition is ZelavisDeploymentBackendAdapter =>
@@ -335,61 +349,64 @@ export function createDeploymentBackendManager(options: {
           `Deployment backend "${id}" is not registered.`,
         );
       }
-      return Promise.all(
-        selected.map((definition) => snapshot(definition, policy, true)),
+      return yield* Effect.forEach(
+        selected,
+        (definition) => integrationValue(snapshot(definition, policy, true)),
+        { concurrency: Math.max(1, selected.length) },
       );
+      }));
     },
     getPolicy: readPolicy,
     enable(id) {
-      return serializePolicyMutation(async () => {
-        const definition = await requireReadyExecutable(id);
-        const policy = await readPolicy();
-        return writePolicy({
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
+        const definition = (yield* integrationValue(requireReadyExecutable(id)));
+        const policy = (yield* integrationValue(readPolicy()));
+        return (yield* integrationValue(writePolicy({
           defaultBackend: policy.defaultBackend,
           enabledBackends: [...policy.enabledBackends, definition.id],
-        });
-      });
+        })));
+      })));
     },
     disable(id) {
-      return serializePolicyMutation(async () => {
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
         const backendId = normalizeBackendId(id);
         if (backendId === NATIVE_BACKEND) {
           throw new ZelavisDeploymentBackendConflictError(
             "The native deployment backend cannot be disabled.",
           );
         }
-        const policy = await readPolicy();
+        const policy = (yield* integrationValue(readPolicy()));
         if (policy.defaultBackend === backendId) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${backendId}" is the server default and cannot be disabled.`,
           );
         }
-        const assigned = await options.assignedProjectCount?.(backendId) ?? 0;
+        const assigned = (yield* integrationValue(options.assignedProjectCount?.(backendId))) ?? 0;
         if (assigned > 0) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${backendId}" still owns ${assigned} Project${assigned === 1 ? "" : "s"}.`,
           );
         }
-        return writePolicy({
+        return (yield* integrationValue(writePolicy({
           defaultBackend: policy.defaultBackend,
           enabledBackends: policy.enabledBackends.filter((value) => value !== backendId),
-        });
-      });
+        })));
+      })));
     },
     setDefault(id) {
-      return serializePolicyMutation(async () => {
-        const definition = await requireReadyExecutable(id);
-        const policy = await readPolicy();
+      return serializePolicyMutation(() => present(Effect.gen(function* () {
+        const definition = (yield* integrationValue(requireReadyExecutable(id)));
+        const policy = (yield* integrationValue(readPolicy()));
         if (!policy.enabledBackends.includes(definition.id)) {
           throw new ZelavisDeploymentBackendConflictError(
             `Deployment backend "${definition.id}" must be enabled before it can become the default.`,
           );
         }
-        return writePolicy({
+        return (yield* integrationValue(writePolicy({
           defaultBackend: definition.id,
           enabledBackends: policy.enabledBackends,
-        });
-      });
+        })));
+      })));
     },
   };
 }

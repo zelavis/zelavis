@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { acquireLocalDataOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { join, resolve } from "node:path";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
@@ -53,25 +55,32 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
   const stores = new Set<{ close?(): void | Promise<void> }>();
   return defineAdapter({
     name: "bun",
-    async close(requester) {
-      if (requester && ownerOptions && requester !== ownerOptions) return;
-      await Promise.all([...stores].map((store) => store.close?.()));
-      stores.clear();
-      const lease = await ownership?.catch(() => undefined);
-      await lease?.release();
-      ownership = undefined;
-      ownerOptions = undefined;
+    close(requester) {
+      return present(Effect.gen(function* () {
+        if (requester && ownerOptions && requester !== ownerOptions) return;
+        yield* Effect.forEach(
+          [...stores],
+          (store) => integrationValue(store.close?.()),
+          { concurrency: Math.max(1, stores.size), discard: true },
+        );
+        stores.clear();
+        const lease = yield* integrationValue(ownership).pipe(Effect.orElseSucceed(() => undefined));
+        yield* integrationValue(lease?.release());
+        ownership = undefined;
+        ownerOptions = undefined;
+      }));
     },
-    async resolve(
+    resolve(
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisResolvedPlatformOptions, IntegrationFailure> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const isProjectRuntime = options.role === "project";
       if (!isProjectRuntime && options.systemStore !== false) {
         if (ownerOptions && ownerOptions !== _constructorOptions) throw new Error("This adapter already owns a Platform; close it before creating another.");
         ownerOptions = _constructorOptions;
         ownership ??= acquireLocalDataOwnership(dataDirectory);
-        await ownership;
+        (yield* integrationValue(ownership));
       }
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
@@ -98,7 +107,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
       const systemStore =
         options.systemStore === false
           ? undefined
-          : await createBunSqliteSystemStore({ filename: systemStoreFilename });
+          : (yield* integrationValue(createBunSqliteSystemStore({ filename: systemStoreFilename })));
       if (systemStore) stores.add(systemStore);
 
       if (databaseOptions !== false) {
@@ -126,13 +135,13 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
             );
       // The same sources the Node adapter serves: the official catalog, the
       // runtime's own services folder, installed packages and folder frontends.
-      const serviceSources = await createLocalServiceSources({
+      const serviceSources = (yield* integrationValue(createLocalServiceSources({
         dataDirectory,
         services: options.services,
         isProjectRuntime,
         fileStorage,
         systemStore,
-      });
+      })));
 
       return {
         subsystems: nextSubsystems,
@@ -154,6 +163,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
             : {}),
         },
       };
-    },
+    }));
+  },
   });
 }

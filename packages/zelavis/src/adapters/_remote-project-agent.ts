@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, integration } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { parseJson } from "../core/json-validation.js";
 import { preparedProjectRecord, projectForRemoteStart } from "./_project-record-validation.js";
@@ -42,7 +42,7 @@ export function createRemoteProjectAgent(options: {
   let client: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
   const leases = createRemotePlacementLeaseStore({
     store, trust: options.trust, agentId: options.agentId, nodeId: options.nodeId,
-    fencePrevious: async (placement) => client?.fencePlacement?.(placement) ?? false,
+    fencePrevious: (placement) => present(integration(() => client?.fencePlacement?.(placement) ?? false)),
   });
   let runtime: ReturnType<typeof createLocalProjectRuntime> | undefined;
   let ready = false;
@@ -53,15 +53,15 @@ export function createRemoteProjectAgent(options: {
     nonceStore: store,
     isReady: () => ready,
     readPlacement: leases.read,
-    acceptLease: async (token) => {
+    acceptLease: (token) => present(Effect.gen(function* () {
       if (!ready) throw new Error("Project Agent is still starting.");
-      return leases.accept(token);
-    },
+      return (yield* integrationValue(leases.accept(token)));
+    })),
     releaseLease: leases.release,
-    prepareArtifact: async (projectId, body, digest) => {
+    prepareArtifact: (projectId, body, digest) => present(Effect.gen(function* () {
       if (!ready) throw new Error("Project Agent is still starting.");
-      await installRemoteProjectSnapshot({ projectsDirectory, projectId, body, digest });
-    },
+      (yield* integrationValue(installRemoteProjectSnapshot({ projectsDirectory, projectId, body, digest })));
+    })),
     preparedDigest: (projectId) => readPreparedRemoteProjectDigest(projectsDirectory, projectId),
     start: (claims) => { return presentProtocol(Effect.gen(function* () {
       if (!ready || !runtime) throw new Error("Project Agent is still starting.");
@@ -74,10 +74,10 @@ export function createRemoteProjectAgent(options: {
         ownerSession: claims.ownerSession, epoch: claims.epoch,
       }))));
     }).pipe(Effect.withSpan("createRemoteProjectAgent/server/start/callback"))); },
-    stop: async (claims) => {
+    stop: (claims) => present(Effect.gen(function* () {
       if (!ready || !runtime) throw new Error("Project Agent is still starting.");
-      await runtime.stop(claims.projectId);
-    },
+      (yield* integrationValue(runtime.stop(claims.projectId)));
+    })),
   })));
   let processServer: Awaited<ReturnType<typeof createAgentProcessServer>> | undefined;
   try {
@@ -100,15 +100,17 @@ export function createRemoteProjectAgent(options: {
     ready = true;
     return {
       address: server.address,
-      async close() {
+      close() {
+    return present(Effect.gen(function* () {
         ready = false;
-        await server.close();
-        await runtime?.close();
-        await client?.close();
-        await processServer?.close();
-        await store.close?.();
-        await rm(endpointDirectory, { recursive: true, force: true });
-      },
+        (yield* integrationValue(server.close()));
+        (yield* integrationValue(runtime?.close()));
+        (yield* integrationValue(client?.close()));
+        (yield* integrationValue(processServer?.close()));
+        (yield* integrationValue(store.close?.()));
+        (yield* integrationValue(rm(endpointDirectory, { recursive: true, force: true })));
+      }));
+  },
     };
   } catch (error) {
     ready = false;

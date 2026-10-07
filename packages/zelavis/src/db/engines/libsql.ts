@@ -1,3 +1,4 @@
+import { present, integrationValue } from "../../core/runtime/effect-boundary.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, type Scope } from "effect";
@@ -38,12 +39,12 @@ const toBindable = (value: unknown): unknown =>
   value instanceof Uint8Array && !Buffer.isBuffer(value) ? Buffer.from(value) : value;
 
 const loadLibsql = Effect.tryPromise({
-  try: async () => {
-    const mod = (await import("libsql")) as unknown as {
+  try: () => present(Effect.gen(function* () {
+    const mod = ((yield* integrationValue(import("libsql")))) as unknown as {
       default: new (path: string, options?: Record<string, unknown>) => LibsqlDatabase;
     };
     return mod.default;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "libsql.load",

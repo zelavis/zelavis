@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * Domain bindings — the seam between "an operator verified `acme.com`
  * for a project/service" and "the dispatcher actually routes requests
@@ -113,23 +115,25 @@ export interface DomainBindingStore {
   ): Promise<readonly DomainBinding[]>;
 }
 
-export async function deleteProjectDomainBindings(
+export function deleteProjectDomainBindings(
   store: DomainBindingStore,
   projectId: string,
 ): Promise<number> {
+    return present(Effect.gen(function* (): Effect.fn.Return<number, IntegrationFailure> {
   const normalizedProjectId = projectId.trim();
   if (!normalizedProjectId) {
     throw new TypeError("Project id is required to delete domain bindings.");
   }
-  const bindings = await store.list({ projectId: normalizedProjectId });
+  const bindings = (yield* integrationValue(store.list({ projectId: normalizedProjectId })));
   let deleted = 0;
   for (const binding of bindings) {
-    if (await store.delete(binding.host)) {
+    if ((yield* integrationValue(store.delete(binding.host)))) {
       deleted += 1;
     }
   }
   return deleted;
-}
+}));
+  }
 
 const RANDOM_TOKEN_BYTES = 32;
 
@@ -200,7 +204,7 @@ function normalizeHost(host: string): string {
  * should display `binding.verificationToken` to the operator so they
  * can complete the chosen verification method.
  */
-export async function addDomainBinding(
+export function addDomainBinding(
   store: DomainBindingStore,
   options: {
     host: string;
@@ -209,6 +213,7 @@ export async function addDomainBinding(
     metadata?: Record<string, string>;
   },
 ): Promise<DomainBinding> {
+    return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure> {
   const host = normalizeHost(options.host);
   const now = nowIso();
   const binding: DomainBinding = {
@@ -220,8 +225,9 @@ export async function addDomainBinding(
     updatedAt: now,
     metadata: options.metadata,
   };
-  return store.put(binding, "insert");
-}
+  return (yield* integrationValue(store.put(binding, "insert")));
+}));
+  }
 
 /**
  * Mark a binding verified by manual attestation. The operator is
@@ -231,12 +237,13 @@ export async function addDomainBinding(
  *
  * Throws if no binding exists for the host.
  */
-export async function verifyDomainBindingManually(
+export function verifyDomainBindingManually(
   store: DomainBindingStore,
   host: string,
 ): Promise<DomainBinding> {
+    return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure> {
   const normalized = normalizeHost(host);
-  const existing = await store.get(normalized);
+  const existing = (yield* integrationValue(store.get(normalized)));
   if (!existing) {
     throw new Error(`No domain binding exists for "${normalized}".`);
   }
@@ -247,8 +254,9 @@ export async function verifyDomainBindingManually(
     verificationMethod: "manual",
     updatedAt: now,
   };
-  return store.put(updated, "upsert");
-}
+  return (yield* integrationValue(store.put(updated, "upsert")));
+}));
+  }
 
 /**
  * Revoke a binding's verification. The binding stays in the store
@@ -256,12 +264,13 @@ export async function verifyDomainBindingManually(
  * routing for the host stops working immediately. Operators use this
  * when they suspect a domain was hijacked or no longer want it bound.
  */
-export async function revokeDomainBindingVerification(
+export function revokeDomainBindingVerification(
   store: DomainBindingStore,
   host: string,
 ): Promise<DomainBinding | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding | undefined, IntegrationFailure> {
   const normalized = normalizeHost(host);
-  const existing = await store.get(normalized);
+  const existing = (yield* integrationValue(store.get(normalized)));
   if (!existing) {
     return undefined;
   }
@@ -272,8 +281,9 @@ export async function revokeDomainBindingVerification(
     verificationMethod: undefined,
     updatedAt: now,
   };
-  return store.put(updated, "upsert");
-}
+  return (yield* integrationValue(store.put(updated, "upsert")));
+}));
+  }
 
 /**
  * In-memory store. The simplest backend; suitable for tests, ephemeral
@@ -289,10 +299,11 @@ export function createInMemoryDomainBindingStore(
   }
 
   return {
-    async get(host) {
-      return bindings.get(normalizeHost(host));
-    },
-    async put(binding, mode = "insert") {
+    get(host) {
+    return present(integration(() => bindings.get(normalizeHost(host))));
+  },
+    put(binding, mode = "insert") {
+    return present(Effect.gen(function* () {
       const host = normalizeHost(binding.host);
       const existing = bindings.get(host);
       if (existing && mode === "insert") {
@@ -303,11 +314,13 @@ export function createInMemoryDomainBindingStore(
       const frozen = Object.freeze({ ...binding, host });
       bindings.set(host, frozen);
       return frozen;
-    },
-    async delete(host) {
-      return bindings.delete(normalizeHost(host));
-    },
-    async list(filter = {}) {
+    }));
+  },
+    delete(host) {
+    return present(integration(() => bindings.delete(normalizeHost(host))));
+  },
+    list(filter = {}) {
+    return present(Effect.gen(function* () {
       const out: DomainBinding[] = [];
       for (const binding of bindings.values()) {
         if (
@@ -329,7 +342,8 @@ export function createInMemoryDomainBindingStore(
       }
       out.sort((left, right) => left.host.localeCompare(right.host));
       return out;
-    },
+    }));
+  },
   };
 }
 
@@ -367,9 +381,10 @@ export function createKeyValueDomainBindingStore(
   const hostFromKey = (key: string) => key.slice(prefix.length + 1);
 
   return {
-    async get(host) {
+    get(host) {
+    return present(Effect.gen(function* () {
       const normalized = normalizeHost(host);
-      const raw = await options.store.get(keyFor(normalized));
+      const raw = (yield* integrationValue(options.store.get(keyFor(normalized))));
       if (!raw) {
         return undefined;
       }
@@ -383,12 +398,14 @@ export function createKeyValueDomainBindingStore(
         // lets admin UIs surface the bad key separately if needed.
         return undefined;
       }
-    },
-    async put(binding, mode = "insert") {
+    }));
+  },
+    put(binding, mode = "insert") {
+    return present(Effect.gen(function* () {
       const host = normalizeHost(binding.host);
       const key = keyFor(host);
       if (mode === "insert") {
-        const existing = await options.store.get(key);
+        const existing = (yield* integrationValue(options.store.get(key)));
         if (existing) {
           throw new Error(
             `Domain binding for "${host}" already exists; use mode "upsert" to replace.`,
@@ -396,22 +413,24 @@ export function createKeyValueDomainBindingStore(
         }
       }
       const stored = { ...binding, host };
-      await options.store.set(key, JSON.stringify(stored));
+      (yield* integrationValue(options.store.set(key, JSON.stringify(stored))));
       return stored;
-    },
-    async delete(host) {
-      return options.store.delete(keyFor(normalizeHost(host)));
-    },
-    async list(filter = {}) {
+    }));
+  },
+    delete(host) {
+    return present(integration(() => options.store.delete(keyFor(normalizeHost(host)))));
+  },
+    list(filter = {}) {
+    return present(Effect.gen(function* () {
       if (typeof options.store.list !== "function") {
         throw new Error(
           "createKeyValueDomainBindingStore: backing KV store does not implement list().",
         );
       }
-      const keys = await options.store.list(prefix);
+      const keys = (yield* integrationValue(options.store.list(prefix)));
       const out: DomainBinding[] = [];
       for (const key of keys) {
-        const raw = await options.store.get(key);
+        const raw = (yield* integrationValue(options.store.get(key)));
         if (!raw) {
           continue;
         }
@@ -443,7 +462,8 @@ export function createKeyValueDomainBindingStore(
       }
       out.sort((left, right) => left.host.localeCompare(right.host));
       return out;
-    },
+    }));
+  },
   };
 }
 
@@ -461,7 +481,7 @@ export function createKeyValueDomainBindingStore(
  * portable: concrete hostnames live in runtime activation state instead
  * of inside the service package.
  */
-export async function listAuthorizedHostsForService(
+export function listAuthorizedHostsForService(
   options: {
     scope: "system" | "extension";
     projectId?: string;
@@ -469,6 +489,7 @@ export async function listAuthorizedHostsForService(
     domainBindings?: DomainBindingStore;
   },
 ): Promise<readonly string[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly string[], IntegrationFailure> {
   if (options.scope === "system") {
     return [];
   }
@@ -480,10 +501,10 @@ export async function listAuthorizedHostsForService(
     return [];
   }
 
-  const bindings = await options.domainBindings.list({
+  const bindings = (yield* integrationValue(options.domainBindings.list({
     projectId: options.projectId,
     verifiedOnly: true,
-  });
+  })));
   const allowed: string[] = [];
   for (const binding of bindings) {
     if (binding.host === "*") {
@@ -497,5 +518,6 @@ export async function listAuthorizedHostsForService(
     }
     allowed.push(binding.host);
   }
-  return Object.freeze(allowed);
-}
+  return (yield* integrationValue(Object.freeze(allowed)));
+}));
+  }

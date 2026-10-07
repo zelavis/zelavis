@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "./effect-boundary.js";
 import type {
   ZelavisAccessResolveContext,
   ZelavisPrincipal,
@@ -53,13 +55,13 @@ export function composeRequestAuthenticators<TService = unknown>(
   authenticators: readonly ZelavisRequestAuthenticator<TService>[],
 ): ZelavisPrincipalResolver<TService> {
   const frozen = Object.freeze([...authenticators]);
-  return async (context) => {
+  return (context) => present(Effect.gen(function* () {
     for (const authenticator of frozen) {
-      const principal = await authenticator.authenticate(context);
+      const principal = (yield* integrationValue(authenticator.authenticate(context)));
       if (principal) return principal;
     }
     return undefined;
-  };
+  }));
 }
 
 export function readAuthorizationCredential(

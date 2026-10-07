@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import { resolveTrustedEd25519Key, type ZelavisHostOperationTrustStore } from "../deployment/index.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../../system-store.js";
 
@@ -52,10 +54,11 @@ function payload(grant: RemotePlacementGrant): string {
 }
 
 /** Platform signs a committed CAS record for one destination Agent. */
-export async function signRemotePlacementGrant(
+export function signRemotePlacementGrant(
   privateKey: CryptoKey,
   grant: RemotePlacementGrant,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const p = grant.placement;
   if (!validId(grant.keyId) || !validId(grant.agentId) ||
       p.schemaVersion !== 1 || p.authority !== "platform" ||
@@ -72,18 +75,20 @@ export async function signRemotePlacementGrant(
     throw new TypeError("Remote placement grant is invalid or unbounded.");
   }
   const body = payload(grant);
-  const signature = await crypto.subtle.sign("Ed25519", privateKey,
-    new TextEncoder().encode(`${CONTEXT}${body}`));
+  const signature = (yield* integrationValue(crypto.subtle.sign("Ed25519", privateKey,
+    new TextEncoder().encode(`${CONTEXT}${body}`))));
   return `${encode(new TextEncoder().encode(body))}.${encode(new Uint8Array(signature))}`;
-}
+}));
+  }
 
-export async function verifyRemotePlacementGrant(
+export function verifyRemotePlacementGrant(
   trust: ZelavisHostOperationTrustStore,
   token: string,
   agentId: string,
   nodeId: string,
   now = Date.now(),
 ): Promise<RemotePlacementGrant | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<RemotePlacementGrant | undefined, IntegrationFailure> {
   if (!validId(agentId) || !validId(nodeId) || !Number.isSafeInteger(now) ||
       typeof token !== "string" || token.length > 8_192 ||
       !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return undefined;
@@ -110,16 +115,17 @@ export async function verifyRemotePlacementGrant(
       expiresAt <= issuedAt || expiresAt - issuedAt > 30_000 ||
       leaseExpiresAt <= now || leaseExpiresAt - issuedAt > MAX_LEASE_MS ||
       signature.byteLength !== 64) return undefined;
-  const key = await resolveTrustedEd25519Key(trust, keyId, now);
-  if (!key || !(await crypto.subtle.verify("Ed25519", key, signature,
-    new TextEncoder().encode(`${CONTEXT}${body}`)))) return undefined;
+  const key = (yield* integrationValue(resolveTrustedEd25519Key(trust, keyId, now)));
+  if (!key || !((yield* integrationValue(crypto.subtle.verify("Ed25519", key, signature,
+    new TextEncoder().encode(`${CONTEXT}${body}`)))))) return undefined;
   return {
     keyId, agentId: audience,
     placement: { schemaVersion, authority, projectId, nodeId: destination,
       ownerSession, epoch, revision, leaseExpiresAt, state },
     issuedAt, expiresAt,
   };
-}
+}));
+  }
 
 /** Local durable high-water state; never takes a newer owner over an old process. */
 export function createRemotePlacementLeaseStore(options: {
@@ -129,9 +135,9 @@ export function createRemotePlacementLeaseStore(options: {
   readonly nodeId: string;
   readonly fencePrevious: (placement: RemotePlacementRecord) => Promise<boolean>;
 }) {
-  const read = async (projectId: string): Promise<RemotePlacementRecord | undefined> => {
+  const read = (projectId: string): Promise<RemotePlacementRecord | undefined> => present(Effect.gen(function* (): Effect.fn.Return<RemotePlacementRecord | undefined, IntegrationFailure> {
     if (!validId(projectId)) return undefined;
-    const record = await options.store.get(NAMESPACE, projectId);
+    const record = (yield* integrationValue(options.store.get(NAMESPACE, projectId)));
     if (!record || !record.value || typeof record.value !== "object" ||
         Array.isArray(record.value)) return undefined;
     const value = record.value as unknown as RemotePlacementRecord;
@@ -144,20 +150,23 @@ export function createRemotePlacementLeaseStore(options: {
       throw new Error("Malformed remote placement high-water record.");
     }
     return value;
-  };
+  }));
   return {
-    async read(projectId: string) {
-      const placement = await read(projectId);
+    read(projectId: string) {
+    return present(Effect.gen(function* () {
+      const placement = (yield* integrationValue(read(projectId)));
       return placement ? { ...placement, authorityNow: Date.now() } : undefined;
-    },
-    async accept(token: string): Promise<RemotePlacementRecord> {
-      const grant = await verifyRemotePlacementGrant(options.trust, token,
-        options.agentId, options.nodeId);
+    }));
+  },
+    accept(token: string): Promise<RemotePlacementRecord> {
+    return present(Effect.gen(function* (): Effect.fn.Return<RemotePlacementRecord, IntegrationFailure> {
+      const grant = (yield* integrationValue(verifyRemotePlacementGrant(options.trust, token,
+        options.agentId, options.nodeId)));
       if (!grant) throw new Error("Remote placement grant is invalid or expired.");
       const next = grant.placement;
       for (let attempt = 0; attempt < 8; attempt += 1) {
-        const observed = await options.store.get(NAMESPACE, next.projectId);
-        const previous = await read(next.projectId);
+        const observed = (yield* integrationValue(options.store.get(NAMESPACE, next.projectId)));
+        const previous = (yield* integrationValue(read(next.projectId)));
         if (previous) {
           if (next.epoch < previous.epoch ||
               (next.epoch === previous.epoch && next.revision < previous.revision)) {
@@ -176,29 +185,32 @@ export function createRemotePlacementLeaseStore(options: {
               return previous;
             }
           } else if (previous.state === "active" &&
-              !(await options.fencePrevious(previous))) {
+              !((yield* integrationValue(options.fencePrevious(previous))))) {
             throw new Error("The prior remote placement has not been fenced.");
           }
         }
         const value = next as unknown as ZelavisSystemStoreValue;
         const written = observed
-          ? await options.store.compareAndSet(NAMESPACE, next.projectId,
-              observed.updatedAt, value, observed.value)
-          : (await options.store.setIfAbsent(NAMESPACE, next.projectId, value)).created;
+          ? (yield* integrationValue(options.store.compareAndSet(NAMESPACE, next.projectId,
+              observed.updatedAt, value, observed.value)))
+          : ((yield* integrationValue(options.store.setIfAbsent(NAMESPACE, next.projectId, value)))).created;
         if (written) return next;
       }
       throw new Error("Remote placement CAS remained contended.");
-    },
-    async release(placement: Pick<RemotePlacementRecord,
+    }));
+  },
+    release(placement: Pick<RemotePlacementRecord,
       "projectId" | "nodeId" | "ownerSession" | "epoch">): Promise<boolean> {
-      const observed = await options.store.get(NAMESPACE, placement.projectId);
-      const current = await read(placement.projectId);
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
+      const observed = (yield* integrationValue(options.store.get(NAMESPACE, placement.projectId)));
+      const current = (yield* integrationValue(read(placement.projectId)));
       if (!observed || !current || current.nodeId !== placement.nodeId ||
           current.ownerSession !== placement.ownerSession || current.epoch !== placement.epoch) return false;
       if (current.state === "released") return true;
-      return Boolean(await options.store.compareAndSet(NAMESPACE, placement.projectId,
+      return (yield* integrationValue(Boolean((yield* integrationValue(options.store.compareAndSet(NAMESPACE, placement.projectId,
         observed.updatedAt, { ...current, state: "released" } as ZelavisSystemStoreValue,
-        observed.value));
-    },
+        observed.value))))));
+    }));
+  },
   };
 }

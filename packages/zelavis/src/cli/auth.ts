@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
 
 const usage =
@@ -8,7 +10,8 @@ const usage =
  * A Project shortcut grants the narrow Project operator permissions needed by
  * deployment clients without turning the identity into a Platform owner.
  */
-export async function runAuthCommand(args: readonly string[]): Promise<void> {
+export function runAuthCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const permissions: string[] = [];
   let url = "http://localhost:3000/zelavis";
@@ -67,21 +70,21 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
 
   switch (action) {
     case "list": {
-      const serviceAccounts = await client.auth.admin.serviceAccounts();
+      const serviceAccounts = (yield* integrationValue(client.auth.admin.serviceAccounts()));
       print({ serviceAccounts }, () => serviceAccounts.map(line).join("\n") || "No service accounts.");
       return;
     }
     case "set-tenant": {
       if (!accountId) throw new Error("auth service-accounts set-tenant requires an account id.");
       if (!tenantId?.trim()) throw new Error("auth service-accounts set-tenant requires --tenant.");
-      const serviceAccount = await client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim());
+      const serviceAccount = (yield* integrationValue(client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim())));
       print({ serviceAccount }, () =>
         `${serviceAccount.id} now acts in Tenant ${String(serviceAccount.metadata?.tenantId ?? tenantId)}.`);
       return;
     }
     case "create": {
       if (!name?.trim()) throw new Error("auth service-accounts create requires --name.");
-      const result = await client.auth.admin.createServiceAccount({
+      const result = (yield* integrationValue(client.auth.admin.createServiceAccount({
         name: name.trim(),
         permissions,
         ...(tenantId ? { tenantId } : {}),
@@ -104,7 +107,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
             }
           : {}),
         ...(expiresInDays === undefined ? {} : { expiresInDays }),
-      });
+      })));
       print(result, () => [
         `Created ${line(result.serviceAccount)}`,
         "Token (shown once):",
@@ -114,17 +117,18 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     }
     case "rotate": {
       if (!accountId) throw new Error("auth service-accounts rotate requires an account id.");
-      const result = await client.auth.admin.rotateServiceAccountToken(accountId, expiresInDays);
+      const result = (yield* integrationValue(client.auth.admin.rotateServiceAccountToken(accountId, expiresInDays)));
       print(result, () => ["Rotated token (shown once):", result.token].join("\n"));
       return;
     }
     case "revoke": {
       if (!accountId) throw new Error("auth service-accounts revoke requires an account id.");
-      await client.auth.admin.revokeServiceAccount(accountId);
+      (yield* integrationValue(client.auth.admin.revokeServiceAccount(accountId)));
       print({ revoked: accountId }, () => `Revoked ${accountId}.`);
       return;
     }
     default:
       throw new Error(`Unknown auth service-accounts command "${action}". ${usage}`);
   }
-}
+}));
+  }

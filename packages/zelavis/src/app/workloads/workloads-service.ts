@@ -1,3 +1,5 @@
+import { Cause, Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
 import type {
   ZelavisEndpointGroup,
@@ -187,15 +189,16 @@ function toHeaderRecord(headers: Headers): Record<string, string> {
   return result;
 }
 
-async function normalizeExecutionValue(
+function normalizeExecutionValue(
   value: unknown,
 ): Promise<WorkloadExecutionResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<WorkloadExecutionResult, IntegrationFailure> {
   if (value instanceof Response) {
     return {
       status: value.ok ? "completed" : "failed",
       responseStatus: value.status,
       headers: toHeaderRecord(value.headers),
-      output: await value.text(),
+      output: (yield* integrationValue(value.text())),
     };
   }
 
@@ -225,17 +228,19 @@ async function normalizeExecutionValue(
     },
     output: JSON.stringify(value),
   };
-}
+}));
+  }
 
-async function executeTrustedJavaScriptWorkload(
+function executeTrustedJavaScriptWorkload(
   workload: WorkloadDefinition,
   request: Request,
 ): Promise<WorkloadExecutionResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<WorkloadExecutionResult, IntegrationFailure> {
   if (workload.type !== "function") {
     throw new TypeError("Only function workloads can be run by the JavaScript runner.");
   }
 
-  const module = (await import(createModuleDataUrl(workload))) as {
+  const module = ((yield* integrationValue(import(createModuleDataUrl(workload))))) as {
     default?: unknown;
     handler?: unknown;
   };
@@ -247,16 +252,17 @@ async function executeTrustedJavaScriptWorkload(
     );
   }
 
-  return normalizeExecutionValue(
-    await handler({
+  return (yield* integrationValue(normalizeExecutionValue(
+    (yield* integrationValue(handler({
       env: {},
       projectId: workload.projectId,
       request,
       route: workload.route,
       workload,
-    }),
-  );
-}
+    }))),
+  )));
+}));
+  }
 
 function createSeedWorkloads(): WorkloadDefinition[] {
   const timestamp = now();
@@ -341,10 +347,11 @@ function readTypeFromPlural(value: unknown): WorkloadType {
   throw new TypeError("Unknown workload menu section.");
 }
 
-async function createWorkload(
+function createWorkload(
   store: WorkloadsStore,
   body: unknown,
 ): Promise<WorkloadDefinition> {
+    return present(Effect.gen(function* (): Effect.fn.Return<WorkloadDefinition, IntegrationFailure> {
   const input = readBodyObject(body);
   const type = readWorkloadType(input.type);
   const name = slugifyName(readString(input, "name", "") ?? "");
@@ -367,15 +374,17 @@ async function createWorkload(
     updatedAt: timestamp,
   };
 
-  return store.save(workload);
-}
+  return (yield* integrationValue(store.save(workload)));
+}));
+  }
 
-async function updateWorkload(
+function updateWorkload(
   store: WorkloadsStore,
   id: string,
   body: unknown,
 ): Promise<WorkloadDefinition> {
-  const existing = await store.read(id);
+    return present(Effect.gen(function* (): Effect.fn.Return<WorkloadDefinition, IntegrationFailure> {
+  const existing = (yield* integrationValue(store.read(id)));
   if (!existing) {
     throw new TypeError("Workload not found.");
   }
@@ -391,104 +400,117 @@ async function updateWorkload(
     updatedAt: now(),
   };
 
-  return store.save(next);
-}
+  return (yield* integrationValue(store.save(next)));
+}));
+  }
 
-async function runWorkload(
+function runWorkload(
   store: WorkloadsStore,
   workload: WorkloadDefinition,
 ): Promise<WorkloadRunLog> {
-  const timestamp = now();
-  const request = new Request(
-    `http://zelavis.local${normalizeRoutePath(workload.route)}`,
-  );
+  return present(Effect.gen(function* (): Effect.fn.Return<WorkloadRunLog, IntegrationFailure> {
+    const timestamp = now();
+    const request = new Request(
+      `http://zelavis.local${normalizeRoutePath(workload.route)}`,
+    );
 
-  try {
-    const result = await executeTrustedJavaScriptWorkload(workload, request);
-    const log: WorkloadRunLog = {
-      id: createId("run"),
-      workloadId: workload.id,
-      projectId: workload.projectId,
-      status: result.status,
-      responseStatus: result.responseStatus,
-      output: result.output,
-      createdAt: timestamp,
-    };
+    const log = yield* integration(() => executeTrustedJavaScriptWorkload(workload, request)).pipe(
+      Effect.map((result): WorkloadRunLog => ({
+        id: createId("run"),
+        workloadId: workload.id,
+        projectId: workload.projectId,
+        status: result.status,
+        responseStatus: result.responseStatus,
+        output: result.output,
+        createdAt: timestamp,
+      })),
+      Effect.catch((failure) => {
+        const error = unwrapFailure(failure);
+        return Effect.succeed<WorkloadRunLog>({
+          id: createId("run"),
+          workloadId: workload.id,
+          projectId: workload.projectId,
+          status: "failed",
+          output: error instanceof Error ? error.message : String(error),
+          createdAt: timestamp,
+        });
+      }),
+    );
 
-    return store.appendLog(log);
-  } catch (error) {
-    const log: WorkloadRunLog = {
-      id: createId("run"),
-      workloadId: workload.id,
-      projectId: workload.projectId,
-      status: "failed",
-      output: error instanceof Error ? error.message : String(error),
-      createdAt: timestamp,
-    };
-
-    return store.appendLog(log);
-  }
+    return yield* integration(() => store.appendLog(log));
+  }));
 }
 
-async function findHttpFunction(
+function findHttpFunction(
   store: WorkloadsStore,
   projectId: string,
   path: string,
 ) {
+    return present(Effect.gen(function* () {
   const normalizedPath = normalizeRoutePath(path);
-  const workloads = await store.list({
+  const workloads = (yield* integrationValue(store.list({
     projectId,
     type: "function",
-  });
+  })));
 
-  return workloads.find(
+  return (yield* integrationValue(workloads.find(
     (workload) =>
       workload.enabled && normalizeRoutePath(workload.route) === normalizedPath,
-  );
-}
+  )));
+}));
+  }
 
-async function runHttpFunction(
+function runHttpFunction(
   store: WorkloadsStore,
   workload: WorkloadDefinition,
   request: Request,
 ) {
-  const timestamp = now();
+  return present(Effect.gen(function* () {
+    const timestamp = now();
 
-  try {
-    const result = await executeTrustedJavaScriptWorkload(workload, request);
-    await store.appendLog({
-      id: createId("run"),
-      workloadId: workload.id,
-      projectId: workload.projectId,
-      status: result.status,
-      responseStatus: result.responseStatus,
-      output: result.output,
-      createdAt: timestamp,
-    });
+    return yield* Effect.gen(function* () {
+      const result = yield* integration(() => executeTrustedJavaScriptWorkload(workload, request));
+      yield* integration(() => store.appendLog({
+        id: createId("run"),
+        workloadId: workload.id,
+        projectId: workload.projectId,
+        status: result.status,
+        responseStatus: result.responseStatus,
+        output: result.output,
+        createdAt: timestamp,
+      }));
 
-    return {
-      status: result.responseStatus ?? (result.status === "failed" ? 500 : 200),
-      headers: result.headers,
-      body: result.output,
-    };
-  } catch (error) {
-    const output = error instanceof Error ? error.message : String(error);
-    await store.appendLog({
-      id: createId("run"),
-      workloadId: workload.id,
-      projectId: workload.projectId,
-      status: "failed",
-      output,
-      createdAt: timestamp,
-    });
+      return {
+        status: result.responseStatus ?? (result.status === "failed" ? 500 : 200),
+        headers: result.headers,
+        body: result.output,
+      } as HttpFunctionResponse;
+    }).pipe(Effect.catch((failure) => Effect.gen(function* () {
+      const error = unwrapFailure(failure);
+      const output = error instanceof Error ? error.message : String(error);
+      yield* integration(() => store.appendLog({
+        id: createId("run"),
+        workloadId: workload.id,
+        projectId: workload.projectId,
+        status: "failed",
+        output,
+        createdAt: timestamp,
+      }));
 
-    return {
-      status: 500,
-      body: {
-        error: output,
-      },
-    };
-  }
+      return {
+        status: 500,
+        body: {
+          error: output,
+        },
+      } as HttpFunctionResponse;
+    })));
+  }));
+}
+
+interface HttpFunctionResponse {
+  readonly status: number;
+  readonly headers?: Record<string, string>;
+  readonly body: unknown;
 }
 
 function createHttpFunctionRoute(
@@ -522,45 +544,40 @@ function createHttpFunctionRoute(
     },
     method,
     path: "/http/:projectId/*path",
-    handler: async ({
+    handler: ({
       params,
       request,
-    }: ZelavisRouteContext<WorkloadsApi>) => {
-      try {
-        const projectId = params.projectId || "default";
-        const requestedPath = normalizeRoutePath(params.path);
-        const workload = await findHttpFunction(store, projectId, requestedPath);
+    }: ZelavisRouteContext<WorkloadsApi>) => present(Effect.gen(function* () {
+      const projectId = params.projectId || "default";
+      const requestedPath = normalizeRoutePath(params.path);
+      const workload = yield* integrationValue(findHttpFunction(store, projectId, requestedPath));
 
-        if (!workload) {
-          return {
-            status: 404,
-            body: {
-              error: "Function route not found.",
-            },
-          };
-        }
-
-        return runHttpFunction(store, workload, request);
-      } catch (error) {
-        return jsonError(error);
+      if (!workload) {
+        return {
+          status: 404,
+          body: {
+            error: "Function route not found.",
+          },
+        };
       }
-    },
+
+      return yield* integrationValue(runHttpFunction(store, workload, request));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(jsonError(unwrapFailure(Cause.squash(cause))))))),
   };
 }
 
 function route<T>(
   handler: (context: ZelavisRouteContext<WorkloadsApi>) => Promise<T>,
 ) {
-  return async (context: ZelavisRouteContext<WorkloadsApi>) => {
-    try {
-      return {
+  return (context: ZelavisRouteContext<WorkloadsApi>) => present(
+    integration(() => handler(context)).pipe(
+      Effect.map((body) => ({
         status: 200,
-        body: await handler(context),
-      };
-    } catch (error) {
-      return jsonError(error);
-    }
-  };
+        body,
+      })),
+      Effect.catchCause((cause) => Effect.succeed(jsonError(unwrapFailure(Cause.squash(cause))))),
+    ),
+  );
 }
 
 
@@ -589,7 +606,7 @@ export function workloadsEndpointGroup(
           },
           method: "GET",
           path: "/health",
-          handler: route(async () => ({ status: "ready" })),
+          handler: route(() => present(integration(() => { status: "ready" }))),
         },
         {
           id: "workloads.menu",
@@ -604,10 +621,10 @@ export function workloadsEndpointGroup(
           method: "GET",
           path: "/menu/:section",
           access: { permissions: ["workloads.view"] },
-          handler: route(async ({ params, query }) => {
+          handler: route(({ params, query }) => present(Effect.gen(function* () {
             const type = readTypeFromPlural(params.section);
             const projectId = readProjectId(query);
-            const workloads = await store.list({ projectId, type });
+            const workloads = (yield* integrationValue(store.list({ projectId, type })));
             return {
               items: workloads.map((workload) => ({
                 title: workload.name,
@@ -615,7 +632,7 @@ export function workloadsEndpointGroup(
                 pageLabel: "Workloads",
               })),
             };
-          }),
+          }))),
         },
         {
           id: "workloads.list",
@@ -630,12 +647,14 @@ export function workloadsEndpointGroup(
           method: "GET",
           path: "/",
           access: { permissions: ["workloads.view"] },
-          handler: route(async ({ query }) => ({
-            workloads: await store.list({
+          handler: route(({ query }) => present(Effect.gen(function* () {
+    return {
+            workloads: (yield* integrationValue(store.list({
               projectId: readProjectId(query),
               type: readTypeFromQuery(query),
-            }),
-          })),
+            }))),
+          };
+  }))),
         },
         {
           id: "workloads.create",
@@ -651,16 +670,15 @@ export function workloadsEndpointGroup(
           method: "POST",
           path: "/",
           access: { permissions: ["workloads.manage"] },
-          handler: async ({ body }) => {
-            try {
-              return {
+          handler: ({ body }) => present(
+            integration(() => createWorkload(store, body)).pipe(
+              Effect.map((created) => ({
                 status: 201,
-                body: await createWorkload(store, body),
-              };
-            } catch (error) {
-              return jsonError(error);
-            }
-          },
+                body: created,
+              })),
+              Effect.catchCause((cause) => Effect.succeed(jsonError(unwrapFailure(Cause.squash(cause))))),
+            ),
+          ),
         },
         {
           id: "workloads.read",
@@ -676,13 +694,13 @@ export function workloadsEndpointGroup(
           method: "GET",
           path: "/:id",
           access: { permissions: ["workloads.view"] },
-          handler: route(async ({ params }) => {
-            const workload = await store.read(params.id);
+          handler: route(({ params }) => present(Effect.gen(function* () {
+            const workload = (yield* integrationValue(store.read(params.id)));
             if (!workload) {
               throw new TypeError("Workload not found.");
             }
             return workload;
-          }),
+          }))),
         },
         {
           id: "workloads.update",
@@ -698,8 +716,8 @@ export function workloadsEndpointGroup(
           method: "PUT",
           path: "/:id",
           access: { permissions: ["workloads.manage"] },
-          handler: route(async ({ params, body }) =>
-            updateWorkload(store, params.id, body),
+          handler: route(({ params, body }) =>
+            present(integration(() => updateWorkload(store, params.id, body))),
           ),
         },
         {
@@ -716,13 +734,13 @@ export function workloadsEndpointGroup(
           method: "POST",
           path: "/:id/run",
           access: { permissions: ["workloads.manage"] },
-          handler: route(async ({ params }) => {
-            const workload = await store.read(params.id);
+          handler: route(({ params }) => present(Effect.gen(function* () {
+            const workload = (yield* integrationValue(store.read(params.id)));
             if (!workload) {
               throw new TypeError("Workload not found.");
             }
-            return runWorkload(store, workload);
-          }),
+            return (yield* integrationValue(runWorkload(store, workload)));
+          }))),
         },
         ...(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map((method) =>
           createHttpFunctionRoute(store, method),
@@ -740,12 +758,14 @@ export function workloadsEndpointGroup(
           method: "GET",
           path: "/logs",
           access: { permissions: ["workloads.logs.read"] },
-          handler: route(async ({ query }) => ({
-            logs: await store.logs({
+          handler: route(({ query }) => present(Effect.gen(function* () {
+    return {
+            logs: (yield* integrationValue(store.logs({
               projectId: readProjectId(query),
               workloadId: query.get("workloadId") || undefined,
-            }),
-          })),
+            }))),
+          };
+  }))),
         },
       ],
     },

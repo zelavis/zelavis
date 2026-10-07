@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 const NAMESPACE = "fabric.project-ownership.v1";
@@ -85,40 +87,43 @@ export function createProjectPlacementAuthority(options: {
   readonly now?: () => number;
 }): ProjectPlacementAuthority {
   const now = options.now ?? Date.now;
-  const read = async (projectId: string) => {
-    const record = await options.store.get(NAMESPACE, projectId);
+  const read = (projectId: string) => present(Effect.gen(function* () {
+    const record = (yield* integrationValue(options.store.get(NAMESPACE, projectId)));
     return record ? { stored: record, value: decode(record.value, projectId) } : undefined;
-  };
+  }));
   const refuse = (
     reason: Exclude<ProjectPlacementResult, { granted: true }>["reason"],
     current?: ProjectPlacementRecord,
   ): ProjectPlacementResult => ({ granted: false, reason, ...(current ? { current } : {}) });
 
   return {
-    async current(projectId) {
+    current(projectId) {
+    return present(Effect.gen(function* () {
       if (!validId(projectId)) return undefined;
-      return (await read(projectId))?.value;
-    },
-    async acquire(input) {
+      return ((yield* integrationValue(read(projectId))))?.value;
+    }));
+  },
+    acquire(input) {
+    return present(Effect.gen(function* () {
       const request = structuredClone(input);
       if (!validId(request.projectId) || !validId(request.nodeId) ||
           !validId(request.ownerSession) || !validEpoch(request.expectedEpoch) ||
-          !validLease(request.leaseMs)) return refuse("invalid-request");
-      if (!(await options.mayPlace(request.projectId, request.nodeId))) return refuse("policy-refused");
-      const observed = await read(request.projectId);
+          !validLease(request.leaseMs)) return (yield* integrationValue(refuse("invalid-request")));
+      if (!((yield* integrationValue(options.mayPlace(request.projectId, request.nodeId))))) return (yield* integrationValue(refuse("policy-refused")));
+      const observed = (yield* integrationValue(read(request.projectId)));
       const previous = observed?.value;
-      if ((previous?.epoch ?? 0) !== request.expectedEpoch) return refuse("stale", previous);
+      if ((previous?.epoch ?? 0) !== request.expectedEpoch) return (yield* integrationValue(refuse("stale", previous)));
       const instant = now();
       if (previous?.state === "active" && previous.leaseExpiresAt > instant) {
-        return refuse("owned", previous);
+        return (yield* integrationValue(refuse("owned", previous)));
       }
       if (previous?.state === "active" &&
-          !(await options.fencePrevious?.(previous))) {
-        return refuse("fencing-unavailable", previous);
+          !((yield* integrationValue(options.fencePrevious?.(previous))))) {
+        return (yield* integrationValue(refuse("fencing-unavailable", previous)));
       }
       if (!Number.isSafeInteger(instant) ||
           !Number.isSafeInteger(instant + request.leaseMs) ||
-          (previous && previous.epoch >= Number.MAX_SAFE_INTEGER)) return refuse("invalid-request", previous);
+          (previous && previous.epoch >= Number.MAX_SAFE_INTEGER)) return (yield* integrationValue(refuse("invalid-request", previous)));
       const placement: ProjectPlacementRecord = {
         schemaVersion: 1,
         authority: "platform",
@@ -132,75 +137,86 @@ export function createProjectPlacementAuthority(options: {
       };
       const value = placement as unknown as ZelavisSystemStoreValue;
       const written = observed
-        ? await options.store.compareAndSet(NAMESPACE, request.projectId, observed.stored.updatedAt, value, observed.stored.value)
-        : (await options.store.setIfAbsent(NAMESPACE, request.projectId, value)).created;
-      return written ? { granted: true, placement } : refuse("contended", (await read(request.projectId))?.value);
-    },
-    async renew(token, leaseMs) {
+        ? (yield* integrationValue(options.store.compareAndSet(NAMESPACE, request.projectId, observed.stored.updatedAt, value, observed.stored.value)))
+        : ((yield* integrationValue(options.store.setIfAbsent(NAMESPACE, request.projectId, value)))).created;
+      return written ? { granted: true, placement } : refuse("contended", ((yield* integrationValue(read(request.projectId))))?.value);
+    }));
+  },
+    renew(token, leaseMs) {
+    return present(Effect.gen(function* () {
       const claim = structuredClone(token);
       if (!validId(claim.projectId) || !validId(claim.nodeId) ||
           !validId(claim.ownerSession) || !validEpoch(claim.epoch) ||
-          !validLease(leaseMs)) return refuse("invalid-request");
-      const observed = await read(claim.projectId);
+          !validLease(leaseMs)) return (yield* integrationValue(refuse("invalid-request")));
+      const observed = (yield* integrationValue(read(claim.projectId)));
       const previous = observed?.value;
       if (!observed || !previous || !matches(previous, claim) || previous.state !== "active") {
-        return refuse("stale", previous);
+        return (yield* integrationValue(refuse("stale", previous)));
       }
       const instant = now();
-      if (previous.leaseExpiresAt <= instant) return refuse("expired", previous);
+      if (previous.leaseExpiresAt <= instant) return (yield* integrationValue(refuse("expired", previous)));
       if (!Number.isSafeInteger(instant) || !Number.isSafeInteger(instant + leaseMs)) {
-        return refuse("invalid-request", previous);
+        return (yield* integrationValue(refuse("invalid-request", previous)));
       }
       const placement: ProjectPlacementRecord = {
         ...previous,
         revision: previous.revision + 1,
         leaseExpiresAt: Math.max(previous.leaseExpiresAt, instant + leaseMs),
       };
-      const written = await options.store.compareAndSet(NAMESPACE, claim.projectId,
-        observed.stored.updatedAt, placement as unknown as ZelavisSystemStoreValue, observed.stored.value);
-      return written ? { granted: true, placement } : refuse("contended", (await read(claim.projectId))?.value);
-    },
-    async release(token) {
+      const written = (yield* integrationValue(options.store.compareAndSet(NAMESPACE, claim.projectId,
+        observed.stored.updatedAt, placement as unknown as ZelavisSystemStoreValue, observed.stored.value)));
+      return written ? { granted: true, placement } : refuse("contended", ((yield* integrationValue(read(claim.projectId))))?.value);
+    }));
+  },
+    release(token) {
+    return present(Effect.gen(function* () {
       const claim = structuredClone(token);
       if (!validId(claim.projectId) || !validId(claim.nodeId) ||
-          !validId(claim.ownerSession) || !validEpoch(claim.epoch)) return refuse("invalid-request");
-      const observed = await read(claim.projectId);
+          !validId(claim.ownerSession) || !validEpoch(claim.epoch)) return (yield* integrationValue(refuse("invalid-request")));
+      const observed = (yield* integrationValue(read(claim.projectId)));
       const previous = observed?.value;
-      if (!observed || !previous || !matches(previous, claim)) return refuse("stale", previous);
+      if (!observed || !previous || !matches(previous, claim)) return (yield* integrationValue(refuse("stale", previous)));
       if (previous.state === "released") return { granted: true, placement: previous };
       const placement: ProjectPlacementRecord = {
         ...previous, state: "released", revision: previous.revision + 1,
       };
-      const written = await options.store.compareAndSet(NAMESPACE, claim.projectId,
-        observed.stored.updatedAt, placement as unknown as ZelavisSystemStoreValue, observed.stored.value);
-      return written ? { granted: true, placement } : refuse("contended", (await read(claim.projectId))?.value);
-    },
-    async validate(token) {
+      const written = (yield* integrationValue(options.store.compareAndSet(NAMESPACE, claim.projectId,
+        observed.stored.updatedAt, placement as unknown as ZelavisSystemStoreValue, observed.stored.value)));
+      return written ? { granted: true, placement } : refuse("contended", ((yield* integrationValue(read(claim.projectId))))?.value);
+    }));
+  },
+    validate(token) {
+    return present(Effect.gen(function* () {
       if (!validId(token.projectId) || !validId(token.nodeId) ||
           !validId(token.ownerSession) || !validEpoch(token.epoch)) return false;
-      const placement = (await read(token.projectId))?.value;
-      return Boolean(placement && placement.state === "active" &&
-        placement.leaseExpiresAt > now() && matches(placement, token));
-    },
+      const placement = ((yield* integrationValue(read(token.projectId))))?.value;
+      return (yield* integrationValue(Boolean(placement && placement.state === "active" &&
+        placement.leaseExpiresAt > now() && matches(placement, token))));
+    }));
+  },
   };
 }
 
 /** Read-only Agent adapter for a local System Store sharing the host clock. */
-export async function readLocalProjectPlacementLease(
+export function readLocalProjectPlacementLease(
   store: ZelavisSystemStore,
   projectId: string,
 ): Promise<(ProjectPlacementRecord & { readonly authorityNow: number }) | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<(ProjectPlacementRecord & { readonly authorityNow: number }) | undefined, IntegrationFailure> {
   if (!validId(projectId)) return undefined;
-  const stored = await store.get(NAMESPACE, projectId);
+  const stored = (yield* integrationValue(store.get(NAMESPACE, projectId)));
   if (!stored) return undefined;
   return { ...decode(stored.value, projectId), authorityNow: Date.now() };
-}
+}));
+  }
 
 /** Deletion participant runs after the Project stops, before its data is removed. */
-export async function deleteProjectPlacementAuthority(
+export function deleteProjectPlacementAuthority(
   store: ZelavisSystemStore,
   projectId: string,
 ): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   if (!validId(projectId)) throw new TypeError("Invalid Project id for placement cleanup");
-  await store.delete(NAMESPACE, projectId);
-}
+  (yield* integrationValue(store.delete(NAMESPACE, projectId)));
+}));
+  }

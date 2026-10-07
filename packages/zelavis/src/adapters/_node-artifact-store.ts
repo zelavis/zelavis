@@ -1,4 +1,4 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { integrationValue, unwrapIntegrationResult, presentProtocol, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 import { parseJson, objectFields, isString, optional, recordOf } from "../core/json-validation.js";
 import { mkdir, open, readFile } from "node:fs/promises";
@@ -43,18 +43,17 @@ function isExisting(error: unknown): boolean {
   );
 }
 
-async function writeOnce(path: string, body: Uint8Array | string): Promise<boolean> {
-  let file;
-  try {
-    file = await open(path, "wx", 0o600);
-    await file.writeFile(body);
-    return true;
-  } catch (error) {
-    if (isExisting(error)) return false;
-    throw error;
-  } finally {
-    await file?.close();
-  }
+function writeOnce(path: string, body: Uint8Array | string): Promise<boolean> {
+  return present(Effect.acquireUseRelease(
+    integrationValue(open(path, "wx", 0o600)).pipe(
+      Effect.map((file) => ({ file })),
+      Effect.catch((failure) => isExisting(unwrapFailure(failure)) ? Effect.succeed(undefined) : Effect.fail(failure)),
+    ),
+    (opened) => opened
+      ? integrationValue(opened.file.writeFile(body)).pipe(Effect.as(true))
+      : Effect.succeed(false),
+    (opened) => opened ? integrationValue(opened.file.close()).pipe(Effect.orDie) : Effect.void,
+  ));
 }
 
 /** Persistent, content-addressed ArtifactStore for local Node Agents. */
@@ -109,35 +108,39 @@ export function createNodeFileArtifactStore(
   }).pipe(Effect.withSpan("createNodeFileArtifactStore/get"))); }
 
   return {
-    async has(digest) {
-      return (await get(digest)) !== undefined;
-    },
+    has(digest) {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(get(digest)))) !== undefined;
+    }));
+  },
     get,
-    async put(input) {
+    put(input) {
+    return present(Effect.gen(function* () {
       const target = paths(input.digest);
-      const actualDigest = await createArtifactDigest(input.body);
+      const actualDigest = (yield* integrationValue(createArtifactDigest(input.body)));
       if (actualDigest !== input.digest) {
         throw new TypeError(
           `ArtifactStore content digest mismatch: expected ${input.digest}, received ${actualDigest}.`,
         );
       }
 
-      await mkdir(target.directory, { recursive: true });
-      const created = await writeOnce(target.body, input.body);
+      (yield* integrationValue(mkdir(target.directory, { recursive: true })));
+      const created = (yield* integrationValue(writeOnce(target.body, input.body)));
       if (created) {
-        await writeOnce(
+        (yield* integrationValue(writeOnce(
           target.metadata,
           JSON.stringify({
             ...(input.contentType ? { contentType: input.contentType } : {}),
             ...(input.metadata ? { metadata: input.metadata } : {}),
           } satisfies StoredArtifactMetadata),
-        );
+        )));
       }
 
-      const stored = await get(input.digest);
+      const stored = (yield* integrationValue(get(input.digest)));
       if (!stored) throw new Error(`ArtifactStore failed to persist ${input.digest}.`);
       return stored;
-    },
+    }));
+  },
   };
 }
 

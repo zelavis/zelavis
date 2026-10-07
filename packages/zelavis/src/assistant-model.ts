@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, integration, present, integrationValue, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * A thin Zelavis-owned seam between the Admin Agent and a language model.
  *
@@ -90,6 +92,8 @@ export function createProviderModel(
   }
 }
 
+type Generated = Awaited<ReturnType<AssistantModel["generate"]>>;
+
 function createOpenAICompatibleModel(
   provider: "openrouter" | "openai",
   defaultUrl: string,
@@ -108,7 +112,7 @@ function createOpenAICompatibleModel(
 
   return {
     name: `${provider}:${options.model}`,
-    async generate({ messages, tools, signal, onText }) {
+    generate({ messages, tools, signal, onText }) { return present(Effect.gen(function* (): Effect.fn.Return<Generated, IntegrationFailure | AssistantModelError> {
       const body = {
         model: options.model,
         ...(onText ? { stream: true } : {}),
@@ -143,47 +147,39 @@ function createOpenAICompatibleModel(
           : {}),
       };
       const timeout = AbortSignal.timeout(timeoutMs);
-      let response: Response;
-      try {
-        response = await send(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${options.apiKey}`,
-          },
-          body: JSON.stringify(body),
-          redirect: "error",
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        });
-      } catch {
+      const response = yield* integration(() => send(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        redirect: "error",
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })).pipe(
         // Never surface the underlying error: it can echo request headers.
-        throw new AssistantModelError("The model provider could not be reached.");
-      }
+        Effect.mapError(() => new IntegrationFailure(new AssistantModelError("The model provider could not be reached."))),
+      );
       if (!response.ok) {
-        throw new AssistantModelError(`The model provider refused the request (${response.status}).`);
+        return yield* new IntegrationFailure(new AssistantModelError(`The model provider refused the request (${response.status}).`));
       }
-      if (onText) return readStream(response, onText);
-      const text = await readBounded(response);
-      let payload: {
+      if (onText) return yield* integrationValue(readStream(response, onText));
+      const text = yield* integrationValue(readBounded(response));
+      const payload = yield* evaluate(() => JSON.parse(text) as {
         choices?: {
           message?: {
             content?: string | null;
             tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[];
           };
         }[];
-      };
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        throw new AssistantModelError("The model provider returned an unreadable response.");
-      }
+      }).pipe(Effect.mapError(() => new IntegrationFailure(new AssistantModelError("The model provider returned an unreadable response."))));
       const message = payload.choices?.[0]?.message;
-      if (!message) throw new AssistantModelError("The model provider returned no answer.");
+      if (!message) return yield* new IntegrationFailure(new AssistantModelError("The model provider returned no answer."));
       return {
         content: message.content ?? "",
         toolCalls: toToolCalls(message.tool_calls ?? []),
       };
-    },
+    })); },
   };
 }
 
@@ -206,10 +202,11 @@ function toToolCalls(
 }
 
 /** Reads an OpenAI-style server-sent-event completion, bounded like the buffered path. */
-async function readStream(
+function readStream(
   response: Response,
   onText: (delta: string) => void,
 ): Promise<{ content: string; toolCalls: AssistantModelToolCall[] }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ content: string; toolCalls: AssistantModelToolCall[] }, IntegrationFailure> {
   const reader = response.body?.getReader();
   if (!reader) throw new AssistantModelError("The model provider returned no answer.");
   const decoder = new TextDecoder();
@@ -256,11 +253,11 @@ async function readStream(
   };
 
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = (yield* integrationValue(reader.read()));
     if (done) break;
     size += value.byteLength;
     if (size > MAX_MODEL_RESPONSE_BYTES) {
-      await reader.cancel();
+      (yield* integrationValue(reader.cancel()));
       throw new AssistantModelError("The model provider response was too large.");
     }
     pending += decoder.decode(value, { stream: true });
@@ -276,7 +273,8 @@ async function readStream(
     content,
     toolCalls: toToolCalls([...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)),
   };
-}
+}));
+  }
 
 
 /** Anthropic's Messages API, which frames system text, tool use and streaming differently. */
@@ -333,7 +331,7 @@ export function createAnthropicModel(options: ModelEndpointOptions): AssistantMo
 
   return {
     name: `anthropic:${options.model}`,
-    async generate({ messages, tools, signal, onText }) {
+    generate({ messages, tools, signal, onText }) { return present(Effect.gen(function* (): Effect.fn.Return<Generated, IntegrationFailure | AssistantModelError> {
       const { system, turns } = toTurns(messages);
       const body = {
         model: options.model,
@@ -352,36 +350,31 @@ export function createAnthropicModel(options: ModelEndpointOptions): AssistantMo
           : {}),
       };
       const timeout = AbortSignal.timeout(timeoutMs);
-      let response: Response;
-      try {
-        response = await send(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": options.apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify(body),
-          redirect: "error",
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        });
-      } catch {
+      const response = yield* integration(() => send(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": options.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+        redirect: "error",
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })).pipe(
         // Never surface the underlying error: it can echo request headers.
-        throw new AssistantModelError("The model provider could not be reached.");
-      }
+        Effect.mapError(() => new IntegrationFailure(new AssistantModelError("The model provider could not be reached."))),
+      );
       if (!response.ok) {
-        throw new AssistantModelError(`The model provider refused the request (${response.status}).`);
+        return yield* new IntegrationFailure(new AssistantModelError(`The model provider refused the request (${response.status}).`));
       }
-      if (onText) return readAnthropicStream(response, onText);
+      if (onText) return yield* integrationValue(readAnthropicStream(response, onText));
 
-      let payload: { content?: { type?: string; text?: string; id?: string; name?: string; input?: unknown }[] };
-      try {
-        payload = JSON.parse(await readBounded(response));
-      } catch {
-        throw new AssistantModelError("The model provider returned an unreadable response.");
-      }
+      const payload = yield* integration(() => readBounded(response)).pipe(
+        Effect.flatMap((text) => evaluate(() => JSON.parse(text) as { content?: { type?: string; text?: string; id?: string; name?: string; input?: unknown }[] })),
+        Effect.mapError(() => new IntegrationFailure(new AssistantModelError("The model provider returned an unreadable response."))),
+      );
       if (!Array.isArray(payload.content)) {
-        throw new AssistantModelError("The model provider returned no answer.");
+        return yield* new IntegrationFailure(new AssistantModelError("The model provider returned no answer."));
       }
       let content = "";
       const toolCalls: AssistantModelToolCall[] = [];
@@ -392,15 +385,16 @@ export function createAnthropicModel(options: ModelEndpointOptions): AssistantMo
         }
       }
       return { content, toolCalls };
-    },
+    })); },
   };
 }
 
 /** Reads Anthropic's typed server-sent events, bounded like every other response. */
-async function readAnthropicStream(
+function readAnthropicStream(
   response: Response,
   onText: (delta: string) => void,
 ): Promise<{ content: string; toolCalls: AssistantModelToolCall[] }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ content: string; toolCalls: AssistantModelToolCall[] }, IntegrationFailure> {
   const reader = response.body?.getReader();
   if (!reader) throw new AssistantModelError("The model provider returned no answer.");
   const decoder = new TextDecoder();
@@ -452,11 +446,11 @@ async function readAnthropicStream(
   };
 
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = (yield* integrationValue(reader.read()));
     if (done) break;
     size += value.byteLength;
     if (size > MAX_MODEL_RESPONSE_BYTES) {
-      await reader.cancel();
+      (yield* integrationValue(reader.cancel()));
       throw new AssistantModelError("The model provider response was too large.");
     }
     pending += decoder.decode(value, { stream: true });
@@ -481,25 +475,28 @@ async function readAnthropicStream(
       return { id: tool.id, name: tool.name, arguments: args };
     });
   return { content, toolCalls };
-}
+}));
+  }
 
-async function readBounded(response: Response): Promise<string> {
+function readBounded(response: Response): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const reader = response.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = (yield* integrationValue(reader.read()));
     if (done) break;
     size += value.byteLength;
     if (size > MAX_MODEL_RESPONSE_BYTES) {
-      await reader.cancel();
+      (yield* integrationValue(reader.cancel()));
       throw new AssistantModelError("The model provider response was too large.");
     }
     chunks.push(value);
   }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
+  return (yield* integrationValue(new TextDecoder().decode(Buffer.concat(chunks))));
+}));
+  }
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are the Zelavis administration assistant. Help the operator inspect and understand this installation. " +
@@ -539,7 +536,8 @@ export function createModelAssistantResponder(options: {
   const maxSteps = Math.max(1, Math.min(options.maxSteps ?? 5, 10));
   return {
     name: options.model.name,
-    async respond({ thread, principal, onEvent, signal }) {
+    respond({ thread, principal, onEvent, signal }) {
+    return present(Effect.gen(function* () {
       const messages: AssistantModelMessage[] = [
         { role: "system", content: options.system ?? DEFAULT_SYSTEM_PROMPT },
         ...historyOf(thread),
@@ -555,7 +553,7 @@ export function createModelAssistantResponder(options: {
         signal?.throwIfAborted();
         let started = false;
         // The final step offers no tools, forcing a written answer.
-        const result = await options.model.generate({
+        const result = (yield* integrationValue(options.model.generate({
           messages,
           tools: step === maxSteps - 1 ? [] : tools,
           ...(signal ? { signal } : {}),
@@ -572,7 +570,7 @@ export function createModelAssistantResponder(options: {
                 },
               }
             : {}),
-        });
+        })));
         if (result.content.trim()) said.push(result.content.trim());
         if (result.toolCalls.length === 0 || !options.toolbox) {
           return { content: answer() || "I have nothing to add.", provider: options.model.name, ...(activity.length ? { activity } : {}), ...(approvalIds.length ? { approvalIds } : {}) };
@@ -586,7 +584,7 @@ export function createModelAssistantResponder(options: {
           const label = options.toolbox.describe(call);
           const base = { type: "tool" as const, id: call.id, name: call.name, label };
           onEvent?.({ ...base, status: "running" });
-          const outcome = await options.toolbox.run(principal, call, { threadId: thread.id, projectId: thread.projectId });
+          const outcome = (yield* integrationValue(options.toolbox.run(principal, call, { threadId: thread.id, projectId: thread.projectId })));
           const approval = !outcome.ok ? outcome.refusal.approval : undefined;
           const status = approval
             ? ("awaiting" as const)
@@ -612,7 +610,8 @@ export function createModelAssistantResponder(options: {
         ...(activity.length ? { activity } : {}),
         ...(approvalIds.length ? { approvalIds } : {}),
       };
-    },
+    }));
+  },
   };
 }
 

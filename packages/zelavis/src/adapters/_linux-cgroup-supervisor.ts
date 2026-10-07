@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, unwrapFailure, IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { randomUUID } from "node:crypto";
 import { access, lstat, mkdir, readdir, readFile, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -61,32 +63,34 @@ export class CgroupSupervisionUnavailableError extends Error {
 const OPERATION_PREFIX = "zelavis-op-";
 const EMPTY_WAIT_MS = 5_000;
 
-async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false);
-}
-
-async function populated(path: string): Promise<boolean> {
-  const events = await readFile(join(path, "cgroup.events"), "utf8").catch(() => "");
-  return /^populated 1$/m.test(events);
-}
-
-async function killAndRemove(path: string): Promise<void> {
-  await writeFile(join(path, "cgroup.kill"), "1").catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error;
-  });
-  const until = Date.now() + EMPTY_WAIT_MS;
-  while (await populated(path)) {
-    if (Date.now() > until) {
-      throw new CgroupSupervisionUnavailableError(
-        `Operation cgroup ${path} still has processes ${EMPTY_WAIT_MS} ms after cgroup.kill.`,
-      );
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+function exists(path: string): Promise<boolean> {
+    return present(integration(() => access(path).then(() => true, () => false)));
   }
-  await rmdir(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error;
-  });
-}
+
+function populated(path: string): Promise<boolean> {
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
+  const events = (yield* integrationValue(readFile(join(path, "cgroup.events"), "utf8").catch(() => "")));
+  return (yield* integrationValue(/^populated 1$/m.test(events)));
+}));
+  }
+
+const ignoreMissing = (error: NodeJS.ErrnoException): void => {
+  if (error.code !== "ENOENT") throw error;
+};
+
+const killAndRemove = Effect.fn("cgroup.killAndRemove")(function* (path: string): Effect.fn.Return<void, IntegrationFailure | CgroupSupervisionUnavailableError> {
+  yield* integrationValue(writeFile(join(path, "cgroup.kill"), "1").catch(ignoreMissing));
+  const until = Date.now() + EMPTY_WAIT_MS;
+  while (yield* integrationValue(populated(path))) {
+    if (Date.now() > until) {
+      return yield* Effect.fail(new IntegrationFailure(new CgroupSupervisionUnavailableError(
+        `Operation cgroup ${path} still has processes ${EMPTY_WAIT_MS} ms after cgroup.kill.`,
+      )));
+    }
+    yield* Effect.sleep(10);
+  }
+  yield* integrationValue(rmdir(path).catch(ignoreMissing));
+});
 
 function validateLimits(limits: CgroupOperationLimits | undefined) {
   if (!limits) return;
@@ -108,59 +112,61 @@ function validateLimits(limits: CgroupOperationLimits | undefined) {
  * Proves the delegated subtree is usable, reclaims leftovers, and enables the
  * controllers the limits need.
  */
-export async function createCgroupV2OperationSupervisor(
+export function createCgroupV2OperationSupervisor(
   options: CgroupV2SupervisorOptions,
 ): Promise<CgroupV2OperationSupervisor> {
+  return present(Effect.gen(function* (): Effect.fn.Return<CgroupV2OperationSupervisor, IntegrationFailure | CgroupSupervisionUnavailableError> {
   const platform = options.platform ?? process.platform;
   if (platform !== "linux") {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       `cgroup v2 supervision requires Linux; this host is ${platform}.`,
-    );
+    ));
   }
   validateLimits(options.limits);
   const root = options.root;
   if (!root.startsWith("/sys/fs/cgroup/") || root.split("/").includes("..")) {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       "cgroup supervision root must be a normalized directory below /sys/fs/cgroup.",
-    );
+    ));
   }
-  const rootStats = await lstat(root).catch(() => undefined);
+  const rootStats = yield* integrationValue(lstat(root)).pipe(Effect.orElseSucceed(() => undefined));
   if (!rootStats?.isDirectory() || rootStats.isSymbolicLink()) {
-    throw new CgroupSupervisionUnavailableError(`cgroup supervision root ${root} is not a directory.`);
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(`cgroup supervision root ${root} is not a directory.`));
   }
-  if (!(await exists(join(root, "cgroup.controllers")))) {
-    throw new CgroupSupervisionUnavailableError(`${root} is not on a cgroup v2 (unified) hierarchy.`);
+  if (!(yield* integrationValue(exists(join(root, "cgroup.controllers"))))) {
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(`${root} is not on a cgroup v2 (unified) hierarchy.`));
   }
   // `cgroup.kill` (Linux 5.14+) is what makes the kill complete; without it a
   // freeze-and-signal loop would be needed, which this does not attempt.
-  if (!(await exists(join(root, "cgroup.kill")))) {
-    throw new CgroupSupervisionUnavailableError(
+  if (!(yield* integrationValue(exists(join(root, "cgroup.kill"))))) {
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       `${root} has no cgroup.kill; Linux 5.14 or later is required.`,
-    );
+    ));
   }
-  const rootProcesses = (await readFile(join(root, "cgroup.procs"), "utf8")).trim();
+  const rootProcesses = (yield* integrationValue(readFile(join(root, "cgroup.procs"), "utf8"))).trim();
   if (rootProcesses) {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       `${root} contains processes; the Agent must run outside the operations subtree (for example in a sibling leaf).`,
-    );
+    ));
   }
 
   // Delegation proof: creating and removing a child is the permission that
   // matters, not a mode bit.
   const probe = join(root, `zelavis-probe-${randomUUID()}`);
-  try {
-    await mkdir(probe);
-    await rmdir(probe);
-  } catch (error) {
-    throw new CgroupSupervisionUnavailableError(
-      `${root} is not delegated to this Agent: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  yield* integrationValue(mkdir(probe)).pipe(
+    Effect.flatMap(() => integration(() => rmdir(probe))),
+    Effect.mapError((failure) => {
+      const error = unwrapFailure(failure);
+      return new IntegrationFailure(new CgroupSupervisionUnavailableError(
+        `${root} is not delegated to this Agent: ${error instanceof Error ? error.message : String(error)}`,
+      ));
+    }),
+  );
 
   let reclaimed = 0;
-  for (const entry of await readdir(root, { withFileTypes: true })) {
+  for (const entry of yield* integrationValue(readdir(root, { withFileTypes: true }))) {
     if (entry.isDirectory() && entry.name.startsWith(OPERATION_PREFIX)) {
-      await killAndRemove(join(root, entry.name));
+      yield* killAndRemove(join(root, entry.name));
       reclaimed += 1;
     }
   }
@@ -169,17 +175,17 @@ export async function createCgroupV2OperationSupervisor(
   if (options.limits?.memoryMaxBytes !== undefined) controllers.push("memory");
   if (options.limits?.pidsMax !== undefined) controllers.push("pids");
   if (controllers.length > 0) {
-    const available = (await readFile(join(root, "cgroup.controllers"), "utf8")).trim().split(/\s+/);
+    const available = (yield* integrationValue(readFile(join(root, "cgroup.controllers"), "utf8"))).trim().split(/\s+/);
     const missing = controllers.filter((controller) => !available.includes(controller));
     if (missing.length > 0) {
-      throw new CgroupSupervisionUnavailableError(
+      return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
         `${root} does not delegate the ${missing.join(", ")} controller(s).`,
-      );
+      ));
     }
-    await writeFile(
+    yield* integrationValue(writeFile(
       join(root, "cgroup.subtree_control"),
       controllers.map((controller) => `+${controller}`).join(" "),
-    );
+    ));
   }
 
   const joinShell = options.joinShell ?? "/bin/sh";
@@ -188,22 +194,19 @@ export async function createCgroupV2OperationSupervisor(
     root,
     joinShell,
     reclaimed,
-    async open() {
+    open() { return present(Effect.gen(function* (): Effect.fn.Return<CgroupOperationScope, IntegrationFailure> {
       const path = join(root, `${OPERATION_PREFIX}${randomUUID()}`);
-      await mkdir(path);
-      try {
+      yield* integrationValue(mkdir(path));
+      yield* Effect.gen(function* () {
         if (options.limits?.memoryMaxBytes !== undefined) {
-          await writeFile(join(path, "memory.max"), String(options.limits.memoryMaxBytes));
+          yield* integrationValue(writeFile(join(path, "memory.max"), String(options.limits.memoryMaxBytes)));
           // No swap escape from the memory ceiling.
-          await writeFile(join(path, "memory.swap.max"), "0").catch(() => undefined);
+          yield* integrationValue(writeFile(join(path, "memory.swap.max"), "0")).pipe(Effect.orElseSucceed(() => undefined));
         }
         if (options.limits?.pidsMax !== undefined) {
-          await writeFile(join(path, "pids.max"), String(options.limits.pidsMax));
+          yield* integrationValue(writeFile(join(path, "pids.max"), String(options.limits.pidsMax)));
         }
-      } catch (error) {
-        await rmdir(path).catch(() => undefined);
-        throw error;
-      }
+      }).pipe(Effect.tapError(() => integrationValue(rmdir(path)).pipe(Effect.orElseSucceed(() => undefined))));
       let closed: Promise<void> | undefined;
       return {
         path,
@@ -222,18 +225,21 @@ export async function createCgroupV2OperationSupervisor(
             ],
           };
         },
-        async kill() {
-          await writeFile(join(path, "cgroup.kill"), "1").catch((error: NodeJS.ErrnoException) => {
+        kill() {
+    return present(Effect.gen(function* () {
+          (yield* integrationValue(writeFile(join(path, "cgroup.kill"), "1").catch((error: NodeJS.ErrnoException) => {
             if (error.code !== "ENOENT") throw error;
-          });
-        },
+          })));
+        }));
+  },
         close() {
-          closed ??= killAndRemove(path);
+          closed ??= present(killAndRemove(path));
           return closed;
         },
       };
-    },
+    })); },
   };
+  }));
 }
 
 /**
@@ -244,58 +250,61 @@ export async function createCgroupV2OperationSupervisor(
  * controllers to children, which is why the Agent cannot stay where systemd
  * started it. Returns the operations root for `createCgroupV2OperationSupervisor`.
  */
-export async function prepareDelegatedCgroupLayout(options: {
+export function prepareDelegatedCgroupLayout(options: {
   readonly controllers?: readonly ("memory" | "pids")[];
   readonly platform?: string;
 } = {}): Promise<{ readonly agent: string; readonly operations: string }> {
+  return present(Effect.gen(function* (): Effect.fn.Return<{ readonly agent: string; readonly operations: string }, IntegrationFailure | CgroupSupervisionUnavailableError> {
   const platform = options.platform ?? process.platform;
   if (platform !== "linux") {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       `Delegated cgroup layout requires Linux; this host is ${platform}.`,
-    );
+    ));
   }
-  const membership = await readFile("/proc/self/cgroup", "utf8").catch(() => "");
+  const membership = yield* integrationValue(readFile("/proc/self/cgroup", "utf8")).pipe(Effect.orElseSucceed(() => ""));
   const unified = membership.split("\n").find((line) => line.startsWith("0::"));
   if (!unified) {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       "This process is not on a cgroup v2 unified hierarchy.",
-    );
+    ));
   }
   let base = join("/sys/fs/cgroup", unified.slice(3).trim());
   if (base === "/sys/fs/cgroup" || base === "/sys/fs/cgroup/") {
-    throw new CgroupSupervisionUnavailableError(
+    return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
       "This process runs in the root cgroup; start the Agent in a delegated unit or scope.",
-    );
+    ));
   }
   // A restarted process inherits nothing, but a layout already prepared by
   // this process (or a wrapper) is reused rather than nested again.
-  if (base.endsWith("/agent") && await exists(join(base, "..", "operations"))) {
+  if (base.endsWith("/agent") && (yield* integrationValue(exists(join(base, "..", "operations"))))) {
     base = join(base, "..");
   }
   const agent = join(base, "agent");
   const operations = join(base, "operations");
-  try {
-    await mkdir(agent, { recursive: true });
-    await mkdir(operations, { recursive: true });
-    await writeFile(join(agent, "cgroup.procs"), String(process.pid));
-  } catch (error) {
-    throw new CgroupSupervisionUnavailableError(
-      `${base} is not delegated to this process: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  yield* integrationValue(mkdir(agent, { recursive: true })).pipe(
+    Effect.flatMap(() => integration(() => mkdir(operations, { recursive: true }))),
+    Effect.flatMap(() => integration(() => writeFile(join(agent, "cgroup.procs"), String(process.pid)))),
+    Effect.mapError((failure) => {
+      const error = unwrapFailure(failure);
+      return new IntegrationFailure(new CgroupSupervisionUnavailableError(
+        `${base} is not delegated to this process: ${error instanceof Error ? error.message : String(error)}`,
+      ));
+    }),
+  );
   const requested = options.controllers ?? [];
   if (requested.length > 0) {
-    const available = (await readFile(join(base, "cgroup.controllers"), "utf8")).trim().split(/\s+/);
+    const available = (yield* integrationValue(readFile(join(base, "cgroup.controllers"), "utf8"))).trim().split(/\s+/);
     const missing = requested.filter((controller) => !available.includes(controller));
     if (missing.length > 0) {
-      throw new CgroupSupervisionUnavailableError(
+      return yield* new IntegrationFailure(new CgroupSupervisionUnavailableError(
         `${base} does not delegate the ${missing.join(", ")} controller(s).`,
-      );
+      ));
     }
-    await writeFile(
+    yield* integrationValue(writeFile(
       join(base, "cgroup.subtree_control"),
       requested.map((controller) => `+${controller}`).join(" "),
-    );
+    ));
   }
   return { agent, operations };
+  }));
 }

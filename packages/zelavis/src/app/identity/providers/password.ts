@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import { AuthInvalidCredentialsError } from "../core/errors.js";
 import { hashPassword, verifyPassword } from "../core/password.js";
 import type {
@@ -76,12 +78,14 @@ function base64Url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-async function recoveryTokenHash(token: string): Promise<string> {
+function recoveryTokenHash(token: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const input = new TextEncoder().encode(token);
   const bytes = new Uint8Array(input.byteLength);
   bytes.set(input);
-  return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.buffer)));
-}
+  return (yield* integrationValue(base64Url(new Uint8Array((yield* integrationValue(crypto.subtle.digest("SHA-256", bytes.buffer)))))));
+}));
+  }
 
 function secureToken(): string {
   const bytes = new Uint8Array(32);
@@ -98,9 +102,10 @@ export function createPasswordProvider(
   const provider: CredentialProvider = {
     name: PASSWORD_PROVIDER,
 
-    async prepareCredential(
+    prepareCredential(
       input: CredentialEnrollmentInput,
     ): Promise<PreparedCredential> {
+    return present(Effect.gen(function* (): Effect.fn.Return<PreparedCredential, IntegrationFailure> {
       const identifier = normalizeIdentifier(input.identifier);
       if (typeof input.password !== "string") {
         throw new TypeError("Password enrollment requires a password.");
@@ -109,88 +114,91 @@ export function createPasswordProvider(
         identifier,
         // hashPassword owns the length policy, so enrollment and recovery
         // agree on it without restating the rule in either place.
-        secretHash: await hashPassword(input.password, hashOptions),
+        secretHash: (yield* integrationValue(hashPassword(input.password, hashOptions))),
         accountIdentity: accountIdentity(identifier),
       };
-    },
+    }));
+  },
 
-    async authenticate(
+    authenticate(
       input: AuthenticationInput,
       api: CredentialProviderApi,
     ): Promise<AuthenticationResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthenticationResult, IntegrationFailure> {
       const identifier = normalizeIdentifier(input.identifier);
       const password = typeof input.password === "string" ? input.password : "";
       if (password.length > 1024) throw new AuthInvalidCredentialsError();
 
-      const credential = await api.credentials.findByProviderIdentifier(
+      const credential = (yield* integrationValue(api.credentials.findByProviderIdentifier(
         PASSWORD_PROVIDER,
         identifier,
-      );
+      )));
       // Every failure below raises the same error and does the same work:
       // which of the identifier and the password was wrong is not the caller's
       // business, and neither is how long it took to find out.
-      const valid = await verifyPassword(
+      const valid = (yield* integrationValue(verifyPassword(
         password,
         credential?.secretHash ?? DECOY_PASSWORD_HASH,
-      );
+      )));
       if (!credential?.secretHash || !valid) {
         throw new AuthInvalidCredentialsError();
       }
 
-      const account = await api.accounts.findById(credential.accountId);
+      const account = (yield* integrationValue(api.accounts.findById(credential.accountId)));
       if (!account) throw new AuthInvalidCredentialsError();
 
       return {
         account,
         credential,
-        session: await api.sessions.create({
+        session: (yield* integrationValue(api.sessions.create({
           accountId: account.id,
           expiresAt: new Date(Date.now() + sessionTtlMs),
           metadata: { provider: PASSWORD_PROVIDER },
-        }),
+        }))),
       };
-    },
+    }));
+  },
   };
 
   if (options.recovery) {
-    provider.beginRecovery = async (input, api) => {
+    provider.beginRecovery = (input, api) => present(Effect.gen(function* () {
       const identifier = normalizeIdentifier(input.identifier);
-      const credential = await api.credentials.findByProviderIdentifier(
+      const credential = (yield* integrationValue(api.credentials.findByProviderIdentifier(
         PASSWORD_PROVIDER,
         identifier,
-      );
+      )));
       if (credential) {
         const token = secureToken();
         const expiresAt = new Date(Date.now() + (options.recovery?.ttlMs ?? 15 * 60_000));
-        await api.credentials.update({
+        (yield* integrationValue(api.credentials.update({
           ...credential,
           metadata: {
             ...(credential.metadata ?? {}),
             [RECOVERY_METADATA_KEY]: {
               // Stored as a hash: a leaked database must not hand someone a
               // working reset link.
-              tokenHash: await recoveryTokenHash(token),
+              tokenHash: (yield* integrationValue(recoveryTokenHash(token))),
               expiresAt: expiresAt.toISOString(),
             },
           },
           updatedAt: new Date(),
-        });
-        await options.recovery!.deliver({ identifier, token, expiresAt });
+        })));
+        (yield* integrationValue(options.recovery!.deliver({ identifier, token, expiresAt })));
       }
       // Accepted either way, so the response does not report whether an
       // account exists.
       return { accepted: true };
-    };
+    }));
 
-    provider.completeRecovery = async (input, api) => {
+    provider.completeRecovery = (input, api) => present(Effect.gen(function* () {
       if (typeof input.token !== "string" || typeof input.password !== "string") {
         throw new AuthInvalidCredentialsError();
       }
       const identifier = normalizeIdentifier(input.identifier);
-      const credential = await api.credentials.findByProviderIdentifier(
+      const credential = (yield* integrationValue(api.credentials.findByProviderIdentifier(
         PASSWORD_PROVIDER,
         identifier,
-      );
+      )));
       const recovery = credential?.metadata?.[RECOVERY_METADATA_KEY] as
         | { tokenHash?: unknown; expiresAt?: unknown }
         | undefined;
@@ -199,22 +207,22 @@ export function createPasswordProvider(
         typeof recovery?.tokenHash !== "string" ||
         typeof recovery.expiresAt !== "string" ||
         new Date(recovery.expiresAt) <= new Date() ||
-        (await recoveryTokenHash(input.token)) !== recovery.tokenHash
+        ((yield* integrationValue(recoveryTokenHash(input.token)))) !== recovery.tokenHash
       ) {
         throw new AuthInvalidCredentialsError();
       }
 
       const { [RECOVERY_METADATA_KEY]: _used, ...metadata } = credential.metadata ?? {};
-      await api.credentials.update({
+      (yield* integrationValue(api.credentials.update({
         ...credential,
-        secretHash: await hashPassword(input.password, hashOptions),
+        secretHash: (yield* integrationValue(hashPassword(input.password, hashOptions))),
         metadata: Object.keys(metadata).length ? metadata : undefined,
         updatedAt: new Date(),
-      });
+      })));
       // Every existing session ends: a password reset is what someone does
       // when they believe the old one is known to somebody else.
-      await api.sessions.revokeAll(credential.accountId);
-    };
+      (yield* integrationValue(api.sessions.revokeAll(credential.accountId)));
+    }));
   }
 
   return provider;

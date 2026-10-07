@@ -41,9 +41,11 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "effect": "4.0.0"
   },
   "peerDependencies": {
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "effect": "4.0.0"
   }
 }

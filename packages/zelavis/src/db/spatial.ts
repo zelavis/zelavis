@@ -1,3 +1,4 @@
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 /**
  * Geometry, as coordinates the database can index and check exactly.
  *
@@ -516,10 +517,10 @@ interface H3 {
 }
 
 export const loadH3 = Effect.tryPromise({
-  try: async () => {
-    const mod = (await import("h3-js")) as unknown as H3 & { default?: H3 };
+  try: () => present(Effect.gen(function* () {
+    const mod = ((yield* integrationValue(import("h3-js")))) as unknown as H3 & { default?: H3 };
     return (mod.default ?? mod) as H3;
-  },
+  })),
   catch: (cause) =>
     new StoreError({
       op: "spatial.load",

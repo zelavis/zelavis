@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/runtime/contracts.js";
 import type { ZelavisHostOperationBroker } from "./host-operations.js";
 
@@ -10,19 +12,21 @@ export class ZelavisHostPackageProvisioningError extends Error {
 }
 
 /** Creating a Project never grants package authority: the broker checks each installed manifest. */
-export async function provisionProjectHostPackages(
+export function provisionProjectHostPackages(
   broker: ZelavisHostOperationBroker,
   sets: readonly string[],
   principal: ZelavisPrincipal | undefined,
 ): Promise<void> {
-  for (const set of sets) {
-    let record = await broker.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set }, deadlineMs: 900_000 }, principal);
-    const until = Date.now() + 905_000;
-    while (record.agent?.status === "queued" || record.agent?.status === "running" || !record.agent) {
-      if (Date.now() >= until) throw new ZelavisHostPackageProvisioningError(record.operationId, true);
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      record = await broker.get(record.operationId, principal);
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    for (const set of sets) {
+      let record = yield* integrationValue(broker.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set }, deadlineMs: 900_000 }, principal));
+      const until = Date.now() + 905_000;
+      while (record.agent?.status === "queued" || record.agent?.status === "running" || !record.agent) {
+        if (Date.now() >= until) throw new ZelavisHostPackageProvisioningError(record.operationId, true);
+        yield* Effect.sleep(250);
+        record = yield* integrationValue(broker.get(record.operationId, principal));
+      }
+      if (record.agent.status !== "succeeded") throw new ZelavisHostPackageProvisioningError(record.operationId);
     }
-    if (record.agent.status !== "succeeded") throw new ZelavisHostPackageProvisioningError(record.operationId);
-  }
+  }));
 }

@@ -9,8 +9,8 @@
 import {
   ZELAVIS_GATEWAY_AUTHORITY_HEADER,
 } from "./gateway-authority.js";
-import { Effect } from "effect";
-import { integration, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import { Cause, Effect } from "effect";
+import { integration, present, unwrapFailure, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisPrincipal } from "../core/index.js";
 import { tenantOfPrincipal } from "./shared.js";
 import type { FabricApi } from "../core/fabric/index.js";
@@ -361,11 +361,12 @@ export function isRuntimeControlPlanePath(wildcardPath: string): boolean {
  * A Project owns at most one frontend today; the first running one wins rather
  * than failing, so a half-finished replacement cannot take the site down.
  */
-export async function findRunningFrontend(
+export function findRunningFrontend(
   projects: Pick<ZelavisProjectManager, "listOwned">,
   projectId: string,
 ): Promise<{ readonly url: string } | undefined> {
-  const owned = await projects.listOwned(projectId).catch(() => []);
+    return present(Effect.gen(function* (): Effect.fn.Return<{ readonly url: string } | undefined, IntegrationFailure> {
+  const owned = (yield* integrationValue(projects.listOwned(projectId).catch(() => [])));
   for (const candidate of owned) {
     if (
       candidate.kind === "frontend" &&
@@ -376,7 +377,8 @@ export async function findRunningFrontend(
     }
   }
   return undefined;
-}
+}));
+  }
 
 export interface ProjectGatewayDependencies {
   readonly projects: ZelavisProjectManager | undefined;
@@ -631,7 +633,7 @@ export function createProjectGatewayRoutes(
         method === "GET" ? ["project.view"] : ["project.runtime.manage"],
       scope: { type: "project" as const, projectIdParam: "projectId" },
     },
-    handler: async ({
+    handler: ({
       params,
       query,
       request,
@@ -641,24 +643,20 @@ export function createProjectGatewayRoutes(
       query: URLSearchParams;
       request: Request;
       principal?: ZelavisPrincipal;
-    }) => {
-      try {
-        return await forwardToProject({
-          projectId: params.projectId ?? "",
-          wildcardPath: params.path ?? "",
-          query,
-          request,
+    }) => present(Effect.gen(function* () {
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: params.path ?? "",
+        query,
+        request,
+        principal,
+        permissions: projectRuntimePermissions(
           principal,
-          permissions: projectRuntimePermissions(
-            principal,
-            params.projectId ?? "",
-          ),
-          allowFrontend: true,
-        });
-      } catch (error) {
-        return projectErrorResponse(error);
-      }
-    },
+          params.projectId ?? "",
+        ),
+        allowFrontend: true,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
   /**
@@ -706,7 +704,7 @@ export function createProjectGatewayRoutes(
         method === "GET" ? ["project.data.read"] : ["project.data.write"],
       scope: { type: "project" as const, projectIdParam: "projectId" },
     },
-    handler: async ({
+    handler: ({
       params,
       query,
       request,
@@ -716,35 +714,31 @@ export function createProjectGatewayRoutes(
       query: URLSearchParams;
       request: Request;
       principal?: ZelavisPrincipal;
-    }) => {
-      try {
-        const path = (params.path ?? "").replace(/^\/+/, "");
-        if (!path) {
-          return {
-            status: 400,
-            body: { error: "A database path is required." },
-          };
-        }
-        return await forwardToProject({
-          projectId: params.projectId ?? "",
-          wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/${path}`,
-          query,
-          request,
-          principal,
-          // Only the data implications travel with an App data request. The
-          // caller's other Project authority, if it happens to hold any, is
-          // not this request's business and must not ride along into the
-          // child where it would widen what the request can reach.
-          permissions: projectDataPermissions(
-            principal,
-            params.projectId ?? "",
-          ),
-          allowFrontend: false,
-        });
-      } catch (error) {
-        return projectErrorResponse(error);
+    }) => present(Effect.gen(function* () {
+      const path = (params.path ?? "").replace(/^\/+/, "");
+      if (!path) {
+        return {
+          status: 400,
+          body: { error: "A database path is required." },
+        };
       }
-    },
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/${path}`,
+        query,
+        request,
+        principal,
+        // Only the data implications travel with an App data request. The
+        // caller's other Project authority, if it happens to hold any, is
+        // not this request's business and must not ride along into the
+        // child where it would widen what the request can reach.
+        permissions: projectDataPermissions(
+          principal,
+          params.projectId ?? "",
+        ),
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
   return [...proxyRoutes, ...dataRoutes];

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 import {
   requireActivePluginContext,
   getActivePluginContext,
@@ -130,21 +132,21 @@ function registerAutoWebApiRoute(
       pluginResource: resource,
       pluginAction: action,
     },
-    handler: async (reqContext: ZelavisRouteContext) => {
+    handler: (reqContext: ZelavisRouteContext) => present(Effect.gen(function* () {
       const queryObj = Object.fromEntries(reqContext.query.entries());
       const input = method === "GET" || method === "DELETE"
         ? { ...queryObj, ...reqContext.params }
         : reqContext.params.id
           ? { ...(reqContext.body as Record<string, unknown>), id: reqContext.params.id }
           : reqContext.body;
-      const result = await handler(input, reqContext);
+      const result = (yield* integrationValue(handler(input, reqContext)));
       // Returned objects are data, even when they contain status/body/headers.
       return {
         status: 200,
         headers: { "content-type": "application/json" },
         body: result,
       };
-    },
+    })),
   });
 }
 

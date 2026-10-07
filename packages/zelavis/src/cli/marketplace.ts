@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
@@ -9,7 +11,8 @@ const usage =
  * `allowlist` shows how current the list is; `refresh` fetches it again from
  * its sources and reports what each one answered.
  */
-export async function runMarketplaceCommand(args: readonly string[]): Promise<void> {
+export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
@@ -55,13 +58,13 @@ export async function runMarketplaceCommand(args: readonly string[]): Promise<vo
 
   switch (action) {
     case "allowlist": {
-      const status = await client.marketplace.allowlist();
+      const status = (yield* integrationValue(client.marketplace.allowlist()));
       print(status, () =>
         `${status.gated ? "Installs are limited to the allow-list" : "Installs are not limited to the allow-list"}; ${status.sources} source(s).\n${describe(status.list)}`);
       return;
     }
     case "refresh": {
-      const result = await client.marketplace.refresh();
+      const result = (yield* integrationValue(client.marketplace.refresh()));
       print(result, () =>
         [
           result.updated ? "Updated." : "Nothing newer was found.",
@@ -73,4 +76,5 @@ export async function runMarketplaceCommand(args: readonly string[]): Promise<vo
     default:
       throw new Error(`Unknown marketplace command "${action}". ${usage}`);
   }
-}
+}));
+  }

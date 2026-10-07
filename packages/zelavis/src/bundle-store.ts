@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "./core/runtime/effect-boundary.js";
 /**
  * BundleStore — read-side abstraction for service app assets.
  *
@@ -196,9 +198,10 @@ export function createSharedBundleStore(
   }
 
   return {
-    async read(scope, path) {
+    read(scope, path) {
+    return present(Effect.gen(function* () {
       const key = buildBundleStorageKey(scope, path, { prefix, systemKey });
-      const object = (await storage.get(key)) as
+      const object = ((yield* integrationValue(storage.get(key)))) as
         | ZelavisFileStorageObject
         | undefined;
       if (!object) {
@@ -212,8 +215,10 @@ export function createSharedBundleStore(
         cacheControl: object.cacheControl,
         contentDisposition: object.contentDisposition,
       };
-    },
-    async list(scope, listPrefix) {
+    }));
+  },
+    list(scope, listPrefix) {
+    return present(Effect.gen(function* () {
       if (typeof storage.list !== "function") {
         return [];
       }
@@ -221,31 +226,34 @@ export function createSharedBundleStore(
         prefix,
         systemKey,
       });
-      const entries = await storage.list(baseKey);
+      const entries = (yield* integrationValue(storage.list(baseKey)));
       const prefixLen = buildBundleStorageKey(scope, "", {
         prefix,
         systemKey,
       }).length;
-      return entries.map((entry) => entry.path.slice(prefixLen));
-    },
-    async deleteProject(projectId) {
+      return (yield* integrationValue(entries.map((entry) => entry.path.slice(prefixLen))));
+    }));
+  },
+    deleteProject(projectId) {
+    return present(Effect.gen(function* () {
       const normalizedProjectId = normalizeBundleOwner(projectId, "Project id");
       if (typeof storage.list !== "function") {
         throw new Error(
           "Shared bundle storage cannot delete Project assets because its file storage does not support listing.",
         );
       }
-      const entries = await storage.list(
+      const entries = (yield* integrationValue(storage.list(
         `${storagePrefix}/${normalizedProjectId}/`,
-      );
+      )));
       let deleted = 0;
       for (const entry of entries) {
-        if (await storage.delete(entry.path)) {
+        if ((yield* integrationValue(storage.delete(entry.path)))) {
           deleted += 1;
         }
       }
       return deleted;
-    },
+    }));
+  },
   };
 }
 
@@ -260,7 +268,8 @@ export function createInMemoryBundleStore(
     buildBundleStorageKey(scope, path, { prefix: "memory" }).slice("memory/".length);
 
   return {
-    async read(scope, path) {
+    read(scope, path) {
+    return present(Effect.gen(function* () {
       const entry = assets.get(keyFor(scope, path));
       if (!entry) {
         return undefined;
@@ -275,8 +284,10 @@ export function createInMemoryBundleStore(
         contentType: entry.contentType,
         cacheControl: entry.cacheControl,
       };
-    },
-    async list(scope, prefix) {
+    }));
+  },
+    list(scope, prefix) {
+    return present(Effect.gen(function* () {
       const base = keyFor(scope, prefix ?? "");
       const baseNoPrefix = `${scope.projectId ?? "system"}/${scope.serviceName}/${scope.bundle}/`;
       const out: string[] = [];
@@ -286,6 +297,7 @@ export function createInMemoryBundleStore(
         }
       }
       return out;
-    },
+    }));
+  },
   };
 }

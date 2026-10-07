@@ -1,4 +1,3 @@
-import { isUnknown, recordOf, parseJson } from "../core/json-validation.js";
 import { randomUUID } from "node:crypto";
 import { open, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -7,7 +6,7 @@ import { installationInstanceScope } from "../core/runtime/installation-instance
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
-import { planZelavisRuntimeHostAssetsProgram } from "../core/runtime/installation-plan.js";
+import { planZelavisRuntimeHostAssetsProgram, readNativeInstallationReceiptProgram } from "../core/runtime/installation-plan.js";
 import { assertInstallationPath, planZelavisProductionEdgeDirectories } from "../core/runtime/installation-plan.js";
 import { assertProductionEdgePortsProgram } from "../core/runtime/installation-health.js";
 import { isExactVersion } from "../updates.js";
@@ -34,14 +33,16 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
 }) {
   yield* evaluate(() => { if (!isExactVersion(options.version)) throw new Error("Runtime selection requires an exact version."); });
   const scope = installationInstanceScope(options.prefix, options.instance);
-  const source = yield* integration(() => readFile(scope.receipt, "utf8"));
-  const receipt = yield* evaluate(() => {
+  yield* evaluate(() => {
     assertInstallationPath(options.prefix, "runtime selection prefix");
     assertInstallationPath(options.dataDirectory, "runtime selection data");
-    const value = parseJson(source, recordOf(isUnknown));
-    if (value.schemaVersion !== 2 || value.prefix !== options.prefix || value.instance !== options.instance || value.dataDirectory !== options.dataDirectory || !isExactVersion(value.version) || !["system", "user"].includes(String(value.mode))) throw new Error("Runtime selection disagrees with the installation receipt.");
-    if (value.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
-    return value;
+  });
+  // The one reader of the receipt: it validates the shape and refuses a worker's.
+  const found = yield* readNativeInstallationReceiptProgram(createNodeInstallHost(), options.prefix, options.instance);
+  const receipt = yield* evaluate(() => {
+    if (!found || found.prefix !== options.prefix || found.instance !== options.instance || found.dataDirectory !== options.dataDirectory || !isExactVersion(found.version)) throw new Error("Runtime selection disagrees with the installation receipt.");
+    if (found.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
+    return found;
   });
   const runtimeSource = yield* integration(() => readFile(scope.runtime, "utf8"));
   const runtime = yield* evaluate(() => {

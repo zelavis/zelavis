@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { readFile } from "node:fs/promises";
 import { createZelavisClient } from "../sdk/fetch.js";
 import { readAllStdin } from "./prompt.js";
@@ -5,10 +7,11 @@ import { readAllStdin } from "./prompt.js";
 const usage = "zelavis plugins <namespace> <resource> <action> [--file input.json | --data '{...}' | --data-stdin] [--param name=value] [--query name=value] [--url URL] [--api-prefix /api] [--api-version v1] [--token TOKEN] [--json]";
 
 /** All plugin commands dispatch through the same discovered SDK/HTTP contract. */
-export async function runPluginsCommand(
+export function runPluginsCommand(
   args: readonly string[],
   options?: { stdin?: NodeJS.ReadableStream },
 ): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let file: string | undefined;
@@ -79,7 +82,7 @@ export async function runPluginsCommand(
   });
   const [namespace, resource, action] = positional;
   if (help || positional.length < 3) {
-    const operations = (await client.pluginOperations()).filter((operation) =>
+    const operations = ((yield* integrationValue(client.pluginOperations()))).filter((operation) =>
       (!namespace || operation.namespace === namespace) && (!resource || operation.resource === resource));
     console.log(JSON.stringify({
       usage,
@@ -96,16 +99,17 @@ export async function runPluginsCommand(
       throw new Error("Invalid JSON in --data option.");
     }
   } else if (file === "-" || dataStdin) {
-    const raw = await readAllStdin(options?.stdin);
+    const raw = (yield* integrationValue(readAllStdin(options?.stdin)));
     try {
       input = raw.trim() ? JSON.parse(raw) : undefined;
     } catch {
       throw new Error("Invalid JSON from standard input.");
     }
   } else if (file) {
-    input = JSON.parse(await readFile(file, "utf8"));
+    input = JSON.parse((yield* integrationValue(readFile(file, "utf8"))));
   }
 
-  const result = await client.plugins[namespace!]![resource!]![action!]!(input, { params, query });
+  const result = (yield* integrationValue(client.plugins[namespace!]![resource!]![action!]!(input, { params, query })));
   console.log(JSON.stringify(result, null, 2));
-}
+}));
+  }

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
@@ -11,7 +13,8 @@ const usage =
  * as. An operator who needs to read another Tenant's records is doing an
  * operator's job and uses the dashboard or the Project's own database surface.
  */
-export async function runDataCommand(args: readonly string[]): Promise<void> {
+export function runDataCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
@@ -130,14 +133,14 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     `${document.id}\tv${document.version}`;
 
   if (action === "collections") {
-    const collections = await api.collections.list();
+    const collections = (yield* integrationValue(api.collections.list()));
     print({ collections }, () =>
       collections.map((entry) => `${entry.name}\t${entry.surface ?? "database"}`).join("\n")
       || "No collections.");
     return;
   }
   if (action === "modalities") {
-    const modalities = await api.collections.modalities(requireCollection());
+    const modalities = (yield* integrationValue(api.collections.modalities(requireCollection())));
     print({ modalities }, () => Object.entries(modalities)
       .filter(([name]) => name !== "collection")
       .map(([name, state]) => `${name}\t${(state as { status: string }).status}`)
@@ -145,12 +148,12 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "create-collection") {
-    const created = await api.collections.create({ name: requireCollection() });
+    const created = (yield* integrationValue(api.collections.create({ name: requireCollection() })));
     print({ collection: created }, () => `Created collection ${created.name}.`);
     return;
   }
   if (action === "get") {
-    const document = await api.documents.get(requireCollection(), requireDocumentId());
+    const document = (yield* integrationValue(api.documents.get(requireCollection(), requireDocumentId())));
     if (!document) {
       print({ document: null }, () => "Document not found.");
       process.exitCode = 1;
@@ -160,45 +163,45 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "insert") {
-    const document = await api.documents.insert(requireCollection(), {
+    const document = (yield* integrationValue(api.documents.insert(requireCollection(), {
       ...keyed,
       ...(documentId ? { id: documentId } : {}),
       data: requireData(),
-    });
+    })));
     print({ document }, () => `Inserted ${describe(document)}.`);
     return;
   }
   if (action === "update") {
-    const document = await api.documents.update(requireCollection(), requireDocumentId(), {
+    const document = (yield* integrationValue(api.documents.update(requireCollection(), requireDocumentId(), {
       ...keyed,
       data: requireData(),
       ...(mode ? { mode: mode as "merge" | "replace" } : {}),
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-    });
+    })));
     print({ document }, () => `Updated ${describe(document)}.`);
     return;
   }
   if (action === "delete") {
-    const deleted = await api.documents.delete(requireCollection(), requireDocumentId(), {
+    const deleted = (yield* integrationValue(api.documents.delete(requireCollection(), requireDocumentId(), {
       ...keyed,
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-    });
+    })));
     print({ deleted }, () => deleted ? "Deleted." : "No such document.");
     if (!deleted) process.exitCode = 1;
     return;
   }
   if (action === "query") {
-    const documents = await api.documents.query(requireCollection(), clauses);
+    const documents = (yield* integrationValue(api.documents.query(requireCollection(), clauses)));
     print({ documents }, () =>
       documents.map((document) => `${describe(document)}\t${JSON.stringify(document.data)}`).join("\n")
       || "No matching documents.");
     return;
   }
   if (action === "page") {
-    const page = await api.documents.page(requireCollection(), {
+    const page = (yield* integrationValue(api.documents.page(requireCollection(), {
       ...clauses,
       ...(after ? { after } : {}),
-    });
+    })));
     print(page, () =>
       [
         ...page.documents.map((document) => `${describe(document)}\t${JSON.stringify(document.data)}`),
@@ -210,10 +213,10 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     if (!Array.isArray(operations)) {
       throw new Error("data write requires --operations with a JSON list of changes.");
     }
-    const written = await api.documents.write({
+    const written = (yield* integrationValue(api.documents.write({
       ...keyed,
       operations: operations as Parameters<typeof api.documents.write>[0]["operations"],
-    });
+    })));
     print({ written }, () =>
       written.map((entry) =>
         entry._tag === "Deleted"
@@ -223,7 +226,7 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "kv-get") {
-    const entry = await api.kv.get(requireCollection(), requireDocumentId());
+    const entry = (yield* integrationValue(api.kv.get(requireCollection(), requireDocumentId())));
     if (!entry) {
       print({ entry: null }, () => "Key not found.");
       process.exitCode = 1;
@@ -233,33 +236,33 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "kv-set") {
-    const entry = await api.kv.set(requireCollection(), requireDocumentId(), requireData(), {
+    const entry = (yield* integrationValue(api.kv.set(requireCollection(), requireDocumentId(), requireData(), {
       ...keyed,
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
       ...(expiresAt !== undefined ? { expiresAt } : {}),
       ...(ttlMs !== undefined ? { ttlMs } : {}),
-    });
+    })));
     print({ entry }, () => `Stored ${entry.key}\tv${entry.version}.`);
     return;
   }
   if (action === "kv-delete") {
-    const deleted = await api.kv.remove(requireCollection(), requireDocumentId(), {
+    const deleted = (yield* integrationValue(api.kv.remove(requireCollection(), requireDocumentId(), {
       ...keyed,
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-    });
+    })));
     print({ deleted }, () => deleted ? "Deleted." : "No such key.");
     if (!deleted) process.exitCode = 1;
     return;
   }
   if (action === "kv-scan") {
-    const page = await api.kv.scan(requireCollection(), {
+    const page = (yield* integrationValue(api.kv.scan(requireCollection(), {
       ...(prefix !== undefined ? { prefix } : {}),
       ...(lower !== undefined ? { lower } : {}),
       ...(upper !== undefined ? { upper } : {}),
       ...(direction !== undefined ? { direction } : {}),
       ...(limit !== undefined ? { limit } : {}),
       ...(after !== undefined ? { after } : {}),
-    });
+    })));
     print(page, () => [
       ...page.entries.map((entry) => `${entry.key}\tv${entry.version}\t${JSON.stringify(entry.value)}`),
       ...(page.next ? [`next\t${page.next}`] : []),
@@ -267,10 +270,10 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "kv-changes") {
-    const changes = await api.kv.changes(requireCollection(), {
+    const changes = (yield* integrationValue(api.kv.changes(requireCollection(), {
       ...(limit !== undefined ? { limit } : {}),
       ...(after !== undefined ? { after } : {}),
-    });
+    })));
     print({ changes }, () => changes.map((change) =>
       `${change.type}\t${change.key}\tv${change.revision}\t${change.cursor}`,
     ).join("\n") || "No changes.");
@@ -280,10 +283,10 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     if (!Array.isArray(operations)) {
       throw new Error("data kv-write requires --operations with a JSON list of changes.");
     }
-    const written = await api.kv.write(requireCollection(), {
+    const written = (yield* integrationValue(api.kv.write(requireCollection(), {
       ...keyed,
       operations: operations as Parameters<typeof api.kv.write>[1]["operations"],
-    });
+    })));
     print({ written }, () => written.map((entry) =>
       "deleted" in entry
         ? `${entry.deleted ? "Deleted" : "Missing"}\t${entry.key}`
@@ -292,14 +295,15 @@ export async function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "kv-size") {
-    const size = await api.kv.size(requireCollection());
+    const size = (yield* integrationValue(api.kv.size(requireCollection())));
     print({ size }, () => String(size));
     return;
   }
   if (action === "kv-clear") {
-    const removed = await api.kv.clear(requireCollection());
+    const removed = (yield* integrationValue(api.kv.clear(requireCollection())));
     print({ removed }, () => `Removed ${removed} keys.`);
     return;
   }
   throw new Error(`Unknown data command "${action}". ${usage}`);
-}
+}));
+  }

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { resolveRuntimeApiBase } from "./services.js";
 
 export interface BootstrapStatus {
@@ -33,8 +35,9 @@ export interface BootstrapClientOptions {
   fetch?: typeof fetch;
 }
 
-async function readJson<TBody>(response: Response, url: string): Promise<TBody> {
-  const text = await response.text();
+function readJson<TBody>(response: Response, url: string): Promise<TBody> {
+    return present(Effect.gen(function* (): Effect.fn.Return<TBody, IntegrationFailure> {
+  const text = (yield* integrationValue(response.text()));
   const body = text ? (JSON.parse(text) as unknown) : undefined;
 
   if (!response.ok) {
@@ -46,20 +49,24 @@ async function readJson<TBody>(response: Response, url: string): Promise<TBody> 
   }
 
   return body as TBody;
-}
+}));
+  }
 
-export async function readBootstrapStatus(
+export function readBootstrapStatus(
   options: BootstrapClientOptions = {},
 ): Promise<BootstrapStatus> {
+    return present(Effect.gen(function* (): Effect.fn.Return<BootstrapStatus, IntegrationFailure> {
   const url = `${resolveRuntimeApiBase(options.url)}/auth/bootstrap`;
   const fetcher = options.fetch ?? fetch;
-  return readJson<BootstrapStatus>(await fetcher(url), url);
-}
+  return (yield* integrationValue(readJson<BootstrapStatus>((yield* integrationValue(fetcher(url))), url)));
+}));
+  }
 
-export async function bootstrapPlatformOwner(
+export function bootstrapPlatformOwner(
   input: BootstrapOwnerInput,
   options: BootstrapClientOptions = {},
 ): Promise<BootstrapOwnerResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<BootstrapOwnerResult, IntegrationFailure> {
   if (!input.email && !input.username) {
     throw new Error("Platform owner bootstrap requires --email or --username.");
   }
@@ -70,7 +77,7 @@ export async function bootstrapPlatformOwner(
   const url = `${resolveRuntimeApiBase(options.url)}/auth/bootstrap`;
   const fetcher = options.fetch ?? fetch;
   const identifier = input.email ?? input.username!;
-  const response = await fetcher(url, {
+  const response = (yield* integrationValue(fetcher(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -83,10 +90,11 @@ export async function bootstrapPlatformOwner(
       },
       credential: { identifier, password: input.password },
     }),
-  });
+  })));
 
-  return readJson<BootstrapOwnerResult>(response, url);
-}
+  return (yield* integrationValue(readJson<BootstrapOwnerResult>(response, url)));
+}));
+  }
 
 export function formatBootstrapStatus(status: BootstrapStatus): string {
   const lines = [

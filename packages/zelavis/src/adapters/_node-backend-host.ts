@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present } from "../core/runtime/effect-boundary.js";
 import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import type {
@@ -9,11 +11,11 @@ const COMMAND_TIMEOUT_MS = 5_000;
 const OUTPUT_LIMIT = 256 * 1024;
 
 /** Runs a fixed read-only backend probe without a shell or inherited stdin. */
-async function runBackendProbeCommand(
+function runBackendProbeCommand(
   executable: string,
   args: readonly string[],
 ): Promise<ZelavisBackendProbeCommandResult> {
-  return new Promise((resolveRun) => {
+  return present(Effect.callback<ZelavisBackendProbeCommandResult>((resume) => {
     const child = spawn(executable, [...args], {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -38,9 +40,10 @@ async function runBackendProbeCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolveRun({ code: code ?? 1, stdout, stderr, missing, timedOut });
+      resume(Effect.succeed({ code: code ?? 1, stdout, stderr, missing, timedOut }));
     });
-  });
+    return Effect.sync(() => { clearTimeout(timer); });
+  }));
 }
 
 /** Node binding for backend detection probes. */
