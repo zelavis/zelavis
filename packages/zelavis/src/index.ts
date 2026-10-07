@@ -73,6 +73,8 @@ import {
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
+import { createCloudRoutes } from "./platform/cloud-routes.js";
+import type { CloudCapacityController } from "./platform/cloud-capacity.js";
 import { createPlatformEndpointGroup } from "./platform/endpoints.js";
 import {
   createProjectForwarder,
@@ -573,6 +575,8 @@ export interface ZelavisServerOptions {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  /** Cloud capacity: the provider connection and machines requested through it. */
+  cloudCapacity?: CloudCapacityController;
   /** Provider-neutral remote environment boundary for agent execution. */
   remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. Concrete proxy execution stays host-provided. */
@@ -752,6 +756,8 @@ export interface ZelavisPlatformResources {
   marketplace?: ZelavisMarketplaceControl;
   /** Looking up and asking for a newer release of this installation. */
   updates?: ZelavisUpdateControl;
+  /** Cloud capacity: the provider connection and machines requested through it. */
+  cloudCapacity?: CloudCapacityController;
   /**
    * TLS certificate provider. Adapters that terminate TLS in-process
    * (Node/Bun self-host) wire a real provider here; adapters behind a reverse
@@ -3962,6 +3968,7 @@ function resolvePlatformEndpointGroup(
   edgeCertificates?: ZelavisCertificateController,
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
+  cloudCapacity?: CloudCapacityController,
 ): Promise<ZelavisEndpointGroup<any>> {
   return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
@@ -4148,6 +4155,7 @@ function resolvePlatformEndpointGroup(
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
         ...createNodeRoutes({ store: systemStore }),
+        ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",
           spec: {
@@ -6868,6 +6876,7 @@ export function zelavis(
             edgeCertificates,
             options.remoteEnvironment,
             resolvedDatabaseApi,
+            options.cloudCapacity,
           ),
         );
         const productServices = [

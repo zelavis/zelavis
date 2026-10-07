@@ -289,6 +289,8 @@ export interface ZelavisClient {
   readonly updates: ZelavisUpdatesClient;
   /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
   readonly nodes: ZelavisNodesClient;
+  /** Cloud capacity, over `/runtime/cloud`. Same contract as `zelavis cloud`. */
+  readonly cloud: ZelavisCloudClient;
   /**
    * App data in one App Project, as the caller's own Tenant.
    *
@@ -668,6 +670,38 @@ export interface ZelavisNodesClient {
   remove(nodeId: string): Promise<{ readonly removed: boolean }>;
 }
 
+export interface ZelavisCloudConnection {
+  readonly provider: string;
+  readonly label: string;
+  readonly connectedAt: number;
+  readonly connectedBy: string;
+  /** Last four characters of the token; the token itself is never returned. */
+  readonly tokenHint: string;
+}
+
+export interface ZelavisCloudNode {
+  readonly id: string;
+  readonly provider: string;
+  readonly state: "provisioning" | "ready" | "releasing" | "failed";
+  readonly region?: string;
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+export interface ZelavisCloudClient {
+  /** The provider connection, or null; needs `server.cloud.view`. */
+  connection(): Promise<ZelavisCloudConnection | null>;
+  /** Connects a provider. The token is proved by use, sealed, and never returned; needs `server.cloud.connect`. */
+  connect(input: { readonly provider: string; readonly token: string; readonly label?: string }): Promise<ZelavisCloudConnection>;
+  /** Forgets the token; 409 while machines this Platform created still exist; needs `server.cloud.connect`. */
+  disconnect(): Promise<{ readonly disconnected: boolean }>;
+  /** Machines this Platform created in its cloud; needs `server.cloud.view`. */
+  nodes(): Promise<readonly ZelavisCloudNode[]>;
+  /** Creates a machine that enrolls itself as a worker; idempotent per `requestId`; needs `server.cloud.manage`. */
+  requestNode(input: { readonly requestId: string; readonly region?: string; readonly resources?: { readonly cpuCores?: number; readonly memoryBytes?: number; readonly diskBytes?: number } }): Promise<ZelavisCloudNode>;
+  /** Deletes a machine this Platform created; needs `server.cloud.manage`. */
+  releaseNode(nodeId: string): Promise<{ readonly released: boolean }>;
+}
+
 export interface ZelavisProjectsClient {
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
   switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
@@ -950,6 +984,14 @@ export function createZelavisClient(
       status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
       check: () => json<ZelavisUpdateStatus>("/runtime/updates/check", { method: "POST" }),
       apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
+    },
+    cloud: {
+      connection: () => json<{ connection: ZelavisCloudConnection | null }>("/runtime/cloud").then((r) => r.connection),
+      connect: (input) => json<{ connection: ZelavisCloudConnection }>("/runtime/cloud/connection", { method: "POST", body: input }).then((r) => r.connection),
+      disconnect: () => json<{ disconnected: boolean }>("/runtime/cloud/connection", { method: "DELETE" }),
+      nodes: () => json<{ nodes: readonly ZelavisCloudNode[] }>("/runtime/cloud/nodes").then((r) => r.nodes),
+      requestNode: (input) => json<{ node: ZelavisCloudNode }>("/runtime/cloud/nodes", { method: "POST", body: input }).then((r) => r.node),
+      releaseNode: (nodeId) => json<{ released: boolean }>(`/runtime/cloud/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     nodes: {
       list: () => json<ZelavisNodeList>("/runtime/nodes"),

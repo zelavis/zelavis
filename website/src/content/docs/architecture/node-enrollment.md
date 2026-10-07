@@ -115,3 +115,29 @@ unguessable, so the limit protects resources, not secrecy.
 
 Listing never shows a token, its hash or a certificate; it shows the certificate's
 SHA-256. The Platform's trust keys returned at enrollment are public keys.
+
+## Cloud capacity
+
+A Platform can create the machines that join it. `/runtime/cloud` (SDK `client.cloud`, CLI
+`zelavis cloud`) holds one provider connection and the machines requested through it:
+
+```
+GET    /zelavis/api/v1/runtime/cloud               the connection, without its token   (server.cloud.view)
+POST   /zelavis/api/v1/runtime/cloud/connection    connect a provider with an API token (server.cloud.connect)
+DELETE /zelavis/api/v1/runtime/cloud/connection    forget the token                     (server.cloud.connect)
+GET    /zelavis/api/v1/runtime/cloud/nodes         machines this Platform created      (server.cloud.view)
+POST   /zelavis/api/v1/runtime/cloud/nodes         create a machine that enrolls itself (server.cloud.manage)
+DELETE /zelavis/api/v1/runtime/cloud/nodes/:id     delete such a machine                (server.cloud.manage)
+```
+
+The provider token can create and delete machines in its cloud project, so connecting
+needs its own permission, and a dedicated cloud project is recommended. The token is proved
+by use (it must be able to list) before it is kept, is sealed with a key derived from the
+Platform master secret, and is never returned, logged or put in a machine's first-boot data.
+Every use is audited with the acting principal, and an action that cannot be recorded does
+not run. Disconnecting is refused while machines this Platform created still exist, because
+releasing them needs the token. The provisioning engine is composed in by the host
+(`cloudCapacity` option); an installation without one answers `503 cloud-unavailable`.
+A requested machine is created with first-boot data that installs the worker role and joins
+with a single-use token, and it is `ready` only after it has enrolled. This path is built
+and tested against a fake cloud; it has not yet been run against a real one.

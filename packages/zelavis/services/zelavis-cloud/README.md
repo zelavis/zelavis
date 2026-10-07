@@ -1,6 +1,6 @@
 # @zelavis/cloud
 
-Cloud capacity service for Zelavis (not yet wired into the Platform; `private`).
+Cloud capacity service for Zelavis (`private`). The Platform side (`packages/zelavis/src/platform/cloud-capacity.ts`, `cloud-routes.ts`, SDK `client.cloud`, `zelavis cloud`) takes the engine through its `cloudCapacity` option; composing this bundle into a running Platform is not done yet.
 
 It will implement the `CapacityProvider` contract (`zelavis/provider`) with Alchemy as the provisioning engine, bundled with the Platform and never installed by a self-hoster. Fabric keeps all placement, fencing and draining authority; this service only creates and releases machines. Direction, measurements and open tests: `.agents/references/alchemy-architecture-brief.md`, and "Cloud Capacity And Alchemy" in `AGENTS.md`.
 

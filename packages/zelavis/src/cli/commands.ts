@@ -14,6 +14,7 @@ import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
 import { runProjectsCommand } from "./projects.js";
 import { runNodesCommand } from "./nodes.js";
+import { runCloudCommand } from "./cloud.js";
 import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
@@ -129,6 +130,7 @@ Usage:
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
   zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
+  zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
   zelavis nodes <list|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
@@ -562,6 +564,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "worker") {
       (yield* integration(() => runWorkerCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "cloud") {
+      (yield* integration(() => runCloudCommand(args.slice(1))));
       return;
     }
     if (args[0] === "nodes") {
