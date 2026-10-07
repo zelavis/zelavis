@@ -25,6 +25,8 @@ export interface AgentCertificateInput {
   /** Hostnames and IP addresses the Platform will dial the Agent by. */
   readonly names: readonly string[];
   readonly validityDays?: number;
+  /** The subject common name; defaults to `zelavis-agent`. Identity is the pinned certificate, not this name. */
+  readonly commonName?: string;
   /** Injected so tests can pin the clock; defaults to now. */
   readonly now?: number;
 }
@@ -118,6 +120,8 @@ export function generateAgentCertificate(input: AgentCertificateInput): AgentCer
   if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > MAX_VALIDITY_DAYS) {
     throw new RangeError(`Validity must be a whole number of days from 1 to ${MAX_VALIDITY_DAYS}.`);
   }
+  const commonName = input.commonName ?? "zelavis-agent";
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(commonName)) throw new TypeError("The certificate common name has characters that are not allowed.");
   const names = [...new Set(input.names)];
   const subjectAltName = sequence(...names.map(generalName));
 
@@ -128,7 +132,7 @@ export function generateAgentCertificate(input: AgentCertificateInput): AgentCer
 
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const algorithm = sequence(oid("1.2.840.10045.4.3.2"));
-  const subject = sequence(set(sequence(oid("2.5.4.3"), der(0x0c, utf8("zelavis-agent")))));
+  const subject = sequence(set(sequence(oid("2.5.4.3"), der(0x0c, utf8(commonName)))));
   // Positive, non-zero, 16 random bytes: the leading byte has its top bit cleared and is never 0.
   const serial = randomBytes(16);
   serial[0] = (serial[0]! & 0x7f) || 1;

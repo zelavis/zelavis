@@ -666,6 +666,8 @@ export interface ZelavisNodesClient {
    * needed. Refused with 403 and no reason; 409 when this installation does not accept nodes.
    */
   enroll(input: ZelavisNodeEnrollInput): Promise<ZelavisNodeEnrollResult>;
+  /** Where machines enroll and the certificate fingerprint to pin, or null; needs `server.nodes.view`. */
+  platform(): Promise<{ readonly url: string; readonly fingerprint: string } | null>;
   /** Revokes a node; refused with 409 while Projects are placed on it; needs `server.nodes.manage`. */
   remove(nodeId: string): Promise<{ readonly removed: boolean }>;
 }
@@ -997,6 +999,7 @@ export function createZelavisClient(
       list: () => json<ZelavisNodeList>("/runtime/nodes"),
       createEnrollment: (input) => json<ZelavisNodeEnrollmentToken>("/runtime/nodes/enrollments", { method: "POST", body: input }),
       enroll: (input) => json<ZelavisNodeEnrollResult>("/runtime/nodes/enroll", { method: "POST", body: input }),
+      platform: () => json<{ endpoint: { url: string; fingerprint: string } | null }>("/runtime/nodes/platform").then((r) => r.endpoint),
       remove: (nodeId) => json<{ removed: boolean }>(`/runtime/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     data: (projectId) => createDataClient(json, projectId),

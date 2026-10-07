@@ -4,7 +4,7 @@ import { integration, present } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis nodes <list|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] " +
+  "zelavis nodes <list|platform|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] " +
   "[--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] " +
   "[--url URL] [--token API_TOKEN] [--json]";
 
@@ -101,6 +101,13 @@ export function runNodesCommand(args: readonly string[]): Promise<void> {
           ...result.nodes.map((node) => `${node.nodeId}  ${node.state}  ${node.url}  enrolled ${new Date(node.enrolledAt).toISOString()}`),
           ...result.enrollments.filter((e) => e.state === "unused").map((e) => `${e.nodeId}  pending  expires ${new Date(e.expiresAt).toISOString()}`),
         ].join("\n") || "No nodes.");
+        return;
+      }
+      case "platform": {
+        const endpoint = yield* integration(() => client.nodes.platform());
+        print({ endpoint }, () => endpoint
+          ? `${endpoint.url}\nsha256:${endpoint.fingerprint}`
+          : "This installation serves no enrollment endpoint.");
         return;
       }
       case "enroll-token": {

@@ -23,6 +23,8 @@ import {
 
 export const AGENT_TRUST_NAMESPACE = "fabric.agent-trust.v1";
 const TRUST_KEY = "platform";
+export const ENROLLMENT_ENDPOINT_NAMESPACE = "fabric.enrollment-endpoint.v1";
+const ENDPOINT_KEY = "platform";
 const PLACEMENT_NAMESPACE = "fabric.project-ownership.v1";
 /** Attempts, not successes: a resource bound, since the tokens are unguessable. */
 const ENROLL_ATTEMPTS_PER_WINDOW = 120;
@@ -32,6 +34,28 @@ const MAX_TTL_MINUTES = 24 * 60;
 /** The Platform's public keys, which a machine needs to verify what the Platform signs. */
 export const publishAgentTrust = (store: ZelavisSystemStore, trust: ZelavisHostOperationTrustStore) =>
   integration(() => store.set(AGENT_TRUST_NAMESPACE, TRUST_KEY, trust as unknown as ZelavisSystemStoreValue));
+
+/**
+ * Where a machine reaches this Platform to enroll, and the certificate fingerprint to pin.
+ * Published by the host that runs the enrollment listener; public information.
+ */
+export interface EnrollmentEndpoint {
+  readonly url: string;
+  /** SHA-256 of the listener's certificate, lowercase hex. */
+  readonly fingerprint: string;
+}
+
+export const publishEnrollmentEndpoint = (store: ZelavisSystemStore, endpoint: EnrollmentEndpoint) =>
+  integration(() => store.set(ENROLLMENT_ENDPOINT_NAMESPACE, ENDPOINT_KEY, { url: endpoint.url, fingerprint: endpoint.fingerprint }));
+
+const readEnrollmentEndpoint = (store: ZelavisSystemStore) =>
+  integration(() => store.get(ENROLLMENT_ENDPOINT_NAMESPACE, ENDPOINT_KEY)).pipe(
+    Effect.map((record): EnrollmentEndpoint | undefined => {
+      const value: unknown = record?.value;
+      return isObject(value) && typeof value.url === "string" && typeof value.fingerprint === "string" && /^[0-9a-f]{64}$/.test(value.fingerprint)
+        ? { url: value.url, fingerprint: value.fingerprint } : undefined;
+    }),
+  );
 
 const readAgentTrust = (store: ZelavisSystemStore) =>
   integration(() => store.get(AGENT_TRUST_NAMESPACE, TRUST_KEY)).pipe(
@@ -97,6 +121,16 @@ export function createNodeRoutes(options: {
         if (!authority) return unavailable;
         const nodes = (yield* authority.nodes()).map(({ caPem: _certificate, v: _version, ...node }) => node);
         return { headers: noStore, body: { nodes, enrollments: yield* authority.enrollments() } };
+      })),
+    },
+    {
+      id: "runtime.nodes.platform", method: "GET", path: "/nodes/platform",
+      access: { permissions: ["server.nodes.view"], scope: system },
+      spec: { operationId: "getNodeEnrollmentEndpoint", summary: "Where machines enroll, and the certificate fingerprint to pin", tags: ["nodes"],
+        responses: { 200: { description: "The enrollment URL and fingerprint, or null when this installation serves none" } } },
+      handler: () => present(Effect.gen(function* () {
+        if (!store) return unavailable;
+        return { headers: noStore, body: { endpoint: (yield* readEnrollmentEndpoint(store)) ?? null } };
       })),
     },
     {
