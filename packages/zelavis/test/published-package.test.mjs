@@ -147,7 +147,12 @@ test("the default services ship their manifest and built output, not their sourc
   // `files: ["services"]` once published whole folders: the dashboard's React
   // source, its tests and test results, generated types and a node_modules.
   const expected = ["zelavis-app", "zelavis-auth", "zelavis-marketplace", "zelavis-ui"];
-  assert.deepEqual((await readdir(join(unpacked, "services"))).sort(), expected);
+  // The cloud service is not a default service: only its self-contained bundle ships.
+  assert.deepEqual((await readdir(join(unpacked, "services"))).sort(), [...expected, "zelavis-cloud"].sort());
+  assert.equal(await shipped("services/zelavis-cloud/bundle/index.js"), true, "the cloud bundle");
+  for (const leftover of ["src", "dist", "test", "scripts", "node_modules", "package.json"]) {
+    assert.equal(await shipped(`services/zelavis-cloud/${leftover}`), false, `services/zelavis-cloud/${leftover} must not be published`);
+  }
   for (const service of expected) {
     assert.equal(await shipped(`services/${service}/package.json`), true, `${service} has no manifest`);
     assert.equal(await shipped(`services/${service}/dist`), true, `${service} has no built output`);
