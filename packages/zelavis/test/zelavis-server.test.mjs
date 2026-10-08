@@ -1383,6 +1383,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.cloud.read",
       "runtime.cloud.connect",
       "runtime.cloud.disconnect",
+    "runtime.cloud.scaling.read",
+    "runtime.cloud.scaling.set",
       "runtime.cloud.nodes.list",
       "runtime.cloud.nodes.request",
       "runtime.cloud.nodes.release",

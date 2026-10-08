@@ -2841,3 +2841,31 @@ export async function releaseCloudNode(config: RuntimeConfig, nodeId: string) {
     { method: "DELETE" },
   );
 }
+
+export interface RuntimeCloudScaling {
+  settings: {
+    consent: boolean;
+    maxMachines: number;
+    cooldownMinutes: number;
+    updatedAt: number;
+    updatedBy: string;
+  };
+  last?: { outcome: string; at: number };
+}
+
+export async function getCloudScaling(config: RuntimeConfig) {
+  const result = await readJson<{ scaling: RuntimeCloudScaling }>(
+    `${config.api.basePath}/runtime/cloud/scaling`,
+  );
+  return result.scaling;
+}
+
+export async function setCloudScaling(
+  config: RuntimeConfig,
+  input: { consent: boolean; maxMachines: number; cooldownMinutes: number },
+) {
+  return readJson<{ settings: RuntimeCloudScaling["settings"] }>(
+    `${config.api.basePath}/runtime/cloud/scaling`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}

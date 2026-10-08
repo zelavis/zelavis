@@ -37,3 +37,19 @@ export function joinCommand(input: {
 export function newRequestId(random: () => string = () => crypto.randomUUID()): string {
   return `ui-${random().replaceAll("-", "").slice(0, 16)}`;
 }
+
+/** What the last look at unmet demand did, in words for an operator. */
+export function describeScaleOutOutcome(outcome: string | undefined): string {
+  switch (outcome) {
+    case undefined: return "Nothing has needed more capacity yet.";
+    case "requested": return "Requested a machine because Projects could not be placed.";
+    case "waiting": return "Projects cannot be placed; waiting to see whether that lasts.";
+    case "booting": return "Projects cannot be placed; a machine is already starting.";
+    case "at-limit": return "Projects cannot be placed, but the machine limit is reached.";
+    case "cooling-down": return "Projects cannot be placed; waiting out the pause after the last request.";
+    case "no-consent": return "Projects cannot be placed, and automatic requests are off.";
+    case "no-provider": return "Projects cannot be placed, and no cloud provider is connected.";
+    case "failed": return "The last attempt to add capacity failed; see the audit trail.";
+    default: return outcome;
+  }
+}

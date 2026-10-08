@@ -6,13 +6,14 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import type {
+  RuntimeCloudScaling,
   RuntimeCloudConnection,
   RuntimeCloudNode,
   RuntimeEnrollmentToken,
   RuntimeNode,
   RuntimeNodeEnrollment,
 } from "#/lib/runtime-api";
-import { CLOUD_PROVIDERS, joinCommand } from "#/lib/capacity";
+import { CLOUD_PROVIDERS, describeScaleOutOutcome, joinCommand } from "#/lib/capacity";
 
 /** What a loader could read. `unavailable` carries the reason: no permission, or not composed in. */
 export type Loaded<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: string };
@@ -26,6 +27,7 @@ export interface NodesData {
 export interface CloudData {
   readonly connection: RuntimeCloudConnection | null;
   readonly machines: readonly RuntimeCloudNode[];
+  readonly scaling: RuntimeCloudScaling | null;
 }
 
 export type CapacityActionResult =
@@ -151,7 +153,7 @@ export function CloudCapacityPanel({ data }: { data: Loaded<CloudData> }) {
   const busy = fetcher.state !== "idle";
 
   if (!data.ok) return <Failure title="Cloud capacity is not available" reason={data.reason} />;
-  const { connection, machines } = data.value;
+  const { connection, machines, scaling } = data.value;
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -198,6 +200,42 @@ export function CloudCapacityPanel({ data }: { data: Loaded<CloudData> }) {
           <ActionError result={result && (result.intent === "connect-cloud" || result.intent === "disconnect-cloud") ? result : undefined} />
         </CardContent>
       </Card>
+
+      {connection && scaling ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Automatic scale-out</CardTitle>
+            <CardDescription>
+              Off by default. When on, Zelavis requests one machine at a time, and only after Projects have stayed unplaceable for lack of capacity for a couple of minutes. It never deletes machines by itself, and each request is audited.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            <fetcher.Form method="post" action={FABRIC_ACTION} className="flex flex-wrap items-center gap-3">
+              <input type="hidden" name="intent" value="set-scaling" />
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="consent" value="true" defaultChecked={scaling.settings.consent} />
+                Allow Zelavis to spend money on machines
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                At most
+                <Input name="maxMachines" type="number" min={1} max={20} defaultValue={scaling.settings.maxMachines} className="w-20" aria-label="Maximum machines" />
+                machines
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                Pause
+                <Input name="cooldownMinutes" type="number" min={1} max={1440} defaultValue={scaling.settings.cooldownMinutes} className="w-24" aria-label="Minutes between requests" />
+                minutes between requests
+              </label>
+              <Button type="submit" disabled={busy}>Save</Button>
+            </fetcher.Form>
+            <p className="text-sm text-muted-foreground" data-testid="scale-out-status">
+              {scaling.settings.consent ? "Automatic scale-out is on. " : "Automatic scale-out is off. "}
+              {describeScaleOutOutcome(scaling.last?.outcome)}
+            </p>
+            <ActionError result={result?.intent === "set-scaling" ? result : undefined} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {connection ? (
         <Card>

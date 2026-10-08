@@ -107,3 +107,29 @@ test("each route needs its own permission, and the system answers 503 without a 
   const unavailable = await json(await bare.send("GET", "/runtime/cloud"));
   assert.deepEqual([unavailable.status, unavailable.body.code], [503, "cloud-unavailable"]);
 });
+
+test("scaling consent is the same on HTTP, the SDK and the CLI, and needs the strongest permission", async (t) => {
+  const { send, client, cli, as } = await platform(t);
+  assert.equal((await json(await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 1, cooldownMinutes: 5 }))).body.code, "not-connected");
+  await client.cloud.connect({ provider: "hetzner", token: TOKEN });
+  assert.equal((await client.cloud.scaling()).settings.consent, false, "off until a person turns it on");
+
+  const http = await json(await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 3, cooldownMinutes: 20 }));
+  assert.equal(http.status, 200);
+  const viaSdk = await client.cloud.setScaling({ consent: true, maxMachines: 3, cooldownMinutes: 20 });
+  const viaCli = (await cli("scaling", "--enable", "--max-machines", "3", "--cooldown-minutes", "20")).settings;
+  for (const settings of [http.body.settings, viaSdk, viaCli]) {
+    assert.deepEqual([settings.consent, settings.maxMachines, settings.cooldownMinutes], [true, 3, 20]);
+  }
+  assert.equal((await cli("scaling", "--disable")).settings.maxMachines, 3, "unspecified limits are kept");
+  assert.equal((await client.cloud.scaling()).settings.consent, false);
+
+  const invalid = await json(await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 0, cooldownMinutes: 5 }));
+  assert.deepEqual([invalid.status, invalid.body.code], [400, "invalid-request"]);
+
+  as({ id: "viewer", type: "user", permissions: ["server.cloud.view"] });
+  assert.equal((await send("GET", "/runtime/cloud/scaling")).status, 200);
+  assert.equal((await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 1, cooldownMinutes: 5 })).status, 403);
+  as({ id: "manager", type: "user", permissions: ["server.cloud.manage"] });
+  assert.equal((await send("PUT", "/runtime/cloud/scaling", { consent: true, maxMachines: 1, cooldownMinutes: 5 })).status, 403, "managing machines is not consenting to spend");
+});

@@ -695,7 +695,26 @@ export interface ZelavisCloudNode {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+export interface ZelavisCloudScalingSettings {
+  /** Whether Zelavis may request machines by itself. Off until a person turns it on. */
+  readonly consent: boolean;
+  readonly maxMachines: number;
+  readonly cooldownMinutes: number;
+  readonly updatedAt: number;
+  readonly updatedBy: string;
+}
+
+export interface ZelavisCloudScaling {
+  readonly settings: ZelavisCloudScalingSettings;
+  /** What the last look at unmet demand did: `waiting`, `booting`, `at-limit`, `cooling-down`, `requested`, `no-consent`, `no-provider` or `failed`. */
+  readonly last?: { readonly outcome: string; readonly at: number };
+}
+
 export interface ZelavisCloudClient {
+  /** Whether automatic machine requests are allowed, and the last decision; needs `server.cloud.view`. */
+  scaling(): Promise<ZelavisCloudScaling>;
+  /** Allows or forbids automatic machine requests, with limits; 409 when not connected; needs `server.cloud.connect`. */
+  setScaling(input: { readonly consent: boolean; readonly maxMachines: number; readonly cooldownMinutes: number }): Promise<ZelavisCloudScalingSettings>;
   /** The provider connection, or null; needs `server.cloud.view`. */
   connection(): Promise<ZelavisCloudConnection | null>;
   /** Connects a provider. The token is proved by use, sealed, and never returned; needs `server.cloud.connect`. */
@@ -994,6 +1013,8 @@ export function createZelavisClient(
       apply: () => json<ZelavisUpdateStatus>("/runtime/updates/apply", { method: "POST" }),
     },
     cloud: {
+      scaling: () => json<{ scaling: ZelavisCloudScaling }>("/runtime/cloud/scaling").then((r) => r.scaling),
+      setScaling: (input) => json<{ settings: ZelavisCloudScalingSettings }>("/runtime/cloud/scaling", { method: "PUT", body: input }).then((r) => r.settings),
       connection: () => json<{ connection: ZelavisCloudConnection | null }>("/runtime/cloud").then((r) => r.connection),
       connect: (input) => json<{ connection: ZelavisCloudConnection }>("/runtime/cloud/connection", { method: "POST", body: input }).then((r) => r.connection),
       disconnect: () => json<{ disconnected: boolean }>("/runtime/cloud/connection", { method: "DELETE" }),

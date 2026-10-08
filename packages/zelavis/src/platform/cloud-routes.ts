@@ -82,6 +82,38 @@ export function createCloudRoutes(options: { readonly controller?: CloudCapacity
       })),
     },
     {
+      id: "runtime.cloud.scaling.read", method: "GET", path: "/cloud/scaling",
+      access: { permissions: ["server.cloud.view"], scope: system },
+      spec: { operationId: "getCloudScaling", summary: "Read whether Zelavis may request machines by itself", tags: ["cloud"],
+        responses: { 200: { description: "Consent, limits and what the last look at demand did" } } },
+      handler: () => present(Effect.gen(function* () {
+        if (!controller) return unavailable;
+        return yield* controller.scaling().pipe(
+          Effect.map((scaling) => ({ headers: noStore, body: { scaling } })),
+          Effect.catchTag("CloudCapacityError", (error) => Effect.succeed(answerFor(error))),
+        );
+      })),
+    },
+    {
+      id: "runtime.cloud.scaling.set", method: "PUT", path: "/cloud/scaling",
+      access: { permissions: ["server.cloud.connect"], scope: system },
+      spec: { operationId: "setCloudScaling", summary: "Allow or forbid automatic machine requests, with limits", tags: ["cloud"],
+        responses: { 200: { description: "Saved" }, 400: { description: "Invalid request" }, 409: { description: "Not connected" } } },
+      handler: ({ body, principal }) => present(Effect.gen(function* () {
+        if (!controller) return unavailable;
+        if (!isObject(body) || typeof body.consent !== "boolean" || typeof body.maxMachines !== "number" || typeof body.cooldownMinutes !== "number") {
+          return bad("consent, maxMachines and cooldownMinutes are required.");
+        }
+        return yield* controller.setScaling({
+          consent: body.consent, maxMachines: body.maxMachines, cooldownMinutes: body.cooldownMinutes,
+          principalId: principal?.id ?? "unknown",
+        }).pipe(
+          Effect.map((settings) => ({ headers: noStore, body: { settings } })),
+          Effect.catchTag("CloudCapacityError", (error) => Effect.succeed(answerFor(error))),
+        );
+      })),
+    },
+    {
       id: "runtime.cloud.nodes.list", method: "GET", path: "/cloud/nodes",
       access: { permissions: ["server.cloud.view"], scope: system },
       spec: { operationId: "listCloudNodes", summary: "List machines this Platform created in its cloud", tags: ["cloud"],

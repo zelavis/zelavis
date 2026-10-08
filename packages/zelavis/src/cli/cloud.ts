@@ -3,11 +3,12 @@ import { integration, present } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis cloud <status|connect|disconnect|nodes|request|release> [node-id|request-id] " +
+  "zelavis cloud <status|connect|disconnect|nodes|request|release|scaling> [node-id|request-id] " +
   "[--provider NAME] [--label TEXT] [--region NAME] [--url URL] [--token API_TOKEN] [--json]. " +
+  "`scaling` shows whether Zelavis may request machines by itself; --enable or --disable changes it, with --max-machines N and --cooldown-minutes N. " +
   "The provider token is read from the ZELAVIS_CLOUD_TOKEN environment variable, never from an option.";
 
-const VALUE_FLAGS = ["--provider", "--label", "--region", "--url", "--token"];
+const VALUE_FLAGS = ["--provider", "--label", "--region", "--url", "--token", "--max-machines", "--cooldown-minutes"];
 
 class CloudUsageError extends Data.TaggedError("CloudUsageError")<{ readonly message: string }> {}
 
@@ -21,6 +22,9 @@ interface CloudArgs {
   readonly apiToken: string | undefined;
   readonly json: boolean;
   readonly help: boolean;
+  readonly consent: boolean | undefined;
+  readonly maxMachines: number | undefined;
+  readonly cooldownMinutes: number | undefined;
 }
 
 function parseCloudArgs(args: readonly string[]): CloudArgs {
@@ -28,10 +32,16 @@ function parseCloudArgs(args: readonly string[]): CloudArgs {
   const values = new Map<string, string>();
   let json = false;
   let help = false;
+  let consent: boolean | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === "--json") { json = true; continue; }
     if (arg === "--help" || arg === "-h") { help = true; continue; }
+    if (arg === "--enable" || arg === "--disable") {
+      if (consent !== undefined) throw new Error("Choose --enable or --disable, not both.");
+      consent = arg === "--enable";
+      continue;
+    }
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
@@ -42,8 +52,15 @@ function parseCloudArgs(args: readonly string[]): CloudArgs {
   }
   const [action, id, ...rest] = positional;
   if (rest.length > 0) throw new Error(`Unexpected argument "${rest[0]}". ${usage}`);
+  const whole = (flag: string) => {
+    const value = values.get(flag);
+    if (value === undefined) return undefined;
+    if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`${flag} must be a whole number.`);
+    return Number(value);
+  };
   return {
-    action, id, json, help,
+    action, id, json, help, consent,
+    maxMachines: whole("--max-machines"), cooldownMinutes: whole("--cooldown-minutes"),
     provider: values.get("--provider") ?? "hetzner",
     label: values.get("--label"), region: values.get("--region"),
     url: values.get("--url") ?? "http://localhost:3000/zelavis",
@@ -114,6 +131,21 @@ export function runCloudCommand(args: readonly string[]): Promise<void> {
         const nodeId = yield* need(parsed.id, "A node id");
         const result = yield* integration(() => client.cloud.releaseNode(nodeId));
         print(result, () => `Released ${nodeId}.`);
+        return;
+      }
+      case "scaling": {
+        const current = yield* integration(() => client.cloud.scaling());
+        const changing = parsed.consent !== undefined || parsed.maxMachines !== undefined || parsed.cooldownMinutes !== undefined;
+        const view = changing
+          ? { settings: yield* integration(() => client.cloud.setScaling({
+              consent: parsed.consent ?? current.settings.consent,
+              maxMachines: parsed.maxMachines ?? current.settings.maxMachines,
+              cooldownMinutes: parsed.cooldownMinutes ?? current.settings.cooldownMinutes,
+            })) }
+          : current;
+        print(view, () => `Automatic scale-out is ${view.settings.consent ? "ON" : "off"}: at most ${view.settings.maxMachines} machine(s), ` +
+          `${view.settings.cooldownMinutes} min between requests.` +
+          ("last" in view && view.last ? ` Last look: ${view.last.outcome} at ${new Date(view.last.at).toISOString()}.` : ""));
         return;
       }
       default:

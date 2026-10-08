@@ -161,8 +161,8 @@ Platform's certificate fingerprint to pin) and revokes a node. **Infrastructure 
 Providers** connects a cloud provider with an API token, lists the machines Zelavis
 created, requests one and releases one. The dashboard calls the same `/runtime/nodes` and
 `/runtime/cloud` endpoints as the SDK and CLI, with the same permissions; a panel whose
-capability is not composed into the installation says so instead of failing. Automatic
-scale-out is not built: a person requests machines.
+capability is not composed into the installation says so instead of failing. A connected
+provider also shows the automatic scale-out settings described below.
 
 ## Cloud capacity
 
@@ -176,6 +176,8 @@ DELETE /zelavis/api/v1/runtime/cloud/connection    forget the token             
 GET    /zelavis/api/v1/runtime/cloud/nodes         machines this Platform created      (server.cloud.view)
 POST   /zelavis/api/v1/runtime/cloud/nodes         create a machine that enrolls itself (server.cloud.manage)
 DELETE /zelavis/api/v1/runtime/cloud/nodes/:id     delete such a machine                (server.cloud.manage)
+GET    /zelavis/api/v1/runtime/cloud/scaling       automatic scale-out settings         (server.cloud.view)
+PUT    /zelavis/api/v1/runtime/cloud/scaling       allow or forbid it, with limits      (server.cloud.connect)
 ```
 
 The provider token can create and delete machines in its cloud project, so connecting
@@ -195,3 +197,19 @@ A requested machine is created with first-boot data that installs the worker rol
 with a single-use token, and it is `ready` only after it has enrolled. This path is built
 and tested against a fake cloud, through the bundle and the real enrollment authority; it has not
 yet been run against a real one.
+
+### Automatic scale-out
+
+Consent to spend money is separate from the connection and **off by default**
+(`zelavis cloud scaling --enable --max-machines N --cooldown-minutes N`, `client.cloud.setScaling`,
+the dashboard card; needs `server.cloud.connect`, because it lets the Platform spend without a
+person). The signal is Fabric's own: on every reconciliation the Project manager reports how many
+replicas it could not place for `insufficient-capacity`, and only where placement is authoritative
+(a host that models no capacity would report shortfalls that are not real; `no-eligible-node` is not
+counted, because another machine would not fix it). With consent, a shortfall that has held for two
+minutes requests **one** machine, never while a machine is still starting, never past the maximum
+number of machines this Platform created, and never inside the pause since the last request, which is
+recorded before asking so a refusing cloud is not hammered. The request id is derived from the pause
+window, so a restart cannot double-order. Requests are audited as the `autoscaler`. Disconnecting the
+provider also removes the consent. There is no automatic scale-in: releasing a machine needs Fabric to
+report it drained and fenced, which is not built, so machines are released by a person.

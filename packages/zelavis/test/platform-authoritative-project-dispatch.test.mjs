@@ -243,3 +243,43 @@ test("a replacement Platform waits for the old lease and advances the epoch", as
     await manager.close();
   }
 });
+
+function shortfallPlanner(reason) {
+  return {
+    async planProjectPlacements(requests) {
+      return { replicas: [], unplaced: requests.map((request) => ({
+        identity: request.identity, projectKind: request.projectKind,
+        replicaId: "shop:runtime:1", replicaIndex: 0, reason,
+      })) };
+    },
+  };
+}
+
+test("only a real capacity shortfall under authoritative placement is reported for scale-out", async () => {
+  const observed = [];
+  for (const [reason, authoritative, expected] of [
+    ["insufficient-capacity", true, 1],
+    ["no-eligible-node", true, 0],
+    ["insufficient-capacity", false, undefined],
+  ]) {
+    const store = createMemorySystemStore();
+    await seed(store);
+    const authority = createProjectPlacementAuthority({ store, mayPlace: () => true });
+    const calls = [];
+    const manager = await createProjectManager({
+      store, projectRecipes: recipes, runtime: driver().runtime, autoReconcile: false,
+      placement: () => shortfallPlanner(reason),
+      ...(authoritative ? { authoritativePlacement: authority } : {}),
+      dispatch: () => ({ localNodeId: "node-a" }),
+      capacityShortfall: async (count) => { calls.push(count); },
+    });
+    try {
+      await manager.start("shop").catch(() => undefined);
+    } finally {
+      await manager.close();
+    }
+    observed.push(calls.at(-1));
+    assert.equal(calls.at(-1), expected, `${reason}, authoritative=${authoritative}`);
+  }
+  assert.deepEqual(observed, [1, 0, undefined]);
+});

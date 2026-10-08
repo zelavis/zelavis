@@ -6516,6 +6516,9 @@ export function zelavis(
                   // because it runs once and a pass before Fabric exists would enforce
                   // nothing.
                   placement: () => fabricCoreService?.context,
+                  ...(options.cloudCapacity
+                    ? { capacityShortfall: (unplaced: number) => present(options.cloudCapacity!.observeShortfall(unplaced)) }
+                    : {}),
                   ...(projectPlacementAuthority
                     ? { authoritativePlacement: projectPlacementAuthority }
                     : {}),

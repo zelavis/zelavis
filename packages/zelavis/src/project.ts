@@ -793,6 +793,13 @@ export interface ZelavisProjectManagerOptions {
      */
     resolveAlternativeRuntimeKinds?: () => Promise<readonly ZelavisProjectRuntimeKind[]>;
     /**
+     * Told on every reconciliation how many replicas Fabric could not place for lack of
+     * capacity (zero when none). Only reported where placement is authoritative, because a
+     * host that models no capacity reports shortfalls that are not real. The answer is
+     * ignored: whether to add capacity is not this manager's decision.
+     */
+    capacityShortfall?: (unplaced: number) => Promise<unknown>;
+    /**
      * What a deployment backend advertises, for comparing with a recipe's locked
      * isolation intent. Absent on a host with no backend registry, where any
      * required intent is refused because nothing can prove it.
@@ -1345,6 +1352,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             return options.authoritativePlacement
                 ? { blocked: new Set(requests.map((request) => request.identity.workloadId)), elsewhere: new Map() }
                 : empty;
+        if (options.authoritativePlacement && options.capacityShortfall) {
+            const shortfall = plan.unplaced.filter((replica) => replica.reason === "insufficient-capacity").length;
+            yield* Effect.catch(integration(() => options.capacityShortfall!(shortfall)), Effect.fn("Projects.shortfallObserver")(function* () { return undefined; }));
+        }
         const blocked = new Set<string>();
         for (const replica of plan.unplaced) {
             if (options.authoritativePlacement || BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {

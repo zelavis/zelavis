@@ -24,6 +24,13 @@ import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-stor
 
 export const CLOUD_CONNECTION_NAMESPACE = "fabric.cloud-connection.v1";
 export const CLOUD_AUDIT_NAMESPACE = "fabric.cloud-audit.v1";
+export const CLOUD_SCALING_NAMESPACE = "fabric.cloud-scaling.v1";
+const SCALING_KEY = "default";
+const LAST_REQUEST_KEY = "last-request";
+/** A shortfall must hold this long before a machine is requested: sustained need, not a spike. */
+export const SCALE_OUT_SUSTAIN_MS = 2 * 60_000;
+export const MAX_SCALING_MACHINES = 20;
+export const MAX_SCALING_COOLDOWN_MINUTES = 24 * 60;
 const CONNECTION_KEY = "default";
 const SEAL_PURPOSE = "cloud-provider-token";
 const MAX_TOKEN_LENGTH = 512;
@@ -63,6 +70,39 @@ export interface CloudConnectionSummary {
 interface ConnectionRecord extends CloudConnectionSummary {
   readonly sealed: EncryptedSecret;
 }
+
+/**
+ * Whether Zelavis may spend money by itself. Separate from the connection on purpose:
+ * connecting a provider lets a person request machines, consent lets the Platform do it.
+ * Absent means no consent.
+ */
+export interface CloudScalingSettings {
+  readonly consent: boolean;
+  /** Most machines this Platform will have created at once, automatic or not. */
+  readonly maxMachines: number;
+  /** Least time between two automatic requests. */
+  readonly cooldownMinutes: number;
+  readonly updatedAt: number;
+  readonly updatedBy: string;
+}
+
+export const DEFAULT_SCALING: CloudScalingSettings = { consent: false, maxMachines: 1, cooldownMinutes: 15, updatedAt: 0, updatedBy: "" };
+
+/** Why the last look at demand did or did not request a machine. */
+export type CloudScaleOutOutcome =
+  | "idle" | "no-provider" | "no-consent" | "waiting" | "booting" | "at-limit" | "cooling-down" | "requested" | "failed";
+
+export interface CloudScalingStatus {
+  readonly settings: CloudScalingSettings;
+  readonly last?: { readonly outcome: CloudScaleOutOutcome; readonly at: number };
+}
+
+const isScaling = (value: unknown): value is CloudScalingSettings => {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.consent === "boolean" && Number.isInteger(v.maxMachines) && Number.isInteger(v.cooldownMinutes) &&
+    Number.isFinite(v.updatedAt) && typeof v.updatedBy === "string";
+};
 
 export interface CloudProviderConfig {
   readonly provider: CloudProviderId;
@@ -140,6 +180,17 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
     return { record, provider: yield* providerOf({ provider: record.provider, token }) };
   });
 
+  let shortfallSince: number | undefined;
+  let lastLook: { outcome: CloudScaleOutOutcome; at: number } | undefined;
+
+  const readScaling = integration(() => store.get(CLOUD_SCALING_NAMESPACE, SCALING_KEY)).pipe(
+    Effect.flatMap((record) => record === undefined ? Effect.succeed(DEFAULT_SCALING)
+      : isScaling(record.value) ? Effect.succeed(record.value as CloudScalingSettings)
+      : fail("provider-failed", "The stored scaling settings are malformed.")),
+    Effect.mapError((error) => error instanceof CloudCapacityError ? error
+      : new CloudCapacityError({ code: "provider-failed", message: "The scaling settings could not be read.", cause: error })),
+  );
+
   const wrap = <A>(action: () => Promise<A> | A) =>
     integration(() => action()).pipe(
       Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: cause.message, cause })),
@@ -185,6 +236,79 @@ export function createCloudCapacityController(options: CloudCapacityOptions) {
       yield* integration(() => store.delete(CLOUD_CONNECTION_NAMESPACE, CONNECTION_KEY)).pipe(
         Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The connection could not be removed.", cause })),
       );
+      // Consent belongs to the connection it was given for: a later connection starts without it.
+      yield* Effect.forEach([SCALING_KEY, LAST_REQUEST_KEY], (key) => integration(() => store.delete(CLOUD_SCALING_NAMESPACE, key)), { discard: true }).pipe(
+        Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The scaling settings could not be removed.", cause })),
+      );
+      shortfallSince = undefined;
+    }),
+
+    scaling: (): Effect.Effect<CloudScalingStatus, CloudCapacityError> =>
+      readScaling.pipe(Effect.map((settings) => ({ settings, ...(lastLook ? { last: lastLook } : {}) }))),
+
+    /** Records whether Zelavis may request machines by itself, and within which limits. */
+    setScaling: (input: { readonly consent: boolean; readonly maxMachines: number; readonly cooldownMinutes: number; readonly principalId: string }) =>
+      Effect.gen(function* () {
+        if (typeof input.consent !== "boolean") return yield* fail("invalid-request", "consent must be true or false.");
+        if (!Number.isInteger(input.maxMachines) || input.maxMachines < 1 || input.maxMachines > MAX_SCALING_MACHINES) {
+          return yield* fail("invalid-request", `maxMachines must be a whole number from 1 to ${MAX_SCALING_MACHINES}.`);
+        }
+        if (!Number.isInteger(input.cooldownMinutes) || input.cooldownMinutes < 1 || input.cooldownMinutes > MAX_SCALING_COOLDOWN_MINUTES) {
+          return yield* fail("invalid-request", `cooldownMinutes must be a whole number from 1 to ${MAX_SCALING_COOLDOWN_MINUTES}.`);
+        }
+        if ((yield* readRecord) === undefined) return yield* fail("not-connected", "No cloud provider is connected.");
+        yield* audit(input.principalId, input.consent ? "scaling-enable" : "scaling-disable", {
+          maxMachines: String(input.maxMachines), cooldownMinutes: String(input.cooldownMinutes),
+        });
+        const settings: CloudScalingSettings = {
+          consent: input.consent, maxMachines: input.maxMachines, cooldownMinutes: input.cooldownMinutes,
+          updatedAt: now(), updatedBy: input.principalId,
+        };
+        yield* integration(() => store.set(CLOUD_SCALING_NAMESPACE, SCALING_KEY, asValue(settings))).pipe(
+          Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The scaling settings could not be stored.", cause })),
+        );
+        if (!input.consent) shortfallSince = undefined;
+        return settings;
+      }),
+
+    /**
+     * Fabric's demand signal: how many replicas could not be placed for lack of capacity.
+     * Called on every reconcile, so it is cheap when there is nothing to do. It requests at
+     * most one machine, only with consent, only after the shortfall has held for
+     * `SCALE_OUT_SUSTAIN_MS`, never while a machine is still booting, never past the limit
+     * and never inside the cooldown. It does not fail: the outcome says what happened, and a
+     * failure to ask is audited like any other use of the token.
+     */
+    observeShortfall: (unplaced: number): Effect.Effect<CloudScaleOutOutcome> => Effect.gen(function* () {
+      const at = now();
+      const decide = Effect.gen(function* () {
+        if (unplaced <= 0) { shortfallSince = undefined; return "idle" as const; }
+        if ((yield* readRecord) === undefined) return "no-provider" as const;
+        const settings = yield* readScaling;
+        if (!settings.consent) return "no-consent" as const;
+        shortfallSince ??= at;
+        if (at - shortfallSince < SCALE_OUT_SUSTAIN_MS) return "waiting" as const;
+        const { provider } = yield* connected;
+        const machines = yield* wrap(() => provider.list());
+        if (machines.some((machine) => machine.state === "provisioning")) return "booting" as const;
+        if (machines.length >= settings.maxMachines) return "at-limit" as const;
+        const cooldownMs = settings.cooldownMinutes * 60_000;
+        const last = yield* integration(() => store.get(CLOUD_SCALING_NAMESPACE, LAST_REQUEST_KEY)).pipe(
+          Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The last request could not be read.", cause })),
+        );
+        const lastAt = typeof last?.value === "number" ? last.value : 0;
+        if (at - lastAt < cooldownMs) return "cooling-down" as const;
+        // Written before asking: if the ask fails the cooldown still holds, so a refusing cloud is not hammered.
+        yield* integration(() => store.set(CLOUD_SCALING_NAMESPACE, LAST_REQUEST_KEY, asValue(at))).pipe(
+          Effect.mapError((cause) => new CloudCapacityError({ code: "provider-failed", message: "The request time could not be stored.", cause })),
+        );
+        yield* audit("autoscaler", "provision", { requestId: `auto-${Math.floor(at / cooldownMs)}`, shortfall: String(unplaced) });
+        yield* wrap(() => provider.provision({ requestId: `auto-${Math.floor(at / cooldownMs)}`, platformId: options.platformId }));
+        return "requested" as const;
+      });
+      const outcome = yield* decide.pipe(Effect.catch(() => Effect.succeed("failed" as const)));
+      if (outcome !== "idle") lastLook = { outcome, at };
+      return outcome;
     }),
 
     nodes: (): Effect.Effect<readonly ZelavisCapacityNode[], CloudCapacityError> => Effect.gen(function* () {

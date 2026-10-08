@@ -35,3 +35,13 @@ describe("capacity helpers", () => {
     expect(newRequestId()).not.toBe(a);
   });
 });
+
+describe("scale-out wording", () => {
+  it("says something for every outcome the Platform reports, and passes unknown ones through", async () => {
+    const { describeScaleOutOutcome } = await import("./capacity");
+    for (const outcome of [undefined, "requested", "waiting", "booting", "at-limit", "cooling-down", "no-consent", "no-provider", "failed"]) {
+      expect(describeScaleOutOutcome(outcome).length).toBeGreaterThan(10);
+    }
+    expect(describeScaleOutOutcome("something-new")).toBe("something-new");
+  });
+});

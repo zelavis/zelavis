@@ -14,6 +14,7 @@ import {
   disconnectCloud,
   getActiveRuntimeConfig,
   getCloudConnection,
+  getCloudScaling,
   getFabricSnapshot,
   getNodePlatform,
   listCloudNodes,
@@ -21,6 +22,7 @@ import {
   releaseCloudNode,
   removeNode,
   requestCloudNode,
+  setCloudScaling,
   type FabricSnapshot,
 } from "#/lib/runtime-api";
 import { newRequestId } from "#/lib/capacity";
@@ -71,7 +73,8 @@ export async function clientLoader({ request, params }: Route.ClientLoaderArgs) 
       ? await loaded(async () => {
           const connection = await getCloudConnection(runtime);
           const machines = connection ? await listCloudNodes(runtime) : [];
-          return { connection, machines };
+          const scaling = connection ? await getCloudScaling(runtime) : null;
+          return { connection, machines, scaling };
         })
       : undefined;
   return { snapshot, nodes, cloud };
@@ -99,6 +102,13 @@ export async function clientAction({ request }: Route.ClientActionArgs): Promise
         return { intent, done: true };
       case "disconnect-cloud":
         await disconnectCloud(runtime);
+        return { intent, done: true };
+      case "set-scaling":
+        await setCloudScaling(runtime, {
+          consent: form.get("consent") === "true",
+          maxMachines: Number(text("maxMachines")),
+          cooldownMinutes: Number(text("cooldownMinutes")),
+        });
         return { intent, done: true };
       case "request-machine":
         await requestCloudNode(runtime, {
