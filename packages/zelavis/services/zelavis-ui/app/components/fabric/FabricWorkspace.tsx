@@ -29,9 +29,18 @@ import {
   CardTitle,
 } from "#/components/ui/card";
 import type { FabricSnapshot } from "#/lib/runtime-api";
+import {
+  CloudCapacityPanel,
+  NodesCapacityPanel,
+  type CloudData,
+  type Loaded,
+  type NodesData,
+} from "./CapacityPanels";
 
 interface FabricWorkspaceProps {
   snapshot: FabricSnapshot;
+  nodes?: Loaded<NodesData>;
+  cloud?: Loaded<CloudData>;
   section?: string;
   detail?: string;
 }
@@ -161,23 +170,6 @@ function FabricOverview({ snapshot }: { snapshot: FabricSnapshot }) {
         description="Fabric places and routes every managed project type. Only Zelavis App projects opt into the deeper tenant, shard, replica, and schema-rollout data fabric."
       />
     </section>
-  );
-}
-
-function NodesPanel({ snapshot }: { snapshot: FabricSnapshot }) {
-  return (
-    <PlaceholderPanel
-      icon={Server}
-      title="Fabric nodes"
-      description="Registered machines and the roles they can perform."
-      rows={snapshot.nodes.map((node) => ({
-        label: node.id,
-        detail: `${node.roles.join(", ")} · ${node.runtimeDriver ?? "runtime driver unknown"}${node.runtimeEngine ? ` · ${node.runtimeEngine}` : ""}`,
-        state: node.status,
-      }))}
-      noticeTitle="Node enrollment is next"
-      noticeDescription="Remote node identity, heartbeats, capacity reporting, draining, and encrypted agent communication will extend this inventory without changing project placement contracts."
-    />
   );
 }
 
@@ -360,8 +352,9 @@ function DataFabricPanel({ detail }: { detail?: string }) {
   );
 }
 
-function InfrastructurePanel({ detail }: { detail?: string }) {
+function InfrastructurePanel({ detail, cloud }: { detail?: string; cloud?: Loaded<CloudData> }) {
   if (detail === "providers") {
+    if (cloud) return <CloudCapacityPanel data={cloud} />;
     return (
       <PlaceholderPanel
         icon={Cloud}
@@ -580,6 +573,8 @@ function SettingsPanel({ detail }: { detail?: string }) {
 
 export function FabricWorkspace({
   snapshot,
+  nodes,
+  cloud,
   section,
   detail,
 }: FabricWorkspaceProps) {
@@ -588,7 +583,7 @@ export function FabricWorkspace({
   }
 
   if (section === "nodes") {
-    return <NodesPanel snapshot={snapshot} />;
+    return nodes ? <NodesCapacityPanel data={nodes} /> : null;
   }
 
   if (section === "placements") {
@@ -604,7 +599,7 @@ export function FabricWorkspace({
   }
 
   if (section === "infrastructure") {
-    return <InfrastructurePanel detail={detail} />;
+    return <InfrastructurePanel detail={detail} cloud={cloud} />;
   }
 
   if (section === "settings") {

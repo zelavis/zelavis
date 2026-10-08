@@ -153,6 +153,17 @@ the dashboard.
 Listing never shows a token, its hash or a certificate; it shows the certificate's
 SHA-256. The Platform's trust keys returned at enrollment are public keys.
 
+## In the dashboard
+
+**Server → Fabric → Nodes** lists enrolled machines and pending enrollments, creates a
+single-use join command for a machine you manage (the token is shown once, with the
+Platform's certificate fingerprint to pin) and revokes a node. **Infrastructure →
+Providers** connects a cloud provider with an API token, lists the machines Zelavis
+created, requests one and releases one. The dashboard calls the same `/runtime/nodes` and
+`/runtime/cloud` endpoints as the SDK and CLI, with the same permissions; a panel whose
+capability is not composed into the installation says so instead of failing. Automatic
+scale-out is not built: a person requests machines.
+
 ## Cloud capacity
 
 A Platform can create the machines that join it. `/runtime/cloud` (SDK `client.cloud`, CLI

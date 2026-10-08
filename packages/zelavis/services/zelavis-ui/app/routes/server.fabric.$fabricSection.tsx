@@ -9,12 +9,12 @@ export const handle = {
 } as const;
 
 export default function ServerFabricSectionRoute() {
-  const { snapshot } = useOutletContext<FabricOutletContext>();
+  const { snapshot, nodes, cloud } = useOutletContext<FabricOutletContext>();
   const { fabricSection, fabricDetail } = useParams();
 
   if (fabricDetail) {
-    return <Outlet context={{ snapshot } satisfies FabricOutletContext} />;
+    return <Outlet context={{ snapshot, nodes, cloud } satisfies FabricOutletContext} />;
   }
 
-  return <FabricWorkspace snapshot={snapshot} section={fabricSection} />;
+  return <FabricWorkspace snapshot={snapshot} nodes={nodes} cloud={cloud} section={fabricSection} />;
 }

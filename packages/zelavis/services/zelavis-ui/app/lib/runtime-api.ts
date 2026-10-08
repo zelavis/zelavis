@@ -2725,3 +2725,119 @@ export async function seedDemoDatabase(config: RuntimeConfig) {
     },
   });
 }
+
+export interface RuntimeNode {
+  nodeId: string;
+  agentId: string;
+  url: string;
+  enrolledAt: number;
+  state: "active" | "revoked";
+  version?: string;
+  compatibility: "current" | "behind" | "unknown";
+}
+
+export interface RuntimeNodeEnrollment {
+  nodeId: string;
+  origin: "cloud" | "operator";
+  createdAt: number;
+  expiresAt: number;
+  state: "unused" | "consumed";
+}
+
+export interface RuntimeEnrollmentToken {
+  nodeId: string;
+  token: string;
+  expiresAt: number;
+}
+
+export interface RuntimeCloudConnection {
+  provider: string;
+  label: string;
+  connectedAt: number;
+  connectedBy: string;
+  tokenHint: string;
+}
+
+export interface RuntimeCloudNode {
+  id: string;
+  provider: string;
+  state: "provisioning" | "ready" | "releasing" | "failed";
+  region?: string;
+}
+
+export async function listNodes(config: RuntimeConfig) {
+  return readJson<{ nodes: RuntimeNode[]; enrollments: RuntimeNodeEnrollment[] }>(
+    `${config.api.basePath}/runtime/nodes`,
+  );
+}
+
+export async function getNodePlatform(config: RuntimeConfig) {
+  const result = await readJson<{ endpoint: { url: string; fingerprint: string } | null }>(
+    `${config.api.basePath}/runtime/nodes/platform`,
+  );
+  return result.endpoint;
+}
+
+export async function createNodeEnrollment(
+  config: RuntimeConfig,
+  input: { nodeId: string; ttlMinutes?: number },
+) {
+  return readJson<RuntimeEnrollmentToken>(`${config.api.basePath}/runtime/nodes/enrollments`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function removeNode(config: RuntimeConfig, nodeId: string) {
+  return readJson<{ removed: boolean }>(
+    `${config.api.basePath}/runtime/nodes/${encodeURIComponent(nodeId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getCloudConnection(config: RuntimeConfig) {
+  const result = await readJson<{ connection: RuntimeCloudConnection | null }>(
+    `${config.api.basePath}/runtime/cloud`,
+  );
+  return result.connection;
+}
+
+export async function connectCloud(
+  config: RuntimeConfig,
+  input: { provider: string; token: string; label?: string },
+) {
+  return readJson<{ connection: RuntimeCloudConnection }>(
+    `${config.api.basePath}/runtime/cloud/connection`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function disconnectCloud(config: RuntimeConfig) {
+  return readJson<{ disconnected: boolean }>(`${config.api.basePath}/runtime/cloud/connection`, {
+    method: "DELETE",
+  });
+}
+
+export async function listCloudNodes(config: RuntimeConfig) {
+  const result = await readJson<{ nodes: RuntimeCloudNode[] }>(
+    `${config.api.basePath}/runtime/cloud/nodes`,
+  );
+  return result.nodes;
+}
+
+export async function requestCloudNode(
+  config: RuntimeConfig,
+  input: { requestId: string; region?: string },
+) {
+  return readJson<{ node: RuntimeCloudNode }>(`${config.api.basePath}/runtime/cloud/nodes`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function releaseCloudNode(config: RuntimeConfig, nodeId: string) {
+  return readJson<{ released: boolean }>(
+    `${config.api.basePath}/runtime/cloud/nodes/${encodeURIComponent(nodeId)}`,
+    { method: "DELETE" },
+  );
+}
