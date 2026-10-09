@@ -61,6 +61,9 @@ chown zelavis:zelavis /var/lib/zelavis/qualification-session
 printf 'deb [trusted=yes] http://127.0.0.1:9 unavailable main\n' > /etc/apt/sources.list.d/zelavis-cancel.list
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" cancel
 rm /etc/apt/sources.list.d/zelavis-cancel.list
+# The second recipe first: its php-stack set must work alone, before anything installs a database.
+DOKUWIKI_CHECK=/workspace/zelavis-services/dokuwiki/scripts/check-dokuwiki-provisioning.mjs
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" create
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" create
 systemctl stop zelavis.service zelavis.socket
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" seed-upgrade
@@ -84,17 +87,30 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   done
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" start-historical
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" live-upgrade
-  # The second managed recipe, a different shape (no database), through the same path.
-  DOKUWIKI_CHECK=/workspace/zelavis-services/dokuwiki/scripts/check-dokuwiki-provisioning.mjs
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" create
+  # The second managed recipe, a different shape (no database), through the same path. Three rounds,
+  # because one dropped request in four earlier runs was never explained.
+  for round in 1 2 3; do
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" stop
+    systemctl stop zelavis.service zelavis.socket
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" seed
+    systemctl start zelavis.socket zelavis.service
+    for attempt in $(seq 1 60); do
+      if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+      sleep 1
+    done
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" live-upgrade
+  done
+  # The third: a database-backed application whose own installer needs values the Platform generated.
+  JOOMLA_CHECK=/workspace/zelavis-services/joomla/scripts/check-joomla-provisioning.mjs
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" create
   systemctl stop zelavis.service zelavis.socket
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" seed
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" seed
   systemctl start zelavis.socket zelavis.service
   for attempt in $(seq 1 60); do
     if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
     sleep 1
   done
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" live-upgrade
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" live-upgrade
 fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   "$NODE" /workspace/distribution/scripts/qualify-installed-update.mjs

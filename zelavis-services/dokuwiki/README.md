@@ -16,7 +16,6 @@ adopts the processes, upgrades the recipe of a running Project without stopping 
 names another path. DokuWiki's own installer, opened in the browser on first visit, creates the
 administrator. Upgrading the recipe never changes DokuWiki itself; DokuWiki updates itself.
 
-It needs the same host packages as WordPress (`wordpress-stack`, a superset: MariaDB is installed
-but unused); a package set of its own is a follow-up.
+It needs the `php-stack` host package set (Nginx, PHP-FPM and the PHP extensions it uses; no database), which the Platform's fixed host operation installs on approval.
 
 The software version is `2026.7.14` (the manifest allows numeric versions only); the pinned archive is DokuWiki's `2026-07-14c` release, whose letter is part of the archive address.

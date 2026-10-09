@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { Deferred, Duration, Effect, Fiber, PubSub } from "effect";
 import {
-  PlanHost, RecipeError, makePlanController, parseRecipeManifest,
+  PlanHost, RecipeError, listSetupValues, makePlanController, parseRecipeManifest, setupSecrets,
   type PlanController, type PlanHostApi, type RecipeContext, type RecipeManifest,
 } from "../core/recipe/index.js";
 import { evaluate, integration, unwrapFailure, type EffectOperations } from "../core/runtime/effect-boundary.js";
@@ -601,6 +601,19 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         projectId, update,
         (choice) => integration(() => commit(choice)).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
       )).pipe(Effect.mapError(asRuntimeError));
+    }),
+
+    setupValues: Effect.fn("RecipeRuntime.setupValues")(function* (projectId: string, options: { readonly reveal: boolean }) {
+      const [parsed, state, owner] = [yield* manifest, yield* readState(projectId), yield* account()];
+      const source = {
+        ports: state.ports, directories: namedDirectories(projectId, state, parsed),
+        root: paths(projectId).root, sockets: socketDirectory(state), user: owner.user,
+      };
+      if (!options.reveal) return listSetupValues(parsed, source);
+      const names = [...new Set((parsed.setup ?? []).flatMap(setupSecrets))];
+      const secrets = Object.fromEntries(yield* Effect.forEach(names, (name) =>
+        resolveSecret(projectId)(name).pipe(Effect.map((value) => [name, value] as const)), { concurrency: 4 }));
+      return yield* evaluate(() => listSetupValues(parsed, source, secrets)).pipe(Effect.mapError(asRuntimeError));
     }),
 
     ingressReady: Effect.fn("RecipeRuntime.ingressReady")(function* (projectId: string) {

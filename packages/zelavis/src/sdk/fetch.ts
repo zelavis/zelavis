@@ -8,6 +8,7 @@ import type { ServiceSourceDiagnostic } from "../platform/service-registry-view.
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectRecord,
+  ZelavisProjectSetupValue,
   ZelavisProjectVersions,
 } from "../project.js";
 import type { ZelavisProjectIsolationIntent } from "../project-isolation.js";
@@ -758,6 +759,10 @@ export interface ZelavisCloudClient {
 
 export interface ZelavisProjectsClient {
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
+  /** What a person needs to finish the application's own setup; a secret carries no value. Needs `project.view`. */
+  setup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
+  /** The same with secret values, audited. Needs `project.setup.reveal`. */
+  revealSetup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
   switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
@@ -1549,6 +1554,8 @@ function createProjectsClient(
   }));
   return {
     versions: projectId => json<ZelavisProjectVersions>(projectId === undefined ? "/runtime/project-versions" : projectPath(projectId, "versions")),
+    setup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup")).then(result => result.values),
+    revealSetup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup/reveal"), { method: "POST" }).then(result => result.values),
     switchVersion: (projectId, version) => json<ProjectBody>(projectPath(projectId, "version"), { method: "POST", body: { version } }).then(result => result.project),
     list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
     get: (projectId) => present(Effect.gen(function* () {

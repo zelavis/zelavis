@@ -154,6 +154,7 @@ const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
   "project.logs.read",
   "project.runtime.manage",
   "project.settings.manage",
+  "project.setup.reveal",
   "project.users.manage",
   "project.view",
   "project.website.manage",

@@ -111,6 +111,11 @@ command tree.
   recipe that offers install choices (`projects recipes` shows them). Running qualified Apps switch through the shared
   handover at their existing address. Source installations and unsupported
   drivers report why independent selection is unavailable.
+  `projects setup <id> [--reveal]` shows the values an installed application's own
+  setup asks for (a database address and name, a generated password), from
+  `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
+  `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
+  which needs `project.setup.reveal` and is recorded in the audit trail.
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;

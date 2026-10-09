@@ -3,7 +3,7 @@
   "version": "v1",
   "interpreter": "/bin/sh",
   "arguments": {
-    "set": { "required": true, "pattern": "^wordpress-stack$", "maxLength": 32 }
+    "set": { "required": true, "pattern": "^(wordpress-stack|php-stack|mariadb-server)$", "maxLength": 32 }
   },
   "authorization": { "permission": "server.packages.install", "scope": "system" },
   "result": { "format": "json", "maxBytes": 4096 }

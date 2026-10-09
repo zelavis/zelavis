@@ -165,8 +165,8 @@ the Platform service group. Shared package policy/locking state lives at
 `<prefix>/host-packages` (root, 0700). `ZELAVIS_HOST_OPERATIONS_ENDPOINT` selects this
 broker separately from the unprivileged Project process Agent.
 
-The fixed `zelavis.packages-install` operation provisions `wordpress-stack` only
-after explicit `server.packages.install` authorization. The base installation
+The fixed `zelavis.packages-install` operation provisions the fixed sets `wordpress-stack`,
+`php-stack` and `mariadb-server` only after explicit `server.packages.install` authorization. The base installation
 adds no Nginx, PHP or MariaDB. Package-triggered starts are suppressed for the APT
 process tree; existing host units and policy are preserved. The persistent
 `/usr/sbin/policy-rc.d` wrapper delegates normal calls to

@@ -110,6 +110,7 @@ import {
 } from "./assistant-tools.js";
 import { createAssistantApprovalStore } from "./assistant-approvals.js";
 import { createAssistantTurnLimiter } from "./assistant-limits.js";
+import { recordSetupReveal } from "./platform/project-setup-audit.js";
 import { AssistantAuditQueryError, createAssistantAuditReader } from "./assistant-audit.js";
 import {
   AssistantProviderConfigError,
@@ -5512,6 +5513,33 @@ function resolvePlatformEndpointGroup(
           handler: ({ params, body }: { params: Record<string, string>; body: unknown }) => present(Effect.gen(function* () {
               if (!projects) return unavailableProjectsResponse();
               return { status: 200, body: yield* integration(() => projects!.versions(params.projectId ?? "")) };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.setup.list",
+          spec: { operationId: "listProjectSetupValues", summary: "List the values needed to finish an application's own setup; secrets carry no value", tags: ["projects"], responses: { 200: { description: "Setup values" }, 404: { description: "No such Project" } } },
+          method: "GET", path: "/projects/:projectId/setup",
+          access: { permissions: ["project.view"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              return { status: 200, body: { values: yield* integration(() => projects!.setupValues(params.projectId ?? "")) } };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.setup.reveal",
+          spec: { operationId: "revealProjectSetupValues", summary: "Read the values needed to finish an application's own setup, including secrets; audited", tags: ["projects"], responses: { 200: { description: "Setup values" }, 403: { description: "Missing permission" }, 404: { description: "No such Project" } } },
+          method: "POST", path: "/projects/:projectId/setup/reveal",
+          access: { permissions: ["project.setup.reveal"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params, principal }: { params: Record<string, string>; principal?: HostOperationPrincipal }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              const values = yield* integration(() => projects!.setupValues(params.projectId ?? "", { reveal: true }));
+              // A reveal that cannot be recorded is not given.
+              if (!systemStore) return { status: 503, body: { error: "The audit trail is unavailable, so secrets are not revealed." } };
+              yield* recordSetupReveal(systemStore, {
+                at: Date.now(), projectId: params.projectId ?? "", principalId: principal?.id ?? "unknown", principalType: principal?.type ?? "unknown",
+                revealed: values.filter((value) => value.secret).map((value) => value.id),
+              }).pipe(Effect.mapError((error) => unwrapFailure(error)));
+              return { status: 200, body: { values } };
           }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {

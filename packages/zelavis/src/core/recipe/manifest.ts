@@ -60,6 +60,22 @@ const HttpsUrl = Schema.String.check(Schema.isMaxLength(2048), Schema.makeFilter
  */
 const Directory = Schema.Struct({ name: Name, path: RelativePath });
 
+/**
+ * A value a person needs to finish the application's own setup in its own web installer, such as the
+ * address and name of the database it should use. The value is a template over what the Platform
+ * knows about the Project: `{ports.NAME}`, `{dir.NAME}` (a declared directory), `{secret.NAME}` (a
+ * generated secret), `{root}`, `{sockets}` and `{user}`. A value that contains a secret is shown only
+ * when revealed by someone allowed to, and every reveal is audited.
+ */
+const SetupValue = Schema.Struct({
+  id: Name,
+  label: Schema.String.check(Schema.isPattern(/^[\p{L}\p{N} ._()/-]{1,64}$/u)),
+  value: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9 ._:/@=,;()\-{}]{1,256}$/)),
+});
+
+/** The tokens a setup value may use, as the pieces of a template. */
+export const SETUP_TOKEN = /\{(ports|dir|secret)\.([a-z][a-z0-9-]{0,63})\}|\{(root|sockets|user)\}/g;
+
 /** The verified package's install metadata, independent of its npm revision. */
 export const RecipeManifest = Schema.Struct({
   contract: Schema.Literal(1),
@@ -86,6 +102,8 @@ export const RecipeManifest = Schema.Struct({
   adopt: Schema.optional(Schema.Array(Adoption).check(Schema.isMaxLength(4))),
   /** Data directories placed by name below the recipe's root; see {@link Directory}. */
   directories: Schema.optional(Schema.Array(Directory).check(Schema.isMaxLength(16))),
+  /** Values the application's own installer asks for; see {@link SetupValue}. */
+  setup: Schema.optional(Schema.Array(SetupValue).check(Schema.isMaxLength(16))),
 });
 
 export type RecipeManifest = typeof RecipeManifest.Type;
@@ -122,6 +140,15 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
         throw new InvalidRecipeManifest({ message: `Directory "${place}" contains another declared directory.` });
       }
     }
+    unique((manifest.setup ?? []).map((entry) => entry.id), "setup value IDs");
+    for (const entry of manifest.setup ?? []) {
+      const rest = entry.value.replace(SETUP_TOKEN, (token, kind: string | undefined, name: string | undefined) => {
+        if (kind === "ports" && !manifest.ports.some((port) => port.name === name)) throw new InvalidRecipeManifest({ message: `Setup value "${entry.id}" names the port "${name}", which the recipe does not declare.` });
+        if (kind === "dir" && !(manifest.directories ?? []).some((directory) => directory.name === name)) throw new InvalidRecipeManifest({ message: `Setup value "${entry.id}" names the directory "${name}", which the recipe does not declare.` });
+        return "";
+      });
+      if (/[{}]/.test(rest)) throw new InvalidRecipeManifest({ message: `Setup value "${entry.id}" contains a token this contract does not define.` });
+    }
     for (const adoption of manifest.adopt ?? []) {
       unique(Object.keys(adoption.move), "adopted sources");
       unique(Object.values(adoption.move), "adopted destinations");
@@ -138,6 +165,7 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
       }))),
       software: Object.freeze(manifest.software.map((software) => Object.freeze({ ...software }))),
       ports: Object.freeze(manifest.ports.map((port) => Object.freeze({ ...port }))),
+      ...(manifest.setup ? { setup: Object.freeze(manifest.setup.map((entry) => Object.freeze({ ...entry }))) } : {}),
       ...(manifest.directories ? { directories: Object.freeze(manifest.directories.map((directory) => Object.freeze({ ...directory }))) } : {}),
       ...(manifest.adopt ? { adopt: Object.freeze(manifest.adopt.map((adoption) => Object.freeze({
         ...adoption,

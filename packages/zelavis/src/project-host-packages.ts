@@ -5,6 +5,8 @@
  */
 export const HOST_PACKAGE_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "wordpress-stack": Object.freeze(["nginx", "php-fpm", "mariadb"]),
+  "php-stack": Object.freeze(["nginx", "php-fpm"]),
+  "mariadb-server": Object.freeze(["mariadb"]),
 });
 
 /** Requirement names this host can provide: only those a package set can install, and only when the operation Agent exists. */

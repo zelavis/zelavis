@@ -4,7 +4,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -25,6 +25,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let start = true;
   let installHostPackages = false;
   let restart = false;
+  let reveal = false;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -33,6 +34,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (arg === "--install-host-packages") { installHostPackages = true; continue; }
     if (arg === "--no-start") { start = false; continue; }
     if (arg === "--restart") { restart = true; continue; }
+    if (arg === "--reveal") { reveal = true; continue; }
     if (arg === "--help" || arg === "-h") {
       console.log(usage);
       return;
@@ -60,6 +62,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     return;
   }
   if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
+  if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
   if (restart && action !== "upgrade") throw new Error("--restart is only supported by projects upgrade.");
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
@@ -103,6 +106,11 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "versions": {
       const result = yield* integration(() => client.projects.versions(target));
       print(result, () => result.selectable ? result.versions.map(entry => `${entry.version}\t${entry.status}${entry.version === result.current ? "\tselected" : ""}${entry.error ? `\t${entry.error}` : ""}`).join("\n") : result.reason ?? "Independent engine versions are unavailable.");
+      return;
+    }
+    case "setup": {
+      const values = yield* integration(() => reveal ? client.projects.revealSetup(requireTarget("id")) : client.projects.setup(requireTarget("id")));
+      print({ values }, () => values.map(value => `${value.label}\t${value.secret && value.value === undefined ? "(secret: use --reveal)" : value.value}`).join("\n") || "This Project has no setup values.");
       return;
     }
     case "switch-version": {

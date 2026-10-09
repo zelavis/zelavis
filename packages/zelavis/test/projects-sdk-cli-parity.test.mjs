@@ -62,14 +62,21 @@ function projectRuntime() {
       return [{ timestamp: "2026-09-17T00:00:00.000Z", stream: "system", message: `log ${projectId}` }];
     },
     async destroy(projectId) { running.delete(projectId); },
+    async setupValues(projectId, { reveal }) {
+      return [
+        { id: "db-host", label: "Database host", secret: false, value: `127.0.0.1:3306/${projectId}` },
+        { id: "db-password", label: "Database password", secret: true, ...(reveal ? { value: "generated-secret" } : {}) },
+      ];
+    },
     async close() {},
   };
 }
 
 async function boot(t, options = {}) {
   const runtime = projectRuntime();
+  const store = options.store ?? createMemorySystemStore();
   const zv = await zelavis({
-    systemStore: createMemorySystemStore(),
+    systemStore: store,
     ...(options.edgePreviews ? { edgePreviews: options.edgePreviews } : {}),
     ...(options.broker ? { hostOperations: options.broker } : {}),
     projectRuntime: runtime,
@@ -105,6 +112,7 @@ async function boot(t, options = {}) {
   const fetcher = (url, init) => zv.fetch(new Request(url, init), OWNER);
   return {
     zv,
+    store,
     fetcher,
     client: createZelavisClient({ baseUrl: "http://localhost", fetch: fetcher }),
   };
@@ -374,4 +382,34 @@ test("install method and software version are offered, chosen and refused the sa
   const misplaced = await cli(fetcher, ["list", "--method", "native"]);
   assert.notEqual(misplaced.exitCode, 0);
   assert.match(JSON.stringify(misplaced.stderr), /only supported by projects create/);
+});
+
+test("setup values are listed without secrets, revealed only to who may, and every reveal is audited, the same on HTTP, SDK and CLI", async (t) => {
+  const { zv, store, fetcher, client } = await boot(t);
+  await client.projects.create({ id: "setup-site", name: "Setup", recipeName: "acme/plain" });
+  const listed = await client.projects.setup("setup-site");
+  assert.deepEqual(listed, [
+    { id: "db-host", label: "Database host", secret: false, value: "127.0.0.1:3306/setup-site" },
+    { id: "db-password", label: "Database password", secret: true },
+  ]);
+  assert.deepEqual((await http(fetcher, "GET", "/projects/setup-site/setup")).body.values, listed);
+  assert.deepEqual((await cli(fetcher, ["setup", "setup-site"])).stdout.values, listed);
+  assert.equal((await store.list("projects.setup-audit.v1")).length, 0, "listing reveals nothing and records nothing");
+
+  const revealed = await client.projects.revealSetup("setup-site");
+  assert.equal(revealed.find((value) => value.id === "db-password").value, "generated-secret");
+  assert.deepEqual((await http(fetcher, "POST", "/projects/setup-site/setup/reveal")).body.values, revealed);
+  assert.deepEqual((await cli(fetcher, ["setup", "setup-site", "--reveal"])).stdout.values, revealed);
+  const trail = (await store.list("projects.setup-audit.v1")).map((record) => record.value);
+  assert.equal(trail.length, 3, "one record per reveal");
+  assert.ok(trail.every((entry) => entry.projectId === "setup-site" && entry.principalId === "owner" && entry.revealed.join() === "db-password"));
+  assert.ok(!JSON.stringify(trail).includes("generated-secret"), "the secret itself is never recorded");
+
+  // Viewing a Project is not authority to read its secrets.
+  const viewer = { principal: { id: "viewer", type: "user", roles: [], permissions: [], grants: [{ permission: "project.view", scope: { type: "project", projectId: "setup-site" } }] } };
+  const asViewer = (url, init) => zv.fetch(new Request(url, init), viewer);
+  const base = "http://localhost/zelavis/api/v1/runtime/projects/setup-site/setup";
+  assert.equal((await asViewer(base)).status, 200);
+  assert.equal((await asViewer(`${base}/reveal`, { method: "POST" })).status, 403);
+  assert.equal((await store.list("projects.setup-audit.v1")).length, 3, "a refused reveal records nothing");
 });

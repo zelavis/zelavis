@@ -246,6 +246,14 @@ export interface ZelavisProjectLogEntry {
   message: string;
 }
 
+/** A value for finishing an application's own setup; see `ProjectSetupValue` in `zelavis/recipe`. */
+export interface ZelavisProjectSetupValue {
+  readonly id: string;
+  readonly label: string;
+  readonly secret: boolean;
+  readonly value?: string;
+}
+
 export interface ZelavisProjectVersions {
   readonly current?: string;
   readonly latest?: string;
@@ -273,6 +281,8 @@ export interface ZelavisProjectRuntimeDriver {
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
   /** Makes a workload update consistent with a selection another authority (the integration host) proved. */
   settleUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target"): Promise<void>;
+  /** What a person needs to finish the application's own setup; secret values only when `reveal` is set. */
+  setupValues?(projectId: string, options: { readonly reveal: boolean }): Promise<readonly ZelavisProjectSetupValue[]>;
   /** Resolves once public requests may reach the Project: while its serving processes are being replaced it waits. */
   ingressReady?(projectId: string): Promise<void>;
   gatewayTarget?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<string | undefined>;
@@ -388,6 +398,8 @@ export interface ZelavisProjectManager {
   listOwned(ownerProjectId: string): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
   versions(id?: string): Promise<ZelavisProjectVersions>;
+  /** Values for the application's own setup (a database address, a generated password). Secrets only with `reveal`. */
+  setupValues(id: string, options?: { readonly reveal?: boolean }): Promise<readonly ZelavisProjectSetupValue[]>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   update(id: string, input: ZelavisProjectUpdateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
@@ -1861,6 +1873,13 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 if (project.placement) return { selectable: false, reason: "Version selection requires the Project's local runtime catalog.", versions: [] };
                 return yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(unavailable));
             }));
+        }),
+        setupValues: Effect.fn("Projects.setupValues")(function* (id: string, options?: { readonly reveal?: boolean }) {
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            const project = yield* requireProject(projectId);
+            yield* evaluate(() => assertProjectIsOperable(project, "read"));
+            if (!runtimeEffects.setupValues) return [];
+            return yield* runtimeEffects.setupValues(projectId, { reveal: options?.reveal === true });
         }),
         switchVersion: Effect.fn("Projects.switchVersion")(function* (id: string, version: string) {
             yield* evaluate(() => { if (!isExactVersion(version)) throw new ZelavisProjectValidationError("Engine selection requires an exact version."); });

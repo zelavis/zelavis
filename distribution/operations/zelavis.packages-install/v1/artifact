@@ -3,9 +3,16 @@
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
-[ "$#" -eq 2 ] && [ "$1" = --set ] && [ "$2" = wordpress-stack ] || { echo 'Unknown package set.' >&2; exit 2; }
+[ "$#" -eq 2 ] && [ "$1" = --set ] || { echo 'Unknown package set.' >&2; exit 2; }
+# The sets are fixed here, never supplied by a caller or a recipe.
+case "$2" in
+  wordpress-stack) set_name=wordpress-stack; packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core' ;;
+  mariadb-server) set_name=mariadb-server; packages='mariadb-server-core mariadb-client-core php-mysql' ;;
+  php-stack) set_name=php-stack; packages='nginx php-fpm php-cli php-curl php-gd php-intl php-mbstring php-xml php-zip' ;;
+  *) echo 'Unknown package set.' >&2; exit 2 ;;
+esac
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Package installation requires the root Linux operation Agent.' >&2; exit 2; }
-command -v apt-get >/dev/null && command -v dpkg-query >/dev/null || { echo 'wordpress-stack requires Debian or Ubuntu APT.' >&2; exit 2; }
+command -v apt-get >/dev/null && command -v dpkg-query >/dev/null || { echo "$set_name requires Debian or Ubuntu APT." >&2; exit 2; }
 state=${ZELAVIS_HOST_PACKAGES_DIR:?Host package state was not configured by the Agent}
 case "$state" in /*) ;; *) exit 2 ;; esac
 case "$state" in *[!a-zA-Z0-9_./-]*|*/../*|*/./*|*//*) echo 'Invalid host package state directory.' >&2; exit 2 ;; esac
@@ -16,12 +23,11 @@ mode=$(stat -c %a "$state")
 exec 9>"$state/install.lock"
 flock -w 60 9 || { echo 'Another host package operation is still running; retry.' >&2; exit 1; }
 
-packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core'
 missing=false
 for package in $packages; do
   [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null || true)" = 'ii ' ] || missing=true
 done
-if [ "$missing" = false ]; then printf '{"set":"wordpress-stack","changed":false}\n'; exit 0; fi
+if [ "$missing" = false ]; then printf '{"set":"%s","changed":false}\n' "$set_name"; exit 0; fi
 
 # The wrapper delegates normal host operations to the original policy. Only
 # this apt process tree has the suppression variable: interruption cannot leave
@@ -33,7 +39,7 @@ owner=$policy.zelavis-owner
 cat >"$state/policy.wrapper" <<'POLICY'
 #!/bin/sh
 # Zelavis host-package policy v1
-if [ "${ZELAVIS_INSTALLING_PACKAGES:-}" = wordpress-stack ]; then exit 101; fi
+if [ -n "${ZELAVIS_INSTALLING_PACKAGES:-}" ]; then exit 101; fi
 if [ -x /usr/sbin/policy-rc.d.zelavis-original ]; then
   exec /usr/sbin/policy-rc.d.zelavis-original "$@"
 fi
@@ -79,7 +85,7 @@ units() {
   done | sort -u
 }
 units >"$before"
-export DEBIAN_FRONTEND=noninteractive ZELAVIS_INSTALLING_PACKAGES=wordpress-stack
+export DEBIAN_FRONTEND=noninteractive ZELAVIS_INSTALLING_PACKAGES=$set_name
 apt-get -o Acquire::Retries=3 update >&2
 apt-get -o DPkg::Lock::Timeout=60 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-upgrade --no-install-recommends $packages >&2
 # These newly introduced units were denied startup. Do not stop or disable
@@ -89,4 +95,4 @@ if command -v systemctl >/dev/null; then
     if ! grep -Fxq "$unit" "$before"; then systemctl disable "$unit" >&2; fi
   done
 fi
-printf '{"set":"wordpress-stack","changed":true}\n'
+printf '{"set":"%s","changed":true}\n' "$set_name"

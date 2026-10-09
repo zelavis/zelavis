@@ -380,6 +380,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         resolveVersion: Effect.fn("LocalProjects.resolveVersion")(function* (project, version) {
             return yield* effectOperations(node).resolveVersion!(project, version);
         }),
+        setupValues: Effect.fn("LocalProjects.setupValues")(function* (id, options) {
+            const values = effectOperations(yield* forProjectId(id)).setupValues;
+            return values ? yield* values(id, options) : [];
+        }),
         ingressReady: Effect.fn("LocalProjects.ingressReady")(function* (id) {
             const ready = effectOperations(yield* forProjectId(id)).ingressReady;
             if (ready) yield* ready(id);

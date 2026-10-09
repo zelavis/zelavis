@@ -232,6 +232,20 @@ time the Project starts from a stop, the data is moved to the new place with one
 and keeps working), and the install phase runs again so configuration names the new place. A
 crash in between is finished by the next start, because the physical state decides.
 
+### Setup values
+
+Some applications cannot finish their own setup without values the Platform generated: Joomla's
+installer asks for the database's address, name, user and password. A recipe declares them in the
+manifest (`setup`: an id, a label and a template over `{ports.NAME}`, `{dir.NAME}`, `{secret.NAME}`,
+`{root}`, `{sockets}` and `{user}`; a template naming something the recipe does not declare is refused
+when the recipe loads). `zelavis projects setup <id>`, `client.projects.setup(id)` and
+`GET /zelavis/api/v1/runtime/projects/:projectId/setup` list them with `project.view`; a value that
+contains a secret carries none. `--reveal`, `client.projects.revealSetup(id)` and
+`POST .../setup/reveal` return the secrets too, need `project.setup.reveal`, and are recorded (the
+Project, the caller and the value ids, never the values) in the System Store namespace
+`projects.setup-audit.v1`, capped at 500 records and 90 days; a reveal that cannot be recorded is not
+given. The dashboard does not show these values yet.
+
 ### Replacing a serving process
 
 When a newer recipe changes how a process is launched (not only its configuration), that process is
@@ -242,11 +256,13 @@ request waits at most 15 seconds. Reloads and kept processes never close the gat
 requests; it cannot keep a database available while it restarts, so a replaced database is still a
 short pause for the requests that need it.
 
-### Two managed recipes
+### Three managed recipes
 
-WordPress (Nginx, PHP-FPM, MariaDB, generated credentials) and DokuWiki (Nginx and PHP-FPM, no
-database, no credentials) are both managed recipes on this path, with no code in the Platform that
-names either. DokuWiki exists to keep that true.
+WordPress (Nginx, PHP-FPM, MariaDB, generated credentials), DokuWiki (Nginx and PHP-FPM, no database,
+no credentials) and Joomla (like WordPress, whose installer needs the generated values) are managed
+recipes on this path, with no code in the Platform that names any of them. DokuWiki and Joomla exist to
+keep that true. Host packages are fixed named sets (`wordpress-stack`, `php-stack`, `mariadb-server`); a
+recipe lists the sets it needs.
 
 Limits today: a replaced process is covered by the ingress gate for requests, but a database whose launch changed still pauses what needs it; a layout
 move (adoption of an earlier layout) still needs the Project stopped, because a running

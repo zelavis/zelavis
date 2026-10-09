@@ -1,19 +1,19 @@
 {
-  "name": "@zelavis/dokuwiki",
-  "version": "2026.7.14-alpha.0",
+  "name": "@zelavis/joomla",
+  "version": "5.4.9-alpha.0",
   "private": false,
-  "description": "Official Zelavis DokuWiki Project recipe: a flat-file wiki with dedicated Nginx and PHP-FPM, no database.",
+  "description": "Official Zelavis Joomla Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
   "types": "./dist/index.d.ts",
   "zelavis": {
     "kind": "app",
-    "namespace": "dokuwiki",
+    "namespace": "joomla",
     "capabilities": [
       "app:project",
       "app:managed",
-      "app:dokuwiki"
+      "app:joomla"
     ],
     "project": {
       "runtimeKinds": [
@@ -21,11 +21,12 @@
       ],
       "runtime": "./dist/runtime.js",
       "managed": {
-        "adminTitle": "DokuWiki",
-        "adminPath": "/doku.php"
+        "adminTitle": "Joomla Administrator",
+        "adminPath": "/administrator/"
       },
       "hostPackages": [
-        "php-stack"
+        "php-stack",
+        "mariadb-server"
       ],
       "install": {
         "contract": 1,
@@ -36,28 +37,64 @@
             "entry": "./dist/recipe.js",
             "requires": [
               "nginx",
-              "php-fpm"
+              "php-fpm",
+              "mariadb"
             ]
           }
         ],
         "software": [
           {
-            "version": "2026.7.14",
-            "archive": "https://download.dokuwiki.org/src/dokuwiki/dokuwiki-2026-07-14c.tgz",
-            "sha256": "7e9b4dcb5ecb91a57f71b9b77dcec7bcf929959881464796611349ed1d183176",
-            "maxBytes": 33554432
+            "version": "5.4.9",
+            "archive": "https://github.com/joomla/joomla-cms/releases/download/5.4.9/Joomla_5.4.9-Stable-Full_Package.tar.gz",
+            "sha256": "8c658d16b6e908f8cfce3556ac7280fe210c4ebd916202f406fe6bf1b5b05149",
+            "maxBytes": 67108864
           }
         ],
         "ports": [
           {
             "name": "web",
             "protocol": "http"
+          },
+          {
+            "name": "db",
+            "protocol": "tcp"
           }
         ],
         "directories": [
           {
             "name": "site",
             "path": "site"
+          },
+          {
+            "name": "db",
+            "path": "db"
+          }
+        ],
+        "setup": [
+          {
+            "id": "db-type",
+            "label": "Database type",
+            "value": "MySQLi"
+          },
+          {
+            "id": "db-host",
+            "label": "Database host",
+            "value": "127.0.0.1:{ports.db}"
+          },
+          {
+            "id": "db-name",
+            "label": "Database name",
+            "value": "joomla"
+          },
+          {
+            "id": "db-user",
+            "label": "Database user",
+            "value": "joomla"
+          },
+          {
+            "id": "db-password",
+            "label": "Database password",
+            "value": "{secret.db-password}"
           }
         ]
       }
@@ -83,9 +120,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "zelavis-services/dokuwiki"
+    "directory": "zelavis-services/joomla"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/dokuwiki#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/joomla#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
@@ -101,8 +138,8 @@
   },
   "keywords": [
     "zelavis",
-    "dokuwiki",
-    "wiki",
+    "joomla",
+    "cms",
     "recipe"
   ]
 }
