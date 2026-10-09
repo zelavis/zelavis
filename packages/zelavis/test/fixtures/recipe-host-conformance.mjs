@@ -81,6 +81,25 @@ export function recipeHostConformance(test, makeHost) {
     await failure(host.files.write("big.txt", "x".repeat(17 * 1024 * 1024)));
   });
 
+  test("files can be checked for, and assembled from text and secret references", async (t) => {
+    const { host, root, secretsDirectory } = await sandbox(t);
+    assert.equal(await succeed(host.files.exists("a/b.txt")), false);
+    await succeed(host.files.write("a/b.txt", "x"));
+    assert.equal(await succeed(host.files.exists("a/b.txt")), true);
+    assert.equal(await succeed(host.files.exists("a")), true, "a directory exists too");
+    await failure(host.files.exists("../x"));
+
+    const password = await succeed(host.secret("db-password"));
+    const value = await readFile(join(secretsDirectory, "db-password"), "utf8");
+    await succeed(host.files.write("conf/config.php", ["define('PASS', '", password, "');\n"]));
+    assert.equal(await readFile(join(root, "conf/config.php"), "utf8"), `define('PASS', '${value}');\n`);
+    assert.equal(statSync(join(root, "conf/config.php")).mode & 0o077, 0, "a file with a secret part is private");
+    await succeed(host.files.write("conf/plain.txt", ["a", "b"]));
+    assert.equal(await readFile(join(root, "conf/plain.txt"), "utf8"), "ab");
+    assert.equal(statSync(join(root, "conf/plain.txt")).mode & 0o777, 0o644);
+    await failure(host.files.write("conf/bad.txt", ["a", { secret: "never-generated" }]));
+  });
+
   test("only executables the recipe declared run, with no shell and none of the host's environment", async (t) => {
     process.env.ZELAVIS_HOST_ONLY_VARIABLE = "leaked";
     t.after(() => { delete process.env.ZELAVIS_HOST_ONLY_VARIABLE; });

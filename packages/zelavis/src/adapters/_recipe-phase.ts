@@ -10,7 +10,7 @@ import {
   RecipeError, RecipeHost, parseProcessPlan,
   type ProcessPlan, type RecipeContext, type RecipeDefinition,
 } from "../core/recipe/index.js";
-import { createRecipeHost } from "./_recipe-host.js";
+import { TAR_CANDIDATES, createRecipeHost } from "./_recipe-host.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
 
 /**
@@ -54,7 +54,7 @@ export interface RecipePhaseRequest {
   /** The software version a project moves away from, for `upgrade`. */
   readonly previous?: RecipeContext["software"];
   /** The names a process plan may use, from the manifest: its requirements and ports. */
-  readonly allowed: { readonly commands: readonly string[]; readonly ports: readonly string[] };
+  readonly allowed: { readonly commands: readonly string[]; readonly ports: readonly string[]; readonly directories?: readonly string[] };
 }
 
 export type RecipePhaseResult =
@@ -70,6 +70,8 @@ const Request = Schema.Struct({
   secretsDirectory: Schema.String,
   commands: Schema.Record(Schema.String, Schema.String),
   context: Schema.Struct({
+    directories: Schema.Struct({ root: Schema.String, sockets: Schema.String }),
+    account: Schema.Struct({ user: Schema.String, group: Schema.String, switchUser: Schema.Boolean }),
     projectId: Schema.String,
     hostname: Schema.String,
     software: Schema.Struct({ version: Schema.String, archive: Schema.String, sha256: Schema.String, maxBytes: Schema.Number }),
@@ -78,7 +80,7 @@ const Request = Schema.Struct({
     ports: Schema.Record(Schema.String, Schema.Number),
   }),
   previous: Schema.optional(Schema.Struct({ version: Schema.String, archive: Schema.String, sha256: Schema.String, maxBytes: Schema.Number })),
-  allowed: Schema.Struct({ commands: Schema.Array(Schema.String), ports: Schema.Array(Schema.String) }),
+  allowed: Schema.Struct({ commands: Schema.Array(Schema.String), ports: Schema.Array(Schema.String), directories: Schema.optional(Schema.Array(Schema.String)) }),
 });
 
 const PlanValue = Schema.Unknown;
@@ -131,7 +133,8 @@ function readableDirectories(request: RecipePhaseRequest): readonly string[] {
   const zelavis = realOrSelf(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."));
   const effect = packageRoot("effect");
   // The host checks each declared executable before it runs one.
-  const executables = Object.values(request.commands).map(realOrSelf);
+  // Both the path as declared and where it really lies: the host stats the first, which may be a link.
+  const executables = [...Object.values(request.commands), ...TAR_CANDIDATES].flatMap((path) => [path, realOrSelf(path)]);
   const directories = new Set<string>([...executables, zelavis, effect, realOrSelf(dirname(request.module)), realOrSelf(request.root), realOrSelf(request.secretsDirectory)]);
   // Effect's own dependencies sit beside it: hoisted under npm, in its folder's node_modules under pnpm.
   if (basename(dirname(effect)) === "node_modules") directories.add(dirname(effect));
@@ -218,7 +221,7 @@ export const runRecipePhase = (options: RunRecipePhaseOptions): Effect.Effect<Re
       const child = spawn(options.nodeExecutable ?? process.execPath, [...args], {
         cwd: options.root,
         // Nothing of the Platform's environment: no tokens, no paths, no proxies.
-        env: { PATH: "/usr/bin:/bin", HOME: options.root, LANG: "C.UTF-8" },
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: options.root, LANG: "C.UTF-8" },
         stdio: ["pipe", "pipe", "pipe", "pipe"],
         detached: true,
         shell: false,

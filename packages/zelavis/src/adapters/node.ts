@@ -16,6 +16,8 @@ import { Cause, Effect, Exit, Option } from "effect";
 import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
 import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
+import { availableRequirements } from "./_recipe-requirements.js";
+import { provisionableRequirements } from "../project-host-packages.js";
 import { composeCloudCapacity, readCloudPolicy } from "../platform/cloud-engine.js";
 import type { CloudCapacityController } from "../platform/cloud-capacity.js";
 import { loadRemoteNodeSources } from "./_remote-node-sources.js";
@@ -552,6 +554,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
               }),
           ...(hostOperations ? { hostOperations } : {}),
           ...(cloudCapacity ? { cloudCapacity } : {}),
+          // What recipes can be installed here: the tools already present, plus what an approved package
+          // set (with the operation Agent) or Homebrew could add. Checked when a Project is created or started.
+          ...(!isProjectRuntime ? { projectInstallHost: () => present(availableRequirements(provisionableRequirements(hostOperations !== undefined)).pipe(
+            Effect.map((requirements) => ({ drivers: ["js" as const], requirements })))) } : {}),
           ...(remoteEnvironment ? { remoteEnvironment } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),

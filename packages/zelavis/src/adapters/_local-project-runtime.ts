@@ -195,6 +195,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }
         const driver = module.createProjectRuntime({
             directory,
+            packageDirectory: modulePackage,
             agent: recipeAgent,
             options: options.recipeRuntimeOptions?.[recipe.name] ?? {},
         });

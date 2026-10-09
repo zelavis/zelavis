@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { execFile } from "node:child_process";
 import { Cause, Effect, Exit, Fiber } from "effect";
 
 import { runRecipePhase } from "../dist/adapters/_recipe-phase.js";
@@ -34,6 +35,7 @@ async function project(t, source) {
       software: { version: "1.0", archive: "https://example.com/a.tar.gz", sha256: "a".repeat(64), maxBytes: 1000 },
       method: { id: "native", driver: "js", entry: "./recipe.mjs", requires: ["node"] },
       config: { title: "Hello" }, ports: { web: 18080 },
+      directories: { root, sockets: join(base, "sockets") }, account: { user: "u", group: "g", switchUser: false },
     },
     allowed: { commands: ["node"], ports: ["web"] },
     timeoutMs: 30_000,
@@ -266,4 +268,20 @@ export default defineRecipe({
   start: () => Effect.succeed({ processes: [] }),
 });`);
   assert.match((await failure(garbage.request("install"))).message, /not a message/);
+});
+
+test("a phase can unpack an archive with the host's tar while confined", { timeout: 60_000 }, async (t) => {
+  const subject = await project(t, `
+export default defineRecipe({
+  install: () => Effect.gen(function* () {
+    const host = yield* RecipeHost;
+    yield* host.extract("bundle.tar.gz", "site", { stripTopLevel: true });
+  }),
+  start: () => Effect.succeed({ processes: [] }),
+});`);
+  await mkdir(join(subject.root, "src", "app"), { recursive: true });
+  await writeFile(join(subject.root, "src", "app", "index.php"), "<?php");
+  await new Promise((resolve, reject) => execFile("tar", ["-czf", join(subject.root, "bundle.tar.gz"), "-C", join(subject.root, "src"), "app"], (error) => error ? reject(error) : resolve()));
+  await run(subject.request("install"));
+  assert.equal(readFileSync(join(subject.root, "site", "index.php"), "utf8"), "<?php");
 });

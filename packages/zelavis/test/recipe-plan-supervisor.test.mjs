@@ -1,7 +1,7 @@
 // A process plan run through the real local Agent runner: order, readiness, failure cleanup,
 // stop order, secrets, and interruption, with real child processes.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Cause, Effect, Exit, Fiber } from "effect";
 
-import { startProcessPlan } from "zelavis/recipe";
+import { adoptProcessPlan, startProcessPlan } from "zelavis/recipe";
 import { loopbackPortAccepts } from "../dist/adapters/_loopback-probe.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 
@@ -42,7 +42,7 @@ async function setup(t, secrets = {}) {
   const options = {
     runner, workloadId: "p1", cwd: directory, commands: { node: process.execPath }, ports,
     resolveSecret: (name) => secrets[name] === undefined ? Effect.fail({ _tag: "RecipeError", operation: "secret", message: "missing" }) : Effect.succeed(secrets[name]),
-    probe: loopbackPortAccepts, pollMs: 50, stopGraceMs: 2000,
+    probe: loopbackPortAccepts, pathExists: (path) => Effect.sync(() => existsSync(path)), pollMs: 50, stopGraceMs: 2000,
     onExit: (name, exit) => exited.push([name, exit.code]),
   };
   const proc = (name, port, { delay = 0, exitAfter = 0, dependsOn = [], timeoutMs = 5000, args = [], env = {} } = {}) => ({
@@ -162,4 +162,95 @@ test("output is kept, bounded, and attributed to its process", { timeout: 60_000
   assert.ok(lines.every((entry) => entry.process === "db"));
   assert.equal(lines.at(-1).line, "line 799");
   await Effect.runPromise(running.stop);
+});
+
+test("a process can be ready when its file appears, and a missing file past the deadline fails the start", { timeout: 60_000 }, async (t) => {
+  const { options, directory } = await setup(t);
+  const marker = join(directory, "ready.sock");
+  const script = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x"), 500); setInterval(()=>{},1000)`;
+  const process_ = (path, timeoutMs) => ({ name: "fpm", command: "node", args: ["-e", script], env: {}, dependsOn: [], readiness: { path, timeoutMs } });
+  const started = Date.now();
+  const running = await Effect.runPromise(startProcessPlan({ processes: [process_(marker, 5000)] }, options));
+  assert.ok(Date.now() - started >= 450, "it waited for the file");
+  await Effect.runPromise(running.stop);
+  const error = await failureOf(startProcessPlan({ processes: [process_(join(directory, "never.sock"), 700)] }, options));
+  assert.match(error.message, /"fpm" was not ready on its readiness file within 700 ms/);
+});
+
+test("the base environment reaches a process under the plan's own variables, and nothing else of the host's does", { timeout: 60_000 }, async (t) => {
+  process.env.ZELAVIS_HOST_ONLY = "leaked";
+  t.after(() => { delete process.env.ZELAVIS_HOST_ONLY; });
+  const { options, ports, directory } = await setup(t);
+  const out = join(directory, "env.json");
+  const script = `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.env)); require("node:net").createServer().listen(Number(process.argv[1]), "127.0.0.1"); setInterval(()=>{},1000)`;
+  const running = await Effect.runPromise(startProcessPlan({ processes: [{
+    name: "app", command: "node", args: ["-e", script, String(ports.app)], env: { OWN: "plan", SHARED: "plan" }, dependsOn: [], readiness: { port: "app", timeoutMs: 5000 },
+  }] }, { ...options, baseEnvironment: { BASE: "host", SHARED: "base" } }));
+  const seen = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(seen.BASE, "host");
+  assert.equal(seen.OWN, "plan");
+  assert.equal(seen.SHARED, "plan", "the plan wins");
+  assert.equal(seen.ZELAVIS_HOST_ONLY, undefined);
+  await Effect.runPromise(running.stop);
+});
+
+/** What an Agent that outlived the Platform hands back for a process it kept running. */
+function survivor(options, { name, args, cwd, replay = [], running = true }) {
+  const handlers = [];
+  let end;
+  const exit = new Promise((resolve) => { end = resolve; });
+  const child = { workloadId: "p1", running, exit, stop: async () => { child.running = false; end({ code: 0, signal: null, requested: true }); return { code: 0, signal: null, requested: true }; }, listen: (handler) => handlers.push(handler) };
+  return { child, handlers, end, entry: { process: child, command: { workloadId: "p1", executable: process.execPath, args, cwd: cwd ?? options.cwd }, replay } };
+}
+
+test("processes an Agent kept running are adopted when they match the plan exactly, with their output and exit", { timeout: 60_000 }, async (t) => {
+  const { options, ports } = await setup(t, { "db-password": "s3cret-value" });
+  const plan = { processes: [
+    { name: "db", command: "node", args: ["db.js", { secret: "db-password" }], env: {}, dependsOn: [], readiness: { port: "db", timeoutMs: 1000 } },
+    { name: "app", command: "node", args: ["app.js"], env: {}, dependsOn: ["db"], readiness: { port: "app", timeoutMs: 1000 } },
+  ] };
+  const db = survivor(options, { args: ["db.js", "s3cret-value"], replay: [{ stream: "stdout", line: "database ready" }] });
+  const app = survivor(options, { args: ["app.js"] });
+  const lines = [];
+  const adopted = await Effect.runPromise(adoptProcessPlan(plan, [app.entry, db.entry], { ...options, onOutput: (name, output) => lines.push([name, output.line]) }));
+  assert.equal(adopted.running(), true);
+  assert.deepEqual(lines, [["db", "database ready"]], "output the Agent buffered is replayed");
+  db.handlers[0]({ stream: "stderr", line: "later line" });
+  assert.deepEqual(adopted.logs().map((entry) => [entry.process, entry.line]), [["db", "database ready"], ["db", "later line"]]);
+  await Effect.runPromise(adopted.stop);
+  assert.equal(db.child.running, false);
+  assert.equal(app.child.running, false);
+  void ports;
+
+  const lone = survivor(options, { args: ["app.js"] });
+  const partial = await Effect.runPromise(adoptProcessPlan(plan, [lone.entry], options));
+  assert.equal(partial.running(), false, "one process of two is not a running plan, so the driver restarts it whole");
+  await Effect.runPromise(partial.stop);
+  assert.equal(lone.child.running, false, "and what survived is stopped");
+});
+
+test("a process that does not belong to the plan is refused, not adopted", { timeout: 60_000 }, async (t) => {
+  const { options } = await setup(t);
+  const plan = { processes: [{ name: "app", command: "node", args: ["app.js"], env: {}, dependsOn: [], readiness: { port: "app", timeoutMs: 1000 } }] };
+  for (const odd of [
+    survivor(options, { args: ["other.js"] }),
+    survivor(options, { args: ["app.js"], cwd: "/somewhere/else" }),
+  ]) {
+    assert.match((await failureOf(adoptProcessPlan(plan, [odd.entry], options))).message, /does not belong to this Project's plan/);
+  }
+  const foreign = survivor(options, { args: ["app.js"] });
+  foreign.child.workloadId = "someone-else";
+  assert.match((await failureOf(adoptProcessPlan(plan, [foreign.entry], options))).message, /does not belong/);
+  const twin = [survivor(options, { args: ["app.js"] }), survivor(options, { args: ["app.js"] })];
+  assert.match((await failureOf(adoptProcessPlan(plan, twin.map((entry) => entry.entry), options))).message, /does not belong/, "a second claimant for one process is refused");
+});
+
+test("an adopted process that exits later is reported", { timeout: 60_000 }, async (t) => {
+  const { options, exited } = await setup(t);
+  const plan = { processes: [{ name: "app", command: "node", args: ["app.js"], env: {}, dependsOn: [], readiness: { port: "app", timeoutMs: 1000 } }] };
+  const app = survivor(options, { args: ["app.js"] });
+  await Effect.runPromise(adoptProcessPlan(plan, [app.entry], options));
+  app.end({ code: 9, signal: null, requested: false });
+  for (let attempt = 0; attempt < 50 && exited.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(exited, [["app", 9]]);
 });

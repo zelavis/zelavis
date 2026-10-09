@@ -251,6 +251,7 @@ import {
   ZelavisProjectRuntimeError,
   ZelavisProjectValidationError,
   type ZelavisProjectDispatcher,
+  type ZelavisProjectInstallHost,
   type ZelavisProjectRuntimeDriver,
   type ZelavisProjectManager,
   type ZelavisProjectRecord,
@@ -579,6 +580,8 @@ export interface ZelavisServerOptions {
   hostOperations?: ZelavisHostOperationBroker;
   /** Cloud capacity: the provider connection and machines requested through it. */
   cloudCapacity?: CloudCapacityController;
+  /** What this host can do for a recipe's install methods: its drivers, and the requirements it has or can install. */
+  projectInstallHost?: () => Promise<ZelavisProjectInstallHost>;
   /** Provider-neutral remote environment boundary for agent execution. */
   remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. Concrete proxy execution stays host-provided. */
@@ -760,6 +763,7 @@ export interface ZelavisPlatformResources {
   updates?: ZelavisUpdateControl;
   /** Cloud capacity: the provider connection and machines requested through it. */
   cloudCapacity?: CloudCapacityController;
+  projectInstallHost?: () => Promise<ZelavisProjectInstallHost>;
   /**
    * TLS certificate provider. Adapters that terminate TLS in-process
    * (Node/Bun self-host) wire a real provider here; adapters behind a reverse
@@ -6528,10 +6532,10 @@ export function zelavis(
                   // nothing.
                   placement: () => fabricCoreService?.context,
                   // Drivers this host runs: JavaScript recipes today. OCI is declared in the contract but has no driver yet.
-                  installHost: () => Promise.resolve({
+                  installHost: options.projectInstallHost ?? (() => Promise.resolve({
                     drivers: ["js" as const],
                     requirements: provisionableRequirements(options.hostOperations !== undefined),
-                  }),
+                  })),
                   ...(options.cloudCapacity
                     ? { capacityShortfall: (unplaced: number) => present(options.cloudCapacity!.observeShortfall(unplaced)) }
                     : {}),
@@ -7310,6 +7314,7 @@ function mergeZelavisServerOptions(
     agentOperations: override.agentOperations ?? base.agentOperations,
     hostOperations: override.hostOperations ?? base.hostOperations,
     cloudCapacity: override.cloudCapacity ?? base.cloudCapacity,
+    projectInstallHost: override.projectInstallHost ?? base.projectInstallHost,
     remoteEnvironment: override.remoteEnvironment ?? base.remoteEnvironment,
     edge: override.edge ?? base.edge,
     edgeRoutes: override.edgeRoutes ?? base.edgeRoutes,
@@ -7462,6 +7467,7 @@ function applyPlatformResourceDefaults(
     agentOperations: options.agentOperations ?? resources.agentOperations,
     hostOperations: options.hostOperations ?? resources.hostOperations,
     cloudCapacity: options.cloudCapacity ?? resources.cloudCapacity,
+    projectInstallHost: options.projectInstallHost ?? resources.projectInstallHost,
     remoteEnvironment: options.remoteEnvironment ?? resources.remoteEnvironment,
     edge: options.edge ?? resources.edge,
     edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,

@@ -920,14 +920,15 @@ provisioning endpoint ownership and installation wiring remain planned; the
 combined Project process Agent must not become the root package installer.
 The `zelavis/recipe` Effect authoring contract is available. Its manifest
 (`zelavis.project.install`) is validated at package load, and the method and software
-version are chosen once at creation and locked in the Project, but no recipe executes
-through it yet.
+version are chosen once at creation and locked in the Project, and `@zelavis/wordpress`
+runs through it (its recipe is `defineRecipe` phases over `createRecipeProjectRuntime`; the old
+hand-written runtime module is gone).
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
 and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process
 phase runner (`_recipe-phase.ts`, Node permission model, parent re-validates results) exist
-with a conformance suite, but no recipe uses them yet. RecipeHost confines the files and
+with a conformance suite, and WordPress uses them. RecipeHost confines the files and
 commands it mediates; it is not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 

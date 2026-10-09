@@ -44,7 +44,7 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const COMMAND_NAME = /^[a-z][a-z0-9-]{0,63}$/;
 /** The host's own tar, not a recipe's: unpacking is a service of the host, not a declared requirement. */
-const TAR_CANDIDATES = ["/usr/bin/tar", "/bin/tar"] as const;
+export const TAR_CANDIDATES = ["/usr/bin/tar", "/bin/tar"] as const;
 
 export interface RecipeHostOptions {
   /** The project directory every path is relative to. Must exist. */
@@ -134,6 +134,14 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
 
   const reveal = (operation: string, value: string | RecipeSecret) =>
     typeof value === "string" ? Effect.succeed(value) : secretValue(operation, value.secret);
+
+  /** Text and secret references joined into one string. */
+  const assemble = (operation: string, content: string | RecipeSecret | readonly (string | RecipeSecret)[]) =>
+    Array.isArray(content)
+      ? Effect.forEach(content as readonly (string | RecipeSecret)[], (part) => reveal(operation, part)).pipe(Effect.map((parts) => parts.join("")))
+      : reveal(operation, content as string | RecipeSecret);
+  const carriesSecret = (content: string | RecipeSecret | readonly (string | RecipeSecret)[]) =>
+    typeof content === "string" ? false : Array.isArray(content) ? (content as readonly (string | RecipeSecret)[]).some((part) => typeof part !== "string") : true;
 
   const scrub = (text: string) => {
     let clean = text;
@@ -240,10 +248,10 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
       }),
       write: (path, content) => Effect.gen(function* () {
         const file = yield* locate("files.write", path);
-        const text = yield* reveal("files.write", content);
+        const text = yield* assemble("files.write", content);
         if (Buffer.byteLength(text) > MAX_WRITE_BYTES) return yield* refuse("files.write", "The content is larger than a recipe may write.");
         // A file carrying a secret is private; anything else keeps ordinary permissions.
-        const mode = typeof content === "string" ? 0o644 : 0o600;
+        const mode = carriesSecret(content) ? 0o600 : 0o644;
         const failed = "The file could not be written.";
         yield* attempt("files.write", failed, () => mkdir(dirname(file), { recursive: true }));
         const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
@@ -255,6 +263,10 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
         );
         yield* attempt("files.write", failed, () => chmod(temporary, mode));
         yield* attempt("files.write", failed, () => rename(temporary, file));
+      }),
+      exists: (path) => Effect.gen(function* () {
+        const file = yield* locate("files.exists", path);
+        return (yield* lstatIfPresent("files.exists", file)) !== undefined;
       }),
       mkdir: (path) => Effect.gen(function* () {
         const directory = yield* locate("files.mkdir", path);
@@ -351,7 +363,9 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
         args.push(value);
       }
       // The host's variables never reach the command; it gets a fixed minimum and what the recipe names.
-      const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: root, LANG: "C.UTF-8", TMPDIR: join(root, ".tmp") };
+      // Tools find their siblings: the directories of the declared executables come first.
+      const toolPath = [...new Set([...Object.values(options.commands).map((path) => dirname(path)), ...(process.env.PATH ?? "/usr/bin:/bin").split(":")])].join(":");
+      const env: Record<string, string> = { PATH: toolPath, HOME: root, LANG: "C.UTF-8", TMPDIR: join(root, ".tmp") };
       for (const [name, value] of Object.entries(input.env ?? {})) {
         if (!ENV_NAME.test(name)) return yield* refuse("run", `"${name}" is not a valid variable name.`);
         const text = yield* reveal("run", value);

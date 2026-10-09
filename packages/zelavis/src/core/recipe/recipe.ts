@@ -15,10 +15,13 @@ export interface ProcessPlan {
     readonly args: readonly (string | RecipeSecret)[];
     readonly env: Readonly<Record<string, string | RecipeSecret>>;
     readonly dependsOn: readonly string[];
-    readonly readiness: {
-      readonly port: string;
-      readonly timeoutMs: number;
-    };
+    /**
+     * Ready when a declared port accepts connections, or when a file (a unix socket, a pid
+     * file) exists. A path must lie below the project or its socket directory.
+     */
+    readonly readiness:
+      | { readonly port: string; readonly timeoutMs: number }
+      | { readonly path: string; readonly timeoutMs: number };
   }[];
 }
 
@@ -32,10 +35,13 @@ const ProcessPlanWire = Schema.Struct({
     args: Schema.Array(PlanValue).check(Schema.isMaxLength(128)),
     env: Schema.Record(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)), PlanValue),
     dependsOn: Schema.Array(PlanName).check(Schema.isMaxLength(64)),
-    readiness: Schema.Struct({
-      port: PlanName,
-      timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
-    }),
+    readiness: Schema.Union([
+      Schema.Struct({ port: PlanName, timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })) }),
+      Schema.Struct({
+        path: Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/)),
+        timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
+      }),
+    ]),
   })).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
 });
 
@@ -43,6 +49,8 @@ const ProcessPlanWire = Schema.Struct({
 export function parseProcessPlan(input: unknown, allowed: {
   readonly commands: readonly string[];
   readonly ports: readonly string[];
+  /** Absolute directories a readiness path may lie below. */
+  readonly directories?: readonly string[];
 }): ProcessPlan {
   try {
     let plan: typeof ProcessPlanWire.Type;
@@ -55,7 +63,13 @@ export function parseProcessPlan(input: unknown, allowed: {
     if (processes.size !== plan.processes.length) throw new Error("Duplicate process names.");
     for (const process of plan.processes) {
       if (!allowed.commands.includes(process.command)) throw new Error(`Undeclared executable "${process.command}".`);
-      if (!allowed.ports.includes(process.readiness.port)) throw new Error(`Undeclared port "${process.readiness.port}".`);
+      if ("port" in process.readiness) {
+        if (!allowed.ports.includes(process.readiness.port)) throw new Error(`Undeclared port "${process.readiness.port}".`);
+      } else {
+        const path = process.readiness.path;
+        const inside = (allowed.directories ?? []).some((directory) => path.startsWith(`${directory.replace(/\/+$/, "")}/`));
+        if (!inside || path.split("/").includes("..")) throw new Error("A readiness path must lie below the project or its socket directory.");
+      }
       if (Object.keys(process.env).length > 128) throw new Error("Too many environment entries.");
       if (new Set(process.dependsOn).size !== process.dependsOn.length) throw new Error("Duplicate process dependencies.");
     }
@@ -78,7 +92,7 @@ export function parseProcessPlan(input: unknown, allowed: {
       env: Object.freeze(Object.fromEntries(Object.entries(process.env).map(([key, value]) =>
         [key, typeof value === "string" ? value : Object.freeze({ ...value })]))),
       dependsOn: Object.freeze([...process.dependsOn]),
-      readiness: Object.freeze({ ...process.readiness }),
+      readiness: Object.freeze({ ...process.readiness }) as typeof process.readiness,
     }))) });
   } catch (cause) {
     if (cause instanceof RecipeError) throw cause;
@@ -93,6 +107,20 @@ export interface RecipeContext {
   readonly method: RecipeMethod;
   readonly config: Readonly<Record<string, string | number | boolean | RecipeSecret>>;
   readonly ports: Readonly<Record<string, number>>;
+  /** Absolute locations a phase needs to write into configuration files. */
+  readonly directories: {
+    /** Everything the recipe's files API reaches. Phases and processes work here. */
+    readonly root: string;
+    /** Where unix sockets live: short, and visible to every process of the Project. */
+    readonly sockets: string;
+  };
+  /** The OS account the Project's processes run as. */
+  readonly account: {
+    readonly user: string;
+    readonly group: string;
+    /** True when the Platform is root and daemons must drop to this account themselves. */
+    readonly switchUser: boolean;
+  };
 }
 
 /**
@@ -103,7 +131,9 @@ export interface RecipeContext {
 export interface RecipeHostApi {
   readonly files: {
     readonly read: (path: string) => Effect.Effect<string, RecipeError>;
-    readonly write: (path: string, content: string | RecipeSecret) => Effect.Effect<void, RecipeError>;
+    /** Content may be assembled from text and secret references; a file with a secret is private. */
+    readonly write: (path: string, content: string | RecipeSecret | readonly (string | RecipeSecret)[]) => Effect.Effect<void, RecipeError>;
+    readonly exists: (path: string) => Effect.Effect<boolean, RecipeError>;
     readonly mkdir: (path: string) => Effect.Effect<void, RecipeError>;
     readonly remove: (path: string) => Effect.Effect<void, RecipeError>;
   };

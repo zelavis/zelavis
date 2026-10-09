@@ -25,6 +25,7 @@ export type {
   ZelavisAgentProcessRunner,
 } from "../core/agent/process-command.js";
 export { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+export { createRecipeProjectRuntime, type RecipeProjectRuntimeOptions } from "./_recipe-project-runtime.js";
 
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import type { ZelavisProjectRuntimeDriver } from "../project.js";
@@ -33,6 +34,8 @@ import type { ZelavisProjectRuntimeDriver } from "../project.js";
 export interface ZelavisRecipeRuntimeContext {
   /** The directory holding every Project's directory. */
   readonly directory: string;
+  /** The recipe's own package folder: the digest-verified frozen copy this runtime was loaded from. */
+  readonly packageDirectory: string;
   /** The Agent that executes this host's Project processes. */
   readonly agent: ZelavisAgentProcessRunner;
   /** Options the operator set for this recipe's runtime. */

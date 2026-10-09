@@ -117,8 +117,9 @@ No Project runtime gains host package authority through Effect.
 
 The public `zelavis/recipe` subpath provides an initial runtime-neutral contract
 for recipes written with Effect v4. It is available for authoring and validation;
-Project execution still uses the runtime-module model above: no recipe runs through
-the Node host layer yet. A package declares this contract's manifest as
+A recipe either brings a whole runtime module (the model above) or, as `@zelavis/wordpress`
+does, brings only phases and lets the Platform's `createRecipeProjectRuntime` run them. A
+package declares this contract's manifest as
 `zelavis.project.install` in its `package.json`, validated when the package is loaded
 (an invalid one fails the load, naming the package). OCI execution remains planned.
 
@@ -199,8 +200,14 @@ own names, because the recipe shares that descriptor. This confines files Node i
 touches. Commands a recipe declared start from inside the phase and can do what the OS user
 can do; the boundaries that remain are the allow-list of official recipes, the OS user, and
 the host-operation broker. Network access, CPU and memory are limited only by the deadline and
-output caps. Neither is connected to Project creation yet: the WordPress recipe still uses its
-own runtime module, and method and software selection are not yet stored in Project locks.
+output caps. They are connected to Project creation: the recipe runtime (`createRecipeProjectRuntime`)
+resolves the executables for the locked method's requirements, allocates and keeps the ports,
+runs `install` once per Project and `start` each time in a phase process (as the Project's OS
+user), supervises the returned plan, and after a Platform restart asks the recipe for its plan
+again and adopts the processes the Agent kept running. Executables are found by the host from a
+requirement catalogue (`nginx`, `php-fpm`, `mariadb`, `node`): on PATH or the usual sbin
+directories, or Homebrew's prefix; a missing one is installed through Homebrew on macOS and
+reported with how to approve the package set on Linux.
 
 System installations and updates configure `zelavis-host-agent.service`, a separate
 root Agent accepting only operation catalog/submit/get. Its endpoint and token are

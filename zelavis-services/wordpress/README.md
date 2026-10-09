@@ -17,11 +17,29 @@ Linux sockets live in shared installation data so separately supervised systemd
 units can reach them. Frozen older recipes require an explicit recipe upgrade;
 updating the Platform never rewrites their code.
 
+## What is in the package
+
+The recipe is `src/recipe.ts`: `defineRecipe({ install, start })`, written with Effect against
+the `zelavis/recipe` contract. `install` downloads the pinned release (digest-checked),
+writes the site's configuration with the credentials as secret references, validates the
+Nginx and PHP-FPM configuration, and initializes a dedicated MariaDB data directory.
+`start` returns the three processes (database, PHP-FPM, Nginx) as a plan. It knows nothing
+about the machine: the Platform's recipe runtime finds the executables (Debian paths,
+Homebrew), allocates the ports, picks the OS account, runs each phase in a process of its own
+under Node's permission model, supervises and adopts the processes, and cleans up.
+The WordPress releases on offer, with their archive addresses and SHA-256 digests, are the
+`zelavis.project.install` manifest in `package.json` (`pnpm update:wordpress` adds the
+newest); a Project chooses one when it is created and keeps it.
+
+Files live below the Project's `app/` directory (`site/`, `db/`, `run/` and the generated
+configuration); generated credentials live in `.zelavis/secrets/`, outside it.
+
 ## How it plugs in
 
 The Platform hard-codes nothing about WordPress. This package's `package.json`
 declares `zelavis.project.runtime: "./dist/runtime.js"`, and that module exports
-`createProjectRuntime(context)`. When a Project is prepared the Platform freezes
+`createProjectRuntime(context)`, which is three lines over the Platform's
+`createRecipeProjectRuntime`. When a Project is prepared the Platform freezes
 this package into the Project (content digest recorded in its lock), verifies the
 digest on every load, and runs the runtime from the frozen copy, so updating the
 package never changes an existing Project.

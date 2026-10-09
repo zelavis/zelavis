@@ -26,7 +26,40 @@
       },
       "hostPackages": [
         "wordpress-stack"
-      ]
+      ],
+      "install": {
+        "contract": 1,
+        "methods": [
+          {
+            "id": "native",
+            "driver": "js",
+            "entry": "./dist/recipe.js",
+            "requires": [
+              "nginx",
+              "php-fpm",
+              "mariadb"
+            ]
+          }
+        ],
+        "software": [
+          {
+            "version": "7.1.2",
+            "archive": "https://wordpress.org/wordpress-7.1.2.tar.gz",
+            "sha256": "c0c666689d66b870d8825500bb8e402ed04de52602c61a6f516c6236b8c9ac67",
+            "maxBytes": 67108864
+          }
+        ],
+        "ports": [
+          {
+            "name": "web",
+            "protocol": "http"
+          },
+          {
+            "name": "db",
+            "protocol": "tcp"
+          }
+        ]
+      }
     },
     "marketplace": {
       "title": "WordPress",
