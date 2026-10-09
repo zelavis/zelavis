@@ -193,6 +193,16 @@ create, and generated leftovers to discard. Upgrading a stopped Project to such 
    or the upgrade cannot be recorded, every folder is moved back and what was created is
    removed, so the earlier recipe finds its Project as it left it; the interrupted case resumes.
 
+Today this upgrade needs the Project stopped, because a database directory cannot be renamed
+under a running server. The dashboard's **Upgrade** action, `projects upgrade <id> --restart`,
+`client.projects.upgrade(id, { restart: true })` and `{"restart": true}` over HTTP therefore stop
+a running Project, upgrade it and start it again (it is started again as the recipe it had if the
+upgrade fails). That is a limit of the current mechanism, not a rule: the goal is upgrades with no
+downtime whatever the recipe change. Managed apps' integration updates and Zelavis App engine
+updates already run live; for runtime recipes the plan is to compare the new recipe's process plan
+with what is running so unchanged processes keep serving and only changed ones restart, in
+dependency order.
+
 WordPress uses this: an existing WordPress Project (its site, uploads and database) upgrades to
 the current recipe with its address, content and admin login unchanged. The application's own
 software is not updated; WordPress updates itself from wp-admin.

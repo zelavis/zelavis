@@ -4,7 +4,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -24,6 +24,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let softwareVersion: string | undefined;
   let start = true;
   let installHostPackages = false;
+  let restart = false;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -31,6 +32,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (arg === "--json") { json = true; continue; }
     if (arg === "--install-host-packages") { installHostPackages = true; continue; }
     if (arg === "--no-start") { start = false; continue; }
+    if (arg === "--restart") { restart = true; continue; }
     if (arg === "--help" || arg === "-h") {
       console.log(usage);
       return;
@@ -58,6 +60,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     return;
   }
   if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
+  if (restart && action !== "upgrade") throw new Error("--restart is only supported by projects upgrade.");
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
@@ -133,6 +136,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     }
     case "upgrade": {
       const project = yield* integration(() => client.projects.upgrade(requireTarget("id"), {
+        ...(restart ? { restart: true } : {}),
         ...(recipe ? { recipeName: recipe } : {}),
         ...(engineVersion ? { engineVersion } : {}),
       }));

@@ -767,7 +767,12 @@ export interface ZelavisProjectsClient {
   stop(projectId: string): Promise<ZelavisProjectRecord>;
   restart(projectId: string): Promise<ZelavisProjectRecord>;
   /** Updates managed SDK integrations without restarting the app, or hands a supported native App to its selected engine; data is kept. */
-  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string }): Promise<ZelavisProjectRecord>;
+  /**
+   * `restart: true` takes a running Project down for an upgrade that cannot be done live, and starts
+   * it again afterwards (also when the upgrade fails). Without it that upgrade is refused (409)
+   * until the Project is stopped.
+   */
+  upgrade(projectId: string, input?: { readonly recipeName?: string; readonly engineVersion?: string; readonly restart?: boolean }): Promise<ZelavisProjectRecord>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;

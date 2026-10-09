@@ -25,14 +25,15 @@ function recipe(name, version) {
 function projectRuntime() {
   const running = new Set();
   const prepared = [];
+  const events = [];
   return {
-    prepared,
+    prepared, events,
     name: "test-runtime",
     runtimeKinds: ["native"],
     capabilities: () => ({ statelessRuntimeReplicas: false }),
-    async prepare(project, lock) { prepared.push(`${project.id}:${lock.name}@${lock.version}`); },
-    async start(project) { running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
-    async stop(id) { running.delete(id); return { status: "stopped" }; },
+    async prepare(project, lock) { prepared.push(`${project.id}:${lock.name}@${lock.version}`); events.push(`prepare ${project.id} ${lock.version}`); },
+    async start(project) { running.add(project.id); events.push(`start ${project.id} ${project.recipe.version}`); return { status: "running", url: "http://127.0.0.1:1" }; },
+    async stop(id) { running.delete(id); events.push(`stop ${id}`); return { status: "stopped" }; },
     async status(id) { return running.has(id) ? { status: "running", url: "http://127.0.0.1:1" } : { status: "stopped" }; },
     async logs() { return []; },
     async destroy(id) { running.delete(id); },
@@ -252,4 +253,49 @@ test("a real Project created before recipes were frozen is upgraded, keeps its d
 
   const started = await call("/legacy/start", { method: "POST", headers: json, body: "{}" });
   assert.equal(started.status, 200, await started.clone().text());
+});
+
+test("a running Project is stopped, upgraded and started again on request, identically over HTTP, SDK and CLI", async (t) => {
+  const store = createMemorySystemStore();
+  const before = await platform(t, store, "1.0.0");
+  for (const id of ["http-site", "sdk-site", "cli-site", "plain-site"]) await before.client.projects.create({ name: id, id, recipeName: "acme/site" });
+  await before.zv.close();
+
+  const after = await platform(t, store, "2.0.0");
+  // Without the request, the refusal stays.
+  assert.equal((await http(after.fetcher, "POST", "/projects/plain-site/upgrade")).status, 409);
+  after.runtime.events.length = 0;
+
+  const h = await http(after.fetcher, "POST", "/projects/http-site/upgrade", { restart: true });
+  assert.equal(h.status, 200);
+  const sdk = await after.client.projects.upgrade("sdk-site", { restart: true });
+  const c = await cli(after.fetcher, ["upgrade", "cli-site", "--restart"]);
+  assert.equal(c.exitCode, 0);
+  for (const project of [h.body.project, sdk, c.stdout.project]) {
+    assert.deepEqual([project.recipe.version, project.runtime.status, project.desiredState], ["2.0.0", "running", "running"]);
+  }
+  assert.deepEqual(after.runtime.events.filter((event) => event.includes("http-site")), ["stop http-site", "prepare http-site 2.0.0", "prepare http-site 2.0.0", "start http-site 2.0.0"], "down, upgraded (and prepared again by the start), up");
+
+  // A Project that is already stopped is upgraded and stays stopped; a restart flag only matters to a running one.
+  await after.client.projects.stop("plain-site");
+  const idle = await after.client.projects.upgrade("plain-site", { restart: true });
+  assert.deepEqual([idle.recipe.version, idle.runtime.status], ["2.0.0", "stopped"]);
+
+  const invalid = await http(after.fetcher, "POST", "/projects/http-site/upgrade", { restart: "yes" });
+  assert.equal(invalid.status, 400);
+  const misplaced = await cli(after.fetcher, ["list", "--restart"]);
+  assert.notEqual(misplaced.exitCode, 0);
+});
+
+test("an upgrade that fails leaves the Project running as it was", async (t) => {
+  const store = createMemorySystemStore();
+  const { client, fetcher, runtime } = await platform(t, store, "1.0.0");
+  await client.projects.create({ name: "live", id: "live", recipeName: "acme/site" });
+  runtime.events.length = 0;
+  const refused = await http(fetcher, "POST", "/projects/live/upgrade", { recipeName: "acme/nonexistent", restart: true });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /not shipped with this Platform/);
+  assert.equal((await client.projects.get("live")).runtime.status, "running");
+  assert.deepEqual(runtime.events.filter((event) => !event.startsWith("prepare")).map((event) => event.split(" ")[0]), ["stop", "start"], "taken down for the attempt and brought straight back");
+  assert.equal((await client.projects.get("live")).recipe.version, "1.0.0");
 });

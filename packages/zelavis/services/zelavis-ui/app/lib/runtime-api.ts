@@ -1763,7 +1763,8 @@ export async function upgradeProject(
 ): Promise<RuntimeProject> {
   const result = await readJson<{ project: RuntimeProject }>(
     `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/upgrade`,
-    { method: "POST", body: JSON.stringify(recipeName ? { recipeName } : {}) },
+    // A running Project that cannot be upgraded where it stands is stopped and started again by the Platform.
+    { method: "POST", body: JSON.stringify({ restart: true, ...(recipeName ? { recipeName } : {}) }) },
   );
   return normalizeRuntimeProject(result.project);
 }

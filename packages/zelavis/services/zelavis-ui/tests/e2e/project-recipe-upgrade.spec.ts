@@ -48,21 +48,31 @@ test("@smoke a stopped Project on an older recipe can be upgraded from its card"
   await expect(notice).toContainText("keeps this Project's data")
   await notice.getByRole("button", { name: "Upgrade recipe" }).click()
   await expect(page.getByText(/now uses @zelavis\/app 9\.9\.9\. Its data is unchanged/)).toBeVisible()
-  expect(posted).toEqual({})
+  expect(posted).toEqual({ restart: true })
 })
 
-test("@smoke a Project on a retired recipe must be pointed at one, and a running one must be stopped first", async ({ page }) => {
+test("@smoke a Project on a retired recipe must be pointed at one, and a running one is restarted for the move", async ({ page }) => {
   test.skip(!projectId, "needs the e2e Project")
   await pretendStale(page, {
     recipeStatus: { state: "unavailable", reason: 'This Platform ships no recipe named "zelavis/app".' },
     runtime: { driver: "node-process", status: "running", url: "http://127.0.0.1:1" },
     capabilities: { zeroDowntimeUpdates: false },
   })
+  let posted: unknown
+  await page.route(new RegExp(`/runtime/projects/${projectId}/upgrade$`), async route => {
+    posted = route.request().postDataJSON()
+    await route.fulfill({ json: { project: { id: projectId, name: "Zelavis Runtime", recipe: { name: "@zelavis/app", version: "9.9.9" },
+      runtime: { status: "running", url: "http://127.0.0.1:1" } } } })
+  })
   await page.goto(`${basePath}/projects`)
   const notice = page.getByLabel("Recipe upgrade")
   await expect(notice).toContainText('ships no recipe named "zelavis/app"')
-  await expect(notice.getByRole("button", { name: "Upgrade recipe" })).toBeDisabled()
-  await expect(notice).toContainText("Stop the Project first.")
+  await expect(notice).toContainText("it is restarted for the move")
+  await expect(notice).not.toContainText("Stop the Project first.")
+  await expect(notice.getByRole("button", { name: "Upgrade recipe" })).toBeEnabled()
+  await notice.getByRole("button", { name: "Upgrade recipe" }).click()
+  await expect(page.getByText(/It is running at the same address/)).toBeVisible()
+  expect(posted).toMatchObject({ restart: true })
 })
 
 test("@smoke a qualified running App can upgrade at the same address", async ({ page }) => {

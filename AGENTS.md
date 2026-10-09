@@ -925,6 +925,9 @@ runs through it (its recipe is `defineRecipe` phases over `createRecipeProjectRu
 hand-written runtime module is gone).
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
+Recipe upgrades have a zero-downtime goal whatever the recipe change; requiring a stop
+(or the `restart` option that stops, upgrades and starts again) is a limit of the current
+layout-adoption mechanism, never precedent for a new recipe feature.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
 and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process
 phase runner (`_recipe-phase.ts`, Node permission model, parent re-validates results) exist

@@ -98,7 +98,9 @@ function RecipeUpgradeNotice({
   const idle = project.runtime.status === "stopped" || project.runtime.status === "failed";
   const live = project.runtime.status === "running" && project.capabilities.zeroDowntimeUpdates === true;
   const integrationUpdate = project.capabilities.recipeUpdateMode === "integration";
-  const canUpgrade = idle || live;
+  // A running Project that cannot be upgraded where it stands is restarted by the Platform for the upgrade.
+  const restarts = project.runtime.status === "running" && !live && !integrationUpdate;
+  const canUpgrade = idle || live || restarts;
   if (project.deletion) return null;
   if (project.runtimeUpdate) return (
     <div className="grid gap-2 rounded-md border p-3 text-sm" aria-label="Project update">
@@ -114,8 +116,8 @@ function RecipeUpgradeNotice({
         {status.state === "upgradeAvailable"
           ? integrationUpdate
             ? `A newer recipe is available: ${status.version}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
-            : `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data.`
-          : `${status.reason} Choose a recipe to move this Project to; its data is kept.`}
+            : `A newer recipe is available: ${status.version}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`
+          : `${status.reason} Choose a recipe to move this Project to; its data is kept${restarts ? ", and it is restarted for the move" : ""}.`}
       </p>
       {status.state === "unavailable" ? (
         <select
@@ -141,7 +143,7 @@ function RecipeUpgradeNotice({
         >
           {integrationUpdate ? "Update recipe" : "Upgrade recipe"}
         </Button>
-        {!canUpgrade ? <span className="text-xs text-muted-foreground">Stop the Project first.</span> : null}
+        {!canUpgrade ? <span className="text-xs text-muted-foreground">Wait for the Project to finish starting or stopping.</span> : null}
       </div>
     </div>
   );

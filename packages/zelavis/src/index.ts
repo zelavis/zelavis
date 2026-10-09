@@ -5779,6 +5779,7 @@ function resolvePlatformEndpointGroup(
                     description: "The recipe to move to. Defaults to the Project's own recipe.",
                   },
                   engineVersion: { type: "string", description: "Exact installed native App engine; defaults to the latest qualified engine." },
+                  restart: { type: "boolean", description: "Stop a running Project that cannot be upgraded live, and start it again afterwards." },
                 },
               },
             },
@@ -5807,11 +5808,15 @@ function resolvePlatformEndpointGroup(
             }
               const input = yield* evaluate(() => body === undefined || body === null || body === "" ? {} : readBodyObject(body));
               const recipeName = typeof input.recipeName === "string" ? input.recipeName : undefined;
+              if (input.restart !== undefined && typeof input.restart !== "boolean") {
+                return yield* Effect.fail(new ZelavisProjectValidationError("restart must be true or false."));
+              }
               return {
                 status: 200,
                 body: {
                   project: yield* integration(() => projects!.upgrade(params.projectId ?? "", {
                     ...(recipeName ? { recipeName } : {}),
+                    ...(input.restart === true ? { restart: true } : {}),
                     ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
                   })),
                 },

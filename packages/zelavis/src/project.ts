@@ -385,7 +385,12 @@ export interface ZelavisProjectManager {
    * Project recipe. Qualified running Apps hand over without changing their
    * ingress address; other Projects must be stopped or failed. Data stays in place.
    */
-  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string }): Promise<ZelavisProjectRecord>;
+  /**
+   * `restart`: a running Project whose upgrade cannot be done live is stopped first and started
+   * again afterwards (it is started again even when the upgrade fails, as the recipe it had).
+   * Without it, such an upgrade is refused until the Project is stopped.
+   */
+  upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean }): Promise<ZelavisProjectRecord>;
   switchVersion(id: string, version: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
@@ -2023,6 +2028,22 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
+            if (input?.restart === true) {
+                const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
+                const liveCapable = runtime.supportsLiveUpdate?.(current) === true &&
+                    runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
+                const managedIntegration = runtime.capabilities(current).recipeUpdateMode === "integration";
+                // Only a running Project that cannot be upgraded where it stands is taken down for it.
+                if (current.runtime.status === "running" && !liveCapable && !managedIntegration) {
+                    yield* manager.stop(current.id);
+                    const upgrade = yield* Effect.exit(manager.upgrade(current.id, { ...input, restart: false }));
+                    // It was running, so it runs again: the upgraded Project, or the one it was if the upgrade failed.
+                    const started = yield* Effect.exit(manager.start(current.id));
+                    if (Exit.isFailure(upgrade)) return yield* Effect.failCause(upgrade.cause);
+                    if (Exit.isFailure(started)) return yield* Effect.failCause(started.cause);
+                    return started.value;
+                }
+            }
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
                 let project = yield* requireProject(id);
                 // A deletion tombstone always wins over recovery of an update.
