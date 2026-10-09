@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
+import { Agent, get as httpGet } from "node:http";
 import { pathToFileURL } from "node:url";
 if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== "1") throw new Error("Run through wordpress-provisioning-container.sh on a disposable container.");
 await access("/.dockerenv");
@@ -27,7 +28,7 @@ if (phase === "claim") {
   assert.equal(execFileSync("systemctl", ["show", "zelavis.service", "-p", "User", "--value"], { encoding: "utf8" }).trim(), "zelavis");
   const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
   const client = createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl } });
-  if (phase === "seed-upgrade") {
+  if (phase === "seed-upgrade" || phase === "seed-live") {
     // Controlled historical-lock fixture on a stopped disposable installation.
     // No live System Store is edited, and this is not a released recipe version.
     assert.notEqual(execFileSync("sh", ["-c", "systemctl is-active zelavis.service 2>/dev/null || true"], { encoding: "utf8" }).trim(), "active");
@@ -41,6 +42,17 @@ if (phase === "claim") {
     manifest.version = "0.0.0-qualification";
     manifest.zelavis.project.managed.adminTitle = "Historical integration admin";
     await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
+    if (phase === "seed-live") {
+      // The historical recipe differs from the current one in its web configuration only, so upgrading it
+      // while it runs must reload Nginx in place (a header disappears) and replace no process.
+      const header = (text) => {
+        assert.ok(text.includes("client_max_body_size 64m;"), "the fixture's anchor line is still in the recipe");
+        return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "historical" always;');
+      };
+      await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
+      // The install phase already rendered the Project's configuration; the historical recipe would have rendered this.
+      await writeFile(`${directory}/app/nginx.conf`, header(await readFile(`${directory}/app/nginx.conf`, "utf8")));
+    }
     await writeFile(`${frozen}/dist/index.js`, `import { zelavis } from "zelavis/sdk";
 export { WORDPRESS_APP_NAME } from "./runtime.js";
 export function register() {
@@ -81,12 +93,53 @@ export function register() {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
-    let project = ["verify-preview", "upgrade", "start-historical"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
       project = await client.projects.start(project.id);
       assert.equal(project.recipe.version, "0.0.0-qualification");
       console.log("PASS: historical integration fixture is running before the Platform update.");
+    }
+    if (phase === "stop") {
+      project = await client.projects.stop(project.id);
+      assert.equal(project.runtime.status, "stopped");
+      console.log("PASS: WordPress stopped for the live-upgrade fixture.");
+      process.exit(0);
+    }
+    if (phase === "live-upgrade") {
+      assert.equal(project.recipe.version, "0.0.0-qualification");
+      assert.equal(project.runtime.status, "running", JSON.stringify(project));
+      const run = "/var/lib/zelavis/projects/qualification-wordpress/app/run";
+      const pids = async () => Object.fromEntries(await Promise.all(["nginx", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
+      const oneConnection = new Agent({ keepAlive: false });
+      const ask = (url) => new Promise((resolve, reject) => {
+        httpGet(url, { agent: oneConnection }, (reply) => { reply.resume(); reply.on("end", () => resolve({ status: reply.statusCode, header: reply.headers["x-recipe"] ?? null })); reply.on("error", reject); }).on("error", reject);
+      });
+      const before = await pids();
+      assert.equal((await ask(project.runtime.url)).header, "historical");
+      let stop = false, failures = 0, served = 0; const headers = new Set();
+      const traffic = (async () => {
+        while (!stop) {
+          try {
+            const reply = await ask(project.runtime.url);
+            if (reply.status >= 500) failures += 1; else served += 1;
+            headers.add(reply.header);
+          } catch { failures += 1; }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      project = await client.projects.upgrade(project.id, {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      stop = true; await traffic;
+      assert.equal(project.runtime.status, "running", JSON.stringify(project));
+      assert.equal(project.recipe.version, recipes.find((recipe) => recipe.name === "@zelavis/wordpress").version);
+      assert.equal(failures, 0, "no request failed during the live recipe upgrade");
+      assert.ok(served > 20, `served ${served}`);
+      assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
+      assert.deepEqual(await pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
+      assert.equal((await ask(project.runtime.url)).header, null);
+      console.log(`PASS: running WordPress upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM/MariaDB processes.`);
     }
     if (phase === "upgrade") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");

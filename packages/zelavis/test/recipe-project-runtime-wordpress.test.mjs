@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { Agent, get as httpGet } from "node:http";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,19 @@ const lock = (software) => ({
   install: { method: "native", driver: "js", requires: ["nginx", "php-fpm", "mariadb"], software },
 });
 const record = (id, software) => ({ id, name: id, kind: "wordpress", recipe: lock(software), runtimeKind: "native", desiredState: "running", capabilities: {}, runtime: { driver: "x", status: "provisioning" }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+
+// A request on its own connection: a reused keep-alive socket that the server closes while a request is
+// in flight is a client-side race on any reload, not an outage, and would make this proof flaky.
+const oneConnection = new Agent({ keepAlive: false });
+const oneShot = (url) => new Promise((resolve, reject) => {
+  httpGet(url, { agent: oneConnection }, (response) => {
+    let body = "";
+    response.setEncoding("utf8");
+    response.on("data", (chunk) => { body += chunk; });
+    response.on("end", () => resolve({ status: response.statusCode, body, header: response.headers["x-recipe"] }));
+    response.on("error", reject);
+  }).on("error", reject);
+});
 
 const STAND_IN_INDEX = `<?php
 $config = file_get_contents(__DIR__ . '/wp-config.php');
@@ -234,10 +248,9 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
   const traffic = (async () => {
     while (!stop) {
       try {
-        const response = await fetch(`${started.url}/index.php`);
-        const body = await response.text();
-        if (response.status !== 200 || !/database:1/.test(body)) failures += 1; else served += 1;
-        headers.add(response.headers.get("x-recipe"));
+        const response = await oneShot(`${started.url}/index.php`);
+        if (response.status !== 200 || !/database:1/.test(response.body)) failures += 1; else served += 1;
+        headers.add(response.header ?? null);
       } catch { failures += 1; }
       await new Promise((resolve) => setTimeout(resolve, 5));
     }

@@ -513,7 +513,14 @@ Agent; malformed descriptors and genuine cleanup failures must remain visible.
 
 
 Managed third-party app recipe updates refresh Zelavis integration, not the app's
-software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
+software. When the recipe also supervises the app's processes (a recipe runtime such as
+WordPress, and any future Joomla, phpBB, PrestaShop or TYPO3 recipe), the running update is one
+transaction: the recipe's plan is reconciled first (kept, reloaded or replaced processes, and
+configuration rewritten by its install phase) and can be undone; the integration host's
+handover is the single commit point, and a crash is settled from the host's proven selection
+(`settleUpdate`). A recipe upgraded while the Project is stopped prepares the app (install
+phase, recorded as `installedFor` in the recipe state) the next time it starts. This is generic:
+nothing in it knows WordPress. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
 their software updates. The native managed-runtime path must keep the service
 running, stage a verified integration recipe, persist its update intent, and
 commit metadata/artifact without provisioning, rewriting runtime configuration,
@@ -931,7 +938,7 @@ running processes by fingerprint (`core/recipe/plan-diff.ts`, `plan-controller.t
 unchanged processes keep serving, a configuration-only change reloads in place (`config` +
 `update` in the plan), and only a process whose launch changed is replaced, in dependency
 order; a durable journal (`adapters/_recipe-upgrade.ts`) decides previous/target after a
-crash, and any failure rolls back to the previous plan. Not live yet: managed recipes such as WordPress (a running managed Project is routed to the integration update path, which never reconciles the recipe's process plan; wire both together), a layout move
+crash, and any failure rolls back to the previous plan. Not live yet: a layout move
 (adoption) needs the `restart` option (stop, upgrade, start again), a replaced process (e.g.
 the database) has a brief gap, and new requirements or commands refuse the live path and roll
 back. Those are limits, never precedent for a new recipe feature.

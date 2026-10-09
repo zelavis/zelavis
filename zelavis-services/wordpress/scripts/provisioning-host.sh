@@ -72,6 +72,19 @@ done
 phase=upgrade
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then phase=start-historical; fi
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" "$phase"
+if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
+  # A running WordPress Project upgrades its recipe without stopping: only Nginx's configuration differs.
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" stop
+  systemctl stop zelavis.service zelavis.socket
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" seed-live
+  systemctl start zelavis.socket zelavis.service
+  for attempt in $(seq 1 60); do
+    if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+    sleep 1
+  done
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" start-historical
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" live-upgrade
+fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   "$NODE" /workspace/distribution/scripts/qualify-installed-update.mjs
 elif [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then

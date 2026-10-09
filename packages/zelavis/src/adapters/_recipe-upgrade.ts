@@ -70,6 +70,8 @@ export interface UpgradeKitApi {
   /** The Project's descriptor with this recipe lock in it, as `prepare` would write it. */
   readonly writeDescriptor: (id: string, recipe: ZelavisProjectRecipeLock) => Effect.Effect<void, RecipeError>;
   readonly snapshot: (id: string) => Effect.Effect<ZelavisProjectRuntimeSnapshot>;
+  /** Records that the app was prepared by the recipe with this digest. */
+  readonly markInstalled: (id: string, digest: string) => Effect.Effect<void, RecipeError>;
   readonly log: (id: string, message: string) => Effect.Effect<void>;
 }
 
@@ -208,6 +210,7 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
   const before = yield* kit.storedPlan(id);
   if (!controller || !before) return yield* Effect.fail(fail("The Project is not running from a saved plan, so it cannot be upgraded in place."));
   const candidate = join(upgradeDirectory(layout), "stage", "recipe", "package");
+  const external = update.host === true;
 
   return yield* Effect.scoped(Effect.gen(function* () {
     yield* kit.log(id, `Upgrading to ${update.target.version} without stopping.`);
@@ -240,10 +243,14 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
     // From here the new recipe becomes the Project's. It is undone if the Platform cannot record it.
     const committed = Effect.gen(function* () {
       yield* writeJournal(layout, { ...applying, state: "switching" });
-      yield* io("The previous descriptor could not be kept.", () => copyFile(layout.descriptor, join(upgradeDirectory(layout), "descriptor.previous.json")));
       yield* io("The previous plan could not be kept.", () => copyFile(layout.planState, join(upgradeDirectory(layout), "plan-state.previous.json")));
-      yield* swapIn(layout);
-      yield* kit.writeDescriptor(id, update.recipe);
+      // With an integration host in the transaction, the host's handover swaps the recipe directory and
+      // descriptor itself, as part of the one commit; this side only owns the processes and their plan.
+      if (!external) {
+        yield* io("The previous descriptor could not be kept.", () => copyFile(layout.descriptor, join(upgradeDirectory(layout), "descriptor.previous.json")));
+        yield* swapIn(layout);
+        yield* kit.writeDescriptor(id, update.recipe);
+      }
       const fingerprints = yield* controller.fingerprints;
       yield* kit.saveStoredPlan(id, { plan: started.plan, configs: Object.fromEntries(fingerprints.map((entry) => [entry.name, entry.config])) });
       yield* writeJournal(layout, { ...applying, state: "switched" });
@@ -255,6 +262,7 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
       )),
     );
     yield* Effect.uninterruptible(committed);
+    yield* kit.markInstalled(id, update.target.digest).pipe(Effect.catch((error) => Effect.logWarning(`Recording ${id}'s prepared recipe failed: ${error.message}`)));
     yield* discardUpgrade(layout).pipe(Effect.catch((error) => Effect.logWarning(`The finished upgrade's workspace was not removed: ${error.message}`)));
     return yield* kit.snapshot(id);
   }));
@@ -281,13 +289,27 @@ export const recoverRecipeUpdate = Effect.fn("RecipeUpgrade.recover")(function* 
   return "previous" as const;
 });
 
-/** Whether an upgrade is waiting to be recovered. */
-export const upgradePending = (layout: UpgradeLayout) => readJournal(layout).pipe(Effect.map((journal) => journal !== undefined), Effect.orElseSucceed(() => true));
-
-/** Discards a staged upgrade that was never applied. */
-export const abandonStagedUpdate = Effect.fn("RecipeUpgrade.abandon")(function* (id: string) {
+/**
+ * Settles a workload update whose commit another authority made: the integration host's handover
+ * proved which recipe is the Project's, and the processes, plan and configuration follow it.
+ * Idempotent: with nothing journaled the workload is already consistent.
+ */
+export const settleRecipeUpdate = Effect.fn("RecipeUpgrade.settle")(function* (id: string, selection: "previous" | "target") {
   const kit = yield* UpgradeKit;
   const layout = kit.layout(id);
   const journal = yield* readJournal(layout);
-  if (journal?.state === "staged") yield* discardUpgrade(layout);
+  if (!journal) return;
+  if (selection === "target") {
+    // The host commits only after this side wrote its plan ("switched"); anything earlier cannot have been committed.
+    if (journal.state !== "switched") return yield* Effect.fail(fail("The integration host selected the new recipe before its processes were switched; recover the Project manually."));
+    yield* discardUpgrade(layout);
+    return;
+  }
+  yield* returnToPrevious(id, journal);
+  const [controller, before] = [yield* kit.controller(id), yield* kit.storedPlan(id)];
+  if (controller && before) yield* controller.reconcile(before.plan);
+  yield* discardUpgrade(layout);
 });
+
+/** Whether an upgrade is waiting to be recovered. */
+export const upgradePending = (layout: UpgradeLayout) => readJournal(layout).pipe(Effect.map((journal) => journal !== undefined), Effect.orElseSucceed(() => true));

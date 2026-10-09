@@ -220,6 +220,12 @@ export interface ZelavisProjectRuntimeUpdate {
   readonly previous: RuntimeRelease;
   readonly target: RuntimeRelease;
   readonly recipe: ZelavisProjectRecipeLock;
+  /**
+   * The Project's own workload, upgraded in the same transaction as the integration host: a recipe
+   * that supervises a third-party app's processes (`mode: "recipe"`). The host's handover is the one
+   * commit point; the workload is reconciled before it and settled by its outcome.
+   */
+  readonly workload?: ZelavisProjectRuntimeUpdate;
 }
 
 export interface ZelavisProjectRuntimeUpdateIntent {
@@ -262,6 +268,8 @@ export interface ZelavisProjectRuntimeDriver {
   applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
+  /** Makes a workload update consistent with a selection another authority (the integration host) proved. */
+  settleUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target"): Promise<void>;
   gatewayTarget?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<string | undefined>;
   /** Metadata of the exact digest-verified frozen recipe, independent of catalogue summaries. */
   recipeDefinition?(project: Readonly<ZelavisProjectDescriptor>): ZelavisProjectRecipeDefinition | undefined;
@@ -1094,25 +1102,33 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (!isExactVersion(value.engineVersion)) throw new ZelavisProjectValidationError("Engine selection requires an exact version.");
         return { engineVersion: value.engineVersion };
     }
+    function readStoredExecution(value: unknown, depth: number): ZelavisProjectRuntimeUpdate {
+        if (!isObjectRecord(value)) throw new ZelavisProjectValidationError("Malformed persisted Project handover.");
+        const identity = (release: unknown): RuntimeRelease => {
+            if (!isObjectRecord(release) || typeof release.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(String(release.digest))) throw new ZelavisProjectValidationError("Project handover requires immutable execution identities.");
+            return { version: release.version, digest: String(release.digest) };
+        };
+        if (value.mode !== "engine" && value.mode !== "integration" && value.mode !== "recipe") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
+        if (value.workload !== undefined && (depth > 0 || value.mode !== "integration")) throw new ZelavisProjectValidationError("Only an integration update carries one workload update.");
+        return { mode: value.mode, ...(value.host === true ? { host: true as const } : {}), previous: identity(value.previous), target: identity(value.target),
+            recipe: readStoredRecipeLock({ recipe: value.recipe }),
+            ...(value.workload !== undefined ? { workload: readStoredExecution(value.workload, depth + 1) } : {}) };
+    }
     function readStoredRuntimeUpdate(raw: Record<string, unknown>): ZelavisProjectRuntimeUpdateIntent | undefined {
         if (raw.runtimeUpdate === undefined) return undefined;
         const update = raw.runtimeUpdate;
         if (!isObjectRecord(update) || typeof update.id !== "string" || update.id.length > 128 || typeof update.startedAt !== "string" ||
             !isObjectRecord(update.execution) || !isObjectRecord(update.previous) || !isObjectRecord(update.target)) throw new ZelavisProjectValidationError("Malformed persisted Project handover.");
-        const identity = (value: unknown): RuntimeRelease => {
-            if (!isObjectRecord(value) || typeof value.version !== "string" || !/^sha256:[a-f0-9]{64}$/.test(String(value.digest))) throw new ZelavisProjectValidationError("Project handover requires immutable execution identities.");
-            return { version: value.version, digest: String(value.digest) };
-        };
         const state = (value: Record<string, unknown>) => {
             if (typeof value.kind !== "string") throw new ZelavisProjectValidationError("Project handover requires an explicit recipe kind.");
             return { kind: value.kind, recipe: readStoredRecipeLock(value), recipeHistory: readStoredRecipeHistory(value), engineVersion: readEngineVersion(value).engineVersion };
         };
         const previous = state(update.previous), target = state(update.target);
-        const recipe = readStoredRecipeLock({ recipe: update.execution.recipe });
-        if (update.execution.mode !== "engine" && update.execution.mode !== "integration" && update.execution.mode !== "recipe") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
+        const execution = readStoredExecution(update.execution, 0);
+        const recipe = execution.recipe;
         if (recipe.name !== target.recipe.name || recipe.version !== target.recipe.version || recipe.artifact?.digest !== target.recipe.artifact?.digest) throw new ZelavisProjectValidationError("Project handover target differs from its persisted recipe lock.");
         return { id: update.id, startedAt: update.startedAt, previous, target,
-            execution: { mode: update.execution.mode, ...(update.execution.host === true ? { host: true as const } : {}), previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },
+            execution,
             ...(typeof update.error === "string" ? { error: update.error.slice(0, 4000) } : {}) };
     }
     function normalizeStoredProject(value: ZelavisSystemStoreValue): {

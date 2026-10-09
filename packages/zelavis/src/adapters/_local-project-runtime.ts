@@ -329,6 +329,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     };
     const managedIntegration = (project: Readonly<ZelavisProjectDescriptor>) =>
         !!recipeDefinition(project)?.managed && forDescriptor(project) !== node && forDescriptor(project) !== serverFrontend;
+    /** The recipe's own runtime, when it can upgrade the processes it supervises without stopping them. */
+    const workloadOf = (project: Readonly<ZelavisProjectDescriptor>) => {
+        const selected = forDescriptor(project);
+        if (selected === node || selected === serverFrontend) return undefined;
+        const operations = effectOperations(selected);
+        return selected.supportsLiveUpdate?.(project) === true && operations.prepareUpdate && operations.applyUpdate && operations.settleUpdate ? operations : undefined;
+    };
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "local-project",
         detach: Effect.fn("LocalProjects.detach")(function* () {
@@ -382,7 +389,16 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 if (!source) return yield* Effect.fail(new ZelavisProjectRuntimeError("Managed recipe source is unavailable."));
                 if (previous.runtime.status === "running") {
                     yield* integrationRuntime.start(previous, placement);
-                    return yield* integrationRuntime.prepareUpdate!(previous, candidate, placement);
+                    const refreshed = yield* integrationRuntime.prepareUpdate!(previous, candidate, placement);
+                    // A recipe that supervises the app's own processes moves them in the same transaction.
+                    const workload = workloadOf(previous);
+                    if (!workload) return refreshed;
+                    const staged = yield* workload.prepareUpdate!(previous, candidate, placement);
+                    if (staged.target.digest !== refreshed.recipe.artifact?.digest) {
+                        yield* workload.settleUpdate!(previous.id, staged, "previous");
+                        return yield* Effect.fail(new ZelavisProjectRuntimeError("The workload and integration updates froze different recipes."));
+                    }
+                    return { ...refreshed, workload: { ...staged, host: true as const } };
                 }
                 return yield* prepareManagedRecipeUpdate(join(directory, previous.id), previous, candidate, source);
             }
@@ -393,6 +409,16 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         applyUpdate: Effect.fn("LocalProjects.applyUpdate")(function* (id, update, commit) {
             if (update.mode === "integration") {
                 const selected = effectOperations(yield* forProjectId(id));
+                if (update.host && update.workload) {
+                    if (!selected.applyUpdate) return yield* Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime cannot upgrade its processes in place."));
+                    const { workload: _staged, ...refresh } = update;
+                    // The processes are reconciled first and can be put back; the host's handover is the commit.
+                    yield* selected.applyUpdate(id, update.workload, choice => choice === "target"
+                        ? present(integrationRuntime.applyUpdate!(id, refresh, commit).pipe(Effect.asVoid))
+                        : Promise.resolve());
+                    yield* forProjectId(id);
+                    return yield* selected.status(id);
+                }
                 if (update.host) {
                     yield* integrationRuntime.applyUpdate!(id, update, commit);
                     yield* forProjectId(id);
@@ -416,8 +442,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         recoverUpdate: Effect.fn("LocalProjects.recoverUpdate")(function* (id, update) {
             if (update.mode === "integration") {
                 if (update.host) {
-                    const selection = yield* integrationRuntime.recoverUpdate!(id, update);
+                    const { workload: staged, ...refresh } = update;
+                    const selection = yield* integrationRuntime.recoverUpdate!(id, refresh);
                     yield* forProjectId(id);
+                    // The host's journal proved which recipe is the Project's; the processes follow it.
+                    if (staged) yield* (effectOperations(yield* forProjectId(id)).settleUpdate?.(id, staged, selection) ?? Effect.fail(new ZelavisProjectRuntimeError("This recipe runtime cannot settle an interrupted upgrade.")));
                     return selection;
                 }
                 // The durable intent is cleared only after the complete commit.

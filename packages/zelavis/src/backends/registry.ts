@@ -441,6 +441,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   resolveVersion: "descriptor",
   applyUpdate: "project-id",
   recoverUpdate: "project-id",
+  settleUpdate: "project-id",
   prepare: "descriptor",
   start: "descriptor",
   stop: "project-id",
@@ -553,6 +554,11 @@ export function createDeploymentBackendProjectRuntime(options: {
       const recover = effectOperations(yield* forProjectId(id)).recoverUpdate;
       if (!recover) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot recover a Project update."));
       return yield* recover(id, update);
+    }),
+    settleUpdate: Effect.fn("BackendProjects.settleUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[1], selection: "previous" | "target") {
+      const settle = effectOperations(yield* forProjectId(id)).settleUpdate;
+      if (!settle) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot settle a Project update."));
+      return yield* settle(id, update, selection);
     }),
     ...(uniqueRuntimes.some(runtime => runtime.fencePrevious) ? {
       fencePrevious: Effect.fn("BackendProjects.fencePrevious")(function* (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) {

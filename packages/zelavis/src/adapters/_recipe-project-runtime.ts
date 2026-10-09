@@ -20,7 +20,7 @@ import { RequirementUnavailable, resolveRequirementCommands } from "./_recipe-re
 import { runRecipePhase, type RecipePhaseName } from "./_recipe-phase.js";
 import { adoptionPending, applyAdoption, commitAdoption, detectAdoption, revertAdoption, type AdoptedValues } from "./_recipe-adoption.js";
 import { clearPlanState, readPlanState, writePlanState } from "./_recipe-plan-state.js";
-import { UpgradeKit, type UpgradeKitApi, applyRecipeUpdate, prepareRecipeUpdate, recoverRecipeUpdate } from "./_recipe-upgrade.js";
+import { UpgradeKit, type UpgradeKitApi, applyRecipeUpdate, prepareRecipeUpdate, recoverRecipeUpdate, settleRecipeUpdate } from "./_recipe-upgrade.js";
 import { preparedProjectRecord } from "./_project-record-validation.js";
 
 /**
@@ -76,6 +76,8 @@ interface RecipeState {
   readonly method: string;
   readonly software: string;
   readonly installed: boolean;
+  /** Digest of the frozen recipe whose install phase last completed. A different lock means install runs again. */
+  readonly installedFor?: string;
 }
 
 const stateRecord = objectFields<RecipeState>({
@@ -83,7 +85,7 @@ const stateRecord = objectFields<RecipeState>({
   ports: (value): value is Readonly<Record<string, number>> => value !== null && typeof value === "object" && Object.values(value).every(isFiniteNumber),
   socketId: (value): value is string => isString(value) && /^[A-Za-z0-9_-]{1,40}$/.test(value),
   commands: (value): value is Readonly<Record<string, string>> => value !== null && typeof value === "object" && Object.values(value).every(isString),
-  method: isString, software: isString, installed: isBoolean,
+  method: isString, software: isString, installed: isBoolean, installedFor: optional(isString),
 });
 
 const packageRecord = objectFields<{ zelavis?: { project?: { install?: unknown } } }>({
@@ -357,6 +359,10 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       return { status: "running" as const, ...(url ? { url } : {}) };
     }),
     log: (id: string, message: string) => Effect.sync(() => log(id, "system", message)),
+    markInstalled: (id: string, digest: string) => readState(id).pipe(
+      Effect.flatMap((state) => writeState(id, { ...state, installedFor: digest })),
+      Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message })),
+    ),
   };
   const withKit = <A, E>(effect: Effect.Effect<A, E, UpgradeKit>) => effect.pipe(Effect.provideService(UpgradeKit, kit));
 
@@ -422,6 +428,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         v: 1, ports, commands, method: install.method, software: install.software,
         socketId: previous?.socketId ?? adopted?.socketId ?? randomBytes(12).toString("hex"),
         installed: sameInstall && previous.installed,
+        ...(sameInstall && previous.installedFor !== undefined ? { installedFor: previous.installedFor } : {}),
       };
       yield* writeState(project.id, state);
       yield* make(socketDirectory(state));
@@ -437,7 +444,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       if (!state.installed) {
         log(project.id, "system", `Installing ${recipe.name} ${install.software}.`);
         yield* phase(project.id, "install", state, parsed, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS);
-        yield* writeState(project.id, { ...state, installed: true });
+        yield* writeState(project.id, { ...state, installed: true, ...(recipe.artifact ? { installedFor: recipe.artifact.digest } : {}) });
         log(project.id, "system", "Installed.");
       }
       // Last, so a preparation that fails leaves the descriptor the earlier recipe wrote.
@@ -448,8 +455,17 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
     start: Effect.fn("RecipeRuntime.start")(function* (project: ZelavisProjectRecord, placement?: PlacementToken) {
       const parsed = yield* manifest;
-      const state = yield* readState(project.id);
+      let state = yield* readState(project.id);
       if (!state.installed) return yield* Effect.fail(failure(`Project "${project.id}" is not installed; prepare it first.`));
+      // A recipe upgraded while the Project was stopped has not prepared the app yet (its install phase
+      // writes configuration): do that now, before anything starts. Install is idempotent by contract.
+      const locked = project.recipe.artifact?.digest;
+      if (locked !== undefined && state.installedFor !== locked && !controllers.has(project.id)) {
+        log(project.id, "system", `Preparing the app for recipe ${project.recipe.version ?? locked}.`);
+        yield* phase(project.id, "install", state, parsed, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS);
+        state = { ...state, installedFor: locked };
+        yield* writeState(project.id, state);
+      }
       // Running on the new layout means the upgrade was recorded: the way back can close.
       yield* commitAdoption({ zelavis: paths(project.id).zelavis, root: paths(project.id).root, secrets: paths(project.id).secrets }).pipe(Effect.mapError(asRuntimeError));
       const url = urlOf(parsed, state);
@@ -538,6 +554,10 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         projectId, update,
         (choice) => integration(() => commit(choice)).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
       )).pipe(Effect.mapError(asRuntimeError));
+    }),
+
+    settleUpdate: Effect.fn("RecipeRuntime.settleUpdate")(function* (projectId: string, _update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target") {
+      return yield* withKit(settleRecipeUpdate(projectId, selection)).pipe(Effect.mapError(asRuntimeError));
     }),
 
     recoverUpdate: Effect.fn("RecipeRuntime.recoverUpdate")(function* (projectId: string) {
