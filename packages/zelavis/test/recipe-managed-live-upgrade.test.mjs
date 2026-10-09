@@ -3,7 +3,8 @@
 // on what was committed.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,75 +12,16 @@ import test from "node:test";
 import { createLocalProjectRuntime } from "../dist/adapters/_local-project-runtime.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 import { digestArtifactDirectory } from "../dist/adapters/_recipe-artifact.js";
+import { createLocalSqliteSystemStore } from "../dist/adapters/_sqlite-system-store.js";
 import { createProjectManager } from "../dist/project.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
-import { parseRecipeManifest } from "zelavis/recipe";
+import { entry, sleep, sourcesIn } from "./fixtures/managed-live.mjs";
 
-const MANIFEST = {
-  contract: 1,
-  methods: [{ id: "native", driver: "js", entry: "./dist/recipe.mjs", requires: ["node"] }],
-  software: [{ version: "1.0", archive: "https://example.com/app.tar.gz", sha256: "a".repeat(64), maxBytes: 1000 }],
-  ports: [{ name: "web", protocol: "http" }, { name: "db", protocol: "tcp" }],
-};
-
-const RECIPE = (message) => `import { Effect } from "effect";
-import { RecipeHost, defineRecipe } from "zelavis/recipe";
-const SERVER = ${JSON.stringify(`
-const fs = require("node:fs"), http = require("node:http");
-const [name, port, configFile] = process.argv.slice(2);
-const read = () => { try { return fs.readFileSync(configFile, "utf8"); } catch { return "none"; } };
-let current = read();
-process.on("SIGHUP", () => { current = read(); });
-process.on("SIGTERM", () => process.exit(0));
-http.createServer((request, response) => response.end(JSON.stringify({ name, pid: process.pid, config: current }))).listen(Number(port), "127.0.0.1");
-setInterval(() => {}, 1000);
-`)};
-export default defineRecipe({
-  install: () => Effect.gen(function* () {
-    const host = yield* RecipeHost;
-    yield* host.files.write("web.conf", ${JSON.stringify(message)});
-    yield* host.files.write("server.js", SERVER);
-  }),
-  start: (context) => Effect.succeed({ processes: [
-    { name: "db", command: "node", args: [context.directories.root + "/server.js", "db", String(context.ports.db), "-"], env: {}, dependsOn: [], readiness: { port: "db", timeoutMs: 4000 } },
-    { name: "web", command: "node", args: [context.directories.root + "/server.js", "web", String(context.ports.web), context.directories.root + "/web.conf"], env: {}, dependsOn: ["db"],
-      readiness: { port: "web", timeoutMs: 4000 }, config: [context.directories.root + "/web.conf"], update: { strategy: "reload", signal: "SIGHUP" } },
-  ] }),
-});
-`;
-
-async function recipePackage(base, version, message) {
-  const directory = join(base, `package-${version}`);
-  await mkdir(join(directory, "dist"), { recursive: true });
-  await writeFile(join(directory, "package.json"), JSON.stringify({
-    name: "@acme/live", version, type: "module", exports: { ".": { import: "./dist/index.js" } },
-    zelavis: { kind: "app", namespace: "acmelive", project: { runtimeKinds: ["native"], runtime: "./dist/runtime.js", install: MANIFEST, managed: { adminTitle: "Live admin " + version, adminPath: "/admin/" } } },
-  }));
-  await writeFile(join(directory, "dist", "index.js"), `import { zelavis } from "zelavis/sdk";
-export function register() {
-  zelavis.plugins.ui.menus.create({ title: "Integration ${version}", path: "/integration", surface: "root" });
-}`);
-  await writeFile(join(directory, "dist", "recipe.mjs"), RECIPE(message));
-  await writeFile(join(directory, "dist", "runtime.js"), `import { createRecipeProjectRuntime } from "zelavis/adapters/project-runtime";
-export function createProjectRuntime(context) {
-  return createRecipeProjectRuntime({ name: "recipe-live", description: "live recipe", directory: context.directory,
-    packageDirectory: context.packageDirectory, agent: context.agent, recipes: context.recipes });
-}
-`);
-  return directory;
-}
-
-const entry = (version) => ({
-  service: { name: "@acme/live", kind: "app", version, api: {}, service: {}, marketplace: { title: "Live" },
-    project: { runtimeKinds: ["native"], install: parseRecipeManifest(MANIFEST), managed: { adminTitle: "Live admin " + version, adminPath: "/admin/" } } },
-  specifier: "@acme/live", status: "available", source: "official", order: 0,
-});
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fixture(t, rejectTarget) {
   const base = await mkdtemp(join(tmpdir(), "zv-managed-live-"));
   t.after(() => rm(base, { recursive: true, force: true }));
-  const sources = { "1.0.0": await recipePackage(base, "1.0.0", "from version one"), "2.0.0": await recipePackage(base, "2.0.0", "from version two") };
+  const sources = await sourcesIn(base);
   const projects = join(base, "projects");
   const memory = createMemorySystemStore();
   // The Platform's registry can be made to refuse the commit of the new recipe.
@@ -88,7 +30,8 @@ async function fixture(t, rejectTarget) {
     if (typeof value !== "function") return value;
     return (...args) => {
       const record = args.find((argument) => argument && typeof argument === "object" && "recipe" in argument);
-      if (rejectTarget.on && record?.recipe?.version === "2.0.0" && record.runtimeUpdate && !record.runtimeUpdate.error) throw new Error("registry rejected the commit");
+      const committing = record?.recipe?.version === "2.0.0" && record.runtimeUpdate && !record.runtimeUpdate.error;
+      if (rejectTarget.on && committing) throw new Error("registry rejected the commit");
       return value.apply(target, args);
     };
   } });
@@ -185,5 +128,98 @@ test("a managed Project upgraded while stopped prepares the app for the new reci
   assert.equal(started.runtime.status, "running");
   assert.equal((await web(f.projects)("web")).config, "from version two", "install ran for the new recipe before the app started");
   assert.equal(JSON.parse(readFileSync(join(f.projects, "live", ".zelavis", "recipe-state.json"), "utf8")).installedFor, started.recipe.artifact.digest);
+  assert.match((await web(f.projects)("db")).dir, /data-two$/, "the data moved to where the new recipe names it");
+  assert.equal(readFileSync(join(f.projects, "live", "app", "data-two", "marker"), "utf8"), "the application's data");
+  assert.equal(existsSync(join(f.projects, "live", "app", "data-one")), false);
   await manager.close();
 });
+
+test("a recipe that names another place for the data upgrades a running Project without touching the data, and the move happens the next time it starts from a stop", { timeout: 120_000 }, async (t) => {
+  const f = await fixture(t, { on: false });
+  await (await f.managerFor("1.0.0")).create({ name: "Live", id: "live", recipeName: "@acme/live" });
+  const ask = web(f.projects);
+  const before = await ask("db");
+  assert.match(before.dir, /data-one$/);
+
+  const manager = await f.managerFor("2.0.0");
+  const upgraded = await manager.upgrade("live", {});
+  assert.equal(upgraded.recipe.version, "2.0.0");
+  const during = await ask("db");
+  assert.equal(during.pid, before.pid, "the database was not restarted");
+  assert.match(during.dir, /data-one$/, "its data was not moved under it");
+  assert.equal(existsSync(join(f.projects, "live", "app", "data-two")), false);
+
+  await manager.stop("live");
+  const started = await manager.start("live");
+  assert.equal(started.runtime.status, "running");
+  const after = await ask("db");
+  assert.match(after.dir, /data-two$/, "the next start moved the data to where the recipe names it");
+  assert.equal(readFileSync(join(f.projects, "live", "app", "data-two", "marker"), "utf8"), "the application's data", "and nothing in it changed");
+  assert.equal(existsSync(join(f.projects, "live", "app", "data-one")), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.projects, "live", ".zelavis", "recipe-state.json"), "utf8")).layout, { data: "data-two" });
+  await manager.close();
+});
+
+// A real crash: the Platform that is upgrading a running Project is a separate process, killed (SIGKILL)
+// while the commit is in flight. Whatever it left behind must settle onto one recipe.
+for (const hang of ["before", "after"]) {
+  test(`a Platform killed ${hang === "before" ? "before" : "right after"} the registry commit comes back with processes, configuration, integration and registry on one recipe`, { timeout: 180_000 }, async (t) => {
+    const base = await mkdtemp(join(tmpdir(), "zv-managed-crash-"));
+    const projects = join(base, "projects");
+    const sources = await sourcesIn(base);
+    const platform = (version) => {
+      const store = createLocalSqliteSystemStore({ filename: join(base, "registry.sqlite") });
+      const agent = createLocalAgentProcessRunner({ stateDirectory: join(projects, ".agent-processes") });
+      const runtime = createLocalProjectRuntime({ directory: projects, agent,
+        recipeRuntimes: { trusted: () => true, packageDirectory: (name, v) => name === "@acme/live" ? sources[v ?? "1.0.0"] : undefined } });
+      const manager = createProjectManager({ store, projectRecipes: [entry(version)], runtime, autoReconcile: false,
+        installHost: async () => ({ drivers: ["js"], requirements: ["node"] }) });
+      const close = async () => { await (await manager).close().catch(() => undefined); await runtime.close().catch(() => undefined); await agent.close(); await store.close(); };
+      return { store, agent, runtime, manager, close };
+    };
+    // Whatever survives the killed Platform must not outlive the test.
+    t.after(() => {
+      try {
+        const { ports } = JSON.parse(readFileSync(join(projects, "live", ".zelavis", "recipe-state.json"), "utf8"));
+        for (const port of Object.values(ports)) {
+          try { for (const pid of execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).split("\n").filter(Boolean)) process.kill(Number(pid), "SIGKILL"); } catch { /* nothing listens */ }
+        }
+      } catch { /* never created */ }
+      return rm(base, { recursive: true, force: true });
+    });
+
+    const first = platform("1.0.0");
+    await (await first.manager).create({ name: "Live", id: "live", recipeName: "@acme/live" });
+    await first.close();
+
+    const child = spawn(process.execPath, [new URL("./fixtures/managed-live-crash.mjs", import.meta.url).pathname, JSON.stringify({ base, hang })], { stdio: ["ignore", "pipe", "inherit"] });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    const exited = new Promise((resolve) => child.on("exit", resolve));
+    for (let i = 0; i < 1200 && !output.includes("HANGING"); i++) await sleep(50);
+    assert.ok(output.includes("HANGING"), `the upgrade reached the commit: ${output}`);
+    child.kill("SIGKILL");
+    await exited;
+    assert.ok(existsSync(join(projects, "live", ".zelavis", "upgrade")), "the killed Platform left its upgrade journal");
+
+    // The Project host that outlived its Platform waits for the commit it was promised, and rolls back when
+    // the deadline (15 s) passes. A Platform that starts sooner is told to retry; this one starts after.
+    await sleep(17_000);
+    const next = platform("2.0.0");
+    t.after(() => next.close());
+    await next.runtime.adopt();
+    const manager = await next.manager;
+    await manager.reconcile();
+    let project = await manager.get("live");
+    assert.equal(project.runtimeUpdate, undefined, `the unfinished update was settled: ${project.runtimeUpdate?.error}`);
+    if (project.runtime.status !== "running") project = await manager.start("live");
+    assert.equal(project.runtime.status, "running");
+    const version = project.recipe.version;
+    assert.ok(["1.0.0", "2.0.0"].includes(version));
+    const config = version === "2.0.0" ? "from version two" : "from version one";
+    assert.equal((await web(projects)("web")).config, config, "the processes run the recipe the registry names");
+    assert.equal(descriptor(projects).recipe.version, version, "the integration host's descriptor names the same recipe");
+    assert.equal(descriptor(projects).recipe.artifact.digest, await digestArtifactDirectory(join(projects, "live", ".zelavis", "recipe", "package")), "the descriptor and the frozen recipe agree");
+    assert.equal(existsSync(join(projects, "live", ".zelavis", "upgrade")), false, "no half-finished workspace is left");
+  });
+}

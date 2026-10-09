@@ -70,7 +70,7 @@ const Request = Schema.Struct({
   secretsDirectory: Schema.String,
   commands: Schema.Record(Schema.String, Schema.String),
   context: Schema.Struct({
-    directories: Schema.Struct({ root: Schema.String, sockets: Schema.String }),
+    directories: Schema.Struct({ root: Schema.String, sockets: Schema.String, named: Schema.Record(Schema.String, Schema.String) }),
     account: Schema.Struct({ user: Schema.String, group: Schema.String, switchUser: Schema.Boolean }),
     projectId: Schema.String,
     hostname: Schema.String,

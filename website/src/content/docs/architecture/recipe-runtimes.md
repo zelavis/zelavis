@@ -220,6 +220,18 @@ the host's journal, so the processes, their configuration and the integration ar
 same recipe. A recipe upgraded while its Project is stopped runs its `install` phase the next
 time the Project starts. Nothing in this is specific to one application.
 
+### Moving data to a new place
+
+A recipe can place its application data by name, in the manifest (`directories`: a name and a
+path below the recipe's root), and reads the current place from `context.directories.named` in
+its phases, never by joining the path itself. When a newer recipe names another path, a running
+Project is upgraded with its data where it is (the database is not touched, so it is not
+restarted), and the layout map in the Project's recipe state remembers the old place. The next
+time the Project starts from a stop, the data is moved to the new place with one atomic rename
+(an existing destination that holds data is never overwritten; the data then stays where it is
+and keeps working), and the install phase runs again so configuration names the new place. A
+crash in between is finished by the next start, because the physical state decides.
+
 Limits today: a replaced process (a database whose launch changed) has a short gap; a layout
 move (adoption of an earlier layout) still needs the Project stopped, because a running
 database directory cannot be renamed, so the dashboard **Upgrade** action,

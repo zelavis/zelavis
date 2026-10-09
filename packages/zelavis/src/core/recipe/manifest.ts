@@ -51,6 +51,15 @@ const HttpsUrl = Schema.String.check(Schema.isMaxLength(2048), Schema.makeFilter
   } catch { return false; }
 }));
 
+/**
+ * A directory of the application's own data that the recipe places by name. Where it physically is
+ * belongs to the Project: a newer recipe that names another path leaves a running Project's data where
+ * it is (its processes keep running untouched) and the move happens, journaled, the next time the
+ * Project is started from a stop. Recipes read the current location from `context.directories.named`,
+ * never by joining the path themselves.
+ */
+const Directory = Schema.Struct({ name: Name, path: RelativePath });
+
 /** The verified package's install metadata, independent of its npm revision. */
 export const RecipeManifest = Schema.Struct({
   contract: Schema.Literal(1),
@@ -75,6 +84,8 @@ export const RecipeManifest = Schema.Struct({
   ports: Schema.Array(Port).check(Schema.isMaxLength(32)),
   /** Earlier layouts of this recipe that a Project may be upgraded from without moving its data anywhere else. */
   adopt: Schema.optional(Schema.Array(Adoption).check(Schema.isMaxLength(4))),
+  /** Data directories placed by name below the recipe's root; see {@link Directory}. */
+  directories: Schema.optional(Schema.Array(Directory).check(Schema.isMaxLength(16))),
 });
 
 export type RecipeManifest = typeof RecipeManifest.Type;
@@ -103,6 +114,14 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
     unique(manifest.software.map((software) => software.version), "software versions");
     unique(manifest.ports.map((port) => port.name), "port names");
     for (const method of manifest.methods) unique(method.requires, "requirements");
+    unique((manifest.directories ?? []).map((directory) => directory.name), "directory names");
+    const places = (manifest.directories ?? []).map((directory) => directory.path);
+    unique(places, "directory paths");
+    for (const place of places) {
+      if (places.some((other) => other !== place && other.startsWith(`${place}/`))) {
+        throw new InvalidRecipeManifest({ message: `Directory "${place}" contains another declared directory.` });
+      }
+    }
     for (const adoption of manifest.adopt ?? []) {
       unique(Object.keys(adoption.move), "adopted sources");
       unique(Object.values(adoption.move), "adopted destinations");
@@ -119,6 +138,7 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
       }))),
       software: Object.freeze(manifest.software.map((software) => Object.freeze({ ...software }))),
       ports: Object.freeze(manifest.ports.map((port) => Object.freeze({ ...port }))),
+      ...(manifest.directories ? { directories: Object.freeze(manifest.directories.map((directory) => Object.freeze({ ...directory }))) } : {}),
       ...(manifest.adopt ? { adopt: Object.freeze(manifest.adopt.map((adoption) => Object.freeze({
         ...adoption,
         move: Object.freeze({ ...adoption.move }),

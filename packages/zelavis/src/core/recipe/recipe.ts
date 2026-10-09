@@ -141,6 +141,11 @@ export interface RecipeContext {
     readonly root: string;
     /** Where unix sockets live: short, and visible to every process of the Project. */
     readonly sockets: string;
+    /**
+     * The manifest's `directories`, by name, at the place each is now. After an upgrade that names
+     * another path this stays the old one until the Project is next started from a stop.
+     */
+    readonly named: Readonly<Record<string, string>>;
   };
   /** The OS account the Project's processes run as. */
   readonly account: {

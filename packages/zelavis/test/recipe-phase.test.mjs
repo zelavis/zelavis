@@ -35,7 +35,7 @@ async function project(t, source) {
       software: { version: "1.0", archive: "https://example.com/a.tar.gz", sha256: "a".repeat(64), maxBytes: 1000 },
       method: { id: "native", driver: "js", entry: "./recipe.mjs", requires: ["node"] },
       config: { title: "Hello" }, ports: { web: 18080 },
-      directories: { root, sockets: join(base, "sockets") }, account: { user: "u", group: "g", switchUser: false },
+      directories: { root, sockets: join(base, "sockets"), named: {} }, account: { user: "u", group: "g", switchUser: false },
     },
     allowed: { commands: ["node"], ports: ["web"] },
     timeoutMs: 30_000,

@@ -10,7 +10,7 @@ import {
   type PlanController, type RecipeContext, type RecipeManifest,
 } from "../core/recipe/index.js";
 import { evaluate, integration, unwrapFailure, type EffectOperations } from "../core/runtime/effect-boundary.js";
-import { objectFields, optional, isString, isFiniteNumber, isBoolean, isUnknown, parseJson } from "../core/json-validation.js";
+import { objectFields, optional, recordOf, isString, isFiniteNumber, isBoolean, isUnknown, parseJson } from "../core/json-validation.js";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import { ZelavisProjectRuntimeError } from "../project.js";
 import type { ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRecord, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeUpdate } from "../project.js";
@@ -19,6 +19,7 @@ import { makeAgentPlanHost } from "./_plan-host.js";
 import { RequirementUnavailable, resolveRequirementCommands } from "./_recipe-requirements.js";
 import { runRecipePhase, type RecipePhaseName } from "./_recipe-phase.js";
 import { adoptionPending, applyAdoption, commitAdoption, detectAdoption, revertAdoption, type AdoptedValues } from "./_recipe-adoption.js";
+import { relocateDirectories } from "./_recipe-relocation.js";
 import { clearPlanState, readPlanState, writePlanState } from "./_recipe-plan-state.js";
 import { UpgradeKit, type UpgradeKitApi, applyRecipeUpdate, prepareRecipeUpdate, recoverRecipeUpdate, settleRecipeUpdate } from "./_recipe-upgrade.js";
 import { preparedProjectRecord } from "./_project-record-validation.js";
@@ -78,6 +79,8 @@ interface RecipeState {
   readonly installed: boolean;
   /** Digest of the frozen recipe whose install phase last completed. A different lock means install runs again. */
   readonly installedFor?: string;
+  /** Where each of the recipe's named data directories is now, relative to the root (see the manifest's `directories`). */
+  readonly layout?: Readonly<Record<string, string>>;
 }
 
 const stateRecord = objectFields<RecipeState>({
@@ -85,7 +88,7 @@ const stateRecord = objectFields<RecipeState>({
   ports: (value): value is Readonly<Record<string, number>> => value !== null && typeof value === "object" && Object.values(value).every(isFiniteNumber),
   socketId: (value): value is string => isString(value) && /^[A-Za-z0-9_-]{1,40}$/.test(value),
   commands: (value): value is Readonly<Record<string, string>> => value !== null && typeof value === "object" && Object.values(value).every(isString),
-  method: isString, software: isString, installed: isBoolean, installedFor: optional(isString),
+  method: isString, software: isString, installed: isBoolean, installedFor: optional(isString), layout: optional(recordOf(isString)),
 });
 
 const packageRecord = objectFields<{ zelavis?: { project?: { install?: unknown } } }>({
@@ -228,11 +231,15 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     }
   });
 
-  const context = (project: { id: string }, state: RecipeState, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
+  /** The manifest's named directories where the Project has them now. */
+  const namedDirectories = (id: string, state: RecipeState, parsed: RecipeManifest) =>
+    Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).root, state.layout?.[directory.name] ?? directory.path)]));
+
+  const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
     projectId: project.id,
     hostname: "localhost",
     software, method, config: {}, ports: state.ports,
-    directories: { root: paths(project.id).root, sockets: socketDirectory(state) },
+    directories: { root: paths(project.id).root, sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
     account: { user: owner.user, group: owner.group, switchUser: owner.switchUser },
   });
 
@@ -250,7 +257,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     const where = paths(id);
     return yield* runRecipePhase({
       phase: name, module: resolve(packageDirectory, method.entry), root: where.root, secretsDirectory: where.secrets,
-      commands: state.commands, context: context({ id }, state, software, method, owner),
+      commands: state.commands, context: context({ id }, state, parsed, software, method, owner),
       allowed: allowedNames(id, state, parsed),
       timeoutMs, progress: (entry) => log(id, "system", `[${entry.phase}] ${entry.message}`),
       ...(owner.uid !== undefined && owner.gid !== undefined ? { uid: owner.uid, gid: owner.gid } : {}),
@@ -429,6 +436,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         socketId: previous?.socketId ?? adopted?.socketId ?? randomBytes(12).toString("hex"),
         installed: sameInstall && previous.installed,
         ...(sameInstall && previous.installedFor !== undefined ? { installedFor: previous.installedFor } : {}),
+        // Data stays where the Project has it; a different path in this recipe is applied when it next starts from a stop.
+        layout: Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, previous?.layout?.[directory.name] ?? directory.path])),
       };
       yield* writeState(project.id, state);
       yield* make(socketDirectory(state));
@@ -457,14 +466,31 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const parsed = yield* manifest;
       let state = yield* readState(project.id);
       if (!state.installed) return yield* Effect.fail(failure(`Project "${project.id}" is not installed; prepare it first.`));
-      // A recipe upgraded while the Project was stopped has not prepared the app yet (its install phase
-      // writes configuration): do that now, before anything starts. Install is idempotent by contract.
-      const locked = project.recipe.artifact?.digest;
-      if (locked !== undefined && state.installedFor !== locked && !controllers.has(project.id)) {
-        log(project.id, "system", `Preparing the app for recipe ${project.recipe.version ?? locked}.`);
-        yield* phase(project.id, "install", state, parsed, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS);
-        state = { ...state, installedFor: locked };
-        yield* writeState(project.id, state);
+      if (!controllers.has(project.id)) {
+        // Nothing of the Project runs, so this is the moment its data can go where the recipe now wants it.
+        const owner = yield* account();
+        const relocation = yield* relocateDirectories({
+          root: paths(project.id).root, layout: state.layout ?? {},
+          directories: (parsed.directories ?? []).map((directory) => ({ name: directory.name, wanted: directory.path })),
+          ...(owner.uid !== undefined && owner.gid !== undefined ? { owner: { uid: owner.uid, gid: owner.gid } } : {}),
+        }).pipe(Effect.mapError(asRuntimeError));
+        for (const name of relocation.moved) log(project.id, "system", `Moved "${name}" to ${relocation.layout[name]}.`);
+        for (const { name, reason } of relocation.kept) log(project.id, "system", `"${name}" stays where it is: ${reason}.`);
+        // A recipe upgraded while the Project was stopped has not prepared the app yet, and a moved directory
+        // is named in the configuration its install phase wrote: prepare it again before anything starts.
+        // Install is idempotent by contract.
+        const locked = project.recipe.artifact?.digest;
+        const stale = locked !== undefined && state.installedFor !== locked;
+        if (JSON.stringify(relocation.layout) !== JSON.stringify(state.layout ?? {})) {
+          state = { ...state, layout: relocation.layout };
+          yield* writeState(project.id, state);
+        }
+        if (relocation.moved.length > 0 || stale) {
+          log(project.id, "system", `Preparing the app for recipe ${project.recipe.version ?? locked ?? ""}.`);
+          yield* phase(project.id, "install", state, parsed, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS);
+          state = { ...state, ...(locked !== undefined ? { installedFor: locked } : {}) };
+          yield* writeState(project.id, state);
+        }
       }
       // Running on the new layout means the upgrade was recorded: the way back can close.
       yield* commitAdoption({ zelavis: paths(project.id).zelavis, root: paths(project.id).root, secrets: paths(project.id).secrets }).pipe(Effect.mapError(asRuntimeError));
