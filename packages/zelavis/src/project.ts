@@ -294,6 +294,14 @@ export interface ZelavisProjectRuntimeDriver {
   adopt?(): Promise<void>;
   /** Relinquish Agent handles while independently supervised workloads keep serving. */
   detach?(): Promise<void>;
+  /**
+   * The upgrade this driver prepared is recorded; whatever it kept to be able to go back
+   * (an earlier layout's state) can be let go. Best effort: a driver that misses it settles at
+   * the next start.
+   */
+  commitUpgrade?(projectId: string): Promise<void>;
+  /** The upgrade was not recorded: put the Project's files back as the earlier recipe left them. */
+  abandonUpgrade?(projectId: string): Promise<void>;
   status(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   destroy(projectId: string): Promise<void>;
@@ -2057,7 +2065,12 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     }
                     next = { ...next, install: kept };
                 } else if (manifest) {
-                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with. Create a new Project to use it.`)));
+                    // An older layout of the same recipe can be adopted: its folders are moved, not converted.
+                    if (!manifest.adopt?.length) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with, and does not describe how to take over its files. Create a new Project to use it.`)));
+                    }
+                    const install = yield* selectInstall(entry, {});
+                    if (install) next = { ...next, install };
                 }
                 if (input?.engineVersion !== undefined) yield* evaluate(() => readEngineVersion(input as unknown as Record<string, unknown>));
                 const selection = yield* (runtimeEffects.resolveVersion?.({ ...project, recipe: next }, input?.engineVersion) ?? Effect.succeed(undefined));
@@ -2107,9 +2120,16 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 if (!live && !integrationUpdate) {
                     const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
-                    return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(Effect.onError(() => previousEngine
-                        ? runtimeEffects.prepare({ ...project, engineVersion: previousEngine }, project.recipe).pipe(Effect.orDie)
-                        : Effect.void));
+                    return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(
+                        Effect.tap(() => (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined))),
+                        Effect.onError(() => Effect.gen(function* () {
+                            // Whatever the driver moved to prepare the new recipe goes back before anything else.
+                            yield* (runtimeEffects.abandonUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
+                            // And the earlier recipe is prepared again, which restores the frozen copy and descriptor the
+                            // failed upgrade replaced; the original failure is the one reported.
+                            yield* runtimeEffects.prepare(previousEngine ? { ...project, engineVersion: previousEngine } : project, project.recipe)
+                                .pipe(Effect.orElseSucceed(() => undefined));
+                        })));
                 }
                 const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
                 upgraded.recipe = execution.recipe;

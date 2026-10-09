@@ -16,6 +16,7 @@ import { defineEffectProjectRuntime } from "./project-runtime.js";
 import { loopbackPortAccepts } from "./_loopback-probe.js";
 import { RequirementUnavailable, resolveRequirementCommands } from "./_recipe-requirements.js";
 import { runRecipePhase, type RecipePhaseName } from "./_recipe-phase.js";
+import { adoptionPending, applyAdoption, commitAdoption, detectAdoption, revertAdoption, type AdoptedValues } from "./_recipe-adoption.js";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 
@@ -284,14 +285,36 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const owner = yield* account();
       const where = paths(project.id);
       const previous = yield* readStateIfPresent(project.id);
+      const locations = { zelavis: where.zelavis, root: where.root, secrets: where.secrets };
 
+      // A Project made by an earlier layout of this recipe is taken over by moving its folders
+      // where this layout keeps them. Its files and database are not read or rewritten.
+      let adopted: AdoptedValues | undefined;
+      if (!previous) {
+        const adoption = yield* detectAdoption(parsed.adopt, locations).pipe(Effect.mapError(asRuntimeError));
+        if (adoption) {
+          log(project.id, "system", "Taking over the Project's existing files.");
+          adopted = yield* applyAdoption(adoption, locations).pipe(
+            Effect.tapError(() => revertAdoption(locations).pipe(Effect.orElseSucceed(() => undefined))),
+            Effect.mapError(asRuntimeError),
+          );
+        }
+      }
+      const undoAdoption = adopted
+        ? Effect.gen(function* () {
+            yield* revertAdoption(locations).pipe(Effect.mapError(asRuntimeError));
+            yield* integration(() => rm(where.state, { force: true })).pipe(Effect.mapError(asRuntimeError));
+          }).pipe(Effect.orElseSucceed(() => undefined))
+        : Effect.void;
+
+      yield* Effect.gen(function* () {
       const prepared = "The Project directories could not be prepared.";
       const make = (path: string) => integration(() => mkdir(path, { recursive: true, mode: 0o700 })).pipe(Effect.mapError(() => failure(prepared)));
       yield* make(where.root);
       yield* make(where.secrets);
 
       // Ports and socket identity are chosen once and kept, so a restart finds the same addresses.
-      const ports: Record<string, number> = { ...previous?.ports };
+      const ports: Record<string, number> = { ...previous?.ports, ...adopted?.ports };
       for (const port of parsed.ports) {
         if (ports[port.name] !== undefined) continue;
         let candidate = yield* availablePort();
@@ -302,7 +325,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const sameInstall = previous?.method === install.method && previous.software === install.software;
       const state: RecipeState = {
         v: 1, ports, commands, method: install.method, software: install.software,
-        socketId: previous?.socketId ?? randomBytes(12).toString("hex"),
+        socketId: previous?.socketId ?? adopted?.socketId ?? randomBytes(12).toString("hex"),
         installed: sameInstall && previous.installed,
       };
       yield* writeState(project.id, state);
@@ -315,8 +338,6 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         }
         yield* ensureTraversable(dirname(where.project), owner);
       }
-      // `project.json` is what the rest of the Platform reads to find this Project's recipe.
-      yield* integration(() => writeFile(join(where.project, "project.json"), `${JSON.stringify({ ...project, recipe, runtime: { driver: options.name, capabilities } }, null, 2)}\n`, { mode: 0o600 })).pipe(Effect.mapError(asRuntimeError));
 
       if (!state.installed) {
         log(project.id, "system", `Installing ${recipe.name} ${install.software}.`);
@@ -324,12 +345,18 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         yield* writeState(project.id, { ...state, installed: true });
         log(project.id, "system", "Installed.");
       }
+      // Last, so a preparation that fails leaves the descriptor the earlier recipe wrote.
+      // `project.json` is what the rest of the Platform reads to find this Project's recipe.
+      yield* integration(() => writeFile(join(where.project, "project.json"), `${JSON.stringify({ ...project, recipe, runtime: { driver: options.name, capabilities } }, null, 2)}\n`, { mode: 0o600 })).pipe(Effect.mapError(asRuntimeError));
+      }).pipe(Effect.onError(() => undoAdoption));
     }),
 
     start: Effect.fn("RecipeRuntime.start")(function* (project: ZelavisProjectRecord, placement?: PlacementToken) {
       const parsed = yield* manifest;
       const state = yield* readState(project.id);
       if (!state.installed) return yield* Effect.fail(failure(`Project "${project.id}" is not installed; prepare it first.`));
+      // Running on the new layout means the upgrade was recorded: the way back can close.
+      yield* commitAdoption({ zelavis: paths(project.id).zelavis, root: paths(project.id).root, secrets: paths(project.id).secrets }).pipe(Effect.mapError(asRuntimeError));
       const existing = plans.get(project.id);
       if (existing?.running()) return { status: "running" as const, ...(urlOf(parsed, state) ? { url: urlOf(parsed, state)! } : {}), startedAt: new Date().toISOString() };
       // What survived a restart in part is stopped, never mixed with a fresh start.
@@ -380,6 +407,21 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       yield* integration(() => rm(paths(projectId).project, { recursive: true, force: true })).pipe(Effect.mapError(asRuntimeError));
       plans.delete(projectId);
       logs.delete(projectId);
+    }),
+
+    commitUpgrade: Effect.fn("RecipeRuntime.commitUpgrade")(function* (projectId: string) {
+      const where = paths(projectId);
+      yield* commitAdoption({ zelavis: where.zelavis, root: where.root, secrets: where.secrets }).pipe(Effect.mapError(asRuntimeError));
+    }),
+
+    abandonUpgrade: Effect.fn("RecipeRuntime.abandonUpgrade")(function* (projectId: string) {
+      const where = paths(projectId);
+      const locations = { zelavis: where.zelavis, root: where.root, secrets: where.secrets };
+      if (!(yield* adoptionPending(locations))) return;
+      const state = yield* readStateIfPresent(projectId);
+      yield* revertAdoption(locations).pipe(Effect.mapError(asRuntimeError));
+      yield* integration(() => rm(where.state, { force: true })).pipe(Effect.mapError(asRuntimeError));
+      if (state) yield* integration(() => rm(socketDirectory(state), { recursive: true, force: true })).pipe(Effect.mapError(asRuntimeError));
     }),
 
     close: Effect.fn("RecipeRuntime.close")(function* () {

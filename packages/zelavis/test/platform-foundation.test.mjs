@@ -250,6 +250,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     async signGatewayAuthority() { return "signed"; },
     async gatewayTarget() { return "http://127.0.0.1:3000"; },
     async fencePrevious() { return true; }, async adopt() {}, async detach() {},
+    async commitUpgrade() {}, async abandonUpgrade() {},
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },
     async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },

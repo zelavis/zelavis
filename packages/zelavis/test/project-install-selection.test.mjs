@@ -30,8 +30,9 @@ const recipe = (version, install = manifest(), name = "@acme/site") => ({
 
 function driver() {
   const starts = [];
+  const calls = [];
   return {
-    starts,
+    starts, calls,
     runtime: {
       name: "test-runtime",
       capabilities: () => ({
@@ -40,7 +41,9 @@ function driver() {
         databaseReplication: false, tenantPlacement: false, databaseSharding: false,
         runtimeOwnership: "platform-process", survivesControlPlaneRestart: false, description: "test",
       }),
-      async prepare() {},
+      async prepare(project) { calls.push(["prepare", project.id, project.recipe.version]); },
+      async commitUpgrade(id) { calls.push(["commit", id]); },
+      async abandonUpgrade(id) { calls.push(["abandon", id]); },
       async start(project) { starts.push(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
       async stop() { return { status: "stopped" }; },
       async status() { return { status: "stopped" }; },
@@ -176,4 +179,58 @@ test("a stored install lock that is malformed is refused when read, never truste
     await reopened.close();
     await store.set("projects", "site", record);
   }
+});
+
+const withAdoption = (over = {}) => manifest({ adopt: [{ state: "old-state.json", move: { old: "new" }, ports: { web: "port" } }], ...over });
+
+test("a Project of an earlier layout is upgraded to a recipe that can take it over, in two phases", async () => {
+  const { manager, state, open, running } = await setup(undefined, [recipe("1.0.0", null)]);
+  state.host = { drivers: ["js"], requirements: ["nginx", "php-fpm"] };
+  const created = await manager.create({ name: "Old", recipeName: "@acme/site", start: false });
+  assert.equal(created.recipe.install, undefined, "made before the recipe had install methods");
+  await manager.close();
+
+  const newer = await open([recipe("2.0.0", withAdoption())]);
+  const upgraded = await newer.upgrade("old");
+  assert.equal(upgraded.recipe.version, "2.0.0");
+  assert.deepEqual(upgraded.recipe.install, { method: "native", driver: "js", requires: ["nginx", "php-fpm"], software: "7.10.0" });
+  assert.deepEqual(running.calls.filter(([kind]) => kind !== "prepare").map(([kind]) => kind), ["commit"], "recorded, so the way back closes");
+  assert.deepEqual(running.calls.at(-2), ["prepare", "old", "2.0.0"]);
+  await newer.close();
+});
+
+test("a recipe that does not say how to take an earlier layout over refuses, and nothing is touched", async () => {
+  const { manager, state, open } = await setup(undefined, [recipe("1.0.0", null)]);
+  state.host = { drivers: ["js"], requirements: ["nginx", "php-fpm"] };
+  await manager.create({ name: "Old", recipeName: "@acme/site", start: false });
+  await manager.close();
+  const newer = await open([recipe("2.0.0", manifest())]);
+  await assert.rejects(newer.upgrade("old"), /does not describe how to take over its files\. Create a new Project/);
+  assert.equal((await newer.get("old")).recipe.version, "1.0.0");
+  await newer.close();
+});
+
+test("when the upgrade cannot be recorded, the driver is told to put the earlier layout back and the earlier recipe is prepared again", async () => {
+  const { manager, state, store, running } = await setup(undefined, [recipe("1.0.0", null)]);
+  state.host = { drivers: ["js"], requirements: ["nginx", "php-fpm"] };
+  await manager.create({ name: "Old", recipeName: "@acme/site", start: false });
+  await manager.close();
+  const failing = {
+    ...store,
+    set: async (namespace, key, value) => {
+      if (value?.recipe?.version === "2.0.0") throw new Error("store unavailable");
+      return store.set(namespace, key, value);
+    },
+  };
+  const newer = await createProjectManager({
+    store: new Proxy(store, { get: (target, name) => name === "set" ? failing.set : target[name].bind?.(target) ?? target[name] }),
+    projectRecipes: [recipe("2.0.0", withAdoption())], runtime: running.runtime, autoReconcile: false,
+    installHost: async () => state.host,
+  });
+  running.calls.length = 0;
+  await assert.rejects(newer.upgrade("old"), /store unavailable/);
+  assert.deepEqual(running.calls.map(([kind]) => kind), ["prepare", "abandon", "prepare"], "prepared for the new recipe, abandoned, then the earlier recipe prepared again");
+  assert.equal(running.calls.at(-1)[2], "1.0.0");
+  assert.equal((await newer.get("old")).recipe.version, "1.0.0", "the Project is as it was");
+  await newer.close();
 });

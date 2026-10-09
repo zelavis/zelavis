@@ -56,6 +56,6 @@ export type ZelavisEffectProjectRuntimeDriver = EffectOperations<ZelavisProjectR
 
 /** Keep runtime effects native inside the Platform and expose Promises at the driver API boundary. */
 export function defineEffectProjectRuntime(driver: ZelavisEffectProjectRuntimeDriver): ZelavisProjectRuntimeDriver {
-  const { adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget, ...metadata } = driver;
-  return Object.assign(presentOperations({ adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget }), metadata);
+  const { adopt, detach, commitUpgrade, abandonUpgrade, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget, ...metadata } = driver;
+  return Object.assign(presentOperations({ adopt, detach, commitUpgrade, abandonUpgrade, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget }), metadata);
 }

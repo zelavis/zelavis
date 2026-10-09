@@ -173,6 +173,30 @@ The service interface itself does not enforce those restrictions and is not a
 sandbox for arbitrary JavaScript. Privileged package installation belongs to the
 Platform's audited host-operation broker, outside RecipeHost.
 
+### Upgrading a Project to a recipe with a different layout
+
+An application is a folder of files and a database directory, and a recipe's upgrade does not
+convert them. A recipe whose layout differs from an earlier version of itself says how to take
+the earlier one over in its manifest (`adopt`): the earlier state file that marks the layout, the
+folders to rename (`move`), the values to carry over from that file (the ports the existing
+configuration already names, the database password, the socket identity), empty marker files to
+create, and generated leftovers to discard. Upgrading a stopped Project to such a recipe then:
+
+1. validates the earlier state and writes a journal before anything moves;
+2. renames the folders (atomic and instant whatever the database's size; nothing is read,
+   copied or rewritten, and symbolic links are refused), writes the carried-over password to the
+   Project's secrets and creates the markers;
+3. keeps the Project's address, because the ports are carried over;
+4. lets the recipe's own `install` resume over what is there (it regenerates configuration at
+   the new paths and skips what already exists);
+5. keeps the earlier state until the Project runs on the new layout. If anything fails first,
+   or the upgrade cannot be recorded, every folder is moved back and what was created is
+   removed, so the earlier recipe finds its Project as it left it; the interrupted case resumes.
+
+WordPress uses this: an existing WordPress Project (its site, uploads and database) upgrades to
+the current recipe with its address, content and admin login unchanged. The application's own
+software is not updated; WordPress updates itself from wp-admin.
+
 ### The Node RecipeHost and the phase process
 
 The Node implementation (`adapters/_recipe-host.ts`) enforces what the interface only

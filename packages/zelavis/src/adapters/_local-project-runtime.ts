@@ -510,6 +510,14 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             driverOfProject.delete(id);
             recipeDefinitions.delete(id);
         }),
+        commitUpgrade: Effect.fn("LocalProjects.commitUpgrade")(function* (id) {
+            const selected = effectOperations(yield* forProjectId(id));
+            if (selected.commitUpgrade) yield* selected.commitUpgrade(id);
+        }),
+        abandonUpgrade: Effect.fn("LocalProjects.abandonUpgrade")(function* (id) {
+            const selected = effectOperations(yield* forProjectId(id));
+            if (selected.abandonUpgrade) yield* selected.abandonUpgrade(id);
+        }),
         close: Effect.fn("LocalProjects.step")(function* () {
             yield* Effect.forEach([node, integrationNode, ...loaded(), ...serverFrontend ? [serverFrontend] : []], driver => effectOperations(driver).close(), { concurrency: 8, discard: true });
         }),

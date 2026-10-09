@@ -5,6 +5,7 @@
 // initialization, supervision, restart, removal) is the production path.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,4 +129,47 @@ test("an unsupported install lock is refused before anything is created", { time
   wrongMethod.recipe.install = { ...wrongMethod.recipe.install, method: "container", driver: "oci" };
   await assert.rejects(driver.prepare(wrongMethod, wrongMethod.recipe), /JavaScript install methods/);
   assert.equal(existsSync(join(directory, "wp3")), false);
+});
+
+const execute = (file, args) => new Promise((resolve, reject) => execFile(file, args, (error, stdout, stderr) => error ? reject(new Error(`${file}: ${stderr || error.message}`)) : resolve(stdout)));
+
+test("a WordPress Project laid out by the previous recipe is taken over: same address, same database, same files", { skip, timeout: 240_000 }, async (t) => {
+  const { driver, directory } = await setup(t);
+  const id = "legacy";
+  const zelavis = join(directory, id, ".zelavis");
+  const password = "legacy-database-password-0123";
+  const ports = { http: 41231, database: 41232 };
+  // The previous recipe's layout: WordPress in `.zelavis/wordpress` with a configuration naming its
+  // database port and password, a MariaDB directory in `.zelavis/mariadb`, and its state file.
+  await mkdir(join(zelavis, "wordpress", "wp-includes"), { recursive: true });
+  await mkdir(join(zelavis, "wordpress", "wp-content", "uploads"), { recursive: true });
+  await writeFile(join(zelavis, "wordpress", "wp-includes", "version.php"), "<?php $wp_version = '7.0.9';");
+  await writeFile(join(zelavis, "wordpress", "wp-content", "uploads", "photo.txt"), "an upload");
+  await writeFile(join(zelavis, "wordpress", "index.php"), STAND_IN_INDEX);
+  await writeFile(join(zelavis, "wordpress", "wp-config.php"), `<?php\ndefine('DB_NAME', 'wordpress');\ndefine('DB_USER', 'wordpress');\ndefine('DB_PASSWORD', '${password}');\ndefine('DB_HOST', '127.0.0.1:${ports.database}');\n`);
+  await mkdir(join(zelavis, "mariadb"), { recursive: true });
+  const sql = join(zelavis, "legacy-init.sql");
+  await writeFile(sql, `FLUSH PRIVILEGES;\nCREATE DATABASE wordpress;\nCREATE USER 'wordpress'@'127.0.0.1' IDENTIFIED BY '${password}';\nGRANT ALL ON wordpress.* TO 'wordpress'@'127.0.0.1';\nFLUSH PRIVILEGES;\nCREATE TABLE wordpress.wp_options (name VARCHAR(40), value VARCHAR(80));\nINSERT INTO wordpress.wp_options VALUES ('siteurl', 'kept');\n`);
+  const tools = await Effect.runPromise(resolveRequirementCommands(["mariadb"]));
+  await execute(tools["mariadb-install-db"], [`--datadir=${join(zelavis, "mariadb")}`, "--auth-root-authentication-method=normal", "--skip-test-db", `--extra-file=${sql}`]);
+  await rm(sql);
+  await writeFile(join(zelavis, "wordpress-native.json"), JSON.stringify({ httpPort: ports.http, databasePort: ports.database, databaseName: "wordpress", databaseUser: "wordpress", databasePassword: password, socketId: "legacysock01", databaseInitialized: true, nginx: "nginx" }));
+  await writeFile(join(zelavis, "nginx.conf"), "the previous recipe's generated configuration");
+
+  const project = record(id, "7.1.2");
+  await driver.prepare(project, project.recipe);
+  const root = join(directory, id, "app");
+  assert.equal(await readFile(join(root, "site", "wp-content", "uploads", "photo.txt"), "utf8"), "an upload");
+  assert.equal(existsSync(join(zelavis, "wordpress")), false);
+  assert.equal(existsSync(join(zelavis, "mariadb")), false);
+
+  const started = await driver.start(project);
+  assert.equal(started.url, `http://127.0.0.1:${ports.http}`, "the address the Project already had");
+  assert.match(await (await fetch(`${started.url}/index.php`)).text(), /^database:1 php:\d+$/, "PHP reaches the database it always had, with the password it always had");
+  const rows = await execute(tools.mariadb, ["--protocol=tcp", "-h127.0.0.1", `-P${ports.database}`, "-uwordpress", `-p${password}`, "-N", "-e", "select value from wordpress.wp_options where name='siteurl'"]);
+  assert.equal(rows.trim(), "kept", "the data in the database is the data that was there");
+  assert.equal(await readFile(join(root, "site", "wp-includes", "version.php"), "utf8"), "<?php $wp_version = '7.0.9';", "the application's files are untouched: the recipe pins 7.1.2 but this site stays what it is");
+  assert.equal(existsSync(join(zelavis, "wordpress-native.json")), false, "committed once it ran");
+  assert.equal(existsSync(join(zelavis, "nginx.conf")), false);
+  await driver.stop(id);
 });

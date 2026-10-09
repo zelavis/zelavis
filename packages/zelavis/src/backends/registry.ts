@@ -448,6 +448,8 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   logs: "project-id",
   destroy: "project-id",
   signGatewayAuthority: "project-id",
+  commitUpgrade: "project-id",
+  abandonUpgrade: "project-id",
   fencePrevious: "placement",
   adopt: "every-driver",
   detach: "every-driver",
@@ -581,6 +583,14 @@ export function createDeploymentBackendProjectRuntime(options: {
     gatewayTarget: Effect.fn("BackendProjects.gatewayTarget")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[1]) {
       const runtime = effectOperations(yield* evaluate(() => forDescriptor(project)));
       return runtime.gatewayTarget ? yield* runtime.gatewayTarget(project, placement) : project.runtime.url;
+    }),
+    commitUpgrade: Effect.fn("BackendProjects.commitUpgrade")(function* (id: string) {
+      const commit = effectOperations(yield* forProjectId(id)).commitUpgrade;
+      if (commit) yield* commit(id);
+    }),
+    abandonUpgrade: Effect.fn("BackendProjects.abandonUpgrade")(function* (id: string) {
+      const abandon = effectOperations(yield* forProjectId(id)).abandonUpgrade;
+      if (abandon) yield* abandon(id);
     }),
     signGatewayAuthority: Effect.fn("BackendProjects.signGatewayAuthority")(function* (id: string, claims: Parameters<NonNullable<ZelavisProjectRuntimeDriver["signGatewayAuthority"]>>[1]) {
       const sign = effectOperations(yield* forProjectId(id)).signGatewayAuthority;

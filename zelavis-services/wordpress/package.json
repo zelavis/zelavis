@@ -58,6 +58,45 @@
             "name": "db",
             "protocol": "tcp"
           }
+        ],
+        "adopt": [
+          {
+            "state": "wordpress-native.json",
+            "move": {
+              "wordpress": "site",
+              "mariadb": "db"
+            },
+            "ports": {
+              "web": "httpPort",
+              "db": "databasePort"
+            },
+            "secrets": {
+              "db-password": "databasePassword"
+            },
+            "socketId": "socketId",
+            "marks": [
+              "db/.zelavis-initialized"
+            ],
+            "discard": [
+              "nginx.conf",
+              "php-fpm.conf",
+              "nginx.pid",
+              "php-fpm.pid",
+              "mariadb.pid",
+              "nginx-access.log",
+              "nginx-error.log",
+              "php-fpm.log",
+              "php-errors.log",
+              "mariadb.log",
+              "tmp",
+              "sessions",
+              "nginx-client-temp",
+              "nginx-proxy-temp",
+              "nginx-fastcgi-temp",
+              "nginx-uwsgi-temp",
+              "nginx-scgi-temp"
+            ]
+          }
         ]
       }
     },

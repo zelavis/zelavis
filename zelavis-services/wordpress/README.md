@@ -34,6 +34,15 @@ newest); a Project chooses one when it is created and keeps it.
 Files live below the Project's `app/` directory (`site/`, `db/`, `run/` and the generated
 configuration); generated credentials live in `.zelavis/secrets/`, outside it.
 
+## Upgrading an existing Project
+
+A Project made by an earlier version of this recipe (site in `.zelavis/wordpress`, database in
+`.zelavis/mariadb`) upgrades to this one with the Project's **Upgrade** action once it is
+stopped. The `adopt` entry in the manifest tells the Platform to move those folders into the
+new layout and carry over the ports and database password, so the address, content, uploads and
+admin login stay exactly as they were; nothing in WordPress or its database is read or
+rewritten. If the upgrade cannot be completed the folders are moved back.
+
 ## How it plugs in
 
 The Platform hard-codes nothing about WordPress. This package's `package.json`
