@@ -110,7 +110,14 @@ export interface RecipeHostApi {
   readonly download: (input: {
     readonly url: string; readonly sha256: string; readonly maxBytes: number; readonly destination: string;
   }) => Effect.Effect<void, RecipeError>;
-  readonly extract: (archive: string, destination: string) => Effect.Effect<void, RecipeError>;
+  /**
+   * Unpacks a `.tar.gz` below the project. `destination` must not exist yet. With
+   * `stripTopLevel`, the archive must have exactly one top-level directory, whose
+   * contents become the destination (how release archives are usually laid out).
+   */
+  readonly extract: (archive: string, destination: string, options?: {
+    readonly stripTopLevel?: boolean;
+  }) => Effect.Effect<void, RecipeError>;
   readonly run: (input: {
     readonly command: string;
     readonly args: readonly (string | RecipeSecret)[];

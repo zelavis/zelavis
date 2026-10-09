@@ -148,6 +148,36 @@ The service interface itself does not enforce those restrictions and is not a
 sandbox for arbitrary JavaScript. Privileged package installation belongs to the
 Platform's audited host-operation broker, outside RecipeHost.
 
+### The Node RecipeHost and the phase process
+
+The Node implementation (`adapters/_recipe-host.ts`) enforces what the interface only
+describes. Every path is relative to the Project directory; absolute paths, `..` and any
+symbolic link along the way are refused, and files are written through a temporary file
+opened with `O_NOFOLLOW`. A command runs only from a table of absolute executables the host
+builds from the recipe's declared requirements, with no shell, a clean environment (none of
+the host's variables), a deadline, bounded output, and its whole process group killed when
+the deadline passes or the phase is interrupted. A download must be https (redirects only to
+https, at most three), is bounded by the manifest's size, and is kept only if its SHA-256
+equals the pinned digest. `extract` unpacks `.tar.gz` into a staging directory, refuses names
+that climb or are absolute, keeps nothing but plain files and directories, and moves the
+result into place only when it is whole. Secrets are generated once into a private directory
+outside the Project, travel only as references, and are replaced by `[secret]` in anything a
+command prints or a progress message carries. A conformance suite
+(`test/fixtures/recipe-host-conformance.mjs`) holds any adapter to the same behavior.
+
+A phase never runs inside the Platform. `runRecipePhase` starts a fresh Node for each phase
+(as the Project's OS user when given one), with a clean environment and Node's permission
+model on: the process may write only to the Project directory and its secrets directory and
+read only those, the recipe's own folder and the packages it loads. The Platform sends one
+request and receives progress and one result over a private descriptor; what the recipe prints
+is only a log, and the parent validates the plan or path it receives against the manifest's
+own names, because the recipe shares that descriptor. This confines files Node itself
+touches. Commands a recipe declared start from inside the phase and can do what the OS user
+can do; the boundaries that remain are the allow-list of official recipes, the OS user, and
+the host-operation broker. Network access, CPU and memory are limited only by the deadline and
+output caps. Neither is connected to Project creation yet: the WordPress recipe still uses its
+own runtime module, and method and software selection are not yet stored in Project locks.
+
 System installations and updates configure `zelavis-host-agent.service`, a separate
 root Agent accepting only operation catalog/submit/get. Its endpoint and token are
 root-owned and accessible only to the dedicated Platform group. The Platform uses

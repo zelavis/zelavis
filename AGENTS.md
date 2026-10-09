@@ -923,7 +923,10 @@ manifest is not yet integrated into package admission or Project execution.
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
-and qualified. RecipeHost is a convention for trusted code, not a JS sandbox.
+and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process
+phase runner (`_recipe-phase.ts`, Node permission model, parent re-validates results) exist
+with a conformance suite, but no recipe uses them yet. RecipeHost confines the files and
+commands it mediates; it is not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 
 Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
