@@ -17,6 +17,8 @@ import { loadOrCreatePlatformTls } from "./_platform-tls.js";
 
 /** The only path the enrollment listener forwards to the engine. */
 export const ENROLLMENT_PATH = "/zelavis/api/v1/runtime/nodes/enroll";
+/** The one other thing the enrollment ingress forwards: a joined machine refreshing the Platform's public keys. */
+export const TRUST_PATH = "/zelavis/api/v1/runtime/nodes/trust";
 const HOSTNAME = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 import { serveNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 
@@ -180,7 +182,7 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     const tls = yield* loadOrCreatePlatformTls({ directory: join(directory, "enrollment-tls"), names }).pipe(
       Effect.mapError(error => new IntegrationFailure(error)));
     const listener = createNodeRuntimeIngress({ admission, target: () => supervisor?.target() ?? "", headers: headers(), tls,
-      allowPath: path => path === ENROLLMENT_PATH });
+      allowPath: path => path === ENROLLMENT_PATH || path === TRUST_PATH });
     yield* Effect.addFinalizer(() => listener.close.pipe(Effect.orDie));
     const bound = yield* listener.listen({ host: "0.0.0.0", port: port as number });
     enrollmentEndpoint = { url: `https://${names[0]}:${bound}`, fingerprint: tls.fingerprint };

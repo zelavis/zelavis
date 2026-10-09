@@ -24,7 +24,8 @@ export function createRemoteProjectAgent(options: {
   readonly port: number;
   readonly keyPem: string;
   readonly certPem: string;
-  readonly trust: ZelavisHostOperationTrustStore;
+  /** Read for every verification, so a refreshed set of Platform keys applies without a restart. */
+  readonly trust: () => ZelavisHostOperationTrustStore;
   readonly agentId: string;
   readonly nodeId: string;
   readonly runtime?: Omit<LocalProjectRuntimeOptions, "directory" | "agent">;

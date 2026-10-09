@@ -1379,6 +1379,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.nodes.platform",
       "runtime.nodes.enrollments.create",
       "runtime.nodes.enroll",
+      "runtime.nodes.trust",
+      "runtime.nodes.audit",
       "runtime.nodes.remove",
       "runtime.cloud.read",
       "runtime.cloud.connect",

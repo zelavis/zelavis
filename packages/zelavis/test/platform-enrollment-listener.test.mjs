@@ -59,7 +59,12 @@ test("the persistent host serves the enrollment listener: machines pin its certi
     assert.equal((await joined.json()).agentId, "agent-node-a");
     assert.equal((await owner.nodes.list()).nodes[0].nodeId, "node-a");
 
-    for (const path of ["/zelavis/", "/zelavis/api/v1/runtime/nodes", "/auth/bootstrap"]) {
+    const refreshed = await pinned(`${endpoint.url}/zelavis/api/v1/runtime/nodes/trust`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    assert.equal(refreshed.status, 200, "a joined machine can refresh the Platform's keys on the same ingress");
+    assert.ok(Array.isArray((await refreshed.json()).trust.keys));
+    for (const path of ["/zelavis/", "/zelavis/api/v1/runtime/nodes", "/zelavis/api/v1/runtime/nodes/audit", "/auth/bootstrap"]) {
       assert.equal((await pinned(`${endpoint.url}${path}`)).status, 404, path);
     }
     await assert.rejects(createPinnedFetch({ fingerprint: "ab".repeat(32) })(`${endpoint.url}/zelavis/api/v1/runtime/nodes/enroll`, { method: "POST", body: "{}" }), /pinned fingerprint/);

@@ -75,6 +75,51 @@ export interface AgentHostOperationService {
   close(): Promise<void>;
 }
 
+/** A trust store, checked: bounded, only known fields, valid windows, no repeated key id. */
+export function parseHostOperationTrustStore(parsed: unknown):
+  | { readonly trust: ZelavisHostOperationTrustStore; readonly problem?: undefined }
+  | { readonly problem: "structure" | "duplicate-key"; readonly trust?: undefined } {
+  const value = parsed as Record<string, unknown>;
+  const validTime = (time: unknown) =>
+    typeof time === "string" && Number.isFinite(Date.parse(time));
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => key !== "keys" && key !== "revokedKeyIds") ||
+    !Array.isArray(value.keys) ||
+    value.keys.length > 64 ||
+    value.keys.some((key: unknown) => {
+      const entry = key as Record<string, unknown>;
+      return !entry ||
+        typeof entry !== "object" ||
+        Object.keys(entry).some((field) =>
+          !["keyId", "publicKey", "notBefore", "notAfter"].includes(field)) ||
+        typeof entry.keyId !== "string" ||
+        typeof entry.publicKey !== "string" ||
+        !validTime(entry.notBefore) ||
+        !validTime(entry.notAfter) ||
+        Date.parse(entry.notBefore as string) >= Date.parse(entry.notAfter as string);
+    }) ||
+    (value.revokedKeyIds !== undefined &&
+      (!Array.isArray(value.revokedKeyIds) ||
+        value.revokedKeyIds.some((keyId: unknown) => typeof keyId !== "string")))
+  ) {
+    return { problem: "structure" };
+  }
+  const keyIds = (value.keys as { keyId: string }[]).map((key) => key.keyId);
+  if (new Set(keyIds).size !== keyIds.length) return { problem: "duplicate-key" };
+  return {
+    trust: Object.freeze({
+      keys: Object.freeze((value.keys as ZelavisHostOperationTrustStore["keys"]).map((key) =>
+        Object.freeze({ ...key }))),
+      ...(value.revokedKeyIds
+        ? { revokedKeyIds: Object.freeze([...(value.revokedKeyIds as string[])]) }
+        : {}),
+    }),
+  };
+}
+
 /**
  * Reads the Platform authority trust store: the keys whose signed envelopes
  * this Agent accepts.
@@ -116,49 +161,15 @@ export function readHostOperationTrustStore(
       `Host operation trust store ${path} is not valid JSON.`,
     ))),
   );
-  const value = parsed as Record<string, unknown>;
-  const validTime = (time: unknown) =>
-    typeof time === "string" && Number.isFinite(Date.parse(time));
-  if (
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    Object.keys(value).some((key) => key !== "keys" && key !== "revokedKeyIds") ||
-    !Array.isArray(value.keys) ||
-    value.keys.length > 64 ||
-    value.keys.some((key: unknown) => {
-      const entry = key as Record<string, unknown>;
-      return !entry ||
-        typeof entry !== "object" ||
-        Object.keys(entry).some((field) =>
-          !["keyId", "publicKey", "notBefore", "notAfter"].includes(field)) ||
-        typeof entry.keyId !== "string" ||
-        typeof entry.publicKey !== "string" ||
-        !validTime(entry.notBefore) ||
-        !validTime(entry.notAfter) ||
-        Date.parse(entry.notBefore as string) >= Date.parse(entry.notAfter as string);
-    }) ||
-    (value.revokedKeyIds !== undefined &&
-      (!Array.isArray(value.revokedKeyIds) ||
-        value.revokedKeyIds.some((keyId: unknown) => typeof keyId !== "string")))
-  ) {
+  const checked = parseHostOperationTrustStore(parsed);
+  if (checked.trust === undefined) {
     return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
-      `Host operation trust store ${path} has an invalid structure.`,
+      checked.problem === "duplicate-key"
+        ? `Host operation trust store ${path} lists a key id more than once.`
+        : `Host operation trust store ${path} has an invalid structure.`,
     ));
   }
-  const keyIds = (value.keys as { keyId: string }[]).map((key) => key.keyId);
-  if (new Set(keyIds).size !== keyIds.length) {
-    return yield* new IntegrationFailure(new ZelavisHostOperationValidationError(
-      `Host operation trust store ${path} lists a key id more than once.`,
-    ));
-  }
-  return Object.freeze({
-    keys: Object.freeze((value.keys as ZelavisHostOperationTrustStore["keys"]).map((key) =>
-      Object.freeze({ ...key }))),
-    ...(value.revokedKeyIds
-      ? { revokedKeyIds: Object.freeze([...(value.revokedKeyIds as string[])]) }
-      : {}),
-  });
+  return checked.trust;
   }));
 }
 

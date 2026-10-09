@@ -139,7 +139,7 @@ test("an enrolled node becomes ready only when a real Agent answers as that node
   const { createRemoteProjectAgent } = await import("../dist/adapters/_remote-project-agent.js");
   const agent = await createRemoteProjectAgent({
     dataDirectory: join(root, "agent"), host: "localhost", port: 0,
-    keyPem, certPem: liveCertPem, trust, agentId: "agent-late", nodeId: "late",
+    keyPem, certPem: liveCertPem, trust: () => trust, agentId: "agent-late", nodeId: "late",
   });
   t.after(() => agent.close());
 

@@ -91,7 +91,8 @@ export function createProjectDispatchHttpsServer(options: {
   readonly certPem: string;
   readonly agentId: string;
   readonly nodeId: string;
-  readonly trust: ZelavisHostOperationTrustStore;
+  /** Read for every verification, so a refreshed set of Platform keys applies without a restart. */
+  readonly trust: () => ZelavisHostOperationTrustStore;
   readonly nonceStore: ZelavisSystemStore;
   readonly readPlacement: (projectId: string) => Promise<ProjectDispatchPlacement | undefined>;
   readonly isReady?: () => boolean;
@@ -133,7 +134,7 @@ export function createProjectDispatchHttpsServer(options: {
       const authority = request.headers["x-zelavis-authority"];
       if (typeof authority !== "string") return badRequest(response);
       yield* integration(() => receiveProjectDispatch({
-        trust: options.trust, token: authority,
+        trust: options.trust(), token: authority,
         agentId: options.agentId, action: "prepare", projectId,
         nodeId: options.nodeId, readPlacement: options.readPlacement,
         consumeNonce: nonces.consume,
@@ -161,7 +162,7 @@ export function createProjectDispatchHttpsServer(options: {
     if (!body || typeof body.authority !== "string") return badRequest(response);
     const token = body.authority;
     const claims = yield* integration(() => receiveProjectDispatch({
-      trust: options.trust,
+      trust: options.trust(),
       token,
       agentId: options.agentId,
       action,

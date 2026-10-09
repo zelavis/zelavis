@@ -3,6 +3,7 @@ import type { ZelavisServerRoute } from "../core/index.js";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import type { ZelavisHostOperationTrustStore } from "../core/deployment/index.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
+import { enrollmentAuditEntry, listEnrollmentAudit, recordEnrollmentAttempt } from "./node-enrollment-audit.js";
 import {
   NodeEnrollmentError,
   createNodeEnrollmentAuthority,
@@ -113,6 +114,8 @@ export function createNodeRoutes(options: {
   const notAccepting = { status: 409, headers: noStore, body: { error: "This installation does not accept nodes.", code: "nodes-disabled" } };
   const authority = store ? createNodeEnrollmentAuthority({ store, now, ...(options.platformVersion === undefined ? {} : { platformVersion: options.platformVersion }) }) : undefined;
   const admit = createAttemptLimiter({ limit: ENROLL_ATTEMPTS_PER_WINDOW, windowMs: ENROLL_WINDOW_MS, now });
+  // Its own budget: reading public keys must never use up the attempts enrollment needs.
+  const admitTrust = createAttemptLimiter({ limit: ENROLL_ATTEMPTS_PER_WINDOW, windowMs: ENROLL_WINDOW_MS, now });
   const system = { type: "system" as const };
 
   return [
@@ -182,10 +185,45 @@ export function createNodeRoutes(options: {
         }
         // The peer address is not known here (a proxy may sit in front, and a
         // forwarded header is caller-controlled), so no source binding is applied.
+        // A trail that cannot be written must not undo an enrollment that already consumed its
+        // token, so a failed write is reported to the log and the answer still goes out.
+        const record = (error?: NodeEnrollmentError) => {
+          const entry = enrollmentAuditEntry({ at: now(), nodeId: body.nodeId, version: body.version, ...(error ? { error } : {}) });
+          return entry === undefined ? Effect.void
+            : recordEnrollmentAttempt(store, entry).pipe(Effect.catch((failure) => Effect.logError("Enrollment audit entry could not be written", failure)));
+        };
         return yield* authority.complete({ nodeId: body.nodeId, token: body.token, certPem: body.certPem, url: body.url, version: body.version }).pipe(
+          Effect.tap(() => record()),
           Effect.map(({ node }) => ({ status: 200, headers: noStore, body: { nodeId: node.nodeId, agentId: node.agentId, trust } })),
-          Effect.catchTag("NodeEnrollmentError", (error) => Effect.succeed(answerFor(error))),
+          Effect.catchTag("NodeEnrollmentError", (error) => record(error).pipe(Effect.as(answerFor(error)))),
         );
+      })),
+    },
+    {
+      id: "runtime.nodes.trust", method: "POST", path: "/nodes/trust",
+      // No access requirement: these are the Platform's public keys, which a joined machine
+      // reads over the same pinned connection it enrolled on. POST only to keep the narrow
+      // enrollment ingress to one method.
+      spec: { operationId: "getAgentTrust", summary: "The Platform's current public keys, for a joined machine to refresh", tags: ["nodes"],
+        responses: { 200: { description: "The trust store" }, 409: { description: "This installation does not accept nodes" },
+          429: { description: "Too many requests" } } },
+      handler: () => present(Effect.gen(function* () {
+        if (!store) return unavailable;
+        const trust = yield* readAgentTrust(store);
+        if (trust === undefined) return notAccepting;
+        if (!admitTrust()) return { status: 429, headers: { ...noStore, "retry-after": "60" }, body: { error: "Too many requests." } };
+        return { headers: noStore, body: { trust } };
+      })),
+    },
+    {
+      id: "runtime.nodes.audit", method: "GET", path: "/nodes/audit",
+      access: { permissions: ["server.nodes.manage"], scope: system },
+      spec: { operationId: "getNodeEnrollmentAudit", summary: "Recent enrollment attempts and why refused ones were refused", tags: ["nodes"],
+        responses: { 200: { description: "Newest first; never a token, certificate or address" } } },
+      handler: () => present(Effect.gen(function* () {
+        if (!store) return unavailable;
+        const entries = yield* listEnrollmentAudit(store, 100);
+        return { headers: noStore, body: { entries } };
       })),
     },
     {

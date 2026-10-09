@@ -34,7 +34,7 @@
     "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
     "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
-    "release:check": "pnpm run verify && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs && pnpm run distribution:test && pnpm run release:qualify:update",
+    "release:check": "pnpm run verify && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs && pnpm run distribution:test && pnpm run release:qualify:update && pnpm run distribution:qualify:worker",
     "release:status": "changeset status --verbose",
     "release:version": "node scripts/release-version.mjs stable",
     "release:version:alpha": "node scripts/release-version.mjs alpha",

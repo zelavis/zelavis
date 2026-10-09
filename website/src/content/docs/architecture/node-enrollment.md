@@ -109,7 +109,12 @@ source address.
 
 A refusal is one answer, `403 Enrollment refused.`, whatever the reason: wrong
 token, unknown node, expired, replayed or already used. The reason is kept for audit
-and never sent. A node configured by the operator always wins over a registered node
+and never sent: an operator reads it at `GET /runtime/nodes/audit` (`client.nodes.audit()`,
+`zelavis nodes audit`; needs `server.nodes.manage`), newest first, with the outcome
+(`enrolled`, `refused`, `worker-newer`, `node-exists`, `invalid`), the reason for a refusal and
+the version. It never holds a token, certificate or address, keeps a node id only when it has the
+shape of one, records only attempts the rate limiter admitted, and is capped at 500 entries and
+30 days. A node configured by the operator always wins over a registered node
 with the same id, and the local node id can never be taken over.
 
 ## Operating it
@@ -147,6 +152,20 @@ same version is `current`; an older one is accepted and listed as `behind`
 reported no version is `unknown`. This is a join-time check against the version the machine
 reported: nothing re-checks it after a worker is updated in place, and a worker is not updated from
 the dashboard.
+
+## Key rotation
+
+The Platform signs with an Ed25519 key for a year and rotates it 30 days before it expires,
+keeping the old key trusted until then. A worker received the keys when it enrolled, so it
+follows a rotation itself: `zelavis worker join` records how it authenticated the Platform
+(the certificate fingerprint, or a copy of the CA), and a running Agent asks again at start and
+daily over that same pinned connection (`POST /runtime/nodes/trust`, anonymous because the answer
+is public keys, with its own rate limit; the enrollment ingress forwards this one path besides
+enrollment). A new set replaces the old only when it is valid and holds a key valid now, so a
+failure or a hostile answer can never leave the machine trusting nothing; if the Platform cannot
+be reached the Agent keeps its keys and logs a warning. `zelavis worker refresh-trust` does the
+same on demand and rewrites the trust file. A Platform whose certificate no longer matches the pin
+cannot be asked, and needs the machine joined again.
 
 ## Not a secret store
 

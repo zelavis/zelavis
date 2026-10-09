@@ -75,12 +75,14 @@ command tree.
   of a Platform: it generates the Agent's key and certificate locally, authenticates the
   Platform (https only; `--platform-ca-file` or `--platform-fingerprint` for a private or
   self-signed one), enrolls, and writes the Agent configuration. Host-local; the enrollment
-  it makes is `client.nodes.enroll`. See [Node Enrollment](../architecture/node-enrollment/).
+  it makes is `client.nodes.enroll`. `worker refresh-trust` re-reads the Platform's public keys over
+  the same pinned connection (a running Agent does this daily by itself). See
+  [Node Enrollment](../architecture/node-enrollment/).
 - `cloud status|connect|disconnect|nodes|request|release|scaling` manages cloud capacity
   (`client.cloud`): one provider connection and the machines created through it. The
   provider token is read from `ZELAVIS_CLOUD_TOKEN`, never from an option, so it stays
   out of shell history. See [Node Enrollment](../architecture/node-enrollment/).
-- `nodes list|enroll-token|enroll|remove` manages the machines that join this Platform
+- `nodes list|platform|audit|enroll-token|enroll|remove` manages the machines that join this Platform
   (`client.nodes`). `enroll-token <node-id>` issues a single-use credential and shows it
   once; `enroll <node-id> --enrollment-token T --cert-file F --agent-url URL` is what the
   joining machine runs, and `--trust-out FILE` saves the Platform's trust keys for its

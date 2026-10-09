@@ -282,3 +282,49 @@ test("a worker newer than the Platform gets 409 worker-newer, and the credential
   const joined = await json(await send("POST", "/runtime/nodes/enroll", { nodeId: "node-new", token: issued.body.token, certPem, url: AGENT_URL, version: VERSION }));
   assert.equal(joined.status, 200);
 });
+
+test("the operator sees why each attempt was refused, on every surface, and never a secret", async (t) => {
+  const { send, client, cli, as, store } = await platform(t);
+  const issued = (await json(await send("POST", "/runtime/nodes/enrollments", { nodeId: "node-a" }))).body;
+  const wrong = issued.token.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+  const attempt = (body) => send("POST", "/runtime/nodes/enroll", { certPem, url: AGENT_URL, version: VERSION, ...body });
+  assert.equal((await attempt({ nodeId: "node-a", token: wrong })).status, 403);
+  assert.equal((await attempt({ nodeId: "ghost", token: "A".repeat(43) })).status, 403);
+  assert.equal((await attempt({ nodeId: "Not A Node Id!!", token: "A".repeat(43) })).status, 400);
+  assert.equal((await attempt({ nodeId: "node-a", token: issued.token })).status, 200);
+  assert.equal((await attempt({ nodeId: "node-a", token: issued.token, certPem: "x" })).status >= 400, true);
+
+  const viaHttp = (await json(await send("GET", "/runtime/nodes/audit"))).body.entries;
+  const viaSdk = await client.nodes.audit();
+  const viaCli = (await cli("audit")).entries;
+  assert.deepEqual(viaSdk, viaHttp);
+  assert.deepEqual(viaCli, viaHttp);
+
+  const outcomes = viaHttp.map((entry) => [entry.outcome, entry.reason ?? null]);
+  assert.ok(outcomes.some(([o, r]) => o === "refused" && r === "bad-token"));
+  assert.ok(outcomes.some(([o, r]) => o === "refused" && r === "unknown-node"));
+  assert.ok(outcomes.some(([o]) => o === "invalid"));
+  assert.ok(outcomes.some(([o]) => o === "enrolled"));
+  assert.ok(viaHttp.every((entry, index) => index === 0 || viaHttp[index - 1].at >= entry.at), "newest first");
+  assert.ok(!viaHttp.some((entry) => entry.nodeId === "Not A Node Id!!"), "an id that is not shaped like one is not kept");
+
+  const stored = JSON.stringify((await store.list("fabric.node-enrollment-audit.v1")).map((record) => record.value));
+  for (const secret of [issued.token, wrong, certPem, AGENT_URL]) assert.ok(!stored.includes(secret), "no token, certificate or address is recorded");
+
+  as({ id: "viewer", type: "user", permissions: ["server.nodes.view"] });
+  assert.equal((await send("GET", "/runtime/nodes/audit")).status, 403, "viewing nodes is not reading the attempts against them");
+});
+
+test("the enrollment trail is capped by count and age", async () => {
+  const { MAX_ENROLLMENT_AUDIT_RECORDS, ENROLLMENT_AUDIT_RETENTION_MS, NODE_ENROLLMENT_AUDIT_NAMESPACE, recordEnrollmentAttempt } =
+    await import("../dist/platform/node-enrollment-audit.js");
+  const store = createMemorySystemStore();
+  const at = 10_000_000_000;
+  await Effect.runPromise(recordEnrollmentAttempt(store, { at: at - ENROLLMENT_AUDIT_RETENTION_MS - 1, outcome: "refused", reason: "bad-token" }));
+  for (let index = 0; index < MAX_ENROLLMENT_AUDIT_RECORDS + 20; index += 1) {
+    await Effect.runPromise(recordEnrollmentAttempt(store, { at: at + index, outcome: "refused", reason: "bad-token" }));
+  }
+  const kept = await store.list(NODE_ENROLLMENT_AUDIT_NAMESPACE);
+  assert.equal(kept.length, MAX_ENROLLMENT_AUDIT_RECORDS);
+  assert.ok(kept.every((record) => record.value.at >= at), "the aged record went first");
+});

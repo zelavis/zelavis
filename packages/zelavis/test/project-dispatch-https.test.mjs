@@ -62,12 +62,12 @@ test("TLS Project dispatch reaches only the signed destination and refuses repla
       artifact: { digest: await digestArtifactDirectory(recipePackage) } },
   }));
   const leases = createRemotePlacementLeaseStore({
-    store: nonceStore, trust, agentId: "agent-b", nodeId: "node-b",
+    store: nonceStore, trust: () => trust, agentId: "agent-b", nodeId: "node-b",
     fencePrevious: async () => true,
   });
   const server = await createProjectDispatchHttpsServer({
     host: "localhost", port: 0, keyPem, certPem,
-    agentId: "agent-b", nodeId: "node-b", trust, nonceStore,
+    agentId: "agent-b", nodeId: "node-b", trust: () => trust, nonceStore,
     readPlacement: leases.read,
     acceptLease: leases.accept,
     releaseLease: leases.release,

@@ -1,4 +1,4 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Fiber } from "effect";
 import { evaluate, integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * `zelavis agent` — run the Agent as its own process.
@@ -24,6 +24,7 @@ import { createLocalSqliteSystemStore } from "../adapters/_sqlite-system-store.j
 import { REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "../adapters/_agent-remote-environment.js";
 import { readLocalProjectPlacementLease } from "../platform/project-placement-authority.js";
 import { createRemoteProjectAgent } from "../adapters/_remote-project-agent.js";
+import { TRUST_REFRESH_INTERVAL_MS, refreshTrustFile } from "../adapters/_trust-refresh.js";
 import type { ZelavisHostOperationTrustStore } from "../core/deployment/index.js";
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import {
@@ -104,6 +105,7 @@ export function runAgentCommand(
     )) as {
       host?: unknown; port?: unknown; keyFile?: unknown; certFile?: unknown;
       trustFile?: unknown; agentId?: unknown; nodeId?: unknown;
+      platform?: { url?: unknown; fingerprint?: unknown; caFile?: unknown };
     };
     if (typeof config.host !== "string" || typeof config.port !== "number" ||
         typeof config.keyFile !== "string" || typeof config.certFile !== "string" ||
@@ -121,19 +123,43 @@ export function runAgentCommand(
     if (!Array.isArray(trust.keys) || trust.keys.length === 0) {
       throw new Error("Remote Project Agent trust file has no Platform keys.");
     }
+    // The keys in force. A rotation on the Platform replaces them here without a restart.
+    let currentTrust = trust;
+    const platformUrl = config.platform?.url;
+    const refresher = typeof platformUrl === "string"
+      ? Effect.runFork(Effect.forever(
+          refreshTrustFile({
+            platform: {
+              url: platformUrl,
+              ...(typeof config.platform?.fingerprint === "string" ? { fingerprint: config.platform.fingerprint } : {}),
+              ...(typeof config.platform?.caFile === "string" ? { caFile: relativeFile(config.platform.caFile) } : {}),
+            },
+            trustFile: relativeFile(config.trustFile as string),
+          }).pipe(
+            Effect.tap((refreshed) => Effect.sync(() => {
+              currentTrust = refreshed.trust;
+              if (refreshed.changed) console.log("Updated the Platform's keys.");
+            })),
+            // A Platform that cannot be reached right now must not stop the Agent serving: it keeps the keys it has.
+            Effect.catch((failure) => Effect.logWarning(failure.message)),
+            Effect.andThen(Effect.sleep(TRUST_REFRESH_INTERVAL_MS)),
+          )))
+      : undefined;
+    const stopRefreshing = refresher ? Fiber.interrupt(refresher) : Effect.void;
     const remote = yield* integrationValue(createRemoteProjectAgent({
       dataDirectory, host: config.host, port: config.port,
-      keyPem, certPem, trust, agentId: config.agentId, nodeId: config.nodeId,
+      keyPem, certPem, trust: () => currentTrust, agentId: config.agentId, nodeId: config.nodeId,
     }));
     console.log(`Zelavis Project Agent listening on ${remote.address}`);
     const signal = options.signal;
     if (signal) {
       if (!signal.aborted) yield* untilAborted(signal);
       yield* integrationValue(remote.close());
+      yield* stopRefreshing;
       return;
     }
     yield* Effect.callback<void>((resume) => {
-      const stop = () => { void remote.close().finally(() => resume(Effect.void)); };
+      const stop = () => { void remote.close().finally(() => resume(stopRefreshing)); };
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
     });

@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { Data, Effect } from "effect";
@@ -6,17 +6,21 @@ import { integration, present } from "../core/runtime/effect-boundary.js";
 import { generateAgentCertificate } from "../adapters/_agent-certificate.js";
 import { firstRoutableAddress } from "../adapters/_host-address.js";
 import { createPinnedFetch, normalizeFingerprint } from "../adapters/_pinned-fetch.js";
+import { writeFileAtomically as writeAtomically } from "../adapters/_atomic-file.js";
+import { refreshTrustFile, type PlatformPin } from "../adapters/_trust-refresh.js";
 import { createZelavisClient, ZelavisClientHttpError } from "../sdk/fetch.js";
 import { defaultCliDataDirectory } from "./data-directory.js";
 import { ZELAVIS_VERSION } from "../version.js";
 
 const usage =
+  "zelavis worker refresh-trust [--data-dir DIR] [--json]  (re-reads the Platform's public keys over the pinned connection used to join)\n" +
   "zelavis worker join --platform-url https://HOST[/zelavis] --node-id ID --enrollment-token TOKEN " +
   "[--platform-fingerprint sha256:HEX | --platform-ca-file FILE] [--address HOST_OR_IP]... [--port N] [--bind HOST] [--data-dir DIR] [--json]";
 
 /** Where the worker keeps its identity and Agent configuration. */
 export const WORKER_DIRECTORY = "worker";
 const DEFAULT_AGENT_PORT = 8443;
+const PLATFORM_CA_FILE = "platform-ca.pem";
 const MAX_ADDRESSES = 8;
 
 class WorkerUsageError extends Data.TaggedError("WorkerUsageError")<{ readonly message: string }> {}
@@ -108,15 +112,6 @@ const readIfPresent = (file: string) =>
       (failure.cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(failure)),
   );
 
-/** Write beside the target, then rename: a reader never sees half a file. */
-const writeAtomically = (file: string, content: string, mode: number) =>
-  Effect.gen(function* () {
-    const temporary = `${file}.${process.pid}.tmp`;
-    yield* integration(() => writeFile(temporary, content, { mode }));
-    yield* integration(() => chmod(temporary, mode));
-    yield* integration(() => rename(temporary, file));
-  });
-
 /** A key file must be a regular, private file this user owns, never a link someone planted. */
 const assertPrivateFile = (file: string) =>
   integration(() => lstat(file)).pipe(
@@ -152,6 +147,27 @@ export function runWorkerCommand(args: readonly string[]): Promise<void> {
     });
     if (parsed.help || !parsed.action) {
       console.log(usage);
+      return;
+    }
+    if (parsed.action === "refresh-trust") {
+      const directory = join(parsed.dataDirectory, WORKER_DIRECTORY);
+      const configText = yield* readIfPresent(join(directory, "remote-project.json"));
+      if (configText === undefined) return yield* new WorkerJoinError({ message: "This machine has not joined a Platform; there is nothing to refresh." });
+      const config = JSON.parse(configText) as { trustFile?: unknown; platform?: { url?: unknown; fingerprint?: unknown; caFile?: unknown } };
+      if (typeof config.trustFile !== "string" || typeof config.platform?.url !== "string") {
+        return yield* new WorkerJoinError({ message: "This machine's configuration does not record how it authenticates the Platform; join again." });
+      }
+      const pin: PlatformPin = {
+        url: config.platform.url,
+        ...(typeof config.platform.fingerprint === "string" ? { fingerprint: config.platform.fingerprint } : {}),
+        ...(typeof config.platform.caFile === "string" ? { caFile: join(directory, config.platform.caFile) } : {}),
+      };
+      const refreshed = yield* refreshTrustFile({ platform: pin, trustFile: join(directory, config.trustFile) }).pipe(
+        Effect.mapError((error) => new WorkerJoinError({ message: error.message })),
+      );
+      console.log(parsed.json ? JSON.stringify({ changed: refreshed.changed, keys: refreshed.trust.keys.map((key) => key.keyId) }, null, 2)
+        : refreshed.changed ? `Updated the Platform's keys (${refreshed.trust.keys.length}). A running Agent refreshes them itself daily; restart it to apply them now.`
+        : "The Platform's keys are unchanged.");
       return;
     }
     if (parsed.action !== "join") {
@@ -267,9 +283,17 @@ export function runWorkerCommand(args: readonly string[]): Promise<void> {
 
     // Configuration is written last: its presence means the machine is joined.
     yield* writeAtomically(trustFile, `${JSON.stringify(enrolled.trust, null, 2)}\n`, 0o644);
+    // The pin that authenticated the Platform at join is kept, so the Agent can follow key rotation
+    // over the same connection. A CA is copied here so the pin does not depend on a file elsewhere.
+    if (caPem !== undefined) yield* writeAtomically(join(directory, PLATFORM_CA_FILE), caPem, 0o644);
+    const platform = {
+      url: `${base.origin}${base.pathname === "/" ? "/zelavis" : base.pathname.replace(/\/+$/, "")}`,
+      ...(parsed.fingerprint === undefined ? {} : { fingerprint: normalizeFingerprint(parsed.fingerprint) }),
+      ...(caPem === undefined ? {} : { caFile: PLATFORM_CA_FILE }),
+    };
     yield* writeAtomically(configFile, `${JSON.stringify({
       host: parsed.bind, port: parsed.port, keyFile: "agent.key", certFile: "agent.crt", trustFile: "trust.json",
-      agentId: enrolled.agentId, nodeId: enrolled.nodeId,
+      agentId: enrolled.agentId, nodeId: enrolled.nodeId, platform,
     }, null, 2)}\n`, 0o644);
     const identity: WorkerIdentity = {
       nodeId: enrolled.nodeId, agentId: enrolled.agentId, url: agentUrl, certSha256: sha256Of(certPem!),

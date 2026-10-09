@@ -659,7 +659,25 @@ export interface ZelavisNodeEnrollResult {
   readonly trust: { readonly keys: readonly { readonly keyId: string; readonly publicKey: string; readonly notBefore: string; readonly notAfter: string }[] };
 }
 
+/** One answered enrollment attempt. Never carries a token, certificate or address. */
+export interface ZelavisNodeEnrollmentAuditEntry {
+  readonly at: number;
+  readonly outcome: "enrolled" | "refused" | "worker-newer" | "node-exists" | "invalid";
+  /** Present only when what the caller sent had the shape of a node id. */
+  readonly nodeId?: string;
+  /** Why a refused attempt was refused: the caller is never told. */
+  readonly reason?: "unknown-node" | "bad-token" | "expired" | "already-consumed" | "source-mismatch" | "node-registered" | "node-revoked";
+  readonly version?: string;
+}
+
 export interface ZelavisNodesClient {
+  /**
+   * The Platform's current public keys, for a joined machine to refresh its trust; no session
+   * is needed. 409 when this installation does not accept nodes.
+   */
+  trust(): Promise<{ readonly keys: readonly { readonly keyId: string; readonly publicKey: string; readonly notBefore: string; readonly notAfter: string }[]; readonly revokedKeyIds?: readonly string[] }>;
+  /** Recent enrollment attempts, newest first, with the reason a refusal had; needs `server.nodes.manage`. */
+  audit(): Promise<readonly ZelavisNodeEnrollmentAuditEntry[]>;
   /** Enrolled nodes and pending enrollments; needs `server.nodes.view`. */
   list(): Promise<ZelavisNodeList>;
   /**
@@ -1023,6 +1041,8 @@ export function createZelavisClient(
       releaseNode: (nodeId) => json<{ released: boolean }>(`/runtime/cloud/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     nodes: {
+      trust: () => json<{ trust: Awaited<ReturnType<ZelavisNodesClient["trust"]>> }>("/runtime/nodes/trust", { method: "POST", body: {} }).then((r) => r.trust),
+      audit: () => json<{ entries: readonly ZelavisNodeEnrollmentAuditEntry[] }>("/runtime/nodes/audit").then((r) => r.entries),
       list: () => json<ZelavisNodeList>("/runtime/nodes"),
       createEnrollment: (input) => json<ZelavisNodeEnrollmentToken>("/runtime/nodes/enrollments", { method: "POST", body: input }),
       enroll: (input) => json<ZelavisNodeEnrollResult>("/runtime/nodes/enroll", { method: "POST", body: input }),

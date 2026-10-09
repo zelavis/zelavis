@@ -130,7 +130,8 @@ export function verifyRemotePlacementGrant(
 /** Local durable high-water state; never takes a newer owner over an old process. */
 export function createRemotePlacementLeaseStore(options: {
   readonly store: ZelavisSystemStore;
-  readonly trust: ZelavisHostOperationTrustStore;
+  /** Read for every verification, so a refreshed set of Platform keys applies without a restart. */
+  readonly trust: () => ZelavisHostOperationTrustStore;
   readonly agentId: string;
   readonly nodeId: string;
   readonly fencePrevious: (placement: RemotePlacementRecord) => Promise<boolean>;
@@ -160,7 +161,7 @@ export function createRemotePlacementLeaseStore(options: {
   },
     accept(token: string): Promise<RemotePlacementRecord> {
     return present(Effect.gen(function* (): Effect.fn.Return<RemotePlacementRecord, IntegrationFailure> {
-      const grant = (yield* integrationValue(verifyRemotePlacementGrant(options.trust, token,
+      const grant = (yield* integrationValue(verifyRemotePlacementGrant(options.trust(), token,
         options.agentId, options.nodeId)));
       if (!grant) throw new Error("Remote placement grant is invalid or expired.");
       const next = grant.placement;
