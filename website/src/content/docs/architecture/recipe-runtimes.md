@@ -213,7 +213,7 @@ processes: a running Project upgraded through the manager with no failed request
 unchanged database PID, and the real WordPress recipe (Nginx, PHP-FPM, MariaDB) switching to a
 changed web configuration under continuous traffic with all three PIDs unchanged.
 
-Limits today: a replaced process (a database whose launch changed) has a short gap; a layout
+Limits today: the Platform does not yet apply this to managed recipes such as WordPress: a running managed Project takes the integration update path, which refreshes the Zelavis integration only and leaves the recipe's processes and configuration as they are; a replaced process (a database whose launch changed) has a short gap; a layout
 move (adoption of an earlier layout) still needs the Project stopped, because a running
 database directory cannot be renamed, so the dashboard **Upgrade** action,
 `projects upgrade <id> --restart`, `client.projects.upgrade(id, { restart: true })` and

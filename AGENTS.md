@@ -931,7 +931,7 @@ running processes by fingerprint (`core/recipe/plan-diff.ts`, `plan-controller.t
 unchanged processes keep serving, a configuration-only change reloads in place (`config` +
 `update` in the plan), and only a process whose launch changed is replaced, in dependency
 order; a durable journal (`adapters/_recipe-upgrade.ts`) decides previous/target after a
-crash, and any failure rolls back to the previous plan. Not live yet: a layout move
+crash, and any failure rolls back to the previous plan. Not live yet: managed recipes such as WordPress (a running managed Project is routed to the integration update path, which never reconciles the recipe's process plan; wire both together), a layout move
 (adoption) needs the `restart` option (stop, upgrade, start again), a replaced process (e.g.
 the database) has a brief gap, and new requirements or commands refuse the live path and roll
 back. Those are limits, never precedent for a new recipe feature.
