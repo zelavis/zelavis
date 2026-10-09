@@ -1,4 +1,5 @@
-import type { ZelavisServiceRegistryEntry, ZelavisServiceRegistryStateEntry } from "../service.js";
+import type { RecipeManifest } from "../core/recipe/index.js";
+import type { ZelavisProjectRecipeDefinition, ZelavisServiceRegistryEntry, ZelavisServiceRegistryStateEntry } from "../service.js";
 
 /** Catalogue identity shared by public transports. Acquisition references stay private. */
 export interface PublicServiceRegistryIdentity {
@@ -11,6 +12,26 @@ export interface PublicServiceRegistryIdentity {
   /** Who maintains it; `zelavis` for what the Zelavis project publishes. Separate from `source`, which is about trust in the registry. */
   maintainer?: string;
   order?: number;
+}
+
+/** What a person can choose when creating a Project; archive addresses and entry paths stay in the recipe. */
+export interface PublicInstallChoices {
+  methods: readonly { id: string; driver: "js" | "oci"; requires: readonly string[] }[];
+  software: readonly { version: string }[];
+}
+
+export function publicInstallChoices(install: RecipeManifest): PublicInstallChoices {
+  return {
+    methods: install.methods.map((method) => ({ id: method.id, driver: method.driver, requires: method.requires })),
+    software: install.software.map((software) => ({ version: software.version })),
+  };
+}
+
+/** A recipe's Project metadata for public transports, with the install manifest narrowed to its choices. */
+export function publicProjectRecipe(project: ZelavisProjectRecipeDefinition | undefined) {
+  if (!project) return undefined;
+  const { install, ...rest } = project;
+  return { ...rest, ...(install ? { install: publicInstallChoices(install) } : {}) };
 }
 
 /** Administrative diagnostics only; never include this shape in public discovery. */

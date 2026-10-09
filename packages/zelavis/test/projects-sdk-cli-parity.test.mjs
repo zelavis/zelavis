@@ -6,6 +6,7 @@ import { createZelavisClient, ZelavisClientHttpError } from "../dist/sdk/fetch.j
 import { createZelavisEdgePreviews } from "../dist/edge/previews.js";
 import { createNodeEdgePreviewHost } from "../dist/adapters/_node-edge-previews.js";
 import { runCli } from "../dist/cli/commands.js";
+import { parseRecipeManifest } from "../dist/core/recipe/index.js";
 
 const OWNER = { principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] } };
 
@@ -83,6 +84,18 @@ async function boot(t, options = {}) {
       catalog: [
         { ...recipe("acme/packages"), service: { ...recipe("acme/packages").service, project: { runtimeKinds: ["native"], hostPackages: ["wordpress-stack"] } } },
         recipe("acme/plain"),
+        { ...recipe("acme/choosy"), service: { ...recipe("acme/choosy").service, project: { runtimeKinds: ["native"], install: parseRecipeManifest({
+          contract: 1,
+          methods: [
+            { id: "native", driver: "js", entry: "./recipe.mjs", requires: [] },
+            { id: "container", driver: "oci", image: `registry.example/app@sha256:${"a".repeat(64)}`, requires: ["docker"] },
+          ],
+          software: [
+            { version: "7.1", archive: "https://example.com/7.1.tar.gz", sha256: "b".repeat(64), maxBytes: 1000 },
+            { version: "6.9", archive: "https://example.com/6.9.tar.gz", sha256: "c".repeat(64), maxBytes: 1000 },
+          ],
+          ports: [{ name: "web", protocol: "http" }],
+        }) } } },
         recipe("acme/advised", { network: "advisory" }),
         recipe("acme/vm-only", { boundary: { minimum: "microvm", enforcement: "required" } }),
       ],
@@ -317,4 +330,48 @@ test("the same preview descriptor is read through HTTP, SDK and CLI", async (t) 
   assert.equal((await client.projects.start(project.id)).preview.port, project.preview.port);
   await client.projects.remove(project.id);
   await assert.rejects(fetch(`http://127.0.0.1:${project.preview.port}`));
+});
+
+test("install method and software version are offered, chosen and refused the same way on HTTP, SDK and CLI", async (t) => {
+  const { fetcher, client } = await boot(t);
+
+  const listed = await http(fetcher, "GET", "/project-recipes");
+  const choosy = listed.body.projectRecipes.find((entry) => entry.name === "acme/choosy");
+  assert.deepEqual(choosy.install, {
+    methods: [{ id: "native", driver: "js", requires: [] }, { id: "container", driver: "oci", requires: ["docker"] }],
+    software: [{ version: "7.1" }, { version: "6.9" }],
+  }, "what can be chosen, without archive addresses or entry paths");
+  assert.deepEqual((await client.projects.recipes()).find((entry) => entry.name === "acme/choosy").install, choosy.install);
+  assert.deepEqual((await cli(fetcher, ["recipes"])).stdout.projectRecipes.find((entry) => entry.name === "acme/choosy").install, choosy.install);
+  assert.equal(listed.body.projectRecipes.find((entry) => entry.name === "acme/plain").install, undefined);
+
+  const viaHttp = await http(fetcher, "POST", "/projects", { name: "http-site", recipeName: "acme/choosy", softwareVersion: "6.9" });
+  assert.equal(viaHttp.status, 201);
+  const viaSdk = await client.projects.create({ name: "sdk-site", recipeName: "acme/choosy", softwareVersion: "6.9" });
+  const viaCli = await cli(fetcher, ["create", "cli-site", "--recipe", "acme/choosy", "--software-version", "6.9"]);
+  assert.equal(viaCli.exitCode, 0);
+  assert.deepEqual(viaHttp.body.project.recipe.install, { method: "native", driver: "js", requires: [], software: "6.9" });
+  assert.deepEqual(viaSdk.recipe.install, viaHttp.body.project.recipe.install);
+  assert.deepEqual(viaCli.stdout.project.recipe.install, viaHttp.body.project.recipe.install);
+
+  const newest = await client.projects.create({ name: "newest", recipeName: "acme/choosy" });
+  assert.equal(newest.recipe.install.software, "7.1", "the newest when none is named");
+
+  const refusedHttp = await http(fetcher, "POST", "/projects", { name: "bad-a", recipeName: "acme/choosy", method: "container" });
+  assert.equal(refusedHttp.status, 400);
+  assert.match(refusedHttp.body.error, /requested recipe method "container" is unavailable; no alternative was selected/);
+  await assert.rejects(client.projects.create({ name: "bad-b", recipeName: "acme/choosy", method: "container" }), (error) =>
+    error instanceof ZelavisClientHttpError && error.status === 400 && error.message === refusedHttp.body.error);
+  const refusedCli = await cli(fetcher, ["create", "bad-c", "--recipe", "acme/choosy", "--method", "container"]);
+  assert.notEqual(refusedCli.exitCode, 0);
+
+  const wrongType = await http(fetcher, "POST", "/projects", { name: "bad-d", recipeName: "acme/choosy", method: 7 });
+  assert.equal(wrongType.status, 400);
+  const nothingToChoose = await http(fetcher, "POST", "/projects", { name: "bad-e", recipeName: "acme/plain", softwareVersion: "1.0" });
+  assert.match(nothingToChoose.body.error, /no install method or software version to choose/);
+  assert.equal((await http(fetcher, "GET", "/projects/bad-a")).status, 404, "a refused creation leaves nothing behind");
+
+  const misplaced = await cli(fetcher, ["list", "--method", "native"]);
+  assert.notEqual(misplaced.exitCode, 0);
+  assert.match(JSON.stringify(misplaced.stderr), /only supported by projects create/);
 });

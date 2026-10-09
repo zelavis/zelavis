@@ -1,3 +1,4 @@
+import { parseRecipeManifest, type RecipeManifest } from "./core/recipe/index.js";
 import { Effect } from "effect";
 import { IntegrationFailure, present, integrationValue } from "./core/runtime/effect-boundary.js";
 import { normalizeProjectHostPackages } from "./project-host-packages.js";
@@ -110,6 +111,11 @@ export interface ZelavisProjectRecipeDefinition {
   readonly isolation?: ZelavisProjectIsolationIntent;
   /** Present for a managed app (WordPress and the like); see `ZelavisProjectManagedDefinition`. */
   readonly managed?: ZelavisProjectManagedDefinition;
+  /**
+   * How to install and run the software: named methods and the software versions the recipe
+   * can install. Contract 1 (`zelavis/recipe`). A Project locks one method and one version.
+   */
+  readonly install?: RecipeManifest;
 }
 
 export interface ZelavisServiceRegistryEntry<TContext = unknown> {
@@ -616,10 +622,20 @@ export function manifestProjectRecipe(
   manifest: ZelavisPackageManifest,
 ): ZelavisProjectRecipeDefinition | undefined {
   const project = (manifest.zelavis as { project?: unknown } | undefined)?.project as
-    | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed"> & { isolation?: unknown; managed?: unknown })
+    | (Omit<ZelavisProjectRecipeDefinition, "isolation" | "managed" | "install"> & { isolation?: unknown; managed?: unknown; install?: unknown })
     | undefined;
   if (!project) return undefined;
   const hostPackages = normalizeProjectHostPackages(project.hostPackages);
+  let install: RecipeManifest | undefined;
+  if (project.install !== undefined) {
+    try {
+      install = parseRecipeManifest(project.install);
+    } catch (error) {
+      throw new TypeError(
+        `Package "${manifest.name}" declares invalid zelavis.project.install: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   let managed: ZelavisProjectManagedDefinition | undefined;
   try {
     managed = normalizeProjectManaged(project.managed);
@@ -629,8 +645,8 @@ export function manifestProjectRecipe(
     );
   }
   if (project.isolation === undefined) {
-    const { managed: _managed, isolation: _isolation, ...rest } = project;
-    return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(managed ? { managed } : {}) };
+    const { managed: _managed, isolation: _isolation, install: _install, ...rest } = project;
+    return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(managed ? { managed } : {}), ...(install ? { install } : {}) };
   }
   let isolation: ZelavisProjectIsolationIntent | undefined;
   try {
@@ -640,8 +656,8 @@ export function manifestProjectRecipe(
       `Package "${manifest.name}" declares invalid zelavis.project.isolation: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const { isolation: _declared, managed: _managed, ...rest } = project;
-  return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}) };
+  const { isolation: _declared, managed: _managed, install: _install, ...rest } = project;
+  return { ...rest, ...(hostPackages ? { hostPackages } : {}), ...(isolation ? { isolation } : {}), ...(managed ? { managed } : {}), ...(install ? { install } : {}) };
 }
 
 /**

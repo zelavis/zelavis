@@ -532,6 +532,10 @@ export interface ZelavisProjectCreateInput {
   readonly id?: string;
   readonly recipeName?: string;
   readonly engineVersion?: string;
+  /** Install method id, from the recipe's `install.methods`; refused when this host cannot run it. */
+  readonly method?: string;
+  /** Software version, from the recipe's `install.software`; defaults to the newest. */
+  readonly softwareVersion?: string;
   /** Defaults to true. */
   readonly start?: boolean;
 }
@@ -547,6 +551,11 @@ export interface ZelavisProjectRecipeSummary {
   readonly summary?: string;
   readonly runtimeKinds: readonly string[];
   readonly isolation?: ZelavisProjectIsolationIntent;
+  /** What can be chosen at creation, when the recipe offers a choice. */
+  readonly install?: {
+    readonly methods: readonly { readonly id: string; readonly driver: "js" | "oci"; readonly requires: readonly string[] }[];
+    readonly software: readonly { readonly version: string }[];
+  };
   readonly [key: string]: unknown;
 }
 

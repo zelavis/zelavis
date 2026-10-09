@@ -1,3 +1,4 @@
+import { selectRecipeMethod, selectRecipeSoftware } from "./core/recipe/index.js";
 import type { TaggedFailure } from "./core/runtime/effect-boundary.js";
 import { isExactVersion } from "./updates.js";
 import type { RuntimeRelease } from "./core/runtime/handover.js";
@@ -72,6 +73,23 @@ export interface ZelavisProjectDeletionState {
 
 export type ZelavisProjectKind = string;
 
+export interface ZelavisProjectInstallLock {
+  /** The recipe's method id, for example `native` or `container`. */
+  readonly method: string;
+  readonly driver: "js" | "oci";
+  /** The requirements the method declared, kept so start can check them without the manifest. */
+  readonly requires: readonly string[];
+  /** The exact software version this Project installs. */
+  readonly software: string;
+}
+
+/** What this host can do for a recipe's install methods. */
+export interface ZelavisProjectInstallHost {
+  readonly drivers: readonly ("js" | "oci")[];
+  /** Requirement names the host satisfies or can provision through approved operations. */
+  readonly requirements: readonly string[];
+}
+
 export interface ZelavisProjectRecipeLock {
   hostPackages?: readonly string[];
   name: string;
@@ -85,6 +103,12 @@ export interface ZelavisProjectRecipeLock {
   isolation?: ZelavisProjectIsolationIntent;
   /** Set for a managed app: hosting-style controls and its own admin entry. */
   managed?: ZelavisProjectManagedDefinition;
+  /**
+   * The install method and software version chosen at creation. Selection happens once and is
+   * never repeated at start, so a host that loses the method refuses to start the Project
+   * instead of quietly using another one.
+   */
+  install?: ZelavisProjectInstallLock;
   /**
    * Content digest of the recipe package materialized into the Project. A
    * runtime that finds one runs that artifact, not the Platform's copy.
@@ -303,6 +327,10 @@ export interface ZelavisProjectGatewayAuthorityInput {
 
 export interface ZelavisProjectCreateInput {
   engineVersion?: string;
+  /** Install method id, for a recipe that offers several. Refused when this host cannot run it. */
+  method?: string;
+  /** Software version to install, for a recipe that offers several. Defaults to the newest. */
+  softwareVersion?: string;
   name: string;
   id?: string;
   recipeName?: string;
@@ -672,6 +700,21 @@ function normalizeRecipeRuntimeKinds(
   return Object.freeze(normalized);
 }
 
+const INSTALL_ID = /^[a-z][a-z0-9-]{0,63}$/;
+const INSTALL_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$/;
+
+function readInstallLock(value: unknown): ZelavisProjectInstallLock {
+  const fail = () => new ZelavisProjectValidationError("Stored Project install lock is malformed.");
+  if (!isObjectRecord(value)) throw fail();
+  const { method, driver, requires, software, ...extra } = value;
+  if (Object.keys(extra).length > 0 || typeof method !== "string" || !INSTALL_ID.test(method) ||
+      (driver !== "js" && driver !== "oci") || typeof software !== "string" || software.length > 64 || !INSTALL_VERSION.test(software) ||
+      !Array.isArray(requires) || requires.length > 32 || requires.some((name) => typeof name !== "string" || !INSTALL_ID.test(name))) {
+    throw fail();
+  }
+  return Object.freeze({ method, driver, requires: Object.freeze([...requires] as string[]), software });
+}
+
 function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProjectRecipeLock {
   const rawRecipe = rawProject.recipe;
   if (!isObjectRecord(rawRecipe)) {
@@ -701,6 +744,7 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
     ),
     ...isolationIntentField(rawRecipe.isolation, "Stored Project recipe lock"),
     ...managedField(rawRecipe.managed, "Stored Project recipe lock"),
+    ...(rawRecipe.install !== undefined ? { install: readInstallLock(rawRecipe.install) } : {}),
     ...(rawRecipe.hostPackages !== undefined ? { hostPackages: normalizeProjectHostPackages(rawRecipe.hostPackages) } : {}),
     ...(rawRecipe.artifact !== undefined ? { artifact: (() => {
       if (!isObjectRecord(rawRecipe.artifact) || typeof rawRecipe.artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(rawRecipe.artifact.digest)) throw new ZelavisProjectValidationError("Stored recipe artifact requires its exact content digest.");
@@ -793,6 +837,11 @@ export interface ZelavisProjectManagerOptions {
      */
     resolveAlternativeRuntimeKinds?: () => Promise<readonly ZelavisProjectRuntimeKind[]>;
     /**
+     * What this host can do for a recipe's install methods. Absent on a host that cannot prove
+     * any, where a recipe with install methods is refused rather than guessed at.
+     */
+    installHost?: () => Promise<ZelavisProjectInstallHost>;
+    /**
      * Told on every reconciliation how many replicas Fabric could not place for lack of
      * capacity (zero when none). Only reported where placement is authoritative, because a
      * host that models no capacity reports shortfalls that are not real. The answer is
@@ -880,6 +929,52 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             return yield* Effect.fail(new ZelavisProjectValidationError(`Project runtime "${defaultKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`));
         }
         return yield* Effect.fail(new ZelavisProjectIsolationError(`Project recipe "${recipe.name}"`, defaultAssessment!));
+    });
+    /**
+     * The install method and software version a new Project locks. Chosen once, from what this
+     * host can do, and never again: a later start checks the lock and refuses, it does not pick.
+     */
+    const selectInstall = Effect.fn("Projects.selectInstall")(function* (
+        entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
+        requested: { method?: string | undefined; softwareVersion?: string | undefined },
+    ) {
+        const manifest = entry.service.project?.install;
+        if (!manifest) {
+            if (requested.method !== undefined || requested.softwareVersion !== undefined) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${entry.service.name}" has no install method or software version to choose.`));
+            }
+            return undefined;
+        }
+        if (!options.installHost) {
+            return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${entry.service.name}" installs through methods this host cannot prove it supports.`));
+        }
+        const host = yield* integration(() => options.installHost!());
+        return yield* evaluate((): ZelavisProjectInstallLock => {
+            try {
+                const method = selectRecipeMethod(manifest, {
+                    drivers: host.drivers, requirements: host.requirements,
+                    ...(requested.method === undefined ? {} : { method: requested.method }),
+                });
+                const software = selectRecipeSoftware(manifest, requested.softwareVersion);
+                return { method: method.id, driver: method.driver, requires: [...method.requires], software: software.version };
+            } catch (error) {
+                throw new ZelavisProjectValidationError(error instanceof Error ? error.message : String(error));
+            }
+        });
+    });
+    /** The refusal for a Project whose locked install method this host can no longer run. */
+    const installRefusal = Effect.fn("Projects.installRefusal")(function* (project: Readonly<ZelavisProjectDescriptor>) {
+        const install = project.recipe.install;
+        if (!install) return undefined;
+        const host = options.installHost ? yield* integration(() => options.installHost!()) : undefined;
+        const missing = host === undefined
+            ? ["a host that can prove its capabilities"]
+            : [
+                ...(host.drivers.includes(install.driver) ? [] : [`the ${install.driver} driver`]),
+                ...install.requires.filter((name) => !host.requirements.includes(name)),
+            ];
+        return missing.length === 0 ? undefined : new ZelavisProjectValidationError(
+            `Project "${project.id}" was created with the "${install.method}" install method, which needs ${missing.join(", ")}; this host does not provide it. Zelavis will not switch methods on its own.`);
     });
     /** The refusal for a Project whose required isolation is not proven. */
     function isolationRefusal(project: Readonly<ZelavisProjectDescriptor>): ZelavisProjectIsolationError | undefined {
@@ -1486,7 +1581,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         return yield* Effect.catch(Effect.gen(function* () {
             // Refused inside the try so it is recorded as a failure with its reason,
             // and before `prepare`, so the driver never runs for it.
-            const refusal = isolationRefusal(project);
+            const refusal = isolationRefusal(project) ?? (yield* installRefusal(project));
             if (refusal)
                 return (yield* Effect.fail(refusal));
             const placement = (yield* localPlacementToken(project.id));
@@ -1744,6 +1839,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
             }
             let recipe = yield* evaluate(() => recipeLockFromRegistryEntry(projectRecipe));
+            const install = yield* selectInstall(projectRecipe, { method: input.method, softwareVersion: input.softwareVersion });
+            if (install) recipe = { ...recipe, install };
             const defaultKind = normalizeRuntimeKind(options.resolveDefaultRuntimeKind
                 ? (yield* integration(() => options.resolveDefaultRuntimeKind!())) : defaultRuntimeKind);
             const runtimeKind = yield* selectRuntimeKind(recipe, defaultKind);
@@ -1873,7 +1970,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 (yield* evaluate(() => assertProjectIsOperable(project, "restarted")));
                 // Refused before stopping: a running Project is not taken down only to
                 // discover it may not be started again.
-                const refusal = isolationRefusal(project);
+                const refusal = isolationRefusal(project) ?? (yield* installRefusal(project));
                 if (refusal)
                     return (yield* Effect.fail(refusal));
                 if (options.authoritativePlacement) {
@@ -1948,6 +2045,20 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
                 }
                 let next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                // The install method and software version are the Project's own choice, made at creation.
+                // A newer recipe keeps them when it still offers them; otherwise the upgrade is refused.
+                const manifest = entry.service.project?.install;
+                if (project.recipe.install) {
+                    const kept = project.recipe.install;
+                    const offered = manifest?.methods.some((method) => method.id === kept.method && method.driver === kept.driver) &&
+                        manifest.software.some((software) => software.version === kept.software);
+                    if (!offered) {
+                        return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" no longer offers the "${kept.method}" method with software ${kept.software} this Project uses. Create a new Project to use it.`)));
+                    }
+                    next = { ...next, install: kept };
+                } else if (manifest) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with. Create a new Project to use it.`)));
+                }
                 if (input?.engineVersion !== undefined) yield* evaluate(() => readEngineVersion(input as unknown as Record<string, unknown>));
                 const selection = yield* (runtimeEffects.resolveVersion?.({ ...project, recipe: next }, input?.engineVersion) ?? Effect.succeed(undefined));
                 if (input?.engineVersion !== undefined && !selection)

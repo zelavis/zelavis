@@ -60,6 +60,8 @@ const projectSearchSchema = {
   recipe: parseAsString.withDefault("zelavis/app"),
   versionProject: parseAsString.withDefault(""),
   engineVersion: parseAsString.withDefault(""),
+  method: parseAsString.withDefault(""),
+  software: parseAsString.withDefault(""),
 } as const;
 
 export async function clientLoader({ request }: ClientLoaderFunctionArgs) {
@@ -152,7 +154,7 @@ function ProjectsRoute() {
   const navigation = useNavigation();
   const openingProjectId = navigation.state === "loading" && navigation.location
     ? getProjectIdFromPathname(navigation.location.pathname) : undefined;
-  const [{ q, new: createMode, name: requestedName, recipe: recipeName, versionProject, engineVersion }, setParams] =
+  const [{ q, new: createMode, name: requestedName, recipe: recipeName, versionProject, engineVersion, method: installMethod, software: installSoftware }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -170,6 +172,7 @@ function ProjectsRoute() {
           service.name,
         summary: service.marketplace?.summary,
         hostPackages: service.project?.hostPackages,
+        install: service.project?.install,
         runtimeKinds: service.project?.runtimeKinds ?? ["native"],
       })) ?? [];
   const selectedRecipe =
@@ -225,9 +228,11 @@ function ProjectsRoute() {
         recipeName: selectedRecipe?.name ?? recipeName,
         start: true,
         ...(selectedRecipe?.name === "@zelavis/app" && engineVersion ? { engineVersion } : {}),
+        ...(selectedRecipe?.install && installMethod ? { method: installMethod } : {}),
+        ...(selectedRecipe?.install && installSoftware ? { softwareVersion: installSoftware } : {}),
         ...(installHostPackages ? { installHostPackages: true } : {}),
       });
-      setParams({ name: null, new: null, recipe: null, engineVersion: null });
+      setParams({ name: null, new: null, recipe: null, engineVersion: null, method: null, software: null });
       setMessage(`${project.name} is running in its own project runtime.`);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -367,7 +372,7 @@ function ProjectsRoute() {
                     id="project-recipe"
                     value={selectedRecipe?.name ?? recipeName}
                     onChange={(event) =>
-                      setParams({ recipe: event.target.value || null, engineVersion: null })
+                      setParams({ recipe: event.target.value || null, engineVersion: null, method: null, software: null })
                     }
                     className="flex h-9 w-full rounded-md border bg-background px-9 text-sm outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={creating || projectRecipes.length === 0}
@@ -389,6 +394,30 @@ function ProjectsRoute() {
                     {versions?.versions.map(entry => <option key={entry.version} value={entry.version} disabled={entry.status !== "available"}>{entry.version}{entry.status !== "available" ? " (unavailable)" : ""}</option>)}
                   </select>
                   {versions?.reason ? <p className="text-sm text-muted-foreground">{versions.reason}</p> : null}
+                </div>
+              ) : null}
+              {selectedRecipe?.install ? (
+                <div className="grid gap-4 md:col-span-3 md:grid-cols-2">
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium" htmlFor="create-install-method">Install method</label>
+                    <select id="create-install-method" value={installMethod} onChange={event => setParams({ method: event.target.value || null })}
+                      disabled={creating} className="h-9 rounded-md border bg-background px-3 text-sm">
+                      <option value="">Automatic (the first this server can run)</option>
+                      {selectedRecipe.install.methods.map(method => (
+                        <option key={method.id} value={method.id}>
+                          {method.id} ({method.driver === "oci" ? "container" : "native"}{method.requires.length ? `, needs ${method.requires.join(", ")}` : ""})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium" htmlFor="create-install-software">Software version</label>
+                    <select id="create-install-software" value={installSoftware} onChange={event => setParams({ software: event.target.value || null })}
+                      disabled={creating} className="h-9 rounded-md border bg-background px-3 text-sm">
+                      <option value="">Newest available</option>
+                      {selectedRecipe.install.software.map(software => <option key={software.version} value={software.version}>{software.version}</option>)}
+                    </select>
+                  </div>
                 </div>
               ) : null}
               <div className="flex items-end gap-2">

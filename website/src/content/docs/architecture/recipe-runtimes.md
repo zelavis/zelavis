@@ -117,8 +117,10 @@ No Project runtime gains host package authority through Effect.
 
 The public `zelavis/recipe` subpath provides an initial runtime-neutral contract
 for recipes written with Effect v4. It is available for authoring and validation;
-package admission and Project execution still use the runtime-module model above.
-The JS recipe driver, Node host layer and OCI execution remain planned.
+Project execution still uses the runtime-module model above: no recipe runs through
+the Node host layer yet. A package declares this contract's manifest as
+`zelavis.project.install` in its `package.json`, validated when the package is loaded
+(an invalid one fails the load, naming the package). OCI execution remains planned.
 
 `parseRecipeManifest` validates contract 1 metadata: named methods, bounded host
 requirements, declared ports and software releases with HTTPS archives, SHA-256
@@ -129,8 +131,30 @@ are refused. The returned manifest is an immutable snapshot.
 
 Software versions belong to verified recipe metadata independently of the npm
 recipe revision. `selectRecipeMethod` picks the first method the supplied host
-capabilities can satisfy, or refuses an unavailable explicit choice. Integration
-must lock the selected method ID at creation; a Project start must use that lock.
+capabilities can satisfy, or refuses an unavailable explicit choice.
+`selectRecipeSoftware` takes the requested version, which must be offered, or the newest.
+
+Creating a Project from a recipe that declares `install` makes both choices once and
+locks them in the Project's recipe lock (`install: { method, driver, requires, software }`):
+`projects create --method ID --software-version V`, `client.projects.create({ method,
+softwareVersion })`, `POST /runtime/projects`, and two pickers in the dashboard's create form
+(`GET /runtime/project-recipes` and the CLI `projects recipes` list what is on offer). With
+no choice named the Platform locks the first method this host can run and the newest
+software. The host's capabilities are the drivers it has (JavaScript today; OCI has no driver)
+and the requirements it has or can install through an approved package set. A host that cannot
+prove its capabilities refuses such a recipe instead of guessing. A start or restart checks the lock
+and refuses, naming what is missing, when the host no longer provides the method; it never
+selects another. A recipe upgrade keeps the choice when the newer recipe still offers that
+method and software version, and is refused otherwise.
+
+Once its start phase has returned a process plan, `startProcessPlan` runs it through the Agent's
+process contract: processes start in dependency order, each only after its dependencies' ports
+accept connections (independent ones together, at most four at a time), executables and ports
+come from the host's tables and never from the plan's text, the environment is exactly what the
+plan names, and secret references are resolved at the last moment. A process that is not ready in
+time, or exits first, fails the start after everything already started is stopped; one that exits
+later is reported and not restarted; stopping goes dependents first; interruption stops what was
+started.
 
 `defineRecipe` describes Effect `install` and `start` phases, with optional `stop`,
 `upgrade`, `backup` and `remove`. Phases request the `RecipeHost` service, which

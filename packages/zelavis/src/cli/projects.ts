@@ -4,7 +4,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--no-start] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -20,6 +20,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let id: string | undefined;
   let recipe: string | undefined;
   let engineVersion: string | undefined;
+  let method: string | undefined;
+  let softwareVersion: string | undefined;
   let start = true;
   let installHostPackages = false;
   let json = false;
@@ -36,7 +38,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -46,6 +48,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--id") id = value;
     if (flag === "--recipe") recipe = value;
     if (flag === "--engine-version") engineVersion = value;
+    if (flag === "--method") method = value;
+    if (flag === "--software-version") softwareVersion = value;
   }
 
   const [action, target, ...rest] = positional;
@@ -55,6 +59,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   }
   if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
+  if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
   const base = new URL(url);
   const client = createZelavisClient({
@@ -88,7 +93,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "recipes": {
       const recipes = yield* integration(() => client.projects.recipes());
       print({ projectRecipes: recipes }, () =>
-        recipes.map((entry) => `${entry.name}\t${entry.runtimeKinds.join(",")}\t${entry.title}`).join("\n"));
+        recipes.map((entry) => `${entry.name}\t${entry.runtimeKinds.join(",")}\t${entry.title}` +
+          (entry.install ? `\tmethods ${entry.install.methods.map((method) => method.id).join(",")}\tsoftware ${entry.install.software.map((software) => software.version).join(",")}` : "")).join("\n"));
       return;
     }
     case "versions": {
@@ -117,6 +123,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
         ...(id ? { id } : {}),
         ...(recipe ? { recipeName: recipe } : {}),
         ...(engineVersion ? { engineVersion } : {}),
+        ...(method ? { method } : {}),
+        ...(softwareVersion ? { softwareVersion } : {}),
         start,
         ...(installHostPackages ? { installHostPackages: true } : {}),
       }));

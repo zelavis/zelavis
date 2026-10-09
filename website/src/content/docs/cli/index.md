@@ -107,7 +107,8 @@ command tree.
   installed native App engines. `projects switch-version <id> --engine-version
   <exact-version>` selects one with its matching App recipe. `create <name>` and
   `upgrade <id>` also accept `--engine-version`; their default is the latest
-  qualified installed engine. Running qualified Apps switch through the shared
+  qualified installed engine. `create` also takes `--method ID` and `--software-version V` for a
+  recipe that offers install choices (`projects recipes` shows them). Running qualified Apps switch through the shared
   handover at their existing address. Source installations and unsupported
   drivers report why independent selection is unavailable.
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform

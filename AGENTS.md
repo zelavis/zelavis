@@ -918,8 +918,10 @@ host-operation Agent: it accepts only installed-operation catalog, submit and
 status messages, and never opens or reclaims Project process state. Root
 provisioning endpoint ownership and installation wiring remain planned; the
 combined Project process Agent must not become the root package installer.
-The initial `zelavis/recipe` Effect authoring contract is available, but its
-manifest is not yet integrated into package admission or Project execution.
+The `zelavis/recipe` Effect authoring contract is available. Its manifest
+(`zelavis.project.install`) is validated at package load, and the method and software
+version are chosen once at creation and locked in the Project, but no recipe executes
+through it yet.
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated

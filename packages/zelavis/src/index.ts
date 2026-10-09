@@ -1,10 +1,11 @@
+import { provisionableRequirements } from "./project-host-packages.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
 import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
-import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
+import { publicInstallChoices, publicProjectRecipe, publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
 import {
   identityEndpointGroup as createIdentityEndpointGroup,
@@ -2018,7 +2019,7 @@ function resolveRuntimeManagementCore(
       // general catalogue leaves these out and shows them beside the plugin
       // they extend instead.
       extends: serviceExtensionPoints(entry.service),
-      project: entry.service.project,
+      project: publicProjectRecipe(entry.service.project),
       menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
       menus: entry.service.menus?.map((menu) =>
         serializeServiceMenuForDashboard(entry.service.name, menu),
@@ -4770,6 +4771,9 @@ function resolvePlatformEndpointGroup(
                   ...(entry.service.project?.managed
                     ? { managed: entry.service.project.managed }
                     : {}),
+                  // What a person can choose when creating: methods (with what each needs) and
+                  // the software versions on offer. The archive addresses stay in the recipe.
+                  ...(entry.service.project?.install ? { install: publicInstallChoices(entry.service.project.install) } : {}),
                 })),
             },
           }),
@@ -5552,6 +5556,11 @@ function resolvePlatformEndpointGroup(
               if (input.engineVersion !== undefined && (!isExactVersion(input.engineVersion) || (input.recipeName !== undefined && input.recipeName !== "@zelavis/app"))) {
                 return yield* Effect.fail(new ZelavisProjectValidationError("An exact engine version can only be selected for a native Zelavis App."));
               }
+              for (const field of ["method", "softwareVersion"] as const) {
+                if (input[field] !== undefined && typeof input[field] !== "string") {
+                  return yield* Effect.fail(new ZelavisProjectValidationError(`${field} must be a string.`));
+                }
+              }
               if (input.installHostPackages !== undefined && typeof input.installHostPackages !== "boolean") {
                 return yield* Effect.fail(new ZelavisProjectValidationError("installHostPackages must be true or false."));
               }
@@ -5569,6 +5578,8 @@ function resolvePlatformEndpointGroup(
               }
               const project = yield* integration(() => projects!.create({
                 ...(input.engineVersion !== undefined ? { engineVersion: input.engineVersion as string } : {}),
+                ...(typeof input.method === "string" ? { method: input.method } : {}),
+                ...(typeof input.softwareVersion === "string" ? { softwareVersion: input.softwareVersion } : {}),
                 name: typeof input.name === "string" ? input.name : "",
                 ...(typeof input.id === "string" ? { id: input.id } : {}),
                 ...(typeof input.recipeName === "string"
@@ -6516,6 +6527,11 @@ export function zelavis(
                   // because it runs once and a pass before Fabric exists would enforce
                   // nothing.
                   placement: () => fabricCoreService?.context,
+                  // Drivers this host runs: JavaScript recipes today. OCI is declared in the contract but has no driver yet.
+                  installHost: () => Promise.resolve({
+                    drivers: ["js" as const],
+                    requirements: provisionableRequirements(options.hostOperations !== undefined),
+                  }),
                   ...(options.cloudCapacity
                     ? { capacityShortfall: (unplaced: number) => present(options.cloudCapacity!.observeShortfall(unplaced)) }
                     : {}),

@@ -109,3 +109,37 @@ export function selectRecipeMethod(manifest: RecipeManifest, host: {
       : `The requested recipe method "${host.method}" is unavailable; no alternative was selected.`,
   });
 }
+
+export class RecipeSoftwareUnavailable extends Schema.TaggedError<RecipeSoftwareUnavailable>()(
+  "RecipeSoftwareUnavailable", { message: Schema.String },
+) {}
+
+const versionParts = (version: string) => version.split(".").map(Number);
+
+/** Orders `x.y` and `x.y.z` versions; the newest sorts last. */
+export function compareSoftwareVersions(left: string, right: string): number {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * The software version a new Project installs: the one asked for, which must be offered, or
+ * the newest. Like method selection this happens once, at creation; the result is locked.
+ */
+export function selectRecipeSoftware(manifest: RecipeManifest, requested?: string): RecipeManifest["software"][number] {
+  if (requested !== undefined) {
+    const found = manifest.software.find((software) => software.version === requested);
+    if (!found) {
+      throw new RecipeSoftwareUnavailable({
+        message: `Software version "${requested}" is not offered by this recipe (${manifest.software.map((software) => software.version).join(", ")}).`,
+      });
+    }
+    return found;
+  }
+  return [...manifest.software].sort((a, b) => compareSoftwareVersions(a.version, b.version)).at(-1)!;
+}

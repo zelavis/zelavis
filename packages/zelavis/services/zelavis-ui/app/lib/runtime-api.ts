@@ -96,6 +96,8 @@ export interface RuntimeServiceRegistryEntry {
   project?: {
     hostPackages?: readonly string[];
     runtimeKinds: readonly RuntimeProjectRuntimeKind[];
+    /** What a person can choose at creation, when the recipe offers a choice. */
+    install?: RuntimeInstallChoices;
   };
   menu?: RuntimeServiceRegistryMenuDefinition;
   menus?: readonly RuntimeServiceRegistryMenuDefinition[];
@@ -392,6 +394,11 @@ export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject
       runtimeKinds: project.recipe.runtimeKinds ?? ["native"],
     },
   };
+}
+
+export interface RuntimeInstallChoices {
+  methods: readonly { id: string; driver: "js" | "oci"; requires: readonly string[] }[];
+  software: readonly { version: string }[];
 }
 
 export interface RuntimeProjectRecipe {
@@ -1705,6 +1712,8 @@ export async function createProject(
     id?: string;
     recipeName?: string;
     engineVersion?: string;
+    method?: string;
+    softwareVersion?: string;
     start?: boolean;
     installHostPackages?: boolean;
   },
