@@ -652,6 +652,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/zelavis
 
+  zelavis-services/dokuwiki:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.4
+        version: 26.6.4
+      effect:
+        specifier: 4.0.0
+        version: 4.0.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
   zelavis-services/ecommerce:
     devDependencies:
       effect:

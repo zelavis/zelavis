@@ -442,6 +442,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   applyUpdate: "project-id",
   recoverUpdate: "project-id",
   settleUpdate: "project-id",
+  ingressReady: "project-id",
   prepare: "descriptor",
   start: "descriptor",
   stop: "project-id",
@@ -554,6 +555,10 @@ export function createDeploymentBackendProjectRuntime(options: {
       const recover = effectOperations(yield* forProjectId(id)).recoverUpdate;
       if (!recover) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot recover a Project update."));
       return yield* recover(id, update);
+    }),
+    ingressReady: Effect.fn("BackendProjects.ingressReady")(function* (id: string) {
+      const ready = effectOperations(yield* forProjectId(id)).ingressReady;
+      if (ready) yield* ready(id);
     }),
     settleUpdate: Effect.fn("BackendProjects.settleUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[1], selection: "previous" | "target") {
       const settle = effectOperations(yield* forProjectId(id)).settleUpdate;

@@ -84,6 +84,17 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   done
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" start-historical
   runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" live-upgrade
+  # The second managed recipe, a different shape (no database), through the same path.
+  DOKUWIKI_CHECK=/workspace/zelavis-services/dokuwiki/scripts/check-dokuwiki-provisioning.mjs
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" create
+  systemctl stop zelavis.service zelavis.socket
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" seed
+  systemctl start zelavis.socket zelavis.service
+  for attempt in $(seq 1 60); do
+    if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+    sleep 1
+  done
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" live-upgrade
 fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   "$NODE" /workspace/distribution/scripts/qualify-installed-update.mjs

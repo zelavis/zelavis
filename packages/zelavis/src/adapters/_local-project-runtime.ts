@@ -380,6 +380,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         resolveVersion: Effect.fn("LocalProjects.resolveVersion")(function* (project, version) {
             return yield* effectOperations(node).resolveVersion!(project, version);
         }),
+        ingressReady: Effect.fn("LocalProjects.ingressReady")(function* (id) {
+            const ready = effectOperations(yield* forProjectId(id)).ingressReady;
+            if (ready) yield* ready(id);
+        }),
         prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate, placement) {
             if (managedIntegration(previous)) {
                 yield* assertTrusted(candidate.recipe.name);

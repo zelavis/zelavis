@@ -2,29 +2,24 @@ import { Effect } from "effect";
 import { RecipeError, RecipeHost, defineRecipe, type ProcessPlan, type RecipeContext, type RecipeHostApi } from "zelavis/recipe";
 
 /**
- * WordPress as a recipe: what to install and what to run, and nothing about the machine.
+ * DokuWiki as a recipe: a flat-file wiki served by Nginx and PHP-FPM, with no database.
  *
- * Installing downloads the pinned release, writes the site's configuration and initializes a
- * dedicated MariaDB data directory. Starting returns the three processes of the stack (MariaDB,
- * PHP-FPM, Nginx) as a plan. The Platform finds the executables, allocates the ports, runs each
- * phase in a process of its own as the Project's OS user, starts and supervises the plan, and
- * resumes it after a restart.
+ * It is the second managed recipe of the Platform and deliberately different from WordPress in shape
+ * (two processes, no credentials, no database to initialize) so that nothing in the recipe runtime,
+ * the live upgrade or the integration depends on one application. Installing downloads the pinned
+ * release (digest-checked) and validates the web configuration; DokuWiki's own installer, opened in
+ * the browser, creates the administrator. Starting returns the two processes as a plan.
  *
- * Layout below the Project's directory (`context.directories.root`): `site/` is WordPress,
- * `db/` the database, `run/` pid files and logs, the rest temporary space. Generated credentials
- * are secrets: this code names them and the host keeps them outside the Project.
+ * Layout below the Project's directory (`context.directories.root`): `site/` is DokuWiki (code,
+ * `conf/` and `data/` are its own), `run/` pid files and logs, the rest temporary space.
  */
 
 const MINIMUM_PHP: readonly [number, number] = [8, 2];
-const MINIMUM_MARIADB: readonly [number, number] = [10, 6];
-const REQUIRED_EXTENSIONS = ["curl", "dom", "fileinfo", "gd", "intl", "mbstring", "mysqli", "openssl", "xml", "zip"] as const;
+const REQUIRED_EXTENSIONS = ["mbstring", "xml"] as const;
 const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run", "nginx-client-temp", "nginx-proxy-temp", "nginx-fastcgi-temp", "nginx-uwsgi-temp", "nginx-scgi-temp"] as const;
-const SALTS = ["AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY", "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT"] as const;
-const DATABASE_NAME = "wordpress";
-const DATABASE_USER = "wordpress";
 
-/** Where the Project keeps a named directory now, absolute and below the root. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
-const place = (context: RecipeContext, name: "site" | "db") => {
+/** Where the Project keeps its site now, absolute and below the root. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
+const place = (context: RecipeContext, name: "site") => {
   const absolute = context.directories.named[name];
   if (absolute === undefined) throw refuse("install", `The Platform did not provide the "${name}" directory.`);
   return { absolute, relative: absolute.slice(context.directories.root.length + 1) };
@@ -40,10 +35,7 @@ function versionAtLeast(text: string, minimum: readonly [number, number]): boole
   return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
 }
 
-const phpString = (value: string) => value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-const sqlString = (value: string) => `'${value.replace(/'/g, "''")}'`;
 const quoted = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-const secretName = (salt: string) => `wp-${salt.toLowerCase().replaceAll("_", "-")}`;
 
 function phpFpmConfig(context: RecipeContext): string {
   const { root, sockets } = context.directories;
@@ -56,7 +48,7 @@ pid = ${root}/run/php-fpm.pid
 error_log = ${root}/run/php-fpm.log
 daemonize = no
 
-[wordpress]
+[dokuwiki]
 user = ${user}
 group = ${group}
 listen = ${sockets}/php-fpm.sock
@@ -128,10 +120,21 @@ http {
     listen 127.0.0.1:${web};
     server_name _;
     root ${quoted(place(context, "site").absolute)};
-    index index.php index.html;
+    index doku.php index.html;
+
+    # DokuWiki keeps configuration, code and its own data below the document root; none of it is served.
+    location ~ ^/(data|conf|bin|inc|vendor)/ { deny all; }
+    location ~ /(\\.ht|README|COPYING|VERSION|SECURITY\\.md)$ { deny all; }
 
     location / {
-      try_files $uri $uri/ /index.php?$args;
+      try_files $uri $uri/ @dokuwiki;
+    }
+
+    location @dokuwiki {
+      rewrite ^/_media/(.*) /lib/exe/fetch.php?media=$1 last;
+      rewrite ^/_detail/(.*) /lib/exe/detail.php?media=$1 last;
+      rewrite ^/_export/([^/]+)/(.*) /doku.php?do=export_$1&id=$2 last;
+      rewrite ^/(.*) /doku.php?id=$1&$args last;
     }
 
     location ~ \\.php$ {
@@ -171,7 +174,7 @@ const requireVersions = (host: RecipeHostApi) => Effect.gen(function* () {
   const php = yield* host.run({ command: "php", args: ["-r", "echo PHP_VERSION;"], timeoutMs: 30_000 });
   const fpm = yield* host.run({ command: "php-fpm", args: ["-v"], timeoutMs: 30_000 });
   if (php.code !== 0 || !versionAtLeast(php.stdout, MINIMUM_PHP) || !versionAtLeast(`${fpm.stdout} ${fpm.stderr}`, MINIMUM_PHP)) {
-    return yield* Effect.fail(refuse("install", `WordPress needs PHP CLI and PHP-FPM ${MINIMUM_PHP.join(".")} or newer; found CLI ${php.stdout.trim()} and FPM ${fpm.stdout.trim().split("\n")[0] ?? ""}.`));
+    return yield* Effect.fail(refuse("install", `DokuWiki needs PHP CLI and PHP-FPM ${MINIMUM_PHP.join(".")} or newer; found CLI ${php.stdout.trim()} and FPM ${fpm.stdout.trim().split("\n")[0] ?? ""}.`));
   }
   const extensions = yield* host.run({
     command: "php", timeoutMs: 30_000,
@@ -179,63 +182,20 @@ const requireVersions = (host: RecipeHostApi) => Effect.gen(function* () {
   });
   const missing = yield* Effect.try({ try: () => JSON.parse(extensions.stdout) as unknown, catch: () => refuse("install", "PHP did not report its extensions.") });
   if (!Array.isArray(missing) || missing.length > 0) {
-    return yield* Effect.fail(refuse("install", `WordPress is missing required PHP extensions: ${Array.isArray(missing) ? missing.join(", ") : "unknown"}.`));
-  }
-  const database = yield* host.run({ command: "mariadbd", args: ["--version"], timeoutMs: 30_000 });
-  if (!versionAtLeast(`${database.stdout} ${database.stderr}`, MINIMUM_MARIADB)) {
-    return yield* Effect.fail(refuse("install", `WordPress needs MariaDB ${MINIMUM_MARIADB.join(".")} or newer; found ${database.stdout.trim()}.`));
+    return yield* Effect.fail(refuse("install", `DokuWiki is missing required PHP extensions: ${Array.isArray(missing) ? missing.join(", ") : "unknown"}.`));
   }
 });
 
 const installSite = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
   const site = place(context, "site").relative;
-  if (!(yield* host.files.exists(`${site}/wp-includes/version.php`))) {
-    yield* host.progress({ phase: "install", message: `Downloading WordPress ${context.software.version}.` });
-    yield* host.download({ url: context.software.archive, sha256: context.software.sha256, maxBytes: context.software.maxBytes, destination: "dl/wordpress.tar.gz" });
+  if (!(yield* host.files.exists(`${site}/doku.php`))) {
+    yield* host.progress({ phase: "install", message: `Downloading DokuWiki ${context.software.version}.` });
+    yield* host.download({ url: context.software.archive, sha256: context.software.sha256, maxBytes: context.software.maxBytes, destination: "dl/dokuwiki.tar.gz" });
     // A half-extracted earlier attempt is replaced, not merged into.
     yield* host.files.remove(site);
-    yield* host.extract("dl/wordpress.tar.gz", site, { stripTopLevel: true });
+    yield* host.extract("dl/dokuwiki.tar.gz", site, { stripTopLevel: true });
     yield* host.files.remove("dl");
   }
-  if (!(yield* host.files.exists(`${site}/wp-config.php`))) {
-    const password = yield* host.secret("db-password");
-    const salts = yield* Effect.forEach(SALTS, (salt) => host.secret(secretName(salt)));
-    yield* host.files.write(`${site}/wp-config.php`, [
-      `<?php\ndefine('DB_NAME', '${phpString(DATABASE_NAME)}');\ndefine('DB_USER', '${phpString(DATABASE_USER)}');\ndefine('DB_PASSWORD', '`,
-      password,
-      `');\ndefine('DB_HOST', '127.0.0.1:${context.ports.db}');\ndefine('DB_CHARSET', 'utf8mb4');\ndefine('DB_COLLATE', '');\n`,
-      ...SALTS.flatMap((salt, index) => [`define('${salt}', '`, salts[index]!, "');\n"]),
-      `$table_prefix = 'wp_';\ndefine('WP_DEBUG', false);\nif (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');\nrequire_once ABSPATH . 'wp-settings.php';\n`,
-    ]);
-  }
-});
-
-const initializeDatabase = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
-  const database = place(context, "db");
-  const marker = `${database.relative}/.zelavis-initialized`;
-  if (yield* host.files.exists(marker)) return;
-  yield* host.progress({ phase: "install", message: "Initializing the database." });
-  const password = yield* host.secret("db-password");
-  const { root } = context.directories;
-  // An earlier attempt that died partway left a data directory with nothing in it worth keeping.
-  yield* host.files.remove(database.relative);
-  yield* host.files.mkdir(database.relative);
-  // The first FLUSH PRIVILEGES turns account management on: bootstrap runs without grant tables.
-  yield* host.files.write("run/init.sql", [
-    `FLUSH PRIVILEGES;\nCREATE DATABASE IF NOT EXISTS \`${DATABASE_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n`,
-    `CREATE USER IF NOT EXISTS ${sqlString(DATABASE_USER)}@'127.0.0.1' IDENTIFIED BY '`, password, `';\n`,
-    `GRANT ALL PRIVILEGES ON \`${DATABASE_NAME}\`.* TO ${sqlString(DATABASE_USER)}@'127.0.0.1';\nFLUSH PRIVILEGES;\n`,
-  ]);
-  const created = yield* host.run({
-    command: "mariadb-install-db", timeoutMs: 10 * 60_000,
-    args: [`--datadir=${database.absolute}`, "--auth-root-authentication-method=normal", "--skip-test-db", `--extra-file=${root}/run/init.sql`,
-      ...(context.account.switchUser ? [`--user=${context.account.user}`] : [])],
-  });
-  yield* host.files.remove("run/init.sql");
-  if (created.code !== 0) {
-    return yield* Effect.fail(refuse("install", `MariaDB could not initialize its data directory: ${(created.stderr || created.stdout).trim().split("\n").slice(-3).join(" ")}`));
-  }
-  yield* host.files.write(marker, "initialized\n");
 });
 
 export default defineRecipe({
@@ -255,8 +215,7 @@ export default defineRecipe({
     if (fpm.code !== 0) return yield* Effect.fail(refuse("install", `The PHP-FPM configuration is not valid: ${(fpm.stderr || fpm.stdout).trim().split("\n").slice(-3).join(" ")}`));
     const nginx = yield* host.run({ command: "nginx", args: ["-t", "-c", `${root}/nginx.conf`, "-p", root], timeoutMs: 30_000 });
     if (nginx.code !== 0) return yield* Effect.fail(refuse("install", `The Nginx configuration is not valid: ${(nginx.stderr || nginx.stdout).trim().split("\n").slice(-3).join(" ")}`));
-    yield* initializeDatabase(host, context);
-    yield* host.progress({ phase: "install", message: "WordPress is installed." });
+    yield* host.progress({ phase: "install", message: "DokuWiki is installed. Open the site to run its installer." });
   }),
 
   start: (context) => Effect.sync((): ProcessPlan => {
@@ -264,14 +223,7 @@ export default defineRecipe({
     return {
       processes: [
         {
-          name: "database", command: "mariadbd", env: {}, dependsOn: [], readiness: { port: "db", timeoutMs: 120_000 },
-          args: [`--datadir=${place(context, "db").absolute}`, `--socket=${sockets}/mariadb.sock`, `--port=${context.ports.db}`, "--bind-address=127.0.0.1",
-            `--pid-file=${root}/run/mariadb.pid`, `--log-error=${root}/run/mariadb.log`,
-            // MariaDB refuses to run as root without this, and there is nothing sensible for it to guess.
-            ...(context.account.switchUser ? [`--user=${context.account.user}`] : [])],
-        },
-        {
-          name: "php-fpm", command: "php-fpm", env: {}, dependsOn: ["database"],
+          name: "php-fpm", command: "php-fpm", env: {}, dependsOn: [],
           args: ["-F", "-y", `${root}/php-fpm.conf`], readiness: { path: `${sockets}/php-fpm.sock`, timeoutMs: 120_000 },
           // A new pool configuration is picked up by PHP-FPM's graceful reload: workers finish their requests first.
           config: [`${root}/php-fpm.conf`], update: { strategy: "reload", signal: "SIGUSR2" },

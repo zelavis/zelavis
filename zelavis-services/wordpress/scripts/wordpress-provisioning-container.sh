@@ -27,7 +27,7 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 if ! docker exec "$CONTAINER" sh /workspace/zelavis-services/wordpress/scripts/provisioning-host.sh; then
-  docker exec "$CONTAINER" journalctl -u zelavis.service -u zelavis-agent.service -u zelavis-host-agent.service -n 60 --no-pager || true
+  docker exec "$CONTAINER" sh -c 'journalctl -u zelavis.service -u zelavis-agent.service -u zelavis-host-agent.service -n 400 --no-pager | grep -v php_invoke | tail -80' || true
   exit 1
 fi
 if [[ -n "${ZELAVIS_UPDATE_PROOF:-}" ]]; then

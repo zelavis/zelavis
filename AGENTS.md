@@ -939,8 +939,7 @@ unchanged processes keep serving, a configuration-only change reloads in place (
 `update` in the plan), and only a process whose launch changed is replaced, in dependency
 order; a durable journal (`adapters/_recipe-upgrade.ts`) decides previous/target after a
 crash, and any failure rolls back to the previous plan. Not live yet: adopting an earlier recipe's layout (`adopt`) needs the `restart` option (stop, upgrade, start again); a recipe that places data by name (`directories`, read from
-`context.directories.named`) upgrades live with the data left where it is and moves it, atomically, at the next start from a stop, a replaced process (e.g.
-the database) has a brief gap, and new requirements or commands refuse the live path and roll
+`context.directories.named`) upgrades live with the data left where it is and moves it, atomically, at the next start from a stop, a replaced process is covered for public requests by the ingress gate (`ingressReady`: requests wait at the gateway while a launch change replaces a serving process) but a replaced database still pauses what needs it, and new requirements or commands refuse the live path and roll
 back. Those are limits, never precedent for a new recipe feature.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
 and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process

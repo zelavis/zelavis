@@ -254,7 +254,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },
     async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },
-    async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; }, async settleUpdate() {},
+    async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; }, async settleUpdate() {}, async ingressReady() {},
   };
   const runtime = createDeploymentBackendProjectRuntime({
     store,

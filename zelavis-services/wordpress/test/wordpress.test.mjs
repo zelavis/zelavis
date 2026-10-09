@@ -44,7 +44,7 @@ test("its runtime is the Platform's recipe runtime, configured by the host's use
 const context = (overrides = {}) => ({
   projectId: "p1", hostname: "localhost", software: install.software[0], method: install.methods[0], config: {},
   ports: { web: 18080, db: 13306 },
-  directories: { root: "/srv/p1/app", sockets: "/run/zv-abc" },
+  directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site", db: "/srv/p1/app/db" } },
   account: { user: "www-data", group: "www-data", switchUser: false },
   ...overrides,
 });
@@ -119,6 +119,21 @@ test("install downloads the pinned release, writes private credentials by refere
   assert.ok(fake.files.has("db/.zelavis-initialized"));
   assert.ok(fake.calls.runs.some((call) => call.command === "nginx" && call.args[0] === "-t"));
   assert.ok(fake.calls.runs.some((call) => call.command === "php-fpm" && call.args[0] === "-tt"));
+});
+
+test("the site and the database are wherever the Project has them: a recipe never assumes its own layout", async () => {
+  const moved = { named: { site: "/srv/p1/app/web/wp", db: "/srv/p1/app/data/mysql" } };
+  const where = (named) => ({ directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named } });
+  const plan = Effect.runSync(recipe.start(context(where(moved.named))));
+  assert.ok(plan.processes[0].args.includes("--datadir=/srv/p1/app/data/mysql"));
+  const fake = fakeHost();
+  await runInstall(fake, context(where(moved.named)));
+  assert.deepEqual(fake.calls.extracts.map((e) => e.destination), ["web/wp"]);
+  assert.ok(fake.calls.writes.has("web/wp/wp-config.php"));
+  assert.ok(fake.files.has("data/mysql/.zelavis-initialized"));
+  const text = (name) => [].concat(fake.calls.writes.get(name)).join("");
+  assert.ok(text("nginx.conf").includes("/srv/p1/app/web/wp"));
+  assert.ok(text("php-fpm.conf").includes("chdir = /srv/p1/app/web/wp"));
 });
 
 test("install resumes: nothing is downloaded, regenerated or reinitialized when it is already there", async () => {

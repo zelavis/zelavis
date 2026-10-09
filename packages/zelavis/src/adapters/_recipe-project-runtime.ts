@@ -4,10 +4,10 @@ import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { Effect, Fiber, PubSub } from "effect";
+import { Deferred, Duration, Effect, Fiber, PubSub } from "effect";
 import {
   PlanHost, RecipeError, makePlanController, parseRecipeManifest,
-  type PlanController, type RecipeContext, type RecipeManifest,
+  type PlanController, type PlanHostApi, type RecipeContext, type RecipeManifest,
 } from "../core/recipe/index.js";
 import { evaluate, integration, unwrapFailure, type EffectOperations } from "../core/runtime/effect-boundary.js";
 import { objectFields, optional, recordOf, isString, isFiniteNumber, isBoolean, isUnknown, parseJson } from "../core/json-validation.js";
@@ -100,6 +100,8 @@ const packageRecord = objectFields<{ zelavis?: { project?: { install?: unknown }
 const DEFAULT_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const PHASE_TIMEOUT_MS = 2 * 60_000;
 const LOG_LIMIT = 500;
+/** How long requests already inside a Project are given to finish once its gate closes. */
+const INGRESS_DRAIN_MS = 300;
 const SECRET_NAME = /^[a-z][a-z0-9-]{0,63}$/;
 
 const failure = (message: string) => new ZelavisProjectRuntimeError(message);
@@ -204,6 +206,12 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     Effect.flatMap((text) => evaluate(() => parseJson(text, stateRecord))),
     Effect.mapError(() => failure(`Project "${id}" has no recipe state; prepare it first.`)),
   );
+  /** Name and version of a recipe package, or nothing when it cannot be read. */
+  const packageIdentity = (directory: string) => integration(() => readFile(join(directory, "package.json"), "utf8")).pipe(
+    Effect.flatMap((text) => evaluate(() => parseJson(text, objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown })))),
+    Effect.map((identity): string | undefined => typeof identity.name === "string" && typeof identity.version === "string" ? `${identity.name}@${identity.version}` : undefined),
+    Effect.orElseSucceed((): string | undefined => undefined),
+  );
   const readStateIfPresent = (id: string) => readState(id).pipe(Effect.map((state): RecipeState | undefined => state), Effect.orElseSucceed(() => undefined));
   const writeState = (id: string, state: RecipeState) =>
     integration(() => writeFile(paths(id).state, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 })).pipe(Effect.mapError(asRuntimeError));
@@ -272,13 +280,26 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
   type PlacementToken = Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1];
 
+  /**
+   * Public requests wait here while the Project's serving processes are replaced: the gate of a Project is
+   * closed for exactly the length of the replacement and opened however it ends.
+   */
+  const gates = new Map<string, Deferred.Deferred<void>>();
+  const disruption = (id: string): NonNullable<PlanHostApi["disruption"]> => (work) => Effect.acquireUseRelease(
+    Effect.sync(() => { const gate = Deferred.makeUnsafe<void>(); gates.set(id, gate); return gate; }).pipe(
+      // Requests already inside the Project finish before anything is stopped; new ones wait at the gate.
+      Effect.tap(() => Effect.sleep(Duration.millis(INGRESS_DRAIN_MS)))),
+    () => work,
+    (gate) => Effect.sync(() => { if (gates.get(id) === gate) gates.delete(id); Deferred.doneUnsafe(gate, Effect.void); }),
+  );
+
   /** A plan controller for a Project, listening to what its processes do so the Project's log tells it. */
   const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, placement?: PlacementToken) {
     const host = makeAgentPlanHost({
       runner: agent, workloadId: id, cwd: paths(id).root, commands: state.commands, ports: state.ports,
       ...(placement ? { placement: placement as never } : {}),
       baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: paths(id).root, LANG: "C.UTF-8" },
-      resolveSecret: resolveSecret(id),
+      resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
     });
     const controller = yield* makePlanController.pipe(Effect.provideService(PlanHost, host));
@@ -582,6 +603,11 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       )).pipe(Effect.mapError(asRuntimeError));
     }),
 
+    ingressReady: Effect.fn("RecipeRuntime.ingressReady")(function* (projectId: string) {
+      const gate = gates.get(projectId);
+      if (gate) yield* Deferred.await(gate);
+    }),
+
     settleUpdate: Effect.fn("RecipeRuntime.settleUpdate")(function* (projectId: string, _update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target") {
       return yield* withKit(settleRecipeUpdate(projectId, selection)).pipe(Effect.mapError(asRuntimeError));
     }),
@@ -599,10 +625,16 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const entries = yield* integration(() => readdir(projectsDirectory, { withFileTypes: true }));
       if (entries.length > 4096) return yield* Effect.fail(failure("Recipe Project adoption exceeds its discovery bound."));
       const parsed = yield* manifest;
+      // Several recipes share the Projects directory, and each runtime adopts only the Projects it
+      // runs: judging another recipe's processes by this recipe's manifest would refuse them.
+      const own = yield* packageIdentity(options.packageDirectory);
       yield* Effect.forEach(entries.filter((entry) => entry.isDirectory() && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(entry.name)), (entry) => Effect.gen(function* () {
         const id = entry.name;
         const state = yield* readStateIfPresent(id);
         if (!state?.installed || controllers.has(id)) return;
+        const theirs = yield* packageIdentity(join(paths(id).zelavis, "recipe", "package"));
+        // Only a Project positively identified as another recipe's is left alone.
+        if (own !== undefined && theirs !== undefined && theirs !== own) return;
         const attached = yield* integration(() => agent.attach!(id));
         if (attached.length === 0) return;
         // What the processes were started from was saved; asking the recipe again is the fallback.

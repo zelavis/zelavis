@@ -48,6 +48,13 @@ export interface PlanHostApi {
   /** What every process gets before the plan's own variables. */
   readonly baseEnvironment: Readonly<Record<string, string>>;
   readonly pollInterval: Duration.Input;
+  /**
+   * Wraps the part of a reconciliation during which something the Project serves with is stopped and
+   * started again (a replaced process, or one removed while others remain). The host uses it to hold
+   * public requests at its ingress for exactly that long, so a replacement shows as a short wait and
+   * not as failed requests. Reloads and kept processes never need it.
+   */
+  readonly disruption?: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly stopGrace: Duration.Input;
   readonly resolveSecret: (name: string) => Effect.Effect<string, RecipeError>;
   readonly start: (command: ZelavisAgentProcessCommand, options: ZelavisAgentProcessStartOptions) => Effect.Effect<ZelavisAgentProcess, RecipeError>;
@@ -283,10 +290,14 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
       const wanted: readonly WantedProcess[] = resolved.map((entry) => ({ name: entry.name, fingerprint: entry.fingerprint, dependsOn: entry.dependsOn, update: entry.update }));
       const groups = planSteps(view(yield* Ref.get(table)), wanted);
       const done: Record<"kept" | "reloaded" | "replaced" | "added" | "removed", string[]> = { kept: [], reloaded: [], replaced: [], added: [], removed: [] };
-      for (const group of groups) {
-        const outcomes = yield* Effect.forEach(group, (step) => apply(byName)(step).pipe(Effect.map((outcome) => [step.name, outcome] as const)), { concurrency: START_CONCURRENCY });
-        for (const [name, outcome] of outcomes) done[outcome].push(name);
-      }
+      const work = Effect.gen(function* () {
+        for (const group of groups) {
+          const outcomes = yield* Effect.forEach(group, (step) => apply(byName)(step).pipe(Effect.map((outcome) => [step.name, outcome] as const)), { concurrency: START_CONCURRENCY });
+          for (const [name, outcome] of outcomes) done[outcome].push(name);
+        }
+      });
+      const disruptive = groups.some((group) => group.some((step) => step._tag === "Replace" || (step._tag === "Remove" && wanted.length > 0)));
+      yield* host.disruption && disruptive ? host.disruption(work) : work;
       return done as ReconcileReport;
     }));
   });

@@ -1,0 +1,108 @@
+{
+  "name": "@zelavis/dokuwiki",
+  "version": "2026.7.14-alpha.0",
+  "private": false,
+  "description": "Official Zelavis DokuWiki Project recipe: a flat-file wiki with dedicated Nginx and PHP-FPM, no database.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "app",
+    "namespace": "dokuwiki",
+    "capabilities": [
+      "app:project",
+      "app:managed",
+      "app:dokuwiki"
+    ],
+    "project": {
+      "runtimeKinds": [
+        "native"
+      ],
+      "runtime": "./dist/runtime.js",
+      "managed": {
+        "adminTitle": "DokuWiki",
+        "adminPath": "/doku.php"
+      },
+      "hostPackages": [
+        "wordpress-stack"
+      ],
+      "install": {
+        "contract": 1,
+        "methods": [
+          {
+            "id": "native",
+            "driver": "js",
+            "entry": "./dist/recipe.js",
+            "requires": [
+              "nginx",
+              "php-fpm"
+            ]
+          }
+        ],
+        "software": [
+          {
+            "version": "2026.7.14",
+            "archive": "https://download.dokuwiki.org/src/dokuwiki/dokuwiki-2026-07-14c.tgz",
+            "sha256": "7e9b4dcb5ecb91a57f71b9b77dcec7bcf929959881464796611349ed1d183176",
+            "maxBytes": 33554432
+          }
+        ],
+        "ports": [
+          {
+            "name": "web",
+            "protocol": "http"
+          }
+        ],
+        "directories": [
+          {
+            "name": "site",
+            "path": "site"
+          }
+        ]
+      }
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "zelavis-services/dokuwiki"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/dokuwiki#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0",
+    "zelavis": ">=2.0.0-alpha.16"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "effect": "4.0.0",
+    "typescript": "^7.0.2",
+    "zelavis": "workspace:*"
+  },
+  "keywords": [
+    "zelavis",
+    "dokuwiki",
+    "wiki",
+    "recipe"
+  ]
+}

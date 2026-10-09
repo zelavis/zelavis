@@ -29,12 +29,14 @@ export function makeAgentPlanHost(input: {
   readonly onOutput?: PlanHostApi["onOutput"];
   readonly pollInterval?: Duration.Input;
   readonly stopGrace?: Duration.Input;
+  readonly disruption?: PlanHostApi["disruption"];
 }): PlanHostApi {
   return {
     workloadId: input.workloadId, cwd: input.cwd, commands: input.commands, ports: input.ports,
     baseEnvironment: input.baseEnvironment, resolveSecret: input.resolveSecret,
     ...(input.onOutput ? { onOutput: input.onOutput } : {}),
     ...(input.placement ? { placement: input.placement } : {}),
+    ...(input.disruption ? { disruption: input.disruption } : {}),
     pollInterval: input.pollInterval ?? Duration.millis(250),
     stopGrace: input.stopGrace ?? Duration.seconds(10),
     start: (command, options) => integration(() => input.runner.start(command, options)).pipe(

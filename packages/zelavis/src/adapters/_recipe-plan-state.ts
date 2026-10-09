@@ -25,7 +25,10 @@ export interface StoredPlan {
   readonly configs: Readonly<Record<string, string>>;
 }
 
-const unreadable = () => new RecipeError({ operation: "start", message: "The Project's saved plan is not valid." });
+const unreadable = (cause?: unknown) => new RecipeError({
+  operation: "start",
+  message: `The Project's saved plan is not valid${cause instanceof Error ? `: ${cause.message.slice(0, 300)}` : ""}.`,
+});
 
 export const readPlanState = (
   file: string,
@@ -34,11 +37,11 @@ export const readPlanState = (
   integration(() => readFile(file, "utf8")).pipe(
     Effect.map((text): string | undefined => text),
     Effect.catch((failure) => (failure.cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT"
-      ? Effect.succeed(undefined) : Effect.fail(unreadable())),
+      ? Effect.succeed(undefined) : Effect.fail(unreadable(new Error(`the file could not be read (${(failure.cause as NodeJS.ErrnoException | undefined)?.code ?? "unknown"})`)))),
     Effect.flatMap((text) => text === undefined ? Effect.succeed(undefined) : Schema.decodeUnknownEffect(PlanStateJson)(text).pipe(
       Effect.mapError(unreadable),
       // Revalidated like any plan: a file on disk is not trusted because this code wrote it once.
-      Effect.flatMap((state) => Effect.try({ try: () => parseProcessPlan(state.plan, allowed), catch: unreadable }).pipe(
+      Effect.flatMap((state) => Effect.try({ try: () => parseProcessPlan(state.plan, allowed), catch: (cause) => unreadable(cause) }).pipe(
         Effect.map((plan): StoredPlan => ({ plan, configs: state.configs })))),
     )),
   );

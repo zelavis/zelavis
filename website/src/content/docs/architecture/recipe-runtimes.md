@@ -232,7 +232,23 @@ time the Project starts from a stop, the data is moved to the new place with one
 and keeps working), and the install phase runs again so configuration names the new place. A
 crash in between is finished by the next start, because the physical state decides.
 
-Limits today: a replaced process (a database whose launch changed) has a short gap; a layout
+### Replacing a serving process
+
+When a newer recipe changes how a process is launched (not only its configuration), that process is
+replaced, which would otherwise show as failed requests. While a replacement runs, the Platform's
+gateway holds public requests for the Project at its ingress (`ingressReady`) and releases them when
+the new process is ready, after first giving requests already inside the Project 300 ms to finish. A
+request waits at most 15 seconds. Reloads and kept processes never close the gate. The gate holds
+requests; it cannot keep a database available while it restarts, so a replaced database is still a
+short pause for the requests that need it.
+
+### Two managed recipes
+
+WordPress (Nginx, PHP-FPM, MariaDB, generated credentials) and DokuWiki (Nginx and PHP-FPM, no
+database, no credentials) are both managed recipes on this path, with no code in the Platform that
+names either. DokuWiki exists to keep that true.
+
+Limits today: a replaced process is covered by the ingress gate for requests, but a database whose launch changed still pauses what needs it; a layout
 move (adoption of an earlier layout) still needs the Project stopped, because a running
 database directory cannot be renamed, so the dashboard **Upgrade** action,
 `projects upgrade <id> --restart`, `client.projects.upgrade(id, { restart: true })` and

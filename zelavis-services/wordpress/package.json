@@ -97,6 +97,16 @@
               "nginx-scgi-temp"
             ]
           }
+        ],
+        "directories": [
+          {
+            "name": "site",
+            "path": "site"
+          },
+          {
+            "name": "db",
+            "path": "db"
+          }
         ]
       }
     },

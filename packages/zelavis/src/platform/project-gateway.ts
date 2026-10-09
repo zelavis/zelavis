@@ -466,6 +466,8 @@ export function createProjectForwarder(
         : undefined;
 
     const controlPlane = isRuntimeControlPlanePath(options.wildcardPath);
+    // While the Project's serving processes are being replaced the request waits instead of failing.
+    if (!frontend) yield* integration(() => projects.ingressReady?.(project.id));
     const runtimeUrl = controlPlane && projects.gatewayTarget
       ? yield* integration(() => projects.gatewayTarget!(project.id)) : project.runtime.url;
     if (controlPlane && !runtimeUrl) return { status: 503, body: { error: "Project integration runtime is unavailable." } };

@@ -18,10 +18,10 @@ import { createMemorySystemStore } from "../dist/system-store.js";
 import { entry, sleep, sourcesIn } from "./fixtures/managed-live.mjs";
 
 
-async function fixture(t, rejectTarget) {
+async function fixture(t, rejectTarget, sourceOptions) {
   const base = await mkdtemp(join(tmpdir(), "zv-managed-live-"));
   t.after(() => rm(base, { recursive: true, force: true }));
-  const sources = await sourcesIn(base);
+  const sources = await sourcesIn(base, sourceOptions);
   const projects = join(base, "projects");
   const memory = createMemorySystemStore();
   // The Platform's registry can be made to refuse the commit of the new recipe.
@@ -157,6 +157,33 @@ test("a recipe that names another place for the data upgrades a running Project 
   assert.equal(readFileSync(join(f.projects, "live", "app", "data-two", "marker"), "utf8"), "the application's data", "and nothing in it changed");
   assert.equal(existsSync(join(f.projects, "live", "app", "data-one")), false);
   assert.deepEqual(JSON.parse(readFileSync(join(f.projects, "live", ".zelavis", "recipe-state.json"), "utf8")).layout, { data: "data-two" });
+  await manager.close();
+});
+
+test("replacing the process that serves requests holds public requests at the ingress instead of failing them", { timeout: 120_000 }, async (t) => {
+  const f = await fixture(t, { on: false }, { replaceWeb: true });
+  await (await f.managerFor("1.0.0")).create({ name: "Live", id: "live", recipeName: "@acme/live" });
+  const ask = web(f.projects);
+  const before = { web: await ask("web"), db: await ask("db") };
+
+  const manager = await f.managerFor("2.0.0");
+  let stop = false; const direct = { failed: 0, served: 0 }, gated = { failed: 0, served: 0 };
+  // Straight to the process, as nothing in front of it would.
+  const bare = (async () => { while (!stop) { try { await ask("web"); direct.served += 1; } catch { direct.failed += 1; } await sleep(2); } })();
+  // Through the Platform's ingress, which waits while the serving process is replaced.
+  const through = (async () => { while (!stop) { try { await manager.ingressReady("live"); await ask("web"); gated.served += 1; } catch { gated.failed += 1; } await sleep(2); } })();
+  await sleep(150);
+  const upgraded = await manager.upgrade("live", {});
+  await sleep(150);
+  stop = true; await Promise.all([bare, through]);
+
+  assert.equal(upgraded.recipe.version, "2.0.0");
+  const after = { web: await ask("web"), db: await ask("db") };
+  assert.notEqual(after.web.pid, before.web.pid, "the web process really was replaced");
+  assert.equal(after.db.pid, before.db.pid, "and the database was not");
+  assert.ok(direct.failed > 0, "without the gate the replacement shows as failed requests");
+  assert.equal(gated.failed, 0, "with it, not one request failed");
+  assert.ok(gated.served > 20, `served ${gated.served}`);
   await manager.close();
 });
 

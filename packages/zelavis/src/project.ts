@@ -197,6 +197,9 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   updatedAt: string;
 }
 
+/** The longest a public request waits for a Project whose serving processes are being replaced. */
+export const INGRESS_HOLD_LIMIT_MS = 15_000;
+
 export interface ZelavisProjectCleanupParticipant {
   /** Stable durable identifier. Renaming it changes persisted resume state. */
   readonly id: string;
@@ -270,6 +273,8 @@ export interface ZelavisProjectRuntimeDriver {
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
   /** Makes a workload update consistent with a selection another authority (the integration host) proved. */
   settleUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target"): Promise<void>;
+  /** Resolves once public requests may reach the Project: while its serving processes are being replaced it waits. */
+  ingressReady?(projectId: string): Promise<void>;
   gatewayTarget?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<string | undefined>;
   /** Metadata of the exact digest-verified frozen recipe, independent of catalogue summaries. */
   recipeDefinition?(project: Readonly<ZelavisProjectDescriptor>): ZelavisProjectRecipeDefinition | undefined;
@@ -404,6 +409,8 @@ export interface ZelavisProjectManager {
   remove(id: string): Promise<boolean>;
   /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
   gatewayTarget?(projectId: string): Promise<string | undefined>;
+  /** Resolves when public requests may reach the Project: it waits (at most {@link INGRESS_HOLD_LIMIT_MS}) while the Project's serving processes are replaced. */
+  ingressReady?(projectId: string): Promise<void>;
   signGatewayAuthority(
     projectId: string,
     claims: ZelavisProjectGatewayAuthorityInput,
@@ -2193,6 +2200,14 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
             yield* requireProject(id);
             return yield* runtimeEffects.logs((yield* evaluate(() => normalizeProjectId(id))));
+        }),
+        ingressReady: Effect.fn("Projects.ingressReady")(function* (id: string) {
+            if (!runtimeEffects.ingressReady) return;
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            // Advisory: a gate that cannot be consulted, or is held past the limit, never keeps a request out.
+            yield* runtimeEffects.ingressReady(projectId).pipe(
+                Effect.timeoutOrElse({ duration: INGRESS_HOLD_LIMIT_MS, orElse: () => Effect.void }),
+                Effect.orElseSucceed(() => undefined));
         }),
         gatewayTarget: Effect.fn("Projects.gatewayTarget")(function* (id: string) {
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => Effect.gen(function* () {
