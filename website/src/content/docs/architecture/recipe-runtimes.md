@@ -193,15 +193,33 @@ create, and generated leftovers to discard. Upgrading a stopped Project to such 
    or the upgrade cannot be recorded, every folder is moved back and what was created is
    removed, so the earlier recipe finds its Project as it left it; the interrupted case resumes.
 
-Today this upgrade needs the Project stopped, because a database directory cannot be renamed
-under a running server. The dashboard's **Upgrade** action, `projects upgrade <id> --restart`,
-`client.projects.upgrade(id, { restart: true })` and `{"restart": true}` over HTTP therefore stop
-a running Project, upgrade it and start it again (it is started again as the recipe it had if the
-upgrade fails). That is a limit of the current mechanism, not a rule: the goal is upgrades with no
-downtime whatever the recipe change. Managed apps' integration updates and Zelavis App engine
-updates already run live; for runtime recipes the plan is to compare the new recipe's process plan
-with what is running so unchanged processes keep serving and only changed ones restart, in
-dependency order.
+### Upgrading a running Project
+
+A running Project whose new recipe keeps the same layout upgrades without stopping. The
+Platform stages the new recipe beside the running one, runs its `start` phase to get the new
+process plan, and reconciles that plan against the running processes by fingerprint:
+
+- a process whose launch (executable, arguments, directory, environment) and configuration are
+  unchanged is **kept** and never touched;
+- a process whose plan lists `config` files and an `update` signal (for example Nginx `SIGHUP`,
+  PHP-FPM `SIGUSR2`) and whose only change is those files is **reloaded** in place;
+- a process whose launch changed, or that had exited, is **replaced**, and new ones are added,
+  in dependency order, each waiting for readiness before its dependents are touched.
+
+A durable journal records the upgrade, so after a crash the physical state decides whether the
+Project is on the previous or the target recipe. Any failure (an unready process, a failed
+phase, a commit that cannot be recorded) reconciles back to the previous plan. Proven with real
+processes: a running Project upgraded through the manager with no failed request and an
+unchanged database PID, and the real WordPress recipe (Nginx, PHP-FPM, MariaDB) switching to a
+changed web configuration under continuous traffic with all three PIDs unchanged.
+
+Limits today: a replaced process (a database whose launch changed) has a short gap; a layout
+move (adoption of an earlier layout) still needs the Project stopped, because a running
+database directory cannot be renamed, so the dashboard **Upgrade** action,
+`projects upgrade <id> --restart`, `client.projects.upgrade(id, { restart: true })` and
+`{"restart": true}` over HTTP stop, upgrade and start again; and a new recipe that needs
+requirements or commands the Project does not already hold is refused on the live path and
+rolled back. Recipe upgrades never change the application's own software.
 
 WordPress uses this: an existing WordPress Project (its site, uploads and database) upgrades to
 the current recipe with its address, content and admin login unchanged. The application's own

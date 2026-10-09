@@ -2,7 +2,7 @@ import { isUnknown, optional, objectFields, parseJson } from "../core/json-valid
 import { unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
-import { defineEffectProjectRuntime } from "./project-runtime.js";
+import { defineEffectProjectRuntime, type ZelavisRecipeRuntimeContext } from "./project-runtime.js";
 import { Deferred, Effect } from "effect";
 import { evaluate, integration, present, effectOperations, singleFlight, type EffectOperations } from "../core/runtime/effect-boundary.js";
 import { existsSync } from "node:fs";
@@ -188,7 +188,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         yield* integration(() => linkPlatformPackage(join(modules, RECIPE_ARTIFACT_DIRECTORY)));
         provideHostPackagesTo(modulePackage);
         const module = ((yield* integration(() => import(pathToFileURL(join(modulePackage, entry)).href)))) as {
-            createProjectRuntime?: (context: unknown) => ZelavisProjectRuntimeDriver;
+            createProjectRuntime?: (context: ZelavisRecipeRuntimeContext) => ZelavisProjectRuntimeDriver;
         };
         if (typeof module.createProjectRuntime !== "function") {
             return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" declares a runtime but does not export createProjectRuntime.`));
@@ -197,6 +197,18 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             directory,
             packageDirectory: modulePackage,
             agent: recipeAgent,
+            recipes: {
+                // The exact version asked for, from where this host keeps recipes, or nothing.
+                source: (name, version) => present(Effect.gen(function* () {
+                    const found = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(name, version))) ??
+                        (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
+                    if (!found) return undefined;
+                    const identity = yield* Effect.flatMap(integration(() => readFile(join(found, "package.json"), "utf8")), value => evaluate(() => parseJson(value, objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown }), "recipe package.json")));
+                    return identity.name === name && identity.version === version ? found : undefined;
+                })),
+                stage: (source, dataDirectory) => materializeRecipeArtifact(source, dataDirectory),
+                digest: (packageDirectory) => digestArtifactDirectory(packageDirectory),
+            },
             options: options.recipeRuntimeOptions?.[recipe.name] ?? {},
         });
         recipeDrivers.set(digest, driver);

@@ -63,6 +63,9 @@ test("start returns the three processes, in dependency order, within the manifes
   assert.ok(!database.args.some((arg) => String(arg).startsWith("--user=")), "an unprivileged Platform does not ask MariaDB to switch user");
   assert.deepEqual(checked.processes[1].readiness, { path: "/run/zv-abc/php-fpm.sock", timeoutMs: 120000 });
   assert.deepEqual(checked.processes[2].readiness, { port: "web", timeoutMs: 120000 });
+  assert.deepEqual([checked.processes[1].config, checked.processes[1].update], [["/srv/p1/app/php-fpm.conf"], { strategy: "reload", signal: "SIGUSR2" }], "PHP-FPM reloads gracefully");
+  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/app/nginx.conf"], { strategy: "reload", signal: "SIGHUP" }], "nginx reloads gracefully");
+  assert.equal(checked.processes[0].config, undefined, "the database reads nothing that a reload could change; a different launch restarts it");
 
   const root = Effect.runSync(recipe.start(context({ account: { user: "www-data", group: "www-data", switchUser: true } })));
   assert.ok(root.processes[0].args.includes("--user=www-data"), "a root Platform has MariaDB drop to the account");

@@ -78,7 +78,7 @@ async function setup(t, { startupDelayMs = 0, agent, recipe } = {}) {
   const drivers = [];
   const create = (override) => { const driver = make(override); drivers.push(driver); return driver; };
   t.after(async () => { for (const driver of drivers) await driver.close().catch(() => undefined); await runner.close(); await rm(base, { recursive: true, force: true }); });
-  return { base, directory, runner, create, packageDirectory };
+  return { base, directory, runner, agent: chosen, create, packageDirectory };
 }
 const portOf = (directory, id) => JSON.parse(readFileSync(join(directory, id, ".zelavis", "recipe-state.json"), "utf8")).ports.web;
 const reachable = (port) => Effect.runPromise(loopbackPortAccepts(port));
@@ -160,7 +160,7 @@ test("a stop the Agent refused stays visible and can be retried, and keeps the P
 test("a Platform that restarts adopts the processes its Agent kept running, and starts nothing twice", { timeout: 120_000 }, async (t) => {
   // An Agent that outlives the Platform: it keeps what it started and hands it back on request.
   const kept = new Map();
-  const { create, directory } = await setup(t, { agent: (runner) => ({
+  const { create, directory, agent: connection } = await setup(t, { agent: (runner) => ({
     ...runner, survivesControlPlaneRestart: true,
     start: async (command, options) => {
       let listener = options?.onOutput;
@@ -178,7 +178,8 @@ test("a Platform that restarts adopts the processes its Agent kept running, and 
   const port = portOf(directory, "site5");
   const installs = readFileSync(join(directory, "site5", "app", "installs.log"), "utf8");
 
-  const second = create();
+  // A new Platform: its own connection to the same Agent.
+  const second = create({ agent: { ...connection } });
   assert.equal((await second.status("site5")).status, "stopped", "a new Platform knows nothing yet");
   await second.adopt();
   assert.equal((await second.status("site5")).status, "running");

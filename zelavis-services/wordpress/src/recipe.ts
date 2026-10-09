@@ -264,10 +264,14 @@ export default defineRecipe({
         {
           name: "php-fpm", command: "php-fpm", env: {}, dependsOn: ["database"],
           args: ["-F", "-y", `${root}/php-fpm.conf`], readiness: { path: `${sockets}/php-fpm.sock`, timeoutMs: 120_000 },
+          // A new pool configuration is picked up by PHP-FPM's graceful reload: workers finish their requests first.
+          config: [`${root}/php-fpm.conf`], update: { strategy: "reload", signal: "SIGUSR2" },
         },
         {
           name: "nginx", command: "nginx", env: {}, dependsOn: ["php-fpm"],
           args: ["-c", `${root}/nginx.conf`, "-p", root, "-g", "daemon off;"], readiness: { port: "web", timeoutMs: 120_000 },
+          // SIGHUP makes nginx start workers on the new configuration and let the old ones drain.
+          config: [`${root}/nginx.conf`], update: { strategy: "reload", signal: "SIGHUP" },
         },
       ],
     };

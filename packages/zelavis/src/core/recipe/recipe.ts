@@ -7,6 +7,15 @@ export class RecipeError extends Schema.TaggedError<RecipeError>()(
 
 /** References keep generated credentials out of plans and progress records. */
 export interface RecipeSecret { readonly secret: string }
+/**
+ * What the Platform does with a running process when a newer plan still contains it but its
+ * configuration changed. `reload` signals it and leaves it serving (nginx and PHP-FPM reload
+ * gracefully); `restart` replaces it. The default is `restart`, which is always correct.
+ */
+export type ProcessUpdate =
+  | { readonly strategy: "restart" }
+  | { readonly strategy: "reload"; readonly signal: "SIGHUP" | "SIGUSR1" | "SIGUSR2" };
+
 export interface ProcessPlan {
   readonly processes: readonly {
     readonly name: string;
@@ -22,6 +31,14 @@ export interface ProcessPlan {
     readonly readiness:
       | { readonly port: string; readonly timeoutMs: number }
       | { readonly path: string; readonly timeoutMs: number };
+    /**
+     * Files this process reads its configuration from, as absolute paths below the project or its
+     * socket directory. Their content is part of the process's identity: when it changes between
+     * two plans the process is reloaded or restarted according to `update`, and when it does not
+     * the process is left alone.
+     */
+    readonly config?: readonly string[];
+    readonly update?: ProcessUpdate;
   }[];
 }
 
@@ -42,6 +59,11 @@ const ProcessPlanWire = Schema.Struct({
         timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
       }),
     ]),
+    config: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/))).check(Schema.isMaxLength(8))),
+    update: Schema.optional(Schema.Union([
+      Schema.Struct({ strategy: Schema.Literal("restart") }),
+      Schema.Struct({ strategy: Schema.Literal("reload"), signal: Schema.Literals(["SIGHUP", "SIGUSR1", "SIGUSR2"]) }),
+    ])),
   })).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
 });
 
@@ -72,6 +94,10 @@ export function parseProcessPlan(input: unknown, allowed: {
       }
       if (Object.keys(process.env).length > 128) throw new Error("Too many environment entries.");
       if (new Set(process.dependsOn).size !== process.dependsOn.length) throw new Error("Duplicate process dependencies.");
+      for (const path of process.config ?? []) {
+        const inside = (allowed.directories ?? []).some((directory) => path.startsWith(`${directory.replace(/\/+$/, "")}/`));
+        if (!inside || path.split("/").includes("..")) throw new Error("A configuration path must lie below the project or its socket directory.");
+      }
     }
     const visited = new Set<string>();
     const visiting = new Set<string>();
@@ -93,6 +119,8 @@ export function parseProcessPlan(input: unknown, allowed: {
         [key, typeof value === "string" ? value : Object.freeze({ ...value })]))),
       dependsOn: Object.freeze([...process.dependsOn]),
       readiness: Object.freeze({ ...process.readiness }) as typeof process.readiness,
+      ...(process.config ? { config: Object.freeze([...process.config]) } : {}),
+      ...(process.update ? { update: Object.freeze({ ...process.update }) as typeof process.update } : {}),
     }))) });
   } catch (cause) {
     if (cause instanceof RecipeError) throw cause;

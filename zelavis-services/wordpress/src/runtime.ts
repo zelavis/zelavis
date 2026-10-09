@@ -18,6 +18,7 @@ export function createProjectRuntime(context: ZelavisRecipeRuntimeContext): Zela
     directory: context.directory,
     packageDirectory: context.packageDirectory,
     agent: context.agent,
+    recipes: context.recipes,
     ...(typeof options.user === "string" ? { user: options.user } : {}),
   });
 }

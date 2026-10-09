@@ -925,9 +925,16 @@ runs through it (its recipe is `defineRecipe` phases over `createRecipeProjectRu
 hand-written runtime module is gone).
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
-Recipe upgrades have a zero-downtime goal whatever the recipe change; requiring a stop
-(or the `restart` option that stops, upgrades and starts again) is a limit of the current
-layout-adoption mechanism, never precedent for a new recipe feature.
+Recipe upgrades have a zero-downtime goal whatever the recipe change. A running Project
+upgrades live when the new recipe keeps its layout: the new plan is reconciled against the
+running processes by fingerprint (`core/recipe/plan-diff.ts`, `plan-controller.ts`), so
+unchanged processes keep serving, a configuration-only change reloads in place (`config` +
+`update` in the plan), and only a process whose launch changed is replaced, in dependency
+order; a durable journal (`adapters/_recipe-upgrade.ts`) decides previous/target after a
+crash, and any failure rolls back to the previous plan. Not live yet: a layout move
+(adoption) needs the `restart` option (stop, upgrade, start again), a replaced process (e.g.
+the database) has a brief gap, and new requirements or commands refuse the live path and roll
+back. Those are limits, never precedent for a new recipe feature.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
 and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process
 phase runner (`_recipe-phase.ts`, Node permission model, parent re-validates results) exist

@@ -214,7 +214,7 @@ export interface ZelavisProjectRuntimeSnapshot {
 /** Prepared immutable identities, separate from the persisted Project lock. */
 export interface ZelavisProjectRuntimeUpdate {
   /** Engine handover or a recipe integration refresh which leaves the workload alone. */
-  readonly mode: "engine" | "integration";
+  readonly mode: "engine" | "integration" | "recipe";
   /** A running Project-scoped integration host participates in this transaction. */
   readonly host?: true;
   readonly previous: RuntimeRelease;
@@ -1109,7 +1109,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         };
         const previous = state(update.previous), target = state(update.target);
         const recipe = readStoredRecipeLock({ recipe: update.execution.recipe });
-        if (update.execution.mode !== "engine" && update.execution.mode !== "integration") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
+        if (update.execution.mode !== "engine" && update.execution.mode !== "integration" && update.execution.mode !== "recipe") throw new ZelavisProjectValidationError("Project update requires an explicit execution mode.");
         if (recipe.name !== target.recipe.name || recipe.version !== target.recipe.version || recipe.artifact?.digest !== target.recipe.artifact?.digest) throw new ZelavisProjectValidationError("Project handover target differs from its persisted recipe lock.");
         return { id: update.id, startedAt: update.startedAt, previous, target,
             execution: { mode: update.execution.mode, ...(update.execution.host === true ? { host: true as const } : {}), previous: identity(update.execution.previous), target: identity(update.execution.target), recipe },

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,7 @@ import { createRecipeProjectRuntime } from "../dist/adapters/_recipe-project-run
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 import { resolveRequirementCommands } from "../dist/adapters/_recipe-requirements.js";
 import { loopbackPortAccepts } from "../dist/adapters/_loopback-probe.js";
+import { digestArtifactDirectory, materializeRecipeArtifact } from "../dist/adapters/_recipe-artifact.js";
 
 const wordpress = new URL("../../../zelavis-services/wordpress/", import.meta.url).pathname;
 const manifest = JSON.parse(await readFile(join(wordpress, "package.json"), "utf8"));
@@ -171,5 +172,90 @@ test("a WordPress Project laid out by the previous recipe is taken over: same ad
   assert.equal(await readFile(join(root, "site", "wp-includes", "version.php"), "utf8"), "<?php $wp_version = '7.0.9';", "the application's files are untouched: the recipe pins 7.1.2 but this site stays what it is");
   assert.equal(existsSync(join(zelavis, "wordpress-native.json")), false, "committed once it ran");
   assert.equal(existsSync(join(zelavis, "nginx.conf")), false);
+  await driver.stop(id);
+});
+
+test("a running WordPress Project is upgraded to a recipe that changes its web configuration: nginx and PHP-FPM reload in place, the database is untouched, no request fails", { skip, timeout: 300_000 }, async (t) => {
+  const base = await mkdtemp(join(tmpdir(), "zv-wp-live-"));
+  const directory = join(base, "projects");
+  const runner = createLocalAgentProcessRunner({ stateDirectory: join(directory, ".agent-processes") });
+  t.after(async () => { await runner.close(); await rm(base, { recursive: true, force: true }); });
+
+  // Two versions of the real recipe: the second sets a header on every response, a change of nginx's configuration only.
+  const copy = async (name, version, edit) => {
+    const target = join(base, name);
+    await mkdir(target, { recursive: true });
+    await cp(join(wordpress, "dist"), join(target, "dist"), { recursive: true });
+    const manifestFile = JSON.parse(await readFile(join(wordpress, "package.json"), "utf8"));
+    await writeFile(join(target, "package.json"), JSON.stringify({ ...manifestFile, version }));
+    if (edit) {
+      const recipeFile = join(target, "dist", "recipe.js");
+      await writeFile(recipeFile, edit(await readFile(recipeFile, "utf8")));
+    }
+    return target;
+  };
+  const sources = {
+    "7.1.3": await copy("wp-one", "7.1.3"),
+    "7.1.4": await copy("wp-two", "7.1.4", (text) => {
+      assert.ok(text.includes("client_max_body_size 64m;"), "the recipe still has the line this test edits");
+      return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "two" always;');
+    }),
+  };
+  const id = "wplive";
+  const data = join(directory, id, ".zelavis");
+  await mkdir(data, { recursive: true });
+  const { digest } = await materializeRecipeArtifact(sources["7.1.3"], data);
+  const locked = (version, artifact) => ({ ...lock("7.1.2"), version, ...(artifact ? { artifact: { digest: artifact } } : {}) });
+  const project = { ...record(id, "7.1.2"), recipe: locked("7.1.3", digest) };
+  const driver = createRecipeProjectRuntime({
+    name: "native-wordpress", description: "test", directory, packageDirectory: join(data, "recipe", "package"), agent: runner,
+    recipes: {
+      source: async (name, version) => name === "@zelavis/wordpress" ? sources[version] : undefined,
+      stage: (source, dataDirectory) => materializeRecipeArtifact(source, dataDirectory),
+      digest: (packageDirectory) => digestArtifactDirectory(packageDirectory),
+    },
+  });
+  t.after(() => driver.close().catch(() => undefined));
+  const site = join(directory, id, "app", "site");
+  await mkdir(join(site, "wp-includes"), { recursive: true });
+  await writeFile(join(site, "wp-includes", "version.php"), "<?php $wp_version = 'stand-in';");
+  await writeFile(join(site, "index.php"), STAND_IN_INDEX);
+
+  await driver.prepare(project, project.recipe);
+  const started = await driver.start(project);
+  const read = (file) => Number(readFileSync(join(directory, id, "app", "run", file), "utf8").trim());
+  const pids = () => ({ nginx: read("nginx.pid"), fpm: read("php-fpm.pid"), database: read("mariadb.pid") });
+  const before = pids();
+  const first = await fetch(`${started.url}/index.php`);
+  assert.equal(first.headers.get("x-recipe"), null);
+  assert.match(await first.text(), /database:1/);
+
+  let stop = false; let failures = 0; let served = 0; const headers = new Set();
+  const traffic = (async () => {
+    while (!stop) {
+      try {
+        const response = await fetch(`${started.url}/index.php`);
+        const body = await response.text();
+        if (response.status !== 200 || !/database:1/.test(body)) failures += 1; else served += 1;
+        headers.add(response.headers.get("x-recipe"));
+      } catch { failures += 1; }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  })();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const execution = await driver.prepareUpdate(project, { ...project, recipe: locked("7.1.4") });
+  await driver.applyUpdate(id, execution, async () => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  stop = true; await traffic;
+
+  assert.equal(failures, 0, "not one request failed while WordPress changed recipe");
+  assert.ok(served > 50, `served ${served}`);
+  assert.deepEqual([...headers].sort((a, b) => String(a).localeCompare(String(b))), [null, "two"], "responses switched to the new configuration");
+  assert.deepEqual(pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
+  const after = await fetch(`${started.url}/index.php`);
+  assert.equal(after.headers.get("x-recipe"), "two");
+  assert.match(await after.text(), /database:1/);
+  assert.equal(JSON.parse(await readFile(join(data, "recipe", "package", "package.json"), "utf8")).version, "7.1.4");
+  assert.match(readFileSync(join(directory, id, "app", "nginx.conf"), "utf8"), /X-Recipe/);
   await driver.stop(id);
 });

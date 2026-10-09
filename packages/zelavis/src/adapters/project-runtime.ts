@@ -38,6 +38,18 @@ export interface ZelavisRecipeRuntimeContext {
   readonly packageDirectory: string;
   /** The Agent that executes this host's Project processes. */
   readonly agent: ZelavisAgentProcessRunner;
+  /**
+   * Another version of this recipe, for upgrading a running Project to it. `source` finds the
+   * package of that exact name and version on this host, or nothing; `stage` freezes a package into
+   * a data directory and returns its content digest. Trust in the recipe is the Platform's, decided
+   * before a runtime is created.
+   */
+  readonly recipes: {
+    readonly source: (name: string, version: string) => Promise<string | undefined>;
+    readonly stage: (source: string, dataDirectory: string) => Promise<{ readonly digest: string }>;
+    /** The content digest of a frozen package directory, as the Project's lock records it. */
+    readonly digest: (packageDirectory: string) => Promise<string>;
+  };
   /** Options the operator set for this recipe's runtime. */
   readonly options: Readonly<Record<string, unknown>>;
 }
