@@ -13,7 +13,7 @@ const install = parseRecipeManifest(manifest.zelavis.project.install);
 test("the manifest pins one Joomla release, needs the web and database tiers, and declares what Joomla's installer asks for", async () => {
   assert.equal(manifest.name, JOOMLA_APP_NAME);
   assert.deepEqual(manifest.zelavis.project.hostPackages, ["mariadb-server"]);
-  assert.deepEqual(install.methods.map((method) => [...method.requires]), [[]]);
+  assert.deepEqual(install.methods.map((method) => [method.id, [...method.requires]]), [["native", []], ["container", ["docker"]]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
   assert.deepEqual(install.directories, [{ name: "site", path: "site" }, { name: "db", path: "db" }]);
   for (const software of install.software) {

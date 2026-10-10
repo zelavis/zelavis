@@ -407,7 +407,7 @@ function ProjectsRoute() {
                       <option value="">Automatic (the first this server can run)</option>
                       {selectedRecipe.install.methods.map(method => (
                         <option key={method.id} value={method.id}>
-                          {method.id} ({method.driver === "oci" ? "container" : "native"}{method.requires.length ? `, needs ${method.requires.join(", ")}` : ""})
+                          {method.id} ({method.driver === "oci" || method.requires.includes("docker") ? "container" : "native"}{method.requires.length ? `, needs ${method.requires.join(", ")}` : ""})
                         </option>
                       ))}
                     </select>

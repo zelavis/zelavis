@@ -83,6 +83,10 @@ export const SETUP_TOKEN = /\{(ports|dir|secret)\.([a-z][a-z0-9-]{0,63})\}|\{(ro
  * lets every Project run the PHP (or any other runtime) its application needs, whatever the host has.
  */
 export const RUNTIME_PLATFORMS = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64"] as const;
+const ContainerImage = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:[a-z0-9._:/-]*[a-z0-9])?@sha256:[a-f0-9]{64}$/),
+  Schema.isMaxLength(512),
+);
 const RuntimeDownload = Schema.Struct({
   archive: HttpsUrl,
   /** Other places holding the very same archive, tried in order when the first fails. The digest, not the origin, is what is trusted. */
@@ -101,6 +105,8 @@ const Runtime = Schema.Struct({
    * only built for Linux x86_64 falls back to the host's). Without it, such a platform is refused.
    */
   hostRequirement: Schema.optionalKey(Name),
+  /** The install methods that use this program; every method when absent (a container method has no use for a database download). */
+  methods: Schema.optionalKey(Schema.Array(Name).check(Schema.isMaxLength(8))),
   /** By platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`); a host without an entry cannot run the recipe. */
   downloads: Schema.Record(Schema.String, RuntimeDownload).check(
     Schema.makeFilter((value) => Object.keys(value).length >= 1 && Object.keys(value).every((platform) => (RUNTIME_PLATFORMS as readonly string[]).includes(platform))),
@@ -111,14 +117,15 @@ const Runtime = Schema.Struct({
 export const RecipeManifest = Schema.Struct({
   contract: Schema.Literal(1),
   methods: Schema.Array(Schema.Union([
-    Schema.Struct({ id: Name, driver: Schema.Literal("js"), entry: Entry, requires: Requirements }),
+    Schema.Struct({
+      id: Name, driver: Schema.Literal("js"), entry: Entry, requires: Requirements,
+      /** Images this method runs in containers instead of host programs, by role (`database`), pinned by digest. */
+      containers: Schema.optionalKey(Schema.Record(Name, ContainerImage).check(Schema.makeFilter((value) => Object.keys(value).length <= 4))),
+    }),
     Schema.Struct({
       id: Name,
       driver: Schema.Literal("oci"),
-      image: Schema.String.check(
-        Schema.isPattern(/^[a-z0-9]+(?:[a-z0-9._:/-]*[a-z0-9])?@sha256:[a-f0-9]{64}$/),
-        Schema.isMaxLength(512),
-      ),
+      image: ContainerImage,
       requires: Requirements,
     }),
   ])).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
@@ -174,6 +181,11 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
       }
     }
     unique((manifest.runtimes ?? []).map((runtime) => runtime.command), "runtime commands");
+    for (const runtime of manifest.runtimes ?? []) {
+      for (const id of runtime.methods ?? []) {
+        if (!manifest.methods.some((method) => method.id === id)) throw new InvalidRecipeManifest({ message: `Runtime "${runtime.command}" names the method "${id}", which the recipe does not declare.` });
+      }
+    }
     unique((manifest.setup ?? []).map((entry) => entry.id), "setup value IDs");
     for (const entry of manifest.setup ?? []) {
       const rest = entry.value.replace(SETUP_TOKEN, (token, kind: string | undefined, name: string | undefined) => {
@@ -196,11 +208,13 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
       ...manifest,
       methods: Object.freeze(manifest.methods.map((method) => Object.freeze({
         ...method, requires: Object.freeze([...method.requires]),
+        ...("containers" in method && method.containers ? { containers: Object.freeze({ ...method.containers }) } : {}),
       }))),
       software: Object.freeze(manifest.software.map((software) => Object.freeze({ ...software }))),
       ports: Object.freeze(manifest.ports.map((port) => Object.freeze({ ...port }))),
       ...(manifest.runtimes ? { runtimes: Object.freeze(manifest.runtimes.map((runtime) => Object.freeze({
-        ...runtime, downloads: Object.freeze(Object.fromEntries(Object.entries(runtime.downloads).map(([platform, download]) => [platform, Object.freeze({ ...download, ...(download.mirrors ? { mirrors: Object.freeze([...download.mirrors]) } : {}) })]))),
+        ...runtime, ...(runtime.methods ? { methods: Object.freeze([...runtime.methods]) } : {}),
+        downloads: Object.freeze(Object.fromEntries(Object.entries(runtime.downloads).map(([platform, download]) => [platform, Object.freeze({ ...download, ...(download.mirrors ? { mirrors: Object.freeze([...download.mirrors]) } : {}) })]))),
       }))) } : {}),
       ...(manifest.setup ? { setup: Object.freeze(manifest.setup.map((entry) => Object.freeze({ ...entry }))) } : {}),
       ...(manifest.directories ? { directories: Object.freeze(manifest.directories.map((directory) => Object.freeze({ ...directory }))) } : {}),

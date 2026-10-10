@@ -133,11 +133,14 @@ test("a build no Project names any more is pruned once it is old enough; named a
 
 test("a package set is not offered where the recipe brings what it would install", async () => {
   const { neededHostPackages } = await import("../dist/project-host-packages.js");
-  const database = ["mariadbd", "mariadb"].map((command) => ({ command, hostRequirement: "mariadb", downloads: { "linux-x86_64": {} } }));
+  const database = ["mariadbd", "mariadb"].map((command) => ({ command, hostRequirement: "mariadb", methods: ["native"], downloads: { "linux-x86_64": {} } }));
   const php = [{ command: "php", downloads: { "linux-x86_64": {}, "linux-aarch64": {} } }];
-  assert.deepEqual(neededHostPackages(["mariadb-server"], [...php, ...database], "linux-x86_64"), [], "built here: nothing to install");
-  assert.deepEqual(neededHostPackages(["mariadb-server"], [...php, ...database], "linux-aarch64"), ["mariadb-server"], "no build here: the host's package is still needed");
-  assert.deepEqual(neededHostPackages(["mariadb-server"], [...php, ...database], undefined), ["mariadb-server"]);
-  assert.deepEqual(neededHostPackages(["mariadb-server"], undefined, "linux-x86_64"), ["mariadb-server"], "a recipe that brings nothing needs it");
-  assert.deepEqual(neededHostPackages(["wordpress-stack"], [...php, ...database], "linux-x86_64"), ["wordpress-stack"], "a set that also provides nginx and php-fpm is still needed");
+  const methods = [{ id: "native" }, { id: "container", containers: { database: "mariadb@sha256:" + "a".repeat(64) } }];
+  const install = { methods, runtimes: [...php, ...database] };
+  assert.deepEqual(neededHostPackages(["mariadb-server"], install, "linux-x86_64"), [], "built here: nothing to install");
+  assert.deepEqual(neededHostPackages(["mariadb-server"], install, "linux-aarch64"), ["mariadb-server"], "no build here: the host's package is still needed");
+  assert.deepEqual(neededHostPackages(["mariadb-server"], install, "linux-aarch64", "container"), [], "the container method needs no host database anywhere");
+  assert.deepEqual(neededHostPackages(["mariadb-server"], install, undefined), ["mariadb-server"]);
+  assert.deepEqual(neededHostPackages(["mariadb-server"], { methods }, "linux-x86_64"), ["mariadb-server"], "a recipe that brings nothing needs it");
+  assert.deepEqual(neededHostPackages(["wordpress-stack"], install, "linux-x86_64"), ["wordpress-stack"], "a set that also provides nginx and php-fpm is still needed");
 });

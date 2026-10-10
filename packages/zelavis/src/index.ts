@@ -4772,7 +4772,7 @@ function resolvePlatformEndpointGroup(
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
-                  ...(entry.service.project?.hostPackages ? { hostPackages: neededHostPackages(entry.service.project.hostPackages, entry.service.project.install?.runtimes, platform) } : {}),
+                  ...(entry.service.project?.hostPackages ? { hostPackages: neededHostPackages(entry.service.project.hostPackages, entry.service.project.install, platform) } : {}),
                   ...(entry.service.project?.isolation
                     ? { isolation: entry.service.project.isolation }
                     : {}),
@@ -5616,7 +5616,7 @@ function resolvePlatformEndpointGroup(
                 const recipe = projectRecipes.find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
                 if (!recipe) return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
                 const platform = projectInstallHost ? (yield* integration(() => projectInstallHost!())).platform : undefined;
-                const sets = neededHostPackages(recipe.service.project?.hostPackages ?? [], recipe.service.project?.install?.runtimes, platform);
+                const sets = neededHostPackages(recipe.service.project?.hostPackages ?? [], recipe.service.project?.install, platform, typeof input.method === "string" ? input.method : undefined);
                 if (sets.length) {
                   if (!hostOperations) return { status: 503, body: { error: "Host package installation requires the system installation's operation Agent. Update or repair the system installation, then retry." } };
                   const provisioned = yield* Effect.result(integration(() => provisionProjectHostPackages(hostOperations!, sets, principal)));

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { RecipeError, RecipeHost, defineRecipe, type ProcessPlan, type RecipeContext, type RecipeHostApi } from "zelavis/recipe";
+import { RecipeError, RecipeHost, defineRecipe, initializeMariaDb, mariaDbProcess, releaseMariaDb, requireMariaDb, type ProcessPlan, type RecipeContext, type RecipeHostApi } from "zelavis/recipe";
 
 /**
  * PrestaShop as a recipe: Caddy, PHP-FPM and a dedicated MariaDB, with the PHP release this PrestaShop is
@@ -13,7 +13,6 @@ import { RecipeError, RecipeHost, defineRecipe, type ProcessPlan, type RecipeCon
  */
 
 const MINIMUM_PHP: readonly [number, number] = [8, 1];
-const MINIMUM_MARIADB: readonly [number, number] = [10, 6];
 const REQUIRED_EXTENSIONS = ["curl", "dom", "fileinfo", "gd", "iconv", "intl", "mbstring", "openssl", "pdo_mysql", "simplexml", "zip", "zlib"] as const;
 const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run"] as const;
 const DATABASE_NAME = "prestashop";
@@ -36,7 +35,6 @@ function versionAtLeast(text: string, minimum: readonly [number, number]): boole
   return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
 }
 
-const sqlString = (value: string) => `'${value.replace(/'/g, "''")}'`;
 const quoted = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 function phpFpmConfig(context: RecipeContext): string {
@@ -118,7 +116,7 @@ http://:${web} {
 `;
 }
 
-const requireVersions = (host: RecipeHostApi) => Effect.gen(function* () {
+const requireVersions = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
   const php = yield* host.run({ command: "php", args: ["-r", "echo PHP_VERSION;"], timeoutMs: 30_000 });
   const fpm = yield* host.run({ command: "php-fpm", args: ["-v"], timeoutMs: 30_000 });
   if (php.code !== 0 || !versionAtLeast(php.stdout, MINIMUM_PHP) || !versionAtLeast(`${fpm.stdout} ${fpm.stderr}`, MINIMUM_PHP)) {
@@ -132,10 +130,7 @@ const requireVersions = (host: RecipeHostApi) => Effect.gen(function* () {
   if (!Array.isArray(missing) || missing.length > 0) {
     return yield* Effect.fail(refuse("install", `PrestaShop is missing required PHP extensions: ${Array.isArray(missing) ? missing.join(", ") : "unknown"}.`));
   }
-  const database = yield* host.run({ command: "mariadbd", args: ["--version"], timeoutMs: 30_000 });
-  if (!versionAtLeast(`${database.stdout} ${database.stderr}`, MINIMUM_MARIADB)) {
-    return yield* Effect.fail(refuse("install", `PrestaShop needs MariaDB ${MINIMUM_MARIADB.join(".")} or newer; found ${database.stdout.trim()}.`));
-  }
+  yield* requireMariaDb(host, context, { minimum: [10, 6] });
 });
 
 const installSite = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
@@ -153,39 +148,14 @@ const installSite = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(
   }
 });
 
-const initializeDatabase = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
-  const database = place(context, "db");
-  const marker = `${database.relative}/.zelavis-initialized`;
-  if (yield* host.files.exists(marker)) return;
-  yield* host.progress({ phase: "install", message: "Initializing the database." });
-  const password = yield* host.secret("db-password");
-  const { root } = context.directories;
-  // An earlier attempt that died partway left a data directory with nothing in it worth keeping.
-  yield* host.files.remove(database.relative);
-  yield* host.files.mkdir(database.relative);
-  // The first FLUSH PRIVILEGES turns account management on: bootstrap runs without grant tables.
-  yield* host.files.write("run/init.sql", [
-    `FLUSH PRIVILEGES;\nCREATE DATABASE IF NOT EXISTS \`${DATABASE_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n`,
-    `CREATE USER IF NOT EXISTS ${sqlString(DATABASE_USER)}@'127.0.0.1' IDENTIFIED BY '`, password, `';\n`,
-    `GRANT ALL PRIVILEGES ON \`${DATABASE_NAME}\`.* TO ${sqlString(DATABASE_USER)}@'127.0.0.1';\nFLUSH PRIVILEGES;\n`,
-  ]);
-  const created = yield* host.run({
-    command: "mariadb-install-db", timeoutMs: 10 * 60_000,
-    args: [`--datadir=${database.absolute}`, "--auth-root-authentication-method=normal", "--skip-test-db", `--extra-file=${root}/run/init.sql`,
-      ...(context.account.switchUser ? [`--user=${context.account.user}`] : [])],
-  });
-  yield* host.files.remove("run/init.sql");
-  if (created.code !== 0) {
-    return yield* Effect.fail(refuse("install", `MariaDB could not initialize its data directory: ${(created.stderr || created.stdout).trim().split("\n").slice(-3).join(" ")}`));
-  }
-  yield* host.files.write(marker, "initialized\n");
-});
+/** What the shared MariaDB helper needs to know about this application's database. */
+const databaseSpec = (context: RecipeContext) => ({ name: DATABASE_NAME, user: DATABASE_USER, data: place(context, "db"), minimum: [10, 6] as const });
 
 export default defineRecipe({
   install: (context) => Effect.gen(function* () {
     const host = yield* RecipeHost;
     const { root } = context.directories;
-    yield* requireVersions(host);
+    yield* requireVersions(host, context);
     for (const directory of [...TEMPORARY_DIRECTORIES, place(context, "site").relative]) yield* host.files.mkdir(directory);
     yield* installSite(host, context);
     const configuration = (render: () => string) => Effect.try({
@@ -198,21 +168,19 @@ export default defineRecipe({
     if (fpm.code !== 0) return yield* Effect.fail(refuse("install", `The PHP-FPM configuration is not valid: ${(fpm.stderr || fpm.stdout).trim().split("\n").slice(-3).join(" ")}`));
     const caddy = yield* host.run({ command: "caddy", args: ["validate", "--config", `${root}/Caddyfile`, "--adapter", "caddyfile"], timeoutMs: 30_000 });
     if (caddy.code !== 0) return yield* Effect.fail(refuse("install", `The Caddy configuration is not valid: ${(caddy.stderr || caddy.stdout).trim().split("\n").slice(-3).join(" ")}`));
-    yield* initializeDatabase(host, context);
+    yield* initializeMariaDb(host, context, databaseSpec(context));
     yield* host.progress({ phase: "install", message: "PrestaShop is installed." });
   }),
+
+  // A database container whose client was killed mid-initialization is removed once the processes are down.
+  stop: (context) => Effect.gen(function* () { yield* releaseMariaDb(yield* RecipeHost, context); }),
+  remove: (context) => Effect.gen(function* () { yield* releaseMariaDb(yield* RecipeHost, context); }),
 
   start: (context) => Effect.sync((): ProcessPlan => {
     const { root, sockets } = context.directories;
     return {
       processes: [
-        {
-          name: "database", command: "mariadbd", env: {}, dependsOn: [], readiness: { port: "db", timeoutMs: 120_000 },
-          args: [`--datadir=${place(context, "db").absolute}`, `--socket=${sockets}/mariadb.sock`, `--port=${context.ports.db}`, "--bind-address=127.0.0.1",
-            `--pid-file=${root}/run/mariadb.pid`, `--log-error=${root}/run/mariadb.log`,
-            // MariaDB refuses to run as root without this, and there is nothing sensible for it to guess.
-            ...(context.account.switchUser ? [`--user=${context.account.user}`] : [])],
-        },
+        mariaDbProcess(context, databaseSpec(context)),
         {
           name: "php-fpm", command: "php-fpm", env: {}, dependsOn: ["database"],
           args: ["-F", "-y", `${root}/php-fpm.conf`], readiness: { path: `${sockets}/php-fpm.sock`, timeoutMs: 120_000 },

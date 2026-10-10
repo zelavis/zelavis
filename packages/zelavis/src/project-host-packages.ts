@@ -25,18 +25,27 @@ export function normalizeProjectHostPackages(value: unknown): readonly string[] 
 }
 
 /**
- * The package sets a recipe still needs on this platform. A set is unnecessary when every requirement it
- * provides is brought by the recipe itself here: a runtime with a download for this platform that names the
- * requirement as its `hostRequirement` (MariaDB on Linux x86_64). Platforms without a build keep the set.
+ * The package sets a recipe still needs on this platform with the install method a Project is created with. A set
+ * is unnecessary when every requirement it provides is brought by the recipe itself: a runtime for this method with
+ * a download for this platform that names the requirement as its `hostRequirement` (MariaDB on Linux x86_64), or a
+ * method that runs that program from a container image (`containers.database` stands for `mariadb`). Platforms
+ * without a build keep the set.
  */
 export function neededHostPackages(
   sets: readonly string[],
-  runtimes: ReadonlyArray<{ readonly hostRequirement?: string; readonly downloads: Readonly<Record<string, unknown>> }> | undefined,
+  install: {
+    readonly methods: ReadonlyArray<{ readonly id: string; readonly containers?: Readonly<Record<string, string>> }>;
+    readonly runtimes?: ReadonlyArray<{ readonly hostRequirement?: string; readonly methods?: readonly string[]; readonly downloads: Readonly<Record<string, unknown>> }>;
+  } | undefined,
   platform: string | undefined,
+  methodId?: string,
 ): readonly string[] {
-  const brought = new Set((runtimes ?? [])
-    .filter((runtime) => platform !== undefined && runtime.downloads[platform] !== undefined && runtime.hostRequirement !== undefined)
+  const method = install?.methods.find((candidate) => methodId === undefined ? candidate === install.methods[0] : candidate.id === methodId);
+  const brought = new Set((install?.runtimes ?? [])
+    .filter((runtime) => platform !== undefined && runtime.downloads[platform] !== undefined && runtime.hostRequirement !== undefined
+      && (runtime.methods === undefined || method === undefined || runtime.methods.includes(method.id)))
     .map((runtime) => runtime.hostRequirement!));
+  if (method?.containers?.database !== undefined) brought.add("mariadb");
   return Object.freeze(sets.filter((set) => {
     const provided = HOST_PACKAGE_REQUIREMENTS[set];
     return provided === undefined || !provided.every((requirement) => brought.has(requirement));

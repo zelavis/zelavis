@@ -35,6 +35,17 @@
             "driver": "js",
             "entry": "./dist/recipe.js",
             "requires": []
+          },
+          {
+            "id": "container",
+            "driver": "js",
+            "entry": "./dist/recipe.js",
+            "requires": [
+              "docker"
+            ],
+            "containers": {
+              "database": "mariadb@sha256:54ac814d243128263e18cf818f7abb611bf43a7a95ce8aa102d18f527b1516d1"
+            }
           }
         ],
         "software": [
@@ -147,7 +158,10 @@
                 "maxBytes": 400000000,
                 "executable": "mariadb-11.4.9-linux-systemd-x86_64/bin/mariadbd"
               }
-            }
+            },
+            "methods": [
+              "native"
+            ]
           },
           {
             "command": "mariadb-install-db",
@@ -160,7 +174,10 @@
                 "maxBytes": 400000000,
                 "executable": "mariadb-11.4.9-linux-systemd-x86_64/scripts/mariadb-install-db"
               }
-            }
+            },
+            "methods": [
+              "native"
+            ]
           },
           {
             "command": "mariadb",
@@ -173,7 +190,10 @@
                 "maxBytes": 400000000,
                 "executable": "mariadb-11.4.9-linux-systemd-x86_64/bin/mariadb"
               }
-            }
+            },
+            "methods": [
+              "native"
+            ]
           }
         ],
         "ports": [

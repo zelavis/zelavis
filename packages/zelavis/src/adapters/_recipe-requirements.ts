@@ -34,6 +34,8 @@ interface RequirementCommand {
 }
 
 interface Requirement {
+  /** Said instead of an installation hint when it is missing: a program Zelavis does not install for the operator. */
+  readonly unavailable?: string;
   readonly display: string;
   readonly brewFormula: string;
   readonly commands: Readonly<Record<string, RequirementCommand>>;
@@ -55,6 +57,13 @@ export const REQUIREMENTS: Readonly<Record<string, Requirement>> = Object.freeze
       php: { candidates: ["php"], versionArgs: ["--version"], brewPath: "bin/php" },
       "php-fpm": { candidates: ["php-fpm", "php-fpm8.5", "php-fpm8.4", "php-fpm8.3", "php-fpm8.2"], versionArgs: ["-v"], brewPath: "sbin/php-fpm" },
     },
+  },
+  // A container engine for the install methods that run a program in a container. Zelavis never installs one:
+  // it is the operator's (Docker Desktop, Docker Engine, or a compatible CLI), so a missing one is only reported.
+  docker: {
+    display: "Docker", brewFormula: "docker",
+    unavailable: "This install method runs a program in a container and needs a container engine: install Docker (or a Docker-compatible CLI), start it, and retry.",
+    commands: { docker: { candidates: ["docker"], versionArgs: ["--version"], brewPath: "bin/docker" } },
   },
   mariadb: {
     display: "MariaDB", brewFormula: "mariadb",
@@ -146,6 +155,8 @@ export const resolveRequirementCommands = (requires: readonly string[]): Effect.
   Effect.gen(function* () {
     const first = yield* resolveAll(requires);
     if (first.missing.length === 0) return first.table;
+    const operatorOwned = first.missing.map((name) => REQUIREMENTS[name]!.unavailable).find((message) => message !== undefined);
+    if (operatorOwned !== undefined) return yield* Effect.fail(new RequirementUnavailable({ message: operatorOwned }));
     const display = first.missing.map((name) => REQUIREMENTS[name]!.display).join(", ");
     if (process.platform === "linux") {
       return yield* Effect.fail(new RequirementUnavailable({

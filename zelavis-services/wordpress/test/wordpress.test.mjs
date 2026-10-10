@@ -34,7 +34,7 @@ test("the manifest declares one JavaScript method whose module exists, and the p
   assert.equal(manifest.name, WORDPRESS_APP_NAME);
   assert.equal(manifest.zelavis.kind, "app");
   assert.deepEqual(manifest.zelavis.project.runtimeKinds, ["native"]);
-  assert.deepEqual(install.methods.map((method) => [method.id, method.driver, [...method.requires]]), [["native", "js", []]]);
+  assert.deepEqual(install.methods.map((method) => [method.id, method.driver, [...method.requires]]), [["native", "js", []], ["container", "js", ["docker"]]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
   assert.deepEqual(install.ports.map((port) => [port.name, port.protocol]), [["web", "http"], ["db", "tcp"]]);
   assert.equal(manifest.zelavis.project.runtime, "./dist/runtime.js");

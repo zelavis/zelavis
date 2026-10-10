@@ -61,7 +61,7 @@ export interface PlanHostApi {
   readonly stop: (process: ZelavisAgentProcess, grace: Duration.Input) => Effect.Effect<void, RecipeError>;
   readonly signal: (process: ZelavisAgentProcess, signal: string) => Effect.Effect<void, RecipeError>;
   /** Whether something accepts connections on this loopback port right now. */
-  readonly probePort: (port: number) => Effect.Effect<boolean>;
+  readonly probePort: (port: number, options?: { readonly greeting?: boolean }) => Effect.Effect<boolean>;
   readonly pathExists: (path: string) => Effect.Effect<boolean>;
   /** SHA-256 of a text, as lowercase hex. The core carries no hashing of its own. */
   readonly digest: (text: string) => Effect.Effect<string>;
@@ -112,7 +112,7 @@ export interface PlanController {
 }
 
 type PlanProcess = ProcessPlan["processes"][number];
-type Readiness = { readonly kind: "port"; readonly port: number; readonly timeoutMs: number } | { readonly kind: "path"; readonly path: string; readonly timeoutMs: number };
+type Readiness = { readonly kind: "port"; readonly port: number; readonly timeoutMs: number; readonly greeting: boolean } | { readonly kind: "path"; readonly path: string; readonly timeoutMs: number };
 
 interface Launch {
   readonly executable: string;
@@ -174,7 +174,7 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
     if ("port" in process.readiness) {
       const port = host.ports[process.readiness.port];
       if (port === undefined) return yield* Effect.fail(fail(`"${process.name}" waits on port "${process.readiness.port}", which has no allocation.`));
-      readiness = { kind: "port", port, timeoutMs: process.readiness.timeoutMs };
+      readiness = { kind: "port", port, timeoutMs: process.readiness.timeoutMs, greeting: process.readiness.greeting === true };
     } else {
       readiness = { kind: "path", path: process.readiness.path, timeoutMs: process.readiness.timeoutMs };
     }
@@ -204,7 +204,7 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
 
   /** Waits until the process is ready, fails the moment it exits, and gives up at its deadline. */
   const awaitReady = Effect.fn("PlanController.awaitReady")(function* (live: Live) {
-    const probe = live.readiness.kind === "port" ? host.probePort(live.readiness.port) : host.pathExists(live.readiness.path);
+    const probe = live.readiness.kind === "port" ? host.probePort(live.readiness.port, { greeting: live.readiness.greeting }) : host.pathExists(live.readiness.path);
     const waitsOn = live.readiness.kind === "port" ? "its port" : "its readiness file";
     const until = Effect.flatMap(probe, (ready) => ready ? Effect.void : Effect.fail(new NotReady()));
     const polling = until.pipe(Effect.retry({ schedule: Schedule.spaced(host.pollInterval) }), Effect.orDie);

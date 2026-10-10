@@ -24,3 +24,5 @@ Recipes bring their own web server too: all five managed recipes (WordPress, Dok
 New `@zelavis/drupal` (Drupal 11.4.9 from drupal.org, pinned): the sixth managed recipe, on its own PHP 8.4 and Caddy, with Drupal's web installer fed from the Project's setup values. A runtime download may list up to three `mirrors` (other places holding the same archive, tried in order; the digest is the only trust).
 
 Recipes bring their own MariaDB on Linux x86_64 (pinned official 11.4.9 build as the `mariadbd`, `mariadb-install-db` and `mariadb` runtimes); a runtime's `hostRequirement` names the host requirement used on platforms without a build. WordPress, Joomla, TYPO3, PrestaShop and the new Drupal no longer need the `mariadb-server` host package there.
+
+WordPress, Joomla, TYPO3, PrestaShop and Drupal offer a second install method, `container`, that runs MariaDB from the official image (pinned by digest) through the operator's own Docker; the database code of all five is now one shared helper in `zelavis/recipe`. A process can be ready on its server's greeting (`readiness.greeting`), and `RecipeContext.account` carries numeric `uid`/`gid`.

@@ -138,6 +138,9 @@ const output = (executable: string, args: readonly string[]) =>
     return Effect.sync(() => { if (!settled) { settled = true; child.kill("SIGKILL"); } });
   });
 
+/** The numeric id of the account the Project runs as: the configured one, or else this process's own. */
+const accountId = (configured: number | undefined, own: number | undefined) => configured ?? own;
+
 interface Account { readonly user: string; readonly group: string; readonly uid?: number; readonly gid?: number; readonly switchUser: boolean }
 
 /** Root runs the daemons as an unprivileged account (named, or the first of the usual ones); anyone else as themselves. */
@@ -250,13 +253,16 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const runtimeStore = options.runtimeStore ?? join(projectsDirectory, "..", "runtimes");
 
   /** Command name to absolute program: the host's for the method's requirements, and the manifest's own runtimes. */
-  const commandsOf = (requires: readonly string[], parsed: RecipeManifest) => Effect.gen(function* () {
+  const commandsOf = (method: { readonly id: string; readonly requires: readonly string[] }, parsed: RecipeManifest) => Effect.gen(function* () {
+    const requires = method.requires;
+    // Programs a method does not use (a database download for the method that runs it in a container) are neither fetched nor required.
+    const runtimes = (parsed.runtimes ?? []).filter((runtime) => runtime.methods === undefined || runtime.methods.includes(method.id));
     // A program the recipe brings but has no build of for this platform falls back to the host's, when it says how.
     const platform = runtimePlatform();
-    const unbuilt = (parsed.runtimes ?? []).filter((runtime) => (platform === undefined || runtime.downloads[platform] === undefined) && runtime.hostRequirement !== undefined);
+    const unbuilt = runtimes.filter((runtime) => (platform === undefined || runtime.downloads[platform] === undefined) && runtime.hostRequirement !== undefined);
     const fallbacks = [...new Set(unbuilt.map((runtime) => runtime.hostRequirement!))];
     const host = yield* resolveRequirementCommands([...new Set([...requires, ...fallbacks])]).pipe(Effect.mapError(asRuntimeError));
-    const built = (parsed.runtimes ?? []).filter((runtime) => !unbuilt.includes(runtime));
+    const built = runtimes.filter((runtime) => !unbuilt.includes(runtime));
     const brought = yield* acquireRuntimes({ runtimes: built, store: runtimeStore }).pipe(Effect.mapError(asRuntimeError));
     const clash = Object.keys(brought).find((name) => name in host);
     if (clash !== undefined) return yield* Effect.fail(failure(`"${clash}" is both required from the host and brought by the recipe; a recipe takes one.`));
@@ -278,7 +284,11 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     hostname: "localhost",
     software, method, config: {}, ports: state.ports,
     directories: { root: paths(project.id).root, sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
-    account: { user: owner.user, group: owner.group, switchUser: owner.switchUser },
+    account: {
+      user: owner.user, group: owner.group, switchUser: owner.switchUser,
+      ...(accountId(owner.uid, process.getuid?.()) === undefined ? {} : { uid: accountId(owner.uid, process.getuid?.()) }),
+      ...(accountId(owner.gid, process.getgid?.()) === undefined ? {} : { gid: accountId(owner.gid, process.getgid?.()) }),
+    },
   });
 
   const allowedNames = (id: string, state: RecipeState, parsed: RecipeManifest) =>
@@ -407,7 +417,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const [state, candidate] = [yield* readState(id), yield* readManifest(packageDirectory)];
       const method = candidate.methods.find((offered) => offered.id === state.method && offered.driver === "js");
       if (!method) return yield* Effect.fail(failure("The new recipe no longer offers this Project's install method."));
-      return yield* commandsOf(method.requires, candidate);
+      return yield* commandsOf(method, candidate);
     }).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
     useCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.sync(() => { liveCommands.set(id, commands); }),
     saveCommands: (id: string, commands: Readonly<Record<string, string>>) => readState(id).pipe(
@@ -495,7 +505,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         while (Object.values(ports).includes(candidate)) candidate = yield* availablePort();
         ports[port.name] = candidate;
       }
-      const commands = yield* commandsOf(method.requires, parsed);
+      const commands = yield* commandsOf(method, parsed);
       const sameInstall = previous?.method === install.method && previous.software === install.software;
       const state: RecipeState = {
         v: 1, ports, commands, method: install.method, software: install.software,
@@ -545,7 +555,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         // A recipe upgraded while the Project was stopped may bring other runtimes: have them before anything starts.
         const method = parsed.methods.find((offered) => offered.id === state.method && offered.driver === "js");
         if (method) {
-          const commands = yield* commandsOf(method.requires, parsed);
+          const commands = yield* commandsOf(method, parsed);
           if (JSON.stringify(commands) !== JSON.stringify(state.commands)) {
             state = { ...state, commands };
             yield* writeState(project.id, state);

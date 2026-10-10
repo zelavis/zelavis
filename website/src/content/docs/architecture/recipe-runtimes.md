@@ -249,6 +249,21 @@ after the official address fails (a throttled build host, a vendor that challeng
 The pinned digest is the only trust, so a mirror can be any https origin and a wrong copy is discarded like
 any other mismatch. No mirror is operated yet; the mechanism is what ships.
 
+A recipe can offer a second install method that runs its database in a container: a JavaScript method that
+requires `docker` and names a `containers.database` image pinned by digest (the official multi-arch `mariadb`
+image). The person creating the Project picks the method (`--method container`, the create form's Install
+method, or the API's `method`); it is locked with the Project and never chosen again by the host. The
+recipe's shared MariaDB code (`zelavis/recipe`: `requireMariaDb`, `initializeMariaDb`, `mariaDbProcess`,
+`releaseMariaDb`) runs `docker run` for it as one supervised process: the Project's account (`--user uid:gid`),
+the port published on `127.0.0.1` only, the data directory bind-mounted, the password handed over through the
+client's environment rather than its arguments, and the administrator reachable only from inside the container.
+It is ready when the server sends its handshake, not when the port opens (a published port accepts before the
+server behind it is up). Zelavis does not ship or install a container engine; a missing or stopped one is
+reported when the Project is created or started. A Project killed during the image's first initialization can
+leave its container behind, so stopping or removing the Project removes it by name. The programs a container
+method does not use (the MariaDB download) are not fetched for it, and the `mariadb-server` host package is not
+offered for it.
+
 A program may also be built for only some platforms. MariaDB is: the vendor publishes it for Linux x86_64
 only, so the recipes list it with that one download and a `hostRequirement` (`mariadb`). On Linux x86_64 the
 recipe runs its own pinned MariaDB (a 377 MB download, 1.2 GB unpacked, shared by every Project that pins

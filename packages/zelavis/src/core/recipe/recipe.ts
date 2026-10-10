@@ -25,11 +25,12 @@ export interface ProcessPlan {
     readonly env: Readonly<Record<string, string | RecipeSecret>>;
     readonly dependsOn: readonly string[];
     /**
-     * Ready when a declared port accepts connections, or when a file (a unix socket, a pid
+     * Ready when a declared port accepts connections (with `greeting`, and the server speaks first, as MySQL does:
+     * a published container port accepts before the server inside it is up, so only a greeting proves it), or when a file (a unix socket, a pid
      * file) exists. A path must lie below the project or its socket directory.
      */
     readonly readiness:
-      | { readonly port: string; readonly timeoutMs: number }
+      | { readonly port: string; readonly timeoutMs: number; readonly greeting?: boolean }
       | { readonly path: string; readonly timeoutMs: number };
     /**
      * Files this process reads its configuration from, as absolute paths below the project or its
@@ -53,7 +54,7 @@ const ProcessPlanWire = Schema.Struct({
     env: Schema.Record(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)), PlanValue),
     dependsOn: Schema.Array(PlanName).check(Schema.isMaxLength(64)),
     readiness: Schema.Union([
-      Schema.Struct({ port: PlanName, timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })) }),
+      Schema.Struct({ port: PlanName, timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })), greeting: Schema.optional(Schema.Boolean) }),
       Schema.Struct({
         path: Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/)),
         timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
@@ -151,6 +152,9 @@ export interface RecipeContext {
   readonly account: {
     readonly user: string;
     readonly group: string;
+    /** The same account as numbers, for a program that cannot resolve names (a container's user). */
+    readonly uid?: number;
+    readonly gid?: number;
     /** True when the Platform is root and daemons must drop to this account themselves. */
     readonly switchUser: boolean;
   };
