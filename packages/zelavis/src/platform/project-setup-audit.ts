@@ -31,3 +31,13 @@ export const recordSetupReveal = Effect.fn("ProjectSetupAudit.record")(function*
   const doomed = new Set([...expired, ...surplus].map((record) => record.key));
   yield* Effect.forEach([...doomed], (doomedKey) => integration(() => store.delete(PROJECT_SETUP_AUDIT_NAMESPACE, doomedKey)), { concurrency: 4, discard: true });
 });
+
+/** The reveals of one Project, newest first. */
+export const readSetupReveals = Effect.fn("ProjectSetupAudit.read")(function* (store: ZelavisSystemStore, projectId: string, limit = 100) {
+  const records = yield* integration(() => store.list(PROJECT_SETUP_AUDIT_NAMESPACE));
+  return records
+    .filter((record) => (record.value as { projectId?: unknown }).projectId === projectId)
+    .sort((a, b) => b.key.localeCompare(a.key))
+    .slice(0, limit)
+    .map((record) => record.value as unknown as ProjectSetupAuditEntry);
+});

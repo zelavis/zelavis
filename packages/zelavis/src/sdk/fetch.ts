@@ -757,12 +757,23 @@ export interface ZelavisCloudClient {
   releaseNode(nodeId: string): Promise<{ readonly released: boolean }>;
 }
 
+/** One reveal of a Project's secret setup values; the values themselves are never kept. */
+export interface ZelavisProjectSetupReveal {
+  readonly at: number;
+  readonly projectId: string;
+  readonly principalId: string;
+  readonly principalType: string;
+  readonly revealed: readonly string[];
+}
+
 export interface ZelavisProjectsClient {
   versions(projectId?: string): Promise<ZelavisProjectVersions>;
   /** What a person needs to finish the application's own setup; a secret carries no value. Needs `project.view`. */
   setup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
   /** The same with secret values, audited. Needs `project.setup.reveal`. */
   revealSetup(projectId: string): Promise<readonly ZelavisProjectSetupValue[]>;
+  /** Who revealed the secrets, newest first. Needs `project.setup.reveal`. */
+  setupReveals(projectId: string): Promise<readonly ZelavisProjectSetupReveal[]>;
   switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
@@ -1556,6 +1567,7 @@ function createProjectsClient(
     versions: projectId => json<ZelavisProjectVersions>(projectId === undefined ? "/runtime/project-versions" : projectPath(projectId, "versions")),
     setup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup")).then(result => result.values),
     revealSetup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup/reveal"), { method: "POST" }).then(result => result.values),
+    setupReveals: (projectId) => json<{ reveals: readonly ZelavisProjectSetupReveal[] }>(projectPath(projectId, "setup/audit")).then(result => result.reveals),
     switchVersion: (projectId, version) => json<ProjectBody>(projectPath(projectId, "version"), { method: "POST", body: { version } }).then(result => result.project),
     list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
     get: (projectId) => present(Effect.gen(function* () {

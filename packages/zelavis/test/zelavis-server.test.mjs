@@ -1445,6 +1445,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.projects.versions.list",
     "runtime.projects.setup.list",
     "runtime.projects.setup.reveal",
+    "runtime.projects.setup.audit",
       "runtime.projects.versions.select",
       "runtime.projects.create",
       "runtime.projects.get",

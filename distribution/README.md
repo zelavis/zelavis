@@ -166,7 +166,8 @@ the Platform service group. Shared package policy/locking state lives at
 broker separately from the unprivileged Project process Agent.
 
 The fixed `zelavis.packages-install` operation provisions the fixed sets `wordpress-stack`,
-`php-stack` and `mariadb-server` only after explicit `server.packages.install` authorization. The base installation
+`php-stack` and `mariadb-server` only (`wordpress-stack` is their union, kept only because the published
+`@zelavis/wordpress` 7.1.3-alpha.2 names it: remove it when WordPress is next released) after explicit `server.packages.install` authorization. The base installation
 adds no Nginx, PHP or MariaDB. Package-triggered starts are suppressed for the APT
 process tree; existing host units and policy are preserved. The persistent
 `/usr/sbin/policy-rc.d` wrapper delegates normal calls to

@@ -66,7 +66,7 @@ The authoring API is `zelavis/adapters/project-runtime`.
 On Debian/Ubuntu, check **Install required host packages** in the create-project
 form, or use `zelavis projects create Blog --recipe @zelavis/wordpress
 --install-host-packages`. This requires `server.packages.install`, independently
-of `projects.create`. The Platform submits the fixed `wordpress-stack` set to its
+of `projects.create`. The Platform submits the fixed `php-stack` and `mariadb-server` sets to its
 signed host-operation broker before preparing the Project. System installations
 and updates configure a separate root operation Agent; the Platform and Project
 processes remain unprivileged. The recipe never runs APT or sudo.

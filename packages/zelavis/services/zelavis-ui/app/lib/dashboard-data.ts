@@ -10,6 +10,7 @@ import {
   FileText,
   Fingerprint,
   Globe2,
+  KeyRound,
   LayoutDashboard,
   MonitorCog,
   Package,
@@ -428,6 +429,13 @@ export function buildManagedProjectNavItems(
       url: toProjectPath("/app-database", projectId) as DashboardRoutePath,
       icon: Database,
       pageLabel: "App database",
+      sectionLabel: "Hosting",
+    },
+    {
+      title: "Setup",
+      url: toProjectPath("/setup", projectId) as DashboardRoutePath,
+      icon: KeyRound,
+      pageLabel: "Setup",
       sectionLabel: "Hosting",
     },
     {

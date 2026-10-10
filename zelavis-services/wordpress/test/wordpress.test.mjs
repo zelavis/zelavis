@@ -18,7 +18,7 @@ test("recipe revisions are independent from the pinned WordPress releases", () =
     assert.match(software.sha256, /^[0-9a-f]{64}$/, "the archive has a pinned SHA-256");
     assert.equal(software.archive, `https://wordpress.org/wordpress-${software.version}.tar.gz`);
   }
-  assert.deepEqual(manifest.zelavis.project.hostPackages, ["wordpress-stack"]);
+  assert.deepEqual(manifest.zelavis.project.hostPackages, ["php-stack", "mariadb-server"]);
 });
 
 test("the manifest declares one JavaScript method whose module exists, and the ports the recipe uses", async () => {

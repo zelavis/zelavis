@@ -405,11 +405,18 @@ test("setup values are listed without secrets, revealed only to who may, and eve
   assert.ok(trail.every((entry) => entry.projectId === "setup-site" && entry.principalId === "owner" && entry.revealed.join() === "db-password"));
   assert.ok(!JSON.stringify(trail).includes("generated-secret"), "the secret itself is never recorded");
 
+  const reveals = await client.projects.setupReveals("setup-site");
+  assert.equal(reveals.length, 3);
+  assert.deepEqual((await http(fetcher, "GET", "/projects/setup-site/setup/audit")).body.reveals, reveals);
+  assert.deepEqual((await cli(fetcher, ["setup-audit", "setup-site"])).stdout.reveals, reveals);
+  assert.ok(reveals.every((entry) => entry.principalId === "owner" && entry.revealed.join() === "db-password"));
+
   // Viewing a Project is not authority to read its secrets.
   const viewer = { principal: { id: "viewer", type: "user", roles: [], permissions: [], grants: [{ permission: "project.view", scope: { type: "project", projectId: "setup-site" } }] } };
   const asViewer = (url, init) => zv.fetch(new Request(url, init), viewer);
   const base = "http://localhost/zelavis/api/v1/runtime/projects/setup-site/setup";
   assert.equal((await asViewer(base)).status, 200);
   assert.equal((await asViewer(`${base}/reveal`, { method: "POST" })).status, 403);
+  assert.equal((await asViewer(`${base}/audit`)).status, 403, "who revealed what is not for a viewer either");
   assert.equal((await store.list("projects.setup-audit.v1")).length, 3, "a refused reveal records nothing");
 });

@@ -25,7 +25,8 @@
         "adminPath": "/wp-admin/"
       },
       "hostPackages": [
-        "wordpress-stack"
+        "php-stack",
+        "mariadb-server"
       ],
       "install": {
         "contract": 1,

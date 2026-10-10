@@ -244,7 +244,7 @@ contains a secret carries none. `--reveal`, `client.projects.revealSetup(id)` an
 `POST .../setup/reveal` return the secrets too, need `project.setup.reveal`, and are recorded (the
 Project, the caller and the value ids, never the values) in the System Store namespace
 `projects.setup-audit.v1`, capped at 500 records and 90 days; a reveal that cannot be recorded is not
-given. The dashboard does not show these values yet.
+given. The dashboard shows them on each managed Project's **Setup** page, with a **Reveal secrets** button and the most recent reveals; `GET .../setup/audit`, `zelavis projects setup-audit <id>` and `client.projects.setupReveals(id)` read the trail (also `project.setup.reveal`).
 
 ### Replacing a serving process
 
@@ -256,12 +256,15 @@ request waits at most 15 seconds. Reloads and kept processes never close the gat
 requests; it cannot keep a database available while it restarts, so a replaced database is still a
 short pause for the requests that need it.
 
-### Three managed recipes
+### Four managed recipes
 
 WordPress (Nginx, PHP-FPM, MariaDB, generated credentials), DokuWiki (Nginx and PHP-FPM, no database,
-no credentials) and Joomla (like WordPress, whose installer needs the generated values) are managed
-recipes on this path, with no code in the Platform that names any of them. DokuWiki and Joomla exist to
-keep that true. Host packages are fixed named sets (`wordpress-stack`, `php-stack`, `mariadb-server`); a
+no credentials), Joomla and TYPO3 (like WordPress, whose installers need the generated values; each is
+set up with its own command-line installer in the Debian qualification) are managed recipes on this
+path, with no code in the Platform that names any of them. The others exist to keep that true. Two
+of the applications we looked at could not be offered honestly: phpBB's only official download host
+refuses every client that does not present itself as `curl`, and PrestaShop 8 does not run on the
+PHP 8.2 that Debian 12 ships while PrestaShop 9 has no pinned release archive we could find. Host packages are fixed named sets (`wordpress-stack`, `php-stack`, `mariadb-server`); a
 recipe lists the sets it needs.
 
 Limits today: a replaced process is covered by the ingress gate for requests, but a database whose launch changed still pauses what needs it; a layout
@@ -320,7 +323,7 @@ separate. The root Agent uses systemd-delegated cgroup v2 containment and refuse
 arbitrary process commands.
 
 Recipes may declare bounded `zelavis.project.hostPackages` sets such as
-`["wordpress-stack"]`. These are fixed operations, never supplied package names or
+`["php-stack", "mariadb-server"]`. These are fixed operations, never supplied package names or
 commands. Project creation accepts `installHostPackages: true` through HTTP/SDK,
 `--install-host-packages` through CLI, and an explicit dashboard checkbox. It
 requires the broker's `server.packages.install` permission independently of

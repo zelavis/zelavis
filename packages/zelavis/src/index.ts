@@ -110,7 +110,7 @@ import {
 } from "./assistant-tools.js";
 import { createAssistantApprovalStore } from "./assistant-approvals.js";
 import { createAssistantTurnLimiter } from "./assistant-limits.js";
-import { recordSetupReveal } from "./platform/project-setup-audit.js";
+import { readSetupReveals, recordSetupReveal } from "./platform/project-setup-audit.js";
 import { AssistantAuditQueryError, createAssistantAuditReader } from "./assistant-audit.js";
 import {
   AssistantProviderConfigError,
@@ -5540,6 +5540,16 @@ function resolvePlatformEndpointGroup(
                 revealed: values.filter((value) => value.secret).map((value) => value.id),
               }).pipe(Effect.mapError((error) => unwrapFailure(error)));
               return { status: 200, body: { values } };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.setup.audit",
+          spec: { operationId: "listProjectSetupReveals", summary: "Who revealed a Project's secret setup values, newest first; never the values", tags: ["projects"], responses: { 200: { description: "Reveals" }, 403: { description: "Missing permission" } } },
+          method: "GET", path: "/projects/:projectId/setup/audit",
+          access: { permissions: ["project.setup.reveal"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+              if (!systemStore) return unavailableProjectsResponse();
+              return { status: 200, body: { reveals: yield* readSetupReveals(systemStore, params.projectId ?? "").pipe(Effect.mapError((error) => unwrapFailure(error))) } };
           }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {

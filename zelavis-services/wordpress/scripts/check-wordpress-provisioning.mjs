@@ -92,7 +92,7 @@ export function register() {
     await rootAgent.close();
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["wordpress-stack"]);
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["php-stack", "mariadb-server"]);
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -204,14 +204,17 @@ export function register() {
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
-    const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set: "wordpress-stack" } });
-    let record = repeated;
-    for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      record = await client.hostOperations.get(repeated.operationId);
+    // Every fixed set is already satisfied, whichever way the stack was assembled.
+    for (const set of ["php-stack", "mariadb-server", "wordpress-stack"]) {
+      const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
+      let record = repeated;
+      for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        record = await client.hostOperations.get(repeated.operationId);
+      }
+      assert.equal(record.agent.status, "succeeded", set);
+      assert.equal(record.agent.result.changed, false, set);
     }
-    assert.equal(record.agent.status, "succeeded");
-    assert.equal(record.agent.result.changed, false);
     if (phase === "create") await client.projects.stop(project.id);
     if (phase === "verify-preview") {
       await client.projects.remove(project.id);

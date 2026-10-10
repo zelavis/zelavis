@@ -1,12 +1,13 @@
 /**
- * Qualify the Joomla recipe on the disposable Debian/systemd installation the WordPress harness prepared:
- * the values Joomla's installer asks for are read from the Project (the password only revealed, audited),
- * used to run Joomla's own installer, and the installed site serves; then the recipe of the running
- * Project is upgraded under traffic.
+ * Qualify the TYPO3 recipe on the disposable Debian/systemd installation the WordPress harness prepared:
+ * the values TYPO3's installer asks for are read from the Project (the password only revealed, audited),
+ * used to run TYPO3's own setup command, and the installed site and backend serve; then the recipe of
+ * the running Project is upgraded under traffic.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { Agent, get as httpGet } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -15,7 +16,7 @@ await access("/.dockerenv");
 const platform = process.env.ZELAVIS_QUALIFICATION_PLATFORM ?? "/opt/zelavis/current/platform";
 const phase = process.argv[2];
 const baseUrl = "http://127.0.0.1:3000";
-const id = "qualification-joomla";
+const id = "qualification-typo3";
 const directory = `/var/lib/zelavis/projects/${id}`;
 const { createZelavisClient } = await import(pathToFileURL(`${platform}/dist/sdk/fetch.js`).href);
 const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
@@ -59,44 +60,54 @@ const header = (text) => {
 if (phase === "create") {
   assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");
   const recipes = await client.projects.recipes();
-  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/joomla").hostPackages, ["php-stack", "mariadb-server"]);
-  let project = await client.projects.create({ id, name: "Qualification Joomla", recipeName: "@zelavis/joomla", installHostPackages: true });
+  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/typo3").hostPackages, ["php-stack", "mariadb-server"]);
+  let project = await client.projects.create({ id, name: "Qualification TYPO3", recipeName: "@zelavis/typo3", installHostPackages: true });
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
   const first = await ask(`${project.runtime.url}/`);
   assert.ok(first.status === 200 || first.status === 302, `served ${first.status}`);
-  assert.match(first.body + String(first.location), /installation|Joomla/);
+  assert.match(first.body + String(first.location), /install|TYPO3/);
 
-  // What Joomla's installer asks for, from the Project.
+  // What TYPO3's installer asks for, from the Project.
   const listed = await client.projects.setup(id);
-  assert.deepEqual(listed.map((entry) => entry.id), ["db-type", "db-host", "db-name", "db-user", "db-password"]);
+  assert.deepEqual(listed.map((entry) => entry.id), ["db-driver", "db-host", "db-port", "db-name", "db-user", "db-password"]);
   assert.equal(listed.find((entry) => entry.id === "db-password").value, undefined, "the password is not listed");
   const values = Object.fromEntries((await client.projects.revealSetup(id)).map((entry) => [entry.id, entry.value]));
   assert.ok(values["db-password"] && values["db-password"].length >= 16);
   // They really are the credentials of the Project's database.
-  const connect = execFileSync("php", ["-r", 'mysqli_report(MYSQLI_REPORT_OFF); [$host, $port] = explode(":", $argv[1]); $link = new mysqli($host, $argv[2], $argv[3], $argv[4], (int) $port); echo $link->connect_errno === 0 ? "connected" : "refused: " . $link->connect_error;', "--", values["db-host"], values["db-user"], values["db-password"], values["db-name"]], { encoding: "utf8" });
+  const connect = execFileSync("php", ["-r", 'mysqli_report(MYSQLI_REPORT_OFF); [$host, $port] = explode(":", $argv[1]); $link = new mysqli($host, $argv[2], $argv[3], $argv[4], (int) $port); echo $link->connect_errno === 0 ? "connected" : "refused: " . $link->connect_error;', "--", `${values["db-host"]}:${values["db-port"]}`, values["db-user"], values["db-password"], values["db-name"]], { encoding: "utf8" });
   assert.equal(connect, "connected");
-  console.log("PASS: Joomla's installer values come from the Project, the password only on request, and they open its database.");
+  console.log("PASS: TYPO3's installer values come from the Project, the password only on request, and they open its database.");
 
-  // Joomla's own installer with exactly those values.
+  // TYPO3's own setup command with exactly those values.
   const site = `${directory}/app/site`;
-  const adminPassword = `Adm-${randomBytes(12).toString("hex")}`;
-  installer(["-d", "memory_limit=512M", `${site}/installation/joomla.php`, "install", "--site-name=Qualification", "--admin-user=Administrator", "--admin-username=admin",
-    `--admin-password=${adminPassword}`, "--admin-email=admin@example.test", `--db-type=${values["db-type"].toLowerCase()}`, `--db-host=${values["db-host"]}`,
-    `--db-user=${values["db-user"]}`, `--db-pass=${values["db-password"]}`, `--db-name=${values["db-name"]}`, "--db-prefix=jos_", "--db-encryption=0"], { cwd: site, env: { ...process.env, PWD: site }, timeout: 240_000 }, [values["db-password"], adminPassword]);
-  await rm(`${site}/installation`, { recursive: true, force: true });
+  const adminPassword = `Adm!${randomBytes(12).toString("hex")}`;
+  installer(["-d", "memory_limit=512M", `${site}/typo3/sysext/core/bin/typo3`, "setup", "--no-interaction", `--driver=${values["db-driver"].toLowerCase()}`, `--host=${values["db-host"]}`,
+    `--port=${values["db-port"]}`, `--dbname=${values["db-name"]}`, `--username=${values["db-user"]}`, `--password=${values["db-password"]}`, "--admin-username=admin",
+    `--admin-user-password=${adminPassword}`, "--admin-email=admin@example.test", "--project-name=Qualification", `--create-site=${project.runtime.url}/`, "--server-type=other", "--force"],
+    { cwd: site, env: { ...process.env, PWD: site }, timeout: 300_000 }, [values["db-password"], adminPassword]);
+  // The command-line setup leaves the installer marker (the web installer removes it): an operator removes it.
+  assert.ok(existsSync(`${site}/typo3conf/system/settings.php`), "TYPO3 wrote its configuration");
+  await rm(`${site}/FIRST_INSTALL`, { force: true });
   const front = await ask(`${project.runtime.url}/`);
-  assert.equal(front.status, 200, front.body.slice(0, 300));
-  assert.match(front.body, /Qualification/);
-  const admin = await ask(`${project.runtime.url}/administrator/`);
-  assert.equal(admin.status, 200);
-  assert.match(admin.body, /Joomla|login/i);
-  console.log("PASS: Joomla installed with the Project's values and serves its site and administrator login.");
+  if (front.status >= 500) {
+    // What the application and the servers logged, since TYPO3 answers a bare error page.
+    const tails = [];
+    for (const file of [`${directory}/app/run/php-errors.log`, `${directory}/app/run/nginx-error.log`, `${directory}/app/run/php-fpm.log`]) {
+      tails.push(`${file}:\n${(await readFile(file, "utf8").catch(() => "(unreadable)")).slice(-1200)}`);
+    }
+    const logs = execFileSync("sh", ["-c", `tail -n 8 ${site}/typo3temp/var/log/*.log 2>/dev/null | cut -c1-500`], { encoding: "utf8" });
+    throw new Error(`The front page answered ${front.status}.\n${tails.join("\n")}\nTYPO3:\n${logs}`);
+  }
+  const backend = await ask(`${project.runtime.url}/typo3/`);
+  assert.ok(backend.status === 200 || backend.status === 302, `backend ${backend.status}`);
+  assert.match(backend.body + String(backend.location), /TYPO3|login/i);
+  console.log("PASS: TYPO3 set up with the Project's values and serves its site and backend login.");
   project = await client.projects.stop(id);
   assert.equal(project.runtime.status, "stopped");
 } else if (phase === "stop") {
   const project = await client.projects.stop(id);
   assert.equal(project.runtime.status, "stopped");
-  console.log("PASS: Joomla stopped for the next live-upgrade round.");
+  console.log("PASS: TYPO3 stopped for the next live-upgrade round.");
 } else if (phase === "seed") {
   // A controlled historical recipe on a stopped Project and a stopped Platform; not a released version.
   assert.notEqual(execFileSync("sh", ["-c", "systemctl is-active zelavis.service 2>/dev/null || true"], { encoding: "utf8" }).trim(), "active");
@@ -117,7 +128,7 @@ if (phase === "create") {
     assert.equal(record.value.desiredState, "stopped");
     await store.set("projects", id, { ...record.value, recipe: descriptor.recipe });
   } finally { await store.close(); }
-  console.log("PASS: historical Joomla recipe prepared on a stopped Project.");
+  console.log("PASS: historical TYPO3 recipe prepared on a stopped Project.");
 } else if (phase === "live-upgrade") {
   let project = await client.projects.get(id);
   assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -143,7 +154,7 @@ if (phase === "create") {
   project = await client.projects.upgrade(id, {});
   await new Promise((resolve) => setTimeout(resolve, 500));
   stop = true; await traffic;
-  const current = (await client.projects.recipes()).find((recipe) => recipe.name === "@zelavis/joomla").version;
+  const current = (await client.projects.recipes()).find((recipe) => recipe.name === "@zelavis/typo3").version;
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
   assert.equal(project.recipe.version, current);
   assert.equal(failures, 0, `no request failed during the live recipe upgrade: ${JSON.stringify(failed.slice(0, 5))}`);
@@ -151,7 +162,7 @@ if (phase === "create") {
   assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
   assert.deepEqual(await pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
   assert.equal((await ask(`${project.runtime.url}/`)).header, null);
-  console.log(`PASS: running Joomla upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM/MariaDB processes.`);
+  console.log(`PASS: running TYPO3 upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM/MariaDB processes.`);
 } else {
   throw new Error(`Unknown phase "${phase}".`);
 }

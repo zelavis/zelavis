@@ -18,7 +18,7 @@ docker run -d --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run -
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_PROVISIONING_FROM_NPM=${ZELAVIS_PROVISIONING_FROM_NPM:-}" \
-  -e "ZELAVIS_QUALIFY_UPDATE=${ZELAVIS_QUALIFY_UPDATE:-}" \
+  -e "ZELAVIS_QUALIFY_UPDATE=${ZELAVIS_QUALIFY_UPDATE:-}" -e "ZELAVIS_HARNESS_SKIP=${ZELAVIS_HARNESS_SKIP:-}" \
   "$IMAGE" /sbin/init >/dev/null
 # Init needs a moment to establish its cgroup hierarchy. Bounded readiness, no host service changes.
 for attempt in $(seq 1 60); do

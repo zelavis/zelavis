@@ -4,7 +4,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -111,6 +111,11 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "setup": {
       const values = yield* integration(() => reveal ? client.projects.revealSetup(requireTarget("id")) : client.projects.setup(requireTarget("id")));
       print({ values }, () => values.map(value => `${value.label}\t${value.secret && value.value === undefined ? "(secret: use --reveal)" : value.value}`).join("\n") || "This Project has no setup values.");
+      return;
+    }
+    case "setup-audit": {
+      const reveals = yield* integration(() => client.projects.setupReveals(requireTarget("id")));
+      print({ reveals }, () => reveals.map(entry => `${new Date(entry.at).toISOString()}\t${entry.principalType}:${entry.principalId}\t${entry.revealed.join(",")}`).join("\n") || "No reveals.");
       return;
     }
     case "switch-version": {

@@ -19,6 +19,16 @@ const directory = `/var/lib/zelavis/projects/${id}`;
 const { createZelavisClient } = await import(pathToFileURL(`${platform}/dist/sdk/fetch.js`).href);
 const cookie = await readFile("/var/lib/zelavis/qualification-session", "utf8");
 const client = createZelavisClient({ baseUrl, headers: { cookie, origin: baseUrl } });
+// A failed call says which one it was.
+for (const [method, call] of Object.entries(client.projects)) {
+  client.projects[method] = async (...args) => {
+    try { return await call(...args); } catch (error) { if (error instanceof Error) {
+        const raw = error.response && !error.response.bodyUsed ? await error.response.clone().text().catch(() => "") : "";
+        error.message = `projects.${method}: ${error.message} ${JSON.stringify(error.body ?? {})} [${error.response?.status} ${error.response?.headers?.get?.("content-type")}] ${raw.slice(0, 300)}`;
+      }
+      throw error; }
+  };
+}
 
 const oneConnection = new Agent({ keepAlive: false });
 const ask = (url) => new Promise((resolve, reject) => {

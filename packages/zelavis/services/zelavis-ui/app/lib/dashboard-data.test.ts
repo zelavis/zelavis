@@ -386,6 +386,7 @@ describe("dashboard navigation ownership", () => {
       ["Domains", "Hosting"],
       ["Files", "Hosting"],
       ["App database", "Hosting"],
+      ["Setup", "Hosting"],
       ["Backups", "Operations"],
       ["Logs", "Operations"],
       ["Updates", "Operations"],
@@ -405,7 +406,7 @@ describe("dashboard navigation ownership", () => {
     const next = buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [{ ...service.menus[0], title: "Recipe v2" }] }]);
     expect(next.some(item => item.title === "Recipe v1")).toBe(false);
     expect(next.at(-1)?.title).toBe("Recipe v2");
-    expect(buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [] }])).toHaveLength(8);
+    expect(buildManagedProjectNavItems("wp", {}, [{ ...service, menus: [] }])).toHaveLength(9);
   });
 
   it("reveals the existing native sections only for used managed app APIs", () => {

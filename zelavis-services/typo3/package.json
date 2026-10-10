@@ -1,0 +1,150 @@
+{
+  "name": "@zelavis/typo3",
+  "version": "13.4.36-alpha.0",
+  "private": false,
+  "description": "Official Zelavis TYPO3 Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "app",
+    "namespace": "typo3",
+    "capabilities": [
+      "app:project",
+      "app:managed",
+      "app:typo3"
+    ],
+    "project": {
+      "runtimeKinds": [
+        "native"
+      ],
+      "runtime": "./dist/runtime.js",
+      "managed": {
+        "adminTitle": "TYPO3 Backend",
+        "adminPath": "/typo3/"
+      },
+      "hostPackages": [
+        "php-stack",
+        "mariadb-server"
+      ],
+      "install": {
+        "contract": 1,
+        "methods": [
+          {
+            "id": "native",
+            "driver": "js",
+            "entry": "./dist/recipe.js",
+            "requires": [
+              "nginx",
+              "php-fpm",
+              "mariadb"
+            ]
+          }
+        ],
+        "software": [
+          {
+            "version": "13.4.36",
+            "archive": "https://cdn.typo3.com/typo3/13.4.36/typo3_src-13.4.36.tar.gz",
+            "sha256": "49aed89d1d90e2919c4fcc05d6fea95b8b693d3481589d74ed5215084c3fce3b",
+            "maxBytes": 134217728
+          }
+        ],
+        "ports": [
+          {
+            "name": "web",
+            "protocol": "http"
+          },
+          {
+            "name": "db",
+            "protocol": "tcp"
+          }
+        ],
+        "directories": [
+          {
+            "name": "site",
+            "path": "site"
+          },
+          {
+            "name": "db",
+            "path": "db"
+          }
+        ],
+        "setup": [
+          {
+            "id": "db-driver",
+            "label": "Database driver",
+            "value": "MySQLi"
+          },
+          {
+            "id": "db-host",
+            "label": "Database host",
+            "value": "127.0.0.1"
+          },
+          {
+            "id": "db-port",
+            "label": "Database port",
+            "value": "{ports.db}"
+          },
+          {
+            "id": "db-name",
+            "label": "Database name",
+            "value": "typo3"
+          },
+          {
+            "id": "db-user",
+            "label": "Database user",
+            "value": "typo3"
+          },
+          {
+            "id": "db-password",
+            "label": "Database password",
+            "value": "{secret.db-password}"
+          }
+        ]
+      }
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "zelavis-services/typo3"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/typo3#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0",
+    "zelavis": ">=2.0.0-alpha.16"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "effect": "4.0.0",
+    "typescript": "^7.0.2",
+    "zelavis": "workspace:*"
+  },
+  "keywords": [
+    "zelavis",
+    "typo3",
+    "cms",
+    "recipe"
+  ]
+}

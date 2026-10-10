@@ -1750,6 +1750,35 @@ export function getProjectVersions(config: RuntimeConfig, projectId?: string): P
   return readJson(`${config.api.basePath}${path}`);
 }
 
+export interface RuntimeProjectSetupValue {
+  id: string;
+  label: string;
+  secret: boolean;
+  value?: string;
+}
+
+/** What the application's own installer asks for; a secret carries no value. */
+export function getProjectSetup(config: RuntimeConfig, projectId: string): Promise<readonly RuntimeProjectSetupValue[]> {
+  return readJson<{ values: readonly RuntimeProjectSetupValue[] }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/setup`).then(result => result.values);
+}
+
+export interface RuntimeProjectSetupReveal {
+  at: number;
+  principalId: string;
+  principalType: string;
+  revealed: readonly string[];
+}
+
+/** Who revealed the secrets, newest first; needs `project.setup.reveal`. */
+export function getProjectSetupReveals(config: RuntimeConfig, projectId: string): Promise<readonly RuntimeProjectSetupReveal[]> {
+  return readJson<{ reveals: readonly RuntimeProjectSetupReveal[] }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/setup/audit`).then(result => result.reveals);
+}
+
+/** The same with secrets, audited by the Platform; needs `project.setup.reveal`. */
+export function revealProjectSetup(config: RuntimeConfig, projectId: string): Promise<readonly RuntimeProjectSetupValue[]> {
+  return readJson<{ values: readonly RuntimeProjectSetupValue[] }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/setup/reveal`, { method: "POST" }).then(result => result.values);
+}
+
 export function switchProjectVersion(config: RuntimeConfig, projectId: string, version: string): Promise<RuntimeProject> {
   return readJson<{ project: RuntimeProject }>(`${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/version`,
     { method: "POST", body: JSON.stringify({ version }) }).then(result => normalizeRuntimeProject(result.project));
