@@ -1,6 +1,6 @@
 # @zelavis/joomla
 
-The official Zelavis Joomla Project recipe: dedicated Nginx, PHP-FPM and MariaDB with Project-owned
+The official Zelavis Joomla Project recipe: Caddy, PHP-FPM and a dedicated MariaDB with Project-owned
 configuration, sockets, ports, logs, site files and database. It is an officially maintained service,
 published on its own release cycle, and reaches an installation through the marketplace allow-list.
 
@@ -15,4 +15,4 @@ adopts the processes, upgrades the recipe of a running Project without stopping 
 declared `site` and `db` directories when a newer recipe names other paths. Upgrading the recipe never
 changes Joomla itself; Joomla updates itself.
 
-It needs the `php-stack` and `mariadb-server` host package sets.
+It brings its own PHP and its own web server (pinned builds of PHP's CLI and FPM and of Caddy in its manifest, unpacked into the Platform's store), so the host needs no PHP and no web server and the versions are the recipe's to choose; the host needs only the `mariadb-server` package set.

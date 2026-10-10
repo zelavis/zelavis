@@ -16,3 +16,11 @@ While a launch change replaces a serving process, public requests wait at the ga
 Recipes can declare `setup` values (templates over the Project's ports, directories, sockets, account and generated secrets) for an application's own installer: `projects setup <id> [--reveal]`, `client.projects.setup|revealSetup` and `GET|POST /projects/:id/setup[/reveal]`; revealing needs `project.setup.reveal` and is audited. `@zelavis/joomla` is the first recipe to use them. Host package sets `php-stack` and `mariadb-server` join `wordpress-stack`; `@zelavis/dokuwiki` uses `php-stack` alone.
 
 The dashboard has a Setup page for managed Projects (values, a Reveal secrets button and recent reveals), and the reveal trail is readable through HTTP, SDK and CLI (`projects setup-audit`). `@zelavis/wordpress` now needs the `php-stack` and `mariadb-server` sets; `@zelavis/typo3` is a fourth managed recipe.
+
+Recipes bring their own PHP: manifest `runtimes` pin a build per platform (address, SHA-256, size), unpacked once into `<data>/runtimes/<sha256>/` and offered as commands. WordPress, DokuWiki, Joomla and TYPO3 no longer need PHP on the host, run the PHP version they pin, and an upgrade can switch builds. The host package sets are now `nginx` and `mariadb-server`.
+
+Recipes bring their own web server too: all five managed recipes (WordPress, DokuWiki, Joomla, TYPO3, new `@zelavis/prestashop`) pin Caddy next to their PHP, so only MariaDB is still taken from the host (`mariadb-server`), and DokuWiki needs nothing from it. The recipe host unpacks `.zip` archives with plain Node, retries downloads that stumble, and the Platform prunes runtime builds no Project names.
+
+New `@zelavis/drupal` (Drupal 11.4.9 from drupal.org, pinned): the sixth managed recipe, on its own PHP 8.4 and Caddy, with Drupal's web installer fed from the Project's setup values. A runtime download may list up to three `mirrors` (other places holding the same archive, tried in order; the digest is the only trust).
+
+Recipes bring their own MariaDB on Linux x86_64 (pinned official 11.4.9 build as the `mariadbd`, `mariadb-install-db` and `mariadb` runtimes); a runtime's `hostRequirement` names the host requirement used on platforms without a build. WordPress, Joomla, TYPO3, PrestaShop and the new Drupal no longer need the `mariadb-server` host package there.

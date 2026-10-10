@@ -18,19 +18,38 @@ test("recipe revisions are independent from the pinned WordPress releases", () =
     assert.match(software.sha256, /^[0-9a-f]{64}$/, "the archive has a pinned SHA-256");
     assert.equal(software.archive, `https://wordpress.org/wordpress-${software.version}.tar.gz`);
   }
-  assert.deepEqual(manifest.zelavis.project.hostPackages, ["php-stack", "mariadb-server"]);
+  assert.deepEqual(manifest.zelavis.project.hostPackages, ["mariadb-server"]);
+});
+
+test("PHP and the web server are the recipe's own: pinned builds for every platform, not the host's", () => {
+  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb"]);
+  for (const runtime of install.runtimes.filter((entry) => entry.hostRequirement === undefined)) {
+    assert.match(runtime.version, runtime.command === "caddy" ? /^2\.\d+\.\d+$/ : /^8\.\d+\.\d+$/);
+    assert.deepEqual(Object.keys(runtime.downloads).sort(), ["linux-aarch64", "linux-x86_64", "macos-aarch64", "macos-x86_64"]);
+    for (const download of Object.values(runtime.downloads)) assert.match(download.sha256, /^[0-9a-f]{64}$/);
+  }
 });
 
 test("the manifest declares one JavaScript method whose module exists, and the ports the recipe uses", async () => {
   assert.equal(manifest.name, WORDPRESS_APP_NAME);
   assert.equal(manifest.zelavis.kind, "app");
   assert.deepEqual(manifest.zelavis.project.runtimeKinds, ["native"]);
-  assert.deepEqual(install.methods.map((method) => [method.id, method.driver, [...method.requires]]), [["native", "js", ["nginx", "php-fpm", "mariadb"]]]);
+  assert.deepEqual(install.methods.map((method) => [method.id, method.driver, [...method.requires]]), [["native", "js", []]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
   assert.deepEqual(install.ports.map((port) => [port.name, port.protocol]), [["web", "http"], ["db", "tcp"]]);
   assert.equal(manifest.zelavis.project.runtime, "./dist/runtime.js");
   await access(new URL("../dist/runtime.js", import.meta.url));
   assert.ok(manifest.files.includes("dist"), "the recipe is part of what is published and frozen");
+});
+
+test("MariaDB is the recipe's own where the vendor builds it, and the host's elsewhere", () => {
+  const database = install.runtimes.filter((runtime) => runtime.hostRequirement === "mariadb");
+  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb"]);
+  for (const runtime of database) {
+    assert.deepEqual(Object.keys(runtime.downloads), ["linux-x86_64"]);
+    assert.match(runtime.downloads["linux-x86_64"].archive, /^https:\/\/archive\.mariadb\.org\/mariadb-[\d.]+\/bintar-linux-systemd-x86_64\//);
+  }
+  assert.equal(new Set(database.map((runtime) => runtime.downloads["linux-x86_64"].sha256)).size, 1, "one archive serves all three commands");
 });
 
 test("its runtime is the Platform's recipe runtime, configured by the host's user option", () => {
@@ -52,11 +71,11 @@ const context = (overrides = {}) => ({
 test("start returns the three processes, in dependency order, within the manifest's names", () => {
   const plan = Effect.runSync(recipe.start(context()));
   const checked = parseProcessPlan(plan, {
-    commands: ["nginx", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name),
+    commands: ["caddy", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name),
     directories: ["/srv/p1/app", "/run/zv-abc"],
   });
   assert.deepEqual(checked.processes.map((process) => [process.name, process.command, [...process.dependsOn]]), [
-    ["database", "mariadbd", []], ["php-fpm", "php-fpm", ["database"]], ["nginx", "nginx", ["php-fpm"]],
+    ["database", "mariadbd", []], ["php-fpm", "php-fpm", ["database"]], ["caddy", "caddy", ["php-fpm"]],
   ]);
   const database = checked.processes[0];
   assert.ok(database.args.includes("--datadir=/srv/p1/app/db") && database.args.includes("--port=13306") && database.args.includes("--bind-address=127.0.0.1"));
@@ -64,7 +83,7 @@ test("start returns the three processes, in dependency order, within the manifes
   assert.deepEqual(checked.processes[1].readiness, { path: "/run/zv-abc/php-fpm.sock", timeoutMs: 120000 });
   assert.deepEqual(checked.processes[2].readiness, { port: "web", timeoutMs: 120000 });
   assert.deepEqual([checked.processes[1].config, checked.processes[1].update], [["/srv/p1/app/php-fpm.conf"], { strategy: "reload", signal: "SIGUSR2" }], "PHP-FPM reloads gracefully");
-  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/app/nginx.conf"], { strategy: "reload", signal: "SIGHUP" }], "nginx reloads gracefully");
+  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/app/Caddyfile"], { strategy: "reload", signal: "SIGUSR1" }], "Caddy reloads gracefully");
   assert.equal(checked.processes[0].config, undefined, "the database reads nothing that a reload could change; a different launch restarts it");
 
   const root = Effect.runSync(recipe.start(context({ account: { user: "www-data", group: "www-data", switchUser: true } })));
@@ -117,7 +136,7 @@ test("install downloads the pinned release, writes private credentials by refere
   assert.ok(initialize.args.includes("--extra-file=/srv/p1/app/run/init.sql") && initialize.args.includes("--datadir=/srv/p1/app/db"));
   assert.ok(fake.calls.removed.includes("run/init.sql"), "the file that held the password is removed");
   assert.ok(fake.files.has("db/.zelavis-initialized"));
-  assert.ok(fake.calls.runs.some((call) => call.command === "nginx" && call.args[0] === "-t"));
+  assert.ok(fake.calls.runs.some((call) => call.command === "caddy" && call.args[0] === "validate"));
   assert.ok(fake.calls.runs.some((call) => call.command === "php-fpm" && call.args[0] === "-tt"));
 });
 
@@ -132,7 +151,7 @@ test("the site and the database are wherever the Project has them: a recipe neve
   assert.ok(fake.calls.writes.has("web/wp/wp-config.php"));
   assert.ok(fake.files.has("data/mysql/.zelavis-initialized"));
   const text = (name) => [].concat(fake.calls.writes.get(name)).join("");
-  assert.ok(text("nginx.conf").includes("/srv/p1/app/web/wp"));
+  assert.ok(text("Caddyfile").includes("/srv/p1/app/web/wp"));
   assert.ok(text("php-fpm.conf").includes("chdir = /srv/p1/app/web/wp"));
 });
 
@@ -142,23 +161,21 @@ test("install resumes: nothing is downloaded, regenerated or reinitialized when 
   assert.deepEqual(fake.calls.downloads, []);
   assert.equal(fake.calls.writes.has("site/wp-config.php"), false);
   assert.equal(fake.calls.runs.some((call) => call.command === "mariadb-install-db"), false);
-  assert.ok(fake.calls.writes.has("nginx.conf") && fake.calls.writes.has("php-fpm.conf"), "configuration is regenerated, it is cheap and keeps ports current");
+  assert.ok(fake.calls.writes.has("Caddyfile") && fake.calls.writes.has("php-fpm.conf"), "configuration is regenerated, it is cheap and keeps ports current");
 });
 
-test("configuration follows the account: nginx drops privileges only when asked, PHP-FPM names the account", async () => {
+test("configuration follows the account: PHP-FPM names it, and Caddy, which cannot drop privileges, refuses a root Platform", async () => {
   const plain = fakeHost();
   await runInstall(plain);
-  assert.ok(!plain.calls.writes.get("nginx.conf").startsWith("user "));
   const fpm = plain.calls.writes.get("php-fpm.conf");
   assert.match(fpm, /user = www-data\ngroup = www-data/);
   assert.match(fpm, /listen = \/run\/zv-abc\/php-fpm\.sock/);
   assert.match(fpm, /listen\.mode = 0600/);
+  assert.match(plain.calls.writes.get("Caddyfile"), /bind 127\.0\.0\.1/);
+  assert.match(plain.calls.writes.get("Caddyfile"), /php_fastcgi unix\/\/run\/zv-abc\/php-fpm\.sock/);
 
   const root = fakeHost();
-  await runInstall(root, context({ account: { user: "www-data", group: "web", switchUser: true } }));
-  assert.ok(root.calls.writes.get("nginx.conf").startsWith("user www-data;"));
-  assert.match(root.calls.writes.get("php-fpm.conf"), /group = web/);
-  assert.ok(root.calls.runs.find((call) => call.command === "mariadb-install-db").args.includes("--user=www-data"));
+  await assert.rejects(runInstall(root, context({ account: { user: "www-data", group: "web", switchUser: true } })), /cannot drop privileges/);
 });
 
 test("install refuses what it cannot run, and says why", async () => {
@@ -181,8 +198,8 @@ test("install refuses what it cannot run, and says why", async () => {
 
   const badConfig = fakeHost();
   const run4 = badConfig.host.run;
-  badConfig.host.run = (input) => input.command === "nginx" ? Effect.succeed({ code: 1, stdout: "", stderr: "nginx: [emerg] unknown directive" }) : run4(input);
-  await assert.rejects(runInstall(badConfig), /Nginx configuration is not valid: nginx: \[emerg\] unknown directive/);
+  badConfig.host.run = (input) => input.command === "caddy" ? Effect.succeed({ code: 1, stdout: "", stderr: "Error: adapting config using caddyfile: unknown directive" }) : run4(input);
+  await assert.rejects(runInstall(badConfig), /Caddy configuration is not valid: Error: adapting config using caddyfile: unknown directive/);
 
   const brokenInit = fakeHost();
   const run5 = brokenInit.host.run;

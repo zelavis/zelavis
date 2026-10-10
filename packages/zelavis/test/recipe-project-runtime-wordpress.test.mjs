@@ -1,5 +1,5 @@
-// The real WordPress recipe through the generic recipe runtime, with the real Nginx, PHP-FPM and
-// MariaDB of this host (skipped where they are not installed). WordPress itself is replaced by a
+// The real WordPress recipe through the generic recipe runtime, with the PHP and Caddy it downloads
+// for itself and the MariaDB of this host (off unless ZELAVIS_REAL_STACK=1, because it needs the network). WordPress itself is replaced by a
 // two-file stand-in placed where the recipe looks first, so nothing is downloaded; everything
 // else (requirements, ports, the install and start phases in their own processes, MariaDB
 // initialization, supervision, restart, removal) is the production path.
@@ -21,12 +21,12 @@ import { digestArtifactDirectory, materializeRecipeArtifact } from "../dist/adap
 
 const wordpress = new URL("../../../zelavis-services/wordpress/", import.meta.url).pathname;
 const manifest = JSON.parse(await readFile(join(wordpress, "package.json"), "utf8"));
-const stack = await Effect.runPromise(resolveRequirementCommands(["nginx", "php-fpm", "mariadb"]).pipe(Effect.option, Effect.map((result) => result._tag === "Some")));
-const skip = !stack || !existsSync(join(wordpress, "dist/recipe.js")) ? "needs Nginx, PHP-FPM, MariaDB and a built @zelavis/wordpress" : false;
+const stack = await Effect.runPromise(resolveRequirementCommands(["mariadb"]).pipe(Effect.option, Effect.map((result) => result._tag === "Some")));
+const skip = process.env.ZELAVIS_REAL_STACK !== "1" || !stack || !existsSync(join(wordpress, "dist/recipe.js")) ? "needs ZELAVIS_REAL_STACK=1, MariaDB and a built @zelavis/wordpress" : false;
 
 const lock = (software) => ({
   name: "@zelavis/wordpress", title: "WordPress", version: manifest.version, specifier: "@zelavis/wordpress", runtimeKinds: ["native"],
-  install: { method: "native", driver: "js", requires: ["nginx", "php-fpm", "mariadb"], software },
+  install: { method: "native", driver: "js", requires: ["mariadb"], software },
 });
 const record = (id, software) => ({ id, name: id, kind: "wordpress", recipe: lock(software), runtimeKind: "native", desiredState: "running", capabilities: {}, runtime: { driver: "x", status: "provisioning" }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
 
@@ -78,8 +78,8 @@ test("a WordPress Project installs, starts, serves PHP backed by its own databas
   const state = JSON.parse(readFileSync(join(where, ".zelavis", "recipe-state.json"), "utf8"));
   assert.equal(state.installed, true);
   assert.deepEqual(Object.keys(state.ports).sort(), ["db", "web"]);
-  for (const name of ["nginx", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb", "php"]) assert.ok(state.commands[name]?.startsWith("/"), `${name} resolved to an absolute path`);
-  assert.ok(existsSync(join(where, "app", "nginx.conf")) && existsSync(join(where, "app", "php-fpm.conf")));
+  for (const name of ["caddy", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb", "php"]) assert.ok(state.commands[name]?.startsWith("/"), `${name} resolved to an absolute path`);
+  assert.ok(existsSync(join(where, "app", "Caddyfile")) && existsSync(join(where, "app", "php-fpm.conf")));
   assert.ok(existsSync(join(where, "app", "db", ".zelavis-initialized")));
   assert.ok(!existsSync(join(where, "app", "run", "init.sql")), "the SQL file that held the password is gone");
   const config = readFileSync(join(where, "app", "site", "wp-config.php"), "utf8");
@@ -93,7 +93,7 @@ test("a WordPress Project installs, starts, serves PHP backed by its own databas
   assert.equal(started.url, `http://127.0.0.1:${state.ports.web}`);
   const page = await fetch(`${started.url}/index.php`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /^database:1 php:\d+$/, "Nginx → PHP-FPM → MariaDB with the generated credentials");
+  assert.match(await page.text(), /^database:1 php:\d+$/, "Caddy → PHP-FPM → MariaDB with the generated credentials");
   assert.equal((await driver.status("wp1")).status, "running");
   assert.ok((await driver.logs("wp1")).some((entry) => /Installing @zelavis\/wordpress 7\.1\.2/.test(entry.message)));
 
@@ -189,7 +189,7 @@ test("a WordPress Project laid out by the previous recipe is taken over: same ad
   await driver.stop(id);
 });
 
-test("a running WordPress Project is upgraded to a recipe that changes its web configuration: nginx and PHP-FPM reload in place, the database is untouched, no request fails", { skip, timeout: 300_000 }, async (t) => {
+test("a running WordPress Project is upgraded to a recipe that changes its web configuration: Caddy and PHP-FPM reload in place, the database is untouched, no request fails", { skip, timeout: 300_000 }, async (t) => {
   const base = await mkdtemp(join(tmpdir(), "zv-wp-live-"));
   const directory = join(base, "projects");
   const runner = createLocalAgentProcessRunner({ stateDirectory: join(directory, ".agent-processes") });
@@ -211,8 +211,8 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
   const sources = {
     "7.1.3": await copy("wp-one", "7.1.3"),
     "7.1.4": await copy("wp-two", "7.1.4", (text) => {
-      assert.ok(text.includes("client_max_body_size 64m;"), "the recipe still has the line this test edits");
-      return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "two" always;');
+      assert.ok(text.includes("request_body {"), "the recipe still has the line this test edits");
+      return text.replace("request_body {", 'header X-Recipe "two"\n\t\trequest_body {');
     }),
   };
   const id = "wplive";
@@ -238,7 +238,7 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
   await driver.prepare(project, project.recipe);
   const started = await driver.start(project);
   const read = (file) => Number(readFileSync(join(directory, id, "app", "run", file), "utf8").trim());
-  const pids = () => ({ nginx: read("nginx.pid"), fpm: read("php-fpm.pid"), database: read("mariadb.pid") });
+  const pids = () => ({ caddy: read("caddy.pid"), fpm: read("php-fpm.pid"), database: read("mariadb.pid") });
   const before = pids();
   const first = await fetch(`${started.url}/index.php`);
   assert.equal(first.headers.get("x-recipe"), null);
@@ -264,11 +264,11 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
   assert.equal(failures, 0, "not one request failed while WordPress changed recipe");
   assert.ok(served > 50, `served ${served}`);
   assert.deepEqual([...headers].sort((a, b) => String(a).localeCompare(String(b))), [null, "two"], "responses switched to the new configuration");
-  assert.deepEqual(pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
+  assert.deepEqual(pids(), before, "Caddy, PHP-FPM and MariaDB are the same processes");
   const after = await fetch(`${started.url}/index.php`);
   assert.equal(after.headers.get("x-recipe"), "two");
   assert.match(await after.text(), /database:1/);
   assert.equal(JSON.parse(await readFile(join(data, "recipe", "package", "package.json"), "utf8")).version, "7.1.4");
-  assert.match(readFileSync(join(directory, id, "app", "nginx.conf"), "utf8"), /X-Recipe/);
+  assert.match(readFileSync(join(directory, id, "app", "Caddyfile"), "utf8"), /X-Recipe/);
   await driver.stop(id);
 });

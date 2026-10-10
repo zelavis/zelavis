@@ -32,8 +32,10 @@ for (const [method, call] of Object.entries(client.projects)) {
 }
 
 /** Runs the application's own installer; a failure reports what the tool said, with the generated values removed. */
+/** The PHP this Project brought with it (set when the Project exists). */
+let phpBinary;
 const installer = (args, options, hide = []) => {
-  try { return execFileSync("php", args, { ...options, stdio: "pipe", encoding: "utf8" }); }
+  try { return execFileSync(phpBinary, args, { ...options, stdio: "pipe", encoding: "utf8" }); }
   catch (error) {
     let said = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
     for (const secret of hide) said = said.split(secret).join("[hidden]");
@@ -52,16 +54,18 @@ const ask = (url) => new Promise((resolve, reject) => {
   }).on("error", reject);
 });
 const header = (text) => {
-  assert.ok(text.includes("client_max_body_size"), "the fixture's anchor line is still in the recipe");
-  return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "historical" always;');
+  assert.ok(text.includes("request_body {"), "the fixture's anchor line is still in the recipe");
+  return text.replace("request_body {", 'header X-Recipe "historical"\n\trequest_body {');
 };
 
 if (phase === "create") {
   assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");
   const recipes = await client.projects.recipes();
-  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/joomla").hostPackages, ["php-stack", "mariadb-server"]);
+  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/joomla").hostPackages, ["mariadb-server"]);
   let project = await client.projects.create({ id, name: "Qualification Joomla", recipeName: "@zelavis/joomla", installHostPackages: true });
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
+  phpBinary = JSON.parse(await readFile(`${directory}/.zelavis/recipe-state.json`, "utf8")).commands.php;
+  assert.match(phpBinary, /^\/var\/lib\/zelavis\/runtimes\/[0-9a-f]{64}\/php$/, "the PHP is the recipe's own, in the Platform's store");
   const first = await ask(`${project.runtime.url}/`);
   assert.ok(first.status === 200 || first.status === 302, `served ${first.status}`);
   assert.match(first.body + String(first.location), /installation|Joomla/);
@@ -73,7 +77,7 @@ if (phase === "create") {
   const values = Object.fromEntries((await client.projects.revealSetup(id)).map((entry) => [entry.id, entry.value]));
   assert.ok(values["db-password"] && values["db-password"].length >= 16);
   // They really are the credentials of the Project's database.
-  const connect = execFileSync("php", ["-r", 'mysqli_report(MYSQLI_REPORT_OFF); [$host, $port] = explode(":", $argv[1]); $link = new mysqli($host, $argv[2], $argv[3], $argv[4], (int) $port); echo $link->connect_errno === 0 ? "connected" : "refused: " . $link->connect_error;', "--", values["db-host"], values["db-user"], values["db-password"], values["db-name"]], { encoding: "utf8" });
+  const connect = execFileSync(phpBinary, ["-r", 'mysqli_report(MYSQLI_REPORT_OFF); [$host, $port] = explode(":", $argv[1]); $link = new mysqli($host, $argv[2], $argv[3], $argv[4], (int) $port); echo $link->connect_errno === 0 ? "connected" : "refused: " . $link->connect_error;', "--", values["db-host"], values["db-user"], values["db-password"], values["db-name"]], { encoding: "utf8" });
   assert.equal(connect, "connected");
   console.log("PASS: Joomla's installer values come from the Project, the password only on request, and they open its database.");
 
@@ -107,7 +111,7 @@ if (phase === "create") {
   manifest.version = "0.0.0-qualification";
   await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
   await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
-  await writeFile(`${directory}/app/nginx.conf`, header(await readFile(`${directory}/app/nginx.conf`, "utf8")));
+  await writeFile(`${directory}/app/Caddyfile`, header(await readFile(`${directory}/app/Caddyfile`, "utf8")));
   const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
   descriptor.recipe = { ...descriptor.recipe, version: manifest.version, artifact: { digest: await digestArtifactDirectory(frozen) } };
   await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
@@ -125,7 +129,7 @@ if (phase === "create") {
   assert.equal(project.recipe.version, "0.0.0-qualification");
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
   const run = `${directory}/app/run`;
-  const pids = async () => Object.fromEntries(await Promise.all(["nginx", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
+  const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
   const before = await pids();
   assert.equal((await ask(`${project.runtime.url}/`)).header, "historical");
   let stop = false, failures = 0, served = 0; const headers = new Set(); const failed = [];
@@ -149,9 +153,9 @@ if (phase === "create") {
   assert.equal(failures, 0, `no request failed during the live recipe upgrade: ${JSON.stringify(failed.slice(0, 5))}`);
   assert.ok(served > 20, `served ${served}`);
   assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
-  assert.deepEqual(await pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
+  assert.deepEqual(await pids(), before, "Caddy, PHP-FPM and MariaDB are the same processes");
   assert.equal((await ask(`${project.runtime.url}/`)).header, null);
-  console.log(`PASS: running Joomla upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM/MariaDB processes.`);
+  console.log(`PASS: running Joomla upgraded its recipe live: ${served} requests, none failed, same Caddy/PHP-FPM/MariaDB processes.`);
 } else {
   throw new Error(`Unknown phase "${phase}".`);
 }

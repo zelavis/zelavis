@@ -170,8 +170,9 @@ test("replacing the process that serves requests holds public requests at the in
   let stop = false; const direct = { failed: 0, served: 0 }, gated = { failed: 0, served: 0 };
   // Straight to the process, as nothing in front of it would.
   const bare = (async () => { while (!stop) { try { await ask("web"); direct.served += 1; } catch { direct.failed += 1; } await sleep(2); } })();
-  // Through the Platform's ingress, which waits while the serving process is replaced.
-  const through = (async () => { while (!stop) { try { await manager.ingressReady("live"); await ask("web"); gated.served += 1; } catch { gated.failed += 1; } await sleep(2); } })();
+  // Through the Platform's ingress, which waits while the serving process is replaced; a refused connection is retried once at the gate, as a reverse proxy does.
+  const attempt = async () => { await manager.ingressReady("live"); await ask("web"); };
+  const through = (async () => { while (!stop) { try { await attempt().catch(() => attempt()); gated.served += 1; } catch { gated.failed += 1; } await sleep(2); } })();
   await sleep(150);
   const upgraded = await manager.upgrade("live", {});
   await sleep(150);

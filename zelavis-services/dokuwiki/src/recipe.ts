@@ -16,7 +16,7 @@ import { RecipeError, RecipeHost, defineRecipe, type ProcessPlan, type RecipeCon
 
 const MINIMUM_PHP: readonly [number, number] = [8, 2];
 const REQUIRED_EXTENSIONS = ["mbstring", "xml"] as const;
-const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run", "nginx-client-temp", "nginx-proxy-temp", "nginx-fastcgi-temp", "nginx-uwsgi-temp", "nginx-scgi-temp"] as const;
+const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run"] as const;
 
 /** Where the Project keeps its site now, absolute and below the root. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
 const place = (context: RecipeContext, name: "site") => {
@@ -53,7 +53,7 @@ user = ${user}
 group = ${group}
 listen = ${sockets}/php-fpm.sock
 ; The socket is created by the PHP-FPM master, which is still root when the Platform is. Without
-; these it lands root-owned and nginx's workers, which dropped to the same unprivileged account,
+; these it lands root-owned and the web server, which runs as the same unprivileged account,
 ; get a 502. Comments here are ";" not "#": PHP-FPM parses this with the INI parser.
 listen.owner = ${user}
 listen.group = ${group}
@@ -75,97 +75,42 @@ php_admin_flag[log_errors] = on
 `;
 }
 
-function nginxConfig(context: RecipeContext): string {
+function caddyfile(context: RecipeContext): string {
   const { root, sockets } = context.directories;
   const web = context.ports.web;
+  const site = place(context, "site").absolute;
   if (web === undefined) throw refuse("install", "The recipe needs a web port.");
-  return `${context.account.switchUser ? `user ${context.account.user};\n` : ""}pid ${quoted(`${root}/run/nginx.pid`)};
-error_log stderr notice;
+  // Caddy cannot give up root itself (nginx could); the Platform runs unprivileged on a system installation.
+  if (context.account.switchUser) throw refuse("install", "The web server (Caddy) cannot drop privileges: run the Platform as its own unprivileged account.");
+  return `{
+	admin off
+	auto_https off
+	persist_config off
+}
 
-events { worker_connections 1024; }
-
-http {
-  access_log ${quoted(`${root}/run/nginx-access.log`)};
-  error_log ${quoted(`${root}/run/nginx-error.log`)};
-  # Every temp path nginx may create, not only the ones this config uses. A path left unset falls
-  # back to the prefix nginx was compiled with (/var/lib/nginx on Debian), which a Project's user
-  # cannot write, and nginx creates the directory for every module it was built with.
-  client_body_temp_path ${quoted(`${root}/nginx-client-temp`)};
-  proxy_temp_path ${quoted(`${root}/nginx-proxy-temp`)};
-  fastcgi_temp_path ${quoted(`${root}/nginx-fastcgi-temp`)};
-  uwsgi_temp_path ${quoted(`${root}/nginx-uwsgi-temp`)};
-  scgi_temp_path ${quoted(`${root}/nginx-scgi-temp`)};
-  default_type application/octet-stream;
-  types {
-    text/html html htm;
-    text/css css;
-    application/javascript js;
-    application/json json;
-    application/pdf pdf;
-    application/zip zip;
-    image/gif gif;
-    image/jpeg jpg jpeg;
-    image/png png;
-    image/svg+xml svg;
-    image/webp webp;
-    font/woff woff;
-    font/woff2 woff2;
-    audio/mpeg mp3;
-    video/mp4 mp4;
-  }
-  sendfile on;
-  client_max_body_size 64m;
-
-  server {
-    listen 127.0.0.1:${web};
-    server_name _;
-    root ${quoted(place(context, "site").absolute)};
-    index doku.php index.html;
-
-    # DokuWiki keeps configuration, code and its own data below the document root; none of it is served.
-    location ~ ^/(data|conf|bin|inc|vendor)/ { deny all; }
-    location ~ /(\\.ht|README|COPYING|VERSION|SECURITY\\.md)$ { deny all; }
-
-    location / {
-      try_files $uri $uri/ @dokuwiki;
-    }
-
-    location @dokuwiki {
-      rewrite ^/_media/(.*) /lib/exe/fetch.php?media=$1 last;
-      rewrite ^/_detail/(.*) /lib/exe/detail.php?media=$1 last;
-      rewrite ^/_export/([^/]+)/(.*) /doku.php?do=export_$1&id=$2 last;
-      rewrite ^/(.*) /doku.php?id=$1&$args last;
-    }
-
-    location ~ \\.php$ {
-      try_files $uri =404;
-      fastcgi_pass unix:${sockets}/php-fpm.sock;
-      fastcgi_index index.php;
-      fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-      fastcgi_param SCRIPT_NAME $fastcgi_script_name;
-      fastcgi_param QUERY_STRING $query_string;
-      fastcgi_param REQUEST_METHOD $request_method;
-      fastcgi_param CONTENT_TYPE $content_type;
-      fastcgi_param CONTENT_LENGTH $content_length;
-      fastcgi_param REQUEST_URI $request_uri;
-      fastcgi_param DOCUMENT_URI $document_uri;
-      fastcgi_param DOCUMENT_ROOT $document_root;
-      fastcgi_param SERVER_PROTOCOL $server_protocol;
-      fastcgi_param REQUEST_SCHEME $scheme;
-      fastcgi_param HTTPS $https if_not_empty;
-      fastcgi_param GATEWAY_INTERFACE CGI/1.1;
-      fastcgi_param SERVER_SOFTWARE nginx;
-      fastcgi_param REMOTE_ADDR $remote_addr;
-      fastcgi_param REMOTE_PORT $remote_port;
-      fastcgi_param SERVER_ADDR $server_addr;
-      fastcgi_param SERVER_PORT $server_port;
-      fastcgi_param SERVER_NAME $server_name;
-      fastcgi_param REDIRECT_STATUS 200;
-      fastcgi_param HTTP_PROXY "";
-    }
-
-    location ~ /\\.(?!well-known/) { deny all; }
-  }
+http://:${web} {
+	# Any Host is served (the Platform forwards the visitor's own); the listener itself is loopback only.
+	bind 127.0.0.1
+	root * ${quoted(site)}
+	log {
+		output file ${quoted(`${root}/run/caddy-access.log`)}
+	}
+	request_body {
+		max_size 64MB
+	}
+	# DokuWiki keeps configuration, code and its own data below the document root; none of it is served.
+	@denied path /data/* /conf/* /bin/* /inc/* /vendor/* /README /COPYING /VERSION /SECURITY.md
+	respond @denied 403
+	@hidden {
+		path_regexp hidden ^/\\.
+		not path /.well-known/*
+	}
+	respond @hidden 403
+	php_fastcgi unix/${sockets}/php-fpm.sock {
+		index doku.php
+		try_files {path} {path}/doku.php
+	}
+	file_server
 }
 `;
 }
@@ -209,12 +154,12 @@ export default defineRecipe({
       try: render, catch: (error) => error instanceof RecipeError ? error : refuse("install", "A configuration file could not be generated."),
     });
     yield* host.files.write("php-fpm.conf", yield* configuration(() => phpFpmConfig(context)));
-    yield* host.files.write("nginx.conf", yield* configuration(() => nginxConfig(context)));
+    yield* host.files.write("Caddyfile", yield* configuration(() => caddyfile(context)));
     // Refused here, with the tool's own words, rather than as a process that dies at start.
     const fpm = yield* host.run({ command: "php-fpm", args: ["-tt", "-y", `${root}/php-fpm.conf`], timeoutMs: 30_000 });
     if (fpm.code !== 0) return yield* Effect.fail(refuse("install", `The PHP-FPM configuration is not valid: ${(fpm.stderr || fpm.stdout).trim().split("\n").slice(-3).join(" ")}`));
-    const nginx = yield* host.run({ command: "nginx", args: ["-t", "-c", `${root}/nginx.conf`, "-p", root], timeoutMs: 30_000 });
-    if (nginx.code !== 0) return yield* Effect.fail(refuse("install", `The Nginx configuration is not valid: ${(nginx.stderr || nginx.stdout).trim().split("\n").slice(-3).join(" ")}`));
+    const caddy = yield* host.run({ command: "caddy", args: ["validate", "--config", `${root}/Caddyfile`, "--adapter", "caddyfile"], timeoutMs: 30_000 });
+    if (caddy.code !== 0) return yield* Effect.fail(refuse("install", `The Caddy configuration is not valid: ${(caddy.stderr || caddy.stdout).trim().split("\n").slice(-3).join(" ")}`));
     yield* host.progress({ phase: "install", message: "DokuWiki is installed. Open the site to run its installer." });
   }),
 
@@ -229,10 +174,10 @@ export default defineRecipe({
           config: [`${root}/php-fpm.conf`], update: { strategy: "reload", signal: "SIGUSR2" },
         },
         {
-          name: "nginx", command: "nginx", env: {}, dependsOn: ["php-fpm"],
-          args: ["-c", `${root}/nginx.conf`, "-p", root, "-g", "daemon off;"], readiness: { port: "web", timeoutMs: 120_000 },
-          // SIGHUP makes nginx start workers on the new configuration and let the old ones drain.
-          config: [`${root}/nginx.conf`], update: { strategy: "reload", signal: "SIGHUP" },
+          name: "caddy", command: "caddy", env: {}, dependsOn: ["php-fpm"],
+          args: ["run", "--config", `${root}/Caddyfile`, "--adapter", "caddyfile", "--pidfile", `${root}/run/caddy.pid`], readiness: { port: "web", timeoutMs: 120_000 },
+          // SIGUSR1 makes Caddy load the new configuration and let in-flight requests finish on the old one.
+          config: [`${root}/Caddyfile`], update: { strategy: "reload", signal: "SIGUSR1" },
         },
       ],
     };

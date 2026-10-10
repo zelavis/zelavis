@@ -154,7 +154,7 @@ and none may be reintroduced without the owner asking for them explicitly.
 - A server installation updates itself from the dashboard (see
   `website/.../architecture/updates.md`). That adds no new trust: the updater
   fetches only what the installer already does (nodejs.org and npm), by the same script.
-- The installer and any package (`.deb` included) install no web server, PHP or database. Those belong to the WordPress recipe, which provisions its own Nginx, PHP-FPM and MariaDB when a WordPress Project is created; a base Platform install stays free of them.
+- The installer and any package (`.deb` included) install no web server, PHP or database. Those belong to the recipes: a recipe brings its own pinned PHP and web server (Caddy) (manifest `runtimes`, unpacked into `<data>/runtimes/<sha256>/`, shared read-only by digest, pruned when no Project names them) and brings its own MariaDB where the vendor builds one (Linux x86_64, from archive.mariadb.org; elsewhere a manifest `hostRequirement` falls back to the host's, installed by the fixed `mariadb-server` package set); a base Platform install stays free of them.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.
 

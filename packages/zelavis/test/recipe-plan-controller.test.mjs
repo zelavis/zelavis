@@ -45,7 +45,7 @@ async function setup(t, secrets = {}) {
   t.after(async () => { await runner.close(); await rm(directory, { recursive: true, force: true }); });
   const ports = { db: await freePort(), app: await freePort(), web: await freePort(), cache: await freePort() };
   const makeHost = (over = {}) => makeAgentPlanHost({
-    runner, workloadId: "p1", cwd: directory, commands: { node: process.execPath }, ports, baseEnvironment: {},
+    runner, workloadId: "p1", cwd: directory, commands: () => ({ node: process.execPath }), ports, baseEnvironment: {},
     resolveSecret: (name) => secrets[name] === undefined ? Effect.fail({ _tag: "RecipeError", operation: "secret", message: "missing" }) : Effect.succeed(secrets[name]),
     pollInterval: 40, stopGrace: 2000, ...over,
   });

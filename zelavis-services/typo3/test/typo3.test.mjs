@@ -12,8 +12,8 @@ const install = parseRecipeManifest(manifest.zelavis.project.install);
 
 test("the manifest pins one TYPO3 release, needs the web and database tiers, and declares what TYPO3's installer asks for", async () => {
   assert.equal(manifest.name, TYPO3_APP_NAME);
-  assert.deepEqual(manifest.zelavis.project.hostPackages, ["php-stack", "mariadb-server"]);
-  assert.deepEqual(install.methods.map((method) => [...method.requires]), [["nginx", "php-fpm", "mariadb"]]);
+  assert.deepEqual(manifest.zelavis.project.hostPackages, ["mariadb-server"]);
+  assert.deepEqual(install.methods.map((method) => [...method.requires]), [[]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
   assert.deepEqual(install.directories, [{ name: "site", path: "site" }, { name: "db", path: "db" }]);
   for (const software of install.software) {
@@ -21,6 +21,25 @@ test("the manifest pins one TYPO3 release, needs the web and database tiers, and
     assert.match(software.archive, /^https:\/\/cdn\.typo3\.com\/typo3\/[\d.]+\/typo3_src-[\d.]+\.tar\.gz$/);
   }
   assert.match(manifest.zelavis.project.managed.adminPath, /^\/[A-Za-z0-9._\/-]*$/);
+});
+
+test("PHP and the web server are the recipe's own: pinned builds for every platform, not the host's", () => {
+  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb"]);
+  for (const runtime of install.runtimes.filter((entry) => entry.hostRequirement === undefined)) {
+    assert.match(runtime.version, runtime.command === "caddy" ? /^2\.\d+\.\d+$/ : /^8\.\d+\.\d+$/);
+    assert.deepEqual(Object.keys(runtime.downloads).sort(), ["linux-aarch64", "linux-x86_64", "macos-aarch64", "macos-x86_64"]);
+    for (const download of Object.values(runtime.downloads)) assert.match(download.sha256, /^[0-9a-f]{64}$/);
+  }
+});
+
+test("MariaDB is the recipe's own where the vendor builds it, and the host's elsewhere", () => {
+  const database = install.runtimes.filter((runtime) => runtime.hostRequirement === "mariadb");
+  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb"]);
+  for (const runtime of database) {
+    assert.deepEqual(Object.keys(runtime.downloads), ["linux-x86_64"]);
+    assert.match(runtime.downloads["linux-x86_64"].archive, /^https:\/\/archive\.mariadb\.org\/mariadb-[\d.]+\/bintar-linux-systemd-x86_64\//);
+  }
+  assert.equal(new Set(database.map((runtime) => runtime.downloads["linux-x86_64"].sha256)).size, 1, "one archive serves all three commands");
 });
 
 test("its runtime is the Platform's recipe runtime", () => {
@@ -67,10 +86,10 @@ function fakeHost(existing = []) {
 }
 const runInstall = (fake, ctx = context()) => Effect.runPromise(recipe.install(ctx).pipe(Effect.provideService(RecipeHost, fake.host)));
 
-test("start is the database, PHP-FPM and Nginx in dependency order, within the manifest's names", () => {
+test("start is the database, PHP-FPM and Caddy in dependency order, within the manifest's names", () => {
   const plan = Effect.runSync(recipe.start(context()));
-  const checked = parseProcessPlan(plan, { commands: ["nginx", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name), directories: ["/srv/p1/app", "/run/zv-abc"] });
-  assert.deepEqual(checked.processes.map((process) => [process.name, [...process.dependsOn]]), [["database", []], ["php-fpm", ["database"]], ["nginx", ["php-fpm"]]]);
+  const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name), directories: ["/srv/p1/app", "/run/zv-abc"] });
+  assert.deepEqual(checked.processes.map((process) => [process.name, [...process.dependsOn]]), [["database", []], ["php-fpm", ["database"]], ["caddy", ["php-fpm"]]]);
   assert.ok(checked.processes[0].args.includes("--datadir=/srv/p1/app/db"));
 });
 
@@ -82,8 +101,8 @@ test("install downloads the pinned release into the web root, creates the databa
   const sql = fake.calls.writes.get("run/init.sql");
   assert.ok(sql.some((part) => typeof part === "string" && part.includes("`typo3`")) && sql.some((part) => part.secret === "db-password"));
   assert.ok(!fake.calls.writes.has("site/typo3conf/system/settings.php"), "TYPO3's installer writes its own configuration");
-  assert.match(fake.calls.writes.get("nginx.conf"), /root "\/srv\/p1\/app\/site"/);
-  assert.match(fake.calls.writes.get("nginx.conf"), /fastcgi_param SERVER_NAME \$host;/, "TYPO3's trusted hosts check sees the requested host");
+  assert.match(fake.calls.writes.get("Caddyfile"), /root \* "\/srv\/p1\/app\/site"/);
+  assert.match(fake.calls.writes.get("Caddyfile"), /php_fastcgi/, "PHP is reached through Caddy, which passes the requested host as the server name");
 });
 
 test("the values TYPO3's installer asks for are the Project's setup values, with the password only revealed", () => {

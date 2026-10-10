@@ -25,7 +25,6 @@
         "adminPath": "/administrator/"
       },
       "hostPackages": [
-        "php-stack",
         "mariadb-server"
       ],
       "install": {
@@ -35,11 +34,7 @@
             "id": "native",
             "driver": "js",
             "entry": "./dist/recipe.js",
-            "requires": [
-              "nginx",
-              "php-fpm",
-              "mariadb"
-            ]
+            "requires": []
           }
         ],
         "software": [
@@ -48,6 +43,137 @@
             "archive": "https://github.com/joomla/joomla-cms/releases/download/5.4.9/Joomla_5.4.9-Stable-Full_Package.tar.gz",
             "sha256": "8c658d16b6e908f8cfce3556ac7280fe210c4ebd916202f406fe6bf1b5b05149",
             "maxBytes": 67108864
+          }
+        ],
+        "runtimes": [
+          {
+            "command": "php",
+            "version": "8.4.23",
+            "downloads": {
+              "linux-aarch64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-linux-aarch64.tar.gz",
+                "sha256": "1faabbea9c500daab9ba202cb75ea9876191a2a8f902244e9d0464addb9b55b1",
+                "maxBytes": 39886992,
+                "executable": "php"
+              },
+              "linux-x86_64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-linux-x86_64.tar.gz",
+                "sha256": "5fa2b5f1cc9d7f79b19718926b4f4f0bb6949db52073b2fabf8ae52de3993af5",
+                "maxBytes": 39412959,
+                "executable": "php"
+              },
+              "macos-aarch64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-macos-aarch64.tar.gz",
+                "sha256": "4a5dca6df0211f7fb21425cf1c867968b2dfb7c079f98cf37770c5728e0bf709",
+                "maxBytes": 44568468,
+                "executable": "php"
+              },
+              "macos-x86_64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-macos-x86_64.tar.gz",
+                "sha256": "be88a71134d43e8800946f8372da931ee1796c400a1fb4cf2afd718644251ffc",
+                "maxBytes": 45526512,
+                "executable": "php"
+              }
+            }
+          },
+          {
+            "command": "php-fpm",
+            "version": "8.4.23",
+            "downloads": {
+              "linux-aarch64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-linux-aarch64.tar.gz",
+                "sha256": "8ca6b8d44f12f981cdd96b5aa31f6bf5373a89d201a4a49ed0feb5f242631dec",
+                "maxBytes": 39911298,
+                "executable": "php-fpm"
+              },
+              "linux-x86_64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-linux-x86_64.tar.gz",
+                "sha256": "40e341db82e5e90450122462aa6038fe653b63da951c1da1f10b15d0da4a26a0",
+                "maxBytes": 39439713,
+                "executable": "php-fpm"
+              },
+              "macos-aarch64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-macos-aarch64.tar.gz",
+                "sha256": "1a417db44f0eb0b40a9f8cd862f24ecfabdea87f85863f30d218c4876bb688ef",
+                "maxBytes": 44588813,
+                "executable": "php-fpm"
+              },
+              "macos-x86_64": {
+                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-macos-x86_64.tar.gz",
+                "sha256": "67bbb7f2b2543d45c8a4ab0e4759fbd956530e87fba47a00505c06f09c9b9950",
+                "maxBytes": 45557726,
+                "executable": "php-fpm"
+              }
+            }
+          },
+          {
+            "command": "caddy",
+            "version": "2.11.7",
+            "downloads": {
+              "linux-x86_64": {
+                "archive": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz",
+                "sha256": "727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b",
+                "maxBytes": 22308058,
+                "executable": "caddy"
+              },
+              "linux-aarch64": {
+                "archive": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_arm64.tar.gz",
+                "sha256": "d8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42",
+                "maxBytes": 20679485,
+                "executable": "caddy"
+              },
+              "macos-x86_64": {
+                "archive": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_mac_amd64.tar.gz",
+                "sha256": "110c53e5c093e4cfce6eda787f94f23bef913c309f620fab26b4f678031841ad",
+                "maxBytes": 22746298,
+                "executable": "caddy"
+              },
+              "macos-aarch64": {
+                "archive": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_mac_arm64.tar.gz",
+                "sha256": "cda3030e5d5b13eb9f0b6fb541037f633bddd958c070c5f561d7a5cccb581665",
+                "maxBytes": 21492257,
+                "executable": "caddy"
+              }
+            }
+          },
+          {
+            "command": "mariadbd",
+            "version": "11.4.9",
+            "hostRequirement": "mariadb",
+            "downloads": {
+              "linux-x86_64": {
+                "archive": "https://archive.mariadb.org/mariadb-11.4.9/bintar-linux-systemd-x86_64/mariadb-11.4.9-linux-systemd-x86_64.tar.gz",
+                "sha256": "c079403239fa74900c18ae0f2d99806625b3ae936c8983dd39a96c8b237072da",
+                "maxBytes": 400000000,
+                "executable": "mariadb-11.4.9-linux-systemd-x86_64/bin/mariadbd"
+              }
+            }
+          },
+          {
+            "command": "mariadb-install-db",
+            "version": "11.4.9",
+            "hostRequirement": "mariadb",
+            "downloads": {
+              "linux-x86_64": {
+                "archive": "https://archive.mariadb.org/mariadb-11.4.9/bintar-linux-systemd-x86_64/mariadb-11.4.9-linux-systemd-x86_64.tar.gz",
+                "sha256": "c079403239fa74900c18ae0f2d99806625b3ae936c8983dd39a96c8b237072da",
+                "maxBytes": 400000000,
+                "executable": "mariadb-11.4.9-linux-systemd-x86_64/scripts/mariadb-install-db"
+              }
+            }
+          },
+          {
+            "command": "mariadb",
+            "version": "11.4.9",
+            "hostRequirement": "mariadb",
+            "downloads": {
+              "linux-x86_64": {
+                "archive": "https://archive.mariadb.org/mariadb-11.4.9/bintar-linux-systemd-x86_64/mariadb-11.4.9-linux-systemd-x86_64.tar.gz",
+                "sha256": "c079403239fa74900c18ae0f2d99806625b3ae936c8983dd39a96c8b237072da",
+                "maxBytes": 400000000,
+                "executable": "mariadb-11.4.9-linux-systemd-x86_64/bin/mariadb"
+              }
+            }
           }
         ],
         "ports": [

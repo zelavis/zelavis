@@ -1,7 +1,7 @@
 /**
  * Qualify the DokuWiki recipe, the second managed recipe, on the disposable Debian/systemd installation
  * the WordPress harness prepared: it creates a Project, serves the wiki, and then upgrades the recipe of a
- * running Project under traffic (only Nginx's configuration differs, so nothing may restart).
+ * running Project under traffic (only the web server's configuration differs, so nothing may restart).
  * Run through zelavis-services/wordpress/scripts/wordpress-provisioning-container.sh.
  */
 import assert from "node:assert/strict";
@@ -41,20 +41,24 @@ const ask = (url) => new Promise((resolve, reject) => {
   }).on("error", reject);
 });
 const header = (text) => {
-  assert.ok(text.includes("client_max_body_size"), "the fixture's anchor line is still in the recipe");
-  return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "historical" always;');
+  assert.ok(text.includes("request_body {"), "the fixture's anchor line is still in the recipe");
+  return text.replace("request_body {", 'header X-Recipe "historical"\n\trequest_body {');
 };
 
 if (phase === "create") {
   assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");
   const recipes = await client.projects.recipes();
-  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/dokuwiki").hostPackages, ["php-stack"]);
-  // Run before anything installed the WordPress stack: this set alone provides the web tier and no database.
+  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/dokuwiki").hostPackages, undefined, "DokuWiki needs nothing from the host");
+  // Run before anything installed a host package: DokuWiki brings its own web server and PHP.
   await assert.rejects(access("/usr/sbin/nginx"), { code: "ENOENT" });
   let project = await client.projects.create({ id, name: "Qualification DokuWiki", recipeName: "@zelavis/dokuwiki", installHostPackages: true });
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
-  await access("/usr/sbin/nginx");
-  await assert.rejects(access("/usr/sbin/mariadbd"), { code: "ENOENT" }, "the php-stack set installs no database");
+  await assert.rejects(access("/usr/sbin/nginx"), { code: "ENOENT" }, "no web server was installed on the host");
+  await assert.rejects(access("/usr/sbin/mariadbd"), { code: "ENOENT" }, "and no database");
+  assert.throws(() => execFileSync("sh", ["-c", "command -v php || command -v php-fpm || ls /usr/sbin/php-fpm*"], { stdio: "pipe" }), "the host has no PHP at all: the recipe brought its own");
+  const state = JSON.parse(await readFile(`${directory}/.zelavis/recipe-state.json`, "utf8"));
+  assert.match(state.commands["php-fpm"], /^\/var\/lib\/zelavis\/runtimes\/[0-9a-f]{64}\/php-fpm$/);
+  assert.match(state.commands.caddy, /^\/var\/lib\/zelavis\/runtimes\/[0-9a-f]{64}\/caddy$/, "so is the web server");
   const page = await ask(`${project.runtime.url}/`);
   assert.ok(page.status === 200 || page.status === 302, `served ${page.status}`);
   const installer = await ask(`${project.runtime.url}/install.php`);
@@ -80,7 +84,7 @@ if (phase === "create") {
   manifest.version = "0.0.0-qualification";
   await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
   await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
-  await writeFile(`${directory}/app/nginx.conf`, header(await readFile(`${directory}/app/nginx.conf`, "utf8")));
+  await writeFile(`${directory}/app/Caddyfile`, header(await readFile(`${directory}/app/Caddyfile`, "utf8")));
   const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
   descriptor.recipe = { ...descriptor.recipe, version: manifest.version, artifact: { digest: await digestArtifactDirectory(frozen) } };
   await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
@@ -98,7 +102,7 @@ if (phase === "create") {
   assert.equal(project.recipe.version, "0.0.0-qualification");
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
   const run = `${directory}/app/run`;
-  const pids = async () => Object.fromEntries(await Promise.all(["nginx", "php-fpm"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
+  const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
   const before = await pids();
   assert.equal((await ask(`${project.runtime.url}/install.php`)).header, "historical");
   let stop = false, failures = 0, served = 0; const headers = new Set(); const failed = [];
@@ -122,9 +126,9 @@ if (phase === "create") {
   assert.equal(failures, 0, `no request failed during the live recipe upgrade: ${JSON.stringify(failed.slice(0, 5))}`);
   assert.ok(served > 20, `served ${served}`);
   assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
-  assert.deepEqual(await pids(), before, "Nginx and PHP-FPM are the same processes");
+  assert.deepEqual(await pids(), before, "Caddy and PHP-FPM are the same processes");
   assert.equal((await ask(`${project.runtime.url}/install.php`)).header, null);
-  console.log(`PASS: running DokuWiki upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM processes.`);
+  console.log(`PASS: running DokuWiki upgraded its recipe live: ${served} requests, none failed, same Caddy/PHP-FPM processes.`);
 } else {
   throw new Error(`Unknown phase "${phase}".`);
 }

@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, createWriteStream, type Stats } from "node:fs";
-import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { Effect, Result } from "effect";
+import { Effect, Result, Schedule } from "effect";
 import { integration, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { RecipeError, type RecipeHostApi, type RecipeSecret } from "../core/recipe/index.js";
 
@@ -27,6 +27,7 @@ import { RecipeError, type RecipeHostApi, type RecipeSecret } from "../core/reci
  * (see `_recipe-phase-runner.ts`) and why only official, allow-listed packages are accepted.
  */
 
+import { extractZipEntries, readZipEntries, type ZipEntry } from "./_recipe-zip.js";
 const MAX_PATH_BYTES = 1024;
 const MAX_READ_BYTES = 1024 * 1024;
 const MAX_WRITE_BYTES = 16 * 1024 * 1024;
@@ -56,6 +57,13 @@ export interface RecipeHostOptions {
   readonly progress?: (input: { readonly phase: string; readonly message: string }) => void;
   /** For tests; defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;
+  /** The wait between attempts of a download that stumbled; three seconds unless a test shortens it. */
+  readonly retryDelay?: import("effect").Duration.Input;
+  /**
+   * Accept relative symbolic links that stay inside the unpacked tree. Only for a pinned, digest-verified
+   * program (a database's `bin/mysql -> mariadb`); an application's own archive never gets links.
+   */
+  readonly allowContainedLinks?: boolean;
 }
 
 const fail = (operation: string, message: string) => new RecipeError({ operation, message });
@@ -206,6 +214,7 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
     Effect.gen(function* () {
       let entries = 0;
       let bytes = 0;
+      const root = resolve(directory);
       const visit = (current: string): Effect.Effect<void, RecipeError> => Effect.gen(function* () {
         const names = yield* attempt(operation, "The archive's contents could not be checked.", () => readdir(current));
         for (const name of names) {
@@ -214,6 +223,12 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
           entries += 1;
           if (entries > MAX_ARCHIVE_ENTRIES) return yield* refuse(operation, "The archive holds too many entries.");
           if (stats.isDirectory()) { yield* visit(path); continue; }
+          if (stats.isSymbolicLink() && options.allowContainedLinks === true) {
+            const target = yield* attempt(operation, "The archive's contents could not be checked.", () => readlink(path));
+            const inside = resolve(current, target);
+            if (target.startsWith("/") || !(inside === root || inside.startsWith(`${root}${sep}`))) return yield* refuse(operation, "The archive holds a link that leaves its own tree, which is not allowed.");
+            continue;
+          }
           if (!stats.isFile() || stats.nlink > 1) return yield* refuse(operation, "The archive holds a link or a special file, which is not allowed.");
           bytes += stats.size;
           if (bytes > MAX_EXTRACTED_BYTES) return yield* refuse(operation, "The archive unpacks to more than is allowed.");
@@ -236,6 +251,51 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
     });
     return { stream, digest: () => hash.digest() };
   };
+
+  /** One attempt at a download. */
+  const downloadOnce = (input: Parameters<RecipeHostApi["download"]>[0]): Effect.Effect<void, RecipeError> => Effect.gen(function* () {
+      let url: URL;
+      try { url = new URL(input.url); } catch { return yield* refuse("download", "The download address is not a URL."); }
+      if (url.protocol !== "https:" || url.username || url.password) return yield* refuse("download", "Downloads must be https addresses without credentials.");
+      if (typeof input.sha256 !== "string" || !SHA256.test(input.sha256)) return yield* refuse("download", "A download needs the SHA-256 it must match.");
+      if (!Number.isInteger(input.maxBytes) || input.maxBytes < 1 || input.maxBytes > 1024 * 1024 * 1024) return yield* refuse("download", "The size limit is not valid.");
+      const destination = yield* locate("download", input.destination);
+      const failed = "The download failed.";
+      const limit = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+      let current = url;
+      let response: Response | undefined;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+        const target = current;
+        response = yield* attempt("download", failed, (signal) => fetchImpl(target, { redirect: "manual", signal: AbortSignal.any([signal, limit]) }), { interruptible: true });
+        if (response.status < 300 || response.status > 399) break;
+        const next = response.headers.get("location");
+        if (!next || hop === MAX_REDIRECTS) return yield* refuse("download", "The download redirected too many times.");
+        const followed = yield* Effect.try({ try: () => new URL(next, current), catch: () => fail("download", "The download redirected to something that is not an address.") });
+        if (followed.protocol !== "https:" || followed.username || followed.password) return yield* refuse("download", "The download redirected to an address that is not https.");
+        current = followed;
+      }
+      if (!response || !response.ok || !response.body) return yield* refuse("download", `The server answered ${response?.status ?? "nothing"}.`);
+      const declared = Number(response.headers.get("content-length") ?? "0");
+      if (Number.isFinite(declared) && declared > input.maxBytes) return yield* refuse("download", "The download is larger than the manifest allows.");
+      const body = response.body as unknown as NodeJS.ReadableStream;
+      yield* attempt("download", failed, () => mkdir(dirname(destination), { recursive: true }));
+      const partial = `${destination}.${randomBytes(6).toString("hex")}.part`;
+      const measured = measure(input.maxBytes);
+      yield* Effect.gen(function* () {
+        yield* attempt("download", failed, (signal) => pipeline(
+          body, measured.stream, createWriteStream(partial, { flags: "wx", mode: 0o644 }), { signal: AbortSignal.any([signal, limit]) },
+        ), { interruptible: true });
+        const actual = measured.digest();
+        const expected = Buffer.from(input.sha256, "hex");
+        if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+          return yield* refuse("download", "The download does not match the SHA-256 the manifest pinned; it was discarded.");
+        }
+        yield* attempt("download", failed, () => rename(partial, destination));
+      }).pipe(Effect.onError(() => attempt("download", failed, () => rm(partial, { force: true })).pipe(Effect.orElseSucceed(() => undefined))));
+    });
+
+  /** A download that fails because the network or the server stumbled, not because of what it carried, is tried again. */
+  const transient = (error: RecipeError) => error.message === "The download failed." || /^The server answered (?:5\d\d|429)\./.test(error.message);
 
   const api: RecipeHostApi = {
     files: {
@@ -278,74 +338,55 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
       }),
     },
 
-    download: (input) => Effect.gen(function* () {
-      let url: URL;
-      try { url = new URL(input.url); } catch { return yield* refuse("download", "The download address is not a URL."); }
-      if (url.protocol !== "https:" || url.username || url.password) return yield* refuse("download", "Downloads must be https addresses without credentials.");
-      if (typeof input.sha256 !== "string" || !SHA256.test(input.sha256)) return yield* refuse("download", "A download needs the SHA-256 it must match.");
-      if (!Number.isInteger(input.maxBytes) || input.maxBytes < 1 || input.maxBytes > 1024 * 1024 * 1024) return yield* refuse("download", "The size limit is not valid.");
-      const destination = yield* locate("download", input.destination);
-      const failed = "The download failed.";
-      const limit = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
-      let current = url;
-      let response: Response | undefined;
-      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-        const target = current;
-        response = yield* attempt("download", failed, (signal) => fetchImpl(target, { redirect: "manual", signal: AbortSignal.any([signal, limit]) }), { interruptible: true });
-        if (response.status < 300 || response.status > 399) break;
-        const next = response.headers.get("location");
-        if (!next || hop === MAX_REDIRECTS) return yield* refuse("download", "The download redirected too many times.");
-        const followed = yield* Effect.try({ try: () => new URL(next, current), catch: () => fail("download", "The download redirected to something that is not an address.") });
-        if (followed.protocol !== "https:" || followed.username || followed.password) return yield* refuse("download", "The download redirected to an address that is not https.");
-        current = followed;
-      }
-      if (!response || !response.ok || !response.body) return yield* refuse("download", `The server answered ${response?.status ?? "nothing"}.`);
-      const declared = Number(response.headers.get("content-length") ?? "0");
-      if (Number.isFinite(declared) && declared > input.maxBytes) return yield* refuse("download", "The download is larger than the manifest allows.");
-      const body = response.body as unknown as NodeJS.ReadableStream;
-      yield* attempt("download", failed, () => mkdir(dirname(destination), { recursive: true }));
-      const partial = `${destination}.${randomBytes(6).toString("hex")}.part`;
-      const measured = measure(input.maxBytes);
-      yield* Effect.gen(function* () {
-        yield* attempt("download", failed, (signal) => pipeline(
-          body, measured.stream, createWriteStream(partial, { flags: "wx", mode: 0o644 }), { signal: AbortSignal.any([signal, limit]) },
-        ), { interruptible: true });
-        const actual = measured.digest();
-        const expected = Buffer.from(input.sha256, "hex");
-        if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-          return yield* refuse("download", "The download does not match the SHA-256 the manifest pinned; it was discarded.");
-        }
-        yield* attempt("download", failed, () => rename(partial, destination));
-      }).pipe(Effect.onError(() => attempt("download", failed, () => rm(partial, { force: true })).pipe(Effect.orElseSucceed(() => undefined))));
-    }),
+    download: (input) => downloadOnce(input).pipe(Effect.retry({ times: 2, schedule: Schedule.spaced(options.retryDelay ?? "3 seconds"), while: transient })),
 
     extract: (archive, destination, extractOptions) => Effect.gen(function* () {
       const source = yield* locate("extract", archive);
       const target = yield* locate("extract", destination);
-      if (!/\.(?:tar\.gz|tgz)$/.test(source)) return yield* refuse("extract", "Only .tar.gz archives are supported.");
+      const zip = /\.zip$/.test(source);
+      if (!zip && !/\.(?:tar\.gz|tgz)$/.test(source)) return yield* refuse("extract", "Only .tar.gz and .zip archives are supported.");
       const present = yield* attempt("extract", "The destination could not be inspected.", () => lstat(target).then(() => true, () => false));
       if (present) return yield* refuse("extract", "The destination already exists; remove it first.");
       const strip = extractOptions?.stripTopLevel === true;
       // Names first, so nothing is unpacked that points outside or has no single root to strip.
-      const listing = yield* spawnTar("extract", ["-tzf", source], true);
-      if (listing.code !== 0 || listing.truncated) return yield* refuse("extract", "The archive could not be read.");
-      const names = listing.stdout.split("\n").filter((line) => line.length > 0);
-      if (names.length === 0 || names.length > MAX_ARCHIVE_ENTRIES) return yield* refuse("extract", "The archive is empty or holds too many entries.");
-      for (const name of names) {
-        if (name.startsWith("/") || name.split("/").includes("..") || name.includes("\0")) return yield* refuse("extract", "The archive names a path outside its destination.");
+      let names: string[];
+      let zipEntries: readonly ZipEntry[] | undefined;
+      if (zip) {
+        zipEntries = yield* readZipEntries(source, { entries: MAX_ARCHIVE_ENTRIES, bytes: MAX_EXTRACTED_BYTES }).pipe(Effect.mapError((error) => fail("extract", error.message)));
+        names = zipEntries.map((entry) => entry.name);
+      } else {
+        const listing = yield* spawnTar("extract", ["-tzf", source], true);
+        if (listing.code !== 0 || listing.truncated) return yield* refuse("extract", "The archive could not be read.");
+        names = listing.stdout.split("\n").filter((line) => line.length > 0);
+        if (names.length === 0 || names.length > MAX_ARCHIVE_ENTRIES) return yield* refuse("extract", "The archive is empty or holds too many entries.");
+        for (const name of names) {
+          if (name.startsWith("/") || name.split("/").includes("..") || name.includes("\0")) return yield* refuse("extract", "The archive names a path outside its destination.");
+        }
       }
-      if (strip && new Set(names.map((name) => name.replace(/^\.\//, "").split("/")[0])).size !== 1) {
+      const tops = new Set(names.map((name) => name.replace(/^\.\//, "").split("/")[0]));
+      if (strip && tops.size !== 1) {
         return yield* refuse("extract", "The archive does not have exactly one top-level directory.");
       }
       const staging = `${target}.${randomBytes(6).toString("hex")}.extracting`;
       yield* attempt("extract", "The destination could not be prepared.", () => mkdir(staging, { recursive: true }));
       const cleanup = attempt("extract", "Cleanup failed.", () => rm(staging, { recursive: true, force: true }));
       const outcome = yield* Effect.gen(function* () {
-        const unpacked = yield* spawnTar("extract", ["-xzf", source, "-C", staging, "--no-same-owner", ...(strip ? ["--strip-components=1"] : [])], false);
-        if (unpacked.code !== 0) return yield* refuse("extract", "The archive could not be unpacked.");
-        // Whatever tar did, nothing but plain files and directories is kept.
+        if (zipEntries) {
+          const entries = zipEntries;
+          yield* extractZipEntries(source, entries, staging).pipe(Effect.mapError((error) => fail("extract", error.message)));
+        } else {
+          const unpacked = yield* spawnTar("extract", ["-xzf", source, "-C", staging, "--no-same-owner", ...(strip ? ["--strip-components=1"] : [])], false);
+          if (unpacked.code !== 0) return yield* refuse("extract", "The archive could not be unpacked.");
+        }
+        // Whatever the tool did, nothing but plain files and directories is kept.
         yield* walkExtracted("extract", staging);
-        yield* attempt("extract", "The unpacked files could not be moved into place.", () => rename(staging, target));
+        if (zip && strip) {
+          const [top] = tops;
+          yield* attempt("extract", "The unpacked files could not be moved into place.", () => rename(join(staging, top!), target));
+          yield* cleanup;
+        } else {
+          yield* attempt("extract", "The unpacked files could not be moved into place.", () => rename(staging, target));
+        }
       }).pipe(Effect.onError(() => cleanup.pipe(Effect.orElseSucceed(() => undefined))));
       return outcome;
     }),

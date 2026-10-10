@@ -17,7 +17,7 @@ function machine(options = {}) {
   const readyPorts = new Set();
   const state = { failStart: new Set(), neverReady: new Set(), holdStops: false };
   const host = {
-    workloadId: "p", cwd: "/p", commands: { tool: "/bin/tool" }, ports: { web: 1, db: 2 }, baseEnvironment: {},
+    workloadId: "p", cwd: "/p", commands: () => ({ tool: "/bin/tool" }), ports: { web: 1, db: 2 }, baseEnvironment: {},
     pollInterval: "10 millis", stopGrace: "1 second",
     resolveSecret: () => Effect.succeed("secret"),
     start: (command, startOptions) => Effect.suspend(() => {

@@ -201,7 +201,7 @@ process plan, and reconciles that plan against the running processes by fingerpr
 
 - a process whose launch (executable, arguments, directory, environment) and configuration are
   unchanged is **kept** and never touched;
-- a process whose plan lists `config` files and an `update` signal (for example Nginx `SIGHUP`,
+- a process whose plan lists `config` files and an `update` signal (for example Caddy `SIGUSR1`,
   PHP-FPM `SIGUSR2`) and whose only change is those files is **reloaded** in place;
 - a process whose launch changed, or that had exited, is **replaced**, and new ones are added,
   in dependency order, each waiting for readiness before its dependents are touched.
@@ -210,7 +210,7 @@ A durable journal records the upgrade, so after a crash the physical state decid
 Project is on the previous or the target recipe. Any failure (an unready process, a failed
 phase, a commit that cannot be recorded) reconciles back to the previous plan. Proven with real
 processes: a running Project upgraded through the manager with no failed request and an
-unchanged database PID, and the real WordPress recipe (Nginx, PHP-FPM, MariaDB) switching to a
+unchanged database PID, and the real WordPress recipe (Caddy, PHP-FPM, MariaDB) switching to a
 changed web configuration under continuous traffic with all three PIDs unchanged.
 
 Managed apps (WordPress, and any other recipe that declares `managed`) take the same path in one
@@ -231,6 +231,37 @@ time the Project starts from a stop, the data is moved to the new place with one
 (an existing destination that holds data is never overwritten; the data then stays where it is
 and keeps working), and the install phase runs again so configuration names the new place. A
 crash in between is finished by the next start, because the physical state decides.
+
+### Programs a recipe brings with it
+
+A recipe is its own installer, so it does not borrow the host's PHP. Its manifest's `runtimes` pin the
+programs it needs: a command name (`php`, `php-fpm`), a version, and one download per platform
+(`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`) with an https address, a SHA-256, a
+size bound and the program's path inside the archive. The Platform downloads each once, verifies it,
+unpacks it into a store under `<data>/runtimes/<sha256>/` shared read-only by every Project that pins the
+same build, and offers it to the recipe as that command. A host without a build for its platform is
+refused by name; a build that does not match its digest is discarded; a recipe may not both require a
+command from the host and bring it. Different Projects therefore run different PHP versions side by
+side, and the PHP version is chosen by the recipe, not by what the host happens to have.
+
+A download may also list up to three `mirrors`: other places holding the very same archive, tried in order
+after the official address fails (a throttled build host, a vendor that challenges non-browser clients).
+The pinned digest is the only trust, so a mirror can be any https origin and a wrong copy is discarded like
+any other mismatch. No mirror is operated yet; the mechanism is what ships.
+
+A program may also be built for only some platforms. MariaDB is: the vendor publishes it for Linux x86_64
+only, so the recipes list it with that one download and a `hostRequirement` (`mariadb`). On Linux x86_64 the
+recipe runs its own pinned MariaDB (a 377 MB download, 1.2 GB unpacked, shared by every Project that pins
+it) and needs nothing installed; on any other platform the host's MariaDB is used, as before. A host package set (`mariadb-server`) is neither offered nor installed where the recipe brings what the set would provide. An archive of
+a pinned program may hold relative symbolic links that stay inside its own tree (MariaDB's `bin/mysql` →
+`mariadb`); an application's own archive may not.
+
+An upgrade can change the build: the new recipe's programs are fetched while the Project is still
+serving, the process that uses another program is replaced (under the ingress gate), and the previous
+build stays in the store for rollback until no Project (and no unfinished upgrade) names it, when the Platform prunes it, never one unpacked in the last ten minutes. A download that stumbles (a dropped connection, a 5xx or 429) is tried again twice; one that carries the wrong bytes or is refused is not. The pinned PHP builds are static builds from
+`dl.static-php.dev` (static-php-cli), pinned by our own SHA-256 because the publisher lists none; if that
+host disappears or changes, the digests make the change visible, and the builds can be rebuilt and hosted
+by us. The web server is Caddy, whose official releases publish checksums that the pinned digests were checked against. Only MariaDB is still the host's, installed through the fixed `mariadb-server` set: its official binary tarballs exist for Linux x86_64 only, and a recipe has no way yet to name the base directory its tools need.
 
 ### Setup values
 
@@ -258,14 +289,13 @@ short pause for the requests that need it.
 
 ### Four managed recipes
 
-WordPress (Nginx, PHP-FPM, MariaDB, generated credentials), DokuWiki (Nginx and PHP-FPM, no database,
+WordPress (Caddy, PHP-FPM, MariaDB, generated credentials), DokuWiki (Caddy and PHP-FPM, no database,
 no credentials), Joomla and TYPO3 (like WordPress, whose installers need the generated values; each is
 set up with its own command-line installer in the Debian qualification) are managed recipes on this
 path, with no code in the Platform that names any of them. The others exist to keep that true. Two
 of the applications we looked at could not be offered honestly: phpBB's only official download host
 refuses every client that does not present itself as `curl`, and PrestaShop 8 does not run on the
-PHP 8.2 that Debian 12 ships while PrestaShop 9 has no pinned release archive we could find. Host packages are fixed named sets (`wordpress-stack`, `php-stack`, `mariadb-server`); a
-recipe lists the sets it needs.
+PHP 8.2 that Debian 12 ships while PrestaShop 9 has no pinned release archive we could find. 
 
 Limits today: a replaced process is covered by the ingress gate for requests, but a database whose launch changed still pauses what needs it; a layout
 move (adoption of an earlier layout) still needs the Project stopped, because a running
@@ -323,7 +353,7 @@ separate. The root Agent uses systemd-delegated cgroup v2 containment and refuse
 arbitrary process commands.
 
 Recipes may declare bounded `zelavis.project.hostPackages` sets such as
-`["php-stack", "mariadb-server"]`. These are fixed operations, never supplied package names or
+`["mariadb-server"]`. These are fixed operations, never supplied package names or
 commands. Project creation accepts `installHostPackages: true` through HTTP/SDK,
 `--install-host-packages` through CLI, and an explicit dashboard checkbox. It
 requires the broker's `server.packages.install` permission independently of

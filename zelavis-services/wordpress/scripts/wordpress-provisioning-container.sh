@@ -8,13 +8,13 @@ CONTAINER="zelavis-wordpress-qualification-$(basename "$STAGE")"
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$STAGE"; }
 trap cleanup EXIT
 if [[ -z "${ZELAVIS_PROVISIONING_IMAGE:-}" ]]; then
-  docker build -t "$IMAGE" -f "$REPO_ROOT/zelavis-services/wordpress/scripts/Dockerfile.provisioning" "$REPO_ROOT/zelavis-services/wordpress/scripts"
+  docker build ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DOCKER_PLATFORM"} -t "$IMAGE" -f "$REPO_ROOT/zelavis-services/wordpress/scripts/Dockerfile.provisioning" "$REPO_ROOT/zelavis-services/wordpress/scripts"
 fi
 if [[ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" || "${ZELAVIS_QUALIFY_UPDATE:-}" == local ]]; then
   (cd "$REPO_ROOT" && pnpm --filter zelavis pack --pack-destination "$STAGE")
   mv "$STAGE"/zelavis-*.tgz "$STAGE/zelavis.tgz"
 fi
-docker run -d --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
+docker run -d ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DOCKER_PLATFORM"} --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_PROVISIONING_FROM_NPM=${ZELAVIS_PROVISIONING_FROM_NPM:-}" \

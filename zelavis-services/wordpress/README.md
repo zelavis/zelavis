@@ -4,7 +4,7 @@ The official Zelavis WordPress Project recipe. It is an officially maintained
 service, published to npm on its own release cycle, and it is not shipped with
 Zelavis: it reaches an installation through the marketplace allow-list.
 
-A WordPress Project runs dedicated Nginx, PHP-FPM and MariaDB processes with
+A WordPress Project runs its own Caddy and PHP-FPM and a dedicated MariaDB with
 Project-owned configuration, sockets, ports, logs, site files and database data.
 The exact recipe revision is locked in the Project. Its WordPress software version
 and archive digest are pinned independently, so provisioning fixes can ship without
@@ -22,8 +22,8 @@ updating the Platform never rewrites their code.
 The recipe is `src/recipe.ts`: `defineRecipe({ install, start })`, written with Effect against
 the `zelavis/recipe` contract. `install` downloads the pinned release (digest-checked),
 writes the site's configuration with the credentials as secret references, validates the
-Nginx and PHP-FPM configuration, and initializes a dedicated MariaDB data directory.
-`start` returns the three processes (database, PHP-FPM, Nginx) as a plan. It knows nothing
+Caddy and PHP-FPM configuration, and initializes a dedicated MariaDB data directory.
+`start` returns the three processes (database, PHP-FPM, Caddy) as a plan. It knows nothing
 about the machine: the Platform's recipe runtime finds the executables (Debian paths,
 Homebrew), allocates the ports, picks the OS account, runs each phase in a process of its own
 under Node's permission model, supervises and adopts the processes, and cleans up.
@@ -66,7 +66,7 @@ The authoring API is `zelavis/adapters/project-runtime`.
 On Debian/Ubuntu, check **Install required host packages** in the create-project
 form, or use `zelavis projects create Blog --recipe @zelavis/wordpress
 --install-host-packages`. This requires `server.packages.install`, independently
-of `projects.create`. The Platform submits the fixed `php-stack` and `mariadb-server` sets to its
+of `projects.create`. The Platform submits the fixed `mariadb-server` set (the recipe brings its own PHP and web server) to its
 signed host-operation broker before preparing the Project. System installations
 and updates configure a separate root operation Agent; the Platform and Project
 processes remain unprivileged. The recipe never runs APT or sudo.

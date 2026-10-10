@@ -22,7 +22,7 @@ export function makeAgentPlanHost(input: {
   readonly workloadId: string;
   readonly placement?: AgentPlacementIdentity;
   readonly cwd: string;
-  readonly commands: Readonly<Record<string, string>>;
+  readonly commands: () => Readonly<Record<string, string>>;
   readonly ports: Readonly<Record<string, number>>;
   readonly baseEnvironment: Readonly<Record<string, string>>;
   readonly resolveSecret: (name: string) => Effect.Effect<string, RecipeError>;

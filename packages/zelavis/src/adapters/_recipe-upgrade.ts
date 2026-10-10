@@ -36,6 +36,9 @@ const Journal = Schema.Struct({
   state: Schema.Literals(["staged", "applying", "switching", "switched"]),
   previous: Release,
   target: Release,
+  /** Where each command ran from before this upgrade, and where the new recipe's commands lie. */
+  previousCommands: Schema.Record(Schema.String, Schema.String),
+  commands: Schema.Record(Schema.String, Schema.String),
   /** Configuration files copied before the new install phase may rewrite them. */
   snapshots: Schema.Array(Schema.Struct({ path: Schema.String, copy: Schema.optional(Schema.String) })),
 });
@@ -63,7 +66,15 @@ export interface UpgradeKitApi {
   readonly stageArtifact: (source: string, data: string) => Effect.Effect<{ readonly digest: string }, RecipeError>;
   readonly readManifest: (packageDirectory: string) => Effect.Effect<RecipeManifest, RecipeError>;
   /** Runs one phase of a recipe package that may not be the Project's current one. */
-  readonly phase: (input: { readonly id: string; readonly name: RecipePhaseName; readonly packageDirectory: string; readonly timeoutMs: number }) => Effect.Effect<RecipePhaseResult, RecipeError>;
+  readonly phase: (input: { readonly id: string; readonly name: RecipePhaseName; readonly packageDirectory: string; readonly timeoutMs: number; readonly commands?: Readonly<Record<string, string>> }) => Effect.Effect<RecipePhaseResult, RecipeError>;
+  /** The commands the Project runs from now. */
+  readonly currentCommands: (id: string) => Effect.Effect<Readonly<Record<string, string>>, RecipeError>;
+  /** The commands a package would give the Project: the host's for its requirements, and its own pinned runtimes (acquired here). */
+  readonly commandsFor: (id: string, packageDirectory: string) => Effect.Effect<Readonly<Record<string, string>>, RecipeError>;
+  /** Makes the running plan controller resolve commands from these, from its next reconciliation. */
+  readonly useCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.Effect<void>;
+  /** Records the commands the Project runs from. */
+  readonly saveCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.Effect<void, RecipeError>;
   readonly controller: (id: string) => Effect.Effect<PlanController | undefined>;
   readonly storedPlan: (id: string) => Effect.Effect<StoredPlan | undefined, RecipeError>;
   readonly saveStoredPlan: (id: string, plan: StoredPlan) => Effect.Effect<void, RecipeError>;
@@ -140,7 +151,13 @@ export const prepareRecipeUpdate = Effect.fn("RecipeUpgrade.prepare")(function* 
     target: { version: candidate.recipe.version, digest } satisfies RuntimeRelease,
     recipe: lock,
   };
-  yield* writeJournal(layout, { v: 1, id: crypto.randomUUID(), state: "staged", previous: execution.previous, target: execution.target, snapshots: [] });
+  const previousCommands = yield* kit.currentCommands(previous.id);
+  // The new recipe's own programs are fetched now, while the Project is still serving: apply only switches.
+  const commands = yield* kit.commandsFor(previous.id, join(stage, "recipe", "package")).pipe(
+    // A build that cannot be had refuses the upgrade before anything is staged for it.
+    Effect.tapError(() => io("The staged recipe could not be removed.", () => rm(upgradeDirectory(layout), { recursive: true, force: true })).pipe(Effect.orElseSucceed(() => undefined))),
+  );
+  yield* writeJournal(layout, { v: 1, id: crypto.randomUUID(), state: "staged", previous: execution.previous, target: execution.target, previousCommands, commands, snapshots: [] });
   return execution;
 });
 
@@ -193,6 +210,8 @@ const returnToPrevious = Effect.fn("RecipeUpgrade.returnToPrevious")(function* (
   const plan = join(upgradeDirectory(layout), "plan-state.previous.json");
   if (yield* exists(plan)) yield* io("The previous plan could not be restored.", () => rename(plan, layout.planState));
   yield* restoreConfigurations(journal.snapshots);
+  yield* kit.saveCommands(id, journal.previousCommands);
+  yield* kit.useCommands(id, journal.previousCommands);
 });
 
 export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
@@ -224,6 +243,10 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
           Effect.asVoid)
       : Effect.void);
 
+    // The new commands resolve from the first reconciliation on; the previous ones come back first if this fails.
+    yield* kit.useCommands(id, journal.commands);
+    yield* Effect.addFinalizer((exit) => Exit.isFailure(exit) ? kit.useCommands(id, journal.previousCommands) : Effect.void);
+
     const snapshots = yield* snapshotConfigurations(layout, before.plan);
     const applying: Journal = { ...journal, state: "applying", snapshots };
     yield* writeJournal(layout, applying);
@@ -232,8 +255,8 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
       : Effect.void);
 
     // The new recipe prepares what it needs (configuration, directories) and says what should run.
-    yield* kit.phase({ id, name: "install", packageDirectory: candidate, timeoutMs: INSTALL_TIMEOUT_MS });
-    const started = yield* kit.phase({ id, name: "start", packageDirectory: candidate, timeoutMs: PHASE_TIMEOUT_MS });
+    yield* kit.phase({ id, name: "install", packageDirectory: candidate, timeoutMs: INSTALL_TIMEOUT_MS, commands: journal.commands });
+    const started = yield* kit.phase({ id, name: "start", packageDirectory: candidate, timeoutMs: PHASE_TIMEOUT_MS, commands: journal.commands });
     if (started.phase !== "start") return yield* Effect.fail(fail("The new recipe's start phase returned no process plan."));
 
     const report = yield* controller.reconcile(started.plan);
@@ -244,6 +267,7 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
     const committed = Effect.gen(function* () {
       yield* writeJournal(layout, { ...applying, state: "switching" });
       yield* io("The previous plan could not be kept.", () => copyFile(layout.planState, join(upgradeDirectory(layout), "plan-state.previous.json")));
+      yield* kit.saveCommands(id, journal.commands);
       // With an integration host in the transaction, the host's handover swaps the recipe directory and
       // descriptor itself, as part of the one commit; this side only owns the processes and their plan.
       if (!external) {

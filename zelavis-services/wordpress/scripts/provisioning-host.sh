@@ -63,7 +63,7 @@ chown zelavis:zelavis /var/lib/zelavis/qualification-session
 printf 'deb [trusted=yes] http://127.0.0.1:9 unavailable main\n' > /etc/apt/sources.list.d/zelavis-cancel.list
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" cancel
 rm /etc/apt/sources.list.d/zelavis-cancel.list
-# The second recipe first: its php-stack set must work alone, before anything installs a database.
+# The second recipe first: it must work with no database and no PHP on the host, which it brings itself.
 DOKUWIKI_CHECK=/workspace/zelavis-services/dokuwiki/scripts/check-dokuwiki-provisioning.mjs
 if ! skipped dokuwiki; then runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" create; fi
 runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" create
@@ -128,6 +128,32 @@ if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
       sleep 1
     done
     runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$TYPO3_CHECK" live-upgrade
+  fi
+  if ! skipped prestashop; then
+    # And a fifth, which needs the PHP 8.1 it pins (no PHP is on the host) and unpacks a zip holding a zip.
+    PRESTASHOP_CHECK=/workspace/zelavis-services/prestashop/scripts/check-prestashop-provisioning.mjs
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" create
+    systemctl stop zelavis.service zelavis.socket
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" seed
+    systemctl start zelavis.socket zelavis.service
+    for attempt in $(seq 1 60); do
+      if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+      sleep 1
+    done
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" live-upgrade
+  fi
+  if ! skipped drupal; then
+    # And a sixth, whose installer is Drupal's own installation code run with the Project's values.
+    DRUPAL_CHECK=/workspace/zelavis-services/drupal/scripts/check-drupal-provisioning.mjs
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" create
+    systemctl stop zelavis.service zelavis.socket
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" seed
+    systemctl start zelavis.socket zelavis.service
+    for attempt in $(seq 1 60); do
+      if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
+      sleep 1
+    done
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" live-upgrade
   fi
 fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then

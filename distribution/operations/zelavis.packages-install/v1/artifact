@@ -7,8 +7,7 @@ export PATH
 # The sets are fixed here, never supplied by a caller or a recipe.
 case "$2" in
   wordpress-stack) set_name=wordpress-stack; packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core' ;;
-  mariadb-server) set_name=mariadb-server; packages='mariadb-server-core mariadb-client-core php-mysql' ;;
-  php-stack) set_name=php-stack; packages='nginx php-fpm php-cli php-curl php-gd php-intl php-mbstring php-xml php-zip' ;;
+  mariadb-server) set_name=mariadb-server; packages='mariadb-server-core mariadb-client-core' ;;
   *) echo 'Unknown package set.' >&2; exit 2 ;;
 esac
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Package installation requires the root Linux operation Agent.' >&2; exit 2; }

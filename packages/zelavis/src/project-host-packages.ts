@@ -5,7 +5,6 @@
  */
 export const HOST_PACKAGE_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "wordpress-stack": Object.freeze(["nginx", "php-fpm", "mariadb"]),
-  "php-stack": Object.freeze(["nginx", "php-fpm"]),
   "mariadb-server": Object.freeze(["mariadb"]),
 });
 
@@ -23,4 +22,23 @@ export function normalizeProjectHostPackages(value: unknown): readonly string[] 
     throw new TypeError("Project hostPackages must contain at most eight distinct named package sets.");
   }
   return Object.freeze([...value]);
+}
+
+/**
+ * The package sets a recipe still needs on this platform. A set is unnecessary when every requirement it
+ * provides is brought by the recipe itself here: a runtime with a download for this platform that names the
+ * requirement as its `hostRequirement` (MariaDB on Linux x86_64). Platforms without a build keep the set.
+ */
+export function neededHostPackages(
+  sets: readonly string[],
+  runtimes: ReadonlyArray<{ readonly hostRequirement?: string; readonly downloads: Readonly<Record<string, unknown>> }> | undefined,
+  platform: string | undefined,
+): readonly string[] {
+  const brought = new Set((runtimes ?? [])
+    .filter((runtime) => platform !== undefined && runtime.downloads[platform] !== undefined && runtime.hostRequirement !== undefined)
+    .map((runtime) => runtime.hostRequirement!));
+  return Object.freeze(sets.filter((set) => {
+    const provided = HOST_PACKAGE_REQUIREMENTS[set];
+    return provided === undefined || !provided.every((requirement) => brought.has(requirement));
+  }));
 }

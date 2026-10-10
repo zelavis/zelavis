@@ -76,6 +76,37 @@ const SetupValue = Schema.Struct({
 /** The tokens a setup value may use, as the pieces of a template. */
 export const SETUP_TOKEN = /\{(ports|dir|secret)\.([a-z][a-z0-9-]{0,63})\}|\{(root|sockets|user)\}/g;
 
+/**
+ * A program the recipe brings with it instead of borrowing the host's: one pinned download per platform
+ * (an address, a SHA-256 and a size bound, like the application's own archive), unpacked once into the
+ * Platform's content-addressed store and offered to the recipe as the command `command`. This is what
+ * lets every Project run the PHP (or any other runtime) its application needs, whatever the host has.
+ */
+export const RUNTIME_PLATFORMS = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64"] as const;
+const RuntimeDownload = Schema.Struct({
+  archive: HttpsUrl,
+  /** Other places holding the very same archive, tried in order when the first fails. The digest, not the origin, is what is trusted. */
+  mirrors: Schema.optionalKey(Schema.Array(HttpsUrl).check(Schema.isMaxLength(3))),
+  sha256: Digest,
+  maxBytes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 512 * 1024 * 1024 })),
+  /** The program inside the unpacked archive. */
+  executable: RelativePath,
+});
+const Runtime = Schema.Struct({
+  /** The command name recipes use (`php`, `php-fpm`). */
+  command: Name,
+  version: Version,
+  /**
+   * The host requirement that supplies this command on a platform without a download here (a database
+   * only built for Linux x86_64 falls back to the host's). Without it, such a platform is refused.
+   */
+  hostRequirement: Schema.optionalKey(Name),
+  /** By platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`); a host without an entry cannot run the recipe. */
+  downloads: Schema.Record(Schema.String, RuntimeDownload).check(
+    Schema.makeFilter((value) => Object.keys(value).length >= 1 && Object.keys(value).every((platform) => (RUNTIME_PLATFORMS as readonly string[]).includes(platform))),
+  ),
+});
+
 /** The verified package's install metadata, independent of its npm revision. */
 export const RecipeManifest = Schema.Struct({
   contract: Schema.Literal(1),
@@ -102,6 +133,8 @@ export const RecipeManifest = Schema.Struct({
   adopt: Schema.optional(Schema.Array(Adoption).check(Schema.isMaxLength(4))),
   /** Data directories placed by name below the recipe's root; see {@link Directory}. */
   directories: Schema.optional(Schema.Array(Directory).check(Schema.isMaxLength(16))),
+  /** Programs the recipe brings with it; see {@link Runtime}. */
+  runtimes: Schema.optional(Schema.Array(Runtime).check(Schema.isMaxLength(8))),
   /** Values the application's own installer asks for; see {@link SetupValue}. */
   setup: Schema.optional(Schema.Array(SetupValue).check(Schema.isMaxLength(16))),
 });
@@ -140,6 +173,7 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
         throw new InvalidRecipeManifest({ message: `Directory "${place}" contains another declared directory.` });
       }
     }
+    unique((manifest.runtimes ?? []).map((runtime) => runtime.command), "runtime commands");
     unique((manifest.setup ?? []).map((entry) => entry.id), "setup value IDs");
     for (const entry of manifest.setup ?? []) {
       const rest = entry.value.replace(SETUP_TOKEN, (token, kind: string | undefined, name: string | undefined) => {
@@ -165,6 +199,9 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
       }))),
       software: Object.freeze(manifest.software.map((software) => Object.freeze({ ...software }))),
       ports: Object.freeze(manifest.ports.map((port) => Object.freeze({ ...port }))),
+      ...(manifest.runtimes ? { runtimes: Object.freeze(manifest.runtimes.map((runtime) => Object.freeze({
+        ...runtime, downloads: Object.freeze(Object.fromEntries(Object.entries(runtime.downloads).map(([platform, download]) => [platform, Object.freeze({ ...download, ...(download.mirrors ? { mirrors: Object.freeze([...download.mirrors]) } : {}) })]))),
+      }))) } : {}),
       ...(manifest.setup ? { setup: Object.freeze(manifest.setup.map((entry) => Object.freeze({ ...entry }))) } : {}),
       ...(manifest.directories ? { directories: Object.freeze(manifest.directories.map((directory) => Object.freeze({ ...directory }))) } : {}),
       ...(manifest.adopt ? { adopt: Object.freeze(manifest.adopt.map((adoption) => Object.freeze({

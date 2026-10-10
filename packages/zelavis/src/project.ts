@@ -88,6 +88,8 @@ export interface ZelavisProjectInstallHost {
   readonly drivers: readonly ("js" | "oci")[];
   /** Requirement names the host satisfies or can provision through approved operations. */
   readonly requirements: readonly string[];
+  /** The platform recipes' pinned programs are chosen by (`linux-x86_64`), when this host has one. */
+  readonly platform?: string;
 }
 
 export interface ZelavisProjectRecipeLock {

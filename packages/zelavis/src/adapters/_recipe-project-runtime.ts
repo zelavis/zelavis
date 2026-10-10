@@ -20,6 +20,7 @@ import { RequirementUnavailable, resolveRequirementCommands } from "./_recipe-re
 import { runRecipePhase, type RecipePhaseName } from "./_recipe-phase.js";
 import { adoptionPending, applyAdoption, commitAdoption, detectAdoption, revertAdoption, type AdoptedValues } from "./_recipe-adoption.js";
 import { relocateDirectories } from "./_recipe-relocation.js";
+import { acquireRuntimes, pruneRuntimeStore, runtimePlatform } from "./_recipe-runtimes.js";
 import { clearPlanState, readPlanState, writePlanState } from "./_recipe-plan-state.js";
 import { UpgradeKit, type UpgradeKitApi, applyRecipeUpdate, prepareRecipeUpdate, recoverRecipeUpdate, settleRecipeUpdate } from "./_recipe-upgrade.js";
 import { preparedProjectRecord } from "./_project-record-validation.js";
@@ -58,6 +59,8 @@ export interface RecipeProjectRuntimeOptions {
   /** Account the processes run as when the Platform is root; refused, not replaced, when it does not exist. */
   readonly user?: string;
   readonly installTimeoutMs?: number;
+  /** Where the recipes' own pinned runtimes are unpacked, shared by digest; defaults beside `directory`. */
+  readonly runtimeStore?: string;
   /**
    * Finding and freezing another version of this recipe, which is what upgrading a running Project
    * needs. Absent, a running Project is not upgraded in place.
@@ -243,6 +246,33 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const namedDirectories = (id: string, state: RecipeState, parsed: RecipeManifest) =>
     Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).root, state.layout?.[directory.name] ?? directory.path)]));
 
+  /** Where this host's programs and the recipe's own pinned runtimes keep their builds. */
+  const runtimeStore = options.runtimeStore ?? join(projectsDirectory, "..", "runtimes");
+
+  /** Command name to absolute program: the host's for the method's requirements, and the manifest's own runtimes. */
+  const commandsOf = (requires: readonly string[], parsed: RecipeManifest) => Effect.gen(function* () {
+    // A program the recipe brings but has no build of for this platform falls back to the host's, when it says how.
+    const platform = runtimePlatform();
+    const unbuilt = (parsed.runtimes ?? []).filter((runtime) => (platform === undefined || runtime.downloads[platform] === undefined) && runtime.hostRequirement !== undefined);
+    const fallbacks = [...new Set(unbuilt.map((runtime) => runtime.hostRequirement!))];
+    const host = yield* resolveRequirementCommands([...new Set([...requires, ...fallbacks])]).pipe(Effect.mapError(asRuntimeError));
+    const built = (parsed.runtimes ?? []).filter((runtime) => !unbuilt.includes(runtime));
+    const brought = yield* acquireRuntimes({ runtimes: built, store: runtimeStore }).pipe(Effect.mapError(asRuntimeError));
+    const clash = Object.keys(brought).find((name) => name in host);
+    if (clash !== undefined) return yield* Effect.fail(failure(`"${clash}" is both required from the host and brought by the recipe; a recipe takes one.`));
+    return { ...host, ...brought } as Readonly<Record<string, string>>;
+  });
+
+  /** Builds no Project names any more are removed; a failure to prune is logged and never stops anything. */
+  const pruneRuntimes = pruneRuntimeStore({ store: runtimeStore, projects: projectsDirectory }).pipe(
+    Effect.tap((removed) => removed.length > 0 ? Effect.logInfo(`Removed ${removed.length} unused runtime build(s).`) : Effect.void),
+    Effect.catch((error) => Effect.logWarning(`Pruning the runtime store failed: ${String(error)}`)),
+    Effect.asVoid,
+  );
+
+  /** What each running Project resolves its commands from; a recipe upgrade may swap it. */
+  const liveCommands = new Map<string, Readonly<Record<string, string>>>();
+
   const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
     projectId: project.id,
     hostname: "localhost",
@@ -296,12 +326,13 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   /** A plan controller for a Project, listening to what its processes do so the Project's log tells it. */
   const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, placement?: PlacementToken) {
     const host = makeAgentPlanHost({
-      runner: agent, workloadId: id, cwd: paths(id).root, commands: state.commands, ports: state.ports,
+      runner: agent, workloadId: id, cwd: paths(id).root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
       ...(placement ? { placement: placement as never } : {}),
       baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: paths(id).root, LANG: "C.UTF-8" },
       resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
     });
+    liveCommands.set(id, state.commands);
     const controller = yield* makePlanController.pipe(Effect.provideService(PlanHost, host));
     const listener = yield* Effect.forkDetach(Effect.scoped(Effect.gen(function* () {
       const events = yield* PubSub.subscribe(controller.events);
@@ -319,6 +350,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
   const forget = (id: string) => Effect.gen(function* () {
     controllers.delete(id);
+    liveCommands.delete(id);
     const listener = listeners.get(id);
     listeners.delete(id);
     if (listener) yield* Fiber.interrupt(listener);
@@ -365,11 +397,23 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       ? integration(() => options.recipes!.stage(source, data)).pipe(Effect.mapError(() => new RecipeError({ operation: "upgrade", message: "The new recipe could not be frozen." })))
       : Effect.fail(new RecipeError({ operation: "upgrade", message: "This host cannot stage another version of the recipe." })),
     readManifest: (packageDirectory: string) => readManifest(packageDirectory).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
-    phase: (input: { id: string; name: RecipePhaseName; packageDirectory: string; timeoutMs: number }) => Effect.gen(function* () {
-      const state = yield* readState(input.id);
+    phase: (input: { id: string; name: RecipePhaseName; packageDirectory: string; timeoutMs: number; commands?: Readonly<Record<string, string>> }) => Effect.gen(function* () {
+      const state = { ...(yield* readState(input.id)), ...(input.commands ? { commands: input.commands } : {}) };
       const candidate = yield* readManifest(input.packageDirectory);
       return yield* phase(input.id, input.name, state, candidate, input.timeoutMs, input.packageDirectory);
     }).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
+    currentCommands: (id: string) => readState(id).pipe(Effect.map((state) => state.commands), Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
+    commandsFor: (id: string, packageDirectory: string) => Effect.gen(function* () {
+      const [state, candidate] = [yield* readState(id), yield* readManifest(packageDirectory)];
+      const method = candidate.methods.find((offered) => offered.id === state.method && offered.driver === "js");
+      if (!method) return yield* Effect.fail(failure("The new recipe no longer offers this Project's install method."));
+      return yield* commandsOf(method.requires, candidate);
+    }).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
+    useCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.sync(() => { liveCommands.set(id, commands); }),
+    saveCommands: (id: string, commands: Readonly<Record<string, string>>) => readState(id).pipe(
+      Effect.flatMap((state) => writeState(id, { ...state, commands })),
+      Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message })),
+    ),
     controller: (id: string) => Effect.sync(() => controllers.get(id)),
     storedPlan: (id: string) => Effect.gen(function* () {
       const state = yield* readState(id).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message })));
@@ -389,6 +433,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     log: (id: string, message: string) => Effect.sync(() => log(id, "system", message)),
     markInstalled: (id: string, digest: string) => readState(id).pipe(
       Effect.flatMap((state) => writeState(id, { ...state, installedFor: digest })),
+      Effect.tap(() => pruneRuntimes),
       Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message })),
     ),
   };
@@ -450,7 +495,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         while (Object.values(ports).includes(candidate)) candidate = yield* availablePort();
         ports[port.name] = candidate;
       }
-      const commands = yield* resolveRequirementCommands(method.requires).pipe(Effect.mapError(asRuntimeError));
+      const commands = yield* commandsOf(method.requires, parsed);
       const sameInstall = previous?.method === install.method && previous.software === install.software;
       const state: RecipeState = {
         v: 1, ports, commands, method: install.method, software: install.software,
@@ -497,6 +542,15 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         }).pipe(Effect.mapError(asRuntimeError));
         for (const name of relocation.moved) log(project.id, "system", `Moved "${name}" to ${relocation.layout[name]}.`);
         for (const { name, reason } of relocation.kept) log(project.id, "system", `"${name}" stays where it is: ${reason}.`);
+        // A recipe upgraded while the Project was stopped may bring other runtimes: have them before anything starts.
+        const method = parsed.methods.find((offered) => offered.id === state.method && offered.driver === "js");
+        if (method) {
+          const commands = yield* commandsOf(method.requires, parsed);
+          if (JSON.stringify(commands) !== JSON.stringify(state.commands)) {
+            state = { ...state, commands };
+            yield* writeState(project.id, state);
+          }
+        }
         // A recipe upgraded while the Project was stopped has not prepared the app yet, and a moved directory
         // is named in the configuration its install phase wrote: prepare it again before anything starts.
         // Install is idempotent by contract.
@@ -634,6 +688,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     }),
 
     adopt: Effect.fn("RecipeRuntime.adopt")(function* () {
+      yield* pruneRuntimes;
       if (!agent.survivesControlPlaneRestart || !agent.attach) return;
       const entries = yield* integration(() => readdir(projectsDirectory, { withFileTypes: true }));
       if (entries.length > 4096) return yield* Effect.fail(failure("Recipe Project adoption exceeds its discovery bound."));

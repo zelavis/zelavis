@@ -41,8 +41,8 @@ export interface PlanHostApi {
   readonly workloadId: string;
   readonly cwd: string;
   readonly placement?: AgentPlacementIdentity;
-  /** Requirement name to absolute executable. */
-  readonly commands: Readonly<Record<string, string>>;
+  /** Command name to absolute executable, asked for at each reconciliation: a recipe upgrade may bring other builds. */
+  readonly commands: () => Readonly<Record<string, string>>;
   /** Port name to the number allocated for this Project. */
   readonly ports: Readonly<Record<string, number>>;
   /** What every process gets before the plan's own variables. */
@@ -164,7 +164,7 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
 
   /** A plan process as the Agent will be asked to run it, and as it is told apart from another. */
   const resolve = Effect.fn("PlanController.resolve")(function* (process: PlanProcess) {
-    const executable = host.commands[process.command];
+    const executable = host.commands()[process.command];
     if (executable === undefined) return yield* Effect.fail(fail(`"${process.name}" uses "${process.command}", which this host did not provide.`));
     const args = yield* Effect.forEach(process.args, reveal);
     const env: Record<string, string> = { ...host.baseEnvironment };

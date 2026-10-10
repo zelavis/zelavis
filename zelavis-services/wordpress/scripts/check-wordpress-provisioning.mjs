@@ -44,14 +44,14 @@ if (phase === "claim") {
     await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
     if (phase === "seed-live") {
       // The historical recipe differs from the current one in its web configuration only, so upgrading it
-      // while it runs must reload Nginx in place (a header disappears) and replace no process.
+      // while it runs must reload Caddy in place (a header disappears) and replace no process.
       const header = (text) => {
-        assert.ok(text.includes("client_max_body_size 64m;"), "the fixture's anchor line is still in the recipe");
-        return text.replace("client_max_body_size 64m;", 'client_max_body_size 64m;\n  add_header X-Recipe "historical" always;');
+        assert.ok(text.includes("request_body {"), "the fixture's anchor line is still in the recipe");
+        return text.replace("request_body {", 'header X-Recipe "historical"\n\trequest_body {');
       };
       await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
       // The install phase already rendered the Project's configuration; the historical recipe would have rendered this.
-      await writeFile(`${directory}/app/nginx.conf`, header(await readFile(`${directory}/app/nginx.conf`, "utf8")));
+      await writeFile(`${directory}/app/Caddyfile`, header(await readFile(`${directory}/app/Caddyfile`, "utf8")));
     }
     await writeFile(`${frozen}/dist/index.js`, `import { zelavis } from "zelavis/sdk";
 export { WORDPRESS_APP_NAME } from "./runtime.js";
@@ -92,7 +92,7 @@ export function register() {
     await rootAgent.close();
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["php-stack", "mariadb-server"]);
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["mariadb-server"]);
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -110,7 +110,7 @@ export function register() {
       assert.equal(project.recipe.version, "0.0.0-qualification");
       assert.equal(project.runtime.status, "running", JSON.stringify(project));
       const run = "/var/lib/zelavis/projects/qualification-wordpress/app/run";
-      const pids = async () => Object.fromEntries(await Promise.all(["nginx", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
+      const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
       const oneConnection = new Agent({ keepAlive: false });
       const ask = (url) => new Promise((resolve, reject) => {
         httpGet(url, { agent: oneConnection }, (reply) => { reply.resume(); reply.on("end", () => resolve({ status: reply.statusCode, header: reply.headers["x-recipe"] ?? null })); reply.on("error", reject); }).on("error", reject);
@@ -137,9 +137,9 @@ export function register() {
       assert.equal(failures, 0, "no request failed during the live recipe upgrade");
       assert.ok(served > 20, `served ${served}`);
       assert.deepEqual([...headers].sort(), ["historical", null].sort(), `responses switched to the new web configuration: saw ${JSON.stringify([...headers])}`);
-      assert.deepEqual(await pids(), before, "Nginx, PHP-FPM and MariaDB are the same processes");
+      assert.deepEqual(await pids(), before, "Caddy, PHP-FPM and MariaDB are the same processes");
       assert.equal((await ask(project.runtime.url)).header, null);
-      console.log(`PASS: running WordPress upgraded its recipe live: ${served} requests, none failed, same Nginx/PHP-FPM/MariaDB processes.`);
+      console.log(`PASS: running WordPress upgraded its recipe live: ${served} requests, none failed, same Caddy/PHP-FPM/MariaDB processes.`);
     }
     if (phase === "upgrade") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -168,7 +168,7 @@ export function register() {
       const address = execFileSync("hostname",["-I"],{encoding:"utf8"}).trim().split(/\s+/)[0];
       const externalOrigin = `http://${address}:${project.preview.port}`;
       const external = await fetch(externalOrigin,{redirect:"manual"});
-      assert.equal(external.status,302,"preview must listen on the server network interface");
+      assert.equal(external.status,302,`preview must listen on the server network interface: answered ${external.status} ${external.headers.get("location") ?? ""} ${(await external.text().catch(() => "")).slice(0, 200)}`);
       assert.equal(new URL(external.headers.get("location")).origin,externalOrigin);
       const installer = await fetch(previewUrl, {redirect:"manual"});
       assert.equal(installer.status,302);
@@ -204,8 +204,8 @@ export function register() {
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
-    // Every fixed set is already satisfied, whichever way the stack was assembled.
-    for (const set of ["php-stack", "mariadb-server", "wordpress-stack"]) {
+    // Every fixed set a recipe uses is already satisfied (the legacy wordpress-stack, which also installs PHP, is not).
+    for (const set of ["mariadb-server"]) {
       const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
       let record = repeated;
       for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {

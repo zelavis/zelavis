@@ -35,7 +35,7 @@ export function recipeHostConformance(test, makeHost) {
     await writeFile(join(outside, "private.txt"), "not yours");
     const progress = [];
     const host = makeHost({
-      root, secretsDirectory, commands: { node: process.execPath }, progress: (entry) => progress.push(entry), ...extra,
+      root, secretsDirectory, commands: { node: process.execPath }, progress: (entry) => progress.push(entry), retryDelay: "5 millis", ...extra,
     });
     return { host, root, secretsDirectory, outside, base, progress };
   }
@@ -230,6 +230,34 @@ export function recipeHostConformance(test, makeHost) {
     await failure(failing.host.download({ url: "https://example.com/a", sha256: digestOf(bytes), maxBytes: 1000, destination: "e.bin" }));
   });
 
+  test("a download that stumbles is tried again, but not one that carried the wrong thing or was refused", async (t) => {
+    const bytes = Buffer.from("flaky release");
+    let calls = 0;
+    const flaky = await sandbox(t, { fetch: () => { calls += 1; return calls < 3 ? Promise.reject(new Error("socket hang up")) : Promise.resolve(new Response(bytes, { status: 200 })); } });
+    await succeed(flaky.host.download({ url: "https://example.com/a", sha256: digestOf(bytes), maxBytes: 1024, destination: "a.bin" }));
+    assert.equal(calls, 3, "two stumbles, then the download");
+
+    let busy = 0;
+    const overloaded = await sandbox(t, { fetch: () => { busy += 1; return Promise.resolve(new Response("later", { status: busy < 2 ? 503 : 200 })); } });
+    await succeed(overloaded.host.download({ url: "https://example.com/a", sha256: digestOf(Buffer.from("later")), maxBytes: 1024, destination: "b.bin" }));
+    assert.equal(busy, 2);
+
+    let wrong = 0;
+    const tampered = await sandbox(t, { fetch: () => { wrong += 1; return Promise.resolve(new Response(bytes, { status: 200 })); } });
+    await failure(tampered.host.download({ url: "https://example.com/a", sha256: "0".repeat(64), maxBytes: 1024, destination: "c.bin" }));
+    assert.equal(wrong, 1, "a download that does not match its digest is not asked for again");
+
+    let missing = 0;
+    const gone = await sandbox(t, { fetch: () => { missing += 1; return Promise.resolve(new Response("no", { status: 404 })); } });
+    await failure(gone.host.download({ url: "https://example.com/a", sha256: digestOf(bytes), maxBytes: 1024, destination: "d.bin" }));
+    assert.equal(missing, 1, "a refusal is final");
+
+    let never = 0;
+    const down = await sandbox(t, { fetch: () => { never += 1; return Promise.reject(new Error("offline")); } });
+    await failure(down.host.download({ url: "https://example.com/a", sha256: digestOf(bytes), maxBytes: 1024, destination: "e.bin" }));
+    assert.equal(never, 3, "three attempts and then it gives up");
+  });
+
   test("a redirect is followed only to https, a few times", async (t) => {
     const bytes = Buffer.from("through a redirect");
     const sequence = [
@@ -270,6 +298,70 @@ export function recipeHostConformance(test, makeHost) {
     await writeFile(join(root, "dl/broken.tar.gz"), "not gzip");
     await failure(host.extract("dl/broken.tar.gz", "broken"));
     assert.equal(existsSync(join(root, "broken")), false);
+  });
+
+  const zipOf = async (base, name, python) => {
+    const file = join(base, name);
+    await exec("python3", ["-I", "-c", `import zipfile\nz = zipfile.ZipFile(${JSON.stringify(file)}, "w", zipfile.ZIP_DEFLATED)\n${python}\nz.close()`]);
+    return file;
+  };
+
+  test("a .zip unpacks with nothing but Node: deflated and stored entries, empty files, the executable bit, with or without its single top directory", async (t) => {
+    const { host, root, base } = await sandbox(t);
+    await mkdir(join(root, "dl"), { recursive: true });
+    const file = await zipOf(base, "good.zip", [
+      'z.writestr("app/index.php", "<?php " * 500)',
+      'z.writestr(zipfile.ZipInfo("app/empty"), "")',
+      'z.writestr("app/lib/util.php", "util", compress_type=zipfile.ZIP_STORED)',
+      'i = zipfile.ZipInfo("app/bin/run"); i.create_system = 3; i.external_attr = (0o100755 << 16); z.writestr(i, "#!/bin/sh\\n")',
+      'z.writestr(zipfile.ZipInfo("app/dir/"), "")',
+    ].join("\n"));
+    await exec("cp", [file, join(root, "dl/good.zip")]);
+    await succeed(host.extract("dl/good.zip", "plain"));
+    assert.equal(await readFile(join(root, "plain/app/index.php"), "utf8"), "<?php ".repeat(500));
+    assert.equal(await readFile(join(root, "plain/app/lib/util.php"), "utf8"), "util");
+    assert.equal(existsSync(join(root, "plain/app/empty")), true);
+    assert.equal(existsSync(join(root, "plain/app/dir")), true);
+    assert.equal((await exec("stat", ["-c", "%a", join(root, "plain/app/bin/run")]).catch(() => exec("stat", ["-f", "%Lp", join(root, "plain/app/bin/run")]))).stdout.trim(), "755");
+    await succeed(host.extract("dl/good.zip", "flat", { stripTopLevel: true }));
+    assert.equal(await readFile(join(root, "flat/lib/util.php"), "utf8"), "util");
+    assert.equal(existsSync(join(root, "flat/app")), false);
+    assert.deepEqual((await exec("ls", [root])).stdout.split("\n").filter((entry) => entry.endsWith(".extracting")), [], "no staging left");
+  });
+
+  test("a .zip that points outside, holds a link, names a path twice, has several roots or is damaged is refused and leaves nothing behind", async (t) => {
+    const { host, root, base } = await sandbox(t);
+    await mkdir(join(root, "dl"), { recursive: true });
+    const cases = {
+      climbs: ['z.writestr("../escaped.txt", "x")'],
+      absolute: ['z.writestr("/tmp/zelavis-zip-escaped.txt", "x")'],
+      backslash: ['z.writestr("app\\\\x.txt", "x")'],
+      symlink: ['z.writestr("app/ok.txt", "x")', 'i = zipfile.ZipInfo("app/link"); i.create_system = 3; i.external_attr = (0o120777 << 16); z.writestr(i, "/etc")'],
+      device: ['i = zipfile.ZipInfo("app/dev"); i.create_system = 3; i.external_attr = (0o020666 << 16); z.writestr(i, "")'],
+      twice: ['z.writestr("app/a.txt", "1")', 'z.writestr("app/a.txt", "2")'],
+    };
+    for (const [name, lines] of Object.entries(cases)) {
+      const file = await zipOf(base, `${name}.zip`, lines.join("\n"));
+      await exec("cp", [file, join(root, `dl/${name}.zip`)]);
+      await failure(host.extract(`dl/${name}.zip`, `out-${name}`));
+      assert.equal(existsSync(join(root, `out-${name}`)), false, `${name}: nothing is left in place`);
+    }
+    assert.equal(existsSync(join(base, "escaped.txt")), false);
+    assert.equal(existsSync("/tmp/zelavis-zip-escaped.txt"), false);
+    const two = await zipOf(base, "two.zip", 'z.writestr("one/a.txt", "a")\nz.writestr("two/b.txt", "b")');
+    await exec("cp", [two, join(root, "dl/two.zip")]);
+    await failure(host.extract("dl/two.zip", "stripped", { stripTopLevel: true }));
+    assert.equal(existsSync(join(root, "stripped")), false);
+    // Damage: a flipped byte inside an entry's data fails its CRC; a truncated archive has no directory.
+    const sound = await zipOf(base, "sound.zip", 'z.writestr("app/data.txt", "important " * 400, compress_type=zipfile.ZIP_STORED)');
+    const bytes = await readFile(sound);
+    const flipped = Buffer.from(bytes); flipped[60] ^= 0xff;
+    await writeFile(join(root, "dl/flipped.zip"), flipped);
+    await failure(host.extract("dl/flipped.zip", "out-flipped"));
+    assert.equal(existsSync(join(root, "out-flipped")), false);
+    await writeFile(join(root, "dl/cut.zip"), bytes.subarray(0, bytes.length - 30));
+    await failure(host.extract("dl/cut.zip", "out-cut"));
+    assert.equal(existsSync(join(root, "out-cut")), false);
   });
 
   test("an archive that points outside, holds a link, or has no single root is refused and leaves nothing behind", async (t) => {

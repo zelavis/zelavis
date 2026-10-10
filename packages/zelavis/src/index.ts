@@ -1,4 +1,4 @@
-import { provisionableRequirements } from "./project-host-packages.js";
+import { neededHostPackages, provisionableRequirements } from "./project-host-packages.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
@@ -3976,6 +3976,7 @@ function resolvePlatformEndpointGroup(
   remoteEnvironment?: ZelavisRemoteEnvironment,
   database?: DatabaseRuntimeApi,
   cloudCapacity?: CloudCapacityController,
+  projectInstallHost?: () => Promise<ZelavisProjectInstallHost>,
 ): Promise<ZelavisEndpointGroup<any>> {
   return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
@@ -4755,7 +4756,9 @@ function resolvePlatformEndpointGroup(
           method: "GET",
           path: "/project-recipes",
           access: { authenticated: true },
-          handler: () => ({
+          handler: () => present(Effect.gen(function* () {
+            const platform = projectInstallHost ? (yield* integration(() => projectInstallHost!())).platform : undefined;
+            return {
             status: 200,
             body: {
               projectRecipes: projectRecipes
@@ -4769,7 +4772,7 @@ function resolvePlatformEndpointGroup(
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
-                  ...(entry.service.project?.hostPackages ? { hostPackages: entry.service.project.hostPackages } : {}),
+                  ...(entry.service.project?.hostPackages ? { hostPackages: neededHostPackages(entry.service.project.hostPackages, entry.service.project.install?.runtimes, platform) } : {}),
                   ...(entry.service.project?.isolation
                     ? { isolation: entry.service.project.isolation }
                     : {}),
@@ -4781,7 +4784,8 @@ function resolvePlatformEndpointGroup(
                   ...(entry.service.project?.install ? { install: publicInstallChoices(entry.service.project.install) } : {}),
                 })),
             },
-          }),
+            };
+          })),
         },
         {
           id: "runtime.assistant.audit.list",
@@ -5611,7 +5615,8 @@ function resolvePlatformEndpointGroup(
                 const recipeName = typeof input.recipeName === "string" && input.recipeName.trim() ? input.recipeName.trim() : "@zelavis/app";
                 const recipe = projectRecipes.find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
                 if (!recipe) return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
-                const sets = recipe.service.project?.hostPackages ?? [];
+                const platform = projectInstallHost ? (yield* integration(() => projectInstallHost!())).platform : undefined;
+                const sets = neededHostPackages(recipe.service.project?.hostPackages ?? [], recipe.service.project?.install?.runtimes, platform);
                 if (sets.length) {
                   if (!hostOperations) return { status: 503, body: { error: "Host package installation requires the system installation's operation Agent. Update or repair the system installation, then retry." } };
                   const provisioned = yield* Effect.result(integration(() => provisionProjectHostPackages(hostOperations!, sets, principal)));
@@ -6944,6 +6949,7 @@ export function zelavis(
             options.remoteEnvironment,
             resolvedDatabaseApi,
             options.cloudCapacity,
+            options.projectInstallHost,
           ),
         );
         const productServices = [
