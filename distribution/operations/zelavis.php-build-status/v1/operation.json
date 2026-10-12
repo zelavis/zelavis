@@ -1,0 +1,10 @@
+{
+  "id": "zelavis.php-build-status",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "job": { "required": true, "pattern": "^[a-f0-9]{16}$", "maxLength": 16 }
+  },
+  "authorization": { "permission": "server.php-builds.view", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 4096 }
+}

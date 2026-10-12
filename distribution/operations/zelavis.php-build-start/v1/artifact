@@ -1,0 +1,77 @@
+#!/bin/sh
+# zelavis.php-build-start v1 — starts one PHP build in a detached, resource-limited container and returns at once.
+# A build takes longer than an operation may run, so this only starts it; zelavis.php-build-status reports on it,
+# zelavis.php-build-upload sends the archives to a presigned address, and zelavis.php-build-clean removes it.
+#
+# Fixed: the image (pinned by digest), the build script (carried in this artifact, so its digest covers it), the
+# limits (derived from this host), and one build at a time. A caller names only a job id and an exact PHP version.
+# The container, its output volume and the shared work volume carry the label zelavis.php-build=1.
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+[ "$#" -eq 4 ] && [ "$1" = --job ] && [ "$3" = --php ] || { echo 'Expected --job and --php.' >&2; exit 2; }
+job=$2
+php=$4
+case "$job" in *[!a-f0-9]*) echo 'Invalid job.' >&2; exit 2 ;; esac
+[ "${#job}" -eq 16 ] || { echo 'Invalid job.' >&2; exit 2; }
+case "$php" in ''|*[!0-9.]*|.*|*.|*..*) echo 'Invalid PHP version.' >&2; exit 2 ;; esac
+[ "$(printf '%s' "$php" | tr -cd . | wc -c | tr -d ' ')" = 2 ] || { echo 'The PHP version must be exact (major.minor.patch).' >&2; exit 2; }
+
+[ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'A build needs the root Linux operation Agent.' >&2; exit 2; }
+command -v docker >/dev/null 2>&1 || { echo 'No container engine is installed on this host.' >&2; exit 2; }
+docker version >/dev/null 2>&1 || { echo 'The container engine is not running.' >&2; exit 2; }
+
+case "$(uname -m)" in
+  x86_64|amd64) platform=linux-x86_64 ;;
+  aarch64|arm64) platform=linux-aarch64 ;;
+  *) echo 'Unsupported processor.' >&2; exit 2 ;;
+esac
+
+# One build at a time: a second would compete with the first and with whatever else this host runs.
+if [ -n "$(docker ps --quiet --filter label=zelavis.php-build=1)" ]; then
+  echo 'Another build is running; wait for it or clean it.' >&2; exit 1
+fi
+
+# Limits from this host, never from the caller: at most half the cores and half the free memory, so what
+# else runs here keeps working while PHP compiles.
+cpus=$(getconf _NPROCESSORS_ONLN)
+limit_cpus=$(( cpus > 3 ? cpus / 2 : 1 ))
+[ "$limit_cpus" -le 4 ] || limit_cpus=4
+available_kb=$(awk '$1 == "MemAvailable:" { print $2 }' /proc/meminfo)
+case "$available_kb" in ''|*[!0-9]*) echo 'Free memory is unknown.' >&2; exit 1 ;; esac
+limit_mb=$(( available_kb / 2048 ))
+[ "$limit_mb" -le 6144 ] || limit_mb=6144
+[ "$limit_mb" -ge 3072 ] || { echo "Not enough free memory for a build: it needs 3 GiB it can use and half of what is free is $limit_mb MiB." >&2; exit 1; }
+root=$(docker info --format '{{.DockerRootDir}}')
+free_kb=$(df -Pk "$root" | awk 'NR == 2 { print $4 }')
+[ "${free_kb:-0}" -ge 14680064 ] || { echo 'Not enough free disk for a build: it needs 14 GiB where the container engine keeps its data.' >&2; exit 1; }
+
+image='debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'
+work="zv-php-work-$platform"
+out="zv-php-out-$job"
+name="zv-phpbuild-$job"
+docker volume inspect "$work" >/dev/null 2>&1 || docker volume create --label zelavis.php-build=1 "$work" >/dev/null
+docker volume create --label zelavis.php-build=1 --label "zelavis.php-job=$job" "$out" >/dev/null
+
+# What runs inside the container: unpack the carried files, install the build tools, run the build script.
+inside='set -eu
+apt-get update -q
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q sudo build-essential curl ca-certificates git pkg-config autoconf automake libtool cmake bison re2c m4 gzip tar xz-utils
+mkdir -p /builds
+printf %s "$ZV_BUILD_SH" | base64 -d > /builds/build.sh
+printf %s "$ZV_EXTENSIONS" | base64 -d > /builds/extensions.txt
+printf %s "$ZV_SPC_PINS" | base64 -d > /builds/spc.pins
+exec sh /builds/build.sh "$ZV_PHP" --out /out --work /work --keep'
+
+docker run --detach --name "$name" \
+  --label zelavis.php-build=1 --label "zelavis.php-job=$job" --label "zelavis.php-version=$php" \
+  --cpus "$limit_cpus" --memory "${limit_mb}m" --memory-swap "${limit_mb}m" --pids-limit 4096 \
+  --volume "$work:/work" --volume "$out:/out" \
+  --env "ZV_PHP=$php" \
+  --env 'ZV_BUILD_SH=@@EMBED:BUILD_SH@@' \
+  --env 'ZV_EXTENSIONS=@@EMBED:EXTENSIONS@@' \
+  --env 'ZV_SPC_PINS=@@EMBED:SPC_PINS@@' \
+  "$image" sh -c "$inside" >/dev/null || { docker volume rm "$out" >/dev/null 2>&1 || true; echo 'The build container could not be started.' >&2; exit 1; }
+
+printf '{"schema":1,"job":"%s","platform":"%s","cpus":%s,"memoryMb":%s}\n' "$job" "$platform" "$limit_cpus" "$limit_mb"

@@ -1,0 +1,12 @@
+{
+  "id": "zelavis.php-build-upload",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "file": { "required": true, "pattern": "^php-[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{8}-(cli|fpm)-(linux|macos)-(x86_64|aarch64)\\.tar\\.gz$", "maxLength": 96 },
+    "job": { "required": true, "pattern": "^[a-f0-9]{16}$", "maxLength": 16 },
+    "url": { "required": true, "pattern": "^https://[a-z0-9-]+\\.r2\\.cloudflarestorage\\.com/[A-Za-z0-9._~/%-]+\\?[A-Za-z0-9._~%=&+/:-]+$", "maxLength": 4096 }
+  },
+  "authorization": { "permission": "server.php-builds.run", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 512 }
+}

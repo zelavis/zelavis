@@ -127,7 +127,7 @@ committed.
 
 ## Host operations
 
-`zelavis.host-report` v1, `zelavis.container-probe` v1 (whether a container engine exists and works; read-only, takes no arguments) and the Edge operations ship under
+`zelavis.host-report` v1, `zelavis.container-probe` v1 (whether a container engine exists and works; read-only, takes no arguments), the PHP build operations (`zelavis.php-build-start|status|upload|clean` v1: one detached, resource-limited, labeled container per build around `distribution/php-builds/build.sh`, which the start operation carries inside its own artifact through `operation.json`'s `embed`; nothing is installed on the host and an archive goes from the build's output straight to a presigned R2 address) and the Edge operations ship under
 `operations/<id>/<version>/{artifact, manifest.json}` in every release tree. Sources
 live in `distribution/operations/` (`artifact` plus `operation.json` without a
 digest). `stage-operations.mjs` computes each digest and writes a plain manifest. There

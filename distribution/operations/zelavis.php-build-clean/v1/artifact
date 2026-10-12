@@ -1,0 +1,25 @@
+#!/bin/sh
+# zelavis.php-build-clean v1 — stops one build if it is still running and removes its container and its output
+# volume. Only what carries the Zelavis build label is touched; the shared work volume (the sources and compiled
+# libraries later builds reuse) stays. Safe to repeat.
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+[ "$#" -eq 2 ] && [ "$1" = --job ] || { echo 'Expected --job.' >&2; exit 2; }
+job=$2
+case "$job" in *[!a-f0-9]*) echo 'Invalid job.' >&2; exit 2 ;; esac
+[ "${#job}" -eq 16 ] || { echo 'Invalid job.' >&2; exit 2; }
+command -v docker >/dev/null 2>&1 || { echo 'No container engine is installed on this host.' >&2; exit 2; }
+name="zv-phpbuild-$job"
+out="zv-php-out-$job"
+
+removed=false
+if [ "$(docker inspect --format '{{index .Config.Labels "zelavis.php-build"}}' "$name" 2>/dev/null)" = 1 ]; then
+  docker rm --force "$name" >/dev/null 2>&1 && removed=true
+fi
+volume=false
+if [ "$(docker volume inspect --format '{{index .Labels "zelavis.php-build"}}' "$out" 2>/dev/null)" = 1 ]; then
+  docker volume rm "$out" >/dev/null 2>&1 && volume=true
+fi
+printf '{"schema":1,"job":"%s","containerRemoved":%s,"outputRemoved":%s}\n' "$job" "$removed" "$volume"

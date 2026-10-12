@@ -166,7 +166,8 @@ test("shipped host operation sources are valid and produce their declared result
   for (const id of ids) {
     for (const version of (await readdir(join(source, id.name), { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
       const directory = join(source, id.name, version.name);
-      const template = JSON.parse(await read(join(directory, "operation.json"), "utf8"));
+      // `embed` is a staging directive (see stage-operations.mjs), not part of the installed manifest.
+      const { embed: _embed, ...template } = JSON.parse(await read(join(directory, "operation.json"), "utf8"));
       // Every shipped operation declares who may request it.
       assert.ok(template.authorization, `${id.name} declares authorization`);
       validateHostOperationManifest({ ...template, sha256: "a".repeat(64) });
