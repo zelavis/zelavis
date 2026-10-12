@@ -41,6 +41,11 @@ if (phase === "claim") {
     const manifest = JSON.parse(await readFile(`${frozen}/package.json`, "utf8"));
     manifest.version = "0.0.0-qualification";
     manifest.zelavis.project.managed.adminTitle = "Historical integration admin";
+    // An integration update may not change a deployment contract, so the fixture stands for a historical recipe
+    // that shares the current one's package set. (A real release that changes it cannot update a running app
+    // this way: the update refuses and the app keeps running; that is the point of the rule.)
+    const current = JSON.parse(await readFile("/workspace/zelavis-services/wordpress/package.json", "utf8")).zelavis.project;
+    manifest.zelavis.project.hostPackages = current.hostPackages;
     await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
     if (phase === "seed-live") {
       // The historical recipe differs from the current one in its web configuration only, so upgrading it
@@ -61,7 +66,7 @@ export function register() {
     spec: { operationId: "getHistoricalIntegration", summary: "Read the historical integration fixture" }, handler: () => ({ status: 200, body: { revision: "historical" } }) });
 }`);
     const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
-    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, managed: manifest.zelavis.project.managed, artifact: { digest: await digestArtifactDirectory(frozen) } };
+    descriptor.recipe = { ...descriptor.recipe, version: manifest.version, managed: manifest.zelavis.project.managed, hostPackages: current.hostPackages, artifact: { digest: await digestArtifactDirectory(frozen) } };
     await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
     const store = createLocalSqliteSystemStore({ filename: "/var/lib/zelavis/system/zelavis.sqlite" });
     try {
