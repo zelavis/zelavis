@@ -48,9 +48,9 @@
             "version": "8.4.23",
             "downloads": {
               "linux-aarch64": {
-                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-linux-aarch64.tar.gz",
-                "sha256": "1faabbea9c500daab9ba202cb75ea9876191a2a8f902244e9d0464addb9b55b1",
-                "maxBytes": 39886992,
+                "archive": "https://mirror.zelavis.com/php/8.4.23/php-8.4.23-d2fd8460-cli-linux-aarch64.tar.gz",
+                "sha256": "3917adec0fdcaeceaf1351d0ffa226aaa78b52aee7b64f906d1e4007d9ed92c7",
+                "maxBytes": 26893312,
                 "executable": "php"
               },
               "linux-x86_64": {
@@ -78,9 +78,9 @@
             "version": "8.4.23",
             "downloads": {
               "linux-aarch64": {
-                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-linux-aarch64.tar.gz",
-                "sha256": "8ca6b8d44f12f981cdd96b5aa31f6bf5373a89d201a4a49ed0feb5f242631dec",
-                "maxBytes": 39911298,
+                "archive": "https://mirror.zelavis.com/php/8.4.23/php-8.4.23-d2fd8460-fpm-linux-aarch64.tar.gz",
+                "sha256": "2dbe9d8ca8ffa5688f09fc44b1600128da4ef3ae3d5113a09dd50f10c623c001",
+                "maxBytes": 26923008,
                 "executable": "php-fpm"
               },
               "linux-x86_64": {
