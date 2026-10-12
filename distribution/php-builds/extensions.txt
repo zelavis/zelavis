@@ -16,6 +16,7 @@ gd
 gmp
 iconv
 intl
+mbregex
 mbstring
 mysqli
 mysqlnd

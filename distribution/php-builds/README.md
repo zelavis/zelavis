@@ -24,17 +24,22 @@ less, `ZELAVIS_PHP_BUILD_MIN_FREE_GB` changes the limit); the work directory is 
 (`build-essential`, `curl`, `git`, `pkg-config`); the builder's own `doctor` step reports anything else it
 needs.
 
+GitHub allows only 60 API requests an hour to callers without a token, and one build uses a good part of
+that: build one platform at a time, or give the build a token with no scopes in
+`ZELAVIS_PHP_BUILD_GITHUB_TOKEN` (never your everyday token).
+
 ## What it produces
 
 For each PHP version and platform, two archives with the program at the archive's root, the layout the
 manifests' `executable` expects:
 
 ```
-php-8.4.23-cli-linux-x86_64.tar.gz     php
-php-8.4.23-fpm-linux-x86_64.tar.gz     php-fpm
+php-8.4.23-<set>-cli-linux-x86_64.tar.gz     php
+php-8.4.23-<set>-fpm-linux-x86_64.tar.gz     php-fpm
 ```
 
-and one line per archive in `builds.jsonl` (file, `sha256`, `bytes`, builder version, and the digest of the
+where `<set>` is the first eight hex digits of the digest of `extensions.txt` (a build with another extension set
+never reuses a URL that a cache may still hold), and one line per archive in `builds.jsonl` (file, `sha256`, `bytes`, builder version, and the digest of the
 extension list). The build checks that PHP reports the exact version asked for, that every extension in
 `extensions.txt` is loaded, and that `php-fpm` runs, before it packages anything.
 

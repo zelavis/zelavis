@@ -87,6 +87,12 @@ download-options:
   retry: 5
   prefer-pre-built: ${ZELAVIS_PHP_BUILD_PREBUILT_LIBS:-false}
 CRAFT
+# The builder fetches many sources through GitHub's API, which allows 60 requests an hour without a token. A
+# token with no scopes (a fine-grained one for public data) lifts that; it is written only into this build's
+# craft.yml, which is deleted with the work directory.
+if [ -n "${ZELAVIS_PHP_BUILD_GITHUB_TOKEN:-}" ]; then
+  printf 'extra-env:\n  GITHUB_TOKEN: %s\n' "$ZELAVIS_PHP_BUILD_GITHUB_TOKEN" >> "$WORK/craft.yml"
+fi
 
 printf 'PHP %s for %s, extensions: %s\n' "$VERSION" "$PLATFORM" "$EXTENSIONS"
 if [ "$DRY" = yes ]; then
@@ -105,7 +111,12 @@ ACTUAL=$("$BIN/php" -r 'echo PHP_VERSION;')
 [ "$ACTUAL" = "$VERSION" ] || die "built PHP $ACTUAL, not $VERSION"
 LOADED=$("$BIN/php" -m | tr 'A-Z' 'a-z')
 for extension in $(sed 's/#.*//' "$HERE/extensions.txt" | awk 'NF { print $1 }'); do
-  case "$extension" in opcache) expected="zend opcache" ;; *) expected=$extension ;; esac
+  case "$extension" in
+    # mbregex is a feature of mbstring, not a module of its own.
+    mbregex) "$BIN/php" -r 'exit(function_exists("mb_regex_encoding") ? 0 : 1);' || die "the build lacks mbregex"; continue ;;
+    opcache) expected="zend opcache" ;;
+    *) expected=$extension ;;
+  esac
   printf '%s\n' "$LOADED" | grep -qx "$expected" || die "the build lacks the extension $extension"
 done
 "$BIN/php-fpm" -v >/dev/null || die "php-fpm does not run"
@@ -114,7 +125,8 @@ done
 : > "$WORK/records"
 for program in php php-fpm; do
   case "$program" in php) sapi=cli ;; php-fpm) sapi=fpm ;; esac
-  archive="php-$VERSION-$sapi-$PLATFORM.tar.gz"
+  # The extension set is part of the name, so a build with another set never reuses a URL a cache may hold.
+  archive="php-$VERSION-$(printf '%s' "$EXTENSIONS_SHA" | cut -c1-8)-$sapi-$PLATFORM.tar.gz"
   # gzip -n leaves the clock out of the archive's header.
   tar -cf - -C "$BIN" "$program" | gzip -n -9 > "$OUT/$archive"
   digest=$(sha256_of "$OUT/$archive")

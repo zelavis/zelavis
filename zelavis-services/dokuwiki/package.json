@@ -60,9 +60,9 @@
                 "executable": "php"
               },
               "macos-aarch64": {
-                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-cli-macos-aarch64.tar.gz",
-                "sha256": "4a5dca6df0211f7fb21425cf1c867968b2dfb7c079f98cf37770c5728e0bf709",
-                "maxBytes": 44568468,
+                "archive": "https://mirror.zelavis.com/php/8.4.23/php-8.4.23-d2fd8460-cli-macos-aarch64.tar.gz",
+                "sha256": "31aecc9a14a14e4105e4cd75b95628bcf8af15d8503305d2048b9c12c55d54f7",
+                "maxBytes": 27449344,
                 "executable": "php"
               },
               "macos-x86_64": {
@@ -90,9 +90,9 @@
                 "executable": "php-fpm"
               },
               "macos-aarch64": {
-                "archive": "https://dl.static-php.dev/static-php-cli/bulk/php-8.4.23-fpm-macos-aarch64.tar.gz",
-                "sha256": "1a417db44f0eb0b40a9f8cd862f24ecfabdea87f85863f30d218c4876bb688ef",
-                "maxBytes": 44588813,
+                "archive": "https://mirror.zelavis.com/php/8.4.23/php-8.4.23-d2fd8460-fpm-macos-aarch64.tar.gz",
+                "sha256": "7d3ce0bf995159f2769e3d33b7b0d325b188ed556c12977f55ed683ec7a0cdcd",
+                "maxBytes": 27486208,
                 "executable": "php-fpm"
               },
               "macos-x86_64": {
