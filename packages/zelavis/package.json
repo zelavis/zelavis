@@ -232,7 +232,7 @@
     "libsql": "^0.5.29",
     "lmdb": "^3.5.7",
     "typescript": "^7.0.2",
-    "usearch": "^2.26.2"
+    "usearch": "^2.26.4"
   },
   "keywords": [
     "zelavis",
