@@ -349,6 +349,10 @@ export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZela
       kind: "command", command: `${release}/runtime/node/bin/node`,
       args: [`${release}/platform/dist/adapters/_node-runtime-select-cli.js`, paths.prefix, scope.instance, paths.dataDirectory, version],
     });
+    // The root operation Agent reads its operation manifests when it starts, so a release's new or changed operations
+    // exist only for an Agent started after the release is selected. It holds no Project and no traffic (the Platform
+    // and the Project Agent are the ones that must not restart), so it alone is restarted, once the selection is made.
+    if (input.system) addStep(steps, "host-agent-restart", "Load the selected release's host operation manifests (no Project or Platform process is restarted)", { kind: "command", command: "systemctl", args: ["restart", scope.units[scope.units.length - 1]!] });
     return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
   }
   let ownsUser = previous?.ownsUser ?? false;

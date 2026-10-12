@@ -39,7 +39,10 @@ and public version descriptor before traffic resumes. System installations also
 refresh the selected release's authored systemd templates and reload the unit
 catalogue at that acknowledgement; they do not restart the host or Project Agent.
 Rollback restores the previous release's templates. The host and its public
-listeners keep running throughout.
+listeners keep running throughout. The one service restarted after the release is
+selected is the root operation Agent: it reads its operation manifests when it starts,
+so a release's new or changed host operations exist only for an Agent started after the
+selection, and it holds no Project and no traffic.
 
 A failed preparation or drain leaves the previous engine serving. A failed
 activation or inventory commit fences the candidate before restoring the old

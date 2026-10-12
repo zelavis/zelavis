@@ -161,7 +161,11 @@ test("the dashboard port is held by a socket unit, and a live update leaves the 
   // Selection and receipt changes belong to the nonce-bound host commit.
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
   assert.equal(JSON.parse(await host.read("/opt/zelavis/installation.json")).version, "1.0.0");
-  assert.ok(!host.actions.some((a) => a.command === "systemctl"));
+  // Only the root operation Agent is restarted, after the selection, to load the new release's operation manifests:
+  // it holds no Project and no traffic. The Platform, its socket, the Project Agent and the proxy are left alone.
+  assert.deepEqual(host.actions.filter((a) => a.command === "systemctl").map((a) => a.args.join(" ")), ["restart zelavis-host-agent.service"]);
+  const order = host.actions.map((a) => a.command === "systemctl" ? "agent" : a.args?.[0]?.endsWith("_node-runtime-select-cli.js") ? "select" : undefined).filter(Boolean);
+  assert.deepEqual(order, ["select", "agent"], "the Agent is restarted after the release is selected");
   assert.ok(host.actions.some((a) => a.command === "/opt/zelavis/releases/1.0.1/runtime/node/bin/node" && a.args[0].endsWith("_node-runtime-select-cli.js")));
 });
 
