@@ -240,17 +240,36 @@ assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
 const integrationBefore = await identities();
 
-const integration = await underTraffic(() => client.projects.upgrade(wp.id));
-assert.equal(integration.runtime.status, 'running');
-assert.equal(integration.preview.port, wp.preview.port);
-assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
-assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
-assert.equal(integration.runtimeUpdate, undefined);
-assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
-assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
-await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
-assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
-console.log('PASS: running WordPress integration recipe update preserves processes, software, configuration, content and preview.');
+// A Project made by a release whose WordPress was the hand-written runtime has no install lock, and the recipe-based
+// WordPress cannot take it over through the live integration path (its package set and runtime differ): the update must
+// refuse and leave the app exactly as it was. Moving such a Project is an explicit, stopped upgrade. Once the Platform
+// being updated from has the recipe-based WordPress too, the integration update itself is proved below.
+const handWritten = wp.recipe.install === undefined;
+let integration;
+if (handWritten) {
+  const refused = await underTraffic(() => client.projects.upgrade(wp.id).then(() => undefined, (error) => error));
+  assert.ok(refused instanceof Error && /deployment contract|install lock/i.test(refused.message), `Expected the live upgrade of a hand-written WordPress Project to be refused, got: ${refused}`);
+  integration = await client.projects.get(wp.id);
+  assert.equal(integration.runtime.status, 'running');
+  assert.equal(integration.recipe.version, wp.recipe.version, 'A refused update leaves the lock alone');
+  assert.equal(integration.preview.port, wp.preview.port);
+  assert.deepEqual(await identities(), integrationBefore, 'A refused update must retain app and integration host process identities');
+  assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical', 'A refused update keeps the SDK integration it had');
+  assert.deepEqual(await fingerprints(), appFilesBefore, 'A refused update must leave app software, content, configuration and ownership untouched');
+  console.log('PASS: the recipe-based WordPress is refused live for a hand-written Project, which keeps running unchanged under traffic.');
+} else {
+  integration = await underTraffic(() => client.projects.upgrade(wp.id));
+  assert.equal(integration.runtime.status, 'running');
+  assert.equal(integration.preview.port, wp.preview.port);
+  assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
+  assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
+  assert.equal(integration.runtimeUpdate, undefined);
+  assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+  assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
+  await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
+  assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
+  console.log('PASS: running WordPress integration recipe update preserves processes, software, configuration, content and preview.');
+}
 const choices = await client.projects.versions(id);
 assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
@@ -289,7 +308,7 @@ const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated 
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
   managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true },
-  managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
+  managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true, refusedLive: handWritten,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
   artifact: JSON.parse(await readFile(`/opt/zelavis/releases/${to}/runtime-artifact.json`, 'utf8')).digest };
