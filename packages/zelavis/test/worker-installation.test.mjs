@@ -318,3 +318,24 @@ test("a worker dry run from a staged release prints its plan and changes nothing
   assert.ok(plan.steps.some((step) => step.id === "zelavis-worker.service"));
   assert.ok(!(await exists(join(root, "opt"))) && !(await exists(join(root, "data-worker"))), "a dry run changed nothing");
 });
+
+test("the receipt the previous release wrote, which has no role, is a Platform's and is read as one", async () => {
+  // schemaVersion 2 is what the published release before roles wrote. Updating from it must not be refused.
+  const previous = {
+    schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "2.0.0-alpha.25",
+    prefix: paths.prefix, configDirectory: "/etc/zelavis", dataDirectory: "/var/lib/zelavis", commandPath: "/usr/local/bin/zelavis", ownsUser: true, ownsGroup: true,
+  };
+  const host = new FakeHost();
+  host.files.set(installationReceiptPath(paths.prefix), JSON.stringify(previous));
+  assert.equal(await readInstallationRole(host, paths.prefix), "platform");
+  const receipt = await readNativeInstallationReceipt(host, paths.prefix);
+  assert.equal(receipt.role, "platform");
+  assert.equal(receipt.schemaVersion, 3, "it is read in the current shape; the installer writes that shape when the update finishes");
+  assert.equal(receipt.version, "2.0.0-alpha.25");
+  await assert.rejects(() => readWorkerReceipt(host, paths.prefix), /Platform is installed here/);
+
+  // A version 2 receipt that is not a complete Platform receipt is still refused.
+  const damaged = new FakeHost();
+  damaged.files.set(installationReceiptPath(paths.prefix), JSON.stringify({ schemaVersion: 2, port: 3000 }));
+  await assert.rejects(() => readNativeInstallationReceipt(damaged, paths.prefix), /Malformed|malformed/);
+});

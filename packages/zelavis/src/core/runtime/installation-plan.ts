@@ -1,4 +1,4 @@
-import { isString, objectFields, parseJson, isPositiveInteger, isBoolean, literal, optional } from "../json-validation.js";
+import { isString, objectFields, parseJson, parseJsonObject, isPositiveInteger, isBoolean, literal, optional, type JsonValidator } from "../json-validation.js";
 import { Effect } from "effect";
 import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "./installation-instance.js";
@@ -129,6 +129,17 @@ export interface ZelavisWorkerReceipt {
 const roleRecord = objectFields<{ role: ZelavisInstallationRole }>({ role: literal("platform", "worker") });
 
 /**
+ * Reads a receipt, including the one the previous release wrote. That release (schemaVersion 2) knew only the
+ * Platform role and recorded none, so its receipt is a Platform's; reading it as one is what lets Update now carry an
+ * installation across the version that introduced roles. The installer writes the new receipt (version 3) when it
+ * finishes, so no version 2 receipt outlives the update.
+ */
+function parseReceipt<A>(content: string, check: JsonValidator<A>, context: string): A {
+  const raw = parseJsonObject(content);
+  return parseJson(raw.schemaVersion === 2 ? JSON.stringify({ ...raw, schemaVersion: 3, role: "platform" }) : content, check, context);
+}
+
+/**
  * What kind of machine this prefix describes, from its receipt alone, or
  * undefined when it has none. Every reader and remover chooses by this first,
  * so one never interprets the other's receipt.
@@ -137,7 +148,7 @@ export const readInstallationRoleProgram = Effect.fn("Installation.readInstallat
   const scope = installationInstanceScope(prefix, instance);
   const content = (yield* integration(() => host.read(scope.receipt)));
   if (content === undefined) return undefined;
-  return (yield* evaluate(() => parseJson(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role;
+  return (yield* evaluate(() => parseReceipt(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role;
 });
 
 export function readInstallationRole(host: ZelavisInstallHost, prefix: string, instance = "default"): Promise<ZelavisInstallationRole | undefined> { return present(readInstallationRoleProgram(host, prefix, instance)); }
@@ -146,10 +157,10 @@ export const readNativeInstallationReceiptProgram = Effect.fn("Installation.read
   const scope = installationInstanceScope(prefix, instance);
   const content = (yield* integration(() => host.read(scope.receipt)));
   if (content === undefined) return undefined;
-  if ((yield* evaluate(() => parseJson(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role === "worker") {
+  if ((yield* evaluate(() => parseReceipt(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role === "worker") {
     return yield* new IntegrationFailure(new Error("This machine is a Zelavis worker, not a Platform. A machine is one or the other."));
   }
-  const value = yield* evaluate(() => parseJson(content, receiptRecord, `Native installation receipt at ${scope.receipt}`));
+  const value = yield* evaluate(() => parseReceipt(content, receiptRecord, `Native installation receipt at ${scope.receipt}`));
   if (!value || value.schemaVersion !== 3 || value.role !== "platform" || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
       !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
       value.instance !== instance || !["script", "deb", "create", "cli"].includes(value.installedBy) ||
