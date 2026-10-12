@@ -48,6 +48,18 @@ extension list). The build checks that PHP reports the exact version asked for, 
 Builds are not bit-for-bit reproducible (compilers embed paths and times); what is reproducible is the
 description, and the digest of what was actually built is what a recipe pins.
 
+## The mirror
+
+The archives are served from `https://mirror.zelavis.com/php/<version>/<file>`, a Cloudflare R2 bucket
+(`zelavis-mirror`) with that custom domain. It is untrusted storage: the recipes pin each archive's SHA-256, so
+the host can change (it may move to Zelavis's own cloud) without changing what is trusted. Upload with
+the owner's own Wrangler login:
+
+```sh
+wrangler r2 object put zelavis-mirror/php/8.4.23/<file> --file <file> \
+  --content-type application/gzip --cache-control "public, max-age=86400" --remote
+```
+
 ## After a build
 
 Upload the archives wherever the mirror is, and put the new URL (as `archive`, or as one of its `mirrors`),
