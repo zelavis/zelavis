@@ -364,8 +364,8 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       usearch:
-        specifier: ^2.26.2
-        version: 2.26.2
+        specifier: ^2.26.4
+        version: 2.26.4
 
   packages/zelavis/services/zelavis-app:
     dependencies:
@@ -7321,8 +7321,8 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  usearch@2.26.2:
-    resolution: {integrity: sha512-jz4MKg09LFn6CP/fh9MwY7NV3qQUcXrQIt92LV7CMx44AEnGP1QenhHReua3ETqzgoIYcISJ+SsDoX0DOpFh9Q==}
+  usearch@2.26.4:
+    resolution: {integrity: sha512-0fnp2EWgl0SddPlMmqPxJRgiPmD5LiPV9v788CQq7YqLO2Jx0HopkSaPtLy0GC1ekAtNtyrWn8nz985kM/snJQ==}
     engines: {node: '>=22'}
 
   util-deprecate@1.0.2:
@@ -14994,7 +14994,7 @@ snapshots:
     dependencies:
       react: 19.3.0
 
-  usearch@2.26.2:
+  usearch@2.26.4:
     dependencies:
       bindings: 1.5.0
       node-addon-api: 8.9.2
