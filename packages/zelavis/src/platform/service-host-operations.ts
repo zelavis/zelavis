@@ -1,4 +1,6 @@
-import { ZelavisHostOperationNotFoundError, type ZelavisHostOperationBroker } from "./host-operations.js";
+import { Effect } from "effect";
+import { IntegrationFailure, integrationValue, present } from "../core/runtime/effect-boundary.js";
+import { ZelavisHostOperationNotFoundError, type ZelavisHostOperationBroker, type ZelavisHostOperationRecord } from "./host-operations.js";
 import type { ZelavisServiceHostOperations } from "../service.js";
 
 /**
@@ -19,11 +21,11 @@ export function scopeHostOperations(broker: ZelavisHostOperationBroker, allowed:
       }
       return broker.submit(input, principal);
     },
-    get: async (operationId, principal) => {
-      const record = await broker.get(operationId, principal);
-      if (!names.includes(record.operation)) throw new ZelavisHostOperationNotFoundError("No such host operation.");
+    get: (operationId, principal) => present(Effect.gen(function* (): Effect.fn.Return<ZelavisHostOperationRecord, IntegrationFailure> {
+      const record = yield* integrationValue(broker.get(operationId, principal));
+      if (!names.includes(record.operation)) return yield* new IntegrationFailure(new ZelavisHostOperationNotFoundError("No such host operation."));
       return record;
-    },
+    })),
   };
   return Object.freeze(handle);
 }
