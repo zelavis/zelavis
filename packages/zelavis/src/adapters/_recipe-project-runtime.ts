@@ -459,7 +459,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
     prepare: Effect.fn("RecipeRuntime.prepare")(function* (project: ZelavisProjectRecord, recipe: ZelavisProjectRecipeLock) {
       const install = recipe.install;
-      if (!install) return yield* Effect.fail(failure(`Project recipe "${recipe.name}" has no install lock; create the Project again.`));
+      if (!install) return yield* Effect.fail(failure(`Project recipe "${recipe.name}" has no install lock, so it predates the recipe-based runtime; install the current "${recipe.name}" from the Marketplace and create the Project again.`));
       const parsed = yield* manifest;
       const method = parsed.methods.find((candidate) => candidate.id === install.method && candidate.driver === install.driver);
       if (!method || method.driver !== "js") return yield* Effect.fail(failure(`This runtime executes JavaScript install methods; "${install.method}" is not one.`));

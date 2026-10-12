@@ -298,16 +298,25 @@ for (const version of [to, from]) {
 assert.equal((await client.projects.start(historical.id)).runtime.status, 'running');
 const latest = await client.projects.create({ id: 'explicit-latest', name: 'Latest', start: false });
 assert.equal(latest.engineVersion, to); assert.equal((await descriptor(latest.id)).engine.runtime.version, to);
-const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpress', name: 'Fresh catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
-assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
-assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
-await client.projects.remove(freshManaged.id); await client.projects.remove(catalogueApp.id);
+let freshManagedProved = false;
+if (handWritten) {
+  const stale = await client.projects.create({ id: 'fresh-catalogue-wordpress', name: 'Fresh catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true }).then(() => undefined, (error) => error);
+  assert.ok(stale instanceof Error && /no install lock.*install the current/i.test(stale.message), `A stale installed WordPress must be refused with an actionable message, got: ${stale}`);
+  console.log('PASS: a stale installed WordPress recipe is refused for new Projects with a message naming the fix.');
+} else {
+  const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpress', name: 'Fresh catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
+  assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
+  assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
+  await client.projects.remove(freshManaged.id);
+  freshManagedProved = true;
+}
+await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
-  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true },
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: freshManagedProved },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true, refusedLive: handWritten,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
