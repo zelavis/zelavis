@@ -1,0 +1,82 @@
+{
+  "name": "@zelavis/php-builds",
+  "version": "2.0.0-alpha.0",
+  "private": false,
+  "description": "Builds the PHP the Zelavis recipes run, on the host Zelavis runs on, and publishes it to a mirror.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "plugin",
+    "namespace": "phpBuilds",
+    "capabilities": [
+      "dashboard:menu",
+      "api:routes"
+    ],
+    "hostOperations": [
+      "zelavis.host-report",
+      "zelavis.container-probe",
+      "zelavis.php-build-start",
+      "zelavis.php-build-status",
+      "zelavis.php-build-upload",
+      "zelavis.php-build-clean"
+    ],
+    "marketplace": {
+      "title": "PHP Builds",
+      "summary": "Build static PHP for the recipes on this server and publish it to a mirror, from the dashboard.",
+      "categories": [
+        "server",
+        "tools"
+      ],
+      "tags": [
+        "php",
+        "builds",
+        "mirror"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "files": [
+    "dist",
+    "dashboard"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "zelavis-services/php-builds"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/zelavis-services/php-builds#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0",
+    "zelavis": ">=2.0.0-alpha.25"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "effect": "4.0.0",
+    "typescript": "^7.0.2",
+    "zelavis": "workspace:*"
+  },
+  "keywords": [
+    "zelavis",
+    "php",
+    "builds",
+    "mirror"
+  ]
+}
