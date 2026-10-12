@@ -43,6 +43,23 @@ never reuses a URL that a cache may still hold), and one line per archive in `bu
 extension list). The build checks that PHP reports the exact version asked for, that every extension in
 `extensions.txt` is loaded, and that `php-fpm` runs, before it packages anything.
 
+## Sources are locked
+
+The builder downloads the sources of PHP and of every library from their upstream sites, many of them as "the
+latest release". `sources.lock` records each one for each PHP series and platform (`php-8.4-linux-aarch64`): an
+archive by the SHA-256 of its bytes and its size, a git checkout by its commit. After the download and before
+anything is compiled, `sources-lock.sh` compares what was downloaded with the lock, and a source that moved on,
+disappeared or appeared stops the build and prints the difference. Accepting a change is a deliberate act:
+
+```sh
+distribution/php-builds/build.sh 8.4.23 --update-lock --lock-only   # record, then stop before compiling
+git diff distribution/php-builds/sources.lock                         # read it, then commit it
+```
+
+`--update-lock` replaces only its own series-and-platform section, so the diff is exactly what changed. The lock is a
+bill of materials for the PHP that ships; it does not yet keep the sources on the mirror, so an upstream that
+deletes an old release still breaks a rebuild (the build then fails closed, it never builds something else).
+
 ## What is pinned
 
 - `spc.pins` the builder's own version and SHA-256 per platform; the script refuses a builder that does not

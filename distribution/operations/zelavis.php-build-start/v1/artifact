@@ -62,6 +62,8 @@ mkdir -p /builds
 printf %s "$ZV_BUILD_SH" | base64 -d > /builds/build.sh
 printf %s "$ZV_EXTENSIONS" | base64 -d > /builds/extensions.txt
 printf %s "$ZV_SPC_PINS" | base64 -d > /builds/spc.pins
+printf %s "$ZV_SOURCES_LOCK_SH" | base64 -d > /builds/sources-lock.sh
+printf %s "$ZV_SOURCES_LOCK" | base64 -d > /builds/sources.lock
 exec sh /builds/build.sh "$ZV_PHP" --out /out --work /work --keep'
 
 docker run --detach --name "$name" \
@@ -72,6 +74,8 @@ docker run --detach --name "$name" \
   --env 'ZV_BUILD_SH=@@EMBED:BUILD_SH@@' \
   --env 'ZV_EXTENSIONS=@@EMBED:EXTENSIONS@@' \
   --env 'ZV_SPC_PINS=@@EMBED:SPC_PINS@@' \
+  --env 'ZV_SOURCES_LOCK_SH=@@EMBED:SOURCES_LOCK_SH@@' \
+  --env 'ZV_SOURCES_LOCK=@@EMBED:SOURCES_LOCK@@' \
   "$image" sh -c "$inside" >/dev/null || { docker volume rm "$out" >/dev/null 2>&1 || true; echo 'The build container could not be started.' >&2; exit 1; }
 
 printf '{"schema":1,"job":"%s","platform":"%s","cpus":%s,"memoryMb":%s}\n' "$job" "$platform" "$limit_cpus" "$limit_mb"

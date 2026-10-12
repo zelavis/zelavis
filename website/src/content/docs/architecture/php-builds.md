@@ -13,7 +13,9 @@ with a pinned [static-php-cli](https://github.com/crazywhalecc/static-php-cli) (
 each platform) and the extension set in `extensions.txt`. It checks that PHP reports the version asked for, that
 every extension is present (including `mbregex`, which the builder needs named on its own) and that `php-fpm` runs,
 then writes one archive per program, named with the digest of the extension set, and a line of JSON for each in
-`builds.jsonl`. `pin.mjs` turns those lines into the recipes' manifest entries. Nothing is signed: the digest a
+`builds.jsonl`. Between the download and the compile, `sources-lock.sh` checks every downloaded source against
+`sources.lock` (an archive's SHA-256, a git checkout's commit, per PHP series and platform) and stops the build on any
+difference, so what goes into PHP changes only when someone accepts it with `--update-lock`. `pin.mjs` turns those lines into the recipes' manifest entries. Nothing is signed: the digest a
 recipe pins is the only trust, and the mirror (a Cloudflare R2 bucket at `mirror.zelavis.com`, movable to Zelavis's
 own cloud) is untrusted storage.
 

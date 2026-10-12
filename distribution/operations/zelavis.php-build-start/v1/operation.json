@@ -3,14 +3,30 @@
   "version": "v1",
   "interpreter": "/bin/sh",
   "arguments": {
-    "job": { "required": true, "pattern": "^[a-f0-9]{16}$", "maxLength": 16 },
-    "php": { "required": true, "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "maxLength": 12 }
+    "job": {
+      "required": true,
+      "pattern": "^[a-f0-9]{16}$",
+      "maxLength": 16
+    },
+    "php": {
+      "required": true,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 12
+    }
   },
   "embed": {
     "BUILD_SH": "../php-builds/build.sh",
     "EXTENSIONS": "../php-builds/extensions.txt",
-    "SPC_PINS": "../php-builds/spc.pins"
+    "SPC_PINS": "../php-builds/spc.pins",
+    "SOURCES_LOCK_SH": "../php-builds/sources-lock.sh",
+    "SOURCES_LOCK": "../php-builds/sources.lock"
   },
-  "authorization": { "permission": "server.php-builds.run", "scope": "system" },
-  "result": { "format": "json", "maxBytes": 1024 }
+  "authorization": {
+    "permission": "server.php-builds.run",
+    "scope": "system"
+  },
+  "result": {
+    "format": "json",
+    "maxBytes": 1024
+  }
 }

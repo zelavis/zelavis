@@ -27,7 +27,7 @@ test("the build files travel inside the start operation, whose digest covers the
   assert.doesNotMatch(artifact, /@@EMBED/);
   const manifest = JSON.parse(await readFile(join(directory, "zelavis.php-build-start/v1/manifest.json"), "utf8"));
   assert.equal(manifest.embed, undefined, "the staging directive is not part of the installed manifest");
-  for (const [name, file] of [["ZV_BUILD_SH", "build.sh"], ["ZV_EXTENSIONS", "extensions.txt"], ["ZV_SPC_PINS", "spc.pins"]]) {
+  for (const [name, file] of [["ZV_BUILD_SH", "build.sh"], ["ZV_EXTENSIONS", "extensions.txt"], ["ZV_SPC_PINS", "spc.pins"], ["ZV_SOURCES_LOCK_SH", "sources-lock.sh"], ["ZV_SOURCES_LOCK", "sources.lock"]]) {
     const encoded = artifact.match(new RegExp(`--env '${name}=([A-Za-z0-9+/=]+)'`))?.[1];
     assert.ok(encoded, `${name} is carried`);
     assert.equal(Buffer.from(encoded, "base64").toString("utf8"), await readFile(join(buildFiles, file), "utf8"), `${file} arrives byte for byte`);
