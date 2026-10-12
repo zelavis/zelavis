@@ -3,6 +3,8 @@ import { Effect } from "effect";
 import { IntegrationFailure, present, integrationValue } from "./core/runtime/effect-boundary.js";
 import { normalizeProjectHostPackages } from "./project-host-packages.js";
 import type { ZelavisServiceStore } from "./platform/service-store.js";
+import type { ZelavisHostOperationRecord, ZelavisHostOperationSubmitInput } from "./platform/host-operations.js";
+import type { ZelavisPrincipal } from "./core/runtime/contracts.js";
 import {
   normalizeProjectIsolationIntent,
   type ZelavisProjectIsolationIntent,
@@ -225,6 +227,19 @@ export interface ZelavisServiceSetupCoreContext {
    * service that received it, so a plugin cannot reach another one's records.
    */
   store?: ZelavisServiceStore;
+  /**
+   * Present when the manifest names host operations (`zelavis.hostOperations`) and the host has an operation
+   * Agent. A plugin asks for the operations it was allowed to name, on behalf of the caller whose request it is
+   * serving: the broker authorizes the caller's own permissions, so a plugin never has authority of its own.
+   */
+  hostOperations?: ZelavisServiceHostOperations;
+}
+
+export interface ZelavisServiceHostOperations {
+  /** The operation ids the manifest allows, nothing more. */
+  readonly allowed: readonly string[];
+  submit(input: ZelavisHostOperationSubmitInput, principal: ZelavisPrincipal | undefined): Promise<ZelavisHostOperationRecord>;
+  get(operationId: string, principal: ZelavisPrincipal | undefined): Promise<ZelavisHostOperationRecord>;
 }
 
 export interface ZelavisServiceSetupContext {
@@ -345,6 +360,7 @@ export function resolveServiceModule<TContext = unknown>(
     return Object.freeze({
       name: manifest.name,
       namespace: manifest.zelavis?.namespace,
+      ...(manifest.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
       kind: manifest.zelavis?.kind ?? "plugin",
       version: manifest.version,
       packageDir: (manifest as any)?.packageDir,
@@ -381,6 +397,8 @@ export function resolveServiceModule<TContext = unknown>(
     return Object.freeze({
       name,
       namespace: manifest?.zelavis?.namespace ?? (raw.namespace as string | undefined),
+      // Only the manifest can grant it: a module's own exports never widen what a plugin may ask the host.
+      ...(manifest?.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
       basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
       packageDir: (raw.packageDir as string | undefined) ?? (manifest as any)?.packageDir,
       api: (raw.api as Record<string, any>) ?? {},
@@ -560,7 +578,7 @@ export function loadPluginPackage(options: {
     return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`));
   }
 
-  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "marketplace", "project", "packageDir"]) {
+  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "hostOperations", "marketplace", "project", "packageDir"]) {
     if (exportObj?.[field] !== undefined) {
       return yield* new IntegrationFailure(new TypeError(`Package "${manifest.name}" must declare ${field} through its manifest or host loading options, not a module export.`));
     }
@@ -593,6 +611,7 @@ export function loadPluginPackage(options: {
     kind: manifest.zelavis?.kind ?? "plugin",
     packageDir,
     capabilities,
+    ...(manifest.zelavis?.hostOperations ? { hostOperations: Object.freeze([...manifest.zelavis.hostOperations]) } : {}),
     marketplace,
     basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
     api: { v1: [...context.routes] },
@@ -839,6 +858,8 @@ export interface ActivateServiceRegistryOptions {
   domainBindings?: DomainBindingStore;
   /** Builds the durable store a named service is given. */
   serviceStore?: (serviceName: string) => ZelavisServiceStore;
+  /** Builds the host-operation handle a service whose manifest names operations is given. */
+  hostOperations?: (serviceName: string, allowed: readonly string[]) => ZelavisServiceHostOperations | undefined;
   /**
    * The frontend serving this runtime's root path. It is mounted where the
    * runtime's face belongs rather than corralled under `/apps/<name>` like an
@@ -937,6 +958,12 @@ export function activateServiceRegistry<
         ...((context as unknown as ZelavisServiceSetupContext).core ?? {}),
         ...(options.serviceStore
           ? { store: options.serviceStore(entry.service.name) }
+          : {}),
+        ...(options.hostOperations && entry.service.hostOperations?.length
+          ? (() => {
+              const handle = options.hostOperations!(entry.service.name, entry.service.hostOperations!);
+              return handle ? { hostOperations: handle } : {};
+            })()
           : {}),
       },
       service: entry.service as any,

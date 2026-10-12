@@ -1967,4 +1967,4 @@ export function createLocalServiceSources(
 
 const packageRecord = objectFields<ZelavisPackageManifest>({ name: isString, version: optional(isString), type: optional(isString),
   exports: isUnknown, main: isUnknown, zelavis: optional(objectFields<NonNullable<ZelavisPackageManifest["zelavis"]>>({
-    kind: isString, namespace: optional(isString), capabilities: optional(arrayOf(isString)), marketplace: optional(recordOf(isUnknown)) })) });
+    kind: isString, namespace: optional(isString), capabilities: optional(arrayOf(isString)), hostOperations: optional(arrayOf(isString)), marketplace: optional(recordOf(isUnknown)) })) });

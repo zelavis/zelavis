@@ -251,6 +251,8 @@ export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
   /** Public plugin API namespace, owned by the package manifest. */
   namespace?: string;
+  /** Host operations the manifest allows this plugin to name (see `ZelavisServiceHostOperations`). */
+  hostOperations?: readonly string[];
   kind?: string;
   basePath?: string;
   /**

@@ -222,6 +222,7 @@ import {
   type ZelavisServiceSetupPlatformContext,
   type ZelavisServiceSetupContext,
 } from "./service.js";
+import { scopeHostOperations } from "./platform/service-host-operations.js";
 export * from "./service.js";
 export * from "./system-store.js";
 export * from "./project.js";
@@ -6420,6 +6421,11 @@ export function zelavis(
               // here rather than by the plugin naming one for itself.
               serviceStore: (serviceName: string) =>
                 createServiceStore(systemStore, serviceName),
+              // A plugin names the operations its manifest allows and nothing else; the broker still
+              // authorizes the caller's own permissions for each one.
+              ...(options.hostOperations
+                ? { hostOperations: (_serviceName: string, allowed: readonly string[]) => scopeHostOperations(options.hostOperations!, allowed) }
+                : {}),
             },
           ),
         );
