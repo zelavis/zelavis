@@ -1,0 +1,43 @@
+# The PHP extensions every build carries, one per line (static-php-cli names). They are what the recipes'
+# applications need (WordPress, Drupal, Joomla, TYPO3, PrestaShop) plus the ones their installers and
+# administrators commonly ask for. Changing this list changes every build, so pin the new digests afterwards.
+apcu
+bcmath
+bz2
+calendar
+ctype
+curl
+dom
+exif
+fileinfo
+filter
+ftp
+gd
+gmp
+iconv
+intl
+mbstring
+mysqli
+mysqlnd
+opcache
+openssl
+pcntl
+pdo
+pdo_mysql
+pdo_sqlite
+phar
+posix
+readline
+session
+simplexml
+soap
+sockets
+sodium
+sqlite3
+tokenizer
+xml
+xmlreader
+xmlwriter
+xsl
+zip
+zlib
