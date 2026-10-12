@@ -219,7 +219,7 @@
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.87.3",
+    "@effect/language-service": "^0.87.4",
     "@effect/tsgo": "^0.48.0",
     "@harperfast/rocksdb-js": "2.10.0",
     "@libsql/client": "^0.18.0",
