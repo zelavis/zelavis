@@ -62,7 +62,7 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
   usearch: true
-  workerd: set this to true or false
+  workerd: false
 
 minimumReleaseAgeExclude:
   - effect@4.0.0
