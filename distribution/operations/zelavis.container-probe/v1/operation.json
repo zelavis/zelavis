@@ -1,0 +1,8 @@
+{
+  "id": "zelavis.container-probe",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {},
+  "authorization": { "permission": "server.host.report", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 1024 }
+}

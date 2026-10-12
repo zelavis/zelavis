@@ -186,6 +186,7 @@ test("shipped host operation sources are valid and produce their declared result
   const staged = await stageOperations({ source, output: directory, validate: validateHostOperationManifest });
   assert.ok(staged.includes("zelavis.host-report@v1"));
   assert.ok(staged.includes("zelavis.packages-install@v1"));
+  assert.ok(staged.includes("zelavis.container-probe@v1"));
   for (const operation of staged) {
     const [id, version] = operation.split("@");
     assert.equal((await stat(join(directory, id, version, "artifact"))).mode & 0o777, 0o755);

@@ -1,0 +1,46 @@
+#!/bin/sh
+# zelavis.container-probe v1 — whether this host has a container engine and whether it works, as one
+# JSON object on stdout. Read-only: it never installs, starts, pulls or removes anything, and it takes
+# no arguments. Architecture, CPUs, memory and free disk come from zelavis.host-report. Every string is
+# reduced to a safe character set, so the output is valid JSON without an escaping library.
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+str() { # str <value> -> "value" with only [A-Za-z0-9._+-], or null
+  cleaned=$(printf '%s' "$1" | tr -cd 'A-Za-z0-9._+-' | cut -c1-64)
+  if [ -n "$cleaned" ]; then printf '"%s"' "$cleaned"; else printf 'null'; fi
+}
+num() { case "$1" in ''|*[!0-9]*) printf 'null' ;; *) printf '%s' "$1" ;; esac; }
+within() { # within <seconds> <command...> -> the command's output, or nothing if it takes longer
+  seconds=$1; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$seconds" "$@" 2>/dev/null; else "$@" 2>/dev/null; fi
+}
+
+installed=false
+reachable=false
+version=""
+rootless=null
+builds=null
+
+if command -v docker >/dev/null 2>&1; then
+  installed=true
+  version=$(within 15 docker version --format '{{.Server.Version}}')
+  if [ -n "$version" ]; then
+    reachable=true
+    case "$(within 15 docker info --format '{{.SecurityOptions}}')" in
+      *rootless*) rootless=true ;;
+      *) rootless=false ;;
+    esac
+    # Builds this host is running right now: only containers a Zelavis build started carry the label.
+    builds=$(within 15 docker ps --quiet --filter label=zelavis.php-build=1 | grep -c .)
+  fi
+fi
+
+printf '{"schema":1'
+printf ',"installed":%s' "$installed"
+printf ',"reachable":%s' "$reachable"
+printf ',"version":%s' "$(str "$version")"
+printf ',"rootless":%s' "$rootless"
+printf ',"runningBuilds":%s' "$(num "$builds")"
+printf '}\n'

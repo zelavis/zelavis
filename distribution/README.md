@@ -127,7 +127,7 @@ committed.
 
 ## Host operations
 
-`zelavis.host-report` v1 and the Edge operations ship under
+`zelavis.host-report` v1, `zelavis.container-probe` v1 (whether a container engine exists and works; read-only, takes no arguments) and the Edge operations ship under
 `operations/<id>/<version>/{artifact, manifest.json}` in every release tree. Sources
 live in `distribution/operations/` (`artifact` plus `operation.json` without a
 digest). `stage-operations.mjs` computes each digest and writes a plain manifest. There
