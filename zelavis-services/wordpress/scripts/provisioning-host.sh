@@ -61,14 +61,15 @@ stat -c '%U:%G %a %n' /opt/zelavis/host-agent/agent /opt/zelavis/host-agent/agen
 "$NODE" "$CHECK" claim
 chown zelavis:zelavis /var/lib/zelavis/qualification-session
 printf 'deb [trusted=yes] http://127.0.0.1:9 unavailable main\n' > /etc/apt/sources.list.d/zelavis-cancel.list
-runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" cancel
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" cancel
 rm /etc/apt/sources.list.d/zelavis-cancel.list
 # The second recipe first: it must work with no database and no PHP on the host, which it brings itself.
 DOKUWIKI_CHECK=/workspace/zelavis-services/dokuwiki/scripts/check-dokuwiki-provisioning.mjs
-if ! skipped dokuwiki; then runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" create; fi
-runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" create
+# Not while updating from a published release: it predates the recipes this checkout adds.
+if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ] && ! skipped dokuwiki; then runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" create; fi
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" create
 systemctl stop zelavis.service zelavis.socket
-runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" seed-upgrade
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" seed-upgrade
 systemctl start zelavis.socket zelavis.service
 for attempt in $(seq 1 60); do
   if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
@@ -76,84 +77,84 @@ for attempt in $(seq 1 60); do
 done
 phase=upgrade
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then phase=start-historical; fi
-runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" "$phase"
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" "$phase"
 if [ -z "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
   # A running WordPress Project upgrades its recipe without stopping: only Nginx's configuration differs.
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" stop
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" stop
   systemctl stop zelavis.service zelavis.socket
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" seed-live
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" seed-live
   systemctl start zelavis.socket zelavis.service
   for attempt in $(seq 1 60); do
     if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
     sleep 1
   done
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" start-historical
-  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" live-upgrade
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" start-historical
+  runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" live-upgrade
   # The second managed recipe, a different shape (no database), through the same path. Three rounds,
   # because one dropped request in four earlier runs was never explained.
   for round in 1 2 3; do
     if skipped dokuwiki; then break; fi
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" stop
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" stop
     systemctl stop zelavis.service zelavis.socket
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" seed
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" seed
     systemctl start zelavis.socket zelavis.service
     for attempt in $(seq 1 60); do
       if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
       sleep 1
     done
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DOKUWIKI_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DOKUWIKI_CHECK" live-upgrade
   done
   if ! skipped joomla; then
     # The third: a database-backed application whose own installer needs values the Platform generated.
     JOOMLA_CHECK=/workspace/zelavis-services/joomla/scripts/check-joomla-provisioning.mjs
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" create
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$JOOMLA_CHECK" create
     systemctl stop zelavis.service zelavis.socket
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" seed
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$JOOMLA_CHECK" seed
     systemctl start zelavis.socket zelavis.service
     for attempt in $(seq 1 60); do
       if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
       sleep 1
     done
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$JOOMLA_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$JOOMLA_CHECK" live-upgrade
   fi
   if ! skipped typo3; then
     # And a fourth, whose own setup command runs against the same generated values.
     TYPO3_CHECK=/workspace/zelavis-services/typo3/scripts/check-typo3-provisioning.mjs
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$TYPO3_CHECK" create
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$TYPO3_CHECK" create
     systemctl stop zelavis.service zelavis.socket
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$TYPO3_CHECK" seed
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$TYPO3_CHECK" seed
     systemctl start zelavis.socket zelavis.service
     for attempt in $(seq 1 60); do
       if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
       sleep 1
     done
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$TYPO3_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$TYPO3_CHECK" live-upgrade
   fi
   if ! skipped prestashop; then
     # And a fifth, which needs the PHP 8.1 it pins (no PHP is on the host) and unpacks a zip holding a zip.
     PRESTASHOP_CHECK=/workspace/zelavis-services/prestashop/scripts/check-prestashop-provisioning.mjs
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" create
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$PRESTASHOP_CHECK" create
     systemctl stop zelavis.service zelavis.socket
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" seed
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$PRESTASHOP_CHECK" seed
     systemctl start zelavis.socket zelavis.service
     for attempt in $(seq 1 60); do
       if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
       sleep 1
     done
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$PRESTASHOP_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$PRESTASHOP_CHECK" live-upgrade
   fi
   if ! skipped drupal; then
     # And a sixth, whose installer is Drupal's own installation code run with the Project's values.
     DRUPAL_CHECK=/workspace/zelavis-services/drupal/scripts/check-drupal-provisioning.mjs
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" create
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DRUPAL_CHECK" create
     systemctl stop zelavis.service zelavis.socket
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" seed
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DRUPAL_CHECK" seed
     systemctl start zelavis.socket zelavis.service
     for attempt in $(seq 1 60); do
       if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
       sleep 1
     done
-    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$DRUPAL_CHECK" live-upgrade
+    runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$DRUPAL_CHECK" live-upgrade
   fi
 fi
 if [ -n "${ZELAVIS_QUALIFY_UPDATE:-}" ]; then
@@ -166,7 +167,7 @@ for attempt in $(seq 1 60); do
   if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
   sleep 1
 done
-runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" "$CHECK" verify-preview
+runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_QUALIFY_UPDATE="${ZELAVIS_QUALIFY_UPDATE:-}" "$NODE" "$CHECK" verify-preview
 /opt/zelavis/current/bin/zelavis doctor --json
 # Prove complete removal restores a policy that normal host maintenance can use.
 /opt/zelavis/current/bin/zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
