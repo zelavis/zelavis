@@ -5,7 +5,12 @@ REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 IMAGE="${ZELAVIS_PROVISIONING_IMAGE:-zelavis-wordpress-systemd-test}"
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/zelavis-wordpress-qualification.XXXXXX")
 CONTAINER="zelavis-wordpress-qualification-$(basename "$STAGE")"
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$STAGE"; }
+# ZELAVIS_HARNESS_KEEP=1 leaves a failed run's container behind for inspection (docker exec into it, then docker rm -f it).
+failed=no
+cleanup() {
+  if [[ "$failed" == yes && -n "${ZELAVIS_HARNESS_KEEP:-}" ]]; then printf 'Kept the failed container: %s\n' "$CONTAINER" >&2; else docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; fi
+  rm -rf "$STAGE"
+}
 trap cleanup EXIT
 if [[ -z "${ZELAVIS_PROVISIONING_IMAGE:-}" ]]; then
   docker build ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DOCKER_PLATFORM"} -t "$IMAGE" -f "$REPO_ROOT/zelavis-services/wordpress/scripts/Dockerfile.provisioning" "$REPO_ROOT/zelavis-services/wordpress/scripts"
@@ -28,6 +33,7 @@ for attempt in $(seq 1 60); do
 done
 if ! docker exec "$CONTAINER" sh /workspace/zelavis-services/wordpress/scripts/provisioning-host.sh; then
   docker exec "$CONTAINER" sh -c 'journalctl -u zelavis.service -u zelavis-agent.service -u zelavis-host-agent.service -n 400 --no-pager | grep -v php_invoke | tail -80' || true
+  failed=yes
   exit 1
 fi
 if [[ -n "${ZELAVIS_UPDATE_PROOF:-}" ]]; then
