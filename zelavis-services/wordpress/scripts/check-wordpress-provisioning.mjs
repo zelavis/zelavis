@@ -205,8 +205,9 @@ export function register() {
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
-    // Every fixed set a recipe uses is already satisfied (the legacy wordpress-stack, which also installs PHP, is not).
-    for (const set of ["mariadb-server"]) {
+    // Every fixed set the recipe uses is already satisfied. The recipe of a published release still names the
+    // wordpress-stack set; the current one needs only a database, so its set (which installs no PHP) is checked instead.
+    for (const set of process.env.ZELAVIS_QUALIFY_UPDATE ? ["wordpress-stack"] : ["mariadb-server"]) {
       const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
       let record = repeated;
       for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {
