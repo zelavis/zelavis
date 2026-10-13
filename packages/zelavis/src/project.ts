@@ -868,7 +868,13 @@ const BLOCKING_PLACEMENT_REASONS = new Set(["owner-unplaced", "owner-cycle"]);
 
 export interface ZelavisProjectManagerOptions {
     store: ZelavisSystemStore;
-    projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+    /**
+     * The recipes Projects are created from. A host whose registry changes while it runs (a recipe installed
+     * from the Marketplace) passes a reader, consulted when a Project is listed, read, created or upgraded.
+     */
+    projectRecipes:
+        | readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]
+        | (() => Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]>);
     runtime: ZelavisProjectRuntimeDriver;
     resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
     /**
@@ -1069,12 +1075,17 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
     // gets a directory, a lifecycle, logs, and a routed target — and differs only
     // in what it runs and in being owned by the Project it fronts. Excluding it
     // here is what made an installed frontend package unselectable.
-    const projectRecipeMap = new Map(projectRecipes
+    const recipeMapOf = (entries: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]) => new Map(entries
         .filter((entry) => entry.service.kind === "app" || entry.service.kind === "frontend")
         .flatMap((entry) => [
         [entry.service.name, entry] as const,
         ...(entry.specifier ? [[entry.specifier, entry] as const] : []),
     ]));
+    // Replaced whole, never edited, so a reader sees one registry or the next.
+    let projectRecipeMap = recipeMapOf(typeof projectRecipes === "function" ? yield* integration(() => projectRecipes()) : projectRecipes);
+    const refreshRecipes = typeof projectRecipes === "function"
+        ? integration(() => projectRecipes()).pipe(Effect.tap((entries) => Effect.sync(() => { projectRecipeMap = recipeMapOf(entries); })), Effect.asVoid)
+        : Effect.void;
     /**
      * The Project kind a recipe produces.
      *
@@ -1846,6 +1857,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             availableKinds: availableRuntimeKinds,
         },
         list: Effect.fn("Projects.list")(function* (options?: Parameters<ZelavisProjectManager["list"]>[0]) {
+            yield* refreshRecipes;
             const records = yield* store.list(PROJECTS_NAMESPACE);
             const projects = yield* mapWithConcurrency(records, startupConcurrency, Effect.fn("Projects.transition")(function* (record: ZelavisSystemStoreRecord) {
                 const { project } = yield* evaluate(() => normalizeStoredProject(record.value));
@@ -1864,6 +1876,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
+            yield* refreshRecipes;
             return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
         }),
         versions: Effect.fn("Projects.versions")(function* (id?: string) {
@@ -1891,6 +1904,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             const name = yield* evaluate(() => normalizeProjectName(input.name));
             const id = yield* evaluate(() => normalizeProjectId(input.id ?? name));
             const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
+            yield* refreshRecipes;
             const projectRecipe = projectRecipeMap.get(recipeName);
             if (!projectRecipe) {
                 return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
@@ -2077,6 +2091,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
+            yield* refreshRecipes;
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
                 const liveCapable = runtime.supportsLiveUpdate?.(current) === true &&

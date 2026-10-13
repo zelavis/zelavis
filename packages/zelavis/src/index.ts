@@ -1833,6 +1833,47 @@ function terminalRoutes(context: {
   ] as const;
 }
 
+/**
+ * The service registry as it is now: what was composed, plus what has been
+ * installed since, read from the registry store on every call.
+ *
+ * A running Platform serves the runtime it composed at start, so anything that
+ * must see a package installed afterwards (the service list, the recipes a
+ * Project is created from) reads through this rather than the composed list.
+ */
+function resolveLiveServiceRegistry(options: {
+  composed: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+  store: ZelavisServiceRegistryStore;
+  importer?: ZelavisServiceLoadOptions["importer"];
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
+  entries?: readonly ZelavisServiceRegistryStateEntry[];
+}): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
+  return present(Effect.gen(function* () {
+    const storedEntries = options.entries ?? (yield* integrationValue(options.store.read()));
+    const storedServiceRegistry = (yield* integrationValue(loadStoredServiceRegistryModules(
+      storedEntries,
+      options.importer,
+      options.manifestResolver,
+    )));
+
+    // Static services (passed directly to zelavis()) are system-scoped — they
+    // can use any dashboard surface. The composed registry also holds the
+    // packages installed or discovered when it was composed, already forced to
+    // extension scope; an explicit scope is kept, or the dashboard would run
+    // their pages unsandboxed and offer their menus inside every Project.
+    const composedServiceRegistry = options.composed.map((entry) =>
+      entry.service.scope
+        ? entry
+        : Object.freeze({
+            ...entry,
+            service: Object.freeze({ ...entry.service, scope: "system" as const }),
+          }),
+    );
+
+    return mergeServiceRegistry(composedServiceRegistry, storedServiceRegistry, storedEntries);
+  }));
+}
+
 function resolveRuntimeManagementCore(
   option: ZelavisFrontendInput | undefined,
   context: {
@@ -1901,30 +1942,13 @@ function resolveRuntimeManagementCore(
   ];
   const readResolvedServiceRegistry = (
     entries?: readonly ZelavisServiceRegistryStateEntry[],
-  ) => present(Effect.gen(function* () {
-    const storedEntries = entries ?? (yield* integrationValue(context.serviceRegistryStore.read()));
-    const storedServiceRegistry = (yield* integrationValue(loadStoredServiceRegistryModules(
-      storedEntries,
-      context.serviceImporter,
-      context.serviceManifestResolver,
-    )));
-
-    // Static services (passed directly to zelavis()) are system-scoped — they
-    // can use any dashboard surface. The composed registry also holds the
-    // packages installed or discovered when it was composed, already forced to
-    // extension scope; an explicit scope is kept, or the dashboard would run
-    // their pages unsandboxed and offer their menus inside every Project.
-    const composedServiceRegistry = context.serviceRegistry.map((entry) =>
-      entry.service.scope
-        ? entry
-        : Object.freeze({
-            ...entry,
-            service: Object.freeze({ ...entry.service, scope: "system" as const }),
-          }),
-    );
-
-    return mergeServiceRegistry(composedServiceRegistry, storedServiceRegistry, storedEntries);
-  }));
+  ) => resolveLiveServiceRegistry({
+    composed: context.serviceRegistry,
+    store: context.serviceRegistryStore,
+    importer: context.serviceImporter,
+    manifestResolver: context.serviceManifestResolver,
+    ...(entries ? { entries } : {}),
+  });
   const serializeServiceMenuForDashboard = (
     serviceName: string,
     menu: ZelavisServiceMenuDefinition | undefined,
@@ -4121,7 +4145,7 @@ function remoteEnvironmentRoutes(
 }
 
 function resolvePlatformEndpointGroup(
-  projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+  readProjectRecipes: () => Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]>,
   projects?: ZelavisProjectManager,
   fabric?: FabricApi,
   systemStore?: ZelavisSystemStore,
@@ -4937,6 +4961,7 @@ function resolvePlatformEndpointGroup(
           access: { authenticated: true },
           handler: () => present(Effect.gen(function* () {
             const platform = projectInstallHost ? (yield* integration(() => projectInstallHost!())).platform : undefined;
+            const projectRecipes = yield* integration(() => readProjectRecipes());
             return {
             status: 200,
             body: {
@@ -5792,7 +5817,7 @@ function resolvePlatformEndpointGroup(
               if (input.installHostPackages === true) {
                 if (typeof input.name !== "string" || !input.name.trim()) return yield* Effect.fail(new ZelavisProjectValidationError("Project name is required."));
                 const recipeName = typeof input.recipeName === "string" && input.recipeName.trim() ? input.recipeName.trim() : "@zelavis/app";
-                const recipe = projectRecipes.find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
+                const recipe = (yield* integration(() => readProjectRecipes())).find((entry) => entry.service.kind === "app" && entry.service.name === recipeName);
                 if (!recipe) return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
                 const platform = projectInstallHost ? (yield* integration(() => projectInstallHost!())).platform : undefined;
                 const sets = neededHostPackages(recipe.service.project?.hostPackages ?? [], recipe.service.project?.install, platform, typeof input.method === "string" ? input.method : undefined);
@@ -6428,6 +6453,15 @@ export function zelavis(
             ? Object.freeze({ ...entry, status: "available" as const })
             : entry,
         );
+        // Recipes installed after composition are read from the registry store, so
+        // a Project can be created from one without restarting the Platform.
+        const readServiceRegistry = () =>
+          resolveLiveServiceRegistry({
+            composed: serviceRegistry,
+            store: serviceRegistryStore,
+            importer: compositionOptions.serviceRegistry?.importer,
+            manifestResolver: compositionOptions.serviceRegistry?.manifestResolver,
+          });
         // A Project runtime composes the same subsystems as the Platform. Only the
         // home of its identity data differs: its own database, not the System Store.
         const projectRole = options.role === "project";
@@ -6736,7 +6770,7 @@ export function zelavis(
           systemStore && projectRuntime
             ? yield* integration(() =>
                 createProjectManager({
-                  projectRecipes: serviceRegistry,
+                  projectRecipes: readServiceRegistry,
                   store: systemStore,
                   runtime: projectRuntime,
                   ...(options.edgePreviews
@@ -7108,7 +7142,7 @@ export function zelavis(
         void projects?.reconcile();
         const platformEndpointGroup = yield* integration(() =>
           resolvePlatformEndpointGroup(
-            serviceRegistry,
+            readServiceRegistry,
             projects,
             fabricCoreService?.context,
             systemStore,
