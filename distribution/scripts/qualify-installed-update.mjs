@@ -15,6 +15,7 @@ const from = JSON.parse(await readFile(join(previous, 'manifest.json'), 'utf8'))
 assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
 const to = JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
+import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
 const load = (root, file) => import(pathToFileURL(join(root, 'platform/dist', file)));
 let { createZelavisClient } = await load(previous, 'sdk/fetch.js');
 const baseUrl = 'http://127.0.0.1:3000';
@@ -51,6 +52,7 @@ const executingVersion = () => projectClient(id).plugins.engineproof.engine.get(
 assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
 // A genuine npm catalogue Project stays untouched by the historical fixture.
 // This is the path behind Open that development-only manifests failed to test.
+await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/wordpress');
 const catalogueApp = await client.projects.create({ id: 'catalogue-wordpress', name: 'Catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
 const catalogueDescriptor = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
 const catalogueControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${catalogueApp.id}/proxy/zelavis/api/v1/runtime/config`;
@@ -59,13 +61,18 @@ const catalogueBeforeStatus = initialCatalogueResponse.status;
 await initialCatalogueResponse.arrayBuffer();
 const wp = await client.projects.get('qualification-wordpress');
 assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
-const wpData = '/var/lib/zelavis/projects/qualification-wordpress/.zelavis';
-await writeFile(join(wpData, 'wordpress/integration-preserved.txt'), 'Application content stays outside recipe updates.');
-const wpFiles = ['wordpress-native.json', 'nginx.conf', 'php-fpm.conf', 'wordpress/wp-config.php', 'wordpress/wp-includes/version.php', 'wordpress/integration-preserved.txt'];
+// The recipe's root: Caddy and PHP-FPM configuration beside the `site` directory WordPress lives in.
+const wpData = '/var/lib/zelavis/projects/qualification-wordpress/app';
+await writeFile(join(wpData, 'site/integration-preserved.txt'), 'Application content stays outside recipe updates.');
+const wpFiles = ['Caddyfile', 'php-fpm.conf', 'site/wp-config.php', 'site/wp-includes/version.php', 'site/integration-preserved.txt'];
+// A running recipe update reconciles the plan and its install phase writes the configuration again, so those files
+// must keep their content, owner and mode; WordPress's own software, configuration and content are never touched.
+const recipeWritten = new Set(['Caddyfile', 'php-fpm.conf']);
 const fingerprints = async () => Object.fromEntries(await Promise.all(wpFiles.map(async file => {
   const path = join(wpData, file), metadata = await stat(path);
   return [file, { digest: createHash('sha256').update(await readFile(path)).digest('hex'),
-    uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
+    uid: metadata.uid, gid: metadata.gid, mode: metadata.mode,
+    ...(recipeWritten.has(file) ? {} : { inode: metadata.ino, modified: metadata.mtimeMs }) }];
 })));
 const appFilesBefore = await fingerprints();
 const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).map(async file => {
@@ -310,13 +317,20 @@ if (handWritten) {
   await client.projects.remove(freshManaged.id);
   freshManagedProved = true;
 }
+// What 2.0.0-alpha.26 could not do: a recipe the Marketplace only lists is acquired from npm, and the
+// Project created from it is locked with the package's install methods rather than the listing's none.
+await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/dokuwiki');
+const installedCatalogue = await client.projects.create({ id: 'installed-catalogue-dokuwiki', name: 'Installed catalogue DokuWiki', recipeName: '@zelavis/dokuwiki', start: false });
+assert.equal(installedCatalogue.recipe.install?.method, 'native', 'A Project from an installed catalogue recipe is locked with its install methods');
+await client.projects.remove(installedCatalogue.id);
+console.log('PASS: a catalogue recipe installed from npm creates a Project locked with its install methods.');
 await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
   platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
-  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: freshManagedProved },
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: freshManagedProved, installedCatalogueRecipeLocksInstall: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true, refusedLive: handWritten,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,

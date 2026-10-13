@@ -230,7 +230,7 @@ function ProjectsRoute() {
     try {
       // A recipe that is not installed yet is installed first, as the Marketplace does, so the form is the whole job.
       if (selectedRecipe?.status === "available") {
-        await createDashboardService(rootData.runtime, { specifier: `npm:${selectedRecipe.name}@${selectedRecipe.version}` });
+        await createDashboardService(rootData.runtime, { packageSource: `npm:${selectedRecipe.name}@${selectedRecipe.version}`, status: "installed" });
       }
       const project = await createProject(rootData.runtime, {
         name: requestedName,

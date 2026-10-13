@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { Agent, get as httpGet } from "node:http";
 import { pathToFileURL } from "node:url";
+import { installRecipeIfAvailable } from "/workspace/distribution/scripts/lib/install-recipe.mjs";
 if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== "1") throw new Error("Run through wordpress-provisioning-container.sh on a disposable container.");
 await access("/.dockerenv");
 const platform = process.env.ZELAVIS_QUALIFICATION_PLATFORM ?? "/opt/zelavis/current/platform";
@@ -93,9 +94,11 @@ export function register() {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     // Updating from a published release means the Platform under test still has that release's recipe until it has been updated;
-    // verify-preview runs after the update, on the current catalogue.
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, process.env.ZELAVIS_QUALIFY_UPDATE && phase !== "verify-preview" ? ["wordpress-stack"] : ["mariadb-server"]);
-    let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    // releases before alpha.26 shipped the hand-written WordPress that names the older set. verify-preview runs after the update.
+    const previous = /^2\.0\.0-alpha\.(\d+)$/.exec(process.env.ZELAVIS_PROVISIONING_FROM_NPM ?? "");
+    const handWrittenRelease = Boolean(process.env.ZELAVIS_QUALIFY_UPDATE) && phase !== "verify-preview" && previous !== null && Number(previous[1]) < 26;
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]);
+    let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await (async () => { await installRecipeIfAvailable({ baseUrl, cookie: await readFile("/var/lib/zelavis/qualification-session", "utf8") }, "@zelavis/wordpress"); return client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true }); })();
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
       project = await client.projects.start(project.id);
@@ -206,9 +209,9 @@ export function register() {
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
-    // Every fixed set the recipe uses is already satisfied. The recipe of a published release still names the
-    // wordpress-stack set; the current one needs only a database, so its set (which installs no PHP) is checked instead.
-    for (const set of process.env.ZELAVIS_QUALIFY_UPDATE ? ["wordpress-stack"] : ["mariadb-server"]) {
+    // Every fixed set the recipe uses is already satisfied. The hand-written WordPress of releases before alpha.26
+    // names the wordpress-stack set; the recipe needs only a database, so its set (which installs no PHP) is checked instead.
+    for (const set of handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]) {
       const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
       let record = repeated;
       for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {

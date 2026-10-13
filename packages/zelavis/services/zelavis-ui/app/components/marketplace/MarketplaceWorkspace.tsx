@@ -121,8 +121,10 @@ function errorMessage(error: unknown) {
 
 async function installService(runtime: RuntimeConfig, service: RuntimeServiceRegistryEntry) {
   if (service.installVia === "acquire") {
+    // The Platform acquires an allow-listed package itself; a bare `npm:` specifier would be imported as a module.
     await createDashboardService(runtime, {
-      specifier: `npm:${service.name}@${service.version}`,
+      packageSource: `npm:${service.name}@${service.version}`,
+      status: "installed",
     });
   } else {
     await updateDashboardService(runtime, service.name, { status: "installed" });

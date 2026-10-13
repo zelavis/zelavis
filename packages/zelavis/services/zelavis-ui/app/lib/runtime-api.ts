@@ -111,6 +111,8 @@ export interface RuntimeServiceRegistryUpdate {
 
 export interface RuntimeServiceRegistryCreate {
   specifier?: string;
+  /** A package the Platform acquires itself: `npm:<name>@<version>` from the marketplace's allow-list. */
+  packageSource?: string;
   file?: File;
   name?: string;
   status?: "installed" | "available";
