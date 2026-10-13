@@ -38,6 +38,23 @@ if [ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" ]; then
   systemctl daemon-reload
   systemctl restart zelavis.service
 fi
+# 2.0.0-alpha.26 cannot create a Project from a recipe it acquired from the Marketplace: the catalogue listing
+# shadows the installed package (fixed in alpha.27). Its managed WordPress therefore comes through the operator
+# services folder, holding the published @zelavis/wordpress bytes; every other recipe stays on the Marketplace, and
+# qualify-installed-update.mjs proves install-then-create through it after the update.
+if [ "${ZELAVIS_PROVISIONING_FROM_NPM:-}" = 2.0.0-alpha.26 ]; then
+  wordpress_version=$("$NODE" -p 'require("/workspace/zelavis-services/wordpress/package.json").version')
+  mkdir -p /opt/qualification-services/wordpress /opt/qualification-pack
+  pack_npm=/opt/zelavis/current/runtime/node/lib/node_modules/npm/bin/npm-cli.js
+  [ -f "$pack_npm" ] || pack_npm=$NPM
+  "$NODE" "$pack_npm" pack --registry=https://registry.npmjs.org --pack-destination /opt/qualification-pack "@zelavis/wordpress@$wordpress_version" >/dev/null
+  tar --no-same-owner -xzf /opt/qualification-pack/*.tgz -C /opt/qualification-services/wordpress --strip-components=1
+  rm -rf /opt/qualification-pack
+  mkdir -p /etc/systemd/system/zelavis.service.d
+  printf '[Service]\nEnvironment=ZELAVIS_OFFICIAL_SERVICES_DIR=/opt/qualification-services\n' > /etc/systemd/system/zelavis.service.d/qualification.conf
+  systemctl daemon-reload
+  systemctl restart zelavis.service
+fi
 for attempt in $(seq 1 60); do
   if curl -fsS --max-time 2 http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap >/dev/null; then break; fi
   sleep 1
