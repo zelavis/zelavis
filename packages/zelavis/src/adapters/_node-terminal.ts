@@ -150,7 +150,11 @@ export function createNodeTerminalControl(options: NodeTerminalControlOptions): 
   const discard = Effect.fn("Terminal.discard")(function* (id: string) {
     yield* Effect.result(tmux(["kill-session", "-t", name(id)]));
     const names = yield* file(() => readdir(directory)).pipe(Effect.catch(() => Effect.succeed([] as string[])));
-    for (const entry of names.filter((candidate) => candidate === `${id}.json` || candidate.startsWith(`${id}.`))) {
+    // The record goes first: once it is gone the session no longer exists to any reader, so no one
+    // is sent to an output file that is being removed.
+    const owned = names.filter((candidate) => candidate === `${id}.json` || candidate.startsWith(`${id}.`))
+      .sort((left, right) => Number(right === `${id}.json`) - Number(left === `${id}.json`));
+    for (const entry of owned) {
       yield* file(() => rm(join(directory, entry), { force: true })).pipe(Effect.catch(() => Effect.void));
     }
     activity.delete(id);
@@ -226,7 +230,10 @@ export function createNodeTerminalControl(options: NodeTerminalControlOptions): 
     const match = after === undefined ? null : /^g(\d{1,9})\.(\d{1,15})$/.exec(after);
     if (after !== undefined && !match) return yield* refuse("invalid", "after is not a cursor this terminal returned.");
 
-    let size = (yield* file(() => stat(outputFile(id, session.generation)))).size;
+    // A close or the idle reaper can remove the files between loading the record and reading them.
+    let size = (yield* file(() => stat(outputFile(id, session.generation))).pipe(
+      Effect.catch(() => refuse("not-found", "This terminal session has ended.")),
+    )).size;
     if (size > ROTATE_BYTES) {
       // Start a fresh file; readers of the old one are resynchronised from the screen.
       const next = session.generation + 1;
