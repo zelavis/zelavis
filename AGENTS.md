@@ -115,12 +115,20 @@ current automatically.
   bundled into the service; acquisition refuses a package whose manifest lists
   `dependencies` the Platform will not install.
 - Acquired packages live in content-addressed folders, so an update is a new
-  module with no restart; unreferenced folders are pruned at start. Activation
-  of an update or uninstall reports `restartRecommended`.
+  module with no restart; unreferenced folders are pruned at start.
+- A served engine composes its runtime once. Under the persistent host, a
+  plugin or frontend install, update or uninstall is activated by `engineReload`:
+  the engine asks its host (`reload`, engine-token authority) for a fresh engine
+  of the same release through the shared handover, scheduled rather than awaited
+  because the asking request is drained first; requests wait, none are refused,
+  and the new process holds no previous code. A recipe (`kind: "app"`) triggers
+  no reload: recipes are read live from the registry (`resolveLiveServiceRegistry`)
+  when Projects are listed, created or upgraded. Without a host, activation keeps
+  `restartRecommended` for updates and uninstalls.
 - Platform and native App engine handover is implemented; its contract and
   qualification limits are in `website/.../architecture/updates.md`. Exact installed native App engine
-  version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation keeps
-  the registry's `restartRecommended` behavior.
+  version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation reuses
+  that handover as a same-release reload (above).
 
 ## Distribution Trust Model
 

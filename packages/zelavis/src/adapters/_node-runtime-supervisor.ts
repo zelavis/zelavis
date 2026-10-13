@@ -155,28 +155,31 @@ export const createNodeRuntimeSupervisor = Effect.fn("RuntimeSupervisor.create")
       commit: (release, owner, generation) => options.commit(release, generation).pipe(Effect.andThen(Effect.sync(() => { target = owner.url!; }))),
     },
   });
+  /** One engine handover, to another release or a fresh owner of the same one. */
+  const transfer = (handing: ReturnType<typeof handover.replace>) => lifecycle.withPermit(Effect.gen(function* () {
+    if (closed) return yield* new IntegrationFailure(new Error("Runtime supervisor is closed."));
+    if (closing) return yield* new IntegrationFailure(new Error("Runtime supervisor is shutting down."));
+    updating = true;
+    const result = yield* handing.pipe(Effect.ensuring(Effect.sync(() => { updating = false; })));
+    if (!result.owner.process.running) {
+      yield* ingress.admission.pause;
+      const failure = new IntegrationFailure(new Error("Selected runtime exited before handover completed."));
+      yield* Deferred.fail(failed, failure);
+      return yield* failure;
+    }
+    const retirement = yield* Effect.forEach([...engines].filter(engine => engine !== result.owner), engine => Effect.result(discard(engine)), { concurrency: 1 });
+    // The prior owner already acknowledged release. Its retirement failure
+    // is cleanup debt, not a failed activation of the healthy new owner.
+    cleanupFailures = retirement.flatMap(result => result._tag === "Failure" ? [result.failure.message] : []);
+    return { release: result.release, generation: result.generation, cleanupFailures: [...cleanupFailures] };
+  }));
   return {
     ...ingress,
     failure: Deferred.await(failed),
     target: () => target,
     snapshot: () => ({ ...handover.snapshot(), cleanupFailures: [...cleanupFailures] }),
-    replace: (release: RuntimeRelease) => lifecycle.withPermit(Effect.gen(function* () {
-      if (closed) return yield* new IntegrationFailure(new Error("Runtime supervisor is closed."));
-      if (closing) return yield* new IntegrationFailure(new Error("Runtime supervisor is shutting down."));
-      updating = true;
-      const result = yield* handover.replace(release).pipe(Effect.ensuring(Effect.sync(() => { updating = false; })));
-      if (!result.owner.process.running) {
-        yield* ingress.admission.pause;
-        const failure = new IntegrationFailure(new Error("Selected runtime exited before handover completed."));
-        yield* Deferred.fail(failed, failure);
-        return yield* failure;
-      }
-      const retirement = yield* Effect.forEach([...engines].filter(engine => engine !== result.owner), engine => Effect.result(discard(engine)), { concurrency: 1 });
-      // The prior owner already acknowledged release. Its retirement failure
-      // is cleanup debt, not a failed activation of the healthy new owner.
-      cleanupFailures = retirement.flatMap(result => result._tag === "Failure" ? [result.failure.message] : []);
-      return { release: result.release, generation: result.generation, cleanupFailures: [...cleanupFailures] };
-    })),
+    replace: (release: RuntimeRelease) => transfer(handover.replace(release)),
+    reload: () => transfer(handover.reload()),
     close: lifecycle.withPermit(handover.stop(Effect.gen(function* () {
       if (closed) return;
       closing = true;

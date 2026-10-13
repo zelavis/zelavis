@@ -949,9 +949,10 @@ GET /zelavis/api/v1/runtime/service-page-assets/:service/:bundle/*
 
 When a service registry store is configured, these endpoints read and update
 real install state instead of a hardcoded list. Dashboard metadata updates
-immediately, while service activation is runtime-controlled: a local runtime can
-recompose its service graph when supported, or require a process restart when
-live activation is unavailable. Runtime config exposes the current adapter's
+immediately, while service activation is runtime-controlled: an installed
+Platform hands traffic to a fresh engine of the same release (requests wait,
+none are refused), a host without that ability recomposes in process or asks for
+a restart, and a Project recipe is simply used by the next Project created. Runtime config exposes the current adapter's
 service activation capabilities so the dashboard can show whether uploaded
 specifiers, runtime installs, and isolated execution are actually supported.
 

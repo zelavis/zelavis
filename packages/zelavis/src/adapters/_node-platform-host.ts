@@ -101,6 +101,24 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     previews.clear();
   });
   yield* Effect.addFinalizer(() => closePreviews.pipe(Effect.orDie));
+  // Reloads run in the host's own scope: the engine asking for one is serving the request that
+  // changed the registry, and the handover drains that request before the fresh engine takes over.
+  const hostScope = yield* Effect.scope;
+  let reloadScheduled = false;
+  const reload = transitions.withPermit(Effect.acquireUseRelease(
+    evaluate(() => {
+      // Cleared as the reload begins, so a change made while it runs schedules another.
+      reloadScheduled = false;
+      if (!supervisor || shuttingDown) throw new Error("Platform host is not available for a reload.");
+      handover = true;
+    }), () => supervisor!.reload(), () => Effect.sync(() => { handover = false; }),
+  )).pipe(Effect.catch(error => Effect.sync(() => {
+    (options.output ?? ((_, line) => process.stderr.write(`${line}\n`)))("stderr", `Platform engine reload failed: ${error.message}`);
+  })));
+  const engineAuthority = (authorization: string | undefined) => evaluate(() => {
+    const supplied = Buffer.from(authorization ?? ""), expected = Buffer.from(`Bearer ${token}`);
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error("Engine authority required.");
+  });
   const replace = (release: RuntimeRelease) => transitions.withPermit(Effect.acquireUseRelease(
     evaluate(() => {
       if (!supervisor || shuttingDown) throw new Error("Platform host is not available for replacement.");
@@ -108,11 +126,20 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     }), () => supervisor!.replace(release), () => Effect.sync(() => { handover = false; }),
   ));
   yield* serveNodeRuntimeControl(endpoint, Effect.fn("PlatformHost.control")(function* (input, authorization) {
+    // The serving engine asks for a fresh engine of the same release when only a new composition
+    // can pick a change up. It names nothing: the host reloads what it already runs.
+    if (input.action === "reload") {
+      yield* engineAuthority(authorization);
+      if (!reloadScheduled && !shuttingDown) {
+        reloadScheduled = true;
+        yield* Effect.forkIn(reload, hostScope);
+      }
+      return { scheduled: true };
+    }
     const previewCommand = input.action === "preview-open" || input.action === "preview-close";
     if (previewCommand) {
+      yield* engineAuthority(authorization);
       yield* evaluate(() => {
-        const supplied = Buffer.from(authorization ?? ""), expected = Buffer.from(`Bearer ${token}`);
-        if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error("Engine preview authority required.");
         if (typeof input.projectId !== "string" || !/^[a-z0-9][a-z0-9_-]{0,127}$/.test(input.projectId)) throw new Error("Preview requires an exact Project identity.");
       });
       const projectId = input.projectId as string;

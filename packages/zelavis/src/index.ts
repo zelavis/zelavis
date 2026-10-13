@@ -223,6 +223,7 @@ import {
   type ZelavisServiceRegistryStore,
   type ZelavisServiceSetupPlatformContext,
   type ZelavisServiceSetupContext,
+  type ZelavisServiceKind,
 } from "./service.js";
 import { scopeHostOperations } from "./platform/service-host-operations.js";
 export * from "./service.js";
@@ -761,6 +762,14 @@ export interface ZelavisPlatformResources {
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
+  /**
+   * Hands traffic to a fresh engine of the release already serving, under the
+   * persistent host's admission: requests wait, none are refused. Present only
+   * where such a host serves this engine. It resolves once the reload is
+   * scheduled, never waiting for it, because the request asking for it is one
+   * the handover drains first.
+   */
+  engineReload?: () => Promise<void>;
   servicePackages?: ZelavisServicePackageInstaller;
   /** The marketplace allow-list: what may be installed, and how current it is. */
   marketplace?: ZelavisMarketplaceControl;
@@ -826,6 +835,8 @@ export interface ZelavisAdapter {
 
 export interface ZelavisServiceActivationRequest {
   serviceName: string;
+  /** What the service is, when the registry knows. Absent for a service no longer loadable. */
+  kind?: ZelavisServiceKind;
   action: "register" | "install" | "uninstall" | "update";
   specifier?: string;
   registry: readonly ZelavisServiceRegistryStateEntry[];
@@ -2398,8 +2409,13 @@ function resolveRuntimeManagementCore(
       };
     }
 
+    const entry = (yield* integrationValue(readResolvedServiceRegistry(registry)))
+      .find((candidate) => candidate.service.name === request.serviceName);
     return (yield* integrationValue(context.serviceActivation.activate({
       ...request,
+      ...(entry?.service.kind === "app" || entry?.service.kind === "plugin" || entry?.service.kind === "frontend"
+        ? { kind: entry.service.kind }
+        : {}),
       registry,
     })));
   }));
@@ -7805,10 +7821,26 @@ export class Zelavis {
                 resolved.context.resources.servicePackages?.scaffold,
               ),
               supportsIsolatedExecution: false,
-              description:
-                "Recomposes the in-process Zelavis runtime graph after service registry changes.",
+              description: resolved.context.resources.engineReload
+                ? "Activates service registry changes by handing traffic to a fresh engine of the same release; requests wait, none are refused."
+                : "Recomposes the in-process Zelavis runtime graph after service registry changes.",
             },
             activate: (request) => present(Effect.gen(function* () {
+              const done = { register: "registered", install: "installed", update: "updated", uninstall: "uninstalled" }[request.action];
+              // A recipe is read when a Project is created or upgraded and is never
+              // mounted into the Platform, so nothing here has to change for it.
+              if (request.kind === "app") {
+                return { status: "active", message: `${request.serviceName} is ${done}. New Projects and recipe upgrades use it now.` };
+              }
+              // A served engine composed its runtime once. A fresh engine composes
+              // the registry as it is now, and a new process holds no previous code.
+              if (resolved.context.resources.engineReload) {
+                yield* integration(() => resolved.context.resources.engineReload!());
+                return {
+                  status: "pending",
+                  message: `${request.serviceName} is ${done}. The Platform is reloading to activate it; requests wait until it is ready.`,
+                };
+              }
               self.invalidateRuntime();
               // An install adds code; an update or uninstall leaves the previous
               // module loaded, which is worth saying.
@@ -7816,7 +7848,7 @@ export class Zelavis {
               return {
                 status: "active",
                 message: leavesCodeLoaded
-                  ? `${request.serviceName} is ${request.action === "update" ? "updated" : "uninstalled"}. The previous code stays in memory until the Platform restarts; restart when convenient.`
+                  ? `${request.serviceName} is ${done}. The previous code stays in memory until the Platform restarts; restart when convenient.`
                   : "Service registry state changed. Zelavis will recompose the runtime for the next request.",
                 ...(leavesCodeLoaded ? { restartRecommended: true } : {}),
               };

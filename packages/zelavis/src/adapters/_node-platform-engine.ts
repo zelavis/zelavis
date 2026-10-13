@@ -105,6 +105,9 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
             ...(resources?.projectRuntime ? { projectRuntime: wrap(resources.projectRuntime) } : {}),
             ...(resources?.deploymentBackends ? { deploymentBackends: resources.deploymentBackends.map(backend => ({ ...backend, ...(backend.projectRuntime ? { projectRuntime: wrap(backend.projectRuntime) } : {}) })) } : {}),
             ...(previews ? { edgePreviews: previews } : {}),
+            // A registry change reaches traffic through a fresh engine of this release.
+            ...(options.custody ? { engineReload: () => present(requestNodeRuntimeControl(options.custody!.endpoint, { action: "reload" }, options.custody!.token).pipe(
+              Effect.flatMap(reply => evaluate(() => { if (reply.scheduled !== true) throw new Error("The persistent host did not schedule the reload."); })))) } : {}),
           } };
         })),
       });

@@ -138,3 +138,43 @@ test("a listing whose package failed to load is not reported installed", async (
   assert.equal(created.status, 400);
   assert.match((await created.json()).error, /not installed yet/);
 });
+
+test("a served engine reloads to activate a plugin, never for a recipe, which is read when Projects are created", async (t) => {
+  const { Zelavis, defineAdapter } = await import("../dist/index.js");
+  const root = await mkdtemp(join(tmpdir(), "zelavis-activation-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const write = async (name, zelavis) => {
+    const directory = join(root, name);
+    await mkdir(directory);
+    await writeFile(join(directory, "package.json"), JSON.stringify({ name: `@acme/${name}`, version: "1.0.0", type: "module", exports: { ".": "./index.js" }, zelavis }));
+    await writeFile(join(directory, "index.js"), "export function register() {}\n");
+    return join(directory, "index.js");
+  };
+  const recipePath = await write("recipe", { kind: "app", namespace: "recipe", project: { runtimeKinds: ["native"], install } });
+  const pluginPath = await write("plugin", { kind: "plugin", namespace: "plugin" });
+  const reloads = [];
+  const zv = new Zelavis({
+    adapter: defineAdapter({ name: "reload-test", resolve: () => ({
+      subsystems: { auth: false, database: false },
+      systemStore: createMemorySystemStore(),
+      serviceRegistry: { store: createMemoryServiceRegistryStore([]), manifestResolver: createLocalRuntimeServiceManifestResolver() },
+      resources: { engineReload: async () => { reloads.push(Date.now()); } },
+    }) }),
+  });
+  t.after(() => zv.close());
+  const installService = async (specifier) => {
+    const response = await zv.fetch(new Request("http://localhost/zelavis/api/v1/runtime/services", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ specifier, status: "installed" }),
+    }), OWNER);
+    const body = await response.json();
+    assert.equal(response.status, 201, JSON.stringify(body));
+    return body.activation;
+  };
+  const recipe = await installService(recipePath);
+  assert.equal(recipe.status, "active");
+  assert.equal(reloads.length, 0, "a recipe needs no new engine");
+  const plugin = await installService(pluginPath);
+  assert.equal(plugin.status, "pending");
+  assert.match(plugin.message, /reloading to activate/);
+  assert.equal(reloads.length, 1);
+});

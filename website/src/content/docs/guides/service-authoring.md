@@ -329,7 +329,7 @@ The runtime registry stores service entries separately from Marketplace catalog 
 
 Installing a service updates registry state. Activation is adapter-owned:
 
-- Local runtime adapters can recompose the in-process runtime graph when supported.
+- An installed Platform activates a plugin or frontend by handing traffic to a fresh engine of the same release; requests wait meanwhile. A Project recipe is used by the next Project created or upgraded, with no reload.
 - Hosts without activation support can still store registry metadata, but installs may remain pending.
 
 ## Rule 5: Keep orchestration helpers only when they add real value
