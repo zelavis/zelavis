@@ -47,8 +47,11 @@ Project runs. Moving a stopped Project to a newer recipe is an explicit
 **recipe upgrade**, and the new copy is frozen and swapped in only when complete.
 A failed upgrade restores the previous frozen recipe and host descriptor.
 Custom runtime modules load from verified digest-specific copies under
-`<project>/.zelavis/recipe-modules`, including their relative imports, so a
-Platform process cannot reuse the old runtime when upgrading. The Project's
+`<projects>/.recipe-modules`, including their relative imports, so a
+Platform process cannot reuse the old runtime when upgrading. Projects frozen to
+the same digest share one copy, which is why it lives beside the Projects rather
+than inside one: deleting a Project never removes code another Project runs.
+Copies no Project uses are pruned when the Platform starts. The Project's
 data is untouched.
 
 The host records the locked recipe before provisioning begins, so custom

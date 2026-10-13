@@ -511,9 +511,12 @@ package's definition. Project driver wrappers forward the verified definition.
 Opening managed Project overview pages must not probe unused native APIs.
 
 Custom recipe runtimes execute from verified digest-specific module paths below
-`<project>/.zelavis/recipe-modules` so ESM caching cannot reuse relative imports
-from a previous recipe during an explicit upgrade. These are derived copies,
-not a second lock or authority. Failed preparation restores the previous frozen
+`<projects>/.recipe-modules` so ESM caching cannot reuse relative imports
+from a previous recipe during an explicit upgrade. A driver, and the copy it runs
+from, is shared by every Project frozen to the same digest, so the copy never
+lives inside one Project: deleting that Project would break the others. These
+are derived copies, not a second lock or authority, rebuilt from a Project's
+frozen recipe when missing and pruned at adoption when no loaded driver uses them. Failed preparation restores the previous frozen
 recipe and host descriptor. Record the locked driver before provisioning so
 its custom cleanup can still run after failure and restart. A missing descriptor after early preparation failure
 must still allow cleanup of that exact Project through its trusted driver or

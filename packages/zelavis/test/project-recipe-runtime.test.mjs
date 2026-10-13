@@ -758,3 +758,52 @@ test("a catalogue summary cannot override the verified managed recipe or send da
   assert.equal(body.capabilities.identity.used, false);
   assert.equal(await readFile(join(projects, "site", "workload-events"), "utf8"), "start:v1\n");
 });
+
+test("each Project's recipe driver reads its own module copy, so deleting one Project leaves another of the same recipe working", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "reading");
+  await mkdir(join(source, "dist"), { recursive: true });
+  await writeFile(join(source, "package.json"), JSON.stringify({
+    name: "@acme/site", version: "1.0.0", type: "module", exports: { ".": { import: "./dist/index.js" } },
+    zelavis: { kind: "app", namespace: "acmesite", project: { runtimeKinds: ["native"], runtime: "./dist/runtime.js" } },
+  }));
+  await writeFile(join(source, "dist", "index.js"), "export function register() {}");
+  // Like the Platform's recipe runtime: the package's own manifest is read from where the driver was given it, on every call.
+  await writeFile(join(source, "dist", "runtime.js"), `
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+export function createProjectRuntime({ packageDirectory }) {
+  const running = new Set();
+  const manifest = () => readFile(join(packageDirectory, "package.json"), "utf8").then(JSON.parse);
+  return {
+    name: "reading", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 1,
+    capabilities: () => ({ description: "reads " + packageDirectory }),
+    async prepare() { await manifest(); },
+    async start(project) { await manifest(); running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
+    async stop(id) { running.delete(id); return { status: "stopped" }; },
+    async status(id) { return running.has(id) ? { status: "running", url: "http://127.0.0.1:1" } : { status: "stopped" }; },
+    async logs() { return []; },
+    async destroy(id) { running.delete(id); },
+    async close() {},
+  };
+}`);
+  const projects = join(root, "projects");
+  const driver = router(projects, source);
+  t.after(() => driver.close());
+  const [first, second] = [project("first"), project("second")];
+  await driver.prepare(first, first.recipe);
+  await driver.prepare(second, second.recipe);
+  const shared = driver.capabilities(second).description;
+  assert.ok(shared.includes(join(projects, ".recipe-modules")), `module copies live beside the Projects, not inside one: ${shared}`);
+  await driver.destroy("first");
+  await rm(join(projects, "first"), { recursive: true, force: true });
+  assert.equal((await driver.start(second)).status, "running", "the second Project does not read the deleted one's files");
+
+  // A restarted Platform adopts the Projects it has, keeps the copy they run from and prunes the rest.
+  await mkdir(join(projects, ".recipe-modules", "sha256-unreferenced"), { recursive: true });
+  const restarted = router(projects, source);
+  t.after(() => restarted.close());
+  await restarted.adopt();
+  await assert.rejects(access(join(projects, ".recipe-modules", "sha256-unreferenced")));
+  assert.equal((await restarted.start(second)).status, "running");
+});

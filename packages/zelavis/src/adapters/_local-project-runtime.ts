@@ -3,7 +3,7 @@ import { unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
 import { defineEffectProjectRuntime, type ZelavisRecipeRuntimeContext } from "./project-runtime.js";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Semaphore } from "effect";
 import { evaluate, integration, present, effectOperations, singleFlight, type EffectOperations } from "../core/runtime/effect-boundary.js";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -119,8 +119,14 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         })
         : undefined;
     // Recipe runtimes are loaded from the copy frozen inside each Project and
-    // shared by every Project frozen to the same digest.
+    // shared by every Project frozen to the same digest. The module copy they run
+    // from is shared with them, so it lives beside the Projects rather than inside
+    // one: deleting a Project must not take away code another Project runs. The
+    // dot keeps it out of Project discovery; it is rebuilt from a frozen copy when
+    // missing, and copies no loaded driver uses are pruned when Projects are adopted.
     const recipeDrivers = new Map<string, ZelavisProjectRuntimeDriver>();
+    const sharedModules = join(directory, ".recipe-modules");
+    const moduleLoading = Semaphore.makeUnsafe(1);
     const driverOfProject = new Map<string, ZelavisProjectRuntimeDriver>();
     const verified = new Map<string, { name: string; version: string; definition: ZelavisProjectRecipeDefinition }>();
     const recipeDefinitions = new Map<string, { name: string; version: string; digest: string; definition: ZelavisProjectRecipeDefinition }>();
@@ -170,50 +176,62 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         // loads the selected recipe implementation after verifying this lock.
         const active = driverOfProject.get(projectId);
         if (retainSupervisor && active) return active;
-        const cached = recipeDrivers.get(digest);
-        if (cached) {
-            driverOfProject.set(projectId, cached);
-            return cached;
-        }
-        // ESM caches relative imports by file URL. A version query on the entry
-        // alone leaves its dependencies cached, so each digest needs its own path.
-        const modules = join(directory, projectId, ".zelavis", "recipe-modules", digest.replace(":", "-"));
-        const modulePackage = join(modules, RECIPE_ARTIFACT_DIRECTORY, "package");
-        if (!existsSync(modulePackage))
-            yield* integration(() => materializeRecipeArtifact(frozen, modules));
-        if ((yield* integration(() => digestArtifactDirectory(modulePackage))) !== digest) {
-            return yield* Effect.fail(new ZelavisProjectRuntimeError("Recipe module copy does not match its locked digest."));
-        }
-        // Lets the frozen package resolve `zelavis/*` against the Platform running it.
-        yield* integration(() => linkPlatformPackage(join(modules, RECIPE_ARTIFACT_DIRECTORY)));
-        provideHostPackagesTo(modulePackage);
-        const module = ((yield* integration(() => import(pathToFileURL(join(modulePackage, entry)).href)))) as {
-            createProjectRuntime?: (context: ZelavisRecipeRuntimeContext) => ZelavisProjectRuntimeDriver;
-        };
-        if (typeof module.createProjectRuntime !== "function") {
-            return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" declares a runtime but does not export createProjectRuntime.`));
-        }
-        const driver = module.createProjectRuntime({
-            directory,
-            packageDirectory: modulePackage,
-            agent: recipeAgent,
-            recipes: {
-                // The exact version asked for, from where this host keeps recipes, or nothing.
-                source: (name, version) => present(Effect.gen(function* () {
-                    const found = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(name, version))) ??
-                        (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
-                    if (!found) return undefined;
-                    const identity = yield* Effect.flatMap(integration(() => readFile(join(found, "package.json"), "utf8")), value => evaluate(() => parseJson(value, objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown }), "recipe package.json")));
-                    return identity.name === name && identity.version === version ? found : undefined;
-                })),
-                stage: (source, dataDirectory) => materializeRecipeArtifact(source, dataDirectory),
-                digest: (packageDirectory) => digestArtifactDirectory(packageDirectory),
-            },
-            options: options.recipeRuntimeOptions?.[recipe.name] ?? {},
-        });
-        recipeDrivers.set(digest, driver);
-        driverOfProject.set(projectId, driver);
-        return driver;
+        // One at a time, so two Projects of the same recipe never build its module copy at once.
+        return yield* moduleLoading.withPermit(Effect.gen(function* () {
+            const cached = recipeDrivers.get(digest);
+            if (cached) {
+                driverOfProject.set(projectId, cached);
+                return cached;
+            }
+            // ESM caches relative imports by file URL. A version query on the entry
+            // alone leaves its dependencies cached, so each digest needs its own path.
+            const modules = join(sharedModules, digest.replace(":", "-"));
+            const modulePackage = join(modules, RECIPE_ARTIFACT_DIRECTORY, "package");
+            if (!existsSync(modulePackage))
+                yield* integration(() => materializeRecipeArtifact(frozen, modules));
+            if ((yield* integration(() => digestArtifactDirectory(modulePackage))) !== digest) {
+                return yield* Effect.fail(new ZelavisProjectRuntimeError("Recipe module copy does not match its locked digest."));
+            }
+            // Lets the frozen package resolve `zelavis/*` against the Platform running it.
+            yield* integration(() => linkPlatformPackage(join(modules, RECIPE_ARTIFACT_DIRECTORY)));
+            provideHostPackagesTo(modulePackage);
+            const module = ((yield* integration(() => import(pathToFileURL(join(modulePackage, entry)).href)))) as {
+                createProjectRuntime?: (context: ZelavisRecipeRuntimeContext) => ZelavisProjectRuntimeDriver;
+            };
+            if (typeof module.createProjectRuntime !== "function") {
+                return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe "${recipe.name}" declares a runtime but does not export createProjectRuntime.`));
+            }
+            const driver = module.createProjectRuntime({
+                directory,
+                packageDirectory: modulePackage,
+                agent: recipeAgent,
+                recipes: {
+                    // The exact version asked for, from where this host keeps recipes, or nothing.
+                    source: (name, version) => present(Effect.gen(function* () {
+                        const found = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(name, version))) ??
+                            (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
+                        if (!found) return undefined;
+                        const identity = yield* Effect.flatMap(integration(() => readFile(join(found, "package.json"), "utf8")), value => evaluate(() => parseJson(value, objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown }), "recipe package.json")));
+                        return identity.name === name && identity.version === version ? found : undefined;
+                    })),
+                    stage: (source, dataDirectory) => materializeRecipeArtifact(source, dataDirectory),
+                    digest: (packageDirectory) => digestArtifactDirectory(packageDirectory),
+                },
+                options: options.recipeRuntimeOptions?.[recipe.name] ?? {},
+            });
+            recipeDrivers.set(digest, driver);
+            driverOfProject.set(projectId, driver);
+            return driver;
+        }));
+    });
+    /** Removes module copies no loaded driver runs from. Only at adoption, before any Project is prepared. */
+    const pruneSharedModules = Effect.gen(function* () {
+        if (!existsSync(sharedModules)) return;
+        const entries = yield* integration(() => readdir(sharedModules, { withFileTypes: true }));
+        if (entries.length > 4096) return yield* Effect.fail(new ZelavisProjectRuntimeError("Recipe module copies exceed their discovery bound."));
+        const kept = new Set([...recipeDrivers.keys()].map((digest) => digest.replace(":", "-")));
+        yield* Effect.forEach(entries.filter((entry) => entry.isDirectory() && !kept.has(entry.name)),
+            (entry) => integration(() => rm(join(sharedModules, entry.name), { recursive: true, force: true })), { concurrency: 4, discard: true });
     });
     const recipeDriver = Effect.fn("LocalProjects.recipeDriver")(function* (projectId: string, recipe: Pick<ZelavisProjectRecipeLock, "name"> & {
         version?: string;
@@ -356,6 +374,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                     }
                 }), Effect.fn("LocalProjects.recover")(function* (_error) {
                 }));
+                // Every driver a Project uses is loaded now, so what none of them runs from is left over.
+                yield* pruneSharedModules.pipe(Effect.catch((error) => Effect.sync(() => {
+                    console.warn(`Zelavis could not prune unused recipe module copies: ${String(unwrapFailure(error))}`);
+                })));
                 // Each driver knows which of its own Projects the Agent still runs; the
                 // router only has to ask all of them.
                 for (const driver of [node, integrationNode, ...loaded(), serverFrontend]) {

@@ -290,13 +290,20 @@ const freshManaged = await client.projects.create({ id: 'fresh-catalogue-wordpre
 assert.equal(freshManaged.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal((await projectClient(freshManaged.id).runtime.config()).capabilities.database.used, false);
 await client.projects.remove(freshManaged.id);
-// A recipe the Marketplace only lists is acquired from npm, and the Project created from it is locked
-// with the package's install methods rather than the listing's none.
+// A recipe the Marketplace only lists is acquired from npm; the Project created from it is locked with the
+// package's install methods, starts and serves. A second Project of the same recipe, created after the first
+// is deleted, must still run: they share one recipe driver, which must not run from the deleted Project's files.
 await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/dokuwiki');
-const installedCatalogue = await client.projects.create({ id: 'installed-catalogue-dokuwiki', name: 'Installed catalogue DokuWiki', recipeName: '@zelavis/dokuwiki', start: false });
-assert.equal(installedCatalogue.recipe.install?.method, 'native', 'A Project from an installed catalogue recipe is locked with its install methods');
-await client.projects.remove(installedCatalogue.id);
-console.log('PASS: a catalogue recipe installed from npm creates a Project locked with its install methods.');
+for (const wikiId of ['installed-catalogue-dokuwiki', 'recreated-catalogue-dokuwiki']) {
+  const wiki = await client.projects.create({ id: wikiId, name: 'Installed catalogue DokuWiki', recipeName: '@zelavis/dokuwiki' });
+  assert.equal(wiki.recipe.install?.method, 'native', 'A Project from an installed catalogue recipe is locked with its install methods');
+  assert.equal(wiki.runtime.status, 'running', `${wikiId} starts: ${JSON.stringify(wiki.runtime)}`);
+  const page = await fetch(`http://127.0.0.1:${wiki.preview.port}/doku.php`);
+  assert.equal(page.status, 200, `${wikiId} serves DokuWiki through its preview`);
+  await page.arrayBuffer();
+  await client.projects.remove(wikiId);
+}
+console.log('PASS: a catalogue recipe installed from npm runs, and runs again for a Project created after the first was deleted.');
 await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
