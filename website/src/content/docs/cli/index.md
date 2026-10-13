@@ -62,6 +62,12 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
+- `logs [--ref REFERENCE] [--level LEVEL] [--source NAME] [--limit N] [--after SEQUENCE] [--follow]`
+  reads the Platform's recent log (`client.logs.read`, `GET /zelavis/api/v1/runtime/logs`,
+  permission `server.logs.read` in system scope). An unexpected request failure answers with a
+  generic message and a reference; `--ref` prints the cause recorded under that reference.
+  The log is bounded and kept in memory (it is emptied by a restart, and the same error lines
+  are written to the service journal), and secrets are redacted when an entry is written.
 - `update status|check|apply [--wait]` shows the running version and the newest one on
   its channel, looks again, or asks the installation to update itself and, with
   `--wait`, follows it to the end. It calls the same routes as the dashboard

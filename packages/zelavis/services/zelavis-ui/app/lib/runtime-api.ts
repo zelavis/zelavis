@@ -1883,6 +1883,32 @@ export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStat
   return readJson(`${config.api.basePath}/runtime/updates`);
 }
 
+export interface PlatformLogEntry {
+  sequence: number;
+  at: string;
+  level: "debug" | "info" | "warn" | "error";
+  source: string;
+  message: string;
+  correlationId?: string;
+  detail?: string;
+}
+
+export interface PlatformLogPage {
+  entries: PlatformLogEntry[];
+  latest: number;
+  truncated: boolean;
+}
+
+export async function readPlatformLogs(
+  config: RuntimeConfig,
+  query: { level?: string; correlationId?: string; source?: string; limit?: number } = {},
+): Promise<PlatformLogPage> {
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(name, String(value));
+  const text = params.toString();
+  return readJson(`${config.api.basePath}/runtime/logs${text ? `?${text}` : ""}`);
+}
+
 export async function checkForUpdate(config: RuntimeConfig): Promise<UpdateStatus> {
   return readJson(`${config.api.basePath}/runtime/updates/check`, { method: "POST" });
 }

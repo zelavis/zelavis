@@ -2,6 +2,7 @@ import { neededHostPackages, provisionableRequirements } from "./project-host-pa
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
+import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
 import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
 import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
@@ -1702,6 +1703,8 @@ function resolveRuntimeManagementCore(
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     marketplace?: ZelavisMarketplaceControl;
     updates?: ZelavisUpdateControl;
+    /** The Platform's own recent log, read through `runtime/logs`. */
+    platformLog?: PlatformLog;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
     getServices: () => readonly ZelavisRuntimeService<any>[];
@@ -2441,6 +2444,24 @@ function resolveRuntimeManagementCore(
               return { status: 404, body: { error: "This installation has no marketplace allow-list." } };
             }
             return { status: 200, headers: { "cache-control": "no-store" }, body: (yield* integrationValue(context.marketplace.refresh())) };
+          })),
+        },
+        {
+          id: "runtime.logs.read",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/logs"),
+          access: { permissions: ["server.logs.read"], scope: { type: "system" } },
+          spec: {
+            operationId: "readPlatformLogs",
+            summary: "Read the Platform's recent log, including the cause behind an error reference",
+            tags: ["runtime"],
+            responses: { 200: { description: "Log entries, newest last" }, 400: { description: "Invalid query" }, 404: { description: "This runtime keeps no log" } },
+          },
+          handler: ({ request }: { request: Request }) => present(Effect.gen(function* () {
+            if (!context.platformLog) return { status: 404, body: { error: "This runtime keeps no log." } };
+            const query = readPlatformLogQuery(new URL(request.url).searchParams);
+            if (typeof query === "string") return { status: 400, body: { error: query } };
+            return { status: 200, headers: { "cache-control": "no-store" }, body: context.platformLog.read(query) };
           })),
         },
         {
@@ -6839,6 +6860,7 @@ export function zelavis(
           ? stripFrontendServiceFields(frontendPackageService)
           : undefined;
 
+        const platformLog = createPlatformLog();
         runtimeManagement = yield* integration(() =>
           resolveRuntimeManagementCore(options.frontend, {
             apiPrefix,
@@ -6851,6 +6873,7 @@ export function zelavis(
             servicePackageInstaller: options.servicePackageInstaller,
             marketplace: options.marketplace,
             updates: options.updates,
+            platformLog,
             serviceActivation: options.serviceActivation,
             rootPath,
             getServices: () => runtimeConfigServices,
@@ -7014,6 +7037,7 @@ export function zelavis(
         const runtime = yield* integration(() =>
           mountZelavisServer({
             ...options,
+            plugins: [platformLogPlugin(platformLog)],
             prefix: mountPrefix,
             version: "v1",
             services: productServices,

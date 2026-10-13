@@ -288,6 +288,7 @@ export interface ZelavisClient {
   /** The marketplace allow-list, over `/runtime/marketplace`. Same contract as `zelavis marketplace`. */
   readonly marketplace: ZelavisMarketplaceClient;
   readonly updates: ZelavisUpdatesClient;
+  readonly logs: ZelavisLogsClient;
   /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
   readonly nodes: ZelavisNodesClient;
   /** Cloud capacity, over `/runtime/cloud`. Same contract as `zelavis cloud`. */
@@ -599,6 +600,41 @@ export interface ZelavisMarketplaceClient {
   allowlist(): Promise<ZelavisMarketplaceAllowlistStatus>;
   /** Fetches the list again from its sources; needs `system.services.manage`. */
   refresh(): Promise<ZelavisMarketplaceRefreshResult>;
+}
+
+/** One line of the Platform's recent log. */
+export interface ZelavisLogEntry {
+  readonly sequence: number;
+  readonly at: string;
+  readonly level: "debug" | "info" | "warn" | "error";
+  readonly source: string;
+  readonly message: string;
+  /** The reference a client received with a generic error. */
+  readonly correlationId?: string;
+  readonly detail?: string;
+}
+
+export interface ZelavisLogQuery {
+  /** Only entries newer than this sequence; pass a page's `latest` to follow. */
+  readonly after?: number;
+  readonly limit?: number;
+  /** This level or more severe. */
+  readonly level?: ZelavisLogEntry["level"];
+  /** The reference from an "Action failed" message, to read the cause behind it. */
+  readonly correlationId?: string;
+  readonly source?: string;
+}
+
+export interface ZelavisLogPage {
+  readonly entries: readonly ZelavisLogEntry[];
+  readonly latest: number;
+  /** Entries between `after` and the oldest one kept were dropped. */
+  readonly truncated: boolean;
+}
+
+export interface ZelavisLogsClient {
+  /** The Platform's recent log, newest last; memory only, emptied by a restart. Needs `server.logs.read`. */
+  read(query?: ZelavisLogQuery): Promise<ZelavisLogPage>;
 }
 
 export interface ZelavisUpdatesClient {
@@ -1054,6 +1090,14 @@ export function createZelavisClient(
       allowlist: () => json<ZelavisMarketplaceAllowlistStatus>("/runtime/marketplace/allowlist"),
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
+    },
+    logs: {
+      read: (query = {}) => {
+        const params = new URLSearchParams();
+        for (const [name, value] of Object.entries(query)) if (value !== undefined) params.set(name, String(value));
+        const text = params.toString();
+        return json<ZelavisLogPage>(`/runtime/logs${text ? `?${text}` : ""}`);
+      },
     },
     updates: {
       status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
