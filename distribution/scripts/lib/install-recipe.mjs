@@ -10,7 +10,7 @@ export async function installRecipeIfAvailable({ baseUrl, cookie }, name) {
   if (!entry) throw new Error(`${name} is not offered by this installation.`);
   if (entry.status !== "available") return false;
   const result = entry.installVia === "acquire"
-    ? await fetch(api, { method: "POST", headers, body: JSON.stringify({ specifier: `npm:${entry.name}@${entry.version}` }) })
+    ? await fetch(api, { method: "POST", headers, body: JSON.stringify({ packageSource: `npm:${entry.name}@${entry.version}`, status: "installed" }) })
     : await fetch(`${api}/${encodeURIComponent(name)}`, { method: "PATCH", headers, body: JSON.stringify({ status: "installed" }) });
   if (!result.ok) throw new Error(`Installing ${name} failed: ${result.status} ${(await result.text()).slice(0, 300)}`);
   return true;
