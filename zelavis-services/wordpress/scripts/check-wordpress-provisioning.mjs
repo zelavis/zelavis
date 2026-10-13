@@ -93,8 +93,10 @@ export function register() {
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
     // Updating from a published release means the Platform under test still has that release's recipe until it has been updated;
-    // verify-preview runs after the update, on the current catalogue.
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, process.env.ZELAVIS_QUALIFY_UPDATE && phase !== "verify-preview" ? ["wordpress-stack"] : ["mariadb-server"]);
+    // releases before alpha.26 shipped the hand-written WordPress that names the older set. verify-preview runs after the update.
+    const previous = /^2\.0\.0-alpha\.(\d+)$/.exec(process.env.ZELAVIS_PROVISIONING_FROM_NPM ?? "");
+    const handWrittenRelease = Boolean(process.env.ZELAVIS_QUALIFY_UPDATE) && phase !== "verify-preview" && previous !== null && Number(previous[1]) < 26;
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]);
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
