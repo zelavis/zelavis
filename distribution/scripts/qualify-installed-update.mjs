@@ -15,6 +15,7 @@ const from = JSON.parse(await readFile(join(previous, 'manifest.json'), 'utf8'))
 assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
 const to = JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
+import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
 const load = (root, file) => import(pathToFileURL(join(root, 'platform/dist', file)));
 let { createZelavisClient } = await load(previous, 'sdk/fetch.js');
 const baseUrl = 'http://127.0.0.1:3000';
@@ -51,6 +52,7 @@ const executingVersion = () => projectClient(id).plugins.engineproof.engine.get(
 assert.equal((await executingVersion()).version, from, 'Initial running engine must report the previous npm version');
 // A genuine npm catalogue Project stays untouched by the historical fixture.
 // This is the path behind Open that development-only manifests failed to test.
+await installRecipeIfAvailable({ baseUrl, cookie }, '@zelavis/wordpress');
 const catalogueApp = await client.projects.create({ id: 'catalogue-wordpress', name: 'Catalogue WordPress', recipeName: '@zelavis/wordpress', installHostPackages: true });
 const catalogueDescriptor = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
 const catalogueControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${catalogueApp.id}/proxy/zelavis/api/v1/runtime/config`;

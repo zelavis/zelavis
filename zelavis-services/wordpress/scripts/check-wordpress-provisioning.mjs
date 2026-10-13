@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { Agent, get as httpGet } from "node:http";
 import { pathToFileURL } from "node:url";
+import { installRecipeIfAvailable } from "/workspace/distribution/scripts/lib/install-recipe.mjs";
 if (process.env.ZELAVIS_PROVISIONING_DISPOSABLE !== "1") throw new Error("Run through wordpress-provisioning-container.sh on a disposable container.");
 await access("/.dockerenv");
 const platform = process.env.ZELAVIS_QUALIFICATION_PLATFORM ?? "/opt/zelavis/current/platform";
@@ -97,7 +98,7 @@ export function register() {
     const previous = /^2\.0\.0-alpha\.(\d+)$/.exec(process.env.ZELAVIS_PROVISIONING_FROM_NPM ?? "");
     const handWrittenRelease = Boolean(process.env.ZELAVIS_QUALIFY_UPDATE) && phase !== "verify-preview" && previous !== null && Number(previous[1]) < 26;
     assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]);
-    let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true });
+    let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await (async () => { await installRecipeIfAvailable({ baseUrl, cookie: await readFile("/var/lib/zelavis/qualification-session", "utf8") }, "@zelavis/wordpress"); return client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true }); })();
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
       project = await client.projects.start(project.id);
