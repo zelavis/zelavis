@@ -163,7 +163,10 @@ export const zelavisServerMenu = {
     { title: "Database", path: "/server/database", pageLabel: "Platform Database", panelLabel: "Platform Database",
       access: { permissions: ["server.database.inspect"], scope: { type: "system" } } },
     { title: "Backups", path: "/server/backups", pageLabel: "Backups" },
-    { title: "Logs", path: "/server/logs", pageLabel: "Logs" },
+    { title: "Logs", path: "/server/logs", pageLabel: "Logs",
+      access: { permissions: ["server.logs.read"], scope: { type: "system" } } },
+    { title: "Terminal", path: "/server/terminal", pageLabel: "Terminal",
+      access: { permissions: ["server.terminal.use"], scope: { type: "system" } } },
   ],
 } as const;
 
@@ -184,6 +187,7 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/server/domains",
   "/server/runtimes",
   "/server/logs",
+  "/server/terminal",
   "/settings",
   "/settings/appearance",
   "/projects/:projectId",

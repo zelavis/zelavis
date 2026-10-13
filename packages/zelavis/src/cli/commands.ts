@@ -13,6 +13,7 @@ import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
 import { runLogsCommand } from "./logs.js";
+import { runTerminalCommand } from "./terminal.js";
 import { runProjectsCommand } from "./projects.js";
 import { runNodesCommand } from "./nodes.js";
 import { runCloudCommand } from "./cloud.js";
@@ -138,6 +139,7 @@ Usage:
   zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
   zelavis nodes <list|platform|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
+  zelavis terminal <status|list|install|open|attach|close> [session-id] [--url <url>] [--token <token>] [--json]
   zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
@@ -175,6 +177,7 @@ Commands:
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
   marketplace               Show or refresh the marketplace allow-list.
+  terminal                  Open a shell on the server inside tmux (owner only).
   logs                      Read the Platform's recent log; --ref shows the cause
                             behind the reference of an "Action failed" message.
   update                    Check for a newer version and update this installation
@@ -594,6 +597,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "update") {
       (yield* integration(() => runUpdateCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "terminal") {
+      (yield* integration(() => runTerminalCommand(args.slice(1))));
       return;
     }
     if (args[0] === "logs") {

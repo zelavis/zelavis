@@ -56,6 +56,8 @@ import { createBuiltinDeploymentBackends } from "../backends/index.js";
 import { createNodeBackendHostProbes } from "./_node-backend-host.js";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
 import { createNodeUpdateControl } from "./_node-updates.js";
+import { createNodeTerminalControl } from "./_node-terminal.js";
+import type { ZelavisTerminalControl } from "../terminal.js";
 import { readOrCreatePlatformAuthorityKey } from "./_platform-authority-key.js";
 import {
   createHostOperationBroker,
@@ -155,6 +157,11 @@ export interface NodeAdapterProjectOptions {
 }
 
 export interface NodeAdapterOptions {
+  /**
+   * The owner's terminal (a shell inside tmux, behind `server.terminal.use`). On by default for a
+   * Platform; `false` removes it, and a control replaces the tmux-backed one.
+   */
+  terminal?: false | ZelavisTerminalControl;
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
@@ -569,6 +576,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           servicePackages: serviceSources.servicePackages,
           ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
           ...(!isProjectRuntime && systemStore ? { updates: createNodeUpdateControl({ dataDirectory }) } : {}),
+          ...(!isProjectRuntime && systemStore && options.terminal !== false ? { terminal: options.terminal ?? createNodeTerminalControl({ dataDirectory }) } : {}),
         },
         metadata: {
           runtime: "node",

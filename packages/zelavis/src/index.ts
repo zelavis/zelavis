@@ -123,6 +123,7 @@ import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
 import { isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
+import { isTerminalSessionId, ZelavisTerminalRefusal, type ZelavisTerminalControl } from "./terminal.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
   assertListableFrontend,
@@ -526,6 +527,7 @@ export interface ZelavisServerOptions {
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   marketplace?: ZelavisMarketplaceControl;
   updates?: ZelavisUpdateControl;
+  terminal?: ZelavisTerminalControl;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
   subsystems?: ZelavisSubsystemOptions;
@@ -764,6 +766,8 @@ export interface ZelavisPlatformResources {
   marketplace?: ZelavisMarketplaceControl;
   /** Looking up and asking for a newer release of this installation. */
   updates?: ZelavisUpdateControl;
+  /** A shell on this server for its owner, inside tmux. */
+  terminal?: ZelavisTerminalControl;
   /** Cloud capacity: the provider connection and machines requested through it. */
   cloudCapacity?: CloudCapacityController;
   projectInstallHost?: () => Promise<ZelavisProjectInstallHost>;
@@ -1689,6 +1693,99 @@ interface ZelavisRuntimeManagementCore {
   routes: readonly ZelavisServerRoute<any>[];
 }
 
+const TERMINAL_STATUS = { unavailable: 503, "not-found": 404, limit: 429, invalid: 400 } as const;
+
+/**
+ * The owner's terminal over HTTP. Every route needs `server.terminal.use` in system scope, and a
+ * session belongs to the principal that opened it. Opening and closing go to the Platform log with
+ * the principal; typed input and printed output are never recorded.
+ */
+function terminalRoutes(context: {
+  apiPrefix: string;
+  apiVersion: string;
+  terminal?: ZelavisTerminalControl;
+  platformLog?: PlatformLog;
+}) {
+  const access = { permissions: ["server.terminal.use"], scope: { type: "system" as const } };
+  const base = joinPathParts(context.apiPrefix, context.apiVersion, "runtime/terminal");
+  const none = { status: 404, body: { error: "This runtime has no terminal." } };
+  const guarded = <A>(run: (terminal: ZelavisTerminalControl, owner: string) => Effect.Effect<A, any>, principal: { id: string } | undefined) =>
+    Effect.gen(function* () {
+      const terminal = context.terminal;
+      if (!terminal) return none;
+      if (!principal) return { status: 401, body: { error: "Authentication is required." } };
+      return yield* run(terminal, principal.id);
+    }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+      const error = unwrapFailure(Cause.squash(cause));
+      if (error instanceof ZelavisTerminalRefusal) return { status: TERMINAL_STATUS[error.code], body: { error: error.message, code: error.code } };
+      throw error;
+    })));
+  const sessionId = (params: Record<string, string>) => (isTerminalSessionId(params.sessionId) ? params.sessionId : undefined);
+  const spec = (operationId: string, summary: string) => ({ operationId, summary, tags: ["runtime"], responses: { 200: { description: summary }, 404: { description: "No terminal, or no such session" } } });
+  const audit = (message: string, principal: { id: string } | undefined, sessionLabel?: string) =>
+    context.platformLog?.record({ level: "info", source: "terminal", message: `${message} (principal ${principal?.id ?? "unknown"}${sessionLabel ? `, session ${sessionLabel}` : ""})` });
+  return [
+    {
+      id: "runtime.terminal.status", method: "GET", path: base, access,
+      spec: spec("getTerminal", "Whether a terminal is available here, and the caller's open sessions"),
+      handler: ({ principal }: { principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.all([integration(() => terminal.status()), integration(() => terminal.list(owner))]).pipe(
+        Effect.map(([status, sessions]) => ({ status: 200, headers: { "cache-control": "no-store" }, body: { ...status, sessions } }))), principal)),
+    },
+    {
+      id: "runtime.terminal.open", method: "POST", path: `${base}/sessions`, access,
+      spec: spec("openTerminalSession", "Open a shell session of the given size"),
+      handler: ({ body, principal }: { body: unknown; principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.gen(function* () {
+        const session = yield* integration(() => terminal.open(owner, readBodyObject(body) as { cols: number; rows: number }));
+        audit("Terminal session opened", principal, session.id);
+        return { status: 201, headers: { "cache-control": "no-store" }, body: { session } };
+      }), principal)),
+    },
+    {
+      id: "runtime.terminal.input", method: "POST", path: `${base}/sessions/:sessionId/input`, access,
+      spec: spec("writeTerminalInput", "Type into a session"),
+      handler: ({ body, params, principal }: { body: unknown; params: Record<string, string>; principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.gen(function* () {
+        const id = sessionId(params);
+        if (!id) return { status: 404, body: { error: "No such terminal session.", code: "not-found" } };
+        const data = readBodyObject(body).data;
+        if (typeof data !== "string") return { status: 400, body: { error: "data must be a string.", code: "invalid" } };
+        yield* integration(() => terminal.write(owner, id, data));
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true } };
+      }), principal)),
+    },
+    {
+      id: "runtime.terminal.output", method: "GET", path: `${base}/sessions/:sessionId/output`, access,
+      spec: spec("readTerminalOutput", "Read what a session printed after a cursor"),
+      handler: ({ request, params, principal }: { request: Request; params: Record<string, string>; principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.gen(function* () {
+        const id = sessionId(params);
+        if (!id) return { status: 404, body: { error: "No such terminal session.", code: "not-found" } };
+        const after = new URL(request.url).searchParams.get("after") ?? undefined;
+        return { status: 200, headers: { "cache-control": "no-store" }, body: yield* integration(() => terminal.read(owner, id, after)) };
+      }), principal)),
+    },
+    {
+      id: "runtime.terminal.resize", method: "POST", path: `${base}/sessions/:sessionId/resize`, access,
+      spec: spec("resizeTerminalSession", "Resize a session"),
+      handler: ({ body, params, principal }: { body: unknown; params: Record<string, string>; principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.gen(function* () {
+        const id = sessionId(params);
+        if (!id) return { status: 404, body: { error: "No such terminal session.", code: "not-found" } };
+        yield* integration(() => terminal.resize(owner, id, readBodyObject(body) as { cols: number; rows: number }));
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true } };
+      }), principal)),
+    },
+    {
+      id: "runtime.terminal.close", method: "DELETE", path: `${base}/sessions/:sessionId`, access,
+      spec: spec("closeTerminalSession", "Close a session"),
+      handler: ({ params, principal }: { params: Record<string, string>; principal?: { id: string } }) => present(guarded((terminal, owner) => Effect.gen(function* () {
+        const id = sessionId(params);
+        if (!id) return { status: 404, body: { error: "No such terminal session.", code: "not-found" } };
+        yield* integration(() => terminal.close(owner, id));
+        audit("Terminal session closed", principal, id);
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true } };
+      }), principal)),
+    },
+  ] as const;
+}
+
 function resolveRuntimeManagementCore(
   option: ZelavisFrontendInput | undefined,
   context: {
@@ -1703,6 +1800,7 @@ function resolveRuntimeManagementCore(
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     marketplace?: ZelavisMarketplaceControl;
     updates?: ZelavisUpdateControl;
+    terminal?: ZelavisTerminalControl;
     /** The Platform's own recent log, read through `runtime/logs`. */
     platformLog?: PlatformLog;
     serviceActivation?: ZelavisServiceActivationController;
@@ -2446,6 +2544,7 @@ function resolveRuntimeManagementCore(
             return { status: 200, headers: { "cache-control": "no-store" }, body: (yield* integrationValue(context.marketplace.refresh())) };
           })),
         },
+        ...terminalRoutes(context),
         {
           id: "runtime.logs.read",
           method: "GET",
@@ -4261,6 +4360,25 @@ function resolvePlatformEndpointGroup(
             return operation
               ? { status: 200, body: { operation } }
               : { status: 404, body: { error: "Agent operation was not found." } };
+          })),
+        },
+        {
+          id: "runtime.terminal.install",
+          method: "POST",
+          path: "/terminal/install",
+          access: { permissions: ["server.terminal.use"], scope: { type: "system" } },
+          spec: {
+            operationId: "installTerminalPackages",
+            summary: "Install tmux, which the terminal runs inside, through the audited host package operation",
+            tags: ["runtime"],
+            responses: { 200: { description: "Installed" }, 502: { description: "The package operation failed" }, 503: { description: "No operation Agent" } },
+          },
+          handler: ({ principal }: { principal?: ZelavisPrincipal }) => present(Effect.gen(function* () {
+            if (!hostOperations) return { status: 503, body: { error: "Host package installation requires the system installation's operation Agent. Update or repair the system installation, then retry." } };
+            // The broker checks `server.packages.install` against the manifest for this principal.
+            const provisioned = yield* Effect.result(integration(() => provisionProjectHostPackages(hostOperations, ["terminal"], principal)));
+            if (provisioned._tag === "Failure") return hostOperationErrorResponse(unwrapFailure(provisioned.failure));
+            return { status: 200, headers: { "cache-control": "no-store" }, body: { installed: true } };
           })),
         },
         ...hostOperationRoutes(hostOperations),
@@ -6873,6 +6991,7 @@ export function zelavis(
             servicePackageInstaller: options.servicePackageInstaller,
             marketplace: options.marketplace,
             updates: options.updates,
+            terminal: options.terminal,
             platformLog,
             serviceActivation: options.serviceActivation,
             rootPath,
@@ -7385,6 +7504,7 @@ function mergeZelavisServerOptions(
       override.servicePackageInstaller ?? base.servicePackageInstaller,
     marketplace: override.marketplace ?? base.marketplace,
     updates: override.updates ?? base.updates,
+    terminal: override.terminal ?? base.terminal,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
@@ -7675,6 +7795,7 @@ export class Zelavis {
           servicePackageInstaller: platformResources.servicePackages,
           marketplace: platformResources.marketplace,
           updates: platformResources.updates,
+          terminal: platformResources.terminal,
           serviceActivation: platformResources.services,
           bundleStore,
           domainBindings,

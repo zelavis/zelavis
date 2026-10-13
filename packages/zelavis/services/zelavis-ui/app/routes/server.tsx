@@ -6,6 +6,7 @@ import {
   Fingerprint,
   Globe2,
   ReceiptText,
+  SquareTerminal,
   Server,
   ShieldCheck,
   Waypoints,
@@ -76,7 +77,13 @@ const serverSections = [
     title: "Logs",
     path: "/server/logs",
     icon: ReceiptText,
-    detail: "Runtime, access, and project logs.",
+    detail: "The Platform's recent log and the cause behind an error reference.",
+  },
+  {
+    title: "Terminal",
+    path: "/server/terminal",
+    icon: SquareTerminal,
+    detail: "A shell on this server, inside tmux.",
   },
 ] as const;
 

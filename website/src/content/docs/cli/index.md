@@ -62,6 +62,16 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
+- `terminal status|list|install|open|attach|close [session-id]` is the owner's shell on the server
+  (`client.terminal`, `GET|POST|DELETE /zelavis/api/v1/runtime/terminal*`, permission
+  `server.terminal.use` in system scope; Server → Terminal in the dashboard). `open` starts a
+  session and attaches to it, `attach` picks one up again, and Ctrl-] detaches while the session
+  keeps running. Sessions run inside tmux as the account the Platform runs as (never root) with a
+  small fixed environment, belong to the principal that opened them, and are bounded in number,
+  input size and idle time. `install` adds tmux through the audited `zelavis.packages-install`
+  operation (it also needs `server.packages.install`). Opening and closing are written to the
+  Platform log; typed input and printed output are never recorded. `nodeAdapter({ terminal: false })`
+  removes it.
 - `logs [--ref REFERENCE] [--level LEVEL] [--source NAME] [--limit N] [--after SEQUENCE] [--follow]`
   reads the Platform's recent log (`client.logs.read`, `GET /zelavis/api/v1/runtime/logs`,
   permission `server.logs.read` in system scope). An unexpected request failure answers with a

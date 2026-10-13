@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
@@ -289,6 +290,7 @@ export interface ZelavisClient {
   readonly marketplace: ZelavisMarketplaceClient;
   readonly updates: ZelavisUpdatesClient;
   readonly logs: ZelavisLogsClient;
+  readonly terminal: ZelavisTerminalClient;
   /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
   readonly nodes: ZelavisNodesClient;
   /** Cloud capacity, over `/runtime/cloud`. Same contract as `zelavis cloud`. */
@@ -600,6 +602,25 @@ export interface ZelavisMarketplaceClient {
   allowlist(): Promise<ZelavisMarketplaceAllowlistStatus>;
   /** Fetches the list again from its sources; needs `system.services.manage`. */
   refresh(): Promise<ZelavisMarketplaceRefreshResult>;
+}
+
+/** Whether a terminal can be opened on this server, and the caller's own open sessions. */
+export interface ZelavisTerminalOverview extends ZelavisTerminalStatus {
+  readonly sessions: readonly ZelavisTerminalSession[];
+}
+
+export interface ZelavisTerminalClient {
+  /** Availability and the caller's sessions; every terminal call needs `server.terminal.use`. */
+  status(): Promise<ZelavisTerminalOverview>;
+  /** Installs tmux, which the terminal runs inside, through the audited host package operation; needs `server.packages.install` too. */
+  install(): Promise<void>;
+  open(size: ZelavisTerminalSize): Promise<ZelavisTerminalSession>;
+  /** Types text, control characters included, into the session. */
+  write(sessionId: string, data: string): Promise<void>;
+  /** Reads what the session printed after `after` (omit it to start from the current screen). */
+  read(sessionId: string, after?: string): Promise<ZelavisTerminalOutput>;
+  resize(sessionId: string, size: ZelavisTerminalSize): Promise<void>;
+  close(sessionId: string): Promise<void>;
 }
 
 /** One line of the Platform's recent log. */
@@ -1090,6 +1111,15 @@ export function createZelavisClient(
       allowlist: () => json<ZelavisMarketplaceAllowlistStatus>("/runtime/marketplace/allowlist"),
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
+    },
+    terminal: {
+      status: () => json<ZelavisTerminalOverview>("/runtime/terminal"),
+      install: () => json<unknown>("/runtime/terminal/install", { method: "POST", body: {} }).then(() => undefined),
+      open: (size) => json<{ session: ZelavisTerminalSession }>("/runtime/terminal/sessions", { method: "POST", body: size }).then((r) => r.session),
+      write: (id, data) => json<unknown>(`/runtime/terminal/sessions/${encodeURIComponent(id)}/input`, { method: "POST", body: { data } }).then(() => undefined),
+      read: (id, after) => json<ZelavisTerminalOutput>(`/runtime/terminal/sessions/${encodeURIComponent(id)}/output${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`),
+      resize: (id, size) => json<unknown>(`/runtime/terminal/sessions/${encodeURIComponent(id)}/resize`, { method: "POST", body: size }).then(() => undefined),
+      close: (id) => json<unknown>(`/runtime/terminal/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => undefined),
     },
     logs: {
       read: (query = {}) => {

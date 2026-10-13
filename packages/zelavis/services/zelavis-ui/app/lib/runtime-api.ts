@@ -805,6 +805,7 @@ const fallbackConfig: RuntimeConfig = {
       "/server/backups",
       "/server/domains",
       "/server/logs",
+      "/server/terminal",
       "/server/runtimes",
       "/settings",
       "/settings/appearance",
@@ -1882,6 +1883,46 @@ export interface UpdateStatus {
 export async function getUpdateStatus(config: RuntimeConfig): Promise<UpdateStatus> {
   return readJson(`${config.api.basePath}/runtime/updates`);
 }
+
+export interface TerminalSessionInfo {
+  id: string;
+  createdAt: string;
+  lastActiveAt: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalOverview {
+  available: boolean;
+  reason?: string;
+  maxSessions: number;
+  sessions: TerminalSessionInfo[];
+}
+
+export interface TerminalOutput {
+  /** Base64 bytes. */
+  data: string;
+  cursor: string;
+  /** The place was lost: clear the display, then write `data` (the current screen). */
+  reset: boolean;
+  more: boolean;
+}
+
+const terminalPath = (config: RuntimeConfig, suffix = "") => `${config.api.basePath}/runtime/terminal${suffix}`;
+
+export const getTerminalOverview = (config: RuntimeConfig): Promise<TerminalOverview> => readJson(terminalPath(config));
+export const installTerminalPackages = (config: RuntimeConfig): Promise<unknown> =>
+  readJson(terminalPath(config, "/install"), { method: "POST", body: "{}" });
+export const openTerminalSession = (config: RuntimeConfig, size: { cols: number; rows: number }): Promise<TerminalSessionInfo> =>
+  readJson<{ session: TerminalSessionInfo }>(terminalPath(config, "/sessions"), { method: "POST", body: JSON.stringify(size) }).then((result) => result.session);
+export const writeTerminalInput = (config: RuntimeConfig, id: string, data: string, signal?: AbortSignal): Promise<unknown> =>
+  readJson(terminalPath(config, `/sessions/${encodeURIComponent(id)}/input`), { method: "POST", body: JSON.stringify({ data }), ...(signal ? { signal } : {}) });
+export const readTerminalOutput = (config: RuntimeConfig, id: string, after: string | undefined, signal?: AbortSignal): Promise<TerminalOutput> =>
+  readJson(terminalPath(config, `/sessions/${encodeURIComponent(id)}/output${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`), signal ? { signal } : undefined);
+export const resizeTerminalSession = (config: RuntimeConfig, id: string, size: { cols: number; rows: number }): Promise<unknown> =>
+  readJson(terminalPath(config, `/sessions/${encodeURIComponent(id)}/resize`), { method: "POST", body: JSON.stringify(size) });
+export const closeTerminalSession = (config: RuntimeConfig, id: string): Promise<unknown> =>
+  readJson(terminalPath(config, `/sessions/${encodeURIComponent(id)}`), { method: "DELETE" });
 
 export interface PlatformLogEntry {
   sequence: number;

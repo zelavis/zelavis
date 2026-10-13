@@ -911,6 +911,13 @@ On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
 and never fall back from it silently. This does not substitute for pinned
 shared libraries or destination fencing.
 
+The dashboard terminal (`runtime/terminal*`, `zelavis terminal`, Server → Terminal) is the one
+deliberate shell and is not a host operation: it is owner-level (`server.terminal.use`, system
+scope), runs inside tmux as the Platform's own unprivileged account with a small fixed
+environment (never root, never the Platform's variables), and its sessions belong to the opening
+principal. It adds no native dependency and no root escalation; opening and closing are logged,
+typed input and output never are. Do not widen it into a command runner for the Agent or recipes.
+
 Agent authority is Ed25519: only the Platform holds the private key, Agents
 trust its public file, and envelopes bind the exact arguments
 (`argumentsDigest`). The Platform issues authority only through the host
