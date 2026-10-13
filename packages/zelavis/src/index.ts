@@ -1263,6 +1263,53 @@ function isSiteFrontendService(service: { kind?: string; app?: unknown }): boole
 }
 
 /**
+ * A catalogue listing names a package on npm that the marketplace's allow-list
+ * offers but nobody installed. It carries what the list says about the package,
+ * never the package's own manifest (its install methods above all), and it is
+ * never imported: that would run code nobody chose to install.
+ */
+function isCatalogueListing(
+  entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
+): boolean {
+  return entry.status === "available" && entry.specifier?.startsWith("npm:") === true;
+}
+
+/**
+ * Merges a registry with the packages installed or discovered beside it.
+ *
+ * A name the registry already holds stays the registry's, so a mutable package
+ * cannot replace what the operator composed. A listing is the exception: it only
+ * advertised the package, and once that package is loaded the package is the
+ * entry. A listing still present afterwards is not loaded code, so stored state
+ * cannot mark it installed.
+ */
+function mergeServiceRegistry(
+  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+  loaded: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+  state: readonly ZelavisServiceRegistryStateEntry[] | undefined,
+): readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] {
+  const loadedNames = new Set(loaded.map((entry) => entry.service.name));
+  const kept = registry.filter(
+    (entry) => !(isCatalogueListing(entry) && loadedNames.has(entry.service.name)),
+  );
+  const knownServiceNames = new Set(kept.map((entry) => entry.service.name));
+  const added: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] = [];
+  for (const entry of loaded) {
+    if (knownServiceNames.has(entry.service.name)) continue;
+    knownServiceNames.add(entry.service.name);
+    added.push(entry);
+  }
+  const complete = createServiceRegistry([...kept, ...added]);
+  const listedNames = new Set(
+    complete.filter(isCatalogueListing).map((entry) => entry.service.name),
+  );
+  return applyServiceRegistryState(
+    complete,
+    state?.filter((entry) => !listedNames.has(entry.name)),
+  );
+}
+
+/**
  * Runtime-installed and folder-discovered services are always extension-scoped
  * regardless of what `scope` or `menu.surface` their definition declares. Trust
  * is granted by the registration path (static), not the definition itself.
@@ -1317,13 +1364,17 @@ function loadStoredServiceRegistryModules(
     >[] = [];
 
     for (const entry of moduleEntries) {
-      // A stored entry that cannot be loaded is left out; the rest still load.
+      // A stored entry that cannot be loaded is left out and said so; the rest still load.
       const scoped = yield* integration(() => loadServiceRegistry<ZelavisServiceSetupContext>(
         [entry],
         { importer, ...(manifestResolver ? { manifestResolver } : {}) },
       )).pipe(
         Effect.map((loaded) => loaded.map(asExtensionScoped)),
-        Effect.orElseSucceed((): Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] => []),
+        Effect.catch((failure) => Effect.sync((): Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] => {
+          const error = unwrapFailure(failure);
+          console.warn(`Zelavis could not load installed service ${entry.specifier}: ${error instanceof Error ? error.message : String(error)}`);
+          return [];
+        })),
       );
 
       resolvedEntries.push(...scoped);
@@ -1358,12 +1409,8 @@ function loadConfiguredServiceRegistryModules(
     // Official entries are supplied by the host adapter already loaded (bundled
     // packages through the package loader, in-tree recipes as objects);
     // re-importing them by specifier would only repeat that work.
-    // An available entry from the marketplace's list names a package on npm that
-    // is not installed. It is listed from what the list says about it, never
-    // imported: importing it would run code that nobody chose to install.
-    const listedNotInstalled =
-      entry.status === "available" && entry.specifier?.startsWith("npm:");
-    if (!entry.specifier || entry.manifest || entry.source === "official" || listedNotInstalled) {
+    // A catalogue listing is listed from what the allow-list says, never imported.
+    if (!entry.specifier || entry.manifest || entry.source === "official" || isCatalogueListing(entry)) {
       resolved.push(...createServiceRegistry([entry]));
       continue;
     }
@@ -1863,10 +1910,12 @@ function resolveRuntimeManagementCore(
     )));
 
     // Static services (passed directly to zelavis()) are system-scoped — they
-    // can use any dashboard surface. Runtime-installed services are already
-    // forced to extension scope inside loadStoredServiceRegistryModules.
-    const systemServiceRegistry = context.serviceRegistry.map((entry) =>
-      entry.service.scope === "system"
+    // can use any dashboard surface. The composed registry also holds the
+    // packages installed or discovered when it was composed, already forced to
+    // extension scope; an explicit scope is kept, or the dashboard would run
+    // their pages unsandboxed and offer their menus inside every Project.
+    const composedServiceRegistry = context.serviceRegistry.map((entry) =>
+      entry.service.scope
         ? entry
         : Object.freeze({
             ...entry,
@@ -1874,17 +1923,7 @@ function resolveRuntimeManagementCore(
           }),
     );
 
-    const knownServiceNames = new Set(
-      systemServiceRegistry.map((entry) => entry.service.name),
-    );
-    const completeServiceRegistry = createServiceRegistry([
-      ...systemServiceRegistry,
-      ...storedServiceRegistry.filter(
-        (entry) => !knownServiceNames.has(entry.service.name),
-      ),
-    ]);
-
-    return (yield* integrationValue(applyServiceRegistryState(completeServiceRegistry, storedEntries)));
+    return mergeServiceRegistry(composedServiceRegistry, storedServiceRegistry, storedEntries);
   }));
   const serializeServiceMenuForDashboard = (
     serviceName: string,
@@ -6375,26 +6414,13 @@ export function zelavis(
             ),
           );
         }
-        const knownServiceNames = new Set(
-          baseServiceRegistry.map((entry) => entry.service.name),
-        );
         // A dropped-in package must not take over a name the installation composed
         // itself: shadowing `@zelavis/auth` from the folder would replace the
-        // Platform's own auth with whatever was on disk.
-        const discoveredServices = discoveredServiceRegistry.filter((entry) => {
-          if (knownServiceNames.has(entry.service.name)) return false;
-          knownServiceNames.add(entry.service.name);
-          return true;
-        });
-        const completeServiceRegistry = createServiceRegistry([
-          ...baseServiceRegistry,
-          ...discoveredServices,
-          ...storedServiceRegistry.filter(
-            (entry) => !knownServiceNames.has(entry.service.name),
-          ),
-        ]);
-        const serviceRegistry = applyServiceRegistryState(
-          completeServiceRegistry,
+        // Platform's own auth with whatever was on disk. Discovered packages come
+        // before stored ones, so the folder wins a name both hold.
+        const serviceRegistry = mergeServiceRegistry(
+          baseServiceRegistry,
+          [...discoveredServiceRegistry, ...storedServiceRegistry],
           initialServiceRegistryState,
         ).map((entry) =>
           entry.service.name === "@zelavis/auth" &&
