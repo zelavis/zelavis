@@ -61,7 +61,7 @@ async function acquiredPackage(t) {
   return join(directory, "index.js");
 }
 
-test("an installed catalogue recipe replaces its listing, so a Project created from it is locked with install methods", async (t) => {
+test("an installed catalogue recipe replaces its listing at once, so a Project created from it is locked with install methods", async (t) => {
   const specifier = await acquiredPackage(t);
   const systemStore = createMemorySystemStore();
   const registryStore = createMemoryServiceRegistryStore([]);
@@ -98,20 +98,23 @@ test("an installed catalogue recipe replaces its listing, so a Project created f
   assert.equal(listed.status, "installed");
   assert.equal(listed.installVia, undefined, "no longer something to acquire");
 
-  // The registry change recomposes the runtime; the next composition reads the installed package.
-  const after = await compose();
-  t.after(() => after.close());
-  assert.equal(await recipeStatus(after), "installed");
-  const recomposed = await (await call(after, "/runtime/services")).json();
-  assert.equal((recomposed.services ?? recomposed).find((entry) => entry.name === NAME).scope, "extension",
-    "an installed package stays extension-scoped once it is part of the composed registry");
-  const created = await call(after, "/runtime/projects", { method: "POST", body: JSON.stringify({ name: "Wiki", recipeName: NAME, start: false }) });
+  // A running Platform keeps serving the runtime it composed at start: the installed recipe is read live.
+  assert.equal(await recipeStatus(before), "installed");
+  const created = await call(before, "/runtime/projects", { method: "POST", body: JSON.stringify({ name: "Wiki", recipeName: NAME, start: false }) });
   const body = await created.json();
   assert.equal(created.status, 201, JSON.stringify(body));
   const project = body.project ?? body;
   assert.equal(project.recipe.name, NAME);
   assert.equal(project.recipe.install?.method, "native");
   assert.equal(project.recipe.install?.software, "1.0.0");
+
+  // Composed again, the installed package is part of the composed registry and keeps its extension scope.
+  const after = await compose();
+  t.after(() => after.close());
+  assert.equal(await recipeStatus(after), "installed");
+  const recomposed = await (await call(after, "/runtime/services")).json();
+  assert.equal((recomposed.services ?? recomposed).find((entry) => entry.name === NAME).scope, "extension",
+    "an installed package stays extension-scoped once it is part of the composed registry");
 });
 
 test("a listing whose package failed to load is not reported installed", async (t) => {
