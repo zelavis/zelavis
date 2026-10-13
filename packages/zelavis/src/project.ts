@@ -1895,6 +1895,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             if (!projectRecipe) {
                 return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
             }
+            // A catalogue entry only advertises that a package can be acquired; its install methods live in the package
+            // itself, so a Project locked from it would have none and could never start.
+            if (projectRecipe.status === "available" && projectRecipe.specifier?.startsWith("npm:") && projectRecipe.service.project?.install === undefined) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" is not installed yet; install it from the Marketplace, then create the Project.`));
+            }
             let recipe = yield* evaluate(() => recipeLockFromRegistryEntry(projectRecipe));
             const install = yield* selectInstall(projectRecipe, { method: input.method, softwareVersion: input.softwareVersion });
             if (install) recipe = { ...recipe, install };

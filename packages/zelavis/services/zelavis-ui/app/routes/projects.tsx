@@ -31,6 +31,7 @@ import {
   toDashboardProjectItem,
 } from "#/lib/dashboard-data";
 import {
+  createDashboardService,
   createProject,
   getActiveRuntimeConfig,
   getProjectVersions,
@@ -168,6 +169,8 @@ function ProjectsRoute() {
       ?.filter((service) => service.kind === "app")
       .map((service) => ({
         name: service.name,
+        status: service.status,
+        version: service.version,
         title:
           service.marketplace?.title ??
           service.menu?.title ??
@@ -225,6 +228,10 @@ function ProjectsRoute() {
     setCreating(true);
 
     try {
+      // A recipe that is not installed yet is installed first, as the Marketplace does, so the form is the whole job.
+      if (selectedRecipe?.status === "available") {
+        await createDashboardService(rootData.runtime, { specifier: `npm:${selectedRecipe.name}@${selectedRecipe.version}` });
+      }
       const project = await createProject(rootData.runtime, {
         name: requestedName,
         recipeName: selectedRecipe?.name ?? recipeName,

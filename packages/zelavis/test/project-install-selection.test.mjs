@@ -234,3 +234,12 @@ test("when the upgrade cannot be recorded, the driver is told to put the earlier
   assert.equal((await newer.get("old")).recipe.version, "1.0.0", "the Project is as it was");
   await newer.close();
 });
+
+test("a catalogue recipe that is not installed is refused at creation, never locked without install methods", async () => {
+  // A catalogue entry advertises that a package can be acquired; the package's install manifest is not in it.
+  const catalogue = { ...recipe("1.0.0", null, "@acme/catalogue"), status: "available", specifier: "npm:@acme/catalogue@1.0.0" };
+  const { manager } = await setup(undefined, [catalogue]);
+  await assert.rejects(manager.create({ name: "Cat", recipeName: "@acme/catalogue", start: false }), /not installed yet; install it from the Marketplace/);
+  assert.equal(await manager.get("cat"), undefined, "nothing was created");
+  await manager.close();
+});
