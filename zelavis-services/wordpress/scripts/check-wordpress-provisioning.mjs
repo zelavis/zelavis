@@ -93,11 +93,7 @@ export function register() {
     await rootAgent.close();
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
-    // Updating from a published release means the Platform under test still has that release's recipe until it has been updated;
-    // releases before alpha.26 shipped the hand-written WordPress that names the older set. verify-preview runs after the update.
-    const previous = /^2\.0\.0-alpha\.(\d+)$/.exec(process.env.ZELAVIS_PROVISIONING_FROM_NPM ?? "");
-    const handWrittenRelease = Boolean(process.env.ZELAVIS_QUALIFY_UPDATE) && phase !== "verify-preview" && previous !== null && Number(previous[1]) < 26;
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]);
+    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["mariadb-server"]);
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await (async () => { await installRecipeIfAvailable({ baseUrl, cookie: await readFile("/var/lib/zelavis/qualification-session", "utf8") }, "@zelavis/wordpress"); return client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true }); })();
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -209,9 +205,8 @@ export function register() {
     for (const unit of ["nginx.service", "php8.2-fpm.service", "mariadb.service"]) {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
-    // Every fixed set the recipe uses is already satisfied. The hand-written WordPress of releases before alpha.26
-    // names the wordpress-stack set; the recipe needs only a database, so its set (which installs no PHP) is checked instead.
-    for (const set of handWrittenRelease ? ["wordpress-stack"] : ["mariadb-server"]) {
+    // Every fixed set the recipe uses is already satisfied: it needs only a database, so the set installs no PHP.
+    for (const set of ["mariadb-server"]) {
       const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
       let record = repeated;
       for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {
