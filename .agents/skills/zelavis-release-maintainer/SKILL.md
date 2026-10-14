@@ -36,7 +36,9 @@ Use this skill for:
    catalogue of a release that shipped an outdated default.
 6. Keep alpha vs stable intent explicit.
    Manual npm browser verification requires an interactive terminal; the release
-   wrapper uses direct recursive pnpm publishing after Changesets versioning.
+   wrapper packs with `pnpm pack` (which rewrites `workspace:` ranges) and publishes
+   each tarball with `npm publish`, `zelavis` first, so npm runs its own browser
+   login and 2FA. `pnpm publish` no longer starts that flow and fails with a 404.
 7. A release is `npm publish` and nothing else: no signing keys, secrets, GitHub
    Actions/Releases, archives or APT repository (AGENTS.md "Distribution Trust
    Model"). Do not add them without the owner asking. After publishing, install the

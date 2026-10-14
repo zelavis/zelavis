@@ -1,7 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -16,22 +18,21 @@ if (!["alpha", "latest"].includes(tag)) {
   process.exit(1);
 }
 
+const REGISTRY = "https://registry.npmjs.org";
 const env = { ...process.env };
-let tempDir;
+const tempDir = mkdtempSync(join(tmpdir(), "zelavis-release-"));
 const preStatePath = join(process.cwd(), ".changeset", "pre.json");
-const isPreMode = existsSync(preStatePath);
-const preState = isPreMode
+const preState = existsSync(preStatePath)
   ? JSON.parse(readFileSync(preStatePath, "utf8"))
   : null;
 
 if (env.NPM_TOKEN) {
-  tempDir = mkdtempSync(join(tmpdir(), "zelavis-npm-"));
   const npmrcPath = join(tempDir, ".npmrc");
 
   writeFileSync(
     npmrcPath,
     [
-      "registry=https://registry.npmjs.org/",
+      `registry=${REGISTRY}/`,
       `//registry.npmjs.org/:_authToken=${env.NPM_TOKEN}`,
       "always-auth=true",
       "",
@@ -45,15 +46,16 @@ if (env.NPM_TOKEN) {
   console.log("Using NPM_TOKEN for non-interactive npm publishing.");
 } else {
   console.log(
-    "NPM_TOKEN is not set. Falling back to normal manual npm authentication.",
+    "NPM_TOKEN is not set. npm will ask for the owner's login and 2FA in the browser.",
   );
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
     stdio: "inherit",
     env,
+    ...options,
   });
 
   if (result.error) {
@@ -67,10 +69,79 @@ function run(command, args) {
   }
 }
 
+const capture = (command, args, options = {}) =>
+  execFileSync(command, args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], ...options }).trim();
+
+/** Whether npm already lists this exact version; a release never republishes one. */
+function listedOnNpm(name, version) {
+  try {
+    return capture("npm", ["view", `${name}@${version}`, "version", `--registry=${REGISTRY}`]) === version;
+  } catch {
+    return false;
+  }
+}
+
+/** The workspace's public packages, read from pnpm so a new package is covered without being named here. */
+function publicPackages() {
+  const listed = JSON.parse(capture("pnpm", ["ls", "-r", "--json", "--depth", "-1"]));
+  return listed
+    .filter((entry) => !entry.private && entry.name && entry.version)
+    .map((entry) => ({
+      name: entry.name,
+      version: entry.version,
+      path: entry.path,
+      manifest: JSON.parse(readFileSync(join(entry.path, "package.json"), "utf8")),
+    }));
+}
+
+/** Packages before the packages that depend on them, so `zelavis` is on npm before `@zelavis/*` names it. */
+function inDependencyOrder(packages) {
+  const names = new Set(packages.map((entry) => entry.name));
+  const dependsOn = (entry) => Object.keys({
+    ...entry.manifest.dependencies,
+    ...entry.manifest.peerDependencies,
+    ...entry.manifest.optionalDependencies,
+  }).filter((name) => names.has(name) && name !== entry.name);
+  const ordered = [];
+  const placed = new Set();
+  while (ordered.length < packages.length) {
+    const ready = packages
+      .filter((entry) => !placed.has(entry.name) && dependsOn(entry).every((name) => placed.has(name)))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    if (ready.length === 0) throw new Error("The packages to publish depend on each other in a cycle.");
+    for (const entry of ready) {
+      ordered.push(entry);
+      placed.add(entry.name);
+    }
+  }
+  return ordered;
+}
+
+/**
+ * pnpm packs, because it rewrites `workspace:` ranges to the exact versions being released; npm
+ * publishes, because it runs npm's own browser login and 2FA, which pnpm no longer starts.
+ */
+function pack(entry, index) {
+  const destination = join(tempDir, String(index));
+  mkdirSync(destination);
+  capture("pnpm", ["pack", "--pack-destination", destination], { cwd: entry.path });
+  const tarballs = readdirSync(destination).filter((file) => file.endsWith(".tgz"));
+  if (tarballs.length !== 1) throw new Error(`pnpm pack produced ${tarballs.length} tarballs for ${entry.name}.`);
+  const tarball = join(destination, tarballs[0]);
+  const packed = JSON.parse(capture("tar", ["-xOzf", tarball, "package/package.json"]));
+  if (packed.name !== entry.name || packed.version !== entry.version) {
+    throw new Error(`The packed ${entry.name}@${entry.version} names itself ${packed.name}@${packed.version}.`);
+  }
+  const unresolved = Object.entries({ ...packed.dependencies, ...packed.peerDependencies, ...packed.optionalDependencies })
+    .filter(([, range]) => String(range).startsWith("workspace:"));
+  if (unresolved.length > 0) {
+    throw new Error(`The packed ${entry.name} still names workspace ranges: ${unresolved.map(([name]) => name).join(", ")}.`);
+  }
+  return tarball;
+}
+
 try {
   run("pnpm", ["release:check"]);
-
-  const publishArgs = ["changeset", "publish"];
 
   if (preState) {
     if (tag === "latest") {
@@ -80,28 +151,32 @@ try {
     if (preState.tag !== tag) {
       throw new Error(`Changesets prerelease mode is active with tag "${preState.tag}", which does not match the requested publish tag "${tag}".`);
     }
-  } else if (tag !== "latest") {
-    publishArgs.push("--tag", tag);
   }
 
-  // Tags must represent the files being published, including version changes.
+  // What is published must be what is committed, version changes included.
   run("git", ["diff", "--quiet"]);
   run("git", ["diff", "--cached", "--quiet"]);
-  // Changesets captures its child publisher's output, so pnpm's browser 2FA
-  // flow has no interactive terminal. Keep versioning in Changesets, but let
-  // pnpm publish directly with inherited stdio for the owner's manual login.
-  // Recursive publishing skips versions already present in the registry.
-  if (env.NPM_TOKEN) run("pnpm", publishArgs);
-  else run("pnpm", ["-r", "publish", "--tag", tag, "--access", "public", "--no-git-checks"]);
+
+  const pending = inDependencyOrder(publicPackages().filter((entry) => !listedOnNpm(entry.name, entry.version)));
+  if (pending.length === 0) {
+    console.log("Every public package is already on npm at its current version; nothing to publish.");
+  } else {
+    console.log(`Publishing ${pending.map((entry) => `${entry.name}@${entry.version}`).join(", ")} with tag "${tag}".`);
+    // Packed first, so a package that cannot be packed stops the release before anything is published.
+    const tarballs = pending.map((entry, index) => ({ entry, tarball: pack(entry, index) }));
+    for (const { entry, tarball } of tarballs) {
+      run("npm", ["publish", tarball, "--tag", tag, "--access", "public", `--registry=${REGISTRY}`]);
+      console.log(`Published ${entry.name}@${entry.version}.`);
+    }
+  }
 
   // The release is the npm package: install.sh and `npm create zelavis` fetch
   // exactly that version. Nothing else is built, signed or uploaded.
   const platform = JSON.parse(readFileSync(join(process.cwd(), "packages/zelavis/package.json"), "utf8"));
-  const capture = (command, args) => execFileSync(command, args, { encoding: "utf8", env }).trim();
   // npm lists a new version 10-15 minutes after publish, so wait rather than fail.
   const view = () => {
     try {
-      return JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", "--registry=https://registry.npmjs.org"]));
+      return JSON.parse(capture("npm", ["view", `zelavis@${platform.version}`, "name", "version", "dist.integrity", "--json", `--registry=${REGISTRY}`]));
     } catch { return undefined; }
   };
   let published = view();
@@ -118,7 +193,5 @@ try {
   console.error(error.message);
   process.exitCode = error.exitCode ?? 1;
 } finally {
-  if (tempDir) {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  rmSync(tempDir, { recursive: true, force: true });
 }
