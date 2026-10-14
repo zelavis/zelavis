@@ -47,6 +47,14 @@ export interface RecipePhaseRequest {
   /** Absolute path of the recipe's JavaScript module: the verified, frozen artifact. */
   readonly module: string;
   readonly root: string;
+  /** Other Project directories the phase may write by absolute path: `app/` under recipe contract 2. */
+  readonly areas?: readonly string[];
+  /**
+   * The root and areas as the recipe's context spells them, where that differs from where they really
+   * lie (through a link such as macOS's /var): an absolute path a recipe builds from its context is
+   * translated before it is confined, and only the real path is ever opened.
+   */
+  readonly aliases?: Readonly<Record<string, string>>;
   readonly secretsDirectory: string;
   /** Requirement name to absolute executable. */
   readonly commands: Readonly<Record<string, string>>;
@@ -67,6 +75,8 @@ const Request = Schema.Struct({
   phase: Schema.Literals(PHASES),
   module: Schema.String,
   root: Schema.String,
+  areas: Schema.optional(Schema.Array(Schema.String)),
+  aliases: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   secretsDirectory: Schema.String,
   commands: Schema.Record(Schema.String, Schema.String),
   context: Schema.Struct({
@@ -135,7 +145,8 @@ function readableDirectories(request: RecipePhaseRequest): readonly string[] {
   // The host checks each declared executable before it runs one.
   // Both the path as declared and where it really lies: the host stats the first, which may be a link.
   const executables = [...Object.values(request.commands), ...TAR_CANDIDATES].flatMap((path) => [path, realOrSelf(path)]);
-  const directories = new Set<string>([...executables, zelavis, effect, realOrSelf(dirname(request.module)), realOrSelf(request.root), realOrSelf(request.secretsDirectory)]);
+  const directories = new Set<string>([...executables, zelavis, effect, realOrSelf(dirname(request.module)), realOrSelf(request.root),
+    ...(request.areas ?? []).map(realOrSelf), realOrSelf(request.secretsDirectory)]);
   // Effect's own dependencies sit beside it: hoisted under npm, in its folder's node_modules under pnpm.
   if (basename(dirname(effect)) === "node_modules") directories.add(dirname(effect));
   // Under pnpm, a package's own dependencies are siblings in the virtual store.
@@ -146,7 +157,7 @@ function readableDirectories(request: RecipePhaseRequest): readonly string[] {
 }
 
 export function phaseArguments(request: RecipePhaseRequest, runner: string): readonly string[] {
-  const writable = [realOrSelf(request.root), realOrSelf(request.secretsDirectory)];
+  const writable = [realOrSelf(request.root), ...(request.areas ?? []).map(realOrSelf), realOrSelf(request.secretsDirectory)];
   return [
     "--permission",
     ...readableDirectories(request).map((directory) => `--allow-fs-read=${directory}`),
@@ -188,29 +199,39 @@ export const runRecipePhase = (options: RunRecipePhaseOptions): Effect.Effect<Re
     if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > MAX_TIMEOUT_MS) {
       return yield* Effect.fail(fail(options.phase, "The phase deadline is not valid."));
     }
-    for (const path of [options.module, options.root, options.secretsDirectory, ...Object.values(options.commands)]) {
+    for (const path of [options.module, options.root, ...(options.areas ?? []), options.secretsDirectory, ...Object.values(options.commands)]) {
       if (!isAbsolute(path)) return yield* Effect.fail(fail(options.phase, "Paths given to a phase must be absolute."));
     }
     const stats = yield* integration(() => lstat(options.module)).pipe(
       Effect.mapError(() => fail(options.phase, "The recipe module does not exist.")),
     );
     if (!stats.isFile() || stats.isSymbolicLink()) return yield* Effect.fail(fail(options.phase, "The recipe module must be a regular file."));
+    // Made before anything is resolved: a directory that does not exist yet has no real path to grant.
+    for (const directory of [options.root, ...(options.areas ?? [])]) {
+      yield* integration(() => mkdir(directory, { recursive: true })).pipe(Effect.mapError(() => fail(options.phase, "The project directories could not be prepared.")));
+    }
 
     const request: RecipePhaseRequest = {
       // Real paths: the permission model and module loading both see through links, and the child must name what it may use.
       phase: options.phase, module: realOrSelf(options.module), root: realOrSelf(options.root), secretsDirectory: realOrSelf(options.secretsDirectory),
+      ...(options.areas?.length ? { areas: options.areas.map(realOrSelf) } : {}),
+      ...(() => {
+        const aliases = Object.fromEntries([options.root, ...(options.areas ?? [])]
+          .map((path) => [resolve(path), realOrSelf(path)] as const).filter(([given, real]) => given !== real));
+        return Object.keys(aliases).length > 0 ? { aliases } : {};
+      })(),
       commands: options.commands, context: options.context, allowed: options.allowed,
       ...(options.previous === undefined ? {} : { previous: options.previous }),
     };
     // The phase may write only below these, so they exist and belong to its user before it starts.
     const prepared = "The project directories could not be prepared.";
     const prepare = <A>(run: () => Promise<A>) => integration(run).pipe(Effect.mapError(() => fail(options.phase, prepared)));
-    yield* prepare(() => mkdir(request.root, { recursive: true }));
+    for (const directory of [request.root, ...(request.areas ?? [])]) yield* prepare(() => mkdir(directory, { recursive: true }));
     yield* prepare(() => mkdir(request.secretsDirectory, { recursive: true, mode: 0o700 }));
     yield* prepare(() => chmod(request.secretsDirectory, 0o700));
     if (options.uid !== undefined && options.gid !== undefined) {
       const { uid, gid } = options;
-      yield* prepare(() => chown(request.root, uid, gid));
+      for (const directory of [request.root, ...(request.areas ?? [])]) yield* prepare(() => chown(directory, uid, gid));
       yield* prepare(() => chown(request.secretsDirectory, uid, gid));
     }
     const args = yield* evaluate(() => phaseArguments(request, RUNNER)).pipe(
@@ -308,7 +329,8 @@ export const runPhaseInChild = (stdin: string): Effect.Effect<void> =>
       return yield* Effect.fail(fail(request.phase, "The recipe module must default-export defineRecipe({ install, start, ... })."));
     }
     const host = createRecipeHost({
-      root: request.root, secretsDirectory: request.secretsDirectory, commands: request.commands,
+      root: request.root, ...(request.areas ? { areas: request.areas } : {}), ...(request.aliases ? { aliases: request.aliases } : {}),
+      secretsDirectory: request.secretsDirectory, commands: request.commands,
       progress: (entry) => send({ type: "progress", ...entry }),
     });
     const run = <A>(program: Effect.Effect<A, RecipeError, RecipeHost>) => program.pipe(Effect.provideService(RecipeHost, host));

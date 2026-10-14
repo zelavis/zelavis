@@ -529,6 +529,17 @@ must still allow cleanup of that exact Project through its trusted driver or
 Agent; malformed descriptors and genuine cleanup failures must remain visible.
 
 
+**The app folder rule.** A third-party app's Project keeps the application, and only the
+application, in `<project>/app/`: its code, uploads and configuration (`app/site`) and its database
+(`app/db`), each a named directory of the recipe manifest. Zelavis never writes inside `app/` after the
+app is installed, whatever changes around it: recipe versions, integration code, dashboard menus and
+APIs, Platform updates. Everything Zelavis owns for running the app (web server and PHP-FPM
+configuration, pid files, logs, `run/`, `tmp/`, `sessions/`) lives in `<project>/.zelavis/server/`, the
+recipe runtime's `root`, which Zelavis may rewrite freely. Recipe manifest contract 2 is this layout;
+contract 1 (application and plumbing together in `app/`) runs unchanged until its Project upgrades to a
+contract 2 recipe, which moves only the plumbing out. A new recipe declares every directory of
+application data as a named directory, and nothing else of the application lives under `root`.
+
 Managed third-party app recipe updates refresh Zelavis integration, not the app's
 software. When the recipe also supervises the app's processes (a recipe runtime such as
 WordPress, and any future Joomla, phpBB, PrestaShop or TYPO3 recipe), the running update is one

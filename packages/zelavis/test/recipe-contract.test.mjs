@@ -29,7 +29,7 @@ test("verified recipe metadata is a strict immutable snapshot with independent s
 
 test("recipe manifests refuse ambiguous identities, paths, unpinned bytes and unbounded declarations", () => {
   const changes = [
-    (m) => { m.contract = 2; },
+    (m) => { m.contract = 3; },
     (m) => { m.methods[0].driver = "shell"; },
     (m) => { m.methods[0].id = "../native"; },
     (m) => { m.methods[0].entry = "./dist/../recipe.js"; },

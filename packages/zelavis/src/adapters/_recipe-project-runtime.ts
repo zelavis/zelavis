@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, chown, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -36,8 +36,11 @@ import { preparedProjectRecord } from "./_project-record-validation.js";
  * no knowledge of Debian versus macOS.
  *
  * Layout under `<directory>/<project id>`:
- * - `app/`: everything the recipe's files API reaches. Site files, data and configuration.
- * - `.zelavis/secrets/`: generated credentials, outside `app/` so no recipe path reaches them.
+ * - `app/`: the application. Its named directories (`site`, `db`) live here under every contract.
+ * - The recipe's root, where it writes the files the Platform runs the application with (server
+ *   configuration, pid files, logs, temporary space): `app/` itself under manifest contract 1, and
+ *   `.zelavis/server/` under contract 2, so that nothing Zelavis writes lands among the application's files.
+ * - `.zelavis/secrets/`: generated credentials, outside both so no recipe path reaches them.
  * - `.zelavis/recipe-state.json`: ports, socket identity, resolved executables, install progress.
  * - `project.json`: the descriptor other parts of the Platform read.
  * Unix sockets live in a short directory beside `directory` on Linux, because separate systemd
@@ -199,11 +202,16 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const paths = (id: string) => {
     const project = join(projectsDirectory, id);
     return {
-      project, root: join(project, "app"), zelavis: join(project, ".zelavis"),
+      project, app: join(project, "app"), zelavis: join(project, ".zelavis"),
       secrets: join(project, ".zelavis", "secrets"), state: join(project, ".zelavis", "recipe-state.json"),
       planState: join(project, ".zelavis", "plan-state.json"), descriptor: join(project, "project.json"),
     };
   };
+  /** The recipe's root for a Project, by the contract of the recipe that runs there; see the layout above. */
+  const rootOf = (id: string, parsed: Pick<RecipeManifest, "contract">) =>
+    parsed.contract === 2 ? join(paths(id).zelavis, "server") : paths(id).app;
+  /** The directories a recipe may write by absolute path besides its root. */
+  const areasOf = (id: string, parsed: Pick<RecipeManifest, "contract">) => parsed.contract === 2 ? [paths(id).app] : [];
   /** Short and shared by every unit: separate systemd units have separate private temp directories. */
   const socketDirectory = (state: Pick<RecipeState, "socketId">) =>
     join(process.platform === "linux" ? resolve(projectsDirectory, "..", "runtime-sockets") : "/tmp", `zv-${state.socketId}`);
@@ -247,7 +255,31 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
   /** The manifest's named directories where the Project has them now. */
   const namedDirectories = (id: string, state: RecipeState, parsed: RecipeManifest) =>
-    Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).root, state.layout?.[directory.name] ?? directory.path)]));
+    Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).app, state.layout?.[directory.name] ?? directory.path)]));
+
+  /**
+   * After a Project first runs a contract 2 recipe: what contract 1 kept in `app/` beside the application
+   * (server configuration, pid files, logs, temporary space) is moved to `.zelavis/server/contract-1/`,
+   * so `app/` holds the application alone. Moved rather than deleted, and only what is not one of the
+   * recipe's named directories.
+   */
+  const tidyApplication = (id: string, state: RecipeState, parsed: RecipeManifest) => Effect.gen(function* () {
+    if (parsed.contract !== 2) return;
+    const app = paths(id).app;
+    const kept = new Set((parsed.directories ?? []).map((directory) => (state.layout?.[directory.name] ?? directory.path).split("/")[0]));
+    const entries = yield* integration(() => readdir(app)).pipe(Effect.orElseSucceed((): string[] => []));
+    const leftovers = entries.filter((name) => !kept.has(name));
+    if (leftovers.length === 0) return;
+    const aside = join(rootOf(id, parsed), "contract-1");
+    yield* integration(() => mkdir(aside, { recursive: true, mode: 0o700 }));
+    for (const name of leftovers) {
+      // A name already set aside by an earlier move keeps both: the later one gets a suffix.
+      let target = join(aside, name);
+      for (let index = 1; (yield* integration(() => stat(target)).pipe(Effect.as(true), Effect.orElseSucceed(() => false))); index += 1) target = join(aside, `${name}.${index}`);
+      yield* integration(() => rename(join(app, name), target));
+    }
+    log(id, "system", `Moved ${leftovers.length} file(s) the Platform kept beside the application out of app/: ${leftovers.join(", ")}.`);
+  }).pipe(Effect.mapError(asRuntimeError));
 
   /** Where this host's programs and the recipe's own pinned runtimes keep their builds. */
   const runtimeStore = options.runtimeStore ?? join(projectsDirectory, "..", "runtimes");
@@ -283,7 +315,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     projectId: project.id,
     hostname: "localhost",
     software, method, config: {}, ports: state.ports,
-    directories: { root: paths(project.id).root, sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
+    directories: { root: rootOf(project.id, parsed), sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
     account: {
       user: owner.user, group: owner.group, switchUser: owner.switchUser,
       ...(accountId(owner.uid, process.getuid?.()) === undefined ? {} : { uid: accountId(owner.uid, process.getuid?.()) }),
@@ -292,7 +324,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   });
 
   const allowedNames = (id: string, state: RecipeState, parsed: RecipeManifest) =>
-    ({ commands: Object.keys(state.commands), ports: parsed.ports.map((port) => port.name), directories: [paths(id).root, socketDirectory(state)] });
+    ({ commands: Object.keys(state.commands), ports: parsed.ports.map((port) => port.name), directories: [...new Set([rootOf(id, parsed), paths(id).app, socketDirectory(state)])] });
 
   /** Runs one phase of a recipe package: the Project's own, or a candidate being staged for an upgrade. */
   const phase = Effect.fn("RecipeRuntime.phase")(function* (
@@ -304,7 +336,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     if (!method || method.driver !== "js" || !software) return yield* Effect.fail(failure("The recipe no longer offers this Project's install method and software version."));
     const where = paths(id);
     return yield* runRecipePhase({
-      phase: name, module: resolve(packageDirectory, method.entry), root: where.root, secretsDirectory: where.secrets,
+      phase: name, module: resolve(packageDirectory, method.entry), root: rootOf(id, parsed), secretsDirectory: where.secrets,
+      ...(areasOf(id, parsed).length > 0 ? { areas: areasOf(id, parsed) } : {}),
       commands: state.commands, context: context({ id }, state, parsed, software, method, owner),
       allowed: allowedNames(id, state, parsed),
       timeoutMs, progress: (entry) => log(id, "system", `[${entry.phase}] ${entry.message}`),
@@ -334,11 +367,12 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   );
 
   /** A plan controller for a Project, listening to what its processes do so the Project's log tells it. */
-  const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, placement?: PlacementToken) {
+  const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, parsed: RecipeManifest, placement?: PlacementToken) {
+    const root = rootOf(id, parsed);
     const host = makeAgentPlanHost({
-      runner: agent, workloadId: id, cwd: paths(id).root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
+      runner: agent, workloadId: id, cwd: root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
       ...(placement ? { placement: placement as never } : {}),
-      baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: paths(id).root, LANG: "C.UTF-8" },
+      baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, LANG: "C.UTF-8" },
       resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
     });
@@ -469,7 +503,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const owner = yield* account();
       const where = paths(project.id);
       const previous = yield* readStateIfPresent(project.id);
-      const locations = { zelavis: where.zelavis, root: where.root, secrets: where.secrets };
+      // The application's directories are the same under every contract: adoption moves folders into `app/`.
+      const locations = { zelavis: where.zelavis, root: where.app, secrets: where.secrets };
 
       // A Project made by an earlier layout of this recipe is taken over by moving its folders
       // where this layout keeps them. Its files and database are not read or rewritten.
@@ -494,7 +529,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       yield* Effect.gen(function* () {
       const prepared = "The Project directories could not be prepared.";
       const make = (path: string) => integration(() => mkdir(path, { recursive: true, mode: 0o700 })).pipe(Effect.mapError(() => failure(prepared)));
-      yield* make(where.root);
+      yield* make(where.app);
+      yield* make(rootOf(project.id, parsed));
       yield* make(where.secrets);
 
       // Ports and socket identity are chosen once and kept, so a restart finds the same addresses.
@@ -524,6 +560,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           yield* integration(() => chown(path, uid, gid)).pipe(Effect.mapError(() => failure(prepared)));
         }
         yield* ensureTraversable(dirname(where.project), owner);
+        // Under contract 2 the account reaches its root inside `.zelavis`, which it may cross but not list.
+        if (parsed.contract === 2) yield* ensureTraversable(rootOf(project.id, parsed), owner);
       }
 
       if (!state.installed) {
@@ -546,7 +584,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
         // Nothing of the Project runs, so this is the moment its data can go where the recipe now wants it.
         const owner = yield* account();
         const relocation = yield* relocateDirectories({
-          root: paths(project.id).root, layout: state.layout ?? {},
+          root: paths(project.id).app, layout: state.layout ?? {},
           directories: (parsed.directories ?? []).map((directory) => ({ name: directory.name, wanted: directory.path })),
           ...(owner.uid !== undefined && owner.gid !== undefined ? { owner: { uid: owner.uid, gid: owner.gid } } : {}),
         }).pipe(Effect.mapError(asRuntimeError));
@@ -576,9 +614,11 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           state = { ...state, ...(locked !== undefined ? { installedFor: locked } : {}) };
           yield* writeState(project.id, state);
         }
+        // Nothing runs yet, and the recipe's root is prepared: anything of an earlier layout left in app/ can go.
+        yield* tidyApplication(project.id, state, parsed);
       }
       // Running on the new layout means the upgrade was recorded: the way back can close.
-      yield* commitAdoption({ zelavis: paths(project.id).zelavis, root: paths(project.id).root, secrets: paths(project.id).secrets }).pipe(Effect.mapError(asRuntimeError));
+      yield* commitAdoption({ zelavis: paths(project.id).zelavis, root: paths(project.id).app, secrets: paths(project.id).secrets }).pipe(Effect.mapError(asRuntimeError));
       const url = urlOf(parsed, state);
       const answer = () => ({ status: "running" as const, ...(url ? { url } : {}), startedAt: new Date().toISOString() });
 
@@ -593,7 +633,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           const { uid, gid } = owner;
           yield* integration(() => chown(socketDirectory(state), uid, gid)).pipe(Effect.mapError(asRuntimeError));
         }
-        controller = yield* createController(project.id, state, placement);
+        controller = yield* createController(project.id, state, parsed, placement);
       }
       const result = yield* phase(project.id, "start", state, parsed, PHASE_TIMEOUT_MS);
       if (result.phase !== "start") return yield* Effect.fail(failure("The start phase returned no process plan."));
@@ -641,12 +681,12 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
     commitUpgrade: Effect.fn("RecipeRuntime.commitUpgrade")(function* (projectId: string) {
       const where = paths(projectId);
-      yield* commitAdoption({ zelavis: where.zelavis, root: where.root, secrets: where.secrets }).pipe(Effect.mapError(asRuntimeError));
+      yield* commitAdoption({ zelavis: where.zelavis, root: where.app, secrets: where.secrets }).pipe(Effect.mapError(asRuntimeError));
     }),
 
     abandonUpgrade: Effect.fn("RecipeRuntime.abandonUpgrade")(function* (projectId: string) {
       const where = paths(projectId);
-      const locations = { zelavis: where.zelavis, root: where.root, secrets: where.secrets };
+      const locations = { zelavis: where.zelavis, root: where.app, secrets: where.secrets };
       if (!(yield* adoptionPending(locations))) return;
       const state = yield* readStateIfPresent(projectId);
       yield* revertAdoption(locations).pipe(Effect.mapError(asRuntimeError));
@@ -661,17 +701,26 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     applyUpdate: Effect.fn("RecipeRuntime.applyUpdate")(function* (
       projectId: string, update: ZelavisProjectRuntimeUpdate, commit: (selection: "previous" | "target") => Promise<void>,
     ) {
-      return yield* withKit(applyRecipeUpdate(
+      const snapshot = yield* withKit(applyRecipeUpdate(
         projectId, update,
         (choice) => integration(() => commit(choice)).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
       )).pipe(Effect.mapError(asRuntimeError));
+      // The new recipe is the Project's and its processes run from its root: under contract 2, what an
+      // earlier layout kept in app/ beside the application is set aside. A failure here changes nothing that runs.
+      const now = yield* readManifest(join(paths(projectId).zelavis, "recipe", "package")).pipe(Effect.option);
+      const state = yield* readStateIfPresent(projectId);
+      if (now._tag === "Some" && state) {
+        yield* tidyApplication(projectId, state, now.value).pipe(
+          Effect.catch((error) => Effect.sync(() => log(projectId, "system", `Earlier layout files were left in app/: ${error.message}`))));
+      }
+      return snapshot;
     }),
 
     setupValues: Effect.fn("RecipeRuntime.setupValues")(function* (projectId: string, options: { readonly reveal: boolean }) {
       const [parsed, state, owner] = [yield* manifest, yield* readState(projectId), yield* account()];
       const source = {
         ports: state.ports, directories: namedDirectories(projectId, state, parsed),
-        root: paths(projectId).root, sockets: socketDirectory(state), user: owner.user,
+        root: rootOf(projectId, parsed), sockets: socketDirectory(state), user: owner.user,
       };
       if (!options.reveal) return listSetupValues(parsed, source);
       const names = [...new Set((parsed.setup ?? []).flatMap(setupSecrets))];
@@ -723,7 +772,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           if (result.phase !== "start") return yield* Effect.fail(failure("The start phase returned no process plan."));
           plan = result.plan;
         }
-        const controller = yield* createController(id, state);
+        const controller = yield* createController(id, state, parsed);
         yield* controller.adopt(plan, attached, saved?.configs ?? {}).pipe(Effect.mapError(asRuntimeError));
       }), { concurrency: 4, discard: true });
     }),

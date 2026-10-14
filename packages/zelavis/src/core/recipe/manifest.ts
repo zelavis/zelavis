@@ -115,7 +115,14 @@ const Runtime = Schema.Struct({
 
 /** The verified package's install metadata, independent of its npm revision. */
 export const RecipeManifest = Schema.Struct({
-  contract: Schema.Literal(1),
+  /**
+   * The layout the recipe runs in. 1: the application and the files the Platform runs it with share
+   * the recipe's root, `app/`. 2: the application alone lives in `app/`, as the named directories, and
+   * the root is the Platform's own directory beside it (`.zelavis/server`), so nothing Zelavis writes
+   * ever lands among the application's files. A contract 2 recipe declares every directory of
+   * application data as a named directory.
+   */
+  contract: Schema.Literals([1, 2]),
   methods: Schema.Array(Schema.Union([
     Schema.Struct({
       id: Name, driver: Schema.Literal("js"), entry: Entry, requires: Requirements,
@@ -166,7 +173,7 @@ export function parseRecipeManifest(input: unknown): RecipeManifest {
     try {
       manifest = Schema.decodeUnknownSync(RecipeManifest)(input, { onExcessProperty: "error" });
     } catch {
-      throw new InvalidRecipeManifest({ message: "Recipe manifest does not match contract 1." });
+      throw new InvalidRecipeManifest({ message: "Recipe manifest does not match contract 1 or 2." });
     }
     unique(manifest.methods.map((method) => method.id), "method IDs");
     unique(manifest.software.map((software) => software.version), "software versions");

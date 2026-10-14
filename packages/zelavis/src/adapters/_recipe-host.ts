@@ -48,8 +48,16 @@ const COMMAND_NAME = /^[a-z][a-z0-9-]{0,63}$/;
 export const TAR_CANDIDATES = ["/usr/bin/tar", "/bin/tar"] as const;
 
 export interface RecipeHostOptions {
-  /** The project directory every path is relative to. Must exist. */
+  /** The project directory every relative path is relative to. Must exist. */
   readonly root: string;
+  /**
+   * Other directories of the Project a recipe may name by absolute path: its application directory
+   * (`app/`) under contract 2, whose root is the Platform's own directory beside it. Anything else
+   * absolute is refused, as is any path that climbs out or crosses a symbolic link.
+   */
+  readonly areas?: readonly string[];
+  /** Other spellings of the root and areas (through a link), mapped to where they lie; an absolute path is translated first. */
+  readonly aliases?: Readonly<Record<string, string>>;
   /** Where generated secrets live. Outside `root`, so no path can reach them. */
   readonly secretsDirectory: string;
   /** Requirement name to absolute executable, built by the host from the recipe's `requires`. */
@@ -86,10 +94,14 @@ const lstatIfPresent = (operation: string, path: string) =>
 
 const refuse = (operation: string, message: string) => Effect.fail(fail(operation, message));
 
-function checkRelative(operation: string, path: unknown): Effect.Effect<readonly string[], RecipeError> {
+function checkPath(operation: string, path: unknown): Effect.Effect<string, RecipeError> {
   if (typeof path !== "string" || path.length === 0 || Buffer.byteLength(path) > MAX_PATH_BYTES || path.includes("\0") || path.includes("\\")) {
     return refuse(operation, "The path is empty, too long or has characters that are not allowed.");
   }
+  return Effect.succeed(path);
+}
+
+function checkRelative(operation: string, path: string): Effect.Effect<readonly string[], RecipeError> {
   if (path.startsWith("/")) return refuse(operation, "The path must be relative to the project.");
   const segments = path.split("/").filter((segment) => segment !== "" && segment !== ".");
   if (segments.length === 0) return refuse(operation, "The path names the project directory itself.");
@@ -99,12 +111,18 @@ function checkRelative(operation: string, path: unknown): Effect.Effect<readonly
 
 export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
   const root = resolve(options.root);
+  const areas = [root, ...(options.areas ?? []).map((area) => resolve(area))];
+  const aliases = Object.entries(options.aliases ?? {}).map(([given, real]) => [resolve(given), resolve(real)] as const);
+  /** A path as the recipe's context spells it, translated to where it lies. */
+  const unalias = (path: string) => {
+    const match = aliases.find(([given]) => path === given || path.startsWith(given + sep));
+    return match ? match[1] + path.slice(match[0].length) : path;
+  };
   const secretsDirectory = resolve(options.secretsDirectory);
   const fetchImpl = options.fetch ?? fetch;
   /** Secret values this host has handed out, to remove from anything it returns. */
   const known = new Map<string, string>();
 
-  const insideRoot = (candidate: string) => candidate === root || candidate.startsWith(root + sep);
 
   /**
    * The absolute path for a relative one, after refusing any existing symlink along it. A path
@@ -112,16 +130,26 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
    */
   const locate = (operation: string, path: unknown): Effect.Effect<string, RecipeError> =>
     Effect.gen(function* () {
-      const segments = yield* checkRelative(operation, path);
-      let current = root;
+      const checked = unalias(yield* checkPath(operation, path));
+      // An absolute path is taken as relative to the area holding it, and checked exactly as a relative one is.
+      let base = root;
+      let relative = checked;
+      if (checked.startsWith("/")) {
+        const area = areas.find((candidate) => checked === candidate || checked.startsWith(candidate + sep));
+        if (area === undefined) return yield* refuse(operation, "The path is outside the project.");
+        base = area;
+        relative = checked.slice(area.length + 1);
+      }
+      const segments = yield* checkRelative(operation, relative);
+      let current = base;
       for (const segment of segments) {
         current = join(current, segment);
         const exists = yield* lstatIfPresent(operation, current);
         if (exists === undefined) break;
         if (exists.isSymbolicLink()) return yield* refuse(operation, "The path crosses a symbolic link.");
       }
-      const absolute = join(root, ...segments);
-      if (!insideRoot(absolute)) return yield* refuse(operation, "The path leaves the project.");
+      const absolute = join(base, ...segments);
+      if (!(absolute === base || absolute.startsWith(base + sep))) return yield* refuse(operation, "The path leaves the project.");
       return absolute;
     });
 
