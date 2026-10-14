@@ -3387,7 +3387,8 @@ function resolveFabricCoreService(
   const projectPlacement = (
     projectId: string,
   ): Promise<FabricProjectPlacement | undefined> => present(Effect.gen(function* (): Effect.fn.Return<FabricProjectPlacement | undefined, IntegrationFailure> {
-    const project = (yield* integrationValue(context.projects?.get(projectId)));
+    // A view: routing asks for placement on every request, and must not wait out a live update.
+    const project = (yield* integrationValue(context.projects?.view(projectId)));
     return project ? (yield* integrationValue(toPlacement(project))) : undefined;
   }));
 
@@ -7112,8 +7113,9 @@ export function zelavis(
         options.edgePreviews?.configure((projectId, request) => {
           return present(
             Effect.gen(function* () {
+              // A view, so preview traffic keeps flowing through a live update.
               const project = yield* integration(() =>
-                projects?.get(projectId),
+                projects?.view(projectId),
               );
               if (!project || project.deletion)
                 return new Response("Site not found.", { status: 404 });
