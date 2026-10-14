@@ -1,6 +1,6 @@
 ---
 name: zelavis-release-maintainer
-description: Use when preparing or reviewing Zelavis releases, including Changesets, version bumps, publish flow, package README alignment, and release-risk validation across the workspace.
+description: Use whenever the owner asks to release, publish or cut a version of Zelavis ("release a new alpha", "publish a new version", "cut a stable release"), and when preparing or reviewing a release: Changesets, versioning, publishing services and the Platform, the allow-list, release qualification and the update gate. Holds the full step-by-step release runbook.
 ---
 
 # Zelavis Release Maintainer

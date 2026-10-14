@@ -1813,6 +1813,14 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 - Short feature branches go off `dev` or `main` and are squash-merged as usual.
 - Do not assume GitHub app or automation credentials can open PRs automatically; if that fails, leave the branch pushed and provide the PR URL to the user.
 
+## Releasing
+
+When the owner asks for a release ("release", "release a new alpha", "publish a new version",
+"cut a stable release"), follow the runbook in
+`.agents/skills/zelavis-release-maintainer/SKILL.md` step by step, from step 1. It names every
+command, what only the owner does (npm login and 2FA, approving pushes and deploys), and what
+must be green before anything is published. Do not ask the owner to explain the procedure.
+
 ## Documentation Expectations
 
 - Each package should have a focused README with purpose, scope, and basic usage.
