@@ -420,7 +420,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
             if (!source) return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe ${name}@${version} is not available on this host.`));
             const manifest = yield* Effect.flatMap(integration(() => readFile(join(source, "package.json"), "utf8")), (text) => evaluate(() => {
-                const declared = (JSON.parse(text) as { zelavis?: { project?: { install?: unknown } } }).zelavis?.project?.install;
+                const declared = parseJson(text, objectFields<{ zelavis?: { project?: { install?: unknown } } }>({ zelavis: optional(objectFields<{ project?: { install?: unknown } }>({ project: optional(objectFields<{ install?: unknown }>({ install: optional(isUnknown) })) })) }), "recipe package.json").zelavis?.project?.install;
                 if (declared === undefined) throw new ZelavisProjectRuntimeError(`Project recipe ${name}@${version} declares no install methods.`);
                 return parseRecipeManifest(declared);
             }));
