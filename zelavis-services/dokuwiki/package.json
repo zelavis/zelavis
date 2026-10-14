@@ -177,7 +177,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.28"
+    "zelavis": ">=2.0.0-alpha.29"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
