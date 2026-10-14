@@ -5090,6 +5090,10 @@ function resolvePlatformEndpointGroup(
                     entry.service.name,
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
+                  // As in the service list: how a recipe that is not installed yet is installed.
+                  ...(entry.status === "available"
+                    ? { installVia: entry.specifier?.startsWith("npm:") ? "acquire" : "activate" }
+                    : {}),
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
                   ...(entry.service.project?.hostPackages ? { hostPackages: neededHostPackages(entry.service.project.hostPackages, entry.service.project.install, platform) } : {}),
                   ...(entry.service.project?.isolation

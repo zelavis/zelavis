@@ -87,6 +87,8 @@ test("an installed catalogue recipe replaces its listing at once, so a Project c
     (await (await call(runtime, "/runtime/project-recipes")).json()).projectRecipes.find((entry) => entry.name === NAME)?.status;
 
   assert.equal(await recipeStatus(before), "available");
+  const offered = (await (await call(before, "/runtime/project-recipes")).json()).projectRecipes.find((entry) => entry.name === NAME);
+  assert.equal(offered.installVia, "acquire", "the create form installs a listed recipe the way the Marketplace does");
   const refused = await call(before, "/runtime/projects", { method: "POST", body: JSON.stringify({ name: "Early", recipeName: NAME, start: false }) });
   assert.equal(refused.status, 400);
   assert.match((await refused.json()).error, /not installed yet/);

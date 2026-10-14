@@ -411,6 +411,8 @@ export interface RuntimeProjectRecipe {
   title: string;
   version?: string;
   status: "installed" | "available";
+  /** How a recipe that is not installed yet is installed: fetched from the allow-list, or switched on where it is. */
+  installVia?: "acquire" | "activate";
   source?: "official" | "community";
   summary?: string;
   marketplace?: RuntimeServiceRegistryEntry["marketplace"];
@@ -2090,6 +2092,19 @@ export async function updateDashboardService(
     serviceRegistry: result.services,
     activation: result.activation,
   };
+}
+
+/**
+ * Installs a service that is offered but not installed: the Platform acquires an allow-listed package itself
+ * (a bare `npm:` specifier would be imported as a module), and one it already holds is switched on in place.
+ */
+export async function installDashboardService(
+  config: RuntimeConfig,
+  service: { name: string; version?: string; installVia?: "acquire" | "activate" },
+): Promise<RuntimeServiceRegistryMutationResult> {
+  return service.installVia === "acquire"
+    ? createDashboardService(config, { packageSource: `npm:${service.name}@${service.version}`, status: "installed" })
+    : updateDashboardService(config, service.name, { status: "installed" });
 }
 
 /** Installs the newer version the allow-list lists for an installed service; the Platform picks the version. */
