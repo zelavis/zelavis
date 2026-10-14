@@ -1,5 +1,13 @@
 # @zelavis/auth
 
+## 1.1.0-alpha.31
+
+### Patch Changes
+
+- Updated dependencies [43f76c4]
+- Updated dependencies [fc4b2dd]
+  - zelavis@2.0.0-alpha.31
+
 ## 1.1.0-alpha.30
 
 ### Patch Changes
