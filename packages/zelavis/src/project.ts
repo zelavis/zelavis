@@ -399,6 +399,13 @@ export interface ZelavisProjectManager {
   /** Projects owned by one Project. */
   listOwned(ownerProjectId: string): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
+  /**
+   * The Project as it is now, without waiting for a lifecycle transition and
+   * without persisting what it observes. For routing a request: a live update
+   * holds the lifecycle for its whole length, and traffic must keep reaching the
+   * serving runtime meanwhile.
+   */
+  view(id: string): Promise<ZelavisProjectRecord | undefined>;
   versions(id?: string): Promise<ZelavisProjectVersions>;
   /** Values for the application's own setup (a database address, a generated password). Secrets only with `reveal`. */
   setupValues(id: string, options?: { readonly reveal?: boolean }): Promise<readonly ZelavisProjectSetupValue[]>;
@@ -865,6 +872,8 @@ export interface ZelavisProjectDispatcher {
  * group is unsatisfiable no matter which node runs it.
  */
 const BLOCKING_PLACEMENT_REASONS = new Set(["owner-unplaced", "owner-cycle"]);
+/** How old a registry reading may be when it only labels listed Projects. */
+const RECIPE_LABEL_MAX_AGE_MS = 5_000;
 
 export interface ZelavisProjectManagerOptions {
     store: ZelavisSystemStore;
@@ -1083,8 +1092,14 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
     ]));
     // Replaced whole, never edited, so a reader sees one registry or the next.
     let projectRecipeMap = recipeMapOf(typeof projectRecipes === "function" ? yield* integration(() => projectRecipes()) : projectRecipes);
-    const refreshRecipes = typeof projectRecipes === "function"
-        ? integration(() => projectRecipes()).pipe(Effect.tap((entries) => Effect.sync(() => { projectRecipeMap = recipeMapOf(entries); })), Effect.asVoid)
+    let recipesReadAt = Date.now();
+    // Creating and upgrading choose a recipe, so they read the registry as it is. Listing and reading only
+    // label Projects with it, and run on every dashboard poll, so a reading a few seconds old serves them.
+    const refreshRecipes = (maximumAgeMs = 0) => typeof projectRecipes === "function" && Date.now() - recipesReadAt >= maximumAgeMs
+        ? integration(() => projectRecipes()).pipe(Effect.tap((entries) => Effect.sync(() => {
+            projectRecipeMap = recipeMapOf(entries);
+            recipesReadAt = Date.now();
+        })), Effect.asVoid)
         : Effect.void;
     /**
      * The Project kind a recipe produces.
@@ -1857,7 +1872,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             availableKinds: availableRuntimeKinds,
         },
         list: Effect.fn("Projects.list")(function* (options?: Parameters<ZelavisProjectManager["list"]>[0]) {
-            yield* refreshRecipes;
+            yield* refreshRecipes(RECIPE_LABEL_MAX_AGE_MS);
             const records = yield* store.list(PROJECTS_NAMESPACE);
             const projects = yield* mapWithConcurrency(records, startupConcurrency, Effect.fn("Projects.transition")(function* (record: ZelavisSystemStoreRecord) {
                 const { project } = yield* evaluate(() => normalizeStoredProject(record.value));
@@ -1876,8 +1891,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         get: Effect.fn("Projects.get")(function* (id: Parameters<ZelavisProjectManager["get"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
-            yield* refreshRecipes;
+            yield* refreshRecipes(RECIPE_LABEL_MAX_AGE_MS);
             return yield* withProjectLifecycle(projectId, () => refresh(projectId, true));
+        }),
+        view: Effect.fn("Projects.view")(function* (id: Parameters<ZelavisProjectManager["view"]>[0]) {
+            return yield* refresh(yield* evaluate(() => normalizeProjectId(id)), false);
         }),
         versions: Effect.fn("Projects.versions")(function* (id?: string) {
             const unavailable = { selectable: false, reason: "This runtime cannot select independent engine versions.", versions: [] };
@@ -1904,7 +1922,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             const name = yield* evaluate(() => normalizeProjectName(input.name));
             const id = yield* evaluate(() => normalizeProjectId(input.id ?? name));
             const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
-            yield* refreshRecipes;
+            yield* refreshRecipes();
             const projectRecipe = projectRecipeMap.get(recipeName);
             if (!projectRecipe) {
                 return yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${recipeName}" was not found.`));
@@ -2091,7 +2109,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
-            yield* refreshRecipes;
+            yield* refreshRecipes();
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
                 const liveCapable = runtime.supportsLiveUpdate?.(current) === true &&

@@ -546,7 +546,7 @@ test("managed SDK menus, REST, setup endpoints and disk pages activate through t
   const f = await managedUpdateFixture(t);
   let record = f.previous;
   const forward = createProjectForwarder({ projects: {
-    get: async () => record,
+    get: async () => record, view: async () => record,
     gatewayTarget: () => f.driver.gatewayTarget(record),
     signGatewayAuthority: (id, claims) => f.driver.signGatewayAuthority(id, claims),
   }, fabric: {
@@ -673,7 +673,7 @@ test("managed apps provide ordinary private APIs by default and retain usage and
   const f = await managedUpdateFixture(t);
   let record = f.previous;
   const forward = createProjectForwarder({ projects: {
-    get: async () => record, gatewayTarget: () => f.driver.gatewayTarget(record),
+    get: async () => record, view: async () => record, gatewayTarget: () => f.driver.gatewayTarget(record),
     signGatewayAuthority: (id, claims) => f.driver.signGatewayAuthority(id, claims),
   }, fabric: {
     getProjectPlacement: async () => ({ identity: { type: "project", workloadId: "site", scopeId: "platform" }, state: "active", generation: 1, runtimeNodeId: "local" }),
@@ -742,7 +742,7 @@ test("a catalogue summary cannot override the verified managed recipe or send da
   await store.set("projects", "site", { ...stored.value, recipe: { ...stored.value.recipe, managed: { adminTitle: "Wrong catalogue title" } } });
   assert.equal((await read()).recipe.managed.adminTitle, "Admin 1.0.0");
   const forward = createProjectForwarder({ projects: {
-    get: read, gatewayTarget: async () => driver.gatewayTarget(await read()),
+    get: read, view: read, gatewayTarget: async () => driver.gatewayTarget(await read()),
     signGatewayAuthority: (id, claims) => driver.signGatewayAuthority(id, claims),
   }, fabric: {
     getProjectPlacement: async () => ({ identity: { type: "project", workloadId: "site", scopeId: "platform" }, state: "active", generation: 1, runtimeNodeId: "local" }),

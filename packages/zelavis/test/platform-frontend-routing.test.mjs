@@ -99,6 +99,7 @@ test("a Project's public paths reach its frontend, and never carry Platform auth
   const routes = createProjectGatewayRoutes({
     projects: {
       get: async () => project,
+      view: async () => project,
       listOwned: async () => owned,
       signGatewayAuthority: async () => {
         signed += 1;

@@ -306,6 +306,7 @@ test("the Assistant reaches a real Project runtime with only the caller's databa
     const forward = createProjectForwarder({
       projects: {
         get: async (id) => ({ id, recipe: { name: "@zelavis/app", version: "1.0.0" }, runtime: { status: "running", url: `http://127.0.0.1:${child.address().port}` } }),
+        view: async (id) => ({ id, recipe: { name: "@zelavis/app", version: "1.0.0" }, runtime: { status: "running", url: `http://127.0.0.1:${child.address().port}` } }),
         signGatewayAuthority: async (_id, value) => { claims.push(value); return "signed"; },
       },
       fabric: {

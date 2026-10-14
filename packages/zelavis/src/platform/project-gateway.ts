@@ -422,7 +422,9 @@ export function createProjectForwarder(
     if (!projects) {
       return unavailableProjectsResponse();
     }
-    const project = yield* integration(() => projects.get(options.projectId));
+    // A view, not a locked read: a live update holds the Project's lifecycle for its whole length,
+    // and requests must keep reaching the serving runtime, waiting only at its own handover.
+    const project = yield* integration(() => projects.view(options.projectId));
     if (!project) {
       return yield* Effect.fail(new ZelavisProjectNotFoundError(
         `Project "${options.projectId}" was not found.`,
