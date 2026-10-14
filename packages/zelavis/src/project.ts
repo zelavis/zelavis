@@ -2269,14 +2269,28 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 Effect.orElseSucceed(() => undefined));
         }),
         gatewayTarget: Effect.fn("Projects.gatewayTarget")(function* (id: string) {
-            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => Effect.gen(function* () {
-                const project = yield* requireProject(id);
-                yield* evaluate(() => assertProjectIsOperable(project, "accessed"));
-                if (project.runtime.status !== "running") return undefined;
-                return runtimeEffects.gatewayTarget
-                    ? yield* runtimeEffects.gatewayTarget(project, yield* localPlacementToken(id))
-                    : project.runtime.url;
-            }));
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            const current = yield* requireProject(projectId);
+            // A managed app's integration runtime may be started here, which is a lifecycle change.
+            if (current.recipe.managed) {
+                return yield* withProjectLifecycle(projectId, () => Effect.gen(function* () {
+                    const project = yield* requireProject(projectId);
+                    yield* evaluate(() => assertProjectIsOperable(project, "accessed"));
+                    if (project.runtime.status !== "running") return undefined;
+                    return runtimeEffects.gatewayTarget
+                        ? yield* runtimeEffects.gatewayTarget(project, yield* localPlacementToken(projectId))
+                        : project.runtime.url;
+                }));
+            }
+            // Anything else is a read of the serving runtime's stable address, which must not wait out a live
+            // update holding the lifecycle: the runtime's own handover is where requests wait, briefly.
+            if (current.deletion) {
+                return yield* Effect.fail(new ZelavisProjectConflictError(`Project "${projectId}" is pending deletion and cannot be accessed. Retry deletion instead.`));
+            }
+            if (current.runtime.status !== "running") return undefined;
+            return runtimeEffects.gatewayTarget
+                ? yield* runtimeEffects.gatewayTarget(current, yield* localPlacementToken(projectId))
+                : current.runtime.url;
         }),
         signGatewayAuthority: Effect.fn("Projects.signGatewayAuthority")(function* (projectId: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[0], claims: Parameters<ZelavisProjectManager["signGatewayAuthority"]>[1]) {
             if (!runtimeEffects.signGatewayAuthority) return undefined;

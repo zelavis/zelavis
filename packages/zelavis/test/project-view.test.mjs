@@ -9,7 +9,7 @@ import { createMemorySystemStore } from "../dist/system-store.js";
 const recipe = { service: { name: "@acme/site", kind: "app", version: "1.0.0", api: {}, service: {}, project: { runtimeKinds: ["native"] } },
   specifier: "@acme/site", status: "available", source: "official", order: 0 };
 
-test("a Project's view answers while a lifecycle transition holds it; get waits for the transition", async (t) => {
+test("a Project's view and gateway target answer while a lifecycle transition holds it; get waits for the transition", async (t) => {
   let release;
   const held = new Promise((resolve) => { release = resolve; });
   let starts = 0;
@@ -39,6 +39,8 @@ test("a Project's view answers while a lifecycle transition holds it; get waits 
   const viewed = await Promise.race([manager.view("site"), new Promise((resolve) => setTimeout(() => resolve("waited"), 1000))]);
   assert.notEqual(viewed, "waited", "the view does not wait for the transition");
   assert.equal(viewed.id, "site");
+  const targeted = await Promise.race([manager.gatewayTarget("site").then((url) => ({ url })), new Promise((resolve) => setTimeout(() => resolve("waited"), 1000))]);
+  assert.notEqual(targeted, "waited", "the gateway target of a Project that is not a managed app does not wait for the transition");
   let got = false;
   const reading = manager.get("site").then((project) => { got = true; return project; });
   await new Promise((resolve) => setTimeout(resolve, 50));
