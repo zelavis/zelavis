@@ -1,5 +1,13 @@
 # zelavis
 
+## 2.0.0-alpha.28
+
+### Patch Changes
+
+- ec1e06e: Requests to a Project keep flowing while its Zelavis version is switched or its recipe is updated live: the Platform finds and reaches the Project without waiting for the operation (a managed app's integration runtime aside), so they pause only for the moment the engine is handed over instead of for the whole switch (which could exceed 30 seconds).
+- b14db6c: Deleting a third-party app Project (WordPress, DokuWiki, Drupal, Joomla, TYPO3, PrestaShop) no longer breaks the next Project created from the same recipe with "The recipe package has no readable package.json." Projects of one recipe version share its runtime, which now runs from a copy kept beside the Projects instead of inside the first one; copies no Project uses are removed when the Platform starts.
+- da2994f: A plugin or frontend installed, updated or uninstalled on a running Platform now takes effect without a restart: the Platform hands traffic to a fresh engine of the same release through the same handover that applies updates, so requests wait briefly instead of failing and no previous code stays loaded. Installing a Project recipe needs no reload; the next Project created or upgraded uses it.
+
 ## 2.0.0-alpha.27
 
 ### Patch Changes
