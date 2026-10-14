@@ -52,7 +52,9 @@ if (phase === "claim") {
       };
       await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
       // The install phase already rendered the Project's configuration; the historical recipe would have rendered this.
-      await writeFile(`${directory}/app/Caddyfile`, header(await readFile(`${directory}/app/Caddyfile`, "utf8")));
+      // Where the recipe keeps its server configuration: app/ under contract 1, .zelavis/server under contract 2.
+      const caddyfile = manifest.zelavis.project.install.contract === 2 ? `${directory}/.zelavis/server/Caddyfile` : `${directory}/app/Caddyfile`;
+      await writeFile(caddyfile, header(await readFile(caddyfile, "utf8")));
     }
     await writeFile(`${frozen}/dist/index.js`, `import { zelavis } from "zelavis/sdk";
 export { WORDPRESS_APP_NAME } from "./runtime.js";
@@ -93,7 +95,10 @@ export function register() {
     await rootAgent.close();
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
-    assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages, ["mariadb-server"]);
+    // The fixed host package sets the WordPress this Platform offers needs: the hand-written runtime of
+    // earlier releases names wordpress-stack, the recipe names mariadb-server.
+    const hostPackageSets = recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages;
+    assert.ok(Array.isArray(hostPackageSets) && hostPackageSets.length > 0, JSON.stringify(hostPackageSets));
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await (async () => { await installRecipeIfAvailable({ baseUrl, cookie: await readFile("/var/lib/zelavis/qualification-session", "utf8") }, "@zelavis/wordpress"); return client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true }); })();
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");
@@ -110,7 +115,10 @@ export function register() {
     if (phase === "live-upgrade") {
       assert.equal(project.recipe.version, "0.0.0-qualification");
       assert.equal(project.runtime.status, "running", JSON.stringify(project));
-      const run = "/var/lib/zelavis/projects/qualification-wordpress/app/run";
+      const frozenManifest = JSON.parse(await readFile("/var/lib/zelavis/projects/qualification-wordpress/.zelavis/recipe/package/package.json", "utf8"));
+      const run = frozenManifest.zelavis.project.install?.contract === 2
+        ? "/var/lib/zelavis/projects/qualification-wordpress/.zelavis/server/run"
+        : "/var/lib/zelavis/projects/qualification-wordpress/app/run";
       const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
       const oneConnection = new Agent({ keepAlive: false });
       const ask = (url) => new Promise((resolve, reject) => {
@@ -206,7 +214,7 @@ export function register() {
       assert.notEqual(execFileSync("sh", ["-c", 'systemctl is-active "$1" 2>/dev/null || true', "sh", unit], { encoding: "utf8" }).trim(), "active", `${unit} must not occupy host ports`);
     }
     // Every fixed set the recipe uses is already satisfied: it needs only a database, so the set installs no PHP.
-    for (const set of ["mariadb-server"]) {
+    for (const set of hostPackageSets) {
       const repeated = await client.hostOperations.submit({ operation: "zelavis.packages-install", version: "v1", arguments: { set } });
       let record = repeated;
       for (let i = 0; i < 100 && record.agent?.status !== "succeeded"; i++) {

@@ -126,7 +126,7 @@ package declares this contract's manifest as
 `zelavis.project.install` in its `package.json`, validated when the package is loaded
 (an invalid one fails the load, naming the package). OCI execution remains planned.
 
-`parseRecipeManifest` validates contract 1 metadata: named methods, bounded host
+`parseRecipeManifest` validates contract 1 and 2 metadata: named methods, bounded host
 requirements, declared ports and software releases with HTTPS archives, SHA-256
 digests and download size limits. JS methods name a relative module entry. OCI
 methods declare digest-pinned images; declaring an image does not enable execution.
@@ -176,6 +176,24 @@ The service interface itself does not enforce those restrictions and is not a
 sandbox for arbitrary JavaScript. Privileged package installation belongs to the
 Platform's audited host-operation broker, outside RecipeHost.
 
+### Where an app's files live
+
+A third-party app's Project keeps the application, and only the application, in `app/`: the
+directories its recipe names in the manifest (`directories`), such as `app/site` for the code,
+uploads and configuration and `app/db` for the database. Zelavis writes there only to install the
+application; recipe updates, integration code, dashboard menus and APIs, and Platform updates never
+touch it. What Zelavis runs the application with (web server and PHP-FPM configuration, pid files,
+logs, `run/`, `tmp/`, `sessions/`) is the recipe's root, `.zelavis/server`, which Zelavis may rewrite
+freely.
+
+That layout is manifest **contract 2**. A recipe names its application directories by their
+absolute paths (`context.directories.named`) and writes everything else relative to its root
+(`context.directories.root`); the recipe file API reaches `app/` by absolute path and nothing else
+outside the root. Under **contract 1** the application and those files share `app/`; such a recipe
+runs unchanged, and its Project moves to contract 2 with an ordinary recipe upgrade, live or from a
+stop: the new recipe writes its files into `.zelavis/server`, the processes switch over, and only then
+is what contract 1 kept in `app/` beside the application moved to `.zelavis/server/contract-1`.
+
 ### Upgrading a Project to a recipe with a different layout
 
 An application is a folder of files and a database directory, and a recipe's upgrade does not
@@ -195,6 +213,15 @@ create, and generated leftovers to discard. Upgrading a stopped Project to such 
 5. keeps the earlier state until the Project runs on the new layout. If anything fails first,
    or the upgrade cannot be recorded, every folder is moved back and what was created is
    removed, so the earlier recipe finds its Project as it left it; the interrupted case resumes.
+
+A **running** Project of such an earlier layout (a WordPress made by the hand-written runtime of
+releases before alpha.26) crosses without being stopped by hand. While it still serves, the
+Platform fetches the new recipe's programs and checks the host (`prefetchUpdate`). Then it holds the
+Project's requests (dashboard, site previews and the Project's own domains alike, for at most two
+minutes), stops the old processes, takes the folders over as above and starts the new recipe.
+Visitors wait for that moment instead of receiving an error, the Project record says "running"
+throughout, so its preview address never closes, and a failure puts the earlier recipe back and
+starts it again.
 
 ### Upgrading a running Project
 

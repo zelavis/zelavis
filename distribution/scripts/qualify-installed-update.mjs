@@ -61,19 +61,24 @@ const catalogueBeforeStatus = initialCatalogueResponse.status;
 await initialCatalogueResponse.arrayBuffer();
 const wp = await client.projects.get('qualification-wordpress');
 assert.equal(wp.recipe.version, '0.0.0-qualification', 'A historical integration fixture must already be serving');
-// The recipe's root: Caddy and PHP-FPM configuration beside the `site` directory WordPress lives in.
-const wpData = '/var/lib/zelavis/projects/qualification-wordpress/app';
-await writeFile(join(wpData, 'site/integration-preserved.txt'), 'Application content stays outside recipe updates.');
-const wpFiles = ['Caddyfile', 'php-fpm.conf', 'site/wp-config.php', 'site/wp-includes/version.php', 'site/integration-preserved.txt'];
-// A running recipe update reconciles the plan and its install phase writes the configuration again, so those files
-// must keep their content, owner and mode; WordPress's own software, configuration and content are never touched.
-const recipeWritten = new Set(['Caddyfile', 'php-fpm.conf']);
-const fingerprints = async () => Object.fromEntries(await Promise.all(wpFiles.map(async file => {
-  const path = join(wpData, file), metadata = await stat(path);
+// Where WordPress lives: its software, configuration and content are never touched by a recipe update.
+const wpProject = '/var/lib/zelavis/projects/qualification-wordpress';
+const wpData = join(wpProject, 'app');
+/**
+ * The layout contract of the recipe the Project runs: 0 for the hand-written runtime of releases before
+ * alpha.26 (no install manifest), 1 keeps the server's files in app/, 2 in .zelavis/server.
+ */
+const wpContract = async () => JSON.parse(await readFile(join(wpProject, '.zelavis/recipe/package/package.json'), 'utf8')).zelavis.project.install?.contract ?? 0;
+// The hand-written runtime kept the site in .zelavis/wordpress; taking it over renames it into app/site, so
+// the same files keep their inode and modification time across the move.
+const wpSite = async () => (await wpContract()) === 0 ? join(wpProject, '.zelavis/wordpress') : join(wpData, 'site');
+await writeFile(join(await wpSite(), 'integration-preserved.txt'), 'Application content stays outside recipe updates.');
+const wpFiles = ['wp-config.php', 'wp-includes/version.php', 'integration-preserved.txt'];
+const fingerprints = async () => { const site = await wpSite(); return Object.fromEntries(await Promise.all(wpFiles.map(async file => {
+  const path = join(site, file), metadata = await stat(path);
   return [file, { digest: createHash('sha256').update(await readFile(path)).digest('hex'),
-    uid: metadata.uid, gid: metadata.gid, mode: metadata.mode,
-    ...(recipeWritten.has(file) ? {} : { inode: metadata.ino, modified: metadata.mtimeMs }) }];
-})));
+    uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
+}))); };
 const appFilesBefore = await fingerprints();
 const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).map(async file => {
   const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
@@ -246,6 +251,7 @@ for (const capability of ['database', 'identity', 'storage', 'workloads']) {
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
 const integrationBefore = await identities();
+const contractBefore = await wpContract();
 
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
 assert.equal(integration.runtime.status, 'running');
@@ -253,7 +259,17 @@ assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
 assert.equal(integration.runtimeUpdate, undefined);
-assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+const contractAfter = await wpContract();
+if (contractAfter === contractBefore) {
+  assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+} else {
+  // Moving to the layout where app/ is the application alone changes where the servers read their configuration,
+  // so their processes are replaced while requests wait (the traffic above proves none failed).
+  assert.equal(contractAfter, 2);
+  assert.deepEqual((await readdir(wpData)).sort(), ['db', 'site'], 'app/ holds WordPress and its database alone');
+  await stat(join(wpProject, '.zelavis/server/Caddyfile'));
+  console.log(`PASS: WordPress moved from recipe contract ${contractBefore} to 2 under traffic; app/ holds the application alone.`);
+}
 assert.equal((await wpClient.runtime.config()).services.find(service => service.name === '@zelavis/wordpress').menus?.length ?? 0, 0, 'Removed SDK menus disappear immediately');
 await assert.rejects(wpClient.plugins.wordpress.integration.get(), /not found|unknown|not available|operation/i);
 assert.deepEqual(await fingerprints(), appFilesBefore, 'Recipe update must preserve app software, content, configuration and ownership');
