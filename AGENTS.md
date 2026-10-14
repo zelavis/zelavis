@@ -142,7 +142,11 @@ and none may be reintroduced without the owner asking for them explicitly.
   The wrapper packs each public package npm lacks with `pnpm pack`, which rewrites
   `workspace:` ranges, and publishes the tarballs with `npm publish` in dependency
   order, so npm runs its own browser login and 2FA in an interactive terminal;
-  pnpm's publisher no longer starts that flow. Nothing is built,
+  pnpm's publisher no longer starts that flow. Changed services go first
+  (`release:publish:services:*`, then `pnpm allowlist update`); `release:check` ends by
+  naming the commit it qualified, and `ZELAVIS_RELEASE_QUALIFIED=<sha>` lets the
+  publish step skip re-running it for exactly that clean commit. The step-by-step
+  runbook is the release-maintainer skill. Nothing is built,
   signed, uploaded or hosted per release.
 - Trust anchors are https origins and nothing else: **npm** (package integrity is
   npm's own registry digest), **nodejs.org** (the pinned private Node, checked against

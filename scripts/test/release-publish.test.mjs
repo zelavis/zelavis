@@ -13,11 +13,13 @@ const publisher = resolve(dirname(fileURLToPath(import.meta.url)), "../release-p
 const WORKSPACE = [
   { dir: "packages/app", manifest: { name: "@zelavis/app", version: "1.0.1-alpha.12", peerDependencies: { zelavis: "workspace:*" } } },
   { dir: "packages/zelavis", manifest: { name: "zelavis", version: "2.0.0-alpha.12" } },
-  { dir: "services/wiki", manifest: { name: "@zelavis/wiki", version: "1.0.0", peerDependencies: { zelavis: "workspace:*" } } },
+  { dir: "zelavis-services/wiki", manifest: { name: "@zelavis/wiki", version: "1.0.0", peerDependencies: { zelavis: "workspace:*" } } },
   { dir: "website", manifest: { name: "@zelavis/website", version: "0.0.1", private: true } },
 ];
 
-function fixture(t, { pre, dirty = false, published = ["@zelavis/wiki@1.0.0"], keepWorkspaceRanges = false } = {}) {
+const HEAD = "4ead9a1c4a0000000000000000000000000000aa";
+
+function fixture(t, { pre, dirty = false, published = ["@zelavis/wiki@1.0.0"], keepWorkspaceRanges = false, qualified } = {}) {
   const root = mkdtempSync(join(tmpdir(), "zelavis-publisher-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
@@ -45,7 +47,8 @@ ${body}
 `);
     chmodSync(path, 0o755);
   };
-  stub("git", `if (${dirty}) process.exit(1);`);
+  stub("git", `if (args[0] === "rev-parse") process.stdout.write(${JSON.stringify(HEAD)});
+else if (${dirty}) process.exit(1);`);
   stub("pnpm", `
 if (args[0] === "ls") process.stdout.write(${JSON.stringify(JSON.stringify(listing))});
 if (args[0] === "pack") {
@@ -65,11 +68,13 @@ else if (args[0] === "view") {
   if (!${JSON.stringify(published)}.includes(args[1])) process.exit(1);
   process.stdout.write(args[1].slice(args[1].lastIndexOf("@") + 1));
 }`);
-  return (tag) => {
+  return (tag, ...flags) => {
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, ZELAVIS_TEST_COMMAND_LOG: log };
     delete env.NPM_TOKEN;
     delete env.NODE_AUTH_TOKEN;
-    const result = spawnSync(process.execPath, [publisher, tag], { cwd: root, env, encoding: "utf8" });
+    delete env.ZELAVIS_RELEASE_QUALIFIED;
+    if (qualified) env.ZELAVIS_RELEASE_QUALIFIED = qualified;
+    const result = spawnSync(process.execPath, [publisher, tag, ...flags], { cwd: root, env, encoding: "utf8" });
     const commands = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     const publishes = commands.filter(([command, action]) => command === "npm" && action === "publish");
     return { ...result, commands, publishes };
@@ -81,7 +86,8 @@ const tarballOf = (publish) => publish[2].split("/").at(-1);
 test("an alpha release packs with pnpm and publishes with npm, only what npm lacks, the Platform first", (t) => {
   const result = fixture(t, { pre: "alpha" })("alpha");
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.commands.slice(0, 3), [
+  assert.deepEqual(result.commands.slice(0, 4), [
+    ["git", "rev-parse", "HEAD"],
     ["pnpm", "release:check"],
     ["git", "diff", "--quiet"],
     ["git", "diff", "--cached", "--quiet"],
@@ -108,13 +114,13 @@ test("prerelease mode cannot publish to latest", (t) => {
   const result = fixture(t, { pre: "alpha" })("latest");
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Exit prerelease mode/);
-  assert.deepEqual(result.commands, [["pnpm", "release:check"]]);
+  assert.deepEqual(result.commands, [["git", "rev-parse", "HEAD"], ["pnpm", "release:check"]]);
 });
 
 test("uncommitted tracked files prevent publication", (t) => {
   const result = fixture(t, { dirty: true })("alpha");
   assert.equal(result.status, 1);
-  assert.deepEqual(result.commands, [["pnpm", "release:check"], ["git", "diff", "--quiet"]]);
+  assert.deepEqual(result.commands, [["git", "rev-parse", "HEAD"], ["pnpm", "release:check"], ["git", "diff", "--quiet"]]);
 });
 
 test("a packed package that still names a workspace range stops the release before anything is published", (t) => {
@@ -129,4 +135,35 @@ test("with every version already on npm, nothing is published", (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.publishes.length, 0);
   assert.match(result.stdout, /nothing to publish/);
+});
+
+test("the services phase publishes only the changed services, after the workspace checks, and says what comes next", (t) => {
+  const result = fixture(t, { pre: "alpha", published: ["zelavis@2.0.0-alpha.12", "@zelavis/app@1.0.1-alpha.12"] })("alpha", "--services");
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.commands[1], ["pnpm", "run", "verify"], "the update gate and allow-list check belong to the Platform phase");
+  assert.deepEqual(result.publishes.map(tarballOf), ["zelavis-wiki-1.0.0.tgz"]);
+  assert.match(result.stdout, /pnpm allowlist update/);
+  assert.ok(!result.commands.some((command) => command[0] === "npm" && command.includes("--json")), "the Platform's listing is not awaited");
+});
+
+test("the Platform phase refuses while a changed service is unpublished, before publishing anything", (t) => {
+  const result = fixture(t, { pre: "alpha", published: [] })("alpha");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Publish the changed services first.*@zelavis\/wiki@1\.0\.0.*release:publish:services:alpha/s);
+  assert.equal(result.publishes.length, 0);
+});
+
+test("a commit release:check already qualified is published without running the checks again", (t) => {
+  const result = fixture(t, { pre: "alpha", qualified: HEAD })("alpha");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.commands.some(([command, action]) => command === "pnpm" && action === "release:check"));
+  assert.ok(result.commands.some(([command, action]) => command === "git" && action === "diff"), "the tree is still required to be clean");
+  assert.equal(result.publishes.length, 2);
+});
+
+test("a qualification of another commit does not count", (t) => {
+  const result = fixture(t, { pre: "alpha", qualified: "0000000000000000000000000000000000000000" })("alpha");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.commands.some(([command, action]) => command === "pnpm" && action === "release:check"));
+  assert.match(result.stdout, /not 4ead9a1c4a/);
 });
