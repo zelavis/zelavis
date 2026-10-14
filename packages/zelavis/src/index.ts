@@ -7113,7 +7113,9 @@ export function zelavis(
         options.edgePreviews?.configure((projectId, request) => {
           return present(
             Effect.gen(function* () {
-              // A view, so preview traffic keeps flowing through a live update.
+              // Held first while the Project's processes are swapped, then a view, so preview
+              // traffic waits through a crossing and keeps flowing through a live update.
+              yield* integration(() => projects?.ingressReady?.(projectId) ?? Promise.resolve());
               const project = yield* integration(() =>
                 projects?.view(projectId),
               );

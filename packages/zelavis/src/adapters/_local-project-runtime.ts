@@ -19,6 +19,8 @@ import type { ZelavisAgentAttachedProcess, ZelavisAgentProcessRunner } from "../
 import { resolveBundledServiceDirectory, linkPlatformPackage } from "./_local-runtime.js";
 import { RECIPE_ARTIFACT_DIRECTORY, digestArtifactDirectory, materializeRecipeArtifact, } from "./_recipe-artifact.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
+import { recipeCommands } from "./_recipe-project-runtime.js";
+import { parseRecipeManifest } from "../core/recipe/index.js";
 import { restoreNodeProjectRelease } from "./_node-project-release.js";
 /**
  * Where a recipe that provides its own runtime comes from, and whether this host
@@ -409,6 +411,23 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         ingressReady: Effect.fn("LocalProjects.ingressReady")(function* (id) {
             const ready = effectOperations(yield* forProjectId(id)).ingressReady;
             if (ready) yield* ready(id);
+        }),
+        prefetchUpdate: Effect.fn("LocalProjects.prefetchUpdate")(function* (_previous, candidate) {
+            const { name, version, install } = candidate.recipe;
+            if (!install || version === undefined) return;
+            yield* assertTrusted(name);
+            const source = (yield* integration(() => options.recipeRuntimes?.packageDirectory?.(name, version))) ??
+                (yield* integration(() => options.recipePackageDirectory?.(name, version))) ?? resolveBundledServiceDirectory(name);
+            if (!source) return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe ${name}@${version} is not available on this host.`));
+            const manifest = yield* Effect.flatMap(integration(() => readFile(join(source, "package.json"), "utf8")), (text) => evaluate(() => {
+                const declared = (JSON.parse(text) as { zelavis?: { project?: { install?: unknown } } }).zelavis?.project?.install;
+                if (declared === undefined) throw new ZelavisProjectRuntimeError(`Project recipe ${name}@${version} declares no install methods.`);
+                return parseRecipeManifest(declared);
+            }));
+            const method = manifest.methods.find((offered) => offered.id === install.method && offered.driver === "js");
+            if (!method || method.driver !== "js") return yield* Effect.fail(new ZelavisProjectRuntimeError(`Project recipe ${name}@${version} does not offer the "${install.method}" method.`));
+            // The same store the recipe runtime fills, so its preparation finds the programs already there.
+            yield* recipeCommands(method, manifest, join(directory, "..", "runtimes"));
         }),
         prepareUpdate: Effect.fn("LocalProjects.prepareUpdate")(function* (previous, candidate, placement) {
             if (managedIntegration(previous)) {

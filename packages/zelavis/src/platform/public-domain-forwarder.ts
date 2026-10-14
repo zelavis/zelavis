@@ -127,7 +127,9 @@ export function forwardPublicRequest(
   const binding = (yield* integrationValue(resolveVerifiedBinding(domainBindings, url.host)));
   if (!binding?.projectId) return undefined;
 
-  // A view, so a Project's own domain keeps answering through a live update.
+  // Held first while the Project's processes are swapped, then a view, so a Project's own domain
+  // waits through a crossing and keeps answering through a live update.
+  yield* integrationValue((projects.ingressReady?.(binding.projectId) ?? Promise.resolve()).catch(() => undefined));
   const project = (yield* integrationValue(projects.view(binding.projectId).catch(() => undefined)));
   if (!project) return undefined;
 

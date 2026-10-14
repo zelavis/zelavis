@@ -169,6 +169,26 @@ const resolveAccount = (configured: string | undefined): Effect.Effect<Account, 
   });
 
 /**
+ * Command name to absolute program for a recipe's install method: the host's for its requirements, and the
+ * recipe's own pinned runtimes, fetched into the shared store when not there yet.
+ */
+export const recipeCommands = (method: { readonly id: string; readonly requires: readonly string[] }, parsed: RecipeManifest, runtimeStore: string) => Effect.gen(function* () {
+  const requires = method.requires;
+  // Programs a method does not use (a database download for the method that runs it in a container) are neither fetched nor required.
+  const runtimes = (parsed.runtimes ?? []).filter((runtime) => runtime.methods === undefined || runtime.methods.includes(method.id));
+  // A program the recipe brings but has no build of for this platform falls back to the host's, when it says how.
+  const platform = runtimePlatform();
+  const unbuilt = runtimes.filter((runtime) => (platform === undefined || runtime.downloads[platform] === undefined) && runtime.hostRequirement !== undefined);
+  const fallbacks = [...new Set(unbuilt.map((runtime) => runtime.hostRequirement!))];
+  const host = yield* resolveRequirementCommands([...new Set([...requires, ...fallbacks])]).pipe(Effect.mapError(asRuntimeError));
+  const built = runtimes.filter((runtime) => !unbuilt.includes(runtime));
+  const brought = yield* acquireRuntimes({ runtimes: built, store: runtimeStore }).pipe(Effect.mapError(asRuntimeError));
+  const clash = Object.keys(brought).find((name) => name in host);
+  if (clash !== undefined) return yield* Effect.fail(failure(`"${clash}" is both required from the host and brought by the recipe; a recipe takes one.`));
+  return { ...host, ...brought } as Readonly<Record<string, string>>;
+});
+
+/**
  * Plan controllers by Agent. Whoever has the Agent sees the Project's running processes, which is
  * what lets an upgraded recipe's driver (a new instance, made from the new package) carry on with
  * processes the old instance started.
@@ -285,21 +305,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const runtimeStore = options.runtimeStore ?? join(projectsDirectory, "..", "runtimes");
 
   /** Command name to absolute program: the host's for the method's requirements, and the manifest's own runtimes. */
-  const commandsOf = (method: { readonly id: string; readonly requires: readonly string[] }, parsed: RecipeManifest) => Effect.gen(function* () {
-    const requires = method.requires;
-    // Programs a method does not use (a database download for the method that runs it in a container) are neither fetched nor required.
-    const runtimes = (parsed.runtimes ?? []).filter((runtime) => runtime.methods === undefined || runtime.methods.includes(method.id));
-    // A program the recipe brings but has no build of for this platform falls back to the host's, when it says how.
-    const platform = runtimePlatform();
-    const unbuilt = runtimes.filter((runtime) => (platform === undefined || runtime.downloads[platform] === undefined) && runtime.hostRequirement !== undefined);
-    const fallbacks = [...new Set(unbuilt.map((runtime) => runtime.hostRequirement!))];
-    const host = yield* resolveRequirementCommands([...new Set([...requires, ...fallbacks])]).pipe(Effect.mapError(asRuntimeError));
-    const built = runtimes.filter((runtime) => !unbuilt.includes(runtime));
-    const brought = yield* acquireRuntimes({ runtimes: built, store: runtimeStore }).pipe(Effect.mapError(asRuntimeError));
-    const clash = Object.keys(brought).find((name) => name in host);
-    if (clash !== undefined) return yield* Effect.fail(failure(`"${clash}" is both required from the host and brought by the recipe; a recipe takes one.`));
-    return { ...host, ...brought } as Readonly<Record<string, string>>;
-  });
+  const commandsOf = (method: { readonly id: string; readonly requires: readonly string[] }, parsed: RecipeManifest) =>
+    recipeCommands(method, parsed, runtimeStore);
 
   /** Builds no Project names any more are removed; a failure to prune is logged and never stops anything. */
   const pruneRuntimes = pruneRuntimeStore({ store: runtimeStore, projects: projectsDirectory }).pipe(

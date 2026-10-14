@@ -4,7 +4,7 @@
 // else (requirements, ports, the install and start phases in their own processes, MariaDB
 // initialization, supervision, restart, removal) is the production path.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { Agent, get as httpGet } from "node:http";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -79,9 +79,11 @@ test("a WordPress Project installs, starts, serves PHP backed by its own databas
   assert.equal(state.installed, true);
   assert.deepEqual(Object.keys(state.ports).sort(), ["db", "web"]);
   for (const name of ["caddy", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb", "php"]) assert.ok(state.commands[name]?.startsWith("/"), `${name} resolved to an absolute path`);
-  assert.ok(existsSync(join(where, "app", "Caddyfile")) && existsSync(join(where, "app", "php-fpm.conf")));
+  // Contract 2: the server's files are the Platform's, beside the application, and app/ is the application alone.
+  assert.ok(existsSync(join(where, ".zelavis", "server", "Caddyfile")) && existsSync(join(where, ".zelavis", "server", "php-fpm.conf")));
+  assert.deepEqual(readdirSync(join(where, "app")).sort(), ["db", "site"], "app/ holds nothing but WordPress and its database");
   assert.ok(existsSync(join(where, "app", "db", ".zelavis-initialized")));
-  assert.ok(!existsSync(join(where, "app", "run", "init.sql")), "the SQL file that held the password is gone");
+  assert.ok(!existsSync(join(where, ".zelavis", "server", "run", "init.sql")), "the SQL file that held the password is gone");
   const config = readFileSync(join(where, "app", "site", "wp-config.php"), "utf8");
   assert.equal(statSync(join(where, "app", "site", "wp-config.php")).mode & 0o077, 0, "the configuration is private");
   const password = readFileSync(join(where, ".zelavis", "secrets", "db-password"), "utf8");
@@ -186,6 +188,7 @@ test("a WordPress Project laid out by the previous recipe is taken over: same ad
   assert.equal(await readFile(join(root, "site", "wp-includes", "version.php"), "utf8"), "<?php $wp_version = '7.0.9';", "the application's files are untouched: the recipe pins 7.1.2 but this site stays what it is");
   assert.equal(existsSync(join(zelavis, "wordpress-native.json")), false, "committed once it ran");
   assert.equal(existsSync(join(zelavis, "nginx.conf")), false);
+  assert.deepEqual(readdirSync(root).sort(), ["db", "site"], "taken over straight into the layout where app/ is the application alone");
   await driver.stop(id);
 });
 
@@ -237,7 +240,7 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
 
   await driver.prepare(project, project.recipe);
   const started = await driver.start(project);
-  const read = (file) => Number(readFileSync(join(directory, id, "app", "run", file), "utf8").trim());
+  const read = (file) => Number(readFileSync(join(directory, id, ".zelavis", "server", "run", file), "utf8").trim());
   const pids = () => ({ caddy: read("caddy.pid"), fpm: read("php-fpm.pid"), database: read("mariadb.pid") });
   const before = pids();
   const first = await fetch(`${started.url}/index.php`);
@@ -269,6 +272,6 @@ test("a running WordPress Project is upgraded to a recipe that changes its web c
   assert.equal(after.headers.get("x-recipe"), "two");
   assert.match(await after.text(), /database:1/);
   assert.equal(JSON.parse(await readFile(join(data, "recipe", "package", "package.json"), "utf8")).version, "7.1.4");
-  assert.match(readFileSync(join(directory, id, "app", "Caddyfile"), "utf8"), /X-Recipe/);
+  assert.match(readFileSync(join(directory, id, ".zelavis", "server", "Caddyfile"), "utf8"), /X-Recipe/);
   await driver.stop(id);
 });

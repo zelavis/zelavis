@@ -79,7 +79,7 @@ test("a package's install manifest is validated when it is loaded", () => {
   const loaded = manifestProjectRecipe(pkg(manifest()));
   assert.equal(loaded.install.software.length, 3);
   assert.ok(Object.isFrozen(loaded.install));
-  assert.throws(() => manifestProjectRecipe(pkg({ ...manifest(), contract: 2 })), /@acme\/site.*zelavis\.project\.install/);
+  assert.throws(() => manifestProjectRecipe(pkg({ ...manifest(), contract: 3 })), /@acme\/site.*zelavis\.project\.install/);
   assert.throws(() => manifestProjectRecipe(pkg({ ...manifest(), extra: true })), /zelavis\.project\.install/);
   assert.equal(manifestProjectRecipe({ name: "x", version: "1.0.0", zelavis: { kind: "app", project: { runtimeKinds: ["native"] } } }).install, undefined);
 });

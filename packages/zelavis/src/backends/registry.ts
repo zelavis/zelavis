@@ -436,6 +436,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   recipeDefinition: "descriptor",
   supportsLiveUpdate: "descriptor",
   prepareUpdate: "descriptor",
+  prefetchUpdate: "descriptor",
   gatewayTarget: "descriptor",
   versions: "wrapper",
   resolveVersion: "descriptor",
@@ -546,6 +547,10 @@ export function createDeploymentBackendProjectRuntime(options: {
       const prepare = effectOperations(yield* evaluate(() => forDescriptor(previous))).prepareUpdate;
       if (!prepare) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
       return yield* prepare(previous, candidate, placement);
+    }),
+    prefetchUpdate: Effect.fn("BackendProjects.prefetchUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prefetchUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prefetchUpdate"]>>[1]) {
+      const prefetch = effectOperations(yield* evaluate(() => forDescriptor(previous))).prefetchUpdate;
+      if (prefetch) yield* prefetch(previous, candidate);
     }),
     applyUpdate: Effect.fn("BackendProjects.applyUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[1], commit: Parameters<NonNullable<ZelavisProjectRuntimeDriver["applyUpdate"]>>[2]) {
       const apply = effectOperations(yield* forProjectId(id)).applyUpdate;

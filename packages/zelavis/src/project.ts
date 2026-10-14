@@ -201,6 +201,14 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
 
 /** The longest a public request waits for a Project whose serving processes are being replaced. */
 export const INGRESS_HOLD_LIMIT_MS = 15_000;
+/**
+ * The longest a public request waits while a Project crosses to a recipe of another layout: its old
+ * processes stop, its folders move and the new recipe installs and starts. Longer than a process
+ * replacement, because the new recipe's install phase runs inside it.
+ */
+export const CROSSING_HOLD_LIMIT_MS = 120_000;
+/** How long requests already inside a Project are given to finish before a crossing stops its processes. */
+const CROSSING_DRAIN_MS = 300;
 
 export interface ZelavisProjectCleanupParticipant {
   /** Stable durable identifier. Renaming it changes persisted resume state. */
@@ -278,6 +286,12 @@ export interface ZelavisProjectRuntimeDriver {
   /** Resolves only a verified installed engine and its bundled App recipe. */
   resolveVersion?(project: Readonly<ZelavisProjectDescriptor>, version?: string): Promise<{ engineVersion: string; recipe: ZelavisProjectRecipeLock } | undefined>;
   prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<ZelavisProjectRuntimeUpdate>;
+  /**
+   * Acquires what a candidate recipe needs (its pinned programs) and checks this host can run it, while
+   * the Project keeps serving from its current recipe. Used before a cross-layout upgrade takes the
+   * Project's processes over, so the moment requests are held lasts only as long as the switch.
+   */
+  prefetchUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord): Promise<void>;
   applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
   recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
@@ -1277,6 +1291,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
      * Project clears it; a Project held by placement records nothing, since it never tried to start.
      */
     const startBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+    /** Projects whose public requests wait while they cross to a recipe of another layout; see `crossLive`. */
+    const holds = new Map<string, Deferred.Deferred<void>>();
     const clearStartBackoff = (id: string) => Effect.sync(() => { startBackoff.delete(id); });
     const write = Effect.fn("Projects.write")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
         const { preview: _preview, ...record } = project;
@@ -1887,6 +1903,48 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 }
                 return (yield* startLocally(id));
     });
+    /**
+     * A running Project crosses to a recipe of another layout that takes it over (an app made by an earlier,
+     * hand-written runtime). Everything that can be done while it serves is done first: the new recipe's
+     * programs are fetched and the host is checked. Then its public requests are held, its processes are
+     * stopped, the new recipe takes its folders over (journaled renames, nothing read or rewritten) and
+     * starts, and the requests go on to it. Visitors wait for that moment; none is refused. If anything
+     * fails the folders go back, the earlier recipe is prepared and started again, and the error is reported.
+     * The record says "running" throughout, so the Project's preview address never closes.
+     */
+    const crossLive = Effect.fn("Projects.crossLive")(function* (project: ZelavisProjectRecord, candidate: ZelavisProjectRecord, upgraded: ZelavisProjectRecord) {
+        if (runtimeEffects.prefetchUpdate) yield* runtimeEffects.prefetchUpdate(project, candidate);
+        const placement = yield* localPlacementToken(project.id);
+        const hold = Deferred.makeUnsafe<void>();
+        holds.set(project.id, hold);
+        return yield* Effect.gen(function* () {
+            // Requests already inside the Project finish before its processes stop; new ones wait at the hold.
+            yield* Effect.sleep(CROSSING_DRAIN_MS);
+            yield* runtimeEffects.stop(project.id);
+            const crossed = yield* Effect.exit(Effect.gen(function* () {
+                yield* runtimeEffects.prepare(candidate, candidate.recipe);
+                return yield* runtimeEffects.start(candidate, placement);
+            }));
+            if (Exit.isSuccess(crossed)) {
+                const written = yield* write(applySnapshot(upgraded, crossed.value));
+                yield* (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
+                return written;
+            }
+            // The folders go back first, then the earlier recipe is prepared and run again where it was.
+            yield* (runtimeEffects.abandonUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
+            const restored = yield* Effect.exit(Effect.gen(function* () {
+                yield* runtimeEffects.prepare(project, project.recipe);
+                return yield* runtimeEffects.start(project, placement);
+            }));
+            yield* write(Exit.isSuccess(restored)
+                ? applySnapshot(project, restored.value)
+                : { ...project, runtime: { driver: runtime.name, status: "failed", error: String(Cause.squash(restored.cause)).slice(0, 4000) }, updatedAt: new Date().toISOString() });
+            return yield* Effect.failCause(crossed.cause);
+        }).pipe(Effect.ensuring(Effect.sync(() => {
+            if (holds.get(project.id) === hold) holds.delete(project.id);
+            Deferred.doneUnsafe(hold, Effect.void);
+        })));
+    });
     const manager: EffectOperations<ZelavisProjectManager> = {
         runtime: {
             driver: runtime.name,
@@ -2182,6 +2240,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" makes a different kind of Project than "${project.id}" (${project.kind}).`)));
                 }
                 let next = (yield* evaluate(() => recipeLockFromRegistryEntry(entry)));
+                // Whether the Project crosses from a layout its new recipe takes over (an earlier, hand-written
+                // runtime of the same app): its processes are swapped rather than updated in place.
+                let adopting = false;
                 // The install method and software version are the Project's own choice, made at creation.
                 // A newer recipe keeps them when it still offers them; otherwise the upgrade is refused.
                 const manifest = entry.service.project?.install;
@@ -2195,6 +2256,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     next = { ...next, install: kept };
                 } else if (manifest) {
                     // An older layout of the same recipe can be adopted: its folders are moved, not converted.
+                    adopting = true;
                     if (!manifest.adopt?.length) {
                         return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${next.name}@${next.version}" installs through methods this Project was not created with, and does not describe how to take over its files. Create a new Project to use it.`)));
                     }
@@ -2246,7 +2308,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     runtime: { driver: runtime.name, status: "stopped" },
                     updatedAt: now,
                 };
-                if (!live && !integrationUpdate) {
+                if (adopting && project.runtime.status === "running") return yield* crossLive(project, candidate, upgraded);
+                if ((!live && !integrationUpdate) || adopting) {
                     const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
                     return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(
@@ -2287,8 +2350,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             return yield* runtimeEffects.logs((yield* evaluate(() => normalizeProjectId(id))));
         }),
         ingressReady: Effect.fn("Projects.ingressReady")(function* (id: string) {
-            if (!runtimeEffects.ingressReady) return;
             const projectId = yield* evaluate(() => normalizeProjectId(id));
+            // A crossing holds the Project's requests for as long as its processes are swapped; bounded, never shut.
+            const hold = holds.get(projectId);
+            if (hold) yield* Deferred.await(hold).pipe(Effect.timeoutOrElse({ duration: CROSSING_HOLD_LIMIT_MS, orElse: () => Effect.void }));
+            if (!runtimeEffects.ingressReady) return;
             // Advisory: a gate that cannot be consulted, or is held past the limit, never keeps a request out.
             yield* runtimeEffects.ingressReady(projectId).pipe(
                 Effect.timeoutOrElse({ duration: INGRESS_HOLD_LIMIT_MS, orElse: () => Effect.void }),
