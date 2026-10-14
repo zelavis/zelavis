@@ -134,7 +134,7 @@ Usage:
   zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
-  zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis marketplace <allowlist|refresh|updates|update <name>> [--url <url>] [--token <token>] [--json]
   zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
   zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
   zelavis nodes <list|platform|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
@@ -176,7 +176,7 @@ Commands:
                             outlive the Platform that drives it.
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
-  marketplace               Show or refresh the marketplace allow-list.
+  marketplace               Show or refresh the marketplace allow-list; list and install service updates.
   terminal                  Open a shell on the server inside tmux (owner only).
   logs                      Read the Platform's recent log; --ref shows the cause
                             behind the reference of an "Action failed" message.

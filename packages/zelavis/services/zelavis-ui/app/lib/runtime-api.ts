@@ -82,6 +82,8 @@ export interface RuntimeServiceRegistryEntry {
   status: "installed" | "available";
   /** How an available entry is installed: fetched from the allow-list, or switched on where it is. */
   installVia?: "acquire" | "activate";
+  /** An installed package the allow-list lists at a newer version. */
+  update?: { version: string };
   source?: "official" | "community";
   /** Who maintains it; `zelavis` for what the Zelavis project publishes. */
   maintainer?: string;
@@ -2088,6 +2090,19 @@ export async function updateDashboardService(
     serviceRegistry: result.services,
     activation: result.activation,
   };
+}
+
+/** Installs the newer version the allow-list lists for an installed service; the Platform picks the version. */
+export async function updateDashboardServiceToListed(
+  config: RuntimeConfig,
+  name: string,
+): Promise<RuntimeServiceRegistryMutationResult & { version: string }> {
+  const result = await readJson<{
+    service: { name: string; version: string };
+    services: RuntimeServiceRegistryEntry[];
+    activation?: RuntimeServiceActivationResult;
+  }>(`${config.api.basePath}/runtime/services/${encodeURIComponent(name)}/update`, { method: "POST", body: "{}" });
+  return { serviceRegistry: result.services, activation: result.activation, version: result.service.version };
 }
 
 export async function createDashboardService(

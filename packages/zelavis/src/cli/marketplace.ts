@@ -3,13 +3,14 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis marketplace <allowlist|refresh> [--url URL] [--token TOKEN] [--json]";
+  "zelavis marketplace <allowlist|refresh|updates|update NAME> [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis marketplace` — the allow-list routes through the JS SDK client.
  *
  * `allowlist` shows how current the list is; `refresh` fetches it again from
- * its sources and reports what each one answered.
+ * its sources and reports what each one answered. `updates` lists the installed
+ * services the list offers at a newer version, and `update NAME` installs it.
  */
 export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
@@ -42,7 +43,10 @@ export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
     console.log(usage);
     return;
   }
-  if (rest.length > 0) throw new Error(`Unexpected argument "${rest[0]}". ${usage}`);
+  const operands = action === "update" ? 1 : 0;
+  if (rest.length !== operands) {
+    throw new Error(rest.length > operands ? `Unexpected argument "${rest[operands]}". ${usage}` : `marketplace update needs a service name. ${usage}`);
+  }
   const base = new URL(url);
   const client = createZelavisClient({
     baseUrl: base.origin,
@@ -71,6 +75,21 @@ export function runMarketplaceCommand(args: readonly string[]): Promise<void> {
           ...result.attempts.map((a) => `${a.source}: ${a.outcome}${a.detail ? ` (${a.detail})` : ""}`),
           describe(result.list),
         ].join("\n"));
+      return;
+    }
+    case "updates": {
+      const updates = (yield* integrationValue(client.marketplace.services())).filter((service) => service.update);
+      print(updates, () => updates.length === 0
+        ? "Every installed service is at the newest version the marketplace lists."
+        : updates.map((service) => `${service.name} ${service.version ?? "?"} -> ${service.update!.version}`).join("\n"));
+      return;
+    }
+    case "update": {
+      const result = (yield* integrationValue(client.marketplace.update(rest[0]!)));
+      print(result, () => [
+        `Updated ${result.service.name} from ${result.service.from ?? "?"} to ${result.service.version}.`,
+        ...(result.activation?.message ? [result.activation.message] : []),
+      ].join("\n"));
       return;
     }
     default:

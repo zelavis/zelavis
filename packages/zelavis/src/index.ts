@@ -122,7 +122,7 @@ import {
 import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
-import { isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
+import { compareVersions, isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
 import { isTerminalSessionId, ZelavisTerminalRefusal, type ZelavisTerminalControl } from "./terminal.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
@@ -1854,6 +1854,12 @@ function terminalRoutes(context: {
  */
 function resolveLiveServiceRegistry(options: {
   composed: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+  /**
+   * Names the composed list holds only because they were installed when it was composed. The store is
+   * their authority, so its current entries replace them: a package installed again at another version
+   * is that version from then on, without a restart.
+   */
+  installed?: ReadonlySet<string>;
   store: ZelavisServiceRegistryStore;
   importer?: ZelavisServiceLoadOptions["importer"];
   manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
@@ -1872,7 +1878,7 @@ function resolveLiveServiceRegistry(options: {
     // packages installed or discovered when it was composed, already forced to
     // extension scope; an explicit scope is kept, or the dashboard would run
     // their pages unsandboxed and offer their menus inside every Project.
-    const composedServiceRegistry = options.composed.map((entry) =>
+    const composedServiceRegistry = options.composed.filter((entry) => !options.installed?.has(entry.service.name)).map((entry) =>
       entry.service.scope
         ? entry
         : Object.freeze({
@@ -1894,6 +1900,12 @@ function resolveRuntimeManagementCore(
       ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
     >[];
     serviceRegistryStore: ZelavisServiceRegistryStore;
+    /** See `resolveLiveServiceRegistry`. */
+    installedServiceNames?: ReadonlySet<string>;
+    /** The version the marketplace's allow-list lists for each package it offers, by name. */
+    listedServiceVersions?: ReadonlyMap<string, string>;
+    /** Told after every registry change, so what reads installed recipes does not label Projects from the old set. */
+    serviceRegistryChanged?: () => Promise<void>;
     serviceImporter?: ZelavisServiceLoadOptions["importer"];
     serviceManifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     servicePackageInstaller?: ZelavisServicePackageInstaller;
@@ -1955,11 +1967,21 @@ function resolveRuntimeManagementCore(
     entries?: readonly ZelavisServiceRegistryStateEntry[],
   ) => resolveLiveServiceRegistry({
     composed: context.serviceRegistry,
+    ...(context.installedServiceNames ? { installed: context.installedServiceNames } : {}),
     store: context.serviceRegistryStore,
     importer: context.serviceImporter,
     manifestResolver: context.serviceManifestResolver,
     ...(entries ? { entries } : {}),
   });
+  /** The newer version the allow-list lists for an installed package, if there is one. */
+  const listedUpdate = (
+    entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
+  ): string | undefined => {
+    const listed = context.listedServiceVersions?.get(entry.service.name);
+    const installed = entry.service.version;
+    return entry.status === "installed" && listed && installed && isExactVersion(listed) && isExactVersion(installed)
+      && compareVersions(listed, installed) > 0 ? listed : undefined;
+  };
   const serializeServiceMenuForDashboard = (
     serviceName: string,
     menu: ZelavisServiceMenuDefinition | undefined,
@@ -2305,6 +2327,9 @@ function resolveRuntimeManagementCore(
         ...(entry.status === "available"
           ? { installVia: entry.specifier?.startsWith("npm:") ? "acquire" : "activate" }
           : {}),
+        // An installed package the allow-list now lists at a newer version; `runtime/services/:name/update`
+        // installs that version.
+        ...(listedUpdate(entry) ? { update: { version: listedUpdate(entry)! } } : {}),
         // Present only on a service that extends another. A client listing a
         // general catalogue leaves these out and shows them beside the plugin
         // they extend instead.
@@ -2394,6 +2419,10 @@ function resolveRuntimeManagementCore(
               )),
           )),
       );
+      if (context.serviceRegistryChanged) {
+        const changed = context.serviceRegistryChanged;
+        yield* Effect.tryPromise({ try: () => changed(), catch: (cause) => new RegistryUnavailable({ cause }) });
+      }
       return { entries, activation };
     });
 
@@ -2845,6 +2874,75 @@ function resolveRuntimeManagementCore(
               return {
                 status: 201,
                 body: {
+                  services: yield* integration(() => serializeServiceRegistryForDashboard()),
+                  activation,
+                },
+              };
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "runtime.services.updateToListed",
+          spec: {
+            operationId: "updateRuntimeServiceToListed",
+            summary: "Update an installed service to the version the marketplace allow-list lists",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Service updated" },
+              400: { description: "Not an installed service, or the package could not be acquired" },
+              409: { description: "Already the newest listed version, or the registry mutation conflicted" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["system.services.manage"] },
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/services/:name/update",
+          ),
+          // The version comes from the allow-list, never from the request, as for the Platform's own updates.
+          // It is acquired and registered exactly as an install is, so the gate, the digest check and the
+          // activation are the same; a recipe is then read live and a Project offers its upgrade at once.
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+              const serviceName = params.name?.trim();
+              if (!serviceName) {
+                throw new ZelavisValidationError("Service name is required.");
+              }
+              const current = (yield* integration(() => readResolvedServiceRegistry()))
+                .find((entry) => entry.service.name === serviceName);
+              if (!current || current.status !== "installed") {
+                throw new ZelavisValidationError(`"${serviceName}" is not an installed service.`);
+              }
+              const version = listedUpdate(current);
+              if (!version) {
+                return {
+                  status: 409,
+                  body: { error: `${serviceName}@${current.service.version ?? "unknown"} is the newest version the marketplace lists.` },
+                };
+              }
+              const created = yield* integration(() => readDashboardServiceRegistryCreate(
+                { packageSource: `npm:${serviceName}@${version}`, status: "installed" },
+                {
+                  importer: context.serviceImporter,
+                  manifestResolver: context.serviceManifestResolver,
+                  packageInstaller: context.servicePackageInstaller,
+                },
+              ));
+              if (created.name !== serviceName) {
+                throw new ZelavisValidationError(`The package listed for "${serviceName}" names itself "${created.name}".`);
+              }
+              const { activation } = yield* integration(() => runServiceRegistryChange(
+                applyServiceRegistryChange(
+                  (entries) => [
+                    ...entries.filter((entry) => entry.name !== serviceName),
+                    { ...entries.find((entry) => entry.name === serviceName), ...created },
+                  ],
+                  () => ({ serviceName, action: "update", specifier: created.specifier }),
+                ),
+              ));
+              return {
+                status: 200,
+                body: {
+                  service: { name: serviceName, from: current.service.version, version },
                   services: yield* integration(() => serializeServiceRegistryForDashboard()),
                   activation,
                 },
@@ -6470,11 +6568,21 @@ export function zelavis(
             ? Object.freeze({ ...entry, status: "available" as const })
             : entry,
         );
+        // What the composition took from the store and nowhere else: a package the
+        // installation composed itself, or one dropped into the folder, keeps its name.
+        const composedElsewhere = new Set([
+          ...baseServiceRegistry.filter((entry) => !isCatalogueListing(entry)),
+          ...discoveredServiceRegistry,
+        ].map((entry) => entry.service.name));
+        const installedServiceNames: ReadonlySet<string> = new Set(
+          storedServiceRegistry.map((entry) => entry.service.name).filter((name) => !composedElsewhere.has(name)),
+        );
         // Recipes installed after composition are read from the registry store, so
         // a Project can be created from one without restarting the Platform.
         const readServiceRegistry = () =>
           resolveLiveServiceRegistry({
             composed: serviceRegistry,
+            installed: installedServiceNames,
             store: serviceRegistryStore,
             importer: compositionOptions.serviceRegistry?.importer,
             manifestResolver: compositionOptions.serviceRegistry?.manifestResolver,
@@ -7062,6 +7170,12 @@ export function zelavis(
             apiVersion,
             serviceRegistry,
             serviceRegistryStore,
+            installedServiceNames,
+            ...(projects?.recipesChanged ? { serviceRegistryChanged: () => projects.recipesChanged!() } : {}),
+            listedServiceVersions: new Map(
+              baseServiceRegistry.filter(isCatalogueListing).flatMap((entry) =>
+                entry.service.version ? [[entry.service.name, entry.service.version] as const] : []),
+            ),
             serviceImporter: compositionOptions.serviceRegistry?.importer,
             serviceManifestResolver:
               compositionOptions.serviceRegistry?.manifestResolver,

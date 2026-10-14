@@ -5,7 +5,7 @@ import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../sys
 import type { IdentityApi } from "../app/identity/index.js";
 import type { ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
-import type { ServiceSourceDiagnostic } from "../platform/service-registry-view.js";
+import type { PublicServiceRegistryIdentity, ServiceSourceDiagnostic, ServiceUpdateResult } from "../platform/service-registry-view.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectRecord,
@@ -602,6 +602,13 @@ export interface ZelavisMarketplaceClient {
   allowlist(): Promise<ZelavisMarketplaceAllowlistStatus>;
   /** Fetches the list again from its sources; needs `system.services.manage`. */
   refresh(): Promise<ZelavisMarketplaceRefreshResult>;
+  /** The registered services; an installed one the list offers at a newer version carries `update`. */
+  services(): Promise<readonly PublicServiceRegistryIdentity[]>;
+  /**
+   * Installs the newer version the list offers for an installed service; needs `system.services.manage`.
+   * The Platform chooses the version from the list; a recipe's Projects then offer its upgrade.
+   */
+  update(name: string): Promise<ServiceUpdateResult>;
 }
 
 /** Whether a terminal can be opened on this server, and the caller's own open sessions. */
@@ -1111,6 +1118,8 @@ export function createZelavisClient(
       allowlist: () => json<ZelavisMarketplaceAllowlistStatus>("/runtime/marketplace/allowlist"),
       refresh: () =>
         json<ZelavisMarketplaceRefreshResult>("/runtime/marketplace/allowlist/refresh", { method: "POST" }),
+      services: () => json<{ services: readonly PublicServiceRegistryIdentity[] }>("/runtime/services").then((result) => result.services),
+      update: (name) => json<ServiceUpdateResult>(`/runtime/services/${encodeURIComponent(name)}/update`, { method: "POST", body: {} }),
     },
     terminal: {
       status: () => json<ZelavisTerminalOverview>("/runtime/terminal"),

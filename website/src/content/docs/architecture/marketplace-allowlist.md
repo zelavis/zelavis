@@ -64,6 +64,27 @@ POST /zelavis/api/v1/runtime/marketplace/allowlist/refresh  fetch it again (syst
 SDK: `client.marketplace.allowlist()` and `client.marketplace.refresh()`.
 CLI: `zelavis marketplace allowlist` and `zelavis marketplace refresh`.
 
+## Updating an installed service
+
+An installed service the list offers at a newer version carries
+`update: { version }` in `GET /zelavis/api/v1/runtime/services`, and the Marketplace
+shows **Update to** that version. Updating installs the listed version through the
+same gate as an install:
+
+```txt
+POST /zelavis/api/v1/runtime/services/:name/update   install the listed version (system.services.manage)
+```
+
+The version is the list's, never the caller's, the same rule as for Platform
+updates. The answer is `409` when the installed version is already the newest
+listed. The running Platform serves the new version at once, with no restart: a
+plugin or frontend is activated as on install, and a recipe is read live, so its
+Projects offer **Upgrade** to it straight away. Upgrading each Project stays a
+separate, explicit action.
+
+SDK: `client.marketplace.services()` and `client.marketplace.update(name)`.
+CLI: `zelavis marketplace updates` and `zelavis marketplace update <name>`.
+
 Sources come from `services.marketplace.sources` or `ZELAVIS_ALLOWLIST_SOURCES`
 (comma separated). The default is `https://zelavis.com/allowlist.json`. There are
 no keys: the list is plain JSON and its https origin is the trust anchor, the same

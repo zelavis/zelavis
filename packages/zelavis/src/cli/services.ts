@@ -175,7 +175,8 @@ export function formatRuntimeServiceList(
   const rows = services.map((service) => {
     const version = service.version ? `@${service.version}` : "";
     const source = service.source ? ` ${service.source}` : "";
-    return `${service.status.padEnd(9)} ${service.name}${version}${source}`;
+    const update = service.update ? ` (update to ${service.update.version}: zelavis marketplace update ${service.name})` : "";
+    return `${service.status.padEnd(9)} ${service.name}${version}${source}${update}`;
   });
 
   return rows.join("\n");

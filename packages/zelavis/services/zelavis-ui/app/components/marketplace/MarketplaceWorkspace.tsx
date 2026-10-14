@@ -10,6 +10,7 @@ import {
   Plug,
   Plus,
   Search,
+  ArrowUpCircle,
 } from "lucide-react";
 import * as React from "react";
 import { Link, useNavigate, useRevalidator, useRouteLoaderData } from "react-router";
@@ -47,6 +48,7 @@ import {
   createProject,
   refreshMarketplaceAllowlist,
   updateDashboardService,
+  updateDashboardServiceToListed,
   type MarketplaceAllowlistStatus,
   type RuntimeConfig,
   type RuntimeServiceRegistryEntry,
@@ -261,6 +263,26 @@ export function MarketplaceWorkspace({
     }
   }
 
+  async function update(service: RuntimeServiceRegistryEntry) {
+    setBusy(service.name);
+    setMessage(undefined);
+    try {
+      // Recipes are installed on the Platform; plugins and frontends in the scope being looked at.
+      const result = await updateDashboardServiceToListed(tab === "apps" ? controlRuntime! : runtime!, service.name);
+      setMessage({
+        text: tab === "apps"
+          ? `Updated ${marketplaceTitle(service)} to ${result.version}. Its Projects now offer the upgrade.`
+          : `Updated ${marketplaceTitle(service)} to ${result.version}.`,
+        tone: "ok",
+      });
+      revalidator.revalidate();
+    } catch (error) {
+      setMessage({ text: errorMessage(error), tone: "error" });
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   async function createFrom(service: RuntimeServiceRegistryEntry, name: string) {
     setBusy(service.name);
     setMessage(undefined);
@@ -443,6 +465,12 @@ export function MarketplaceWorkspace({
                       <Info />
                       More details
                     </Button>
+                    {service.update ? (
+                      <Button type="button" variant="outline" disabled={pending} onClick={() => void update(service)}>
+                        {pending ? <LoaderCircle className="animate-spin" /> : <ArrowUpCircle />}
+                        Update to {service.update.version}
+                      </Button>
+                    ) : null}
                     {tab !== "apps" && installed ? (
                       <Badge variant="outline" className="gap-1">
                         <Check className="size-3" />

@@ -12,6 +12,15 @@ export interface PublicServiceRegistryIdentity {
   /** Who maintains it; `zelavis` for what the Zelavis project publishes. Separate from `source`, which is about trust in the registry. */
   maintainer?: string;
   order?: number;
+  /** An installed package the marketplace's allow-list lists at a newer version. */
+  update?: { version: string };
+}
+
+/** What `runtime/services/:name/update` did: the package moved from one listed version to the next. */
+export interface ServiceUpdateResult {
+  service: { name: string; from?: string; version: string };
+  services: readonly PublicServiceRegistryIdentity[];
+  activation?: { status: "active" | "pending"; message?: string };
 }
 
 /** What a person can choose when creating a Project; archive addresses and entry paths stay in the recipe. */

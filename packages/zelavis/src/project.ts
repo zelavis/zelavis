@@ -446,6 +446,8 @@ export interface ZelavisProjectManager {
   gatewayTarget?(projectId: string): Promise<string | undefined>;
   /** Resolves when public requests may reach the Project: it waits (at most {@link INGRESS_HOLD_LIMIT_MS}) while the Project's serving processes are replaced. */
   ingressReady?(projectId: string): Promise<void>;
+  /** The installed recipes changed: the next read labels Projects from the registry as it is now. */
+  recipesChanged?(): Promise<void>;
   signGatewayAuthority(
     projectId: string,
     claims: ZelavisProjectGatewayAuthorityInput,
@@ -2348,6 +2350,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
             yield* requireProject(id);
             return yield* runtimeEffects.logs((yield* evaluate(() => normalizeProjectId(id))));
+        }),
+        recipesChanged: Effect.fn("Projects.recipesChanged")(function* () {
+            recipesReadAt = 0;
         }),
         ingressReady: Effect.fn("Projects.ingressReady")(function* (id: string) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));

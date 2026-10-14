@@ -316,6 +316,13 @@ Rules that hold for every change:
   background website refresh applies on the next start, not to that initial catalogue.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
+- An installed service the list offers at a newer version is an update
+  (`update: { version }` in `runtime/services`; `POST runtime/services/:name/update`,
+  `client.marketplace.update`, `zelavis marketplace update`). The version comes from
+  the list, never the request, and installs through the same gate. The store is the
+  authority for every package the composition took from it, so the live registry
+  serves the new version without a restart, and a registry change tells the Project
+  manager its recipe reading is stale.
 
 ## Platform And App Service Boundary
 
