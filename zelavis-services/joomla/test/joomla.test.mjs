@@ -51,7 +51,7 @@ test("its runtime is the Platform's recipe runtime", () => {
 const context = (overrides = {}) => ({
   projectId: "p1", hostname: "localhost", software: install.software[0], method: install.methods[0], config: {},
   ports: { web: 18080, db: 13306 },
-  directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site", db: "/srv/p1/app/db" } },
+  directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site", db: "/srv/p1/app/db" } },
   account: { user: "www-data", group: "www-data", switchUser: false },
   ...overrides,
 });
@@ -88,7 +88,7 @@ const runInstall = (fake, ctx = context()) => Effect.runPromise(recipe.install(c
 
 test("start is the database, PHP-FPM and Caddy in dependency order, within the manifest's names", () => {
   const plan = Effect.runSync(recipe.start(context()));
-  const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name), directories: ["/srv/p1/app", "/run/zv-abc"] });
+  const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name), directories: ["/srv/p1/.zelavis/server", "/srv/p1/app", "/run/zv-abc"] });
   assert.deepEqual(checked.processes.map((process) => [process.name, [...process.dependsOn]]), [["database", []], ["php-fpm", ["database"]], ["caddy", ["php-fpm"]]]);
   assert.ok(checked.processes[0].args.includes("--datadir=/srv/p1/app/db"));
 });
@@ -96,10 +96,10 @@ test("start is the database, PHP-FPM and Caddy in dependency order, within the m
 test("install downloads the pinned release without a top-level folder, creates the database and user, and writes no application configuration", async () => {
   const fake = fakeHost();
   await runInstall(fake);
-  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/joomla.tar.gz", destination: "site", options: {} }]);
+  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/joomla.tar.gz", destination: "/srv/p1/app/site", options: {} }]);
   const sql = fake.calls.writes.get("run/init.sql");
   assert.ok(sql.some((part) => typeof part === "string" && part.includes("`joomla`")) && sql.some((part) => part.secret === "db-password"));
-  assert.ok(!fake.calls.writes.has("site/configuration.php"), "Joomla's installer writes its own configuration");
+  assert.ok(!fake.calls.writes.has("/srv/p1/app/site/configuration.php"), "Joomla's installer writes its own configuration");
   assert.match(fake.calls.writes.get("Caddyfile"), /root \* "\/srv\/p1\/app\/site"/);
 });
 

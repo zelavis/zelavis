@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { initializeMariaDb, mariaDbProcess, parseProcessPlan, releaseMariaDb, requireMariaDb } from "../dist/core/recipe/index.js";
 
 const IMAGE = `mariadb@sha256:${"a".repeat(64)}`;
-const spec = { name: "app", user: "app", data: { absolute: "/srv/p/app/db", relative: "db" } };
+const spec = { name: "app", user: "app", data: { absolute: "/srv/p/app/db" } };
 const context = (container) => ({
   projectId: "p1", hostname: "localhost", software: {}, config: {}, ports: { web: 18080, db: 13306 },
   method: container ? { id: "container", driver: "js", requires: ["docker"], containers: { database: IMAGE } } : { id: "native", driver: "js", requires: [] },
@@ -62,14 +62,14 @@ test("initializing pulls the image and prepares the data directory for the conta
   const container = fakeHost();
   await direct(initializeMariaDb(container.host, context(true), spec));
   assert.deepEqual(container.calls.runs.map((call) => [call.command, call.args[0]]), [["docker", "pull"]]);
-  assert.deepEqual(container.calls.dirs, ["db"]);
+  assert.deepEqual(container.calls.dirs, ["/srv/p/app/db"]);
   assert.deepEqual(container.calls.secrets, ["db-password"]);
   assert.equal(container.calls.writes.size, 0, "the image creates the database and account itself");
 
   const native = fakeHost();
   await direct(initializeMariaDb(native.host, context(false), spec));
   assert.deepEqual(native.calls.runs.map((call) => call.command), ["mariadb-install-db"]);
-  assert.ok(native.calls.writes.has("db/.zelavis-initialized"));
+  assert.ok(native.calls.writes.has("/srv/p/app/db/.zelavis-initialized"));
 
   const failing = fakeHost({ docker: { code: 1, stdout: "", stderr: "denied" } });
   await assert.rejects(direct(initializeMariaDb(failing.host, context(true), spec)), /image could not be fetched/);

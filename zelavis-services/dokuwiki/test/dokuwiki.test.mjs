@@ -44,7 +44,7 @@ test("its runtime is the Platform's recipe runtime", () => {
 const context = (overrides = {}) => ({
   projectId: "p1", hostname: "localhost", software: install.software[0], method: install.methods[0], config: {},
   ports: { web: 18080 },
-  directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site" } },
+  directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site" } },
   account: { user: "www-data", group: "www-data", switchUser: false },
   ...overrides,
 });
@@ -78,7 +78,7 @@ const runInstall = (fake, ctx = context()) => Effect.runPromise(recipe.install(c
 
 test("start is two processes, PHP-FPM then Caddy, both reloadable, within the manifest's names", () => {
   const plan = Effect.runSync(recipe.start(context()));
-  const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm"], ports: ["web"], directories: ["/srv/p1/app", "/run/zv-abc"] });
+  const checked = parseProcessPlan(plan, { commands: ["caddy", "php", "php-fpm"], ports: ["web"], directories: ["/srv/p1/.zelavis/server", "/srv/p1/app", "/run/zv-abc"] });
   assert.deepEqual(checked.processes.map((process) => [process.name, [...process.dependsOn]]), [["php-fpm", []], ["caddy", ["php-fpm"]]]);
   assert.deepEqual(checked.processes.map((process) => process.update), [{ strategy: "reload", signal: "SIGUSR2" }, { strategy: "reload", signal: "SIGUSR1" }]);
 });
@@ -87,7 +87,7 @@ test("install downloads the pinned release into the named site directory, holds 
   const fake = fakeHost();
   await runInstall(fake);
   assert.deepEqual(fake.calls.downloads.map((d) => [d.url, d.sha256, d.destination]), [[install.software[0].archive, install.software[0].sha256, "dl/dokuwiki.tar.gz"]]);
-  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/dokuwiki.tar.gz", destination: "site", options: { stripTopLevel: true } }]);
+  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/dokuwiki.tar.gz", destination: "/srv/p1/app/site", options: { stripTopLevel: true } }]);
   const caddy = fake.calls.writes.get("Caddyfile");
   assert.match(caddy, /index doku\.php/);
   assert.match(caddy, /respond @denied 403/);
@@ -98,10 +98,10 @@ test("install downloads the pinned release into the named site directory, holds 
 test("the site is wherever the Project has it, and an install that finds it does not download again", async () => {
   const named = { site: "/srv/p1/app/web/wiki" };
   const fake = fakeHost();
-  await runInstall(fake, context({ directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named } }));
-  assert.deepEqual(fake.calls.extracts.map((e) => e.destination), ["web/wiki"]);
+  await runInstall(fake, context({ directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named } }));
+  assert.deepEqual(fake.calls.extracts.map((e) => e.destination), ["/srv/p1/app/web/wiki"]);
   assert.match(fake.calls.writes.get("Caddyfile"), /root \* "\/srv\/p1\/app\/web\/wiki"/);
-  await runInstall(fake, context({ directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named } }));
+  await runInstall(fake, context({ directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named } }));
   assert.equal(fake.calls.downloads.length, 1, "nothing is downloaded twice");
 });
 

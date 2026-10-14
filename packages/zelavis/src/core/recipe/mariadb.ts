@@ -14,8 +14,8 @@ export interface MariaDbSpec {
   /** The database and the account that owns it (the application's installer is given both). */
   readonly name: string;
   readonly user: string;
-  /** The data directory, absolute and relative to the Project root (what the manifest's `directories` named). */
-  readonly data: { readonly absolute: string; readonly relative: string };
+  /** The data directory, absolute: where the manifest's `directories` named it (`app/db`). */
+  readonly data: { readonly absolute: string };
   /** The oldest server version the application supports, for the method that runs the host's or the recipe's build. */
   readonly minimum?: readonly [number, number];
 }
@@ -62,16 +62,16 @@ export const initializeMariaDb = (host: RecipeHostApi, context: RecipeContext, s
     yield* host.progress({ phase: "install", message: "Fetching the database image." });
     const pulled = yield* host.run({ command: "docker", args: ["pull", "--quiet", image], timeoutMs: 15 * 60_000 });
     if (pulled.code !== 0) return yield* Effect.fail(refuse("install", `The database image could not be fetched: ${(pulled.stderr || pulled.stdout).trim().split("\n").slice(-2).join(" ")}`));
-    yield* host.files.mkdir(spec.data.relative);
+    yield* host.files.mkdir(spec.data.absolute);
     return;
   }
-  const marker = `${spec.data.relative}/.zelavis-initialized`;
+  const marker = `${spec.data.absolute}/.zelavis-initialized`;
   if (yield* host.files.exists(marker)) return;
   yield* host.progress({ phase: "install", message: "Initializing the database." });
   const { root } = context.directories;
   // An earlier attempt that died partway left a data directory with nothing in it worth keeping.
-  yield* host.files.remove(spec.data.relative);
-  yield* host.files.mkdir(spec.data.relative);
+  yield* host.files.remove(spec.data.absolute);
+  yield* host.files.mkdir(spec.data.absolute);
   // The first FLUSH PRIVILEGES turns account management on: bootstrap runs without grant tables.
   yield* host.files.write("run/init.sql", [
     `FLUSH PRIVILEGES;\nCREATE DATABASE IF NOT EXISTS \`${spec.name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n`,

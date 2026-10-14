@@ -63,7 +63,8 @@ test("its runtime is the Platform's recipe runtime, configured by the host's use
 const context = (overrides = {}) => ({
   projectId: "p1", hostname: "localhost", software: install.software[0], method: install.methods[0], config: {},
   ports: { web: 18080, db: 13306 },
-  directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site", db: "/srv/p1/app/db" } },
+  // Contract 2: the application alone in app/, the Platform's own files in .zelavis/server.
+  directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named: { site: "/srv/p1/app/site", db: "/srv/p1/app/db" } },
   account: { user: "www-data", group: "www-data", switchUser: false },
   ...overrides,
 });
@@ -72,7 +73,7 @@ test("start returns the three processes, in dependency order, within the manifes
   const plan = Effect.runSync(recipe.start(context()));
   const checked = parseProcessPlan(plan, {
     commands: ["caddy", "php", "php-fpm", "mariadbd", "mariadb-install-db", "mariadb"], ports: install.ports.map((port) => port.name),
-    directories: ["/srv/p1/app", "/run/zv-abc"],
+    directories: ["/srv/p1/.zelavis/server", "/srv/p1/app", "/run/zv-abc"],
   });
   assert.deepEqual(checked.processes.map((process) => [process.name, process.command, [...process.dependsOn]]), [
     ["database", "mariadbd", []], ["php-fpm", "php-fpm", ["database"]], ["caddy", "caddy", ["php-fpm"]],
@@ -82,8 +83,8 @@ test("start returns the three processes, in dependency order, within the manifes
   assert.ok(!database.args.some((arg) => String(arg).startsWith("--user=")), "an unprivileged Platform does not ask MariaDB to switch user");
   assert.deepEqual(checked.processes[1].readiness, { path: "/run/zv-abc/php-fpm.sock", timeoutMs: 120000 });
   assert.deepEqual(checked.processes[2].readiness, { port: "web", timeoutMs: 120000 });
-  assert.deepEqual([checked.processes[1].config, checked.processes[1].update], [["/srv/p1/app/php-fpm.conf"], { strategy: "reload", signal: "SIGUSR2" }], "PHP-FPM reloads gracefully");
-  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/app/Caddyfile"], { strategy: "reload", signal: "SIGUSR1" }], "Caddy reloads gracefully");
+  assert.deepEqual([checked.processes[1].config, checked.processes[1].update], [["/srv/p1/.zelavis/server/php-fpm.conf"], { strategy: "reload", signal: "SIGUSR2" }], "PHP-FPM reloads gracefully");
+  assert.deepEqual([checked.processes[2].config, checked.processes[2].update], [["/srv/p1/.zelavis/server/Caddyfile"], { strategy: "reload", signal: "SIGUSR1" }], "Caddy reloads gracefully");
   assert.equal(checked.processes[0].config, undefined, "the database reads nothing that a reload could change; a different launch restarts it");
 
   const root = Effect.runSync(recipe.start(context({ account: { user: "www-data", group: "www-data", switchUser: true } })));
@@ -124,8 +125,8 @@ test("install downloads the pinned release, writes private credentials by refere
   const fake = fakeHost();
   await runInstall(fake);
   assert.deepEqual(fake.calls.downloads.map((d) => [d.url, d.sha256, d.maxBytes, d.destination]), [[install.software[0].archive, install.software[0].sha256, install.software[0].maxBytes, "dl/wordpress.tar.gz"]]);
-  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/wordpress.tar.gz", destination: "site", options: { stripTopLevel: true } }]);
-  const config = fake.calls.writes.get("site/wp-config.php");
+  assert.deepEqual(fake.calls.extracts, [{ archive: "dl/wordpress.tar.gz", destination: "/srv/p1/app/site", options: { stripTopLevel: true } }]);
+  const config = fake.calls.writes.get("/srv/p1/app/site/wp-config.php");
   assert.ok(Array.isArray(config) && config.some((part) => part.secret === "db-password"), "the password is a reference");
   assert.equal(config.filter((part) => typeof part === "object").length, 9, "one password and eight salts");
   assert.ok(config.join("").includes("DB_HOST', '127.0.0.1:13306'"));
@@ -133,33 +134,35 @@ test("install downloads the pinned release, writes private credentials by refere
   assert.ok(sql[0].startsWith("FLUSH PRIVILEGES;"), "account management is switched on before accounts are created");
   assert.ok(sql.some((part) => part.secret === "db-password"));
   const initialize = fake.calls.runs.find((call) => call.command === "mariadb-install-db");
-  assert.ok(initialize.args.includes("--extra-file=/srv/p1/app/run/init.sql") && initialize.args.includes("--datadir=/srv/p1/app/db"));
+  assert.ok(initialize.args.includes("--extra-file=/srv/p1/.zelavis/server/run/init.sql") && initialize.args.includes("--datadir=/srv/p1/app/db"));
   assert.ok(fake.calls.removed.includes("run/init.sql"), "the file that held the password is removed");
-  assert.ok(fake.files.has("db/.zelavis-initialized"));
+  assert.ok(fake.files.has("/srv/p1/app/db/.zelavis-initialized"));
+  assert.ok([...fake.calls.writes.keys(), ...fake.files.keys()].every((path) => !path.startsWith("/srv/p1/app/") || /^\/srv\/p1\/app\/(site|db)(\/|$)/.test(path)),
+    "nothing lands in app/ outside the application's own directories");
   assert.ok(fake.calls.runs.some((call) => call.command === "caddy" && call.args[0] === "validate"));
   assert.ok(fake.calls.runs.some((call) => call.command === "php-fpm" && call.args[0] === "-tt"));
 });
 
 test("the site and the database are wherever the Project has them: a recipe never assumes its own layout", async () => {
   const moved = { named: { site: "/srv/p1/app/web/wp", db: "/srv/p1/app/data/mysql" } };
-  const where = (named) => ({ directories: { root: "/srv/p1/app", sockets: "/run/zv-abc", named } });
+  const where = (named) => ({ directories: { root: "/srv/p1/.zelavis/server", sockets: "/run/zv-abc", named } });
   const plan = Effect.runSync(recipe.start(context(where(moved.named))));
   assert.ok(plan.processes[0].args.includes("--datadir=/srv/p1/app/data/mysql"));
   const fake = fakeHost();
   await runInstall(fake, context(where(moved.named)));
-  assert.deepEqual(fake.calls.extracts.map((e) => e.destination), ["web/wp"]);
-  assert.ok(fake.calls.writes.has("web/wp/wp-config.php"));
-  assert.ok(fake.files.has("data/mysql/.zelavis-initialized"));
+  assert.deepEqual(fake.calls.extracts.map((e) => e.destination), ["/srv/p1/app/web/wp"]);
+  assert.ok(fake.calls.writes.has("/srv/p1/app/web/wp/wp-config.php"));
+  assert.ok(fake.files.has("/srv/p1/app/data/mysql/.zelavis-initialized"));
   const text = (name) => [].concat(fake.calls.writes.get(name)).join("");
   assert.ok(text("Caddyfile").includes("/srv/p1/app/web/wp"));
   assert.ok(text("php-fpm.conf").includes("chdir = /srv/p1/app/web/wp"));
 });
 
 test("install resumes: nothing is downloaded, regenerated or reinitialized when it is already there", async () => {
-  const fake = fakeHost(["site/wp-includes/version.php", "site/wp-config.php", "db/.zelavis-initialized"]);
+  const fake = fakeHost(["/srv/p1/app/site/wp-includes/version.php", "/srv/p1/app/site/wp-config.php", "/srv/p1/app/db/.zelavis-initialized"]);
   await runInstall(fake);
   assert.deepEqual(fake.calls.downloads, []);
-  assert.equal(fake.calls.writes.has("site/wp-config.php"), false);
+  assert.equal(fake.calls.writes.has("/srv/p1/app/site/wp-config.php"), false);
   assert.equal(fake.calls.runs.some((call) => call.command === "mariadb-install-db"), false);
   assert.ok(fake.calls.writes.has("Caddyfile") && fake.calls.writes.has("php-fpm.conf"), "configuration is regenerated, it is cheap and keeps ports current");
 });

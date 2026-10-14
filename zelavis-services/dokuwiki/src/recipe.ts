@@ -10,19 +10,20 @@ import { RecipeError, RecipeHost, defineRecipe, type ProcessPlan, type RecipeCon
  * release (digest-checked) and validates the web configuration; DokuWiki's own installer, opened in
  * the browser, creates the administrator. Starting returns the two processes as a plan.
  *
- * Layout below the Project's directory (`context.directories.root`): `site/` is DokuWiki (code,
- * `conf/` and `data/` are its own), `run/` pid files and logs, the rest temporary space.
+ * Layout (manifest contract 2): the application alone is in `app/`, as its named directories: `site/` is DokuWiki (code,
+ * `conf/` and `data/` are its own); the Platform's own files are in the root
+ * (`context.directories.root`, `.zelavis/server`): server configuration, `run/` pid files and logs, temporary space.
  */
 
 const MINIMUM_PHP: readonly [number, number] = [8, 2];
 const REQUIRED_EXTENSIONS = ["mbstring", "xml"] as const;
 const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run"] as const;
 
-/** Where the Project keeps its site now, absolute and below the root. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
+/** Where the Project keeps its site now, absolute, in app/. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
 const place = (context: RecipeContext, name: "site") => {
   const absolute = context.directories.named[name];
   if (absolute === undefined) throw refuse("install", `The Platform did not provide the "${name}" directory.`);
-  return { absolute, relative: absolute.slice(context.directories.root.length + 1) };
+  return { absolute };
 };
 
 const refuse = (operation: string, message: string) => new RecipeError({ operation, message });
@@ -132,7 +133,7 @@ const requireVersions = (host: RecipeHostApi) => Effect.gen(function* () {
 });
 
 const installSite = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
-  const site = place(context, "site").relative;
+  const site = place(context, "site").absolute;
   if (!(yield* host.files.exists(`${site}/doku.php`))) {
     yield* host.progress({ phase: "install", message: `Downloading DokuWiki ${context.software.version}.` });
     yield* host.download({ url: context.software.archive, sha256: context.software.sha256, maxBytes: context.software.maxBytes, destination: "dl/dokuwiki.tar.gz" });
@@ -148,7 +149,7 @@ export default defineRecipe({
     const host = yield* RecipeHost;
     const { root } = context.directories;
     yield* requireVersions(host);
-    for (const directory of [...TEMPORARY_DIRECTORIES, place(context, "site").relative]) yield* host.files.mkdir(directory);
+    for (const directory of [...TEMPORARY_DIRECTORIES, place(context, "site").absolute]) yield* host.files.mkdir(directory);
     yield* installSite(host, context);
     const configuration = (render: () => string) => Effect.try({
       try: render, catch: (error) => error instanceof RecipeError ? error : refuse("install", "A configuration file could not be generated."),

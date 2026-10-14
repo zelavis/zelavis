@@ -7,8 +7,9 @@ import { RecipeError, RecipeHost, defineRecipe, initializeMariaDb, mariaDbProces
  * root. A `FIRST_INSTALL` file opens TYPO3's installer, which asks for the database's address, name,
  * user and password; the Platform shows them as the Project's setup values.
  *
- * Layout below the Project's directory (`context.directories.root`): `site/` is TYPO3 (the web root),
- * `db/` the database, `run/` pid files and logs, the rest temporary space.
+ * Layout (manifest contract 2): the application alone is in `app/`, as its named directories: `site/` is TYPO3 (the web root),
+ * `db/` the database; the Platform's own files are in the root
+ * (`context.directories.root`, `.zelavis/server`): server configuration, `run/` pid files and logs, temporary space.
  */
 
 const MINIMUM_PHP: readonly [number, number] = [8, 2];
@@ -17,11 +18,11 @@ const TEMPORARY_DIRECTORIES = ["tmp", "sessions", "run"] as const;
 const DATABASE_NAME = "typo3";
 const DATABASE_USER = "typo3";
 
-/** Where the Project keeps a named directory now, absolute and below the root. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
+/** Where the Project keeps a named directory now, absolute, in app/. A newer recipe may name another path; the Platform moves the data at the next start from a stop. */
 const place = (context: RecipeContext, name: "site" | "db") => {
   const absolute = context.directories.named[name];
   if (absolute === undefined) throw refuse("install", `The Platform did not provide the "${name}" directory.`);
-  return { absolute, relative: absolute.slice(context.directories.root.length + 1) };
+  return { absolute };
 };
 
 const refuse = (operation: string, message: string) => new RecipeError({ operation, message });
@@ -129,7 +130,7 @@ const requireVersions = (host: RecipeHostApi, context: RecipeContext) => Effect.
 });
 
 const installSite = (host: RecipeHostApi, context: RecipeContext) => Effect.gen(function* () {
-  const site = place(context, "site").relative;
+  const site = place(context, "site").absolute;
   if (!(yield* host.files.exists(`${site}/typo3/index.php`))) {
     yield* host.progress({ phase: "install", message: `Downloading TYPO3 ${context.software.version}.` });
     yield* host.download({ url: context.software.archive, sha256: context.software.sha256, maxBytes: context.software.maxBytes, destination: "dl/typo3.tar.gz" });
@@ -153,7 +154,7 @@ export default defineRecipe({
     const host = yield* RecipeHost;
     const { root } = context.directories;
     yield* requireVersions(host, context);
-    for (const directory of [...TEMPORARY_DIRECTORIES, place(context, "site").relative]) yield* host.files.mkdir(directory);
+    for (const directory of [...TEMPORARY_DIRECTORIES, place(context, "site").absolute]) yield* host.files.mkdir(directory);
     yield* installSite(host, context);
     const configuration = (render: () => string) => Effect.try({
       try: render, catch: (error) => error instanceof RecipeError ? error : refuse("install", "A configuration file could not be generated."),

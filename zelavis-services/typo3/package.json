@@ -28,7 +28,7 @@
         "mariadb-server"
       ],
       "install": {
-        "contract": 1,
+        "contract": 2,
         "methods": [
           {
             "id": "native",
