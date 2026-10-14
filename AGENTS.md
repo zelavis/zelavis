@@ -142,8 +142,10 @@ and none may be reintroduced without the owner asking for them explicitly.
   The wrapper packs each public package npm lacks with `pnpm pack`, which rewrites
   `workspace:` ranges, and publishes the tarballs with `npm publish` in dependency
   order, so npm runs its own browser login and 2FA in an interactive terminal;
-  pnpm's publisher no longer starts that flow. Changed services go first
-  (`release:publish:services:*`, then `pnpm allowlist update`); `release:check` ends by
+  pnpm's publisher no longer starts that flow. Services and Platform publish in one run:
+  `pnpm allowlist update` lists an unpublished service version with its local pack's digest
+  (packing is deterministic), and the publisher refuses a service tarball whose digest is not
+  the listed one before anything is published; `release:check` ends by
   naming the commit it qualified, and `ZELAVIS_RELEASE_QUALIFIED=<sha>` lets the
   publish step skip re-running it for exactly that clean commit. The step-by-step
   runbook is the release-maintainer skill. Nothing is built,
@@ -308,10 +310,12 @@ Rules that hold for every change:
   packages in the operator's own checkout and must never become a way to install
   from anywhere else.
 - Releases run `pnpm allowlist update` (rebuild the list from `zelavis-services/*`
-  and npm's digests, bump `sequence`) and `pnpm allowlist publish` (a plain copy with
-  a fresh expiry at `website/public/allowlist.json`, served by the next website deploy).
-  Publish changed official services first, update the snapshot, then build and
-  publish the Platform. `pnpm allowlist check` refuses stale defaults during release
+  with npm's digests, or the local pack's for a version npm does not have yet, bump
+  `sequence`) and `pnpm allowlist publish` (a plain copy with a fresh expiry at
+  `website/public/allowlist.json`, served by the next website deploy). The publisher
+  checks every service tarball against the listed digest before it publishes anything,
+  and publishes a changed service only with the Platform that ships its listing; deploy
+  the website list after that publish. `pnpm allowlist check` refuses stale defaults during release
   validation. A runtime composes its catalogue from the shipped snapshot; a
   background website refresh applies on the next start, not to that initial catalogue.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the

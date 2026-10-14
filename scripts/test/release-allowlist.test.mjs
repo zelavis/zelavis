@@ -6,7 +6,7 @@ const manifest = { name: "@zelavis/wordpress", version: "7.1.3-alpha.2" };
 const current = { name: manifest.name, latest: manifest.version, versions: [{ version: manifest.version }] };
 
 test("release refuses a stale default even when the new recipe is listed", () => {
-  assert.throws(() => assertReleaseAllowlist({ services: [{ ...current, latest: "7.1.3-alpha.1" }] }, [manifest]), /Publish changed services first/);
+  assert.throws(() => assertReleaseAllowlist({ services: [{ ...current, latest: "7.1.3-alpha.1" }] }, [manifest]), /is not the shipped allow-list default/);
 });
 
 test("release refuses a default without an exact listed version", () => {

@@ -41,8 +41,6 @@
     "release:pre:exit": "changeset pre exit",
     "release:publish:alpha": "node scripts/release-publish.mjs alpha",
     "release:publish:latest": "node scripts/release-publish.mjs latest",
-    "release:publish:services:alpha": "node scripts/release-publish.mjs alpha --services",
-    "release:publish:services:latest": "node scripts/release-publish.mjs latest --services",
     "dev": "node scripts/dev.mjs",
     "github:storage:check": "node scripts/github-storage.mjs check",
     "github:storage:clean": "node scripts/github-storage.mjs clean",

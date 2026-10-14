@@ -36,23 +36,25 @@ long steps in the background, and keep the machine awake (lid open) while they r
    stable release; prerelease mode must be exited first). Read the CHANGELOG it writes,
    commit `chore(release): version packages (alpha.N)`. If the build then changes
    generated files (the dashboard bundle), commit them as their own release commit.
-4. **Services first, when one changed.** If any `zelavis-services/*` version is not on npm:
-   `pnpm release:publish:services:alpha` (owner: npm login and 2FA, see 6), then
-   `pnpm allowlist update`, commit the snapshot. The Platform phase refuses while a
-   changed service is unpublished, because the Platform ships the allow-list and must
-   carry those services' npm digests.
-5. **Qualify:** `pnpm release:check` in the worktree (roughly 10 minutes of workspace
-   checks plus 20 to 40 of Docker qualification: the update gate from the actual previous
-   npm release, then the worker installation). It must end green and print
+4. **Allow-list, when a service changed:** `pnpm allowlist update` in the worktree, then
+   commit the snapshot. A service version npm does not have yet is listed with the digest
+   of its local pack (packing is deterministic and npm's digest is the digest of the
+   uploaded tarball), so nothing is published first and nothing waits for npm.
+5. **Qualify:** `pnpm release:check` in the worktree (about 15 minutes measured on
+   2026-10-14: workspace checks, then Docker qualification: the update gate from the actual
+   previous npm release, then the worker installation). Nothing else may build in the
+   worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
    `Qualified <sha>`. A red run is fixed on `dev` (commit, push when the owner agrees),
    the worktree is re-versioned from `dev`, and qualification starts again. Never publish
    on red, and never count a lucky rerun as qualification: find why it failed.
 6. **Publish (owner).** Hand the owner, in a terminal tab:
    `npm login --auth-type=web`, then
-   `ZELAVIS_RELEASE_QUALIFIED=<sha> pnpm release:publish:alpha` in the worktree. The script
-   packs each pending package with `pnpm pack` (rewriting `workspace:` ranges) and
-   publishes it with `npm publish`, `zelavis` first; npm prints "Authenticate your account
-   at …" for each, which the owner approves. A 404 from npm means "not logged in" or "this
+   `ZELAVIS_RELEASE_QUALIFIED=<sha> pnpm release:publish:alpha` in the worktree. One run
+   publishes services and Platform together: it packs each pending package with `pnpm pack`
+   (rewriting `workspace:` ranges), refuses before publishing anything if a service tarball's
+   digest is not the one the allow-list names, and publishes with `npm publish`, `zelavis`
+   first; npm prints "Authenticate your account at …" for each, which the owner approves. It
+   does not wait for npm to list what it published. A 404 from npm means "not logged in" or "this
    token may not publish": log in again with `--auth-type=web`. `pnpm publish` must not be
    used: it answers that 404 without starting npm's login.
 7. **Confirm** `npm view zelavis dist-tags` names the new version (npm lists it within
@@ -108,7 +110,6 @@ pnpm release:status
 pnpm release:version
 pnpm release:version:alpha
 pnpm release:check
-pnpm release:publish:services:alpha
 pnpm release:publish:alpha
 pnpm release:publish:latest
 pnpm allowlist update

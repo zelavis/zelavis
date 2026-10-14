@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,17 +20,41 @@ const WORKSPACE = [
 
 const HEAD = "4ead9a1c4a0000000000000000000000000000aa";
 
-function fixture(t, { pre, dirty = false, published = ["@zelavis/wiki@1.0.0"], keepWorkspaceRanges = false, qualified } = {}) {
+function fixture(t, { pre, dirty = false, published = ["@zelavis/wiki@1.0.0"], keepWorkspaceRanges = false, qualified, listed = "match" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "zelavis-publisher-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
   const log = join(root, "commands.jsonl");
+  const premade = join(root, "premade");
   mkdirSync(bin);
+  mkdirSync(premade);
   const listing = WORKSPACE.map(({ dir, manifest }) => {
     mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, dir, "package.json"), JSON.stringify(manifest));
     return { name: manifest.name, version: manifest.version, path: join(root, dir), private: manifest.private === true };
   });
+  // Each package packs to one fixed tarball, as pnpm's deterministic pack does: workspace ranges become the
+  // exact version of the package they name, unless the case is one that keeps them.
+  const digests = {};
+  for (const { manifest } of WORKSPACE.filter(({ manifest }) => !manifest.private)) {
+    const packed = structuredClone(manifest);
+    for (const field of ["dependencies", "peerDependencies"]) for (const [name, range] of Object.entries(packed[field] ?? {}))
+      if (!keepWorkspaceRanges && range.startsWith("workspace:")) packed[field][name] = listing.find((entry) => entry.name === name).version;
+    const staging = mkdtempSync(join(tmpdir(), "zelavis-pack-"));
+    mkdirSync(join(staging, "package"));
+    writeFileSync(join(staging, "package", "package.json"), JSON.stringify(packed));
+    const file = join(premade, `${manifest.name.replace("@", "").replace("/", "-")}-${manifest.version}.tgz`);
+    execFileSync("tar", ["-czf", file, "-C", staging, "package"]);
+    rmSync(staging, { recursive: true, force: true });
+    digests[manifest.name] = `sha512-${createHash("sha512").update(readFileSync(file)).digest("base64")}`;
+  }
+  // The shipped allow-list, naming the service with the digest of its pack, a wrong one, or not at all.
+  const snapshotDirectory = join(root, "packages/zelavis/services/zelavis-marketplace");
+  mkdirSync(snapshotDirectory, { recursive: true });
+  const wiki = { "match": digests["@zelavis/wiki"], "wrong": `sha512-${"A".repeat(86)}==` }[listed];
+  writeFileSync(join(snapshotDirectory, "allowlist.snapshot.json"), JSON.stringify({
+    services: wiki ? [{ name: "@zelavis/wiki", versions: [{ version: "1.0.0", integrity: wiki }] }] : [],
+  }));
   if (pre) {
     mkdirSync(join(root, ".changeset"));
     writeFileSync(join(root, ".changeset/pre.json"), JSON.stringify({ mode: "pre", tag: pre }));
@@ -37,10 +62,8 @@ function fixture(t, { pre, dirty = false, published = ["@zelavis/wiki@1.0.0"], k
   const stub = (command, body) => {
     const path = join(bin, command);
     writeFileSync(path, `#!/usr/bin/env node
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { appendFileSync, copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 const args = process.argv.slice(2);
 appendFileSync(process.env.ZELAVIS_TEST_COMMAND_LOG, JSON.stringify([${JSON.stringify(command)}, ...args]) + "\\n");
 ${body}
@@ -52,19 +75,12 @@ else if (${dirty}) process.exit(1);`);
   stub("pnpm", `
 if (args[0] === "ls") process.stdout.write(${JSON.stringify(JSON.stringify(listing))});
 if (args[0] === "pack") {
-  // Like pnpm: workspace ranges become the exact version of the package they name.
   const manifest = JSON.parse(readFileSync("package.json", "utf8"));
-  for (const field of ["dependencies", "peerDependencies"]) for (const [name, range] of Object.entries(manifest[field] ?? {}))
-    if (!${keepWorkspaceRanges} && range.startsWith("workspace:")) manifest[field][name] = ${JSON.stringify(listing)}.find((entry) => entry.name === name).version;
-  const staging = mkdtempSync(join(tmpdir(), "zelavis-pack-"));
-  mkdirSync(join(staging, "package"));
-  writeFileSync(join(staging, "package", "package.json"), JSON.stringify(manifest));
-  const destination = args[args.indexOf("--pack-destination") + 1];
-  execFileSync("tar", ["-czf", join(destination, manifest.name.replace("@", "").replace("/", "-") + "-" + manifest.version + ".tgz"), "-C", staging, "package"]);
+  const file = manifest.name.replace("@", "").replace("/", "-") + "-" + manifest.version + ".tgz";
+  copyFileSync(join(${JSON.stringify(premade)}, file), join(args[args.indexOf("--pack-destination") + 1], file));
 }`);
   stub("npm", `
-if (args[0] === "view" && args.includes("--json")) process.stdout.write(JSON.stringify({ name: "zelavis", version: "2.0.0-alpha.12", "dist.integrity": "sha512-test" }));
-else if (args[0] === "view") {
+if (args[0] === "view") {
   if (!${JSON.stringify(published)}.includes(args[1])) process.exit(1);
   process.stdout.write(args[1].slice(args[1].lastIndexOf("@") + 1));
 }`);
@@ -75,7 +91,7 @@ else if (args[0] === "view") {
     delete env.ZELAVIS_RELEASE_QUALIFIED;
     if (qualified) env.ZELAVIS_RELEASE_QUALIFIED = qualified;
     const result = spawnSync(process.execPath, [publisher, tag, ...flags], { cwd: root, env, encoding: "utf8" });
-    const commands = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const commands = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
     const publishes = commands.filter(([command, action]) => command === "npm" && action === "publish");
     return { ...result, commands, publishes };
   };
@@ -101,7 +117,42 @@ test("an alpha release packs with pnpm and publishes with npm, only what npm lac
   const packs = result.commands.filter(([command, action]) => command === "pnpm" && action === "pack");
   const firstPublish = result.commands.findIndex(([command, action]) => command === "npm" && action === "publish");
   assert.ok(result.commands.lastIndexOf(packs.at(-1)) < firstPublish, "everything is packed before anything is published");
-  assert.ok(result.commands.at(-1).includes("zelavis@2.0.0-alpha.12"), "and npm is asked for the Platform last");
+  assert.equal(result.commands.at(-1)[1], "publish", "nothing waits for npm to list what was published");
+  assert.match(result.stdout, /Published zelavis@2\.0\.0-alpha\.12 \(sha512-/);
+});
+
+test("changed services are published in the same run as the Platform, each checked against the shipped allow-list", (t) => {
+  const result = fixture(t, { pre: "alpha", published: [] })("alpha");
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.publishes.map(tarballOf), ["zelavis-2.0.0-alpha.12.tgz", "zelavis-app-1.0.1-alpha.12.tgz", "zelavis-wiki-1.0.0.tgz"]);
+});
+
+test("a service whose tarball is not the one the allow-list names stops the release before anything is published", (t) => {
+  const result = fixture(t, { pre: "alpha", published: [], listed: "wrong" })("alpha");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@zelavis\/wiki@1\.0\.0 packs to sha512-.*but the allow-list names.*pnpm allowlist update/s);
+  assert.equal(result.publishes.length, 0);
+});
+
+test("a service the allow-list does not name stops the release before anything is published", (t) => {
+  const result = fixture(t, { pre: "alpha", published: [], listed: "missing" })("alpha");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /allow-list does not name @zelavis\/wiki@1\.0\.0/);
+  assert.equal(result.publishes.length, 0);
+});
+
+test("a changed service is never published without the Platform that ships its listing", (t) => {
+  const result = fixture(t, { pre: "alpha", published: ["zelavis@2.0.0-alpha.12", "@zelavis/app@1.0.1-alpha.12"] })("alpha");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /version zelavis too/);
+  assert.equal(result.publishes.length, 0);
+});
+
+test("the retired services phase is refused rather than ignored", (t) => {
+  const result = fixture(t, { pre: "alpha" })("alpha", "--services");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unexpected argument "--services"/);
+  assert.equal(result.publishes.length, 0);
 });
 
 test("stable releases publish to latest", (t) => {
@@ -135,22 +186,6 @@ test("with every version already on npm, nothing is published", (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.publishes.length, 0);
   assert.match(result.stdout, /nothing to publish/);
-});
-
-test("the services phase publishes only the changed services, after the workspace checks, and says what comes next", (t) => {
-  const result = fixture(t, { pre: "alpha", published: ["zelavis@2.0.0-alpha.12", "@zelavis/app@1.0.1-alpha.12"] })("alpha", "--services");
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.commands[1], ["pnpm", "run", "verify"], "the update gate and allow-list check belong to the Platform phase");
-  assert.deepEqual(result.publishes.map(tarballOf), ["zelavis-wiki-1.0.0.tgz"]);
-  assert.match(result.stdout, /pnpm allowlist update/);
-  assert.ok(!result.commands.some((command) => command[0] === "npm" && command.includes("--json")), "the Platform's listing is not awaited");
-});
-
-test("the Platform phase refuses while a changed service is unpublished, before publishing anything", (t) => {
-  const result = fixture(t, { pre: "alpha", published: [] })("alpha");
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Publish the changed services first.*@zelavis\/wiki@1\.0\.0.*release:publish:services:alpha/s);
-  assert.equal(result.publishes.length, 0);
 });
 
 test("a commit release:check already qualified is published without running the checks again", (t) => {

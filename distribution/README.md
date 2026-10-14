@@ -97,20 +97,20 @@ planned. See [the update architecture](../website/src/content/docs/architecture/
 
 ## Releasing
 
-A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs root
-verification and docs checks, publishes Changesets-versioned packages and confirms the exact
-version is on npm. That is all: there is no workflow, tag push, artifact, signing key
-or secret. npm authentication is the release owner's. Tracked version/source changes
-must be committed before publishing. After publishing, run the installer against the
-new version on a real host (`sudo zelavis doctor`).
-
-With the owner's manual npm login, the publisher runs recursive `pnpm publish`
-directly so browser verification can use the terminal. Versions already on npm
-are skipped; the requested `alpha` or `latest` tag is explicit for every package.
+A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs
+`pnpm release:check` (unless `ZELAVIS_RELEASE_QUALIFIED` names this exact clean commit), packs
+every public package npm lacks with `pnpm pack`, checks each service tarball against the digest
+the shipped allow-list names, and publishes services and Platform in one run with `npm publish`,
+so npm's own browser login and 2FA run in the terminal. Versions already on npm are skipped; the
+requested `alpha` or `latest` tag is explicit for every package. That is all: there is no
+workflow, tag push, artifact, signing key or secret. Tracked version/source changes must be
+committed before publishing. After publishing, run the installer against the new version on a
+real host (`sudo zelavis doctor`).
 
 The website (`website/`) is deployed separately to Cloudflare Pages and serves
 `/install.sh`, the Install page and `/allowlist.json`. Publish a refreshed allow-list
-with `pnpm allowlist update` then `pnpm allowlist publish` and deploy the website.
+with `pnpm allowlist update` (before qualifying and publishing) and `pnpm allowlist publish`
+(after publishing), then deploy the website.
 
 ## Build commands
 
