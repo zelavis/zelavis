@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/drupal",
-  "version": "11.4.9-alpha.0",
+  "version": "11.4.9-alpha.1",
   "private": false,
   "description": "Official Zelavis Drupal Project recipe: a native site with its own Caddy, PHP-FPM and MariaDB.",
   "license": "MIT",
@@ -279,7 +279,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.29"
+    "zelavis": ">=2.0.0-alpha.30"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

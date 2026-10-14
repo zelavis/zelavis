@@ -1,5 +1,12 @@
 # zelavis
 
+## 2.0.0-alpha.30
+
+### Patch Changes
+
+- 7185b50: A third-party app's Project now keeps the application, and only the application, in `app/`: its site in `app/site` and its database in `app/db`. Everything Zelavis runs it with (web server and PHP configuration, pid files, logs, temporary files) lives in `.zelavis/server` instead, so recipe updates, new dashboard features and Platform updates never touch the application's folder. WordPress, DokuWiki, Drupal, Joomla, TYPO3 and PrestaShop use this layout (recipe contract 2). An existing Project moves to it with an ordinary recipe upgrade, live and without stopping: its site and database stay exactly where they are, only the Platform's own files move out of `app/`.
+- e540a0d: A WordPress Project created before the recipe-based WordPress (alpha.26) upgrades from the dashboard while it runs: the Platform fetches what the new recipe needs while the site keeps serving, then holds the site's requests for the few seconds it takes to stop the old processes, take its folders over into the new layout (the same files, database, address, password and admin login) and start the new ones. Visitors wait instead of getting an error, and if anything goes wrong the earlier setup is put back and started again. Site previews and a Project's own domains now wait the same way during any such switch, instead of answering that the site is not running.
+
 ## 2.0.0-alpha.29
 
 ### Patch Changes

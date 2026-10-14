@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/dokuwiki",
-  "version": "2026.7.14-alpha.0",
+  "version": "2026.7.14-alpha.1",
   "private": false,
   "description": "Official Zelavis DokuWiki Project recipe: a flat-file wiki with dedicated Nginx and PHP-FPM, no database.",
   "license": "MIT",
@@ -177,7 +177,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.29"
+    "zelavis": ">=2.0.0-alpha.30"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

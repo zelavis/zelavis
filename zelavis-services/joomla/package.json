@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/joomla",
-  "version": "5.4.9-alpha.0",
+  "version": "5.4.9-alpha.1",
   "private": false,
   "description": "Official Zelavis Joomla Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",
@@ -274,7 +274,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.29"
+    "zelavis": ">=2.0.0-alpha.30"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
