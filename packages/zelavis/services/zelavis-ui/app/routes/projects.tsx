@@ -170,6 +170,8 @@ function ProjectsRoute() {
       .map((service) => ({
         name: service.name,
         status: service.status,
+        // How a recipe that is not installed yet is installed: acquired from the allow-list, or switched on.
+        installVia: service.installVia,
         version: service.version,
         title:
           service.marketplace?.title ??
@@ -295,6 +297,11 @@ function ProjectsRoute() {
     setError(undefined);
     setPendingProjectId(project.id);
     try {
+      // A recipe the Marketplace only lists is installed first, as the create form does, so the one click is the whole job.
+      const target = projectRecipes.find((recipe) => recipe.name === (targetRecipe ?? project.recipe.name));
+      if (target?.status === "available" && target.installVia === "acquire") {
+        await installDashboardService(rootData.runtime, target);
+      }
       const upgraded = await upgradeProject(rootData.runtime, project.id, targetRecipe);
       setMessage(
         `${project.name} now uses ${upgraded.recipe.name}${upgraded.recipe.version ? ` ${upgraded.recipe.version}` : ""}. Its data is unchanged. ${upgraded.runtime.status === "running" ? "It is running at the same address." : "Start it when you are ready."}`,

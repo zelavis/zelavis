@@ -52,7 +52,7 @@ function driver({ failNewStart = false } = {}) {
   };
 }
 
-async function runningOldBlog(t, options) {
+async function runningOldBlog(t, options = {}) {
   const fake = driver(options);
   const store = createMemorySystemStore();
   const entries = [recipe("7.1.3-alpha.2", false)];
@@ -61,7 +61,7 @@ async function runningOldBlog(t, options) {
   t.after(() => manager.close());
   await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
   assert.equal((await manager.get("blogger")).runtime.status, "running");
-  entries[0] = recipe("7.1.3-alpha.4", true);
+  entries[0] = options.next ?? recipe("7.1.3-alpha.4", true);
   fake.calls.length = 0;
   return { fake, manager, store };
 }
@@ -100,4 +100,14 @@ test("a crossing that fails puts the earlier recipe back, running, and reports w
   let released = false;
   await manager.ingressReady("blogger").then(() => { released = true; });
   assert.equal(released, true, "nothing stays held");
+});
+
+test("an upgrade to a recipe the Marketplace only lists is refused until it is installed, never run from the listing", async (t) => {
+  // What the allow-list says about the package: identity and version, no install methods and no code.
+  const listing = { ...recipe("7.1.3-alpha.4", false), status: "available", specifier: "npm:@acme/blog@7.1.3-alpha.4" };
+  listing.service = { ...listing.service, marketplace: { title: "Blog" } };
+  const { fake, manager } = await runningOldBlog(t, { next: listing });
+  await assert.rejects(manager.upgrade("blogger"), /Blog 7\.1\.3-alpha\.4 is listed in the Marketplace but not installed yet\. Install it, then upgrade "blogger"/);
+  assert.deepEqual(fake.calls, [], "nothing was prepared, stopped or rewritten");
+  assert.equal((await manager.get("blogger")).runtime.status, "running");
 });

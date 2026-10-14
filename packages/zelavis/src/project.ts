@@ -2236,6 +2236,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     return (yield* Effect.fail(new ZelavisProjectValidationError(`Project recipe "${targetName}" is not shipped with this Platform.` +
                         (input?.recipeName ? "" : " Name the recipe to move this Project to."))));
                 }
+                // A listing only advertises a package the Marketplace would acquire: it carries no install
+                // methods and no code, so it is installed first, as it is before a Project is created from it.
+                if (entry.status === "available" && entry.specifier?.startsWith("npm:")) {
+                    return (yield* Effect.fail(new ZelavisProjectValidationError(`${entry.service.marketplace?.title ?? targetName}${entry.service.version ? ` ${entry.service.version}` : ""} is listed in the Marketplace but not installed yet. Install it, then upgrade "${project.id}".`)));
+                }
                 // A frontend stays a frontend and an app stays an app; a Project's kind
                 // label follows its recipe's name, so it is re-derived below.
                 if ((entry.service.kind === "frontend") !== (project.kind === "frontend")) {
