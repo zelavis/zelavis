@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Release tooling for the marketplace allow-list.
 //
-//   pnpm allowlist update [--skip-unpublished]  rebuild the list from zelavis-services + npm
+//   pnpm allowlist update                   rebuild the list from zelavis-services (npm's digest, or the local pack's)
 //   pnpm allowlist publish [--expires-days <n>] write the list zelavis.com serves
 //   pnpm allowlist check                    refuse stale defaults before a Platform release
 //
@@ -11,7 +11,9 @@
 // https://zelavis.com/allowlist.json. There are no keys: https from zelavis.com
 // is the trust anchor, as it is for the installer.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertReleaseAllowlist } from "./release-allowlist.mjs";
@@ -52,7 +54,7 @@ function localServices() {
     if (!existsSync(file)) return;
     const manifest = JSON.parse(readFileSync(file, "utf8"));
     if (manifest.private || !manifest.zelavis?.kind) return;
-    found.push(manifest);
+    found.push({ ...manifest, directory });
   };
   for (const entry of readdirSync(servicesRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "node_modules") continue;
@@ -80,6 +82,24 @@ function publishedIntegrity(name, version) {
   }
 }
 
+/**
+ * The digest of the tarball this checkout packs, for a version npm does not have yet. Packing is
+ * deterministic, and npm's digest is the digest of the uploaded tarball, so publishing that tarball makes
+ * this the digest npm serves; the publisher refuses a tarball whose digest differs from the listed one.
+ */
+function packedIntegrity(manifest) {
+  execFileSync("pnpm", ["--filter", manifest.name, "run", "--if-present", "build"], { cwd: root, stdio: "inherit" });
+  const destination = mkdtempSync(join(tmpdir(), "zelavis-allowlist-pack-"));
+  try {
+    execFileSync("pnpm", ["pack", "--pack-destination", destination], { cwd: manifest.directory, stdio: ["ignore", "ignore", "inherit"] });
+    const tarballs = readdirSync(destination).filter((file) => file.endsWith(".tgz"));
+    if (tarballs.length !== 1) fail(`pnpm pack produced ${tarballs.length} tarballs for ${manifest.name}.`);
+    return `sha512-${createHash("sha512").update(readFileSync(join(destination, tarballs[0]))).digest("base64")}`;
+  } finally {
+    rmSync(destination, { recursive: true, force: true });
+  }
+}
+
 function readSnapshot() {
   return existsSync(snapshotFile) ? JSON.parse(readFileSync(snapshotFile, "utf8")) : undefined;
 }
@@ -88,19 +108,13 @@ async function update() {
   const { parseAllowlist } = await library();
   const previous = readSnapshot();
   const services = new Map((previous?.services ?? []).map((service) => [service.name, service]));
-  const skipped = [];
   for (const manifest of localServices()) {
     const existing = services.get(manifest.name);
     const versions = new Map((existing?.versions ?? []).map((entry) => [entry.version, entry]));
     if (!versions.has(manifest.version)) {
-      const integrity = publishedIntegrity(manifest.name, manifest.version);
-      if (!integrity) {
-        if (!flags.get("skip-unpublished")) {
-          fail(`${manifest.name}@${manifest.version} is not published to npm, so it has no digest to list. Publish it, or pass --skip-unpublished.`);
-        }
-        skipped.push(`${manifest.name}@${manifest.version}`);
-        continue;
-      }
+      const published = publishedIntegrity(manifest.name, manifest.version);
+      const integrity = published ?? packedIntegrity(manifest);
+      if (!published) console.log(`${manifest.name}@${manifest.version} is not on npm yet: listed with the digest of its local pack.`);
       versions.set(manifest.version, { version: manifest.version, integrity });
     }
     const marketplaceInfo = manifest.zelavis.marketplace ?? {};
@@ -133,7 +147,6 @@ async function update() {
   });
   writeFileSync(snapshotFile, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`Wrote sequence ${next.sequence} with ${next.services.length} service(s) to ${snapshotFile}.`);
-  if (skipped.length) console.log(`Not listed (unpublished): ${skipped.join(", ")}`);
 }
 
 async function publish() {
