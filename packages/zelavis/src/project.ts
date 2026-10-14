@@ -874,6 +874,9 @@ export interface ZelavisProjectDispatcher {
 const BLOCKING_PLACEMENT_REASONS = new Set(["owner-unplaced", "owner-cycle"]);
 /** How old a registry reading may be when it only labels listed Projects. */
 const RECIPE_LABEL_MAX_AGE_MS = 5_000;
+/** The first wait after an automatic start fails; each further failure doubles it, up to the maximum. */
+const START_BACKOFF_BASE_MS = 15_000;
+const START_BACKOFF_MAX_MS = 60 * 60_000;
 
 export interface ZelavisProjectManagerOptions {
     store: ZelavisSystemStore;
@@ -1267,6 +1270,14 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
      * transition generation, which is tracked in `TODO.md`.
      */
     const withProjectLifecycle = lifecycleGate();
+    /**
+     * Automatic starts that keep failing, and when the next may run. A Project that cannot start (a recipe
+     * it can no longer run, a host requirement that is missing) would otherwise be prepared, failed and
+     * written back on every reconciliation, forever. A successful start or any operator action on the
+     * Project clears it; a Project held by placement records nothing, since it never tried to start.
+     */
+    const startBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+    const clearStartBackoff = (id: string) => Effect.sync(() => { startBackoff.delete(id); });
     const write = Effect.fn("Projects.write")(function* (project: ZelavisProjectRecord): Effect.fn.Return<ZelavisProjectRecord, TaggedFailure> {
         const { preview: _preview, ...record } = project;
         yield* store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(record));
@@ -1819,6 +1830,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         (yield* dispatchElsewhere(project, assignedNodeId));
                         return;
                     }
+                    const backoff = startBackoff.get(project.id);
+                    if (backoff && Date.now() < backoff.nextAttemptAt) return;
                     const snapshot = (yield* runtimeEffects.status(project.id));
                     if (!closing &&
                         snapshot.status !== "running" &&
@@ -1829,14 +1842,22 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         // concurrently with whatever an operator is doing, and a start
                         // interleaved with another start or a stop leaves the System
                         // Store describing a process that is not what is running.
-                        yield* Effect.catch(withProjectLifecycle(project.id, Effect.fn("Projects.reconcileStart")(function* () {
+                        const attempt = yield* Effect.result(withProjectLifecycle(project.id, Effect.fn("Projects.reconcileStart")(function* () {
                             // Creation or an operator transition may finish while this pass waits for its permit.
                             const current = yield* read(project.id);
                             if (closing || !current || current.deletion || current.desiredState !== "running") return;
                             const latest = yield* runtimeEffects.status(project.id);
                             if (latest.status === "running" || latest.status === "starting") return;
                             yield* startLocally(project.id);
-                        })), () => Effect.void);
+                        })));
+                        if (attempt._tag === "Success") {
+                            startBackoff.delete(project.id);
+                        } else {
+                            // The failure and its reason are already on the Project record.
+                            const failures = (startBackoff.get(project.id)?.failures ?? 0) + 1;
+                            const wait = Math.min(START_BACKOFF_BASE_MS * 2 ** Math.min(failures - 1, 20), START_BACKOFF_MAX_MS);
+                            startBackoff.set(project.id, { failures, nextAttemptAt: Date.now() + wait });
+                        }
                     }
                 })));
             });
@@ -2023,6 +2044,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         update: Effect.fn("Projects.update")(function* (id: Parameters<ZelavisProjectManager["update"]>[0], input: Parameters<ZelavisProjectManager["update"]>[1]) {
+            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
                 const project = (yield* requireProject(id));
                 (yield* evaluate(() => assertProjectIsOperable(project, "updated")));
@@ -2034,9 +2056,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         start: Effect.fn("Projects.start")(function* (id: Parameters<ZelavisProjectManager["start"]>[0]) {
+            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => startPlaced(id));
         }),
         stop: Effect.fn("Projects.stop")(function* (id: Parameters<ZelavisProjectManager["stop"]>[0]) {
+            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
                 let project = (yield* requireProject(id));
                 // Stopping a Project that is already being deleted would restart the
@@ -2059,6 +2083,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         restart: Effect.fn("Projects.restart")(function* (id: Parameters<ZelavisProjectManager["restart"]>[0]) {
+            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
                 let project = (yield* requireProject(id));
                 (yield* evaluate(() => assertProjectIsOperable(project, "restarted")));
@@ -2109,6 +2134,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             }));
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
+            yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             yield* refreshRecipes();
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
@@ -2298,6 +2324,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         remove: Effect.fn("Projects.remove")(function* (id: Parameters<ZelavisProjectManager["remove"]>[0]) {
             const projectId = yield* evaluate(() => normalizeProjectId(id));
+            yield* clearStartBackoff(projectId);
             return yield* singleFlight(deletionRuns, projectId, () => withProjectLifecycle(projectId, () => deleteProject(projectId)));
         }),
         reconcile: Effect.fn("Projects.reconcile")(function* () {
