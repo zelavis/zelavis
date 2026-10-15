@@ -14,5 +14,22 @@ export const nativePaths = [
   "/server/security",
   "/server/access",
   "/server/access/users",
-  "/server/access/permissions"
+  "/server/access/permissions",
+  "/server/resources",
+  "/server/fabric",
+  "/server/fabric/:fabricSection",
+  "/server/fabric/:fabricSection/:fabricDetail",
+  "/server/fabric/placements",
+  "/server/fabric/migrations",
+  "/server/fabric/data",
+  "/server/fabric/data/shards",
+  "/server/fabric/data/replicas",
+  "/server/fabric/data/schema-rollouts",
+  "/server/fabric/infrastructure",
+  "/server/fabric/infrastructure/providers",
+  "/server/fabric/infrastructure/autoscaling",
+  "/server/fabric/settings",
+  "/server/fabric/settings/placement-policies",
+  "/server/fabric/settings/networking",
+  "/server/fabric/settings/limits"
 ] as const;

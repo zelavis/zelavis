@@ -20,7 +20,7 @@ export function card(title: string | undefined, ...body: (Node | string | undefi
 
 /** A card whose rows run to its edges, for lists of dataRow. */
 export function rowsCard(title: string, ...rows: HTMLElement[]) {
-  return node("section", { class: "k-card flush" }, node("h2", {}, title), ...rows);
+  return node("section", { class: "k-card flush" }, ...(title ? [node("h2", {}, title)] : []), ...rows);
 }
 
 export function dataRow(label: string, detail: string, meta?: Node | string) {

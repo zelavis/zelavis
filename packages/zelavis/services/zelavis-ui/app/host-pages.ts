@@ -4,7 +4,7 @@ import { button, empty, field, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, facts, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 
-type HostPath = "/server" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
+type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
 
 /** Server pages about the host itself: the overview, backends, domains, the System Store, security and access. */
 
@@ -147,6 +147,33 @@ export const securityScreen = Effect.fn("ui.securityScreen")(function*(_context:
       dataRow("Application secrets", "Secret presence, file permissions, and accidental public exposure checks.", badge("planned"))));
 });
 
+const PROCESSES = [
+  ["zelavis-runtime", "Main dashboard and service runtime."],
+  ["site-host", "Local website hosting worker for project domains."],
+  ["database-writer", "Serialized local SQL writes and event-log append flow."],
+  ["backup-scheduler", "Snapshot queue and backup windows."]
+] as const;
+const LIMITS = [
+  ["Sustained CPU", "Warn above 70% for 10 minutes, mark critical above 90%."],
+  ["Memory pressure", "Watch used RAM, cache pressure, and swap activity together."],
+  ["Disk capacity", "Warn before local media, database files, and backups fill the volume."],
+  ["Outbound traffic", "Track project traffic so small VPS plans do not surprise the user."]
+] as const;
+
+/** The host does not report CPU, memory, disk or traffic yet, so this page says what is planned and shows no numbers. */
+export const resourcesScreen = Effect.fn("ui.resourcesScreen")(function*(context: ScreenContext) {
+  const requested = context.url.searchParams.get("resourceView");
+  const view = requested === "processes" || requested === "storage" || requested === "limits" ? requested : "";
+  const tab = (name: string, title: string) => button(title, () => context.setSearch({ resourceView: name || undefined }), { class: view === name ? "primary" : "", "aria-pressed": String(view === name) });
+  return page(
+    node("div", { class: "actions" }, tab("", "Overview"), tab("processes", "Processes"), tab("storage", "Storage"), tab("limits", "Limits")),
+    resourceNotice("Host metrics are not collected yet", "This Platform does not report CPU, memory, disk or network usage, so nothing is charted here rather than showing numbers that are not real. The rows below are what this page will cover."),
+    ...(view === "" ? [columns(3, statCard("CPU and memory", "planned", "Host pressure over time."), statCard("Disk", "planned", "What is consuming local storage."), statCard("Network", "planned", "Traffic per project."))] : []),
+    ...(view === "" || view === "processes" ? [rowsCard("Processes", ...PROCESSES.map(([title, detail]) => dataRow(title, detail, badge("planned"))))] : []),
+    ...(view === "storage" ? [rowsCard("Storage", dataRow("Projects", "Project files and runtime state.", badge("planned")), dataRow("Databases", "Project databases and the System Store.", badge("planned")), dataRow("Backups and logs", "Retained snapshots and log files.", badge("planned")))] : []),
+    ...(view === "" || view === "limits" ? [rowsCard("Limits", ...LIMITS.map(([title, detail]) => dataRow(title, detail, badge("planned"))))] : []));
+});
+
 const LEVELS = [
   ["Owner", "Full system grants for the Zelavis instance and every project."],
   ["Operator", "Delegated support and operations grants across selected resources."],
@@ -244,6 +271,7 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
 
 export const hostScreens = {
   "/server": serverHomeScreen,
+  "/server/resources": resourcesScreen,
   "/server/backups": backupsScreen,
   "/server/runtimes": runtimesScreen,
   "/server/domains": domainsScreen,
