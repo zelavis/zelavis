@@ -7,6 +7,7 @@ import { projectsOverviewScreen } from "./projects-pages.ts";
 import { servicesScreen, settingsScreen } from "./settings-pages.ts";
 import { marketplaceScreen as platformMarketplace } from "./marketplace-pages.ts";
 import { notRunning, projectContext } from "./project-context.ts";
+import { handlesProjectPath, projectPagesScreen } from "./project-pages.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
 import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
@@ -326,6 +327,7 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
     if (entered.missing) return entered.missing;
     return entered.scoped ? yield* platformMarketplace(context, "project", entered.scoped) : notRunning();
   }
+  if (handlesProjectPath(context)) return yield* projectPagesScreen(context);
   if (/^\/server\/fabric(\/|$)/.test(context.path)) return yield* fabricScreen(context);
   const hostScreen = (hostScreens as Record<string, typeof logsScreen>)[context.path.replace(/(.)\/$/, "$1")];
   if (hostScreen) return yield* hostScreen(context);

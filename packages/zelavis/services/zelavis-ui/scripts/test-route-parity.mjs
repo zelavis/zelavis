@@ -218,7 +218,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
     yield* io(() => page.setViewportSize(viewport));
     for (const [section, title] of [["domains", "Domains"], ["files", "Files"], ["app-database", "App database"], ["setup", "Setup"], ["backups", "Backups"], ["logs", "Logs"], ["updates", "Updates"], ["admin", "App Admin"]]) {
       yield* visit("/projects/parity-lab/" + section);
-      yield* io(() => workspace().getByText(title, { exact: true }).first().waitFor());
+      yield* io(() => page.locator(".content").getByText(title, { exact: true }).first().waitFor());
       assert.equal(errors.length, 0, errors.join("\n"));
       results.push({ path: "/projects/:projectId/" + section, viewport: viewport.width, status: "managed recipe UI fixture loaded; provisioning not exercised" });
     }
