@@ -40,9 +40,11 @@ long steps in the background, and keep the machine awake (lid open) while they r
    commit the snapshot. A service version npm does not have yet is listed with the digest
    of its local pack (packing is deterministic and npm's digest is the digest of the
    uploaded tarball), so nothing is published first and nothing waits for npm.
-5. **Qualify:** `pnpm release:check` in the worktree (about 15 minutes measured on
-   2026-10-14: workspace checks, then Docker qualification: the update gate from the actual
-   previous npm release, then the worker installation). Nothing else may build in the
+5. **Qualify:** `pnpm release:check` in the worktree (about 30 minutes: workspace checks,
+   then Docker qualification: the update gate from the actual previous npm release, the
+   long-history gate (`release:qualify:history`: apps made by old releases, carried by live
+   updates onto the candidate, every recipe upgrade with zero failed requests), then the
+   worker installation). Nothing else may build in the
    worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
    `Qualified <sha>`. A red run is fixed on `dev` (commit, push when the owner agrees),
    the worktree is re-versioned from `dev`, and qualification starts again. Never publish

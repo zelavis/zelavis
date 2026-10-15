@@ -1362,6 +1362,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (project.runtime.status === "provisioning" || project.deletion || project.runtimeUpdate) {
             return project;
         }
+        // Crossing to a recipe of another layout, the old processes are gone before the new ones answer and the
+        // driver says "stopped". The Project is not: its requests wait at the hold. Reporting the in-between
+        // status would make Edge close the preview listener, and visitors would be refused instead of held.
+        if (holds.has(project.id)) return yield* ingressView(project);
         const snapshot = yield* runtimeEffects.status(project.id);
         // A start that failed before any process existed (a recipe that cannot be
         // prepared, a refused placement) leaves the driver with nothing to report.

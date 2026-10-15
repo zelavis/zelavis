@@ -56,23 +56,29 @@ async function runningOldBlog(t, options = {}) {
   const fake = driver(options);
   const store = createMemorySystemStore();
   const entries = [recipe("7.1.3-alpha.2", false)];
+  // What Edge is told: a status other than running closes the Project's preview listener.
+  const synced = [];
   const manager = await createProjectManager({ store, projectRecipes: () => Promise.resolve(entries), runtime: fake.runtime, autoReconcile: false,
-    installHost: async () => ({ drivers: ["js"], requirements: [] }) });
+    installHost: async () => ({ drivers: ["js"], requirements: [] }),
+    synchronizeIngress: async (project) => { synced.push(project.runtime.status); return { status: "ready", port: 18081 }; } });
   t.after(() => manager.close());
   await manager.create({ id: "blogger", name: "Blogger", recipeName: "@acme/blog" });
   assert.equal((await manager.get("blogger")).runtime.status, "running");
   entries[0] = options.next ?? recipe("7.1.3-alpha.4", true);
   fake.calls.length = 0;
-  return { fake, manager, store };
+  synced.length = 0;
+  return { fake, manager, store, synced };
 }
 
 test("a running Project of an earlier layout crosses to the recipe that takes it over while its requests wait", async (t) => {
-  const { fake, manager, store } = await runningOldBlog(t);
+  const { fake, manager, store, synced } = await runningOldBlog(t);
   let released = false;
   const statuses = [];
   // While the new recipe prepares, a visitor arrives: it is held, and the record still says running.
   fake.state.during = async () => {
     statuses.push((await store.get("projects", "blogger")).value.runtime.status);
+    // The dashboard or reconciliation reads the Project meanwhile; the driver itself says stopped.
+    assert.equal((await manager.list()).find((project) => project.id === "blogger").runtime.status, "running", "a read during the swap shows it running");
     manager.ingressReady("blogger").then(() => { released = true; });
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(released, false, "a request arriving during the swap waits");
@@ -81,6 +87,7 @@ test("a running Project of an earlier layout crosses to the recipe that takes it
   const upgraded = await manager.upgrade("blogger");
   assert.deepEqual(fake.calls, [["prefetch", "7.1.3-alpha.4"], ["stop"], ["prepare", "7.1.3-alpha.4"], ["start", "7.1.3-alpha.4"], ["commit", "blogger"]]);
   assert.deepEqual(statuses, ["running"], "the Project never looks stopped to the Platform");
+  assert.ok(synced.length > 0 && synced.every((status) => status === "running"), `Edge keeps the preview listener: ${synced}`);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(released, true, "and goes on once the new recipe runs");
   assert.equal(upgraded.runtime.status, "running");

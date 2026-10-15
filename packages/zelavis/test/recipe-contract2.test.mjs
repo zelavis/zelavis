@@ -56,14 +56,17 @@ async function packageFor(base, version, contract, message) {
   return directory;
 }
 
-async function setup(t, first, { strict } = {}) {
+async function setup(t, first, { strict, starts } = {}) {
   const base = await mkdtemp(join(tmpdir(), "zv-contract2-"));
   const directory = join(base, "projects");
   const local = createLocalAgentProcessRunner({ stateDirectory: join(directory, ".agent-processes") });
   // Like the separately supervised Agent, which refuses a Project process that names no placement.
-  const runner = strict
-    ? { ...local, start: (command, options) => strict.enforced && !command.placement
-        ? Promise.reject(new Error("Project placement authority is required.")) : local.start(command, options) }
+  const runner = strict || starts
+    ? { ...local, start: (command, options) => {
+        starts?.push({ executable: command.executable, cwd: command.cwd });
+        return strict?.enforced && !command.placement
+          ? Promise.reject(new Error("Project placement authority is required.")) : local.start(command, options);
+      } }
     : local;
   const sources = {
     "1.0.0": await packageFor(base, "1.0.0", 1, "contract 1 configuration"),
@@ -142,4 +145,15 @@ test("an update that failed for want of a placement is recovered under the place
   const placement = { projectId: id, nodeId: "local", ownerSession: "owner", epoch: 1 };
   assert.equal(await driver.recoverUpdate(id, execution, placement), "previous");
   assert.deepEqual(await ask(), { config: "contract 1 configuration", page: "the application's own page" }, "the previous recipe serves again");
+});
+
+test("processes a live upgrade to the new layout starts run from the new root, where a later adoption looks for them", async (t) => {
+  const starts = [];
+  const { project, driver, record, lock, id } = await setup(t, "1.0.0", { starts });
+  assert.deepEqual(starts.map((start) => start.cwd), [join(project, "app")], "contract 1 runs from app/");
+  starts.length = 0;
+  const execution = await driver.prepareUpdate(record, { ...record, recipe: lock("2.0.0") });
+  await driver.applyUpdate(id, execution, async () => undefined);
+  assert.ok(starts.length > 0, "the upgrade replaced the process");
+  assert.deepEqual([...new Set(starts.map((start) => start.cwd))], [join(project, ".zelavis", "server")]);
 });

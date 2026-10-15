@@ -73,6 +73,10 @@ export interface UpgradeKitApi {
   readonly commandsFor: (id: string, packageDirectory: string) => Effect.Effect<Readonly<Record<string, string>>, RecipeError>;
   /** Makes the running plan controller resolve commands from these, from its next reconciliation. */
   readonly useCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.Effect<void>;
+  /** The working directory the Project's processes launch in now: its recipe's root. */
+  readonly currentRoot: (id: string) => Effect.Effect<string | undefined>;
+  /** Makes the running plan controller launch processes in this recipe's root, from its next reconciliation. */
+  readonly useRoot: (id: string, root: string | { readonly manifest: RecipeManifest }) => Effect.Effect<void>;
   /** Records the commands the Project runs from. */
   readonly saveCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.Effect<void, RecipeError>;
   readonly controller: (id: string) => Effect.Effect<PlanController | undefined>;
@@ -246,6 +250,11 @@ export const applyRecipeUpdate = Effect.fn("RecipeUpgrade.apply")(function* (
     // The new commands resolve from the first reconciliation on; the previous ones come back first if this fails.
     yield* kit.useCommands(id, journal.commands);
     yield* Effect.addFinalizer((exit) => Exit.isFailure(exit) ? kit.useCommands(id, journal.previousCommands) : Effect.void);
+    // So does the root: a process the new plan starts runs where the new recipe keeps its files, and the controller
+    // that later adopts it (after a Platform update) knows it by that.
+    const previousRoot = yield* kit.currentRoot(id);
+    yield* kit.useRoot(id, { manifest: yield* kit.readManifest(candidate) });
+    yield* Effect.addFinalizer((exit) => Exit.isFailure(exit) && previousRoot !== undefined ? kit.useRoot(id, previousRoot) : Effect.void);
 
     const snapshots = yield* snapshotConfigurations(layout, before.plan);
     const applying: Journal = { ...journal, state: "applying", snapshots };

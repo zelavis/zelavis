@@ -1584,7 +1584,14 @@ The current pre-handover manual conversion is a known gap to eliminate; do not
 use it as precedent for future releases or add permanent legacy runtime paths.
 The release gate `pnpm release:qualify:update` starts from the actual previous npm
 release in disposable Linux/systemd and qualifies the packed candidate with
-continuous dashboard/App/WordPress traffic. Before publication only acquisition
+continuous dashboard/App/WordPress traffic. `pnpm release:qualify:history` qualifies a
+server with a history: apps made by old releases (`distribution/history.json`: a
+hand-written WordPress from alpha.25, a contract-1 DokuWiki from alpha.29), opened so
+their integration hosts start, carried by live updates (never the installer) through the
+previous release onto the candidate, a recipe left only listed, then every recipe
+upgrade under traffic with zero failed requests, and exactly one of each process after a
+Platform restart. Each release keeps the allow-list it shipped with there. When a release
+changes host, runtime or recipe-layout behaviour, add it to `via`. Before publication only acquisition
 is substituted; after publication qualify the ordinary authenticated update API
 with real npm acquisition. Candidate Node pins are read from JSON before its code
 runs. Live root commit refreshes the selected release's authored unit templates

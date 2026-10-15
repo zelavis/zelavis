@@ -26,7 +26,8 @@ export function makeAgentPlanHost(input: {
    * and an Agent refuses a Project process that names none.
    */
   readonly placement?: () => AgentPlacementIdentity | undefined;
-  readonly cwd: string;
+  /** Read at every launch and adoption: an upgrade to another layout moves it. */
+  readonly cwd: string | (() => string);
   readonly commands: () => Readonly<Record<string, string>>;
   readonly ports: Readonly<Record<string, number>>;
   readonly baseEnvironment: Readonly<Record<string, string>>;
@@ -38,7 +39,8 @@ export function makeAgentPlanHost(input: {
 }): PlanHostApi {
   const placement = input.placement;
   return {
-    workloadId: input.workloadId, cwd: input.cwd, commands: input.commands, ports: input.ports,
+    workloadId: input.workloadId, commands: input.commands, ports: input.ports,
+    get cwd() { return typeof input.cwd === "function" ? input.cwd() : input.cwd; },
     baseEnvironment: input.baseEnvironment, resolveSecret: input.resolveSecret,
     ...(input.onOutput ? { onOutput: input.onOutput } : {}),
     // A getter on the host itself: a spread would copy the value once, at creation.

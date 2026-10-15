@@ -356,6 +356,9 @@ test("a process that does not belong to the plan, or claims another workload, or
   }
   const controller = await controllerFor();
   assert.match((await failureOf(controller.adopt(plan, [survivor(directory, { args: ["app.js"] }).entry, survivor(directory, { args: ["app.js"] }).entry], {}))).message, /does not belong/);
+  // A process an earlier release started from the Project's former root is adopted only when that root is named.
+  const moved = await controllerFor();
+  await moved.adopt(plan, [survivor(directory, { args: ["app.js"], cwd: "/former/root" }).entry], {}, ["/former/root"]).pipe(Effect.runPromise);
   const full = await controllerFor();
   await full.adopt(plan, [survivor(directory, { args: ["app.js"] }).entry], {}).pipe(Effect.runPromise);
   assert.match((await failureOf(full.adopt(plan, [survivor(directory, { args: ["app.js"] }).entry], {}))).message, /only be adopted into a controller that runs none/);

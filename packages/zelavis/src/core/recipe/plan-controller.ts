@@ -100,7 +100,11 @@ export interface PlanController {
   /** Makes the running processes match `plan`, changing as little as it can. */
   readonly reconcile: (plan: ProcessPlan) => Effect.Effect<ReconcileReport, RecipeError>;
   /** Takes back processes an Agent kept running. Only into an empty controller. */
-  readonly adopt: (plan: ProcessPlan, attached: readonly ZelavisAgentAttachedProcess[], configs: Readonly<Record<string, string>>) => Effect.Effect<void, RecipeError>;
+  /**
+   * Takes over processes that already run this plan. `formerRoots` are working directories an earlier layout of
+   * the same Project launched in (a process an earlier release replaced during an upgrade still runs there).
+   */
+  readonly adopt: (plan: ProcessPlan, attached: readonly ZelavisAgentAttachedProcess[], configs: Readonly<Record<string, string>>, formerRoots?: readonly string[]) => Effect.Effect<void, RecipeError>;
   /** Stops everything, dependents first. */
   readonly stop: Effect.Effect<void, RecipeError>;
   readonly names: Effect.Effect<readonly string[]>;
@@ -302,14 +306,14 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
     }));
   });
 
-  const adopt = Effect.fn("PlanController.adopt")(function* (plan: ProcessPlan, attached: readonly ZelavisAgentAttachedProcess[], configs: Readonly<Record<string, string>>) {
+  const adopt = Effect.fn("PlanController.adopt")(function* (plan: ProcessPlan, attached: readonly ZelavisAgentAttachedProcess[], configs: Readonly<Record<string, string>>, formerRoots: readonly string[] = []) {
     return yield* permit.withPermit(Effect.gen(function* () {
       if ((yield* Ref.get(table)).size > 0) return yield* Effect.fail(fail("Processes can only be adopted into a controller that runs none."));
       const resolved = yield* resolveAll(plan);
       const claimed = new Set<string>();
       for (const entry of attached) {
         const match = resolved.find((candidate) => !claimed.has(candidate.name) && entry.command.executable === candidate.launch.executable &&
-          entry.command.cwd === host.cwd && (entry.command.args?.length ?? 0) === candidate.launch.args.length &&
+          (entry.command.cwd === host.cwd || formerRoots.includes(entry.command.cwd)) && (entry.command.args?.length ?? 0) === candidate.launch.args.length &&
           candidate.launch.args.every((value, index) => entry.command.args?.[index] === value));
         if (!match || entry.process.workloadId !== host.workloadId || !entry.process.listen) {
           return yield* Effect.fail(fail("The Agent returned a process that does not belong to this Project's plan."));

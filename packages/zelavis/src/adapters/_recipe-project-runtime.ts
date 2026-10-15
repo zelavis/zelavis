@@ -319,6 +319,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const liveCommands = new Map<string, Readonly<Record<string, string>>>();
   /** The placement each Project runs under, as the Platform last handed it over (a start or an update). */
   const placements = new Map<string, PlacementToken>();
+  /** Where each running Project's processes launch: its recipe's root, which an upgrade to another layout moves. */
+  const liveRoots = new Map<string, string>();
 
   const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
     projectId: project.id,
@@ -379,13 +381,14 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, parsed: RecipeManifest) {
     const root = rootOf(id, parsed);
     const host = makeAgentPlanHost({
-      runner: agent, workloadId: id, cwd: root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
+      runner: agent, workloadId: id, cwd: () => liveRoots.get(id) ?? root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
       placement: () => placements.get(id) as never,
       baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, LANG: "C.UTF-8" },
       resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
     });
     liveCommands.set(id, state.commands);
+    liveRoots.set(id, root);
     const controller = yield* makePlanController.pipe(Effect.provideService(PlanHost, host));
     const listener = yield* Effect.forkDetach(Effect.scoped(Effect.gen(function* () {
       const events = yield* PubSub.subscribe(controller.events);
@@ -404,6 +407,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   const forget = (id: string) => Effect.gen(function* () {
     controllers.delete(id);
     placements.delete(id);
+    liveRoots.delete(id);
     liveCommands.delete(id);
     const listener = listeners.get(id);
     listeners.delete(id);
@@ -464,6 +468,10 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       return yield* commandsOf(method, candidate);
     }).pipe(Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message }))),
     useCommands: (id: string, commands: Readonly<Record<string, string>>) => Effect.sync(() => { liveCommands.set(id, commands); }),
+    currentRoot: (id: string) => Effect.sync(() => liveRoots.get(id)),
+    useRoot: (id: string, root: string | { readonly manifest: RecipeManifest }) => Effect.sync(() => {
+      liveRoots.set(id, typeof root === "string" ? root : rootOf(id, root.manifest));
+    }),
     saveCommands: (id: string, commands: Readonly<Record<string, string>>) => readState(id).pipe(
       Effect.flatMap((state) => writeState(id, { ...state, commands })),
       Effect.mapError((error) => new RecipeError({ operation: "upgrade", message: error.message })),
@@ -791,7 +799,10 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           plan = result.plan;
         }
         const controller = yield* createController(id, state, parsed);
-        yield* controller.adopt(plan, attached, saved?.configs ?? {}).pipe(Effect.mapError(asRuntimeError));
+        // Under contract 2, app/ is where contract 1 launched: a process an earlier release replaced while upgrading
+        // this Project to the new layout may still run there.
+        const formerRoots = rootOf(id, parsed) === paths(id).app ? [] : [paths(id).app];
+        yield* controller.adopt(plan, attached, saved?.configs ?? {}, formerRoots).pipe(Effect.mapError(asRuntimeError));
       }), { concurrency: 4, discard: true });
     }),
   };
