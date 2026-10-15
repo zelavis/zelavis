@@ -1724,11 +1724,15 @@ until the cutover (bug fixes, security fixes, and an endpoint's existing page wh
 The cutover renames `new-ui` to `@zelavis/ui` and the React dashboard to `@zelavis/ui-legacy`, which
 stays in the repository only so what the new one still lacks can be looked up; it is not a second
 product and is not extended. The cutover happens when its gates pass, and they are not waived by this
-rule: Fuzor installed from npm (no sibling checkout, `FUZOR_DIR`, or `prepare:local` link step); no
-Fuzor page importing a route module from the legacy package (those are island stand-ins, not
-parity); the Fuzor build, typecheck, route-parity and embedded desktop/mobile browser checks inside
-`pnpm run verify` and the release gate; and an update from the previous release through **Update now**
-that serves the new dashboard. Until then the React dashboard remains the default served one.
+rule: Fuzor comes from the owner's own checkout (`FUZOR_DIR`, default `../fuzor`), never from npm, so
+Zelavis always builds against the Fuzor on disk. Every dashboard build rebuilds a stale Fuzor
+(`scripts/fuzor-source.mjs`) and records its version, commit and a digest of its uncommitted changes in
+`.fuzor/fuzor-build.json`; the Platform package ships only the built dashboard, so an installation and a
+Platform process never need Fuzor, and only the machine that builds a release does (as it already must).
+Further gates: no Fuzor page importing a route module from the legacy package (those are island
+stand-ins, not parity), the `plugins.ui` menu/service contract carried over to the new package, the
+Fuzor build, typecheck, route-parity and embedded desktop/mobile browser checks inside the release
+gate, and an update from the previous release through **Update now** that serves the new dashboard. Until then the React dashboard remains the default served one.
 
 `packages/zelavis/services/new-ui` is the Fuzor frontend. Until the cutover keep the
 React dashboard as the default: full feature parity and real embedded/dev

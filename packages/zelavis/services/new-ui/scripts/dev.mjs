@@ -4,6 +4,8 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { packageRoot, workspaceRoot } from "./link-local.mjs";
+import { ensureFuzorBuilt } from "./fuzor-source.mjs";
+ensureFuzorBuilt();
 const args = process.argv.slice(2);
 const allowed = new Set(["--frontend", "--port", "--ui-port", "--runtime-url", "--embedded", "--data-dir"]);
 const options = {};
