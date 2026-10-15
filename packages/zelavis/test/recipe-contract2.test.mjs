@@ -130,3 +130,16 @@ test("processes adopted without a placement are replaced under the placement the
   assert.deepEqual(await ask(), { config: "contract 2 configuration", page: "the application's own page" });
   assert.deepEqual(await readdir(join(project, "app")), ["site"]);
 });
+
+test("an update that failed for want of a placement is recovered under the placement the Platform holds", async (t) => {
+  const strict = { enforced: false };
+  const { driver, record, lock, ask, id } = await setup(t, "1.0.0", { strict });
+  strict.enforced = true;
+  // What an earlier release did after Update now: no placement reached the replacement, and the rollback
+  // was refused the same way, leaving the update journaled and the previous processes not all running.
+  const execution = await driver.prepareUpdate(record, { ...record, recipe: lock("2.0.0") });
+  await assert.rejects(driver.applyUpdate(id, execution, async () => undefined), /could not be started/);
+  const placement = { projectId: id, nodeId: "local", ownerSession: "owner", epoch: 1 };
+  assert.equal(await driver.recoverUpdate(id, execution, placement), "previous");
+  assert.deepEqual(await ask(), { config: "contract 1 configuration", page: "the application's own page" }, "the previous recipe serves again");
+});

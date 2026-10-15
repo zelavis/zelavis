@@ -294,9 +294,10 @@ export interface ZelavisProjectRuntimeDriver {
   prefetchUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord): Promise<void>;
   applyUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate,
     commit: (selection: "previous" | "target") => Promise<void>): Promise<ZelavisProjectRuntimeSnapshot>;
-  recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate): Promise<"previous" | "target">;
+  /** `placement` is the Project's current one, for processes recovery starts again; absent when none is held. */
+  recoverUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, placement?: ProjectPlacementToken): Promise<"previous" | "target">;
   /** Makes a workload update consistent with a selection another authority (the integration host) proved. */
-  settleUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target"): Promise<void>;
+  settleUpdate?(projectId: string, update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target", placement?: ProjectPlacementToken): Promise<void>;
   /** What a person needs to finish the application's own setup; secret values only when `reveal` is set. */
   setupValues?(projectId: string, options: { readonly reveal: boolean }): Promise<readonly ZelavisProjectSetupValue[]>;
   /** Resolves once public requests may reach the Project: while its serving processes are being replaced it waits. */
@@ -1332,7 +1333,15 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const intent = project.runtimeUpdate;
         if (!intent) return project;
         if (!runtimeEffects.recoverUpdate) return yield* new IntegrationFailure(new Error("Project driver cannot recover its persisted runtime update."));
-        const choice = yield* runtimeEffects.recoverUpdate(project.id, intent.execution);
+        // Recovery may start the previous plan's processes again, and an Agent starts a Project's process only
+        // under its current placement. Without one held (none committed yet), recovery runs without it.
+        const placement = options.authoritativePlacement
+            ? yield* Effect.gen(function* () {
+                yield* ensureCommittedPlacement(project.id, localPlacementNodeId);
+                return yield* localPlacementToken(project.id);
+            }).pipe(Effect.orElseSucceed(() => undefined))
+            : undefined;
+        const choice = yield* runtimeEffects.recoverUpdate(project.id, intent.execution, placement);
         const { runtimeUpdate: _intent, ...settled } = project;
         const selected = { ...settled, ...intent[choice] };
         return yield* write({ ...selected, capabilities: runtime.capabilities(selected), updatedAt: new Date().toISOString() });

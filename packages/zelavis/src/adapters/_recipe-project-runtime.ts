@@ -749,11 +749,14 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       if (gate) yield* Deferred.await(gate);
     }),
 
-    settleUpdate: Effect.fn("RecipeRuntime.settleUpdate")(function* (projectId: string, _update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target") {
+    settleUpdate: Effect.fn("RecipeRuntime.settleUpdate")(function* (projectId: string, _update: ZelavisProjectRuntimeUpdate, selection: "previous" | "target", placement?: PlacementToken) {
+      if (placement) placements.set(projectId, placement);
       return yield* withKit(settleRecipeUpdate(projectId, selection)).pipe(Effect.mapError(asRuntimeError));
     }),
 
-    recoverUpdate: Effect.fn("RecipeRuntime.recoverUpdate")(function* (projectId: string) {
+    recoverUpdate: Effect.fn("RecipeRuntime.recoverUpdate")(function* (projectId: string, _update?: ZelavisProjectRuntimeUpdate, placement?: PlacementToken) {
+      // The previous plan's processes may need starting again, under the Project's current placement.
+      if (placement) placements.set(projectId, placement);
       return yield* withKit(recoverRecipeUpdate(projectId)).pipe(Effect.mapError(asRuntimeError));
     }),
 

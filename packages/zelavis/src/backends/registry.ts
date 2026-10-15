@@ -557,10 +557,10 @@ export function createDeploymentBackendProjectRuntime(options: {
       if (!apply) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend does not support live Project updates."));
       return yield* apply(id, update, commit);
     }),
-    recoverUpdate: Effect.fn("BackendProjects.recoverUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[1]) {
+    recoverUpdate: Effect.fn("BackendProjects.recoverUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[1], placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["recoverUpdate"]>>[2]) {
       const recover = effectOperations(yield* forProjectId(id)).recoverUpdate;
       if (!recover) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot recover a Project update."));
-      return yield* recover(id, update);
+      return yield* recover(id, update, placement);
     }),
     setupValues: Effect.fn("BackendProjects.setupValues")(function* (id: string, options: { readonly reveal: boolean }) {
       const values = effectOperations(yield* forProjectId(id)).setupValues;
@@ -570,10 +570,10 @@ export function createDeploymentBackendProjectRuntime(options: {
       const ready = effectOperations(yield* forProjectId(id)).ingressReady;
       if (ready) yield* ready(id);
     }),
-    settleUpdate: Effect.fn("BackendProjects.settleUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[1], selection: "previous" | "target") {
+    settleUpdate: Effect.fn("BackendProjects.settleUpdate")(function* (id: string, update: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[1], selection: "previous" | "target", placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["settleUpdate"]>>[3]) {
       const settle = effectOperations(yield* forProjectId(id)).settleUpdate;
       if (!settle) return yield* Effect.fail(new ZelavisProjectRuntimeError("This backend cannot settle a Project update."));
-      return yield* settle(id, update, selection);
+      return yield* settle(id, update, selection, placement);
     }),
     ...(uniqueRuntimes.some(runtime => runtime.fencePrevious) ? {
       fencePrevious: Effect.fn("BackendProjects.fencePrevious")(function* (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) {
