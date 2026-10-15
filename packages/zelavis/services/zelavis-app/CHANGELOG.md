@@ -1,5 +1,12 @@
 # @zelavis/app
 
+## 1.0.1-alpha.36
+
+### Patch Changes
+
+- Updated dependencies [f803d6d]
+  - zelavis@2.0.0-alpha.36
+
 ## 1.0.1-alpha.35
 
 ### Patch Changes
