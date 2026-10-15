@@ -1,6 +1,6 @@
 # @zelavis/ui, the Zelavis dashboard
 
-The dashboard of every Platform, built with Fuzor: an HTML-first shell, a Swiper Element sidebar, compiled server views and a native database workspace with three MIT grid libraries. The pages not yet rebuilt natively are the former React dashboard's route modules, mounted as first-party React islands (see Route parity); that dashboard lives on in [`../zelavis-ui-legacy`](../zelavis-ui-legacy) as their source and as a reference. The repository rule is that all new dashboard UI is written here, natively.
+The dashboard of every Platform, built with Fuzor: an HTML-first shell, a Swiper Element sidebar, compiled server views and a native database workspace with three MIT grid libraries. Every page is native; the original React dashboard (`zelavis-ui-legacy`) is kept only as a reference and is no part of the build.
 
 The package ships its built output only (`dist`, `.fuzor/web/dist-spa`, `.fuzor/dist-backend`, `.fuzor/fuzor-build.json`). An installation never needs Fuzor: the server entry is bundled so it imports only `effect`, which the Platform provides.
 
@@ -28,17 +28,15 @@ node scripts/dev.mjs --runtime-url=http://127.0.0.1:3000   # attach to a running
 
 It prints the addresses and the first-owner token. Defaults are ports 3200/3201; busy ports advance within a bounded range, and it never kills existing listeners. Optional flags: `--port=3200`, `--ui-port=3201`, `--data-dir=/absolute/test/data`.
 
-## Route parity
+## Pages
 
-All 56 modules in the legacy React Router manifest are inventoried in [src/workspace-route-manifest.ts](src/workspace-route-manifest.ts). The build checks the original manifest and server menu against that snapshot and fails on drift. See [docs/route-parity.md](docs/route-parity.md) for the complete mapping and qualification limits.
+Every route in [app/dashboard-routes.ts](app/dashboard-routes.ts) is a native page: a screen function in [app/screens.ts](app/screens.ts) or a module it calls (`host-pages`, `fabric-pages`, `projects-pages`, `project-pages`, `content-pages`, `storage-pages`, `workloads-pages`, `settings-pages`, `marketplace-pages`, `auth-pages`, `assistant-pages`). Pages are drawn from the DOM builders in [app/dom.ts](app/dom.ts) and [app/page-kit.ts](app/page-kit.ts), read what they need from the Platform's endpoints with Effect, and run actions through `context.run`.
 
-Fuzor owns the canonical browser URL, mounted route matching, history, outer shell, footer utilities and persistent Swiper navigation. Original feature route components, loaders, actions and resource loaders run in a same-origin first-party iframe with a React memory router. The bridge authenticates the source window and origin and mirrors functional URLs in both directions. Sidebar/footer presentation parameters are excluded in both directions, preserving editor identity and preventing legacy sidebar URL loops. Touch swipe-back crosses the iframe boundary. Workspace styles stay inside that document so editor portals and dashboard styling do not interfere with the native shell.
+A page with live state is a `fuzor-island` whose module owns its state and cleans up with the page: the terminal, the media gallery, the schema builder, the Assistant conversation, the rich text editor (Lexical, without its React bindings), the code editor (CodeMirror) and the update card. React remains only where a library needs it: the Glide Data Grid.
 
-Setup, login, Projects and lifecycle controls, rich Content Studio, workload editors, Auth, Storage/Media, Marketplace, Server/Fabric and Settings use the existing implementations and authority. Capability-dependent and planned pages keep their original limitations. These workspaces are React islands, not claimed to be native Fuzor rewrites or server components. No second bootstrap, permission, catalogue or Project authority is introduced.
+Fuzor owns the canonical browser URL, mounted route matching, history, the outer shell, footer utilities and the persistent Swiper navigation. The sidebar's menus are built in [app/navigation-menu.ts](app/navigation-menu.ts) from the menus services register, the capabilities a Project has, its content types, tables and workloads, and what the signed-in principal may use. The shell also carries the update banner, so **Update now** is one click from any page.
 
-The canonical Project Database route remains native Fuzor SSR with three MIT grids. **Full database tools** opens the original database workspace with `workspaceMode=full`; **Create table** uses its original action and returns to the native grid under the `zelavis-app` admin tenant. Content Studio uses its original schema, rich text, relation and media editors. Its relation resource loader is explicitly rebased through the current Project proxy.
-
-Permission-filtered workspace menus feed the Fuzor sidebar, including nested Server/Fabric, Backend/Workloads and Content types. The footer retains Home, Notifications, Assistant, Search and Account → Settings → Language, with URL-restored mobile and desktop presentation state.
+The canonical Project Database route is native Fuzor server rendering with three MIT grids; **Create table** is a page of its own.
 
 ## Fuzor changes this experiment required
 
@@ -69,7 +67,6 @@ Selected records expose text, numeric, boolean, select and multi-select controls
 ## Validate
 
 ```sh
-node scripts/audit-routes.mjs --check
 node scripts/typecheck.mjs
 node scripts/build.mjs
 node --test tests/*.test.mjs

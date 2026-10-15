@@ -1504,7 +1504,7 @@ those grants, while endpoints remain the authority layer.
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
-- `packages/zelavis/services/zelavis-ui` is the Fuzor dashboard (`@zelavis/ui`) the runtime package ships; `zelavis-ui-legacy` is the former React dashboard kept as island source and reference.
+- `packages/zelavis/services/zelavis-ui` is the Fuzor dashboard (`@zelavis/ui`) the runtime package ships; `zelavis-ui-legacy` is the former React dashboard, kept only as reference.
 - `packages/zelavis/src/adapters` holds the host, runtime and storage adapters
   (Node, Bun, Agent, Project runtimes), exported through `zelavis/adapters/*`
   subpaths.
@@ -1729,13 +1729,17 @@ the owner 2026-10-15 and cut over the same day. **All new dashboard UI is built 
 page, control or flow is never another React route. Fuzor owns its routing and compiled server views.
 Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboard orchestration.
 
+- **The dashboard is entirely native.** Every route is a Fuzor page: a screen in `app/screens.ts` or a module it
+  calls (`app/dashboard-routes.ts` lists them, and the route parity test visits each at desktop and mobile
+  sizes). Pages are built from the small DOM builders in `app/dom.ts` and `app/page-kit.ts`; a page with live
+  state (the terminal, the media gallery, the schema builder, the Assistant conversation, the rich text and code
+  editors) is a `fuzor-island` whose module owns its state and cleans up with the page. **React is used only
+  where a library needs it**: the Glide Data Grid. Everything else, including Lexical (without its React
+  bindings) and CodeMirror, is plain DOM.
 - **The former React Router dashboard** is `packages/zelavis/services/zelavis-ui-legacy`
-  (`@zelavis/ui-legacy`): private, never loaded by a Platform and never published. It stays for two
-  reasons only: the Fuzor dashboard still mounts its route modules as React islands for the pages not yet
-  rebuilt natively (`src/workspace-route-manifest.ts` inventories all 56; `scripts/audit-routes.mjs`
-  fails the build when the legacy routes drift from it), and it is the reference for what the new
-  dashboard lacks. It takes fixes that keep those islands working, nothing else, and a page leaves it
-  by being rebuilt natively. The legacy menu/route description below applies to those pages.
+  (`@zelavis/ui-legacy`): private, never loaded by a Platform, never published, and no longer part of the
+  dashboard's build. It stays only as the reference for what the new dashboard might lack. Do not fix, extend
+  or depend on it; a feature found there that is missing here is built here.
 - **Fuzor comes from the owner's checkout when one exists** (`FUZOR_DIR`, default `../fuzor` beside this
   repository) and otherwise from the pinned npm release, so the owner always builds against the Fuzor on
   disk while CI and other contributors use the exact published one. Every build rebuilds a stale checkout
@@ -1762,37 +1766,35 @@ Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboar
   requests to asset serving.
 - **Qualification** is `pnpm run ci:ui` (also part of `release:check`): the Fuzor package's browser
   suites start throwaway Platforms and check the first-owner and login gates, the embedded production
-  bundle at its mount, every route at desktop and mobile sizes, the database workspace and the three
-  grid libraries. Keep it green; a page leaving the legacy inventory removes its entry in the same change.
+  bundle at its mount, every route at desktop and mobile sizes, the update banner, representative actions
+  (create, upload, edit, save, run) and the three grid libraries. Keep it green; a new page adds its pattern to
+  `app/dashboard-routes.ts`. `PARITY_SHOTS=<dir>` makes the parity run save a screenshot of the main pages.
 
-`packages/zelavis/services/zelavis-ui-legacy` is a special package with extra constraints:
+Dashboard rules (they hold for every page of `@zelavis/ui`):
 
-- It uses **React Router v8** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
-- Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
-- Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/services/zelavis-ui-legacy/app/routes/`. Edit these only to keep an island page working; typegen runs automatically.
-- The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
-- Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
-- Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
-- Below the dashboard desktop breakpoint (`lg`), the sidebar is the whole app shell. Keep the desktop content inset hidden there; mobile and smaller tablet views should be composed from slide navigation and route slots.
-- Do not build separate desktop-only and mobile-only versions of feature behavior. Extract reusable workspace/panel components first, keep page-level data loading in routes/resource routes, and let desktop pages and future mobile slots share those components.
-- Shared UI primitives must stay aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
-- Dashboard routes should use shared control defaults. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
-- Do not add blog-style route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Dashboard content should start with the actual workspace, table, form, chart, or contextual controls unless the page needs a title for a genuinely distinct object or focused editor.
-- Content Studio routes must create collections with
-  `surface: "content-studio"` as a top-level field.
+- The sidebar uses a slide-based navigation model; treat each slide as a distinct panel. Its menus are
+  built natively from what the Platform reports (`app/navigation-menu.ts`: registered service menus,
+  capabilities, content types, tables, workloads) and filtered by what the signed-in principal may use.
+- Below the desktop breakpoint (`lg`) the sidebar is the whole app shell. Compose pages from small modules
+  that work at every size; do not build separate desktop-only and mobile-only versions of a feature.
+- Do not add title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item.
+  Content should start with the actual workspace, table, form, chart, or contextual controls unless the page
+  needs a title for a genuinely distinct object or focused editor.
+- Content Studio routes must create collections with `surface: "content-studio"` as a top-level field.
 - Database routes that create raw tables must use `surface: "database"`.
-- Content Studio sidebar sections show only `surface: "content-studio"`
-  collections and label them as Collections.
-- Core Database sidebar sections show all registered collections, label raw
-  collection entries as Tables, and keep system tables in a distinct System
-  Tables area.
+- Content Studio sidebar sections show only `surface: "content-studio"` collections and label them as
+  Collections. Core Database sidebar sections show all registered collections, label raw collection
+  entries as Tables, and keep system tables in a distinct System Tables area.
 
-**Data loading**: every route that fetches data uses a `clientLoader` + `useLoaderData`. Never fetch in `useEffect` for page-level data. After mutations, use `useRevalidator().revalidate()`. Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is accessed in child routes via `useRouteLoaderData<typeof rootClientLoader>('root')`.
+**Data loading**: a page is a screen function that reads what it needs from the Platform's endpoints with
+Effect when it is drawn (never ad hoc in an event handler's callbacks), and an action runs through
+`context.run`, which reports failures and refreshes the page. A page with live state is a `fuzor-island`.
 
 **URL state & reconstructability**:
-- Everything that can survive a reload must be in the URL. Use `useTypedSearchParams` / `useTypedSearchParam` from `app/lib/use-typed-search-params.ts`. `clientLoader` reads search params from `request.url` so data and URL are always in sync on reload.
-- Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`). Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
+- Everything that can survive a reload must be in the URL (`context.setSearch`). Filters, tabs, the selected
+  record, the open panel and the form values a link may carry belong in the query string.
+- Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`).
+  Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
 
 **Menu items and content area rules**:
 - **Rule 1 (Always Change Content)**: Clicking any menu item or slide **MUST** update the URL and change the content area to its own dedicated page or panel. Even parent items with nested child items must land on an Overview page/route of that section when opened.
@@ -1804,14 +1806,13 @@ When working on UI behavior:
 
 - Treat the dashboard as one client of Zelavis endpoints. Do not put platform-only behavior in route components, local React state, or dashboard-only actions.
 - Prefer `pnpm dev` for end-to-end runtime and dashboard iteration.
-- Use `pnpm --filter @zelavis/ui typecheck` and `pnpm --filter @zelavis/ui build` to validate UI-only changes.
+- Use `pnpm --filter @zelavis/ui typecheck`, `build` and `test` to validate UI-only changes, and `pnpm run ci:ui` for the browser suites.
 - Preserve the existing design language unless the task explicitly asks for redesign.
 
 ## Generated and Sensitive Files
 
 Treat these carefully:
 
-- `packages/zelavis/services/zelavis-ui-legacy/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 

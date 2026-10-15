@@ -1,4 +1,4 @@
-import { serverNavigationMenu } from "./workspace-route-manifest.ts";
+import { serverNavigationMenu } from "./server-navigation.ts";
 import { Effect } from "effect";
 import { zelavis } from "zelavis/sdk";
 import type { ZelavisPlatformFrontendContext } from "zelavis";

@@ -8,7 +8,7 @@ Keep Glide Data Grid as the first-port baseline in a Fuzor React island. React i
 
 ## Current Zelavis behavior
 
-The original UI uses Glide's DataEditor in `zelavis-ui-legacy/app/routes/database.tsx`. Zelavis implements filtering, sorting, column visibility/order, pinning and saved views around the grid. Cells currently return read-only values; row creation lives in a separate drawer. The current filter/sort functions operate on the fetched rows. Replacing the renderer alone would not make those operations cover an entire server-side dataset.
+The original UI uses Glide's DataEditor in `the original React dashboard`. Zelavis implements filtering, sorting, column visibility/order, pinning and saved views around the grid. Cells currently return read-only values; row creation lives in a separate drawer. The current filter/sort functions operate on the fetched rows. Replacing the renderer alone would not make those operations cover an entire server-side dataset.
 
 Keep data access, real Project/Tenant scope, query state and mutation authorization outside a vendor-specific grid. System Store and logical System Table inspection remain read-only. Grid editor/clipboard/undo features do not by themselves authorize or persist database changes.
 

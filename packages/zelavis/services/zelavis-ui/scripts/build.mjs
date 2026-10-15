@@ -8,8 +8,6 @@ import { packageRoot, writeFuzorProvenance } from "./fuzor-source.mjs";
 for (const output of [".fuzor/web", ".fuzor/dist-backend", ".fuzor/dist-spa-server"]) rmSync(resolve(packageRoot, output), { recursive: true, force: true });
 const styles = spawnSync(process.execPath, ["scripts/generate-service-page-styles.mjs"], { cwd: packageRoot, stdio: "inherit" });
 if (styles.status !== 0) process.exit(styles.status ?? 1);
-const audit = spawnSync(process.execPath, ["scripts/audit-routes.mjs", "--check"], { cwd: packageRoot, stdio: "inherit" });
-if (audit.status !== 0) process.exit(audit.status ?? 1);
 const result = spawnSync(process.execPath, ["node_modules/fuzor/dist/cli.js", "build", "--target", "spa"], { cwd: packageRoot, stdio: "inherit" });
 process.exitCode = result.status ?? 1;
 

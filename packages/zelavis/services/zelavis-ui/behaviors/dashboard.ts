@@ -1,4 +1,3 @@
-import { installWorkspaceBridge, workspaceFlag } from "../app/workspace-island.ts";
 import { dashboardSection } from "../app/routes.ts";
 import { clearDraftJournals } from "../app/grids/drafts.ts";
 import { Effect, Fiber } from "effect";
@@ -11,12 +10,9 @@ import { loadScreen, type ScreenContext } from "../app/screens.ts";
 import { mounted, ROOT, unmounted } from "../app/mount.ts";
 import { startUpdateWatch } from "../app/update-watch.ts";
 import { mountUpdateBanner } from "../app/update-views.ts";
+import { loadPlatformMenu, loadProjectMenu } from "../app/navigation-menu.ts";
 
 export function mount(host: HTMLElement) {
-  if (new URL(location.href).searchParams.get(workspaceFlag) === "1" && window.parent !== window) {
-    const fiber = Effect.runFork(Effect.acquireRelease(Effect.tryPromise({ try: () => import("../islands/react-workspace.jsx"), catch: cause => cause }).pipe(Effect.map(module => module.mount(host))), cleanup => Effect.sync(cleanup)).pipe(Effect.flatMap(() => Effect.never), Effect.scoped, Effect.catch(cause => Effect.sync(() => host.replaceChildren(message(String(cause), true))))));
-    return () => { Effect.runFork(Fiber.interrupt(fiber)); };
-  }
   registerButton();
   const router = getRouter(host.ownerDocument);
   if (!router) throw new Error("The dashboard needs Fuzor’s SPA router.");
@@ -59,18 +55,21 @@ export function mount(host: HTMLElement) {
   const main = host.querySelector<HTMLElement>(".main")!;
   const sidebarController = createSidebar(host, sidebar, content, main, router, { onSignOut: signOut, config: () => config });
 
-  const workspaceBridge = installWorkspaceBridge(host, router, value => {
-    const id = router.params().projectId;
-    if (value.projectId !== id || !Array.isArray(value.projects)) return;
-    const list = value.projects as Project[];
-    sidebarController.setProjects(list);
-    const project = list.find(project => project.id === id);
-    const runtime = object(value.runtime);
-    if (config && !id && runtime.access) config = { ...config, access: runtime.access };
-    sidebarController.setWorkspaceNavigation(value.items, id);
-    const path = unmounted(new URL(router.url()).pathname);
-    navigation(path, id, project, runtime as Config);
-  });
+  /** The sidebar's menus come from what the Platform reports; they load beside the page and replace the basic ones. */
+  function loadMenu(projectId: string | undefined, project?: Project, runtime?: Config) {
+    const control = config;
+    if (!control) return;
+    const work = projectId
+      ? project && runtime ? loadProjectMenu(control, project, runtime) : undefined
+      : loadPlatformMenu(control);
+    if (!work) return;
+    const requested = new URL(router!.url()).pathname;
+    fork(work.pipe(Effect.tap(items => Effect.sync(() => {
+      if (disposed || new URL(router!.url()).pathname !== requested) return;
+      sidebarController.setWorkspaceNavigation(items, projectId);
+      syncNavigation();
+    })), Effect.catch(error => Effect.logWarning("The navigation menu could not be loaded", error))));
+  }
 
   function fork(work: Effect.Effect<unknown, never>) {
     const fiber = Effect.runFork(work);
@@ -136,6 +135,7 @@ export function mount(host: HTMLElement) {
         const loaded = JSON.parse(raw);
         sidebarController.setProjects(loaded.projects);
         navigation(path, projectId, loaded.project, loaded.runtime, loaded.menu);
+        loadMenu(projectId, loaded.project, loaded.runtime);
       } else navigation(path, projectId);
       return;
     }
@@ -144,7 +144,7 @@ export function mount(host: HTMLElement) {
     const context: ScreenContext | undefined = config ? {
       config, url, path, projectId, section, navigate, run, refresh: refreshPage,
       projectsNavigation(list) { if (version === generation) sidebarController.setProjects(list); },
-      projectNavigation(project, runtime, menu) { if (version === generation) navigation(path, projectId, project, runtime, menu); },
+      projectNavigation(project, runtime, menu) { if (version === generation) { navigation(path, projectId, project, runtime, menu); loadMenu(projectId, project, runtime); } },
       setSearch(values) { const next = new URL(router!.url()); for (const [key, value] of Object.entries(values)) { if (value === undefined) next.searchParams.delete(key); else next.searchParams.set(key, value); } navigate(`${path}${next.search}${next.hash}`); }
     } : undefined;
     if (!context) return;
@@ -155,6 +155,7 @@ export function mount(host: HTMLElement) {
       const latest = yield* loadConfig;
       if (disposed || version !== generation) return;
       config = latest; context.config = latest;
+      if (!projectId && path !== "/login" && path !== "/setup" && path !== "/logout") loadMenu(undefined);
       if (path !== "/login" && path !== "/setup") stopUpdates = startUpdateWatch(latest.api.basePath);
       navigation(path, projectId);
       const screen = router!.route()?.kind === "not-found"
@@ -162,7 +163,7 @@ export function mount(host: HTMLElement) {
         : yield* loadScreen(context);
       if (!disposed && version === generation) {
         legacyContent.replaceChildren(screen);
-        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts"), "update-card": () => import("../app/update-views.ts"), "media-gallery": () => import("../app/media-view.ts"), "code-editor": () => import("../app/code-editor.ts"), "schema-builder": () => import("../app/schema-builder.ts"), "rich-text": () => import("../app/rich-text-editor.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
+        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts"), "update-card": () => import("../app/update-views.ts"), "media-gallery": () => import("../app/media-view.ts"), "code-editor": () => import("../app/code-editor.ts"), "schema-builder": () => import("../app/schema-builder.ts"), "assistant-chat": () => import("../app/assistant-chat.ts"), "rich-text": () => import("../app/rich-text-editor.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
         yield* Effect.never;
       }
     }).pipe(Effect.scoped, Effect.catch(error => Effect.sync(() => {
@@ -186,8 +187,7 @@ export function mount(host: HTMLElement) {
   const unsubscribeRoute = router.subscribeRoute(() => { renderedPath = new URL(router!.url()).pathname; renderedData = dataIdentity(router!.url()); if (config) reload(); });
   const unsubscribeUrl = router.subscribeUrl(url => {
     if (new URL(url).pathname !== renderedPath || !config) return;
-    if (isServerView()) { if (host.querySelector("iframe[data-feature-workspace]")) reload(); else syncNavigation(); return; }
-    if (host.querySelector("iframe[data-feature-workspace]")) { syncNavigation(); workspaceBridge.sync(); return; }
+    if (isServerView()) { syncNavigation(); return; }
     const nextData = dataIdentity(url);
     if (nextData === renderedData) syncNavigation();
     else { renderedData = nextData; reload(); }
@@ -202,7 +202,7 @@ export function mount(host: HTMLElement) {
   return () => {
     disposed = true; themeMedia.removeEventListener("change", applyTheme); window.removeEventListener("storage", applyTheme);
     outlet.removeEventListener("fuzor:view-commit", viewCommitted); document.removeEventListener("newui:refresh", refreshRequested);
-    unsubscribeRoute(); unsubscribeUrl(); workspaceBridge.dispose(); sidebarController.dispose(); host.removeEventListener("keydown", escape);
+    unsubscribeRoute(); unsubscribeUrl(); sidebarController.dispose(); host.removeEventListener("keydown", escape);
     stopUpdates?.(); unmountUpdateBanner();
     for (const fiber of fibers) Effect.runFork(Fiber.interrupt(fiber));
     fibers.clear();

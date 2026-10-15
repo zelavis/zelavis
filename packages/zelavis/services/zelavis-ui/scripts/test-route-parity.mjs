@@ -9,8 +9,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 import { packageRoot } from "./fuzor-source.mjs";
-import { workspaceRouteCatalog } from "../src/workspace-route-manifest.ts";
-import { nativePaths } from "../app/native-paths.ts";
+import { dashboardRoutes } from "../app/dashboard-routes.ts";
 
 const io = work => Effect.tryPromise({ try: work, catch: cause => cause instanceof Error ? cause : new Error(String(cause)) });
 const qualify = Effect.scoped(Effect.gen(function*() {
@@ -42,10 +41,9 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const context = yield* io(() => browser.newContext({ viewport: { width: 1440, height: 1000 } }));
   const page = yield* io(() => context.newPage());
   page.setDefaultTimeout(15000);
-  yield* Effect.addFinalizer(() => io(async () => { console.log("Final route:", page.url()); console.log("Final errors:", await page.locator(".errors").innerText({ timeout: 1000 }).catch(() => "")); console.log("Final workspace:", (await page.frameLocator("iframe[data-feature-workspace]").locator("body").innerText({ timeout: 1000 }).catch(() => "native workspace")).slice(-1800)); }).pipe(Effect.orDie));
+  yield* Effect.addFinalizer(() => io(async () => { console.log("Final route:", page.url()); console.log("Final errors:", await page.locator(".errors").innerText({ timeout: 1000 }).catch(() => "")); console.log("Final workspace:", "native".slice(-1800)); }).pipe(Effect.orDie));
   const errors = [];
   page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  const workspace = () => page.frameLocator("iframe[data-feature-workspace]");
   yield* io(() => page.goto(origin + "/zelavis/projects", { waitUntil: "networkidle" }));
   yield* io(() => page.waitForURL(/\/zelavis\/setup/));
   yield* io(() => page.getByRole("button", { name: "Get started", exact: true }).click());
@@ -87,8 +85,8 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* request(proxy + "/database/documents/articles", "POST", { tenantId: "zelavis-app", id: "entry-a", data: { title: "Parity record" } });
   const workload = yield* request(proxy + "/workloads", "POST", { projectId: "parity-lab", type: "function", name: "route-fixture", route: "/api/parity", code: 'export default () => new Response("qualification")', enabled: true });
   const examples = { projectId: "parity-lab", contentType: "articles", entryId: "entry-a", workloadKind: "functions", workloadId: workload.id, managedSection: "domains", fabricSection: "nodes", fabricDetail: "health", collection: "articles" };
-  const cases = workspaceRouteCatalog.filter(item => !["/setup", "/logout", "/_api/relations/:collection"].includes(item.path)).map(item => ({ ...item, example: item.path === "/*" ? "/not-a-dashboard-route" : item.path.replace(/:([a-zA-Z]+)/g, (_, key) => examples[key]) }));
-  for (const path of ["/server/fabric/placements", "/server/fabric/migrations", "/server/fabric/data", "/server/fabric/data/shards", "/server/fabric/data/replicas", "/server/fabric/data/schema-rollouts", "/server/fabric/infrastructure", "/server/fabric/infrastructure/providers", "/server/fabric/infrastructure/autoscaling", "/server/fabric/settings", "/server/fabric/settings/placement-policies", "/server/fabric/settings/networking", "/server/fabric/settings/limits", "/projects?new=1"]) cases.push({ path, example: path, file: "nested/query workspace" });
+  const cases = [...dashboardRoutes.filter(path => !["/setup", "/logout"].includes(path)), "/*"].map(path => ({ path, file: path, example: path === "/*" ? "/not-a-dashboard-route" : path.replace(/:([a-zA-Z]+)/g, (_, key) => examples[key]) }));
+  for (const path of ["/server/fabric/placements", "/server/fabric/migrations", "/server/fabric/data", "/server/fabric/data/shards", "/server/fabric/data/replicas", "/server/fabric/data/schema-rollouts", "/server/fabric/infrastructure", "/server/fabric/infrastructure/providers", "/server/fabric/infrastructure/autoscaling", "/server/fabric/settings", "/server/fabric/settings/placement-policies", "/server/fabric/settings/networking", "/server/fabric/settings/limits", "/projects?new=1"]) cases.push({ path, example: path, file: "nested/query page" });
   const results = [{ path: "/setup", file: "routes/setup.tsx", status: "qualified wizard flow" }];
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     yield* io(() => page.setViewportSize(viewport));
@@ -96,20 +94,12 @@ const qualify = Effect.scoped(Effect.gen(function*() {
       const url = origin + "/zelavis" + entry.example;
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
-      else if (nativePaths.includes(entry.path)) {
-        yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty, .content .auth-card").first().waitFor());
-        assert.equal(yield* io(() => page.locator("iframe[data-feature-workspace]").count()), 0, `${entry.file}: native page mounts no workspace frame`);
-        const text = yield* io(() => page.locator(".content").innerText());
-        assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
-      }
       else if (entry.example === "/projects/parity-lab/database") {
         yield* io(() => page.locator("form.filters").getByLabel("Tenant ID", { exact: true }).waitFor());
       } else {
-        yield* io(() => workspace().locator(".react-feature-workspace").waitFor());
-        yield* io(() => workspace().locator('[role="status"]').filter({ hasText: "Loading workspace" }).waitFor({ state: "hidden" }));
-        const text = yield* io(() => workspace().locator("body").innerText());
-        assert.ok(text.trim().length > 15, `${entry.file}: dedicated content renders (${viewport.width})`);
-        assert.ok(!/Could not open this workspace|Cannot read properties|undefined is not|Page being ported|Invalid hook call/.test(text), `${entry.file}: ${text}`);
+        yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty, .content .auth-card").first().waitFor());
+        const text = yield* io(() => page.locator(".content").innerText());
+        assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
       }
       assert.equal(errors.length, 0, `${entry.file}: ${errors.join("\n")}`);
       results.push({ path: entry.example, file: entry.file, viewport: viewport.width, status: "loaded" });
@@ -257,6 +247,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
     for (const shot of ["/projects", "/projects?new=1", "/server", "/server/fabric", "/server/access/users", "/settings", "/marketplace", "/projects/parity-lab", "/projects/parity-lab/storage", "/projects/parity-lab/media", "/projects/parity-lab/workloads/new", "/projects/parity-lab/content", "/projects/parity-lab/content/articles", "/projects/parity-lab/content/articles/entry-a", "/projects/parity-lab/content/ui-notes/note-a", "/projects/parity-lab/content/ui-notes/fields?view=editor", "/projects/parity-lab/content/ui-notes/fields?view=settings", "/projects/parity-lab/settings", "/assistant", "/projects/parity-lab/database", "/projects/parity-lab/auth", "/projects/parity-lab/marketplace"]) {
       yield* visit(shot);
       yield* io(() => page.waitForTimeout(800));
+      if (shot === "/projects/parity-lab/content") { yield* io(() => page.getByRole("button", { name: /Content/ }).first().click().catch(() => undefined)); yield* io(() => page.waitForTimeout(600)); }
       yield* io(() => page.screenshot({ path: `${process.env.PARITY_SHOTS}/${shot.replace(/[^a-z0-9]+/gi, "_")}.png`, fullPage: true }));
     }
   }

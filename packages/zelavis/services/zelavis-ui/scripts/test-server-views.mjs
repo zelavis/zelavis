@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { chromium } from "@playwright/test";
 import { createNodeServer, closeNodeServer } from "fuzor/server/node";
-import { serverNavigationMenu } from "../src/workspace-route-manifest.ts";
+import { serverNavigationMenu } from "../src/server-navigation.ts";
 import { packageRoot } from "./fuzor-source.mjs";
 import { resolve, join, extname } from "node:path";
 import { mkdtemp, readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
