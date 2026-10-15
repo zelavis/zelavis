@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { chromium } from "@playwright/test";
 import { packageRoot } from "./fuzor-source.mjs";
 import { workspaceRouteCatalog } from "../src/workspace-route-manifest.ts";
+import { nativePaths } from "../app/native-paths.ts";
 
 const io = work => Effect.tryPromise({ try: work, catch: cause => cause instanceof Error ? cause : new Error(String(cause)) });
 const qualify = Effect.scoped(Effect.gen(function*() {
@@ -95,9 +96,11 @@ const qualify = Effect.scoped(Effect.gen(function*() {
       const url = origin + "/zelavis" + entry.example;
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
-      else if (entry.path === "/server/logs" || entry.path === "/server/terminal") {
-        yield* io(() => page.getByRole("heading", { name: entry.path === "/server/logs" ? "Logs" : "Terminal", exact: true }).waitFor());
-        assert.equal(yield* io(() => page.locator(".react-feature-workspace, iframe").count()), 0, `${entry.file}: native page mounts no React island`);
+      else if (nativePaths.includes(entry.path)) {
+        yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty").first().waitFor());
+        assert.equal(yield* io(() => page.locator("iframe[data-feature-workspace]").count()), 0, `${entry.file}: native page mounts no workspace frame`);
+        const text = yield* io(() => page.locator(".content").innerText());
+        assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
       }
       else if (entry.example === "/projects/parity-lab/database") {
         yield* io(() => page.locator("form.filters").getByLabel("Tenant ID", { exact: true }).waitFor());

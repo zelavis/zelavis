@@ -3,9 +3,6 @@ import { array, label, object, request } from "./api.ts";
 import { button, empty, link, message, node } from "./dom.ts";
 import type { ScreenContext } from "./screens.ts";
 
-/** Server pages the Fuzor dashboard renders itself. A path listed here never falls back to the React island. */
-export const nativeServerPaths = ["/server/logs", "/server/terminal"] as const;
-
 const LEVELS = ["debug", "info", "warn", "error"] as const;
 const heading = (text: string, ...actions: HTMLElement[]) => node("div", { class: "toolbar" }, node("h1", {}, text), node("div", { class: "actions" }, ...actions));
 const notice = (text: string) => node("p", { class: "muted" }, text);
