@@ -3,6 +3,7 @@ import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./co
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
+import { setUnexpectedErrorSink } from "./core/runtime/error-policy.js";
 import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
 import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
@@ -7208,6 +7209,16 @@ export function zelavis(
           : undefined;
 
         const platformLog = createPlatformLog();
+        // A request that failed behind a generic answer is recorded here with the reference the caller saw,
+        // so Server → Logs (and the service journal) explain it. Redaction is the log's own.
+        const recordUnexpected = (correlationId: string, error: unknown) => {
+          const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+          platformLog.record({ level: "error", source: "request", message: `Request failed: ${message}`, correlationId,
+            ...(error instanceof Error && error.stack ? { detail: error.stack } : {}) });
+          console.error(`Request failed (reference ${correlationId}): ${message}`);
+        };
+        setUnexpectedErrorSink(recordUnexpected);
+        yield* Effect.addFinalizer(() => Effect.sync(() => setUnexpectedErrorSink(undefined)));
         runtimeManagement = yield* integration(() =>
           resolveRuntimeManagementCore(options.frontend, {
             apiPrefix,

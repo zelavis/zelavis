@@ -127,3 +127,17 @@ test("correlation ids are unguessable and unique per failure", async () => {
   }
   assert.equal(ids.size, 20, "each failure must get its own id");
 });
+
+test("a hidden failure is recorded with the reference its caller sees, and never leaks into the response", async () => {
+  const { createJsonErrorResponse } = await import("../dist/core/runtime/http-errors.js");
+  const { setUnexpectedErrorSink } = await import("../dist/core/runtime/error-policy.js");
+  const recorded = [];
+  setUnexpectedErrorSink((correlationId, error) => recorded.push({ correlationId, message: error.message }));
+  try {
+    const response = createJsonErrorResponse(500, new Error("ENOENT /var/lib/zelavis/secret-path"));
+    assert.doesNotMatch(JSON.stringify(response.body), /secret-path/);
+    assert.deepEqual(recorded, [{ correlationId: response.body.correlationId, message: "ENOENT /var/lib/zelavis/secret-path" }]);
+  } finally {
+    setUnexpectedErrorSink(undefined);
+  }
+});

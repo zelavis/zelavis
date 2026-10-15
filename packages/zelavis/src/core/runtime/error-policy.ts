@@ -62,6 +62,26 @@ export function publicErrorMessage(error: unknown): string | undefined {
 }
 
 /**
+ * Where an error whose message a caller must not see is recorded, with the id the caller does see. The
+ * running Platform sets it (its log and the service journal); without one the cause is still written to
+ * the console, so a reference the dashboard shows always leads to something.
+ */
+let unexpectedErrorSink: ((correlationId: string, error: unknown) => void) | undefined;
+
+export function setUnexpectedErrorSink(sink: ((correlationId: string, error: unknown) => void) | undefined): void {
+  unexpectedErrorSink = sink;
+}
+
+/** Records an error hidden behind `correlationId`; recording never fails the response. */
+export function reportUnexpectedError(correlationId: string, error: unknown): void {
+  if (unexpectedErrorSink) {
+    unexpectedErrorSink(correlationId, error);
+    return;
+  }
+  console.error(`Request failed (reference ${correlationId}):`, error);
+}
+
+/**
  * Short, unguessable id shared between a generic response and the logged cause.
  */
 export function createErrorCorrelationId(): string {

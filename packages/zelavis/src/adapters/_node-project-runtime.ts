@@ -48,6 +48,8 @@ export interface NodeProcessProjectRuntimeOptions {
 }
 interface NodeProjectProcess {
     boundEngineVersion?: string;
+    /** The runner the host process executes, which is the code it loads recipes with. */
+    runner?: string;
     process?: ZelavisAgentProcess;
     control?: ReturnType<typeof createNodeRuntimeClient>;
     logs: ZelavisProjectLogEntry[];
@@ -162,6 +164,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     const shutdownConcurrency = positiveInteger(options.shutdownConcurrency, DEFAULT_SHUTDOWN_CONCURRENCY);
     const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
     const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
+    /** The runner a fresh integration host would execute: the current engine's, as `start` selects it. */
+    const integrationRunner = Effect.fn("NodeProjects.integrationRunner")(function* () {
+        const catalogOptions = yield* catalogConfiguration();
+        if (!catalogOptions) return runnerPath;
+        const runtime = yield* createNodeRuntimeCatalog(catalogOptions).select(ZELAVIS_VERSION);
+        const execution = yield* createNodeRuntimeCatalog(catalogOptions).resolve(runtime, "project", {}, {});
+        return join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
+    });
     const installation = describeInstallation(fileURLToPath(new URL("../cli.js", import.meta.url)));
     const catalogConfiguration = Effect.fn("NodeProjects.catalogConfiguration")(function* () {
         if (options.runtimeCatalog) return options.runtimeCatalog;
@@ -415,6 +425,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
                     const state: NodeProjectProcess = {
                         process: child,
+                        runner,
                         logs: [],
                         snapshot: { status: "running" },
                         stopping: false,
@@ -473,6 +484,17 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 return yield* new IntegrationFailure(new Error("The Node project runtime is shutting down."));
             }
             const current = processes.get(project.id);
+            // A managed app's integration host outlives Platform updates by design, and it loads and validates
+            // recipes with its own code. One still running an earlier release's runner would judge a newer
+            // recipe by older rules, so it is replaced: the app's own processes are separate and keep serving.
+            if (options.integrationOnly && current?.process?.running && current.runner !== undefined &&
+                current.runner !== (yield* integrationRunner())) {
+                appendLog(current, "system", "Replacing the integration host, which runs an earlier release's code.");
+                current.stopping = true;
+                yield* integration(() => current.process!.stop()).pipe(Effect.uninterruptible);
+                gatewaySecrets.delete(project.id);
+                current.snapshot = stoppedSnapshot(current);
+            }
             if (current?.process?.running &&
                 (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
                 // A managed app's private App follows its control plane engine.
@@ -537,6 +559,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
             const state: NodeProjectProcess = {
                 ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
+                runner: selectedRunner,
                 logs: current?.logs ?? [],
                 snapshot: { status: "starting" },
                 stopping: false,
