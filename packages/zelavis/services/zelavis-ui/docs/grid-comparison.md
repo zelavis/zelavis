@@ -16,22 +16,20 @@ Grid-specific source is lazy-loaded. The shared workspace is a Fuzor island; onl
 
 ## Install and validate
 
-From this package directory:
+From the repository root, `pnpm install`, then in this package directory:
 
 ```sh
-npm ci --prefix grid-dependencies --ignore-scripts --legacy-peer-deps --no-audit --no-fund
-node scripts/link-local.mjs
 node scripts/typecheck.mjs
 node scripts/build.mjs
 node --test tests/*.test.mjs
-node scripts/dev.mjs --frontend=fuzor
+node scripts/dev.mjs
 ```
 
-Dependencies and their npm lockfile live in `grid-dependencies`, isolated from the parent pnpm workspace. React 18 satisfies Glide's published peer range. The first local install needs registry access. Fuzor must already be built in its sibling checkout, as described in the package README.
+The grid libraries are exact-pinned devDependencies of the package (`@glideapps/glide-data-grid`, `tabulator-tables`, `@visactor/vtable` and its editors), resolved in the workspace lockfile. Glide's published peer range is React 18; it runs on this package's React 19 like it did in the legacy dashboard.
 
 ## License verification
 
-The exact installed grid manifests must declare MIT and match their pinned versions; build and unit tests enforce this. The build retains their copyright/permission notices in `.fuzor/dist-spa/assets/grid-licenses.txt`. VTable's npm package declares MIT but omits its license file, so the notice from its published source commit `a938bf7988391b6c2420f9fd2e0ada40a52b9f8e` is retained locally in `grid-dependencies/VTable-LICENSE.txt`.
+The exact installed grid manifests must declare MIT and match their pinned versions; build and unit tests enforce this. The build retains their copyright/permission notices in `.fuzor/web/dist-spa/assets/grid-licenses.txt`. VTable's npm package declares MIT but omits its license file, so the notice from its published source commit `a938bf7988391b6c2420f9fd2e0ada40a52b9f8e` is retained locally in `grid-dependencies/VTable-LICENSE.txt`.
 
 Sources: [Glide license](https://github.com/glideapps/glide-data-grid/blob/main/LICENSE), [Tabulator license](https://github.com/tabulator-tables/tabulator/blob/master/LICENSE), [VTable license](https://github.com/VisActor/VTable/blob/a938bf7988391b6c2420f9fd2e0ada40a52b9f8e/LICENSE). The library requirement is MIT; their open-source dependency graph has its own notices and licenses. No paid grid edition is used.
 

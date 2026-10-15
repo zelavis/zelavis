@@ -55,7 +55,8 @@
     "test:browser": "node scripts/audit-routes.mjs --check && node scripts/test-server-views.mjs && node scripts/test-route-parity.mjs && node scripts/test-embedded-server-views.mjs",
     "test:browser:dev": "node scripts/test-embedded-server-views.mjs --dev",
     "audit:routes": "node scripts/audit-routes.mjs --check",
-    "build:plugin": "tsc -p tsconfig.plugin.json"
+    "build:plugin": "tsc -p tsconfig.plugin.json",
+    "dev:server": "node scripts/dev-server.mjs"
   },
   "peerDependencies": {
     "zelavis": "workspace:*"

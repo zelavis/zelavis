@@ -61,8 +61,9 @@ jobs:
           cmp distribution/installers/install.sh website/dist/install.sh
 
   ui:
-    name: Dashboard e2e
+    name: Dashboard browser checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -83,61 +84,17 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @zelavis/ui exec playwright install --with-deps chromium
 
-      - name: Build runtime packages for e2e
+      - name: Build runtime packages for the browser checks
         run: |
           pnpm --filter zelavis build:runtime
-          # The Platform no longer builds the dashboard for you — it does not
-          # depend on it. Anything composing a frontend builds it explicitly.
+          # The Platform does not build the dashboard for you; anything composing a frontend builds it explicitly.
+          # No Fuzor checkout exists here, so this builds against the pinned Fuzor from npm.
           pnpm --filter @zelavis/ui build
 
-      # The e2e Platform is created empty and destroyed with the runner, so
-      # these are throwaway fixtures rather than credentials. Generating them
-      # per run keeps credential-shaped literals out of the repository and
-      # still works on pull requests from forks, which receive no secrets.
-      - name: Generate ephemeral e2e credentials
-        run: |
-          echo "ZELAVIS_BOOTSTRAP_TOKEN=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
-          echo "ZELAVIS_E2E_OWNER_PASSWORD=$(openssl rand -hex 12)" >> "$GITHUB_ENV"
-
-      - name: Start example runtime server
-        env:
-          # The officially maintained services in this checkout, so the
-          # marketplace lists them (WordPress is not on the npm allow-list yet).
-          ZELAVIS_OFFICIAL_SERVICES_DIR: ${{ github.workspace }}/zelavis-services
-        run: |
-          pnpm --filter @zelavis/example-nodejs dev > /tmp/zelavis-runtime.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -s -o /dev/null http://127.0.0.1:3000/zelavis; then
-              echo "Runtime server is up"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Runtime server failed to start"
-          cat /tmp/zelavis-runtime.log
-          exit 1
-
-      # Privileged control-plane endpoints require a real principal, so the
-      # e2e run claims the first owner and uses its session.
-      - name: Bootstrap the Platform owner
-        run: |
-          curl --fail --show-error --silent \
-            --request POST \
-            --header "content-type: application/json" \
-            --data "{\"bootstrapToken\":\"$ZELAVIS_BOOTSTRAP_TOKEN\",\"provider\":\"password\",\"account\":{\"email\":\"ci@example.com\",\"displayName\":\"Zelavis E2E\"},\"credential\":{\"identifier\":\"ci@example.com\",\"password\":\"$ZELAVIS_E2E_OWNER_PASSWORD\"}}" \
-            http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap > /tmp/zelavis-owner.json
-          echo "ZELAVIS_E2E_SESSION_TOKEN=$(node -p "require('/tmp/zelavis-owner.json').session.token")" >> "$GITHUB_ENV"
-
-      - name: Create isolated dashboard test project
-        run: |
-          curl --fail --show-error \
-            --request POST \
-            --header "content-type: application/json" \
-            --header "authorization: Bearer $ZELAVIS_E2E_SESSION_TOKEN" \
-            --data '{"id":"dashboard-e2e","name":"Zelavis Runtime","start":true}' \
-            http://127.0.0.1:3000/zelavis/api/v1/runtime/projects
-
-      - name: Run mounted desktop dashboard e2e
+      # The checks start their own throwaway Platforms with generated credentials and fresh data directories:
+      # first-owner and login gates, the embedded production bundle at the mount path, every route at desktop and
+      # mobile sizes, and the database workspace.
+      - name: Run the dashboard browser checks
         run: pnpm ci:ui
 
   wordpress-provisioning:

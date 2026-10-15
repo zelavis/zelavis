@@ -1,44 +1,36 @@
-# Zelavis dashboard in Fuzor
+# @zelavis/ui, the Zelavis dashboard
 
-A private, opt-in dashboard built around the HTML-first Fuzor shell, Swiper Element sidebar and compiled database workspace. Complex feature workspaces reuse the current dashboard’s React route modules as first-party islands; Glide is also a React island. This restores existing functionality while native Fuzor replacements can be developed and compared. The service definition is [src/new-ui-service.ts](src/new-ui-service.ts); [src/frontend.ts](src/frontend.ts) supplies it through Zelavis’s existing frontend factory contract.
+The dashboard of every Platform, built with Fuzor: an HTML-first shell, a Swiper Element sidebar, compiled server views and a native database workspace with three MIT grid libraries. The pages not yet rebuilt natively are the former React dashboard's route modules, mounted as first-party React islands (see Route parity); that dashboard lives on in [`../zelavis-ui-legacy`](../zelavis-ui-legacy) as their source and as a reference. The repository rule is that all new dashboard UI is written here, natively.
 
-All experiment code and launch tooling live here. The existing Zelavis runtime, React dashboard, root dev script, and workspace lockfile are unchanged. The package has deliberately named opt-in validation scripts so normal recursive builds do not require a sibling Fuzor checkout. Local dependencies are linked by `prepare:local` from the already installed Zelavis and Fuzor dependencies; this package is not publishable or a standalone npm installation.
+The package ships its built output only (`dist`, `.fuzor/web/dist-spa`, `.fuzor/dist-backend`, `.fuzor/fuzor-build.json`). An installation never needs Fuzor: the server entry is bundled so it imports only `effect`, which the Platform provides.
 
-## Run
-
-Build the local framework first, from `~/Projects/fuzor`:
+## Build and run
 
 ```sh
-pnpm --filter fuzor build
+pnpm --filter @zelavis/ui build        # Fuzor build, then the service and frontend in dist/
+pnpm --filter @zelavis/ui typecheck
+pnpm --filter @zelavis/ui test         # unit tests
+pnpm run ci:ui                         # browser suites against throwaway Platforms (from the repository root)
 ```
 
-From the Zelavis repository:
+**Which Fuzor.** On the owner's machine the build uses their own checkout (`FUZOR_DIR`, default `../fuzor` beside this repository), rebuilds it first when its sources are newer than its `dist`, and points `node_modules/fuzor`, `vite` and `typescript` at it. Without a checkout it uses the pinned `fuzor` from npm; `ZELAVIS_FUZOR=npm` forces that (after `pnpm install` restores the links). Either way `.fuzor/fuzor-build.json` records the version, and for a checkout its commit and a digest of its uncommitted changes. See [scripts/fuzor-source.mjs](scripts/fuzor-source.mjs).
+
+**Mounting.** One build mounts at any root path. It is compiled against the placeholder root `/__zelavis__` ([app/mount.ts](app/mount.ts)) and [src/mount-rewrite.ts](src/mount-rewrite.ts) replaces it with the Platform's `rootPath` in the assets it serves and in what the server entry receives and answers. The dev server has no adapter in front of it and mounts at `/zelavis`.
+
+**Development.** From the repository root, `pnpm dev` runs a Platform with this package's Fuzor dev server. In the package, a self-contained launcher starts its own isolated Platform:
 
 ```sh
-cd packages/zelavis/services/new-ui
-node scripts/link-local.mjs
-node scripts/dev.mjs                       # Fuzor is the default
-node scripts/dev.mjs --frontend=react      # existing React dashboard
+cd packages/zelavis/services/zelavis-ui
+node scripts/dev.mjs                  # Platform + Fuzor dev server, isolated test data
+node scripts/dev.mjs --embedded       # the built dashboard served by the Platform, no dev server
+node scripts/dev.mjs --runtime-url=http://127.0.0.1:3000   # attach to a running Platform
 ```
 
-Use these package-local Node launchers to avoid pnpm’s automatic workspace installation when starting an experiment.
-
-The launcher starts a real Platform and the chosen dashboard. It prints their addresses and the first-owner token. Defaults are ports 3200/3201; busy ports advance within a bounded range. It never kills existing listeners. Both frontend choices use this package’s own `.zelavis` test data directory, so you can switch dashboards over the same test projects without touching the ordinary development Platform. Ctrl-C stops only processes this launcher owns.
-
-To attach to an already running Platform, or verify the built frontend:
-
-```sh
-node scripts/dev.mjs --runtime-url=http://127.0.0.1:3000
-node scripts/dev.mjs --data-dir=../../.zelavis  # existing package development data
-node scripts/build.mjs
-node scripts/dev.mjs --embedded
-```
-
-`--embedded` serves the built Fuzor assets directly through Zelavis, with no UI dev server. It also works with `--frontend=react` when the existing React dashboard is built. Optional flags: `--port=3200`, `--ui-port=3201`, `--data-dir=/absolute/test/data`. `FUZOR_DIR` overrides the default sibling Fuzor checkout. The experiment currently supports the `/zelavis` mount only.
+It prints the addresses and the first-owner token. Defaults are ports 3200/3201; busy ports advance within a bounded range, and it never kills existing listeners. Optional flags: `--port=3200`, `--ui-port=3201`, `--data-dir=/absolute/test/data`.
 
 ## Route parity
 
-All 55 modules in the current React Router manifest are inventoried in [src/workspace-route-manifest.ts](src/workspace-route-manifest.ts). The build checks the original manifest and server menu against that snapshot and fails on drift. See [docs/route-parity.md](docs/route-parity.md) for the complete mapping and qualification limits.
+All 56 modules in the legacy React Router manifest are inventoried in [src/workspace-route-manifest.ts](src/workspace-route-manifest.ts). The build checks the original manifest and server menu against that snapshot and fails on drift. See [docs/route-parity.md](docs/route-parity.md) for the complete mapping and qualification limits.
 
 Fuzor owns the canonical browser URL, mounted route matching, history, outer shell, footer utilities and persistent Swiper navigation. Original feature route components, loaders, actions and resource loaders run in a same-origin first-party iframe with a React memory router. The bridge authenticates the source window and origin and mirrors functional URLs in both directions. Sidebar/footer presentation parameters are excluded in both directions, preserving editor identity and preventing legacy sidebar URL loops. Touch swipe-back crosses the iframe boundary. Workspace styles stay inside that document so editor portals and dashboard styling do not interfere with the native shell.
 
@@ -95,6 +87,6 @@ The tests validate the real frontend registration and built assets, malformed AP
 
 The native Database workspace offers Glide, Tabulator and VTable over the same Project records. Choose a library above the grid or share `grid=glide|tabulator|vtable` in the URL. Glide uses a Fuzor React island; Tabulator and VTable mount directly. All three require MIT licenses at their exact pinned releases. See [the experiment notes](docs/grid-comparison.md) for setup, supported operations and limitations.
 
-Before linking local dependencies on a fresh checkout, run `npm ci --prefix grid-dependencies --ignore-scripts --legacy-peer-deps --no-audit --no-fund` from this directory. This installs only the isolated grid dependencies and does not alter the parent workspace lockfile.
+The grid libraries are pinned devDependencies of this package in the workspace lockfile; their licenses are checked at build time.
 
 The server-view browser test uses an isolated authenticated API fixture to exercise all three MIT grids, refreshed server data, retained drafts/DOM/sidebar identity, failed-save retention, retry, staged and unstaged hard-reload recovery, prototype-named database fields, mobile Back navigation and permission failures. It also qualifies schema draft/version controls, typed record reload recovery, iframe sandboxing and both scoped service brokers, assistant approvals and inert reply text, exact-version marketplace installs in both scopes, Project uploads and provider configuration controls. The embedded and dev tests create a real disposable Platform and native App, qualify setup/login gates, render actual records, refresh a staged edit and verify its persisted database value, then create/activate an actual schema and save typed record edits after reload. They choose free ports and release their own servers, browser and temporary data.

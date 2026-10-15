@@ -1,6 +1,6 @@
 # Dashboard route parity
 
-The inventory contains 55 original route modules. Generated source: `src/workspace-route-manifest.ts`; drift check: `node scripts/audit-routes.mjs --check`. Only new-ui was changed; original route modules are imported without modifying the React dashboard or Platform.
+The inventory contains 56 legacy route modules. Generated source: `src/workspace-route-manifest.ts`; drift check: `node scripts/audit-routes.mjs --check`. Only new-ui was changed; original route modules are imported without modifying the React dashboard or Platform.
 
 ## Verification
 

@@ -1504,7 +1504,7 @@ those grants, while endpoints remain the authority layer.
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
-- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/zelavis-ui` is the Fuzor dashboard (`@zelavis/ui`) the runtime package ships; `zelavis-ui-legacy` is the former React dashboard kept as island source and reference.
 - `packages/zelavis/src/adapters` holds the host, runtime and storage adapters
   (Node, Bun, Agent, Project runtimes), exported through `zelavis/adapters/*`
   subpaths.
@@ -1724,47 +1724,53 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-**All new dashboard UI is built in the Fuzor dashboard** (`packages/zelavis/services/new-ui`), decided
-by the owner 2026-10-15. A new page, control or flow is written there natively, never as another React
-route in `packages/zelavis/services/zelavis-ui`. The React dashboard takes only what keeps it working
-until the cutover (bug fixes, security fixes, and an endpoint's existing page when a contract changes).
-The cutover renames `new-ui` to `@zelavis/ui` and the React dashboard to `@zelavis/ui-legacy`, which
-stays in the repository only so what the new one still lacks can be looked up; it is not a second
-product and is not extended. The cutover happens when its gates pass, and they are not waived by this
-rule: Zelavis builds against the owner's own Fuzor checkout (`FUZOR_DIR`, default `../fuzor`), not a
-Fuzor package from npm, so it always uses the Fuzor on disk. Fuzor is published to npm on its own
-cadence, by the owner, and that never changes what Zelavis builds against. Every dashboard build rebuilds a stale Fuzor
-(`scripts/fuzor-source.mjs`) and records its version, commit and a digest of its uncommitted changes in
-`.fuzor/fuzor-build.json`; the Platform package ships only the built dashboard, so an installation and a
-Platform process never need Fuzor, and only the machine that builds a release does (as it already must).
-Further gates: no Fuzor page importing a route module from the legacy package (those are island
-stand-ins, not parity), the `plugins.ui` menu/service contract carried over to the new package, the
-Fuzor build, typecheck, route-parity and embedded desktop/mobile browser checks inside the release
-gate, and an update from the previous release through **Update now** that serves the new dashboard. Until then the React dashboard remains the default served one.
+**The dashboard is the Fuzor dashboard**, `packages/zelavis/services/zelavis-ui` (`@zelavis/ui`), decided by
+the owner 2026-10-15 and cut over the same day. **All new dashboard UI is built there, natively**: a new
+page, control or flow is never another React route. Fuzor owns its routing and compiled server views.
+Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboard orchestration.
 
-`packages/zelavis/services/new-ui` is the Fuzor frontend. Until the cutover keep the
-React dashboard as the default: full feature parity and real embedded/dev
-desktop/mobile qualification are not complete. Its README records implemented controls
-and open gates. Fuzor owns its routing and compiled server views; the React Router
-instructions below apply to `zelavis-ui`. Effect v4 remains mandatory for new
-asynchronous compiler/client/server/dashboard orchestration. Draft recovery is
-bounded tab-local storage partitioned by opaque session, Project, Tenant and table;
-retain original record versions, surface storage failures, clear saved/discarded
-entries and sign-out journals, and never journal authentication/provider credentials.
-See `.agents/skills/zelavis-dashboard-ui/SKILL.md` for the experimental workflow.
-Its service pages keep extension frames opaque and broker requests only within the
-owner's namespace through the exact Project proxy, with bounded requests and scoped
-cleanup. A new iframe document cannot inherit the old grant. Schema/typed record
-editors use public codecs and existing database operations; schema journals stay
-separate from record journals and retain source versions. Wildcard routes must leave
-asset and script/style requests to asset serving.
+- **The former React Router dashboard** is `packages/zelavis/services/zelavis-ui-legacy`
+  (`@zelavis/ui-legacy`): private, never loaded by a Platform and never published. It stays for two
+  reasons only: the Fuzor dashboard still mounts its route modules as React islands for the pages not yet
+  rebuilt natively (`src/workspace-route-manifest.ts` inventories all 56; `scripts/audit-routes.mjs`
+  fails the build when the legacy routes drift from it), and it is the reference for what the new
+  dashboard lacks. It takes fixes that keep those islands working, nothing else, and a page leaves it
+  by being rebuilt natively. The legacy menu/route description below applies to those pages.
+- **Fuzor comes from the owner's checkout when one exists** (`FUZOR_DIR`, default `../fuzor` beside this
+  repository) and otherwise from the pinned npm release, so the owner always builds against the Fuzor on
+  disk while CI and other contributors use the exact published one. Every build rebuilds a stale checkout
+  (`scripts/fuzor-source.mjs`) and records which Fuzor it used in `.fuzor/fuzor-build.json`. Fuzor is
+  published to npm by the owner on its own cadence; the `fuzor` pin here moves only to a published
+  version, and a feature Zelavis needs from Fuzor is added to Fuzor first (the owner allows patching it).
+- **The build is mount-independent.** It is compiled against the placeholder root `/__zelavis__`
+  (`app/mount.ts`) and the frontend adapter (`src/mount-rewrite.ts`) replaces it with the Platform's
+  `rootPath` as it serves (assets, the server entry's requests and responses). Dashboard code takes the
+  mount from `app/mount.ts` and never writes `/zelavis` or `/api/v1` literally. The dashboard calls
+  `v1` of the Platform it is mounted on.
+- **Nothing is installed beside the shipped dashboard.** The server entry is bundled so it imports only
+  `effect` (which the Platform provides) and Node; the build refuses output that imports anything else.
+  The dashboard's server code calls the Platform in-process through the frontend context's `fetch`, never
+  over a guessed address.
+- Draft recovery is bounded tab-local storage partitioned by opaque session, Project, Tenant and table;
+  retain original record versions, surface storage failures, clear saved/discarded entries and
+  sign-out journals, and never journal authentication/provider credentials. See
+  `.agents/skills/zelavis-dashboard-ui/SKILL.md` for the workflow. Service pages keep extension frames
+  opaque and broker requests only within the owner's namespace through the exact Project proxy, with
+  bounded requests and scoped cleanup. A new iframe document cannot inherit the old grant. Schema/typed
+  record editors use public codecs and existing database operations; schema journals stay separate from
+  record journals and retain source versions. Wildcard routes must leave asset and script/style
+  requests to asset serving.
+- **Qualification** is `pnpm run ci:ui` (also part of `release:check`): the Fuzor package's browser
+  suites start throwaway Platforms and check the first-owner and login gates, the embedded production
+  bundle at its mount, every route at desktop and mobile sizes, the database workspace and the three
+  grid libraries. Keep it green; a page leaving the legacy inventory removes its entry in the same change.
 
-`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
+`packages/zelavis/services/zelavis-ui-legacy` is a special package with extra constraints:
 
 - It uses **React Router v8** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/services/zelavis-ui-legacy/app/routes/`. Edit these only to keep an island page working; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -1805,7 +1811,7 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/services/zelavis-ui-legacy/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 
@@ -1828,17 +1834,11 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   invisible — the command still succeeds, having quietly checked less. Prefer
   `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
   deliberate exceptions, so a new package is covered by default.
-- Dashboard behavior is proven in a real browser: `pnpm run ci:ui:local` runs the
-  smoke specs against a throwaway Platform, and `pnpm run ci:ui:setup:local` runs
-  the first-run wizard against an unclaimed one. Both pick free ports and stop
-  only the processes they started; never make an e2e script claim a fixed port
-  or kill by port or command line, because that can take down a running dev
-  server. Specs share one runtime and run one at a time. Run `pnpm run docs:check`
-  after docs changes.
-- Dashboard boot, mounting and navigation changes also require
-  `pnpm run ci:ui:embedded:local`: the production bundle served by a throwaway
-  Platform must hydrate and navigate on desktop and mobile without browser errors.
-  Dev-server tests alone do not cover rewritten production HTML and asset URLs.
+- Dashboard behavior is proven in a real browser: `pnpm run ci:ui` (also `ci:ui:local`) runs the Fuzor
+  dashboard's browser suites against throwaway Platforms, including the embedded production bundle at its
+  mount on desktop and mobile sizes. The suites pick free ports and stop only the processes they started;
+  never make an e2e script claim a fixed port or kill by port or command line, because that can take down
+  a running dev server. Run `pnpm run docs:check` after docs changes.
 - Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
   workspace package is invisible to every root command, whatever its scripts say.
 
