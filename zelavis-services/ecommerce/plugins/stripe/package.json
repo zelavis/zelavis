@@ -54,7 +54,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.34",
+    "zelavis": ">=2.0.0-alpha.35",
     "@zelavis/ecommerce": ">=2.0.0-alpha.4"
   },
   "devDependencies": {
