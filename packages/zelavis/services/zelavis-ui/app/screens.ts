@@ -1,5 +1,6 @@
 import { hasWorkspaceRoute, workspaceFrame } from "./workspace-island.ts";
 import { servicePageScreen } from "./service-pages.ts";
+import { logsScreen, terminalScreen } from "./server-pages.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
 import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
@@ -370,6 +371,9 @@ const providerControls = Effect.fn("new-ui.providerControls")(function*(context:
 });
 
 export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: ScreenContext) {
+  // Pages rebuilt natively come first: the legacy inventory still lists them, and they must not fall back to the island.
+  if (context.path === "/server/logs") return yield* logsScreen(context);
+  if (context.path === "/server/terminal") return yield* terminalScreen(context);
   if (hasWorkspaceRoute(context.path) && (!/^\/projects\/[^/]+\/database\/?$/.test(context.path) || context.url.searchParams.get("workspaceMode") === "full")) {
     if (context.path !== "/login" && context.path !== "/setup" && context.path !== "/logout") {
       const list = yield* projects(context.config);

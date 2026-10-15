@@ -156,7 +156,7 @@ export function mount(host: HTMLElement) {
         : yield* loadScreen(context);
       if (!disposed && version === generation) {
         legacyContent.replaceChildren(screen);
-        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
+        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
         yield* Effect.never;
       }
     }).pipe(Effect.scoped, Effect.catch(error => Effect.sync(() => {

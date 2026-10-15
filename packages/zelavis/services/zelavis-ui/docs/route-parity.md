@@ -35,7 +35,8 @@ The outer shell, canonical URL and history, Swiper navigation and native databas
 | `/server/access/users` | `routes/server.access.users.tsx` | Original feature route island |
 | `/server/access/permissions` | `routes/server.access.permissions.tsx` | Original feature route island |
 | `/server/backups` | `routes/server.backups.tsx` | Original feature route island |
-| `/server/logs` | `routes/server.logs.tsx` | Original feature route island |
+| `/server/logs` | `routes/server.logs.tsx` | Native Fuzor page (`app/server-pages.ts`) |
+| `/server/terminal` | `routes/server.terminal.tsx` | Native Fuzor page (`app/server-pages.ts`, xterm island) |
 | `/server/database` | `routes/server.database.tsx` | Original feature route island |
 | `/server/fabric` | `routes/server.fabric.tsx` | Original feature route island |
 | `/server/fabric/:fabricSection` | `routes/server.fabric.$fabricSection.tsx` | Original feature route island |

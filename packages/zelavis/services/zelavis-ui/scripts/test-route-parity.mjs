@@ -95,6 +95,10 @@ const qualify = Effect.scoped(Effect.gen(function*() {
       const url = origin + "/zelavis" + entry.example;
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
+      else if (entry.path === "/server/logs" || entry.path === "/server/terminal") {
+        yield* io(() => page.getByRole("heading", { name: entry.path === "/server/logs" ? "Logs" : "Terminal", exact: true }).waitFor());
+        assert.equal(yield* io(() => page.locator(".react-feature-workspace, iframe").count()), 0, `${entry.file}: native page mounts no React island`);
+      }
       else if (entry.example === "/projects/parity-lab/database") {
         yield* io(() => page.locator("form.filters").getByLabel("Tenant ID", { exact: true }).waitFor());
       } else {
