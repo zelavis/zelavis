@@ -1,6 +1,6 @@
 import { integrationValue, unwrapIntegrationResult, presentProtocol, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
-import { isString, optional, objectFields, parseJson } from "../core/json-validation.js";
+import { isString, isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
 /**
  * A Project's recipe, materialized into the Project.
  *
@@ -103,29 +103,50 @@ export class RecipeArtifactError extends Error {
 }
 
 /**
- * Loads the Project's own recipe after proving it is the one that was locked:
- * same content digest, same package name, same version.
+ * Proves a materialized recipe is the one that was locked: same content digest, same package name, same
+ * version. It reads nothing else: a long-lived host (a Project's persistent runtime host survives Platform
+ * updates) must never judge a recipe's content by its own, possibly older, rules. Whatever loads the recipe
+ * validates it, with current code.
  */
-export function loadRecipeArtifact(
+export function verifyRecipeArtifact(
   dataDirectory: string,
   lock: { name: string; version: string; digest: string },
-) {
+): Promise<void> {
     return present(Effect.gen(function* () {
-  const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
-  const target = join(destination, PACKAGE_DIRECTORY);
+  const target = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY, PACKAGE_DIRECTORY);
   if (!existsSync(target)) {
     throw new RecipeArtifactError(
       `Project recipe ${lock.name}@${lock.version} has no materialized artifact at ${target}.`,
     );
   }
-
   const actual = (yield* integrationValue(digestArtifactDirectory(target)));
   if (actual !== lock.digest) {
     throw new RecipeArtifactError(
       `Project recipe ${lock.name}@${lock.version} does not match its locked digest; refusing to run modified code.`,
     );
   }
+  const identity = parseJson((yield* integrationValue(readFile(join(target, "package.json"), "utf8"))),
+    objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown }), "recipe package.json");
+  if (identity.name !== lock.name || identity.version !== lock.version) {
+    throw new RecipeArtifactError(
+      `Project recipe artifact is ${String(identity.name)}@${String(identity.version)}, not the locked ${lock.name}@${lock.version}.`,
+    );
+  }
+}));
+  }
 
+/**
+ * Loads the Project's own recipe after proving it is the one that was locked
+ * (`verifyRecipeArtifact`), validating its manifest with the code running it.
+ */
+export function loadRecipeArtifact(
+  dataDirectory: string,
+  lock: { name: string; version: string; digest: string },
+) {
+    return present(Effect.gen(function* () {
+  yield* integrationValue(verifyRecipeArtifact(dataDirectory, lock));
+  const destination = join(dataDirectory, RECIPE_ARTIFACT_DIRECTORY);
+  const target = join(destination, PACKAGE_DIRECTORY);
   const manifest = resolveLocalPackageManifest(target);
   if (!manifest || manifest.name !== lock.name || manifest.version !== lock.version) {
     throw new RecipeArtifactError(

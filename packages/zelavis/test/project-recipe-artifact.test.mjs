@@ -203,3 +203,23 @@ test("a recipe the marketplace offered but this install never installed is fetch
   await mkdir(otherData, { recursive: true });
   await assert.rejects(() => ensureRecipeArtifact({ name: "@acme/offered", version: "9.9.9" }, other, otherData, supply), /cannot be prepared/);
 });
+
+test("a host verifies a recipe's identity only, so a manifest newer than its code still verifies; loading judges it", async (t) => {
+  const { verifyRecipeArtifact, loadRecipeArtifact } = await import("../dist/adapters/_recipe-artifact.js");
+  const root = await mkdtemp(join(tmpdir(), "zelavis-identity-only-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, "source");
+  await mkdir(source, { recursive: true });
+  // A contract this code does not know, as a recipe from a later release would declare.
+  await mkdir(join(source, "dist"), { recursive: true });
+  await writeFile(join(source, "package.json"), JSON.stringify({ name: "@acme/later", version: "9.0.0", type: "module", exports: { ".": "./dist/index.js" },
+    zelavis: { kind: "app", namespace: "later", project: { runtimeKinds: ["native"], install: { contract: 99 } } } }));
+  await writeFile(join(source, "dist", "index.js"), "export function register() {}\n");
+  const data = join(root, "data");
+  await mkdir(data, { recursive: true });
+  const { digest } = await materializeRecipeArtifact(source, data);
+  const lock = { name: "@acme/later", version: "9.0.0", digest };
+  await verifyRecipeArtifact(data, lock);
+  await assert.rejects(verifyRecipeArtifact(data, { ...lock, version: "9.0.1" }), /not the locked/);
+  await assert.rejects(loadRecipeArtifact(data, lock), /zelavis.project.install/);
+});

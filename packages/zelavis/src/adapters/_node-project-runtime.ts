@@ -1,4 +1,5 @@
 import { isUnknown, optional, objectFields, parseJson } from "../core/json-validation.js";
+import { compareVersions, isExactVersion } from "../updates.js";
 import { IntegrationFailure, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import type { TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { defineEffectProjectRuntime } from "./project-runtime.js";
@@ -57,6 +58,10 @@ interface NodeProjectProcess {
     stopping: boolean;
 }
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+/** The first release whose persistent host verifies a recipe's identity only, never its content. */
+const IDENTITY_ONLY_HOST_SINCE = "2.0.0-alpha.36";
+/** The first release whose code reads each recipe manifest contract. */
+const RECIPE_CONTRACT_SINCE: Readonly<Record<number, string>> = { 1: "0.0.0", 2: "2.0.0-alpha.30" };
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_SHUTDOWN_CONCURRENCY = 8;
 const DEFAULT_LOG_LIMIT = 500;
@@ -164,13 +169,23 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
     const shutdownConcurrency = positiveInteger(options.shutdownConcurrency, DEFAULT_SHUTDOWN_CONCURRENCY);
     const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
     const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
-    /** The runner a fresh integration host would execute: the current engine's, as `start` selects it. */
-    const integrationRunner = Effect.fn("NodeProjects.integrationRunner")(function* () {
-        const catalogOptions = yield* catalogConfiguration();
-        if (!catalogOptions) return runnerPath;
-        const runtime = yield* createNodeRuntimeCatalog(catalogOptions).select(ZELAVIS_VERSION);
-        const execution = yield* createNodeRuntimeCatalog(catalogOptions).resolve(runtime, "project", {}, {});
-        return join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
+    /**
+     * Whether a running host can verify `candidate`'s recipe. From alpha.36 a host checks only identity and digest;
+     * an earlier one parses the recipe's manifest with its own code, which knows the contracts of its release.
+     */
+    const hostReadsRecipe = Effect.fn("NodeProjects.hostReadsRecipe")(function* (runner: string, candidate: { readonly recipe: { readonly name: string; readonly version: string } }) {
+        const version = /\/releases\/([^/]+)\/platform\/dist\/adapters\/_node-project-runner\.js$/.exec(runner)?.[1];
+        // A checkout's runner is this code; an installed one names its release.
+        if (!version || !isExactVersion(version) || compareVersions(version, IDENTITY_ONLY_HOST_SINCE) >= 0) return true;
+        const source = yield* integration(() => options.recipePackageDirectory?.(candidate.recipe.name, candidate.recipe.version));
+        if (!source) return true;
+        const manifest = yield* integration(() => readFile(join(source, "package.json"), "utf8"));
+        const contract = yield* evaluate(() => {
+            const install = parseJson(manifest, objectFields<{ zelavis?: { project?: { install?: unknown } } }>({ zelavis: optional(objectFields<{ project?: { install?: unknown } }>({ project: optional(objectFields<{ install?: unknown }>({ install: optional(isUnknown) })) })) }), "recipe package.json").zelavis?.project?.install;
+            return install && typeof install === "object" && typeof (install as { contract?: unknown }).contract === "number" ? (install as { contract: number }).contract : 1;
+        });
+        const since = RECIPE_CONTRACT_SINCE[contract];
+        return since !== undefined && compareVersions(version, since) >= 0;
     });
     const installation = describeInstallation(fileURLToPath(new URL("../cli.js", import.meta.url)));
     const catalogConfiguration = Effect.fn("NodeProjects.catalogConfiguration")(function* () {
@@ -271,7 +286,21 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const app = yield* catalog.app(selected.version).pipe(Effect.mapError(error => new ZelavisProjectValidationError(error.message)));
             return { engineVersion: selected.version, recipe: app.recipe };
         }),
-        prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate) {
+        prepareUpdate: Effect.fn("NodeProjects.prepareUpdate")(function* (previous, candidate, placement) {
+            // A managed app's integration host outlives Platform updates by design (its supervision is kept
+            // through them), and it loads and validates recipes with its own code. About to load a new recipe,
+            // one still running an earlier release's runner would judge it by older rules, so it is replaced
+            // first; the app's own processes are separate and keep serving.
+            const existing = processes.get(previous.id);
+            if (options.integrationOnly && existing?.process?.running && existing.runner !== undefined &&
+                !(yield* hostReadsRecipe(existing.runner, candidate))) {
+                appendLog(existing, "system", "Replacing the integration host, which runs an earlier release's code.");
+                existing.stopping = true;
+                yield* integration(() => existing.process!.stop()).pipe(Effect.uninterruptible);
+                gatewaySecrets.delete(previous.id);
+                existing.snapshot = stoppedSnapshot(existing);
+                yield* driver.start(previous, placement);
+            }
             const state = processes.get(previous.id);
             if (!state?.process?.running || !state.control) return yield* new IntegrationFailure(new Error("Project has no running handover host."));
             const before = yield* state.control.request({ action: "status" });
@@ -484,17 +513,6 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 return yield* new IntegrationFailure(new Error("The Node project runtime is shutting down."));
             }
             const current = processes.get(project.id);
-            // A managed app's integration host outlives Platform updates by design, and it loads and validates
-            // recipes with its own code. One still running an earlier release's runner would judge a newer
-            // recipe by older rules, so it is replaced: the app's own processes are separate and keep serving.
-            if (options.integrationOnly && current?.process?.running && current.runner !== undefined &&
-                current.runner !== (yield* integrationRunner())) {
-                appendLog(current, "system", "Replacing the integration host, which runs an earlier release's code.");
-                current.stopping = true;
-                yield* integration(() => current.process!.stop()).pipe(Effect.uninterruptible);
-                gatewaySecrets.delete(project.id);
-                current.snapshot = stoppedSnapshot(current);
-            }
             if (current?.process?.running &&
                 (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
                 // A managed app's private App follows its control plane engine.
