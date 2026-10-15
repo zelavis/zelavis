@@ -201,8 +201,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   console.log("Action: native Projects create form preserves URL-backed input and creates a real App runtime.");
 
   yield* visit("/settings/appearance");
-  yield* io(() => workspace().getByRole("combobox", { name: "Theme", exact: true }).click());
-  yield* io(() => workspace().getByRole("option", { name: /^Dark/ }).click());
+  yield* io(() => page.getByLabel("Theme", { exact: true }).selectOption("dark"));
   yield* io(() => page.waitForFunction(() => document.documentElement.dataset.dashboardTheme === "dark"));
   assert.equal((yield* request("/runtime/settings")).theme, "dark");
   console.log("Action: theme persists through the existing runtime API and synchronizes with the Fuzor shell.");
@@ -227,6 +226,22 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.unroute("**/api/v1/runtime/projects", managedProjects));
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   console.log("Managed recipe UI fixture: all eight hosting sections render on desktop and mobile; planned controls remain labelled planned.");
+
+  // The update banner: a newer version is announced everywhere, and Update now sends the one trusted request.
+  const updateStatus = { current: "2.0.0-alpha.1", latest: "2.0.0-alpha.2", available: true, managed: true, state: "idle", channel: "alpha" };
+  const applied = [];
+  yield* io(() => page.route("**/api/v1/runtime/updates**", async route => {
+    const request = route.request();
+    if (request.method() === "POST" && request.url().endsWith("/apply")) applied.push(request.url());
+    await route.fulfill({ json: applied.length ? { ...updateStatus, available: false, state: "requested" } : updateStatus });
+  }));
+  yield* visit("/server/backups");
+  yield* io(() => page.getByTestId("update-banner").getByText("2.0.0-alpha.2", { exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Update now", exact: true }).click());
+  yield* io(() => page.getByText("Starting the update", { exact: false }).waitFor());
+  assert.equal(applied.length, 1, "Update now sends exactly one apply request");
+  yield* io(() => page.unroute("**/api/v1/runtime/updates**"));
+  console.log("Action: the update banner announces a newer version and Update now requests the update once.");
 
   yield* visit("/logout");
   yield* io(() => page.waitForURL(/\/zelavis\/login/));

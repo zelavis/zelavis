@@ -50,3 +50,12 @@ export function facts(entries: readonly (readonly [string, string])[]) {
   for (const [name, value] of entries) list.append(node("div", {}, node("dt", {}, name), node("dd", {}, value)));
   return list;
 }
+
+/** A confirmation that survives the refresh following an action: the next render of a page shows it once. */
+let flashText: string | undefined;
+export const setFlash = (text: string) => { flashText = text; };
+export function flashNotice(title: string) {
+  const holder = node("div", { role: "status" });
+  if (flashText) { holder.replaceChildren(resourceNotice(title, flashText)); flashText = undefined; }
+  return holder;
+}

@@ -4,6 +4,7 @@ import { logsScreen, terminalScreen } from "./server-pages.ts";
 import { hostScreens } from "./host-pages.ts";
 import { fabricScreen } from "./fabric-pages.ts";
 import { projectsOverviewScreen } from "./projects-pages.ts";
+import { servicesScreen, settingsScreen } from "./settings-pages.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
 import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
@@ -245,20 +246,6 @@ export const serverScreen = Effect.fn("new-ui.serverScreen")(function*(context: 
   return empty("Page being ported", "This server surface is available in the React dashboard. The Fuzor port currently covers nodes, ingress, backends, and read-only System Store inspection.");
 });
 
-export const settingsScreen = Effect.fn("new-ui.settingsScreen")(function*(context: ScreenContext) {
-  if (context.path === "/settings/appearance") {
-    const select = node("select", { "aria-label": "Dashboard color scheme" }, node("option", { value: "system" }, "System"), node("option", { value: "light" }, "Light"), node("option", { value: "dark" }, "Dark"));
-    select.value = document.documentElement.dataset.dashboardTheme ?? "system";
-    select.addEventListener("change", () => { document.documentElement.dataset.dashboardTheme = select.value; });
-    return node("section", { class: "panel narrow" }, heading("Appearance"), node("p", {}, "Choose a color scheme for this dashboard session."), node("label", {}, node("span", {}, "Color scheme"), select));
-  }
-  const panel = node("section", { class: "panel narrow" }, heading("Settings"), node("p", {}, "Experimental dashboard · Fuzor"));
-  if (context.url.searchParams.get("onboarding") === "hostname") panel.append(message("Your owner account is active. Configure a Platform hostname now, or continue and configure it later."));
-  panel.append(form(context, [field("hostname", "Platform hostname", "text", "", false), node("label", {}, node("span", {}, "HTTPS configuration"), node("select", { name: "mode" }, node("option", { value: "managed" }, "Verify DNS & enable HTTPS"), node("option", { value: "external" }, "Externally terminated TLS"), node("option", { value: "later" }, "Configure later")))], "Save hostname configuration", data => mutation(context, "/runtime/edge/onboard", { mode: value(data, "mode"), ...(value(data, "hostname") ? { hostname: value(data, "hostname") } : {}) }), result => panel.append(json(result))));
-  panel.append(yield* providerControls(context));
-  return panel;
-});
-
 export const assistantScreen = Effect.fn("new-ui.assistantScreen")(function*(context: ScreenContext) {
   const api = context.config.api.basePath;
   const projectId = context.url.searchParams.get("project") ?? undefined;
@@ -329,6 +316,8 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   if (context.path === "/server/logs") return yield* logsScreen(context);
   if (context.path === "/server/terminal") return yield* terminalScreen(context);
   if (context.path === "/" || context.path === "/projects") return yield* projectsOverviewScreen(context);
+  if (context.path.startsWith("/settings")) return yield* settingsScreen(context);
+  if (context.path === "/services") return yield* servicesScreen(context);
   if (/^\/server\/fabric(\/|$)/.test(context.path)) return yield* fabricScreen(context);
   const hostScreen = (hostScreens as Record<string, typeof logsScreen>)[context.path.replace(/(.)\/$/, "$1")];
   if (hostScreen) return yield* hostScreen(context);
@@ -348,7 +337,6 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   if (servicePage) return servicePage;
   if (context.path.startsWith("/server")) return yield* serverScreen(context);
   if (context.path === "/marketplace") return yield* marketplaceScreen(context);
-  if (context.path.startsWith("/settings")) return yield* settingsScreen(context);
   if (context.path === "/assistant") return yield* assistantScreen(context);
   return empty("Page not found", "Choose a section from the sidebar to continue.");
 });

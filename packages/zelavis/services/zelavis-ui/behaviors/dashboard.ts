@@ -9,6 +9,8 @@ import { button, link, message, node } from "../app/dom.ts";
 import { createSidebar } from "../app/sidebar.ts";
 import { loadScreen, type ScreenContext } from "../app/screens.ts";
 import { mounted, ROOT, unmounted } from "../app/mount.ts";
+import { startUpdateWatch } from "../app/update-watch.ts";
+import { mountUpdateBanner } from "../app/update-views.ts";
 
 export function mount(host: HTMLElement) {
   if (new URL(location.href).searchParams.get(workspaceFlag) === "1" && window.parent !== window) {
@@ -36,6 +38,9 @@ export function mount(host: HTMLElement) {
   const legacyContent = node("div");
   const outlet = host.ownerDocument.querySelector<HTMLElement>("fuzor-router")!;
   const errors = node("div", { class: "errors", "aria-live": "polite" });
+  const updateBanner = node("div", { class: "update-slot" });
+  const unmountUpdateBanner = mountUpdateBanner(updateBanner);
+  let stopUpdates: (() => void) | undefined;
   const sidebar = node("aside", { class: "sidebar", id: "dashboard-navigation", "aria-label": "Dashboard navigation" });
   const title = node("span", { class: "breadcrumb" }, "Projects");
   const toggleButton = button("☰", () => {
@@ -48,7 +53,7 @@ export function mount(host: HTMLElement) {
   }
   const refresh = document.createElement("fuzor-button"); refresh.setAttribute("type", "button"); refresh.textContent = "Refresh"; refresh.addEventListener("click", () => refreshPage()); header.append(refresh);
   host.classList.add("dashboard");
-  host.replaceChildren(node("a", { href: "#workspace", class: "skip" }, "Skip to workspace"), sidebar, node("div", { class: "main" }, header, errors, content));
+  host.replaceChildren(node("a", { href: "#workspace", class: "skip" }, "Skip to workspace"), sidebar, node("div", { class: "main" }, header, updateBanner, errors, content));
 
   content.append(outlet, legacyContent);
   const main = host.querySelector<HTMLElement>(".main")!;
@@ -150,13 +155,14 @@ export function mount(host: HTMLElement) {
       const latest = yield* loadConfig;
       if (disposed || version !== generation) return;
       config = latest; context.config = latest;
+      if (path !== "/login" && path !== "/setup") stopUpdates = startUpdateWatch(latest.api.basePath);
       navigation(path, projectId);
       const screen = router!.route()?.kind === "not-found"
         ? node("section", { class: "panel" }, node("h1", {}, "Page not found"), node("p", {}, "This address does not match a dashboard route."), link("Projects", "/"))
         : yield* loadScreen(context);
       if (!disposed && version === generation) {
         legacyContent.replaceChildren(screen);
-        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
+        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts"), "update-card": () => import("../app/update-views.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
         yield* Effect.never;
       }
     }).pipe(Effect.scoped, Effect.catch(error => Effect.sync(() => {
@@ -197,6 +203,7 @@ export function mount(host: HTMLElement) {
     disposed = true; themeMedia.removeEventListener("change", applyTheme); window.removeEventListener("storage", applyTheme);
     outlet.removeEventListener("fuzor:view-commit", viewCommitted); document.removeEventListener("newui:refresh", refreshRequested);
     unsubscribeRoute(); unsubscribeUrl(); workspaceBridge.dispose(); sidebarController.dispose(); host.removeEventListener("keydown", escape);
+    stopUpdates?.(); unmountUpdateBanner();
     for (const fiber of fibers) Effect.runFork(Fiber.interrupt(fiber));
     fibers.clear();
   };

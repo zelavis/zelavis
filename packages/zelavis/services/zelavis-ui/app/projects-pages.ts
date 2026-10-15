@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { ApiError, array, label, object, request } from "./api.ts";
 import { button, empty, link, message, node } from "./dom.ts";
-import { badge, card, columns, facts, page, resourceNotice } from "./page-kit.ts";
+import { badge, card, columns, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
@@ -51,9 +51,6 @@ export function siteUrl(project: Record<string, unknown>, browser: URL): string 
   return undefined;
 }
 
-/** A confirmation survives the refresh that follows an action: the next render of this page shows it once. */
-let pendingFlash: string | undefined;
-
 const dateText = (value: unknown) => { const date = new Date(label(value, "")); return Number.isNaN(date.getTime()) ? label(value) : date.toLocaleString(); };
 const select = (name: string, aria: string, options: readonly (readonly [value: string, text: string, disabled?: boolean])[], selected: string) =>
   node("select", { name, "aria-label": aria }, ...options.map(([value, text, disabled]) => node("option", { value, ...(value === selected ? { selected: "" } : {}), ...(disabled ? { disabled: "" } : {}) }, text)));
@@ -67,9 +64,8 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   const showCreate = params.get("new") === "1";
   const recipes = recipesOf(context.config);
   const canCreate = array(object(object(context.config.access).principal).permissions).includes("*") || context.config.access === undefined;
-  const flash = node("div", { role: "status" });
-  if (pendingFlash) { flash.replaceChildren(resourceNotice("Project updated", pendingFlash)); pendingFlash = undefined; }
-  const say = (text: string) => { pendingFlash = text; };
+  const flash = flashNotice("Project updated");
+  const say = setFlash;
   const act = (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) =>
     context.run(effect, result => { const text = done(object(result)); if (text) say(text); context.refresh(); });
 
