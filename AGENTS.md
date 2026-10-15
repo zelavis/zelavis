@@ -1717,9 +1717,22 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/services/new-ui` is the experimental Fuzor frontend. Keep the
-React dashboard as the default until full feature parity and real embedded/dev
-desktop/mobile qualification are complete. Its README records implemented controls
+**All new dashboard UI is built in the Fuzor dashboard** (`packages/zelavis/services/new-ui`), decided
+by the owner 2026-10-15. A new page, control or flow is written there natively, never as another React
+route in `packages/zelavis/services/zelavis-ui`. The React dashboard takes only what keeps it working
+until the cutover (bug fixes, security fixes, and an endpoint's existing page when a contract changes).
+The cutover renames `new-ui` to `@zelavis/ui` and the React dashboard to `@zelavis/ui-legacy`, which
+stays in the repository only so what the new one still lacks can be looked up; it is not a second
+product and is not extended. The cutover happens when its gates pass, and they are not waived by this
+rule: Fuzor installed from npm (no sibling checkout, `FUZOR_DIR`, or `prepare:local` link step); no
+Fuzor page importing a route module from the legacy package (those are island stand-ins, not
+parity); the Fuzor build, typecheck, route-parity and embedded desktop/mobile browser checks inside
+`pnpm run verify` and the release gate; and an update from the previous release through **Update now**
+that serves the new dashboard. Until then the React dashboard remains the default served one.
+
+`packages/zelavis/services/new-ui` is the Fuzor frontend. Until the cutover keep the
+React dashboard as the default: full feature parity and real embedded/dev
+desktop/mobile qualification are not complete. Its README records implemented controls
 and open gates. Fuzor owns its routing and compiled server views; the React Router
 instructions below apply to `zelavis-ui`. Effect v4 remains mandatory for new
 asynchronous compiler/client/server/dashboard orchestration. Draft recovery is
