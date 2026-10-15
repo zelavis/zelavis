@@ -712,7 +712,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             yield* driver.stop(projectId);
             processes.delete(projectId);
             gatewaySecrets.delete(projectId);
-            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true }));
+            // Retried, bounded: the Platform hands each Project's folder its allow-list after a background
+            // refresh, and a write landing mid-removal leaves the last rmdir with ENOTEMPTY.
+            yield* integration(() => rm(projectDirectory(projectId), { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
         }),
         close: () => singleFlight(closingRuns, "close", () => Effect.gen(function* () {
             closed = true;
