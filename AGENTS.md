@@ -327,6 +327,12 @@ Rules that hold for every change:
   authority for every package the composition took from it, so the live registry
   serves the new version without a restart, and a registry change tells the Project
   manager its recipe reading is stale.
+- A recipe (`kind: "app"`) is never run from its installed copy: each Project freezes
+  its own. So creating a Project from a recipe or upgrading one first brings the recipe
+  to the newest listed version (`acquireRecipe`, acquired through the same gate when it
+  is only listed or installed older), and the Marketplace shows **Update** only for
+  plugins and frontends, which do run from their installed copy. Never move that
+  acquisition into a client: the SDK, CLI and HTTP get it from the Project operations.
 
 ## Platform And App Service Boundary
 

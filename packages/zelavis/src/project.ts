@@ -1,6 +1,6 @@
 import { selectRecipeMethod, selectRecipeSoftware } from "./core/recipe/index.js";
 import type { TaggedFailure } from "./core/runtime/effect-boundary.js";
-import { isExactVersion } from "./updates.js";
+import { compareVersions, isExactVersion } from "./updates.js";
 import type { RuntimeRelease } from "./core/runtime/handover.js";
 import { Cause, Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { IntegrationFailure, effectOperations, unwrapFailure, evaluate, integration, lifecycleGate, present, presentOperations, singleFlight, type EffectOperations } from "./core/runtime/effect-boundary.js";
@@ -904,6 +904,14 @@ export interface ZelavisProjectManagerOptions {
         | readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]
         | (() => Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]>);
     runtime: ZelavisProjectRuntimeDriver;
+    /**
+     * Brings an app recipe to the newest version the marketplace lists before a Project is created from it or
+     * upgraded to it, acquiring it when it is only listed or installed at an older version. A recipe is never
+     * run from its installed copy (each Project freezes its own), so this only decides what the Project gets.
+     */
+    acquireRecipe?: (name: string) => Promise<boolean>;
+    /** The newest version the marketplace lists for a recipe, which is what an upgrade would bring. */
+    listedRecipeVersion?: (name: string) => string | undefined;
     resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
     /**
      * Other backends policy lets a new Project use, in administrator order:
@@ -1141,7 +1149,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 reason: `This Platform ships no recipe named "${recipe.name}".`,
             };
         }
-        const version = shipped.service.version;
+        // What an upgrade would bring: the newest listed version once it is acquired, or what is installed.
+        const listed = options.listedRecipeVersion?.(recipe.name);
+        const version = listed && shipped.service.version && isExactVersion(listed) && isExactVersion(shipped.service.version) &&
+            compareVersions(listed, shipped.service.version) > 0 ? listed : shipped.service.version;
         return version && version !== recipe.version
             ? { state: "upgradeAvailable", version }
             : { state: "current" };
@@ -2003,6 +2014,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             const name = yield* evaluate(() => normalizeProjectName(input.name));
             const id = yield* evaluate(() => normalizeProjectId(input.id ?? name));
             const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
+            if (options.acquireRecipe) yield* integration(() => options.acquireRecipe!(recipeName));
             yield* refreshRecipes();
             const projectRecipe = projectRecipeMap.get(recipeName);
             if (!projectRecipe) {
@@ -2195,6 +2207,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }),
         upgrade: Effect.fn("Projects.upgrade")(function* (id: Parameters<ZelavisProjectManager["upgrade"]>[0], input: Parameters<ZelavisProjectManager["upgrade"]>[1]) {
             yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
+            if (options.acquireRecipe) {
+                const target = input?.recipeName?.trim() || (yield* requireProject(yield* evaluate(() => normalizeProjectId(id)))).recipe.name;
+                yield* integration(() => options.acquireRecipe!(target));
+            }
             yield* refreshRecipes();
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));

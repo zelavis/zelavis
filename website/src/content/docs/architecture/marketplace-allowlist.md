@@ -85,6 +85,13 @@ separate, explicit action.
 SDK: `client.marketplace.services()` and `client.marketplace.update(name)`.
 CLI: `zelavis marketplace updates` and `zelavis marketplace update <name>`.
 
+A Project recipe (`kind: "app"`) needs none of this. A recipe never runs from
+its installed copy, because every Project freezes its own, so creating a Project
+from a recipe or upgrading one first installs the newest version the list names,
+when that version is not installed yet. The Marketplace therefore shows **Update**
+only for plugins and frontends. Each Project still moves to a newer recipe only
+when someone upgrades it.
+
 Sources come from `services.marketplace.sources` or `ZELAVIS_ALLOWLIST_SOURCES`
 (comma separated). The default is `https://zelavis.com/allowlist.json`. There are
 no keys: the list is plain JSON and its https origin is the trust anchor, the same

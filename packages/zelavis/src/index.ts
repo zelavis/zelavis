@@ -1749,6 +1749,8 @@ function presentNativeExtensionOwners(
 interface ZelavisRuntimeManagementCore {
   createRuntimeConfig: () => Promise<unknown>;
   routes: readonly ZelavisServerRoute<any>[];
+  /** Brings an app recipe to the newest listed version before a Project uses it; whether anything changed. */
+  acquireListedRecipe: (serviceName: string) => Promise<boolean>;
 }
 
 const TERMINAL_STATUS = { unavailable: 503, "not-found": 404, limit: 429, invalid: 400 } as const;
@@ -1982,6 +1984,54 @@ function resolveRuntimeManagementCore(
     return entry.status === "installed" && listed && installed && isExactVersion(listed) && isExactVersion(installed)
       && compareVersions(listed, installed) > 0 ? listed : undefined;
   };
+  /**
+   * Acquires the listed version of a package and registers it in place of what the registry held, the way an
+   * install does: the allow-list gate, the digest check and the activation are the same.
+   */
+  const installListedVersion = (serviceName: string, version: string, action: "install" | "update") =>
+    Effect.gen(function* () {
+      const created = yield* integration(() => readDashboardServiceRegistryCreate(
+        { packageSource: `npm:${serviceName}@${version}`, status: "installed" },
+        {
+          importer: context.serviceImporter,
+          manifestResolver: context.serviceManifestResolver,
+          packageInstaller: context.servicePackageInstaller,
+        },
+      ));
+      if (created.name !== serviceName) {
+        return yield* new IntegrationFailure(new ZelavisValidationError(`The package listed for "${serviceName}" names itself "${created.name}".`));
+      }
+      return yield* integration(() => runServiceRegistryChange(
+        applyServiceRegistryChange(
+          (entries) => [
+            ...entries.filter((entry) => entry.name !== serviceName),
+            { ...entries.find((entry) => entry.name === serviceName), ...created },
+          ],
+          () => ({ serviceName, action, specifier: created.specifier }),
+        ),
+      ));
+    });
+  /**
+   * A recipe is never run from its installed copy: every Project freezes its own. So the installed copy only
+   * decides what a new Project or an upgrade gets, and it is brought to the newest version the allow-list lists
+   * whenever one is about to be used. Plugins and frontends do run from theirs and update only when asked.
+   */
+  const acquireListedRecipe = (serviceName: string): Promise<boolean> => present(Effect.gen(function* () {
+    const listed = context.listedServiceVersions?.get(serviceName);
+    if (!listed || !isExactVersion(listed) || !context.servicePackageInstaller?.acquire) return false;
+    const current = (yield* integration(() => readResolvedServiceRegistry()))
+      .find((entry) => entry.service.name === serviceName);
+    if (!current || current.service.kind !== "app") return false;
+    if (current.status === "installed") {
+      if (!listedUpdate(current)) return false;
+      yield* installListedVersion(serviceName, listed, "update");
+      return true;
+    }
+    // Only a listing is acquired; a package the Platform bundled is switched on where it is, never fetched.
+    if (!isCatalogueListing(current)) return false;
+    yield* installListedVersion(serviceName, listed, "install");
+    return true;
+  }));
   const serializeServiceMenuForDashboard = (
     serviceName: string,
     menu: ZelavisServiceMenuDefinition | undefined,
@@ -2919,26 +2969,7 @@ function resolveRuntimeManagementCore(
                   body: { error: `${serviceName}@${current.service.version ?? "unknown"} is the newest version the marketplace lists.` },
                 };
               }
-              const created = yield* integration(() => readDashboardServiceRegistryCreate(
-                { packageSource: `npm:${serviceName}@${version}`, status: "installed" },
-                {
-                  importer: context.serviceImporter,
-                  manifestResolver: context.serviceManifestResolver,
-                  packageInstaller: context.servicePackageInstaller,
-                },
-              ));
-              if (created.name !== serviceName) {
-                throw new ZelavisValidationError(`The package listed for "${serviceName}" names itself "${created.name}".`);
-              }
-              const { activation } = yield* integration(() => runServiceRegistryChange(
-                applyServiceRegistryChange(
-                  (entries) => [
-                    ...entries.filter((entry) => entry.name !== serviceName),
-                    { ...entries.find((entry) => entry.name === serviceName), ...created },
-                  ],
-                  () => ({ serviceName, action: "update", specifier: created.specifier }),
-                ),
-              ));
+              const { activation } = yield* installListedVersion(serviceName, version, "update");
               return {
                 status: 200,
                 body: {
@@ -3305,6 +3336,7 @@ function resolveRuntimeManagementCore(
 
   return {
     createRuntimeConfig: createDashboardRuntimeConfig,
+    acquireListedRecipe,
     routes: routes.map((route) => ({
       ...route,
       path:
@@ -6581,6 +6613,12 @@ export function zelavis(
         const installedServiceNames: ReadonlySet<string> = new Set(
           storedServiceRegistry.map((entry) => entry.service.name).filter((name) => !composedElsewhere.has(name)),
         );
+        const listedServiceVersions: ReadonlyMap<string, string> = new Map(
+          baseServiceRegistry.filter(isCatalogueListing).flatMap((entry) =>
+            entry.service.version ? [[entry.service.name, entry.service.version] as const] : []),
+        );
+        // Set once the management core exists, which the Project manager is created before.
+        let acquireListedRecipe: ((serviceName: string) => Promise<boolean>) | undefined;
         // Recipes installed after composition are read from the registry store, so
         // a Project can be created from one without restarting the Platform.
         const readServiceRegistry = () =>
@@ -6900,6 +6938,8 @@ export function zelavis(
             ? yield* integration(() =>
                 createProjectManager({
                   projectRecipes: readServiceRegistry,
+                  acquireRecipe: (name) => acquireListedRecipe?.(name) ?? Promise.resolve(false),
+                  listedRecipeVersion: (name) => listedServiceVersions.get(name),
                   store: systemStore,
                   runtime: projectRuntime,
                   ...(options.edgePreviews
@@ -7176,10 +7216,7 @@ export function zelavis(
             serviceRegistryStore,
             installedServiceNames,
             ...(projects?.recipesChanged ? { serviceRegistryChanged: () => projects.recipesChanged!() } : {}),
-            listedServiceVersions: new Map(
-              baseServiceRegistry.filter(isCatalogueListing).flatMap((entry) =>
-                entry.service.version ? [[entry.service.name, entry.service.version] as const] : []),
-            ),
+            listedServiceVersions,
             serviceImporter: compositionOptions.serviceRegistry?.importer,
             serviceManifestResolver:
               compositionOptions.serviceRegistry?.manifestResolver,
@@ -7225,6 +7262,7 @@ export function zelavis(
             }),
           }),
         );
+        acquireListedRecipe = runtimeManagement.acquireListedRecipe;
         // Composition is far enough along for placement to resolve, so the startup
         // reconcile can run with the group rule in force. Fire-and-forget, as before:
         // Platform readiness does not wait for every Project runtime.

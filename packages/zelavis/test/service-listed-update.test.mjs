@@ -18,7 +18,8 @@ const NAME = "@acme/wiki";
 const install = (version) => ({
   contract: 2,
   methods: [{ id: "native", driver: "js", entry: "./recipe.js", requires: [] }],
-  software: [{ version, archive: `https://example.com/wiki-${version}.tgz`, sha256: "a".repeat(64), maxBytes: 1000 }],
+  // Every recipe revision offers the same software, so a Project keeps its choice across them.
+  software: [{ version: "1.0", archive: "https://example.com/wiki-1.0.tgz", sha256: "a".repeat(64), maxBytes: 1000 }],
   ports: [{ name: "web", protocol: "http" }],
 });
 
@@ -63,15 +64,16 @@ async function packages(t) {
   return { "1.0.0": await write("1.0.0"), "2.0.0": await write("2.0.0") };
 }
 
-async function platform(t, { listed }) {
+async function platform(t, { listed, installed = "1.0.0", stores }) {
   const specifiers = await packages(t);
   const acquired = [];
   const runtime = await zelavis({
-    systemStore: createMemorySystemStore(),
+    systemStore: stores?.system ?? createMemorySystemStore(),
     subsystems: { auth: false, database: false },
     serviceRegistry: {
       // Installed when the Platform was composed: the case of every server that updated its Platform.
-      store: createMemoryServiceRegistryStore([{ name: NAME, specifier: specifiers["1.0.0"], status: "installed", source: "community" }]),
+      store: stores?.registry ?? createMemoryServiceRegistryStore(installed
+        ? [{ name: NAME, specifier: specifiers[installed], status: "installed", source: "community" }] : []),
       catalog: [listing(listed)],
       manifestResolver: createLocalRuntimeServiceManifestResolver(),
     },
@@ -95,12 +97,8 @@ async function platform(t, { listed }) {
   return { call, wiki, acquired, specifiers, send };
 }
 
-test("an installed recipe the list offers at a newer version updates in the running Platform, and its Projects offer the upgrade", async (t) => {
+test("an installed package the list offers at a newer version updates in the running Platform, the list's version only", async (t) => {
   const { call, wiki, acquired } = await platform(t, { listed: "2.0.0" });
-  const created = await call("/runtime/projects", { method: "POST", body: JSON.stringify({ id: "docs", name: "Docs", recipeName: NAME, start: false }) });
-  assert.equal(created.status, 201, JSON.stringify(created.body));
-  assert.equal((await call("/runtime/projects/docs")).body.project.recipeStatus.state, "current");
-
   const before = await wiki();
   assert.equal(before.version, "1.0.0");
   assert.deepEqual(before.update, { version: "2.0.0" }, "the list offers a newer version");
@@ -112,12 +110,52 @@ test("an installed recipe the list offers at a newer version updates in the runn
   const after = await wiki();
   assert.equal(after.version, "2.0.0", "the running Platform serves the new version at once");
   assert.equal(after.update, undefined);
-  assert.deepEqual((await call("/runtime/projects/docs")).body.project.recipeStatus, { state: "upgradeAvailable", version: "2.0.0" },
-    "a Project offers the upgrade without a restart");
 
   const again = await call(`/runtime/services/${encodeURIComponent(NAME)}/update`, { method: "POST" });
   assert.equal(again.status, 409);
   assert.match(again.body.error, /newest version the marketplace lists/);
+});
+
+test("a Project is created from the newest listed version of a recipe that is only listed, acquired first", async (t) => {
+  const { call, acquired } = await platform(t, { listed: "2.0.0", installed: null });
+  const created = await call("/runtime/projects", { method: "POST", body: JSON.stringify({ id: "docs", name: "Docs", recipeName: NAME, start: false }) });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.project.recipe.version, "2.0.0");
+  assert.equal(created.body.project.recipe.install?.method, "native", "locked from the package, not the listing");
+  assert.deepEqual(acquired, [`npm:${NAME}@2.0.0`]);
+});
+
+test("a Project made from an older recipe offers the newest listed version, and upgrading acquires it first", async (t) => {
+  const stores = { system: createMemorySystemStore() };
+  // Made while 1.0.0 was the newest the list held.
+  const first = await platform(t, { listed: "1.0.0", stores: { system: stores.system } });
+  const created = await first.call("/runtime/projects", { method: "POST", body: JSON.stringify({ id: "docs", name: "Docs", recipeName: NAME, start: false }) });
+  assert.equal(created.body.project.recipe.version, "1.0.0");
+  assert.deepEqual(first.acquired, [], "nothing newer to acquire");
+
+  // The Platform updated; its list now names 2.0.0, and 1.0.0 is still what is installed.
+  const later = await platform(t, { listed: "2.0.0", stores: { system: stores.system } });
+  assert.deepEqual((await later.call("/runtime/projects/docs")).body.project.recipeStatus, { state: "upgradeAvailable", version: "2.0.0" });
+  const upgraded = await later.call("/runtime/projects/docs/upgrade", { method: "POST", body: "{}" });
+  assert.equal(upgraded.status, 200, JSON.stringify(upgraded.body));
+  assert.equal(upgraded.body.project.recipe.version, "2.0.0");
+  assert.deepEqual(later.acquired, [`npm:${NAME}@2.0.0`]);
+  assert.equal((await later.wiki()).version, "2.0.0");
+});
+
+test("a Project whose recipe the server only lists (made when it came with the Platform) upgrades: the recipe is acquired first", async (t) => {
+  const stores = { system: createMemorySystemStore() };
+  const first = await platform(t, { listed: "1.0.0", stores });
+  assert.equal((await first.call("/runtime/projects", { method: "POST", body: JSON.stringify({ id: "blogger", name: "Blogger", recipeName: NAME, start: false }) })).status, 201);
+  // Nothing is installed any more; the list names 2.0.0.
+  const later = await platform(t, { listed: "2.0.0", installed: null, stores });
+  assert.equal((await later.wiki()).status, "available");
+  assert.deepEqual((await later.call("/runtime/projects/blogger")).body.project.recipeStatus, { state: "upgradeAvailable", version: "2.0.0" });
+  const upgraded = await later.call("/runtime/projects/blogger/upgrade", { method: "POST", body: JSON.stringify({ restart: true }) });
+  assert.equal(upgraded.status, 200, JSON.stringify(upgraded.body));
+  assert.equal(upgraded.body.project.recipe.version, "2.0.0");
+  assert.deepEqual(later.acquired, [`npm:${NAME}@2.0.0`]);
+  assert.equal((await later.wiki()).status, "installed");
 });
 
 test("installing an installed package again at another version is that version at once", async (t) => {

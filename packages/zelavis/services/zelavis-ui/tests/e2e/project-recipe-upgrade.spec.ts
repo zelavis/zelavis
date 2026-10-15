@@ -51,48 +51,6 @@ test("@smoke a stopped Project on an older recipe can be upgraded from its card"
   expect(posted).toEqual({ restart: true })
 })
 
-test("@smoke Upgrade installs a recipe the Marketplace only lists before upgrading to it", async ({ page }) => {
-  test.skip(!projectId, "needs the e2e Project")
-  await pretendStale(page, {
-    recipeStatus: { state: "upgradeAvailable", version: "9.9.9" },
-    runtime: { driver: "node-process", status: "stopped" },
-  })
-  const calls: unknown[] = []
-  // The recipe is only listed: the Platform would acquire it from the allow-list.
-  const listed = (services: { name: string }[]) => services.map((service) =>
-    service.name === "@zelavis/app" ? { ...service, status: "available", installVia: "acquire", version: "9.9.9" } : service)
-  await page.route(/\/runtime\/config$/, async (route) => {
-    try {
-      const response = await route.fetch()
-      const body = await response.json()
-      await route.fulfill({ response, json: { ...body, serviceRegistry: listed(body.serviceRegistry ?? []) } })
-    } catch {
-      await route.continue().catch(() => undefined)
-    }
-  })
-  await page.route(/\/runtime\/services$/, async (route) => {
-    if (route.request().method() !== "POST") return route.continue()
-    calls.push(["install", route.request().postDataJSON()])
-    await route.fulfill({ status: 201, json: { services: [] } })
-  })
-  await page.route(new RegExp(`/runtime/projects/${projectId}/upgrade$`), async (route) => {
-    calls.push(["upgrade", route.request().postDataJSON()])
-    await route.fulfill({
-      json: { project: { id: projectId, name: "Zelavis Runtime", recipe: { name: "@zelavis/app", title: "App", version: "9.9.9" },
-        runtime: { driver: "node-process", status: "stopped" }, runtimeKind: "native", kind: "zelavis", capabilities: {},
-        desiredState: "stopped", createdAt: "", updatedAt: "" } },
-    })
-  })
-
-  await page.goto(`${basePath}/projects`)
-  await page.getByLabel("Recipe upgrade").getByRole("button", { name: "Upgrade recipe" }).click()
-  await expect(page.getByText(/now uses @zelavis\/app 9\.9\.9/)).toBeVisible()
-  expect(calls).toEqual([
-    ["install", { packageSource: "npm:@zelavis/app@9.9.9", status: "installed" }],
-    ["upgrade", { restart: true }],
-  ])
-})
-
 test("@smoke a Project on a retired recipe must be pointed at one, and a running one is restarted for the move", async ({ page }) => {
   test.skip(!projectId, "needs the e2e Project")
   await pretendStale(page, {

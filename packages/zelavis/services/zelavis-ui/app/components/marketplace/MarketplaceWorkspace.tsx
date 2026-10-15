@@ -456,7 +456,9 @@ export function MarketplaceWorkspace({
                       <Info />
                       More details
                     </Button>
-                    {service.update ? (
+                    {/* A recipe is brought up to date when a Project is created from it or upgraded, never here:
+                        each Project keeps its own version. */}
+                    {service.update && tab !== "apps" ? (
                       <Button type="button" variant="outline" disabled={pending} onClick={() => void update(service)}>
                         {pending ? <LoaderCircle className="animate-spin" /> : <ArrowUpCircle />}
                         Update to {service.update.version}
