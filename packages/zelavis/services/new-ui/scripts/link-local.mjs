@@ -6,7 +6,11 @@ export const workspaceRoot = resolve(packageRoot, "../../../..");
 export const fuzorRoot = resolve(process.env.FUZOR_DIR ?? resolve(workspaceRoot, "../fuzor"));
 // Local links keep this experiment out of the parent workspace lockfile.
 const targets = {
-  ...Object.fromEntries(["@glideapps/glide-data-grid", "tabulator-tables", "@visactor/vtable", "@visactor/vtable-editors", "react", "react-dom", "@types/react", "@types/react-dom", "@types/tabulator-tables"].map(name => [name, resolve(packageRoot, "grid-dependencies/node_modules", name)])),
+  ...Object.fromEntries(["@glideapps/glide-data-grid", "tabulator-tables", "@visactor/vtable", "@visactor/vtable-editors", "@types/react", "@types/react-dom", "@types/tabulator-tables"].map(name => [name, resolve(packageRoot, "grid-dependencies/node_modules", name)])),
+  react: resolve(workspaceRoot, "packages/zelavis/services/zelavis-ui/node_modules/react"),
+  "react-dom": resolve(workspaceRoot, "packages/zelavis/services/zelavis-ui/node_modules/react-dom"),
+  "react-router": resolve(workspaceRoot, "packages/zelavis/services/zelavis-ui/node_modules/react-router"),
+  "@tailwindcss/vite": resolve(workspaceRoot, "packages/zelavis/services/zelavis-ui/node_modules/@tailwindcss/vite"),
   swiper: resolve(workspaceRoot, "packages/zelavis/services/zelavis-ui/node_modules/swiper"),
   fuzor: resolve(fuzorRoot, "packages/fuzor"),
   vite: resolve(fuzorRoot, "packages/fuzor/node_modules/vite"),

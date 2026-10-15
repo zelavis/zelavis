@@ -1,8 +1,9 @@
+import { mountSchemaEditor } from "../schema-editor.ts";
 import { getRouter } from "fuzor/runtime";
 import type { PersistentClient, PersistentClientModule } from "fuzor/server-components/browser";
 import type { Values } from "fuzor/server-components/protocol";
 import { mountPersistent as mountGrid } from "../grids/controller.ts";
-import { Effect } from "effect";
+import { Effect, Cause } from "effect";
 import { request } from "../api.ts";
 import { parseEdit } from "../grids/model.ts";
 import { button, field, link, message, node } from "../dom.ts";
@@ -22,7 +23,8 @@ export default {
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    host.replaceChildren(selector, choices, paging, errors, gridHost, actions);
+    const full = new URL(router.url()); full.searchParams.set("workspaceMode", "full");
+    host.replaceChildren(node("div", { class: "actions" }, link("Full database tools", full.pathname.replace(/^\/zelavis/, "") + full.search), link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, choices, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());
@@ -32,22 +34,17 @@ export default {
     selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); search({ databaseTenant: String(data.get("tenantId") ?? ""), databaseTable: String(data.get("collection") ?? ""), databaseSystemView: undefined, databaseOffset: undefined, databaseRow: undefined }); });
     let disposed = false;
     const lifetime = new AbortController();
-    function form(fields: HTMLElement[], title: string, submit: (data: FormData) => Promise<unknown>) {
+    function form(fields: HTMLElement[], title: string, submit: (data: FormData) => Effect.Effect<unknown, unknown>) {
       const control = node("button", { type: "submit" }, title);
       const form = node("form", { class: "form" }, ...fields, control);
-      form.addEventListener("submit", async event => {
+      form.addEventListener("submit", event => {
         event.preventDefault(); if (control.disabled) return; control.disabled = true;
-        let error: unknown;
-        try { await submit(new FormData(form)); }
-        catch (cause) { error = cause; }
-        finally {
-          if (!disposed) {
-            // Even failed mutations revalidate authoritative lifecycle state.
-            await router!.navigate(router!.url(), { focus: "preserve", scroll: "preserve" });
-            control.disabled = false;
-            errors.replaceChildren(message(error ? String(error) : "Saved.", Boolean(error)));
-          }
-        }
+        let failure: unknown;
+        Effect.runFork(Effect.gen(function* () {
+          yield* Effect.suspend(() => submit(new FormData(form))).pipe(Effect.catchCause(cause => Effect.sync(() => { failure = Cause.squash(cause); })));
+          if (!disposed) yield* Effect.tryPromise({ try: () => router!.navigate(router!.url(), { focus: "preserve", scroll: "preserve" }), catch: cause => cause });
+          if (!disposed) errors.replaceChildren(message(failure ? String(failure) : "Saved.", Boolean(failure)));
+        }).pipe(Effect.catchCause(cause => Effect.sync(() => { if (!disposed) errors.replaceChildren(message(String(Cause.squash(cause)), true)); })), Effect.ensuring(Effect.sync(() => { control.disabled = false; }))), { signal: lifetime.signal });
       });
       return node("details", {}, node("summary", {}, title), form);
     }
@@ -58,10 +55,10 @@ export default {
       const record = parseEdit(String(data.get("data")));
       if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error("Record data must be a JSON object.");
       const id = String(data.get("recordId") ?? "");
-      return Effect.runPromise(request(`${props.apiBase}/database/documents/${encodeURIComponent(String(props.collection))}`, "POST", { tenantId: props.tenant, data: record, ...(id ? { id } : {}) }), { signal: lifetime.signal });
+      return request(`${props.apiBase}/database/documents/${encodeURIComponent(String(props.collection))}`, "POST", { tenantId: props.tenant, data: record, ...(id ? { id } : {}) });
     }));
     const content = new URL(router.url()).pathname.includes("/content");
-    actions.append(form([field("tenantId", "Tenant ID", "text", String(props.tenant)), field("name", content ? "Collection name" : "Table name")], content ? "Create content collection" : "Create table", data => Effect.runPromise(request(`${props.apiBase}/database/documents/collections`, "POST", { tenantId: String(data.get("tenantId")), name: String(data.get("name")), surface: content ? "content-studio" : "database" }), { signal: lifetime.signal })));
+    actions.append(form([field("tenantId", "Tenant ID", "text", String(props.tenant)), field("name", content ? "Collection name" : "Table name")], content ? "Create content collection" : "Create table", data => request(`${props.apiBase}/database/documents/collections`, "POST", { tenantId: String(data.get("tenantId")), name: String(data.get("name")), surface: content ? "content-studio" : "database" })));
     function controls() {
       host.dataset.projectContext = String(props.navigationJson);
       const navigation = JSON.parse(String(props.navigationJson));
@@ -82,13 +79,30 @@ export default {
         paging.append(node("label", {}, "Page size ", size));
       }
     }
+    let schemaEditor: ReturnType<typeof mountSchemaEditor> | undefined;
+    if (props.tenant && props.collection && !props.readonly) {
+      const records = button("Records", () => search({ databasePanel: undefined, schemaVersion: undefined }));
+      const schema = button("Collection schema", () => search({ databasePanel: "schema" }));
+      selector.append(records, schema);
+    }
+    if (props.schemaPanel) {
+      actions.hidden = true; paging.hidden = true;
+      schemaEditor = mountSchemaEditor(gridHost, { api: String(props.apiBase), tenant: String(props.tenant), collection: String(props.collection), schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? ""), draftScope: props.draftScope, projectId: props.projectId, select: version => search({ schemaVersion: version }), run: work => {
+        Effect.runFork(Effect.gen(function*() {
+          const result = yield* Effect.exit(work);
+          if (disposed) return;
+          yield* Effect.tryPromise({ try: () => router!.navigate(router!.url(), { focus: "preserve", scroll: "preserve" }), catch: cause => cause });
+          if (result._tag === "Failure") return yield* Effect.failCause(result.cause);
+        }).pipe(Effect.catchCause(cause => Effect.sync(() => { if (!disposed) errors.replaceChildren(message(String(Cause.squash(cause)), true)); }))), { signal: lifetime.signal });
+      } });
+    }
     const hasRecords = () => Boolean(props.tenant && (props.collection || props.systemView));
     controls();
-    if (hasRecords()) grid = mountGrid(gridHost, props);
-    else gridHost.append(message("Choose a tenant and table to open records."));
+    if (!props.schemaPanel && hasRecords()) grid = mountGrid(gridHost, props);
+    else if (!props.schemaPanel) gridHost.append(message("Choose a tenant and table to open records."));
     return {
-      async update(next: Values) { props = next; controls(); if (grid) await grid.update(props); },
-      dispose() { disposed = true; lifetime.abort(); return grid?.dispose(); },
+      update(next: Values, operation) { props = next; controls(); schemaEditor?.update({ schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? "") }); return grid?.update(props, operation); },
+      dispose() { disposed = true; lifetime.abort(); schemaEditor?.dispose(); return grid?.dispose(); },
     };
   },
 } satisfies PersistentClientModule;

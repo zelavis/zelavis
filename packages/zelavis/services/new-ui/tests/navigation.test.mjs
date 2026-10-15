@@ -35,3 +35,27 @@ test("Projects panel uses the complete runtime list without duplicating the curr
   const panels = panelsFor(project.id, project, undefined, undefined, [project, { ...project, id: "other", name: "Other" }]);
   assert.deepEqual(panels.find(p => p.id === "projects").items.map(i => i.label), ["Overview", "Create project", "Customer", "Other"]);
 });
+
+
+test("explicit Project routes recover their domain without an invented section parameter", async () => {
+  const { dashboardSection } = await import("../app/routes.ts");
+  assert.equal(dashboardSection("/projects/project/storage", { projectId: "project" }), "storage");
+  assert.equal(dashboardSection("/projects/project/marketplace", { projectId: "project" }), "marketplace");
+  assert.equal(dashboardSection("/projects/p%2Fx/auth/users", { projectId: "p/x" }), "auth/users");
+  assert.equal(dashboardSection("/projects/project", { projectId: "project" }), undefined);
+  assert.equal(dashboardSection("/server/domains", { section: "domains" }), "domains");
+  assert.equal(dashboardSection("/projects/project/storage", {}), undefined);
+});
+
+test("workspace menu descendants survive URL serialization and restore their deepest search view", async () => {
+  const { workspacePanels, trailForLocation } = await import("../app/navigation-model.ts");
+  const panels = workspacePanels(panelsFor("p", { id: "p", name: "P", recipe: {} }), [
+    { title: "Backend", path: "/projects/p/backend", items: [{ title: "Workloads", path: "/projects/p/workloads", items: [{ title: "Functions", path: "/projects/p/workloads/functions" }] }] },
+    { title: "Content", path: "/projects/p/content", items: [{ title: "Articles", path: "/projects/p/content/articles", items: [{ title: "Fields", path: "/projects/p/content/articles/fields" }] }] }
+  ], "p");
+  const trail = trailForLocation(panels, new URL("http://test/zelavis/projects/p/workloads/functions"));
+  assert.deepEqual(resolveTrail(panels, [], trail.join("/")).map(panel => panel.id), ["platform", ...trail]);
+  assert.equal(resolveTrail(panels, [], trail.join("/")).at(-1).label, "Workloads");
+  assert.ok(panels.every(panel => !panel.id.includes("/")));
+  assert.ok(panels.find(panel => panel.id === "server"), "Platform branch remains available in Project workspaces");
+});

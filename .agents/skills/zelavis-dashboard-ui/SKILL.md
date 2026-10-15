@@ -218,3 +218,38 @@ operation, including each table's Tenant and grouped logical System Tables.
 Use loader revalidation after mutations; do not synthesize selected tables or
 maintain a local event copy of runtime services. Platform **Server → Database**
 inspects its separate read-only System Store, never the App database endpoints.
+
+
+## Experimental Fuzor dashboard
+
+`packages/zelavis/services/new-ui` is a separate experimental frontend; the rules
+above describe the current default React dashboard. Do not switch the Platform's
+default frontend until full parity and real embedded/dev desktop/mobile qualification
+are complete. The package README records shipped controls and remaining gates.
+Fuzor handles routing and compiled server views; Effect v4 is mandatory for all new
+asynchronous compiler, browser, adapter, server and dashboard orchestration. Promise
+interfaces are transport boundaries, not permission to orchestrate async workflows.
+Both frontends remain clients of the same SDK/HTTP/CLI-backed capabilities.
+
+Use the experiment's local typecheck/build/unit and server-view scripts rather than
+React Router typegen. Hard reloads of declared client routes must receive the SPA
+shell in production and dev. Fixed Project routes need an explicit domain section
+when their route pattern does not contain a `:section` parameter.
+
+Database draft recovery is tab-local sessionStorage, partitioned by opaque session,
+Project, Tenant and table with bounded retention. Keep original optimistic versions;
+never adopt a fresh server version into a dirty record. Preserve incomplete inspector
+text, surface storage failures, remove saved/discarded entries and clear this tab's
+journals on sign-out. Never journal authentication or provider credentials. Third-party
+cell editor internals remain outside native resumability until they become staged edits.
+
+The experiment now embeds service HTML through runtime asset endpoints. Keep extension
+frames opaque, authenticate broker messages by source window, bound requests, and use
+only the owning service namespace through the exact Project proxy. A new iframe document
+must not inherit the previous document's grant. Scope cleanup interrupts requests/listeners.
+Wildcard client routes must never return dashboard HTML for Vite assets or script/style requests.
+Schema editing uses public `zelavis/db/schema` codecs and existing version/create/activate
+operations. Preserve immutable versions and source-version schema drafts; schema and record
+journals have distinct partitions but share retention limits and sign-out cleanup. Typed
+record controls write into the existing JSON inspector/journal; do not introduce a second
+save path or replace original record versions after refresh.

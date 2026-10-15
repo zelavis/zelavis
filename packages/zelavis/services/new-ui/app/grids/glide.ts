@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { createElement, useState } from "react";
 import { DataEditor, GridCellKind, type GridCell, type Item } from "@glideapps/glide-data-grid";
 import { reactIsland } from "fuzor/islands/react";
@@ -26,12 +27,15 @@ function Grid(props: GridAdapterOptions) {
     onColumnResize: (column, width) => setWidths(previous => ({ ...previous, [column.id!]: width })),
   });
 }
-export async function mount(host: HTMLElement, options: GridAdapterOptions) {
+export function mount(host: HTMLElement, options: GridAdapterOptions, signal?: AbortSignal) {
+  return Effect.runPromise(Effect.gen(function* () {
   const ownedPortal = !document.getElementById("portal");
   const portal = ownedPortal ? document.createElement("div") : document.getElementById("portal")!;
   if (ownedPortal) { portal.id = "portal"; document.body.append(portal); }
-  try {
-    const client = await reactIsland(Grid).mountPersistent(host, options);
+  let mounted = false;
+  yield* Effect.addFinalizer(() => Effect.sync(() => { if (!mounted && ownedPortal) portal.remove(); }));
+    const client = yield* Effect.tryPromise({ try: signal => reactIsland(Grid).mountPersistent(host, options, { signal }), catch: cause => cause });
+    mounted = true;
     return { update(next: GridAdapterOptions) { return client.update(next); }, dispose() { void client.dispose(); if (ownedPortal) portal.remove(); } };
-  } catch (error) { if (ownedPortal) portal.remove(); throw error; }
+  }).pipe(Effect.scoped), signal ? { signal } : undefined);
 }

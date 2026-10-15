@@ -1,18 +1,28 @@
+import { workspaceRouteCatalog } from "./workspace-route-manifest.ts";
 import type { RouteDefinition } from "fuzor/runtime";
 export type DashboardHandle = { pageLabel: string; sidebarTrail: readonly string[] };
 const handle = (pageLabel: string, ...sidebarTrail: string[]): DashboardHandle => ({ pageLabel, sidebarTrail });
-export const clientRoutes = { "/projects/:projectId": "/project/", "/projects/:projectId/:section*": "/project-section/", "/server/:section*": "/server-section/", "/settings/:section*": "/settings/" };
+const declared = workspaceRouteCatalog.filter(route => route.path !== "/*" && route.path !== "/_api/relations/:collection");
+export const clientRoutes: Record<string, string> = Object.fromEntries(declared.map(route => [route.path, route.path.startsWith("/projects/:projectId/") ? "/project-section/" : route.path === "/projects/:projectId" ? "/project/" : route.path.startsWith("/server/") ? "/server-section/" : route.path.startsWith("/settings/") ? "/settings/" : "/"]));
+Object.assign(clientRoutes, { "/:section*": "/", "/projects/:projectId/:section*": "/project-section/", "/server/:section*": "/server-section/", "/settings/:section*": "/settings/", "/projects/create": "/projects/create/" });
+const routeHandle = (path: string): DashboardHandle => {
+  if (path.startsWith("/projects/:projectId")) { const section = path.split("/")[3]; return handle(section ? section[0].toUpperCase() + section.slice(1) : "Project overview", "projects", "project", ...(section && !section.startsWith(":") ? [section] : [])); }
+  if (path.startsWith("/server")) return handle(path.split("/")[2] ?? "Server", "server");
+  if (path.startsWith("/settings")) return handle("Settings", "settings");
+  return handle(path === "/" ? "Projects" : path.slice(1));
+};
 export const routeTree: readonly RouteDefinition[] = [{ id: "platform", path: "/", handle: handle("Projects"), children: [
-  { id: "projects", path: "/projects", handle: handle("Projects", "projects"), children: [
-    { id: "create-project", path: "/projects/create", handle: handle("Create project", "projects") },
-    { id: "project", path: "/projects/:projectId", handle: handle("Project overview", "projects", "project"), children: [
-      ...["database", "auth", "content", "storage", "workloads", "marketplace"].map(section => ({ id: `project-${section}`, path: `/projects/:projectId/${section}`, handle: handle(section[0].toUpperCase() + section.slice(1), "projects", "project", section), children: [{ id: `project-${section}-detail`, path: `/projects/:projectId/${section}/:detail*`, handle: handle(section[0].toUpperCase() + section.slice(1), "projects", "project", section) }] })),
-      { id: "project-section", path: "/projects/:projectId/:section*", handle: handle("Project", "projects", "project") }
-    ] }
-  ] },
-  { id: "server", path: "/server", handle: handle("Server overview", "server"), children: [{ id: "server-section", path: "/server/:section*", handle: handle("Server", "server") }] },
-  { id: "settings", path: "/settings", handle: handle("Settings", "settings"), children: [{ id: "settings-section", path: "/settings/:section*", handle: handle("Settings", "settings") }] },
-  ...["marketplace", "assistant", "setup", "login"].map(name => ({ id: name, path: `/${name}`, handle: handle(name[0].toUpperCase() + name.slice(1)) }))
+  ...[...new Map(declared.map(route => [route.path, route])).values()].filter(route => route.path !== "/").map(route => ({ id: route.file.replace(/\.tsx$/, ""), path: route.path, handle: routeHandle(route.path) })),
+  { id: "create-project", path: "/projects/create", handle: handle("Create project", "projects") },
+  { id: "project-section", path: "/projects/:projectId/:section*", handle: handle("Project", "projects", "project") },
+  { id: "service-page", path: "/:section*", handle: handle("Service page") }
 ] }];
 
-export const databaseRoutes = ["/projects/:projectId/database", "/projects/:projectId/database/:detail*", "/projects/:projectId/content", "/projects/:projectId/content/:detail*"];
+export const databaseRoutes = ["/projects/:projectId/database"];
+
+/** Explicit domain routes carry projectId but have no dynamic :section parameter. */
+export function dashboardSection(path: string, params: Readonly<Record<string, string | undefined>>): string | undefined {
+  if (params.section !== undefined) return params.section;
+  if (!params.projectId || !path.startsWith("/projects/")) return undefined;
+  return path.split("/").slice(3).join("/") || undefined;
+}

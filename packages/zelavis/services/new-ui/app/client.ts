@@ -1,5 +1,5 @@
 import { ready } from "virtual:fuzor/client";
-import { mount } from "../islands/dashboard.ts";
+import { mount } from "../behaviors/dashboard.ts";
 let cleanup: (() => void) | undefined;
 let disposed = false;
 const dispose = () => { disposed = true; cleanup?.(); cleanup = undefined; };

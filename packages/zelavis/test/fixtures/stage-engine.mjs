@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
@@ -32,12 +32,12 @@ export async function stageEngineFixture(packageRoot, release, version) {
   }
   for (const dependency of Object.keys(manifest.dependencies)) await collect(dependency, packageRoot);
   await symlink("..", join(platform, "node_modules/zelavis"));
-  for (const service of await readdir(join(packageRoot, "services"))) {
-    const source = join(packageRoot, "services", service), destination = join(platform, "services", service);
-    await mkdir(destination, { recursive: true });
-    await copyFile(join(source, "package.json"), join(destination, "package.json"));
-    await cp(join(source, "dist"), join(destination, "dist"), { recursive: true });
-    try { await cp(join(source, "build/client"), join(destination, "build/client"), { recursive: true }); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  // Match the published service payload, not every service in the checkout.
+  // Opt-in experiments need not have dist/ and must not enter installed engines.
+  for (const path of manifest.files.filter((path) => path.startsWith("services/"))) {
+    const destination = join(platform, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(join(packageRoot, path), destination, { recursive: true });
   }
   await mkdir(join(release, "runtime/node/bin"), { recursive: true });
   await copyFile(process.execPath, join(release, "runtime/node/bin/node"));

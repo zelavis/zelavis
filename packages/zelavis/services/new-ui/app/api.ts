@@ -1,9 +1,9 @@
 import { Data, Effect, Schema } from "effect";
 
 export class ApiError extends Data.TaggedError("ApiError")<{ message: string; status?: number }> {}
-const ApiConfig = Schema.Struct({ api: Schema.Struct({ basePath: Schema.String }), rootPath: Schema.String, capabilities: Schema.optional(Schema.Unknown), services: Schema.optional(Schema.Array(Schema.Unknown)) });
+const ApiConfig = Schema.Struct({ api: Schema.Struct({ basePath: Schema.String }), rootPath: Schema.String, access: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), services: Schema.optional(Schema.Array(Schema.Unknown)), serviceRegistry: Schema.optional(Schema.Array(Schema.Unknown)) });
 const Bootstrap = Schema.Struct({ required: Schema.Boolean, providers: Schema.Array(Schema.String), enrollmentProviders: Schema.Array(Schema.String) });
-const Project = Schema.Struct({ id: Schema.String, name: Schema.String, recipe: Schema.optional(Schema.Unknown), kind: Schema.optional(Schema.String), runtimeKind: Schema.optional(Schema.String), runtime: Schema.Struct({ status: Schema.String, error: Schema.optional(Schema.String) }), deletion: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.String) });
+const Project = Schema.Struct({ id: Schema.String, name: Schema.String, recipe: Schema.optional(Schema.Unknown), capabilities: Schema.optional(Schema.Unknown), recipeStatus: Schema.optional(Schema.Unknown), engineVersion: Schema.optional(Schema.String), preview: Schema.optional(Schema.Unknown), kind: Schema.optional(Schema.String), runtimeKind: Schema.optional(Schema.String), runtime: Schema.Struct({ status: Schema.String, error: Schema.optional(Schema.String) }), deletion: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.String) });
 export type Project = typeof Project.Type & { status: string };
 export type Config = typeof ApiConfig.Type;
 export const Projects = Schema.Struct({ projects: Schema.Array(Project) });
@@ -60,4 +60,34 @@ export const projectConfig = Effect.fn("new-ui.projectConfig")(function*(control
   const config = yield* request(`${proxy}/zelavis/api/v1/runtime/config`).pipe(Effect.flatMap(value => decode(ApiConfig, value)));
   if (!config.api.basePath.startsWith("/zelavis/api/")) return yield* Effect.fail(new ApiError({ message: "Invalid project API mount." }));
   return { ...config, api: { basePath: `${proxy}${config.api.basePath}` } };
+});
+
+export function storagePath(path: string) {
+  const parts = path.split("/");
+  if (!parts.length || parts.some(part => !part || part === "." || part === "..") || path.length > 4096) throw new Error("Use a file path without empty or parent segments.");
+  return parts.map(encodeURIComponent).join("/");
+}
+/** XHR is the browser transport adapter; Effect owns progress, timeout and interruption. */
+export const uploadFile = Effect.fn("new-ui.uploadFile")(function*(apiBase: string, path: string, file: File, progress: (percent: number) => void) {
+  if (!apiBase.startsWith("/zelavis/api/") || apiBase.includes("..")) return yield* Effect.fail(new ApiError({ message: "Invalid storage API mount." }));
+  if (file.size > 32 * 1024 * 1024) return yield* Effect.fail(new ApiError({ message: "Dashboard uploads are limited to 32 MB." }));
+  const encoded = yield* Effect.try({ try: () => storagePath(path), catch: cause => new ApiError({ message: String(cause) }) });
+  return yield* Effect.callback<unknown, ApiError>(resume => {
+    const transport = new XMLHttpRequest();
+    transport.open("PUT", `${apiBase}/storage/files/${encoded}`);
+    transport.withCredentials = true;
+    transport.setRequestHeader("content-type", file.type || "application/octet-stream");
+    transport.upload.onprogress = event => { if (event.lengthComputable && event.total > 0) progress(Math.round(event.loaded * 100 / event.total)); };
+    transport.onload = () => {
+      if (transport.responseText.length > responseLimit) { resume(Effect.fail(new ApiError({ message: "Upload response exceeded the dashboard limit." }))); return; }
+      let result: unknown;
+      try { result = JSON.parse(transport.responseText); }
+      catch (cause) { resume(Effect.fail(new ApiError({ message: `Invalid upload response: ${String(cause)}` }))); return; }
+      resume(transport.status >= 200 && transport.status < 300 ? Effect.succeed(result) : Effect.fail(new ApiError({ message: label(object(result).error, "Upload failed."), status: transport.status })));
+    };
+    transport.onerror = () => resume(Effect.fail(new ApiError({ message: "Upload connection failed." })));
+    transport.onabort = () => resume(Effect.fail(new ApiError({ message: "Upload cancelled." })));
+    transport.send(file);
+    return Effect.sync(() => { transport.onload = null; transport.onerror = null; transport.onabort = null; transport.upload.onprogress = null; if (transport.readyState !== 4) transport.abort(); });
+  }).pipe(Effect.timeout("60 seconds"), Effect.mapError(error => error instanceof ApiError ? error : new ApiError({ message: "Upload timed out after 60 seconds." })));
 });

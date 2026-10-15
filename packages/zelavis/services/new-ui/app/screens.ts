@@ -1,6 +1,8 @@
+import { hasWorkspaceRoute, workspaceFrame } from "./workspace-island.ts";
+import { servicePageScreen } from "./service-pages.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
-import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, type Config, type Project } from "./api.ts";
+import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
 import { button, empty, field, json, link, message, node, table } from "./dom.ts";
 
 export interface ScreenContext {
@@ -82,12 +84,29 @@ export const createProjectScreen = Effect.fn("new-ui.createProjectScreen")(funct
   const response = yield* request(`${context.config.api.basePath}/runtime/project-recipes`);
   const recipes = rows(response, "projectRecipes");
   const select = node("select", { name: "recipeName", required: "" }, ...recipes.map(recipe => {
-    const entry = object(recipe); return node("option", { value: label(entry.name, "") }, label(entry.title, label(entry.name)));
+    const entry = object(recipe); return node("option", { value: label(entry.name, ""), ...(entry.name === context.url.searchParams.get("recipe") ? { selected: "" } : {}) }, label(entry.title, label(entry.name)));
   }));
-  return node("section", { class: "panel narrow" }, heading("Create project", link("Back to projects", "/")), form(context, [field("name", "Project name"), field("id", "Project ID (optional)", "text", "", false), node("label", {}, node("span", {}, "Project recipe"), select)], "Create project", data => mutation(context, "/runtime/projects", { name: value(data, "name"), ...(value(data, "id") ? { id: value(data, "id") } : {}), recipeName: value(data, "recipeName"), start: false }), result => {
+  const selected = object(recipes.find(recipe => object(recipe).name === (context.url.searchParams.get("recipe") ?? select.value)));
+  const creationSearch = (values: Record<string, string | undefined>) => {
+    const form = select.closest("form"); const data = form ? new FormData(form) : undefined;
+    context.setSearch({ ...values, projectName: data ? value(data, "name") || undefined : undefined, createId: data ? value(data, "id") || undefined : undefined });
+  };
+  select.addEventListener("change", () => creationSearch({ recipe: select.value, engineVersion: undefined }));
+  const controls: HTMLElement[] = [field("name", "Project name", "text", context.url.searchParams.get("projectName") ?? ""), field("id", "Project ID (optional)", "text", context.url.searchParams.get("createId") ?? "", false), node("label", {}, node("span", {}, "Project recipe"), select)];
+  if (selected.name === "@zelavis/app") {
+    const catalogue = object(yield* request(`${context.config.api.basePath}/runtime/project-versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))));
+    if (catalogue.selectable === true) {
+      const versions = node("select", { name: "engineVersion", "aria-label": "Zelavis version" }, node("option", { value: "" }, "Current qualified engine"), ...array(catalogue.versions).map(raw => { const version = object(raw); return node("option", { value: label(version.version, ""), ...(version.status !== "available" ? { disabled: "" } : {}), ...(version.version === context.url.searchParams.get("engineVersion") ? { selected: "" } : {}) }, `${label(version.version)}${version.status !== "available" ? " · unavailable" : ""}`); }));
+      versions.addEventListener("change", () => creationSearch({ engineVersion: versions.value || undefined }));
+      controls.push(node("label", {}, "Zelavis version", versions));
+    } else controls.push(message(label(catalogue.reason, "This checkout uses its current development engine.")));
+  }
+  const packages = array(selected.hostPackages).filter((name): name is string => typeof name === "string");
+  if (packages.length) controls.push(node("label", {}, node("input", { type: "checkbox", name: "installHostPackages" }), `Approve host packages declared by this recipe: ${packages.join(", ")}. This requires server package installation permission.`));
+  return node("section", { class: "panel narrow" }, heading("Create project", link("Back to projects", "/")), form(context, controls, "Create project", data => mutation(context, "/runtime/projects", { name: value(data, "name"), ...(value(data, "id") ? { id: value(data, "id") } : {}), recipeName: value(data, "recipeName"), ...(value(data, "engineVersion") ? { engineVersion: value(data, "engineVersion") } : {}), ...(packages.length ? { installHostPackages: data.get("installHostPackages") === "on" } : {}), start: false }), result => {
     const id = object(object(result).project).id;
     if (typeof id === "string") context.navigate(`/projects/${encodeURIComponent(id)}`); else context.refresh();
-  }), message("Projects are created stopped. Host package approval and exact engine selection are available in the React dashboard while those controls are ported."));
+  }), message("Projects are created stopped. Start the Project after reviewing its configuration."));
 });
 
 function projectActions(context: ScreenContext, project: Project) {
@@ -112,8 +131,38 @@ export const projectScreen = Effect.fn("new-ui.projectScreen")(function*(context
   const overview = node("section", {}, heading(project.name, projectActions(context, project)), node("div", { class: "stats" }, node("div", { class: "stat" }, node("span", {}, "Status"), node("strong", {}, project.status)), node("div", { class: "stat" }, node("span", {}, "Recipe"), node("strong", {}, label(object(project.recipe).name, "Zelavis App")))));
   if (project.error) overview.append(message(project.error, true));
   if (project.deletion) overview.append(message("Project cleanup is pending. Start and restart are disabled.", true), json(project.deletion));
+  if (!context.section && !project.deletion) {
+    if (object(project.recipe).name === "@zelavis/app") {
+      const versions = object(yield* request(`${context.config.api.basePath}/runtime/projects/${encodeURIComponent(project.id)}/versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))));
+      const choices = array(versions.versions).map(object);
+      if (versions.selectable === true) {
+        const select = node("select", { name: "version", required: "", "aria-label": "Zelavis version" }, ...choices.map(entry => node("option", { value: label(entry.version, ""), ...(entry.status !== "available" ? { disabled: "" } : {}), ...(entry.version === (context.url.searchParams.get("engineVersion") ?? versions.current) ? { selected: "" } : {}) }, `${label(entry.version)}${entry.status !== "available" ? ` · ${label(entry.error, "unavailable")}` : ""}`)));
+        select.addEventListener("change", () => context.setSearch({ engineVersion: select.value }));
+        overview.append(node("details", {}, node("summary", {}, "Manage version"), form(context, [select], "Switch Zelavis version", data => mutation(context, `/runtime/projects/${encodeURIComponent(project.id)}/version`, { version: value(data, "version") }))));
+      } else overview.append(message(label(versions.reason, "Version selection is unavailable on this runtime.")));
+    }
+    const status = object(project.recipeStatus);
+    if (status.state === "upgradeAvailable") {
+      const capabilities = object(project.capabilities);
+      const managed = capabilities.recipeUpdateMode === "integration";
+      const allowed = ["stopped", "failed"].includes(project.status) || capabilities.zeroDowntimeUpdates === true;
+      overview.append(message(managed ? "Update the Zelavis integration recipe. This app manages its own software updates." : "Upgrade the locked Project recipe; Project data is retained."), button(managed ? "Update recipe" : "Upgrade recipe", () => { if (window.confirm("Apply the available recipe update?")) context.run(mutation(context, `/runtime/projects/${encodeURIComponent(project.id)}/upgrade`, {})); }, allowed ? {} : { disabled: "" }));
+      if (!allowed) overview.append(message("Stop this Project before upgrading its recipe."));
+    }
+  }
+  if (object(project.recipeStatus).state === "unavailable") overview.append(message(label(object(project.recipeStatus).reason, "The locked recipe is unavailable. Select an installed replacement recipe in the React dashboard."), true));
   if (!context.section && object(project.recipe).managed) {
-    overview.append(message("This managed application uses hosting controls. Its own administration and advanced hosting controls are available in the React dashboard while they are ported."));
+    const preview = object(project.preview);
+    if (project.status === "running" && preview.status === "ready" && Number.isSafeInteger(preview.port) && Number(preview.port) > 0 && Number(preview.port) <= 65535) {
+      const site = new URL(context.url); site.protocol = "http:"; site.port = String(preview.port); site.pathname = "/"; site.search = ""; site.hash = "";
+      overview.append(node("a", { href: site.href, target: "_blank", rel: "noopener noreferrer" }, "Open site"));
+      const managed = object(object(project.recipe).managed);
+      if (typeof managed.adminPath === "string" && managed.adminPath.startsWith("/") && !managed.adminPath.startsWith("//")) {
+        const admin = new URL(managed.adminPath, site);
+        if (admin.origin === site.origin) overview.append(node("a", { href: admin.href, target: "_blank", rel: "noopener noreferrer" }, label(managed.adminTitle, "Open administration")));
+      }
+    } else overview.append(message(label(preview.error, "The site preview is currently unavailable.")));
+    overview.append(message("Advanced hosting controls are available in the React dashboard while they are ported."));
     return overview;
   }
   if (!context.section) {
@@ -125,6 +174,8 @@ export const projectScreen = Effect.fn("new-ui.projectScreen")(function*(context
   context.projectNavigation(project, scoped);
   const capabilities = object(scoped.capabilities);
   const api = scoped.api.basePath;
+  const servicePage = yield* servicePageScreen(scoped, context.path, project.id);
+  if (servicePage) return servicePage;
   const section = context.section.split("/")[0];
   if (["database", "content"].includes(section)) {
     if (object(capabilities.database).available !== true) return empty("Database unavailable", "This project does not expose a Zelavis database.");
@@ -138,7 +189,9 @@ export const projectScreen = Effect.fn("new-ui.projectScreen")(function*(context
     const selector = node("form", { class: "filters" }, field("tenantId", "Tenant ID", "text", tenant), field("collection", "Collection / table", "text", collection), node("button", { type: "submit" }, "Open records"));
     selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); context.setSearch({ databaseTenant: value(data, "tenantId"), databaseTable: value(data, "collection"), databaseSystemView: undefined, databaseOffset: undefined, databaseRow: undefined }); });
     panel.append(selector);
-    if (section === "database") {
+    if (section === "backups") return empty("Backup policies", "No automatic backup provider is configured yet. Scheduled backups and restore drills remain planned capabilities.");
+  if (section === "logs") return empty("Log streams", "No persistent server log sink is configured yet. Global runtime log streams remain a planned capability.");
+  if (section === "database") {
       const choices = node("div", { class: "workspace-links" });
       for (const item of items) {
         const entry = object(item);
@@ -185,9 +238,27 @@ export const projectScreen = Effect.fn("new-ui.projectScreen")(function*(context
     return panel;
   }
   if (section === "auth") return readPanel("Users", yield* request(`${api}/auth/accounts`), undefined, ["id", "displayName", "email", "username", "verified"]);
-  if (section === "storage") return readPanel("Files", yield* request(`${api}/storage/files?prefix=${encodeURIComponent(context.url.searchParams.get("prefix") ?? "")}`), "files", ["path", "size", "contentType", "updatedAt"]);
+  if (section === "storage") {
+    const files = yield* request(`${api}/storage/files?prefix=${encodeURIComponent(context.url.searchParams.get("prefix") ?? "")}`);
+    const panel = readPanel("Files", files, "files", ["path", "size", "contentType", "updatedAt"]);
+    const prefix = field("prefix", "Folder prefix", "text", context.url.searchParams.get("prefix") ?? "", false);
+    const filter = node("form", { class: "filters" }, prefix, node("button", { type: "submit" }, "Open folder"));
+    filter.addEventListener("submit", event => { event.preventDefault(); context.setSearch({ prefix: value(new FormData(filter), "prefix") || undefined }); });
+    const progress = node("p", { "aria-live": "polite" });
+    panel.append(filter, form(context, [field("path", "File path"), field("file", "File (up to 32 MB)", "file")], "Upload file", data => {
+      const file = data.get("file");
+      return file instanceof File ? uploadFile(api, value(data, "path"), file, percent => { progress.textContent = `Uploading ${percent}%`; }) : Effect.fail(new ApiError({ message: "Choose a file." }));
+    }), progress);
+    for (const raw of rows(files, "files")) {
+      const file = object(raw); const path = label(file.path, "");
+      if (!path) continue;
+      const encoded = storagePath(path);
+      panel.append(node("div", { class: "actions" }, node("a", { href: `${api}/storage/files/${encoded}`, download: path.split("/").at(-1)! }, `Download ${path}`), button(`Delete ${path}`, () => { if (window.confirm(`Delete file ${path}?`)) context.run(request(`${api}/storage/files/${encoded}`, "DELETE")); }, { class: "danger" })));
+    }
+    return panel;
+  }
   if (section === "workloads") return readPanel("Workloads", yield* request(`${api}/workloads?projectId=${encodeURIComponent(project.id)}`), "workloads", ["id", "name", "type", "enabled"]);
-  if (section === "marketplace") return readPanel("Project services", yield* request(`${api}/runtime/services`), "services", ["name", "version", "kind", "status"]);
+  if (section === "marketplace") return yield* serviceMarketplace(context, api, true);
   return empty("Page being ported", "This project section has not been implemented in Fuzor yet. Use the React dashboard for its full controls.");
 });
 
@@ -214,32 +285,110 @@ export const serverScreen = Effect.fn("new-ui.serverScreen")(function*(context: 
     }
     return panel;
   }
+  const servicePage = yield* servicePageScreen(context.config, context.path);
+  if (servicePage) return servicePage;
   return empty("Page being ported", "This server surface is available in the React dashboard. The Fuzor port currently covers nodes, ingress, backends, and read-only System Store inspection.");
 });
 
 export const settingsScreen = Effect.fn("new-ui.settingsScreen")(function*(context: ScreenContext) {
+  if (context.path === "/settings/appearance") {
+    const select = node("select", { "aria-label": "Dashboard color scheme" }, node("option", { value: "system" }, "System"), node("option", { value: "light" }, "Light"), node("option", { value: "dark" }, "Dark"));
+    select.value = document.documentElement.dataset.dashboardTheme ?? "system";
+    select.addEventListener("change", () => { document.documentElement.dataset.dashboardTheme = select.value; });
+    return node("section", { class: "panel narrow" }, heading("Appearance"), node("p", {}, "Choose a color scheme for this dashboard session."), node("label", {}, node("span", {}, "Color scheme"), select));
+  }
   const panel = node("section", { class: "panel narrow" }, heading("Settings"), node("p", {}, "Experimental dashboard · Fuzor"));
   if (context.url.searchParams.get("onboarding") === "hostname") panel.append(message("Your owner account is active. Configure a Platform hostname now, or continue and configure it later."));
   panel.append(form(context, [field("hostname", "Platform hostname", "text", "", false), node("label", {}, node("span", {}, "HTTPS configuration"), node("select", { name: "mode" }, node("option", { value: "managed" }, "Verify DNS & enable HTTPS"), node("option", { value: "external" }, "Externally terminated TLS"), node("option", { value: "later" }, "Configure later")))], "Save hostname configuration", data => mutation(context, "/runtime/edge/onboard", { mode: value(data, "mode"), ...(value(data, "hostname") ? { hostname: value(data, "hostname") } : {}) }), result => panel.append(json(result))));
+  panel.append(yield* providerControls(context));
   return panel;
 });
 
 export const assistantScreen = Effect.fn("new-ui.assistantScreen")(function*(context: ScreenContext) {
-  return readPanel("Assistant threads", yield* request(`${context.config.api.basePath}/runtime/assistant/threads`), "threads", ["id", "title", "updatedAt"]);
+  const api = context.config.api.basePath;
+  const projectId = context.url.searchParams.get("project") ?? undefined;
+  const data = yield* request(`${api}/runtime/assistant/threads${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`);
+  const panel = node("section", { class: "panel" }, heading("Assistant"));
+  for (const raw of rows(data, "threads")) { const thread = object(raw); const search = new URLSearchParams({ thread: label(thread.id, ""), ...(projectId ? { project: projectId } : {}) }); panel.append(link(label(thread.title, "Conversation"), `/assistant?${search}`)); }
+  panel.append(form(context, [field("title", "Conversation title", "text", "", false)], "New conversation", data => request(`${api}/runtime/assistant/threads`, "POST", { title: value(data, "title"), ...(projectId ? { projectId } : {}) }), result => { const id = object(object(result).thread).id; if (typeof id === "string") context.setSearch({ thread: id }); }));
+  const threadId = context.url.searchParams.get("thread");
+  if (!threadId) { if (projectId) panel.append(yield* providerControls(context, projectId)); return panel; }
+  const result = object(yield* request(`${api}/runtime/assistant/threads/${encodeURIComponent(threadId)}`));
+  const thread = object(result.thread);
+  const conversation = node("div", { role: "log", "aria-label": "Conversation" });
+  for (const raw of array(thread.messages)) { const message = object(raw); conversation.append(node("article", {}, node("strong", {}, label(message.role)), node("pre", { class: "assistant-message" }, label(message.content, "")))); }
+  panel.append(conversation);
+  for (const raw of array(result.approvals ?? thread.approvals)) {
+    const approval = object(raw); const target = object(approval.target);
+    const card = node("section", { class: "panel", "aria-label": "Approval request" }, node("h3", {}, label(approval.label)), node("p", {}, `Status: ${label(approval.status)}`));
+    if (approval.status === "pending") {
+      const confirm = node("input", { "aria-label": `Type ${label(target.id)} to confirm`, autocomplete: "off" });
+      const decide = (decision: "approve" | "deny") => context.run(request(`${api}/runtime/assistant/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(label(approval.id, ""))}`, "POST", { decision, ...(decision === "approve" && approval.irreversible ? { confirm: confirm.value } : {}) }));
+      const approve = button("Approve", () => decide("approve"), approval.irreversible ? { disabled: "", class: "danger" } : {});
+      if (approval.irreversible) { card.append(node("label", {}, `Type ${label(target.id)} to approve this irreversible action`, confirm)); confirm.addEventListener("input", () => { approve.disabled = confirm.value !== target.id; }); }
+      card.append(button("Deny", () => decide("deny")), approve);
+    }
+    if (approval.outcome) card.append(node("p", {}, label(approval.outcome)));
+    panel.append(card);
+  }
+  panel.append(form(context, [node("label", {}, "Message", node("textarea", { name: "content", rows: "4", required: "", maxlength: "65536" }))], "Send message", data => request(`${api}/runtime/assistant/threads/${encodeURIComponent(threadId)}/messages`, "POST", { content: value(data, "content") })));
+  return panel;
+});
+const serviceMarketplace = Effect.fn("new-ui.serviceMarketplace")(function*(context: ScreenContext, api: string, project = false) {
+  const services = rows(yield* request(`${api}/runtime/services`), "services");
+  const panel = node("section", { class: "panel" }, heading(project ? "Project marketplace" : "Apps, starters & services"));
+  for (const raw of services) {
+    const service = object(raw);
+    if (project && service.kind === "app") continue;
+    const name = label(service.name, ""); if (!name) continue;
+    const card = node("section", { class: "panel" }, node("h2", {}, label(object(service.marketplace).title, name)), node("p", {}, `${label(service.version)} · ${label(service.kind)} · ${label(service.status)}`));
+    if (service.status === "available") card.append(button(`Install ${name}`, () => {
+      const version = label(service.version, "");
+      const effect = service.installVia === "acquire" ? /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
+        ? request(`${api}/runtime/services`, "POST", { specifier: `npm:${name}@${version}` })
+        : Effect.fail(new ApiError({ message: "An exact listed version is required." }))
+        : request(`${api}/runtime/services/${encodeURIComponent(name)}`, "PATCH", { status: "installed" });
+      context.run(effect, result => { if (object(object(result).activation).restartRecommended) panel.append(message("Service activated. A runtime restart is recommended.")); else context.refresh(); });
+    }));
+    if (!project && service.kind === "app" && service.status === "installed") card.append(link("Create project", `/projects/create?recipe=${encodeURIComponent(name)}`));
+    if (service.status === "installed" && service.scope !== "system") card.append(button(`Uninstall ${name}`, () => { if (window.confirm(`Uninstall ${name}?`)) context.run(request(`${api}/runtime/services/${encodeURIComponent(name)}`, "PATCH", { status: "available" })); }, { class: "danger" }));
+    panel.append(card);
+  }
+  return panel;
 });
 export const marketplaceScreen = Effect.fn("new-ui.marketplaceScreen")(function*(context: ScreenContext) {
-  return readPanel("Apps, starters & services", yield* request(`${context.config.api.basePath}/runtime/services`), "services", ["name", "version", "kind", "status"]);
+  return yield* serviceMarketplace(context, context.config.api.basePath);
 });
 
-export function loadScreen(context: ScreenContext): Effect.Effect<HTMLElement, ApiError> {
-  if (context.path === "/setup") return authScreen(context, true);
-  if (context.path === "/login") return authScreen(context, false);
-  if (context.path === "/" || context.path === "/projects") return projectsScreen(context);
-  if (context.path === "/projects/create") return createProjectScreen(context);
-  if (context.projectId) return projectScreen(context);
-  if (context.path.startsWith("/server")) return serverScreen(context);
-  if (context.path === "/marketplace") return marketplaceScreen(context);
-  if (context.path.startsWith("/settings")) return settingsScreen(context);
-  if (context.path === "/assistant") return assistantScreen(context);
-  return Effect.succeed(empty("Page not found", "Choose a section from the sidebar to continue."));
-}
+const providerControls = Effect.fn("new-ui.providerControls")(function*(context: ScreenContext, projectId?: string) {
+  const path = `${context.config.api.basePath}/runtime/assistant/${projectId ? `projects/${encodeURIComponent(projectId)}/` : ""}provider`;
+  const status = object(yield* request(path));
+  const provider = node("select", { name: "provider", required: "" }, ...["openrouter", "openai", "anthropic"].map(name => node("option", { value: name, ...(status.provider === name ? { selected: "" } : {}) }, name)));
+  const panel = node("section", { class: "panel" }, node("h2", {}, projectId ? "Project assistant provider" : "Platform assistant provider"), node("p", {}, `Source: ${label(status.source)} · Model: ${label(status.model)} · API key: ${status.hasApiKey ? "configured" : "not configured"}`));
+  panel.append(form(context, [node("label", {}, "Provider", provider), field("model", "Model", "text", label(status.model, "")), field("apiKey", "API key", "password")], "Save provider", data => request(path, "PUT", { provider: value(data, "provider"), model: value(data, "model"), apiKey: value(data, "apiKey") })), button(projectId ? "Inherit Platform provider" : "Clear stored provider", () => { if (window.confirm("Clear this stored provider configuration?")) context.run(request(path, "DELETE")); }));
+  return panel;
+});
+
+export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: ScreenContext) {
+  if (hasWorkspaceRoute(context.path) && (!/^\/projects\/[^/]+\/database\/?$/.test(context.path) || context.url.searchParams.get("workspaceMode") === "full")) {
+    if (context.path !== "/login" && context.path !== "/setup" && context.path !== "/logout") {
+      const list = yield* projects(context.config);
+      context.projectsNavigation(list);
+      const project = list.find(entry => entry.id === context.projectId);
+      if (project) context.projectNavigation(project, project.status === "running" ? yield* projectConfig(context.config, project.id) : undefined);
+    }
+    return workspaceFrame(context.url);
+  }
+  if (context.path === "/setup") return yield* authScreen(context, true);
+  if (context.path === "/login") return yield* authScreen(context, false);
+  if (context.path === "/" || context.path === "/projects") return yield* projectsScreen(context);
+  if (context.path === "/projects/create") return yield* createProjectScreen(context);
+  if (context.projectId) return yield* projectScreen(context);
+  const servicePage = yield* servicePageScreen(context.config, context.path);
+  if (servicePage) return servicePage;
+  if (context.path.startsWith("/server")) return yield* serverScreen(context);
+  if (context.path === "/marketplace") return yield* marketplaceScreen(context);
+  if (context.path.startsWith("/settings")) return yield* settingsScreen(context);
+  if (context.path === "/assistant") return yield* assistantScreen(context);
+  return empty("Page not found", "Choose a section from the sidebar to continue.");
+});

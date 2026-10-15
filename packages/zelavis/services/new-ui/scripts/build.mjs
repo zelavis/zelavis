@@ -3,6 +3,8 @@ gridNotices();
 import "./link-local.mjs";
 import { spawnSync } from "node:child_process";
 import { packageRoot } from "./link-local.mjs";
+const audit = spawnSync(process.execPath, ["scripts/audit-routes.mjs", "--check"], { cwd: packageRoot, stdio: "inherit" });
+if (audit.status !== 0) process.exit(audit.status ?? 1);
 const result = spawnSync(process.execPath, ["node_modules/fuzor/dist/cli.js", "build", "--target", "spa"], { cwd: packageRoot, stdio: "inherit" });
 process.exitCode = result.status ?? 1;
 

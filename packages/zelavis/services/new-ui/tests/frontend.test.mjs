@@ -13,7 +13,7 @@ test("registers through the SDK as an opt-in trusted frontend", async () => {
 });
 test("serves built assets and refuses traversal, missing files and foreign mounts", async () => {
   const frontend = await newUiFrontend(context);
-  const files = await readdir(new URL("../dist-spa-server/client/assets/", import.meta.url));
+  const files = await readdir(new URL("../.fuzor/dist-spa-server/client/assets/", import.meta.url));
   const name = files.find(name => name.endsWith(".js"));
   const asset = await frontend.bundleStore.read({}, `assets/${name}`);
   assert.match(asset.contentType, /javascript/);

@@ -1,3 +1,4 @@
+import { createSidebarUtilities } from "./sidebar-utilities.ts";
 import { register } from "swiper/element/bundle";
 import type { SwiperContainer } from "swiper/element";
 import type { FuzorRouter } from "fuzor/runtime";
@@ -5,9 +6,9 @@ import { type Config, type Project } from "./api.ts";
 import { button, link, node } from "./dom.ts";
 import type { DashboardHandle } from "./routes.ts";
 
-import { panelsFor, resolveTrail, type Panel } from "./navigation-model.ts";
+import { panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 
-export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: HTMLElement, main: HTMLElement, router: FuzorRouter) {
+export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: HTMLElement, main: HTMLElement, router: FuzorRouter, options: { onSignOut: () => void; config: () => Config | undefined }) {
   register();
   const media = matchMedia("(max-width: 1023px)");
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -16,7 +17,9 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   const mobileSlide = document.createElement("swiper-slide"); mobileSlide.className = "mobile-workspace";
   const mobileTitle = node("span");
   mobileSlide.append(node("div", { class: "panel-heading" }, button("← Menu", () => showMenu(), { "aria-label": "Back to navigation" }), mobileTitle));
-  sidebar.append(link("◈ Zelavis", "/", { class: "brand" }), node("div", { class: "sidebar-label" }, "THE APP PLATFORM"), swiper, node("div", { class: "sidebar-footer" }, node("span", { class: "runtime-dot" }), "Local Platform", node("small", {}, "Built with Fuzor · pre-alpha")));
+  const utilities = createSidebarUtilities(router, options.onSignOut);
+  sidebar.append(link("◈ Zelavis", "/", { class: "brand" }), node("div", { class: "sidebar-label" }, "THE APP PLATFORM"), swiper, utilities.view, utilities.footer);
+  let workspaceNavigation: { projectId?: string; items: unknown } | undefined;
   let auth = false;
   let projectList: readonly Project[] = [];
   let trail: Panel[] = [];
@@ -33,16 +36,21 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   };
   function showMenu() {
     const url = new URL(router.url()); url.searchParams.set("sidebarView", "menu");
+    url.searchParams.delete("sidebarUtility"); url.searchParams.delete("sidebarUtilityPanel");
     void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(console.error);
   }
   function sync(path: string, projectId?: string, project?: Project, runtime?: Config, menu?: unknown) {
     snapshot = { path, projectId, project, runtime, menu };
-    const panels = panelsFor(projectId, project, runtime, menu, projectList);
+    const utilityVisible = utilities.sync(projectList, projectId, options.config());
+    swiper.hidden = utilityVisible;
+    host.classList.toggle("utility-open", utilityVisible);
+    const basePanels = panelsFor(projectId, project, runtime, menu, projectList);
+    const panels = workspaceNavigation && workspaceNavigation.projectId === projectId ? workspacePanels(basePanels, workspaceNavigation.items, projectId) : basePanels;
     const matches = router.matches();
     const handle = matches.at(-1)?.handle as DashboardHandle | undefined;
     const url = new URL(router.url());
     // While the exact Project is loading, retain its route-declared panels; capability filtering follows the response.
-    let next = resolveTrail(panels, handle?.sidebarTrail ?? [], url.searchParams.get("sidebar"));
+    let next = resolveTrail(panels, trailForLocation(panels, url).length ? trailForLocation(panels, url) : handle?.sidebarTrail ?? [], url.searchParams.get("sidebar"));
     if (!project && projectId && handle?.sidebarTrail?.length && url.searchParams.get("sidebar") === null) next = resolveTrail(panels, handle.sidebarTrail.slice(0, 2), null);
     const previousDepth = trail.length;
     trail = next;
@@ -74,7 +82,10 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     if (previousDepth > trail.length && initialized) timer = setTimeout(() => { synchronizing = true; trim(); if (media.matches && new URL(router.url()).searchParams.get("sidebarView") !== "menu") swiper.swiper.slideTo(trail.length, 0); synchronizing = false; }, reduced.matches ? 0 : 310); else trim();
     if (media.matches) { if (mobileSlide.parentNode !== swiper) swiper.append(mobileSlide); if (content.parentNode !== mobileSlide) mobileSlide.append(content); } else { mobileSlide.remove(); if (content.parentNode !== main) main.append(content); }
     if (!initialized) {
-      Object.assign(swiper, { slidesPerView: 1, speed: reduced.matches ? 0 : 300, allowTouchMove: media.matches, injectStyles: [":host{height:100%;min-height:0}.swiper{height:100%}.swiper-wrapper{height:100%}"] });
+      // Mouse/trackpad clicks can drift between press and release. Swiper's
+      // simulated drag otherwise cancels them even with allowTouchMove=false.
+      // Real touch gestures still control the mobile panels.
+      Object.assign(swiper, { slidesPerView: 1, speed: reduced.matches ? 0 : 300, simulateTouch: false, allowTouchMove: media.matches, injectStyles: [":host{height:100%;min-height:0}.swiper{height:100%}.swiper-wrapper{height:100%}"] });
       swiper.initialize(); initialized = true;
     }
     swiper.swiper.allowTouchMove = media.matches;
@@ -97,5 +108,5 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   swiper.addEventListener("swiperslidechange", changed);
   const resized = () => { if (auth && content.parentNode !== main) main.append(content); else sync(snapshot.path, snapshot.projectId, snapshot.project, snapshot.runtime, snapshot.menu); };
   media.addEventListener("change", resized); reduced.addEventListener("change", resized);
-  return { sync, showMenu, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth && content.parentNode !== main) main.append(content); }, dispose() { if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
+  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { workspaceNavigation = { items, projectId }; resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth && content.parentNode !== main) main.append(content); }, dispose() { utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
 }

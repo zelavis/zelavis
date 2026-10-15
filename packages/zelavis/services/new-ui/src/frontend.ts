@@ -6,13 +6,13 @@ import { loadPluginPackage } from "zelavis/service";
 import type { ZelavisPlatformFrontendContext, ZelavisPlatformFrontend } from "zelavis";
 import manifest from "../package.json" with { type: "json" };
 class AssetReadError extends Data.TaggedError("AssetReadError")<{ message: string; cause: unknown }> {}
-const root = fileURLToPath(new URL("../dist-spa-server/client/", import.meta.url));
+const root = fileURLToPath(new URL("../.fuzor/dist-spa-server/client/", import.meta.url));
 const types: Record<string, string> = { ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2" };
 export const newUiFrontend = (context: ZelavisPlatformFrontendContext): Promise<ZelavisPlatformFrontend> => Effect.runPromise(Effect.gen(function*() {
   const service = yield* Effect.tryPromise({ try: () => loadPluginPackage({ manifest, scope: "system", configuration: context, importer: () => import("./new-ui-service.ts") }), catch: cause => new AssetReadError({ message: cause instanceof Error ? cause.message : "Could not load the Fuzor frontend.", cause }) });
   return {
     service,
-    clientRoutes: ["/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login"],
+    clientRoutes: ["/*", "/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login"],
     bundleStore: {
       read(_scope, path) {
         const relative = path.replace(/^\/+/, "");

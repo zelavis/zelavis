@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { chromium } from "@playwright/test";
 import { createNodeServer, closeNodeServer } from "fuzor/server/node";
+import { serverNavigationMenu } from "../app/workspace-route-manifest.ts";
 import { packageRoot } from "./link-local.mjs";
 import { resolve } from "node:path";
 
@@ -10,19 +11,56 @@ let revision = 1, saved = 0, denySave = false;
 const documents = [{ id: "row-a", version: 1, data: { title: "Server A", count: 1, "literal.key": true, ["__proto__"]: { independent: true }, constructor: "database field" } }, { id: "row-b", version: 1, data: { title: "Server B", count: 2 } }];
 const project = { id: "view-lab", name: "View laboratory", recipe: { name: "@zelavis/app" }, runtime: { status: "running" } };
 const api = "/zelavis/api/v1", proxy = `${api}/runtime/projects/view-lab/proxy${api}`;
-const config = { rootPath: "/zelavis", api: { basePath: api }, capabilities: { database: { available: true, used: true } } };
+const fixtureService = { name: "@fixture/page", scope: "extension", status: "installed", apiPath: `${api}/plugins/fixture`, menus: [{ title: "Fixture page", path: "/fixture/page", page: { src: `${api}/runtime/service-page-assets/%40fixture%2Fpage/dist/dashboard.html` } }] };
+let schemas = [{ collection: "articles", version: 1, active: true, fields: [{ name: "title", field: { _tag: "TextField", label: "Article title", required: true } }, { name: "count", field: { _tag: "IntegerField", label: "Article count", required: false } }] }];
+const config = { access: { mode: "owner", label: "Owner", principal: { id: "owner", type: "user", permissions: ["*"], roles: ["owner"] } }, services: [{ name: "@zelavis/new-ui", scope: "system", apiPath: api + "/plugins/newui", menus: [serverNavigationMenu] }], serviceRegistry: [fixtureService], rootPath: "/zelavis", api: { basePath: api }, capabilities: { database: { available: true, used: true } } };
 const observed = [];
+const installs = new Set(); let approvalDecisions = 0, uploaded = false, signedOut = false;
+const thread = { id: "thread-1", title: "Qualification", messages: [{ id: "reply-1", role: "assistant", content: "![untrusted image](https://example.test/image.png)" }] };
+const approval = { id: "approval-1", label: "Delete Project", target: { kind: "project", id: "view-lab" }, irreversible: true, status: "pending" };
+
 const upstream = createServer(async (req, res) => {
   const path = new URL(req.url, "http://fixture").pathname;
   const send = (value, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
   if (path === `${api}/runtime/config` || path === `${proxy}/runtime/config`) return send(config);
-  if (path === `${api}/auth/bootstrap`) return send({ required: false, providers: ["password"], enrollmentProviders: [] });
+  if (path === `${api}/auth/bootstrap`) return send({ available: true, required: false, providers: ["password"], enrollmentProviders: [] });
   if (!req.headers.cookie?.includes("view-session=owner")) return send({ error: "Unauthorized" }, 401);
   observed.push({ path, cookie: req.headers.cookie });
-  if (path === `${api}/runtime/access`) return send({ user: { id: "owner" } });
+  if (path === `${api}/auth/session` && req.method === "DELETE") { signedOut = true; return send({ ok: true }); }
+  if (path.endsWith("/runtime/service-page-assets/%40fixture%2Fpage/dist/dashboard.html")) { res.writeHead(200, { "content-type": "text/html" }); return res.end('<!doctype html><title>Fixture page</title><p>Sandboxed plugin page</p>'); }
+  if (path === `${api}/plugins/fixture/ping` || path === `${proxy}/plugins/fixture/ping`) return send({ target: path });
+  if (path === `${api}/runtime/access`) return send(config.access);
+  if (path.endsWith("/runtime/settings")) return send({ rootPath: "/zelavis", apiBasePath: api, runtimeEngine: { current: "node", desired: "node", available: ["node"], restartRequired: false }, theme: "auto", pageBuilderEnabled: false, preferences: {}, persistence: "runtime", editable: { rootPath: true, runtimeEngine: true, theme: true, pageBuilder: true }, restartRequired: false });
+  if (path === `${api}/runtime/system-store/namespaces`) return send({ namespaces: [] });
   if (path === `${api}/runtime/projects`) return send({ projects: [project] });
+  if (path === `${proxy}/database/documents/collections`) return send({ collections: [{ name: "articles", tenantId: "tenant-a", surface: "database", documentCount: 2 }] });
+  if (path === `${proxy}/database/schemas`) return send({ collections: [] });
   if (path === `${proxy}/database/menu/tables`) return send({ items: [{ title: "Articles", search: { databaseTenant: "tenant-a", databaseTable: "articles" } }] });
-  let text = ""; for await (const chunk of req) text += chunk; const body = text ? JSON.parse(text) : {};
+  let text = ""; for await (const chunk of req) text += chunk; const body = text && req.headers["content-type"]?.includes("application/json") ? JSON.parse(text) : {};
+  if (path === `${api}/runtime/assistant/threads`) return send({ threads: [thread] });
+  if (path === `${api}/runtime/assistant/threads/thread-1`) return send({ thread, approvals: [approval] });
+  if (path === `${api}/runtime/assistant/threads/thread-1/approvals/approval-1`) {
+    assert.equal(body.confirm, "view-lab"); assert.equal(body.decision, "approve"); approvalDecisions++; approval.status = "executed"; return send({ approval });
+  }
+  if (path === `${api}/runtime/assistant/threads/thread-1/messages`) { thread.messages.push({ id: "reply-2", role: "assistant", content: `Received: ${body.content}` }); return send({ thread }); }
+  if (path === `${api}/runtime/assistant/provider`) return send({ source: "stored", model: "test-model", provider: "openai", hasApiKey: true });
+  if (path === `${api}/runtime/edge/onboard`) return send({ status: "configured" });
+  if (path === `${api}/runtime/services` || path === `${proxy}/runtime/services`) {
+    if (req.method === "POST") { assert.equal(body.specifier, "npm:@fixture/plugin@1.2.3"); installs.add(path); }
+    return send({ services: [fixtureService, { name: "@fixture/plugin", version: "1.2.3", kind: "plugin", scope: "extension", status: installs.has(path) ? "installed" : "available", installVia: "acquire" }] });
+  }
+  if (path === `${proxy}/storage/files`) return send({ files: uploaded ? [{ path: "assets/test.txt", size: 4, contentType: "text/plain" }] : [] });
+  if (path === `${proxy}/storage/files/assets/test.txt` && req.method === "PUT") { assert.equal(text, "test"); uploaded = true; return send({ file: { path: "assets/test.txt" } }); }
+  if (path === `${proxy}/database/schemas/articles`) {
+    if (req.method === "POST") {
+      assert.equal(body.tenantId, "tenant-a");
+      if (schemas.some(schema => schema.version === body.version)) return send({ error: "Schema version already exists" }, 409);
+      if (body.activate) schemas = schemas.map(schema => ({ ...schema, active: false }));
+      const schema = { collection: "articles", version: body.version, active: body.activate, fields: body.fields }; schemas.push(schema); return send(schema);
+    }
+    return send({ collection: "articles", schemas });
+  }
+  if (path === `${proxy}/database/schemas/articles/activate`) { assert.equal(body.tenantId, "tenant-a"); schemas = schemas.map(schema => ({ ...schema, active: schema.version === body.version })); return send(schemas.find(schema => schema.active)); }
   if (body.tenantId && body.tenantId !== "tenant-a") return send({ error: "Forbidden tenant" }, 403);
   if (path === `${proxy}/database/documents/articles/query`) return send({ documents: documents.map(row => ({ ...row, data: { ...row.data, revision } })) });
   if (path === `${proxy}/database/documents/articles/row-a` && req.method === "PATCH") {
@@ -37,8 +75,8 @@ try {
   await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
   const upstreamOrigin = `http://127.0.0.1:${upstream.address().port}`;
   process.env.ZELAVIS_DEV_SERVER = upstreamOrigin;
-  const { handler } = await import(new URL("../dist-spa-server/server/entry.mjs", import.meta.url));
-  app = createNodeServer({ assetsDir: resolve(packageRoot, "dist-spa-server/client"), base: "/zelavis/", handler: async request => {
+  const { handler } = await import(new URL("../.fuzor/dist-spa-server/server/entry.mjs", import.meta.url));
+  app = createNodeServer({ assetsDir: resolve(packageRoot, ".fuzor/dist-spa-server/client"), base: "/zelavis/", handler: async request => {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/zelavis/api/")) {
       const headers = new Headers(request.headers); headers.set("origin", upstreamOrigin);
@@ -49,11 +87,49 @@ try {
   await new Promise(resolve => app.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${app.address().port}`;
   browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, hasTouch: true });
   await context.addCookies([{ name: "view-session", value: "owner", url: origin }]);
   const page = await context.newPage(), errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const route = `${origin}/zelavis/projects/view-lab/database?databaseTenant=tenant-a&databaseTable=articles&databaseRow=row-a&sidebar=projects/project/database`;
+  // A trackpad click often moves slightly between pointerdown and pointerup.
+  // Swiper must not consume mouse clicks, even while touch swiping is disabled.
+  const pointerClick = async (locator, drift) => {
+    await locator.click({ trial: true, timeout: 5000 }).catch(async error => { console.error("Sidebar state:", page.url(), await page.locator("body").innerText(), "Workspace:", await page.frameLocator("iframe[data-feature-workspace]").locator("body").innerText().catch(() => "none"), "Observed:", observed); throw error; });
+    const box = await locator.boundingBox(); assert.ok(box);
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + drift, y);
+    await page.mouse.up();
+  };
+  await page.goto(`${origin}/zelavis/?sidebar=`, { waitUntil: "networkidle" });
+  await pointerClick(page.getByRole("link", { name: "Server", exact: true }), 1);
+  await page.waitForURL(/\/zelavis\/server\?sidebar=server/, { timeout: 2000 });
+  await pointerClick(page.getByRole("button", { name: "Back to Platform", exact: true }), 1);
+  await page.waitForURL(/\/zelavis\/\?sidebar=$/, { timeout: 2000 });
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.waitForURL(/sidebarView=menu/);
+  await pointerClick(page.getByRole("link", { name: "Server", exact: true }), 1);
+  await page.waitForURL(/\/zelavis\/server\?sidebar=server&sidebarView=menu/, { timeout: 2000 });
+  await page.getByRole("button", { name: "Back to Platform", exact: true }).press("Enter");
+  await page.waitForURL(/\/zelavis\/\?sidebar=&sidebarView=menu/, { timeout: 2000 });
+  const touch = await context.newCDPSession(page);
+  const swipe = async (startX, endX) => {
+    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: startX, y: 650 }] });
+    for (let step = 1; step <= 8; step++) await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: startX + (endX - startX) * step / 8, y: 650 }] });
+    await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  };
+  await page.getByRole("link", { name: "Server", exact: true }).click({ trial: true });
+  await swipe(700, 100);
+  await page.waitForURL(/sidebarView=content/, { timeout: 2000 });
+  await page.getByRole("button", { name: "Back to navigation", exact: true }).click({ trial: true });
+  await swipe(100, 700);
+  await page.waitForURL(/sidebarView=menu/, { timeout: 2000 });
+  await touch.detach();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  console.log("Sidebar: desktop/mobile trackpad drift and keyboard Back navigate on the first click; real touch swipes still synchronize the URL");
   const refresh = async () => {
     const before = await page.locator(".server-view-status span").innerText();
     revision++;
@@ -62,16 +138,48 @@ try {
   };
   for (const library of ["tabulator", "vtable", "glide"]) {
     await page.goto(route + `&grid=${library}`, { waitUntil: "networkidle" });
-    await page.getByLabel("Selected record JSON").waitFor();
+    await page.getByLabel("Selected record JSON").waitFor({ timeout: 10000 }).catch(async error => { console.error("Database boot:", errors, observed, (await page.locator("body").innerText()).slice(-2500)); throw error; });
     const json = page.getByLabel("Selected record JSON");
+    await json.fill(JSON.stringify({ title: `Utility draft ${library}` }));
+    const switches = page.getByRole("navigation", { name: "Sidebar view switches" });
+    const footerBoxes = await switches.getByRole("button").evaluateAll(buttons => buttons.map(button => ({ top: button.getBoundingClientRect().top, width: button.getBoundingClientRect().width })));
+    assert.equal(footerBoxes.length, 5);
+    assert.ok(footerBoxes.every(box => Math.abs(box.top - footerBoxes[0].top) < 1 && box.width > 30), "Five usable footer controls share one horizontal row");
+    await page.evaluate(() => { window.utilityInput = document.querySelector('[aria-label="Selected record JSON"]'); });
+    await switches.getByRole("button", { name: "Account", exact: true }).click();
+    await page.getByText("Owner dashboard", { exact: true }).waitFor();
+    if (process.argv.includes("--screenshots") && library === "tabulator") await page.screenshot({ path: "/tmp/new-ui-sidebar-account.png" });
+    await page.getByRole("button", { name: "Settings ›", exact: true }).click();
+    await page.getByRole("link", { name: "Global settings", exact: true }).waitFor();
+    await page.goBack();
+    await page.getByText("Owner dashboard", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Settings ›", exact: true }).click();
+    await page.getByRole("button", { name: "Language ›", exact: true }).click();
+    await page.getByRole("button", { name: "Deutsch (Deutschland)", exact: true }).click();
+    assert.equal(await page.getByRole("button", { name: "Deutsch (Deutschland)", exact: true }).getAttribute("aria-pressed"), "true");
+    await switches.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search Zelavis" }).fill("laboratory");
+    await page.getByRole("link", { name: "View laboratory", exact: true }).waitFor();
+    assert.equal(await page.locator(".sidebar-utilities").getByRole("link").count(), 1);
+    await switches.getByRole("button", { name: "Notifications", exact: true }).click();
+    await page.getByRole("link", { name: "Security checklist", exact: true }).waitFor();
+    await switches.getByRole("button", { name: "Assistant", exact: true }).click();
+    assert.match(await page.getByRole("link", { name: "Open chat", exact: true }).getAttribute("href"), /project=view-lab/);
+    await page.locator(".sidebar-utilities").getByRole("button", { name: "Back to navigation", exact: true }).click();
+    assert.ok(await page.evaluate(() => window.utilityInput === document.querySelector('[aria-label="Selected record JSON"]')), `${library}: utilities retain input identity`);
+    assert.equal(JSON.parse(await json.inputValue()).title, `Utility draft ${library}`);
     const first = JSON.parse(await json.inputValue());
     await json.fill(JSON.stringify({ ...first, title: `Unsaved ${library}` }, null, 2));
-    await page.evaluate(() => { const swiper = document.querySelector("swiper-container"); window.viewIdentity = { input: document.querySelector('[aria-label="Selected record JSON"]'), client: document.querySelector("fuzor-island[data-fuzor-component]"), swiper, index: swiper.swiper.activeIndex, grid: document.querySelector(".database-grid").firstElementChild }; });
+    await page.evaluate(() => { const swiper = document.querySelector("swiper-container"); window.viewIdentity = { input: document.querySelector('[aria-label="Selected record JSON"]'), client: document.querySelector("fuzor-client[data-fuzor-component]"), swiper, index: swiper.swiper.activeIndex, grid: document.querySelector(".database-grid").firstElementChild }; });
     await refresh();
     assert.equal(JSON.parse(await json.inputValue()).title, `Unsaved ${library}`);
-    assert.ok(await page.evaluate(() => { const id = window.viewIdentity; return id.input === document.querySelector('[aria-label="Selected record JSON"]') && id.client === document.querySelector("fuzor-island[data-fuzor-component]") && id.swiper === document.querySelector("swiper-container") && id.index === id.swiper.swiper.activeIndex && id.grid === document.querySelector(".database-grid").firstElementChild; }), `${library}: state and DOM owners retained`);
+    assert.ok(await page.evaluate(() => { const id = window.viewIdentity; return id.input === document.querySelector('[aria-label="Selected record JSON"]') && id.client === document.querySelector("fuzor-client[data-fuzor-component]") && id.swiper === document.querySelector("swiper-container") && id.index === id.swiper.swiper.activeIndex && id.grid === document.querySelector(".database-grid").firstElementChild; }), `${library}: state and DOM owners retained`);
     await page.getByRole("button", { name: "Stage record JSON", exact: true }).click();
     await refresh();
+    assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).isEnabled(), true);
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByLabel("Selected record JSON").waitFor();
+    assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, `Unsaved ${library}`);
     assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).isEnabled(), true);
     denySave = true;
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -83,16 +191,97 @@ try {
     console.log(`${library}: retained grid/inspector/sidebar and draft; failed save retained draft; retry persisted it`);
   }
   assert.equal(saved, 3);
+  await page.evaluate(() => { window.viewIdentity = { swiper: document.querySelector("swiper-container"), client: document.querySelector("fuzor-client[data-fuzor-component]") }; });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("Selected record JSON").fill('{"title":"Mobile draft"}');
-  await page.getByRole("button", { name: "Back to navigation", exact: true }).click();
-  await page.waitForURL(/sidebarView=menu/);
+  const mobileSwitches = page.getByRole("navigation", { name: "Sidebar view switches" });
+  await mobileSwitches.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Settings ›", exact: true }).click();
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("link", { name: "Global settings", exact: true }).waitFor();
+  if (process.argv.includes("--screenshots")) await page.screenshot({ path: "/tmp/new-ui-sidebar-mobile-settings.png" });
+  await page.locator(".sidebar-utilities").getByRole("button", { name: "Back to Account", exact: true }).click();
+  await page.locator(".sidebar-utilities").getByRole("button", { name: "Back to navigation", exact: true }).click();
+  await page.getByLabel("Selected record JSON").waitFor({ state: "visible" });
+  assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Mobile draft");
+  await page.evaluate(() => { window.viewIdentity = { swiper: document.querySelector("swiper-container"), client: document.querySelector("fuzor-client[data-fuzor-component]") }; });
+
+  await mobileSwitches.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get("sidebarView") === "menu" && !url.searchParams.has("sidebarUtility"));
+  await page.goBack();
+  await page.getByRole("button", { name: "Log out", exact: true }).waitFor();
   await page.goBack();
   await page.getByLabel("Selected record JSON").waitFor({ state: "visible" });
   assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Mobile draft");
-  assert.ok(await page.evaluate(() => window.viewIdentity.swiper === document.querySelector("swiper-container") && window.viewIdentity.client === document.querySelector("fuzor-island[data-fuzor-component]")));
+  assert.ok(await page.evaluate(() => window.viewIdentity.swiper === document.querySelector("swiper-container") && window.viewIdentity.client === document.querySelector("fuzor-client[data-fuzor-component]")));
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByLabel("Selected record JSON").waitFor({ state: "visible" });
+  assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Mobile draft");
+  await refresh();
+  assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Mobile draft", "Restored unstaged text survives another server update");
   assert.ok(observed.some(entry => entry.path.includes("/projects/view-lab/proxy/") && entry.cookie.includes("view-session=owner")));
   const foreign = await context.request.get(route.replace("tenant-a", "foreign")); assert.ok((await foreign.text()).includes("Database request failed (403)"));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // Feature workspaces now use their original React route modules. Their real
+  // actions, protected navigation and settings are qualified in test-route-parity.
+  // Keep this fixture focused on native Fuzor grids, sidebar state and SDK grants.
+  for (const [path, target] of [["/fixture/page", `${api}/plugins/fixture/ping`], ["/projects/view-lab/fixture/page", `${proxy}/plugins/fixture/ping`]]) {
+    await page.goto(`${origin}/zelavis${path}`, { waitUntil: "networkidle" });
+    const iframe = page.locator('iframe[title="Fixture page"]'); await iframe.waitFor();
+    assert.equal(await iframe.getAttribute("sandbox"), "allow-scripts allow-forms");
+    const frame = await (await iframe.elementHandle()).contentFrame();
+    assert.ok(await frame.evaluate(() => { try { void parent.document.body; return false; } catch { return true; } }), "Sandboxed page cannot read dashboard DOM");
+    const response = await frame.evaluate(() => new Promise(resolve => { const receive = event => { if (event.data.zelavis === "service-page-response" && event.data.id === "ping") { removeEventListener("message", receive); resolve(event.data); } }; addEventListener("message", receive); parent.postMessage({ zelavis: "service-page-request", id: "ping", path: "/ping" }, "*"); }));
+    assert.equal(response.body.target, target); assert.equal(response.status, 200);
+    const forbidden = await frame.evaluate(() => new Promise(resolve => { const receive = event => { if (event.data.zelavis === "service-page-response" && event.data.id === "escape") { removeEventListener("message", receive); resolve(event.data); } }; addEventListener("message", receive); parent.postMessage({ zelavis: "service-page-request", id: "escape", path: "../runtime/access" }, "*"); }));
+    assert.match(forbidden.error, /own API/);
+    await page.reload({ waitUntil: "networkidle" }); await page.locator('iframe[title="Fixture page"]').waitFor();
+  }
+  await page.goto(route + "&databasePanel=schema", { waitUntil: "networkidle" });
+  await page.getByLabel("Schema fields JSON").waitFor();
+  const fieldName = page.getByLabel("Field name", { exact: true }); await fieldName.fill("published");
+  await page.getByLabel("Field label", { exact: true }).fill("Published");
+  await page.getByLabel("Field type", { exact: true }).selectOption("BooleanField");
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh records", exact: true }).click();
+  await page.getByText("published · BooleanField", { exact: false }).waitFor();
+  await page.reload({ waitUntil: "networkidle" }); await page.getByLabel("Schema fields JSON").waitFor();
+  assert.equal(JSON.parse(await page.getByLabel("Schema fields JSON").inputValue()).at(-1).name, "published");
+  await page.getByRole("button", { name: "Save and activate new schema version", exact: true }).click();
+  await page.getByRole("option", { name: "v2 · active", exact: true }).waitFor({ state: "attached" });
+  assert.equal(schemas.at(-1).fields.at(-1).name, "published");
+  await page.getByRole("button", { name: "Records", exact: true }).click();
+  await page.getByLabel("Article title", { exact: true }).waitFor();
+  await page.getByLabel("Article title", { exact: true }).fill("Typed draft");
+  await page.getByLabel("Published", { exact: true }).check();
+  assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).published, true);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByLabel("Article title", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("Article title", { exact: true }).inputValue(), "Typed draft");
+  assert.equal(await page.getByLabel("Published", { exact: true }).isChecked(), true);
+  await page.getByRole("button", { name: "Stage record JSON", exact: true }).click();
+  await page.getByLabel("Article title", { exact: true }).fill("Later unstaged draft");
+  const firstSave = page.waitForResponse(response => response.request().method() === "PATCH" && response.url().endsWith("/documents/articles/row-a"));
+  await page.getByRole("button", { name: "Save changes", exact: true }).click(); assert.equal((await firstSave).status(), 200);
+  await page.getByText("1 record saved.", { exact: true }).waitFor();
+  assert.equal(documents[0].data.title, "Typed draft");
+  assert.equal(await page.getByLabel("Article title", { exact: true }).inputValue(), "Later unstaged draft");
+  await page.getByRole("button", { name: "Stage record JSON", exact: true }).click();
+  const secondSave = page.waitForResponse(response => response.request().method() === "PATCH" && response.url().endsWith("/documents/articles/row-a"));
+  await page.getByRole("button", { name: "Save changes", exact: true }).click(); assert.equal((await secondSave).status(), 200);
+  assert.equal(documents[0].data.title, "Later unstaged draft");
+  await page.getByText("1 record saved.", { exact: true }).waitFor();
+  await page.getByLabel("Article title", { exact: true }).fill("Discard me");
+  await page.getByRole("button", { name: "Discard changes", exact: true }).click();
+  assert.equal(await page.getByLabel("Article title", { exact: true }).inputValue(), "Later unstaged draft");
+  console.log("Sandboxed service pages and broker grants in both scopes, schema versions and typed draft reload recovery passed.");
+  await page.getByRole("navigation", { name: "Sidebar view switches" }).getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Log out", exact: true }).click();
+  await page.waitForURL(/\/zelavis\/login/);
+  assert.ok(signedOut, "Account logout calls the existing session endpoint");
+  assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith("zelavis:new-ui:drafts:1:")).length), 0, "Logout clears tab draft journals");
+  console.log("Sidebar utilities: five footer switches, project search/chat links, Account/Settings/Language, desktop input identity, mobile reload/Back and logout passed.");
   assert.equal(errors.length, 0, errors.join("\n"));
   console.log("Generated SSR registry, project proxy authorization, and all three MIT grid adapters passed against the isolated API fixture.");
 } finally {

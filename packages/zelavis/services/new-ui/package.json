@@ -9,7 +9,7 @@
     "namespace": "newui",
     "frontend": {
       "runtime": "static",
-      "bundle": "dist-spa-server/client",
+      "bundle": ".fuzor/dist-spa-server/client",
       "mode": "spa",
       "assetBase": "/assets/"
     }
@@ -28,11 +28,13 @@
     "prepare:grids": "node scripts/prepare-grids.mjs",
     "test:server-views": "node scripts/test-server-views.mjs",
     "test:embedded-server-views": "node scripts/test-embedded-server-views.mjs",
-    "test:dev-server-views": "node scripts/test-embedded-server-views.mjs --dev"
+    "test:dev-server-views": "node scripts/test-embedded-server-views.mjs --dev",
+    "audit:routes": "node scripts/audit-routes.mjs --check",
+    "test:route-parity": "node scripts/test-route-parity.mjs"
   },
   "localDevelopment": {
     "fuzor": "Sibling checkout at Projects/fuzor, built with its own dependencies",
     "effect": "Host-provided Zelavis Effect 4.0.0",
-    "dependencies": "Isolated pinned grid-dependencies npm lockfile; scripts/link-local.mjs links these and existing local dependencies without parent installation or lockfile changes"
+    "dependencies": "Isolated pinned grid-dependencies npm lockfile; local links reuse the existing dashboard React 19 runtime and dependencies without changing the parent workspace lockfile"
   }
 }

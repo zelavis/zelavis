@@ -31,7 +31,7 @@ Dependencies and their npm lockfile live in `grid-dependencies`, isolated from t
 
 ## License verification
 
-The exact installed grid manifests must declare MIT and match their pinned versions; build and unit tests enforce this. The build retains their copyright/permission notices in `dist-spa/assets/grid-licenses.txt`. VTable's npm package declares MIT but omits its license file, so the notice from its published source commit `a938bf7988391b6c2420f9fd2e0ada40a52b9f8e` is retained locally in `grid-dependencies/VTable-LICENSE.txt`.
+The exact installed grid manifests must declare MIT and match their pinned versions; build and unit tests enforce this. The build retains their copyright/permission notices in `.fuzor/dist-spa/assets/grid-licenses.txt`. VTable's npm package declares MIT but omits its license file, so the notice from its published source commit `a938bf7988391b6c2420f9fd2e0ada40a52b9f8e` is retained locally in `grid-dependencies/VTable-LICENSE.txt`.
 
 Sources: [Glide license](https://github.com/glideapps/glide-data-grid/blob/main/LICENSE), [Tabulator license](https://github.com/tabulator-tables/tabulator/blob/master/LICENSE), [VTable license](https://github.com/VisActor/VTable/blob/a938bf7988391b6c2420f9fd2e0ada40a52b9f8e/LICENSE). The library requirement is MIT; their open-source dependency graph has its own notices and licenses. No paid grid edition is used.
 

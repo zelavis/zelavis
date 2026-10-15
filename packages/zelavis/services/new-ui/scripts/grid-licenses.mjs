@@ -14,6 +14,6 @@ export function gridNotices() {
   }).join("\n\n");
 }
 export function writeGridNotices() {
-  const target = resolve(root, "dist-spa-server/client/assets"); mkdirSync(target, { recursive: true });
+  const target = resolve(root, ".fuzor/dist-spa-server/client/assets"); mkdirSync(target, { recursive: true });
   writeFileSync(resolve(target, "grid-licenses.txt"), gridNotices());
 }

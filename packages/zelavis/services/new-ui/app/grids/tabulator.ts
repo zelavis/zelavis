@@ -1,7 +1,8 @@
+import * as Effect from "effect/Effect";
 import { TabulatorFull as Tabulator, type CellComponent, type RowComponent, type ColumnDefinition, type EmptyCallback } from "tabulator-tables";
 import "tabulator-tables/dist/css/tabulator.min.css";
 import { cellText, cellValue, editText, type GridAdapterOptions } from "./model.ts";
-export async function mount(host: HTMLElement, options: GridAdapterOptions) {
+export function mount(host: HTMLElement, options: GridAdapterOptions) {
   let current = options;
   const rowsFor = (options: GridAdapterOptions) => options.data.records.map(record => Object.fromEntries(options.data.columns.map(column => [column.field, cellValue(record, column)])));
   const columnsFor = (options: GridAdapterOptions): ColumnDefinition[] => options.data.columns.map(column => ({ title: column.label.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"), field: column.field, width: column.key === undefined ? 200 : 180, frozen: column.key === undefined, headerSort: false,
@@ -22,12 +23,14 @@ export async function mount(host: HTMLElement, options: GridAdapterOptions) {
   table.on("rowClick", (_event: UIEvent, row: RowComponent) => current.onSelect(String(row.getData().id)));
   table.on("tableBuilt", () => { if (options.selectedId) table.selectRow(options.selectedId); });
   let rendered = JSON.stringify(rowsFor(options));
-  return { async update(next: GridAdapterOptions) {
+  return { update(next: GridAdapterOptions) {
+    return Effect.runPromise(Effect.gen(function* () {
     const schemaChanged = JSON.stringify(current.data.columns) !== JSON.stringify(next.data.columns);
     current = next;
     if (schemaChanged) table.setColumns(columnsFor(next));
     const rows = rowsFor(next), serialized = JSON.stringify(rows);
-    if (serialized !== rendered) { await table.replaceData(rows); rendered = serialized; }
+    if (serialized !== rendered) { yield* Effect.tryPromise({ try: () => table.replaceData(rows), catch: cause => cause }); rendered = serialized; }
     if (next.selectedId) table.selectRow(next.selectedId);
+    }));
   }, dispose() { table.destroy(); } };
 }

@@ -2,7 +2,7 @@ import { ListTable } from "@visactor/vtable";
 import { InputEditor } from "@visactor/vtable-editors";
 import { cellText, cellValue, editText, type GridAdapterOptions } from "./model.ts";
 function safeText(raw: string) { try { return cellText(JSON.parse(raw)); } catch { return raw; } }
-export async function mount(host: HTMLElement, options: GridAdapterOptions) {
+export function mount(host: HTMLElement, options: GridAdapterOptions) {
   let current = options;
   const editor = new InputEditor();
   host.style.height = "440px";
