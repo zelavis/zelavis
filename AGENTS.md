@@ -1724,8 +1724,9 @@ until the cutover (bug fixes, security fixes, and an endpoint's existing page wh
 The cutover renames `new-ui` to `@zelavis/ui` and the React dashboard to `@zelavis/ui-legacy`, which
 stays in the repository only so what the new one still lacks can be looked up; it is not a second
 product and is not extended. The cutover happens when its gates pass, and they are not waived by this
-rule: Fuzor comes from the owner's own checkout (`FUZOR_DIR`, default `../fuzor`), never from npm, so
-Zelavis always builds against the Fuzor on disk. Every dashboard build rebuilds a stale Fuzor
+rule: Zelavis builds against the owner's own Fuzor checkout (`FUZOR_DIR`, default `../fuzor`), not a
+Fuzor package from npm, so it always uses the Fuzor on disk. Fuzor is published to npm on its own
+cadence, by the owner, and that never changes what Zelavis builds against. Every dashboard build rebuilds a stale Fuzor
 (`scripts/fuzor-source.mjs`) and records its version, commit and a digest of its uncommitted changes in
 `.fuzor/fuzor-build.json`; the Platform package ships only the built dashboard, so an installation and a
 Platform process never need Fuzor, and only the machine that builds a release does (as it already must).
