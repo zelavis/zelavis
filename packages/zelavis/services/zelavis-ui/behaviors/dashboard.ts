@@ -20,7 +20,8 @@ export function mount(host: HTMLElement) {
   if (!router) throw new Error("The dashboard needs Fuzor’s SPA router.");
   const themeMedia = matchMedia("(prefers-color-scheme: dark)");
   const applyTheme = () => {
-    let mode = "auto"; try { mode = localStorage.getItem("theme") ?? "auto"; } catch {}
+    // Storage can be blocked (a private window, site data cleared): "auto" then follows the system preference.
+    const mode = Effect.runSync(Effect.try({ try: () => localStorage.getItem("theme") ?? "auto", catch: cause => cause }).pipe(Effect.orElseSucceed(() => "auto")));
     host.ownerDocument.documentElement.dataset.dashboardTheme = mode === "auto" ? themeMedia.matches ? "dark" : "light" : mode;
   };
   applyTheme(); themeMedia.addEventListener("change", applyTheme); window.addEventListener("storage", applyTheme);
