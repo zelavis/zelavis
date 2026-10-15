@@ -170,21 +170,21 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   console.log("Action: relation picker resource loading and saving retain exact Project scope.");
 
   yield* visit("/projects/parity-lab/workloads/new");
-  yield* io(() => workspace().getByLabel("Name", { exact: true }).fill("ui-created-function"));
-  yield* io(() => workspace().getByLabel("Route", { exact: true }).fill("/api/ui-created"));
-  yield* io(() => workspace().getByRole("button", { name: "Create", exact: true }).click());
+  yield* io(() => page.getByLabel("Name", { exact: true }).fill("ui-created-function"));
+  yield* io(() => page.getByLabel("Route", { exact: true }).fill("/api/ui-created"));
+  yield* io(() => page.getByRole("button", { name: "Create", exact: true }).click());
   yield* io(() => page.waitForURL(/workloads\/functions\/[^/?]+/));
   const id = new URL(page.url()).pathname.split("/").at(-1);
   assert.equal((yield* request(proxy + "/workloads/" + id)).name, "ui-created-function");
-  yield* io(() => workspace().getByRole("button", { name: "Run", exact: true }).click());
-  yield* io(() => workspace().getByText("Run output", { exact: true }).waitFor());
-  yield* io(() => workspace().getByLabel("Name", { exact: true }).fill("ui-renamed-function"));
-  yield* io(() => workspace().getByRole("button", { name: "Save", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Run", exact: true }).click());
+  yield* io(() => page.getByText("Run output", { exact: true }).waitFor());
+  yield* io(() => page.getByLabel("Name", { exact: true }).fill("ui-renamed-function"));
+  yield* io(() => page.getByRole("button", { name: "Save", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/workloads")));
   assert.equal((yield* request(proxy + "/workloads/" + id)).name, "ui-renamed-function");
   yield* io(() => page.goBack({ waitUntil: "networkidle" }));
   yield* io(() => page.waitForURL(/workloads\/functions\/[^/?]+/));
-  assert.equal(yield* io(() => workspace().getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
+  assert.equal(yield* io(() => page.getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
   console.log("Actions: workload creation, run, update and browser Back passed.");
 
   yield* visit("/projects");
@@ -265,7 +265,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => workspace().getByLabel("Password", { exact: true }).fill(password));
   yield* io(() => workspace().getByRole("button", { name: "Login", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/workloads/functions/" + id)));
-  assert.equal(yield* io(() => workspace().getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
+  assert.equal(yield* io(() => page.getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
   assert.ok(!page.url().includes("/zelavis/zelavis/"));
   const localLinks = yield* io(() => workspace().locator('a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
   assert.ok(localLinks.every(path => path.startsWith("/zelavis/") || path.startsWith("/zelavis?")), "Feature links preserve the dashboard mount when opened in another tab");
