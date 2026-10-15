@@ -69,7 +69,7 @@ export function storagePath(path: string) {
   return parts.map(encodeURIComponent).join("/");
 }
 /** XHR is the browser transport adapter; Effect owns progress, timeout and interruption. */
-export const uploadFile = Effect.fn("new-ui.uploadFile")(function*(apiBase: string, path: string, file: File, progress: (percent: number) => void) {
+export const uploadFile = Effect.fn("new-ui.uploadFile")(function*(apiBase: string, path: string, file: File, progress: (percent: number) => void, headers: Readonly<Record<string, string>> = {}) {
   if (!apiBase.startsWith(API_PREFIX) || apiBase.includes("..")) return yield* Effect.fail(new ApiError({ message: "Invalid storage API mount." }));
   if (file.size > 32 * 1024 * 1024) return yield* Effect.fail(new ApiError({ message: "Dashboard uploads are limited to 32 MB." }));
   const encoded = yield* Effect.try({ try: () => storagePath(path), catch: cause => new ApiError({ message: String(cause) }) });
@@ -78,6 +78,7 @@ export const uploadFile = Effect.fn("new-ui.uploadFile")(function*(apiBase: stri
     transport.open("PUT", `${apiBase}/storage/files/${encoded}`);
     transport.withCredentials = true;
     transport.setRequestHeader("content-type", file.type || "application/octet-stream");
+    for (const [name, value] of Object.entries(headers)) transport.setRequestHeader(name, value);
     transport.upload.onprogress = event => { if (event.lengthComputable && event.total > 0) progress(Math.round(event.loaded * 100 / event.total)); };
     transport.onload = () => {
       if (transport.responseText.length > responseLimit) { resume(Effect.fail(new ApiError({ message: "Upload response exceeded the dashboard limit." }))); return; }

@@ -28,7 +28,14 @@ import type { ZelavisEndpointGroup } from "../core/index.js";
 /** Metadata key under which an uploaded object's SHA-256 checksum is stored. */
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 
-function readStorageMetadataHeaders(
+/**
+ * Header prefixes an upload's metadata travels under. `x-zelavis-meta-` is the canonical one; the Project Gateway
+ * removes every `x-zelavis-*` request header (a caller cannot claim Platform authority), so a client that
+ * reaches a Project through the Platform, as the dashboard does, uses `x-file-meta-`.
+ */
+const STORAGE_METADATA_HEADER_PREFIXES = ["x-zelavis-meta-", "x-file-meta-"] as const;
+
+export function readStorageMetadataHeaders(
   headers: Headers | undefined,
 ): Record<string, string> | undefined {
   if (!headers) {
@@ -37,11 +44,13 @@ function readStorageMetadataHeaders(
 
   const metadata: Record<string, string> = {};
   headers.forEach((value, key) => {
-    if (!key.toLowerCase().startsWith("x-zelavis-meta-")) {
+    const lower = key.toLowerCase();
+    const prefix = STORAGE_METADATA_HEADER_PREFIXES.find((entry) => lower.startsWith(entry));
+    if (!prefix) {
       return;
     }
 
-    const name = key.slice("x-zelavis-meta-".length).trim();
+    const name = lower.slice(prefix.length).trim();
     if (!name) {
       return;
     }

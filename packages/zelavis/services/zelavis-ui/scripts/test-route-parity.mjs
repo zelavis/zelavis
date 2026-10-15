@@ -227,6 +227,20 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   console.log("Managed recipe UI fixture: all eight hosting sections render on desktop and mobile; planned controls remain labelled planned.");
 
+  yield* visit("/projects/parity-lab/storage");
+  yield* io(() => page.getByLabel("File", { exact: true }).setInputFiles({ name: "parity.txt", mimeType: "text/plain", buffer: Buffer.from("uploaded through Fuzor") }));
+  yield* io(() => page.getByLabel("Label metadata", { exact: true }).fill("Parity file"));
+  yield* io(() => page.getByRole("button", { name: "Upload file", exact: true }).click());
+  yield* io(() => page.getByText("Uploaded parity.txt.", { exact: true }).waitFor());
+  const stored = yield* request(proxy + "/storage/files/parity.txt?format=metadata");
+  assert.equal(stored.file.metadata?.label, "Parity file", JSON.stringify(stored));
+  yield* io(() => page.getByRole("button", { name: "Delete parity.txt", exact: true }).click().catch(() => undefined));
+  console.log("Action: native storage upload carries its metadata and lands in the Project's storage.");
+
+  yield* visit("/projects/parity-lab/media");
+  yield* io(() => page.getByRole("heading", { name: "Asset details", exact: true }).waitFor());
+  console.log("Action: the media gallery island mounts.");
+
   // The update banner: a newer version is announced everywhere, and Update now sends the one trusted request.
   const updateStatus = { current: "2.0.0-alpha.1", latest: "2.0.0-alpha.2", available: true, managed: true, state: "idle", channel: "alpha" };
   const applied = [];

@@ -6,6 +6,7 @@ import { notRunning, projectContext } from "./project-context.ts";
 import { siteUrl } from "./projects-pages.ts";
 import { providerCard } from "./settings-pages.ts";
 import { servicePageScreen } from "./service-pages.ts";
+import { mediaScreen, storageScreen } from "./storage-pages.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -24,7 +25,7 @@ const MANAGED_SECTIONS: Record<string, readonly [title: string, detail: string]>
 };
 
 /** Sections that are still the React workspace. A page leaves this list when it is rebuilt natively. */
-const LEGACY_SECTIONS = new Set(["database", "content", "media", "storage", "workloads"]);
+const LEGACY_SECTIONS = new Set(["database", "content", "workloads"]);
 
 const usable = (scoped: Config, name: string, hosted: boolean) => { const entry = object(object(scoped.capabilities)[name]); return entry.available === true && (!hosted || entry.used === true); };
 
@@ -52,6 +53,8 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   context.projectNavigation(project, scoped);
   if (section === "auth") return yield* authScreen(context, scoped);
   if (section === "users") return yield* usersScreen(context, scoped);
+  if (section === "storage") return yield* storageScreen(context, scoped);
+  if (section === "media") return yield* mediaScreen(context, scoped);
   const servicePage = yield* servicePageScreen(scoped, context.path, project.id);
   return servicePage ?? empty("Page not found", "Choose a section from the sidebar to continue.");
 });

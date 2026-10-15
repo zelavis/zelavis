@@ -18,6 +18,8 @@ export const nativePaths = [
   "/projects/:projectId/agents",
   "/projects/:projectId/auth",
   "/projects/:projectId/users",
+  "/projects/:projectId/storage",
+  "/projects/:projectId/media",
   "/projects/:projectId/settings",
   "/projects/:projectId/frontend",
   "/projects/:projectId/:managedSection",
