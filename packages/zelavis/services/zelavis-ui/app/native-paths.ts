@@ -4,6 +4,9 @@
  * parity test reads this file, so keep it a plain list of string literals.
  */
 export const nativePaths = [
+  "/",
+  "/projects",
+  "/projects?new=1",
   "/server/logs",
   "/server/terminal",
   "/server",

@@ -188,16 +188,17 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   console.log("Actions: workload creation, run, update and browser Back passed.");
 
   yield* visit("/projects");
-  yield* io(() => workspace().getByPlaceholder("Search projects", { exact: true }).fill("Parity laboratory"));
+  yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).fill("Parity laboratory"));
+  yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).press("Enter"));
   yield* io(() => page.waitForURL(url => url.searchParams.get("q") === "Parity laboratory"));
-  yield* io(() => workspace().getByRole("button", { name: "New project", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "New project", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.searchParams.get("new") === "1"));
-  yield* io(() => workspace().getByLabel("Name", { exact: true }).fill("UI lifecycle test"));
-  yield* io(() => workspace().getByRole("button", { name: "Create", exact: true }).click());
-  yield* io(() => workspace().getByText("UI lifecycle test is running in its own project runtime.", { exact: true }).waitFor());
+  yield* io(() => page.getByLabel("Name", { exact: true }).fill("UI lifecycle test"));
+  yield* io(() => page.getByRole("button", { name: "Create", exact: true }).click());
+  yield* io(() => page.getByText("UI lifecycle test is running in its own project runtime.", { exact: true }).waitFor());
   const created = (yield* request("/runtime/projects")).projects.find(project => project.name === "UI lifecycle test");
   assert.ok(created?.id && created.runtime.status === "running");
-  console.log("Action: original Projects create form preserves URL-backed input and creates a real App runtime.");
+  console.log("Action: native Projects create form preserves URL-backed input and creates a real App runtime.");
 
   yield* visit("/settings/appearance");
   yield* io(() => workspace().getByRole("combobox", { name: "Theme", exact: true }).click());

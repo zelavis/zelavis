@@ -8,7 +8,7 @@ export function panelsFor(projectId?: string, project?: Project, runtime?: Confi
     { label: "Projects", path: "/", branch: "projects" }, { label: "Marketplace", path: "/marketplace" },
     { label: "Server", path: "/server", branch: "server" }, { label: "Assistant", path: "/assistant" }, { label: "Settings", path: "/settings", branch: "settings" }
   ] };
-  const projects: Panel = { id: "projects", label: "Projects", path: "/", items: [{ label: "Overview", path: "/" }, { label: "Create project", path: "/projects/create" }] };
+  const projects: Panel = { id: "projects", label: "Projects", path: "/", items: [{ label: "Overview", path: "/" }, { label: "Create project", path: "/projects?new=1" }] };
   const server: Panel = { id: "server", label: "Server", path: "/server", items: [{ label: "Overview", path: "/server" }, ...["Nodes", "Domains", "Database", "Backends", "Backups", "Logs"].map(label => ({ label, path: `/server/${label.toLowerCase()}` }))] };
   const settings: Panel = { id: "settings", label: "Settings", path: "/settings", items: [{ label: "Overview", path: "/settings" }] };
   for (const entry of projectList) projects.items.push({ label: entry.name, path: `/projects/${encodeURIComponent(entry.id)}`, branch: "project" });

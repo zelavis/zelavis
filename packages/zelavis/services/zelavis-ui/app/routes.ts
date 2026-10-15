@@ -4,7 +4,7 @@ export type DashboardHandle = { pageLabel: string; sidebarTrail: readonly string
 const handle = (pageLabel: string, ...sidebarTrail: string[]): DashboardHandle => ({ pageLabel, sidebarTrail });
 const declared = workspaceRouteCatalog.filter(route => route.path !== "/*" && route.path !== "/_api/relations/:collection");
 export const clientRoutes: Record<string, string> = Object.fromEntries(declared.map(route => [route.path, route.path.startsWith("/projects/:projectId/") ? "/project-section/" : route.path === "/projects/:projectId" ? "/project/" : route.path.startsWith("/server/") ? "/server-section/" : route.path.startsWith("/settings/") ? "/settings/" : "/"]));
-Object.assign(clientRoutes, { "/:section*": "/", "/projects/:projectId/:section*": "/project-section/", "/server/:section*": "/server-section/", "/settings/:section*": "/settings/", "/projects/create": "/projects/create/" });
+Object.assign(clientRoutes, { "/:section*": "/", "/projects/:projectId/:section*": "/project-section/", "/server/:section*": "/server-section/", "/settings/:section*": "/settings/" });
 const routeHandle = (path: string): DashboardHandle => {
   if (path.startsWith("/projects/:projectId")) { const section = path.split("/")[3]; return handle(section ? section[0].toUpperCase() + section.slice(1) : "Project overview", "projects", "project", ...(section && !section.startsWith(":") ? [section] : [])); }
   if (path.startsWith("/server")) return handle(path.split("/")[2] ?? "Server", "server");
@@ -13,7 +13,6 @@ const routeHandle = (path: string): DashboardHandle => {
 };
 export const routeTree: readonly RouteDefinition[] = [{ id: "platform", path: "/", handle: handle("Projects"), children: [
   ...[...new Map(declared.map(route => [route.path, route])).values()].filter(route => route.path !== "/").map(route => ({ id: route.file.replace(/\.tsx$/, ""), path: route.path, handle: routeHandle(route.path) })),
-  { id: "create-project", path: "/projects/create", handle: handle("Create project", "projects") },
   { id: "project-section", path: "/projects/:projectId/:section*", handle: handle("Project", "projects", "project") },
   { id: "service-page", path: "/:section*", handle: handle("Service page") }
 ] }];

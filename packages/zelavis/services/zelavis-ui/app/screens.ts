@@ -3,6 +3,7 @@ import { servicePageScreen } from "./service-pages.ts";
 import { logsScreen, terminalScreen } from "./server-pages.ts";
 import { hostScreens } from "./host-pages.ts";
 import { fabricScreen } from "./fabric-pages.ts";
+import { projectsOverviewScreen } from "./projects-pages.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
 import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
@@ -61,55 +62,6 @@ export const authScreen = Effect.fn("new-ui.authScreen")(function*(context: Scre
     return request(`${context.config.api.basePath}${setup ? "/auth/bootstrap" : `/auth/authenticate/${encodeURIComponent(value(data, "provider"))}`}`, "POST", setup ? { bootstrapToken: value(data, "bootstrapToken"), provider: value(data, "provider"), account, credential: { identifier, password: value(data, "password") } } : { identifier, password: value(data, "password") });
   }, () => context.navigate(setup ? "/settings?onboarding=hostname" : "/")));
   return panel;
-});
-
-export const projectsScreen = Effect.fn("new-ui.projectsScreen")(function*(context: ScreenContext) {
-  const list = yield* projects(context.config);
-  context.projectsNavigation(list);
-  const query = context.url.searchParams.get("q") ?? "";
-  const status = context.url.searchParams.get("status") ?? "all";
-  const search = field("q", "Search projects", "search", query, false);
-  const filter = node("select", { name: "status", "aria-label": "Project status" }, ...["all", "running", "stopped", "failed"].map(option => node("option", { value: option, ...(status === option ? { selected: "" } : {}) }, option)));
-  const filters = node("form", { class: "filters", role: "search" }, search, filter, node("button", { type: "submit" }, "Filter"));
-  filters.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(filters); context.setSearch({ q: value(data, "q") || undefined, status: value(data, "status") === "all" ? undefined : value(data, "status") }); });
-  const visible = list.filter(project => (status === "all" || project.status === status) && `${project.name} ${project.id}`.toLowerCase().includes(query.toLowerCase()));
-  const grid = node("div", { class: "project-grid" });
-  for (const project of visible) {
-    const recipe = object(project.recipe);
-    grid.append(node("article", { class: "project-card" }, node("div", { class: "project-symbol", "aria-hidden": "true" }, project.name.slice(0, 1).toUpperCase()), node("div", { class: "project-card-heading" }, link(project.name, `/projects/${encodeURIComponent(project.id)}`), node("span", { class: `badge ${project.status}` }, project.status)), node("p", {}, label(recipe.name, "Zelavis App")), node("code", {}, project.id), ...(project.deletion ? [message("Deletion in progress. Open the project to retry cleanup.", true)] : [])));
-  }
-  const running = list.filter(project => project.status === "running").length;
-  return node("section", {}, heading("Projects", link("+ Create project", "/projects/create", { class: "primary" })), node("div", { class: "stats" }, stat("Projects", list.length), stat("Running", running), stat("Needs attention", list.filter(project => project.status === "failed" || project.deletion).length)), filters, visible.length ? grid : empty("No projects found", list.length ? "Try a different search or status." : "Create a project to start building."));
-});
-function stat(title: string, count: number) { return node("div", { class: "stat" }, node("span", {}, title), node("strong", {}, String(count))); }
-
-export const createProjectScreen = Effect.fn("new-ui.createProjectScreen")(function*(context: ScreenContext) {
-  const response = yield* request(`${context.config.api.basePath}/runtime/project-recipes`);
-  const recipes = rows(response, "projectRecipes");
-  const select = node("select", { name: "recipeName", required: "" }, ...recipes.map(recipe => {
-    const entry = object(recipe); return node("option", { value: label(entry.name, ""), ...(entry.name === context.url.searchParams.get("recipe") ? { selected: "" } : {}) }, label(entry.title, label(entry.name)));
-  }));
-  const selected = object(recipes.find(recipe => object(recipe).name === (context.url.searchParams.get("recipe") ?? select.value)));
-  const creationSearch = (values: Record<string, string | undefined>) => {
-    const form = select.closest("form"); const data = form ? new FormData(form) : undefined;
-    context.setSearch({ ...values, projectName: data ? value(data, "name") || undefined : undefined, createId: data ? value(data, "id") || undefined : undefined });
-  };
-  select.addEventListener("change", () => creationSearch({ recipe: select.value, engineVersion: undefined }));
-  const controls: HTMLElement[] = [field("name", "Project name", "text", context.url.searchParams.get("projectName") ?? ""), field("id", "Project ID (optional)", "text", context.url.searchParams.get("createId") ?? "", false), node("label", {}, node("span", {}, "Project recipe"), select)];
-  if (selected.name === "@zelavis/app") {
-    const catalogue = object(yield* request(`${context.config.api.basePath}/runtime/project-versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))));
-    if (catalogue.selectable === true) {
-      const versions = node("select", { name: "engineVersion", "aria-label": "Zelavis version" }, node("option", { value: "" }, "Current qualified engine"), ...array(catalogue.versions).map(raw => { const version = object(raw); return node("option", { value: label(version.version, ""), ...(version.status !== "available" ? { disabled: "" } : {}), ...(version.version === context.url.searchParams.get("engineVersion") ? { selected: "" } : {}) }, `${label(version.version)}${version.status !== "available" ? " · unavailable" : ""}`); }));
-      versions.addEventListener("change", () => creationSearch({ engineVersion: versions.value || undefined }));
-      controls.push(node("label", {}, "Zelavis version", versions));
-    } else controls.push(message(label(catalogue.reason, "This checkout uses its current development engine.")));
-  }
-  const packages = array(selected.hostPackages).filter((name): name is string => typeof name === "string");
-  if (packages.length) controls.push(node("label", {}, node("input", { type: "checkbox", name: "installHostPackages" }), `Approve host packages declared by this recipe: ${packages.join(", ")}. This requires server package installation permission.`));
-  return node("section", { class: "panel narrow" }, heading("Create project", link("Back to projects", "/")), form(context, controls, "Create project", data => mutation(context, "/runtime/projects", { name: value(data, "name"), ...(value(data, "id") ? { id: value(data, "id") } : {}), recipeName: value(data, "recipeName"), ...(value(data, "engineVersion") ? { engineVersion: value(data, "engineVersion") } : {}), ...(packages.length ? { installHostPackages: data.get("installHostPackages") === "on" } : {}), start: false }), result => {
-    const id = object(object(result).project).id;
-    if (typeof id === "string") context.navigate(`/projects/${encodeURIComponent(id)}`); else context.refresh();
-  }), message("Projects are created stopped. Start the Project after reviewing its configuration."));
 });
 
 function projectActions(context: ScreenContext, project: Project) {
@@ -376,6 +328,7 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   // Pages rebuilt natively come first: the legacy inventory still lists them, and they must not fall back to the island.
   if (context.path === "/server/logs") return yield* logsScreen(context);
   if (context.path === "/server/terminal") return yield* terminalScreen(context);
+  if (context.path === "/" || context.path === "/projects") return yield* projectsOverviewScreen(context);
   if (/^\/server\/fabric(\/|$)/.test(context.path)) return yield* fabricScreen(context);
   const hostScreen = (hostScreens as Record<string, typeof logsScreen>)[context.path.replace(/(.)\/$/, "$1")];
   if (hostScreen) return yield* hostScreen(context);
@@ -390,8 +343,6 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   }
   if (context.path === "/setup") return yield* authScreen(context, true);
   if (context.path === "/login") return yield* authScreen(context, false);
-  if (context.path === "/" || context.path === "/projects") return yield* projectsScreen(context);
-  if (context.path === "/projects/create") return yield* createProjectScreen(context);
   if (context.projectId) return yield* projectScreen(context);
   const servicePage = yield* servicePageScreen(context.config, context.path);
   if (servicePage) return servicePage;
