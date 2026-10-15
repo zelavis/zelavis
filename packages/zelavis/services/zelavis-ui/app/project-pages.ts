@@ -9,6 +9,7 @@ import { servicePageScreen } from "./service-pages.ts";
 import { mediaScreen, storageScreen } from "./storage-pages.ts";
 import { workloadsScreen } from "./workloads-pages.ts";
 import { contentScreen } from "./content-pages.ts";
+import { newTableScreen } from "./database-pages.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -27,13 +28,15 @@ const MANAGED_SECTIONS: Record<string, readonly [title: string, detail: string]>
 };
 
 /** Sections that are still the React workspace. A page leaves this list when it is rebuilt natively. */
-const LEGACY_SECTIONS = new Set(["database"]);
+const LEGACY_SECTIONS = new Set<string>();
 
 const usable = (scoped: Config, name: string, hosted: boolean) => { const entry = object(object(scoped.capabilities)[name]); return entry.available === true && (!hosted || entry.used === true); };
 
 export const handlesProjectPath = (context: ScreenContext) => {
   if (!context.projectId) return false;
-  const section = context.path.split("/")[3];
+  const [, , , section, rest] = context.path.split("/");
+  // The Database table list and records are the Fuzor database view; only Create table is a page here.
+  if (section === "database") return rest === "new";
   return !section || !LEGACY_SECTIONS.has(section);
 };
 
@@ -45,6 +48,7 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   const hosted = managed(project);
   const base = `/projects/${encodeURIComponent(project.id)}`;
   if (section === "") return yield* overviewScreen(context, project, scoped, hosted);
+  if (section === "database" && scoped) return yield* newTableScreen(context, scoped, `${base}/database`);
   if (section === "workloads") return yield* workloadsScreen(context);
   if (section === "content" && scoped) return yield* contentScreen(context, project, scoped);
   if (section === "settings") return yield* settingsScreen(context, project);

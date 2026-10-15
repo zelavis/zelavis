@@ -3,6 +3,7 @@ import { servicePageScreen } from "./service-pages.ts";
 import { logsScreen, terminalScreen } from "./server-pages.ts";
 import { hostScreens } from "./host-pages.ts";
 import { fabricScreen } from "./fabric-pages.ts";
+import { loginScreen, logoutScreen, setupScreen } from "./auth-pages.ts";
 import { projectsOverviewScreen } from "./projects-pages.ts";
 import { servicesScreen, settingsScreen } from "./settings-pages.ts";
 import { marketplaceScreen as platformMarketplace } from "./marketplace-pages.ts";
@@ -47,26 +48,6 @@ function readPanel(title: string, data: unknown, key?: string, columns?: string[
   const body = columns ? records.length ? table(records, columns) : empty(`No ${title.toLowerCase()} yet`, "This view reads the selected runtime’s existing API.") : json(data);
   return node("section", { class: "panel" }, heading(title), body);
 }
-
-export const authScreen = Effect.fn("new-ui.authScreen")(function*(context: ScreenContext, setup: boolean) {
-  const status = yield* bootstrap(context.config);
-  if (setup && !status.required) { context.navigate("/login"); return message("Owner setup is complete. Opening sign in…"); }
-  const providers = setup ? status.enrollmentProviders : status.providers;
-  const select = node("select", { name: "provider", required: "" }, ...providers.map(provider => node("option", { value: provider }, provider)));
-  const panel = node("section", { class: "auth-card" }, node("div", { class: "brand" }, "◈ Zelavis"), node("h1", {}, setup ? "Set up your Platform" : "Welcome back"), node("p", {}, setup ? "Claim the first owner using this installation’s one-time bootstrap token." : "Sign in to plan, build, and manage your apps."));
-  if (providers.length === 0) { panel.append(message("No supported authentication providers are configured.", true)); return panel; }
-  panel.append(form(context, [
-    ...(setup ? [field("bootstrapToken", "One-time bootstrap token", "password"), field("displayName", "Display name")] : []),
-    node("label", {}, node("span", {}, "Authentication provider"), select),
-    field("identifier", setup ? "Email or username" : "Email or username"),
-    field("password", "Password", "password"),
-  ], setup ? "Create owner account" : "Sign in", data => {
-    const identifier = value(data, "identifier");
-    const account = identifier.includes("@") ? { email: identifier, displayName: value(data, "displayName") } : { username: identifier, displayName: value(data, "displayName") };
-    return request(`${context.config.api.basePath}${setup ? "/auth/bootstrap" : `/auth/authenticate/${encodeURIComponent(value(data, "provider"))}`}`, "POST", setup ? { bootstrapToken: value(data, "bootstrapToken"), provider: value(data, "provider"), account, credential: { identifier, password: value(data, "password") } } : { identifier, password: value(data, "password") });
-  }, () => context.navigate(setup ? "/settings?onboarding=hostname" : "/")));
-  return panel;
-});
 
 function projectActions(context: ScreenContext, project: Project) {
   const path = `/runtime/projects/${encodeURIComponent(project.id)}`;
@@ -316,6 +297,9 @@ const providerControls = Effect.fn("new-ui.providerControls")(function*(context:
 
 export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: ScreenContext) {
   // Pages rebuilt natively come first: the legacy inventory still lists them, and they must not fall back to the island.
+  if (context.path === "/login") return yield* loginScreen(context);
+  if (context.path === "/setup") return yield* setupScreen(context);
+  if (context.path === "/logout") return yield* logoutScreen(context);
   if (context.path === "/server/logs") return yield* logsScreen(context);
   if (context.path === "/server/terminal") return yield* terminalScreen(context);
   if (context.path === "/" || context.path === "/projects") return yield* projectsOverviewScreen(context);
@@ -331,7 +315,7 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   if (/^\/server\/fabric(\/|$)/.test(context.path)) return yield* fabricScreen(context);
   const hostScreen = (hostScreens as Record<string, typeof logsScreen>)[context.path.replace(/(.)\/$/, "$1")];
   if (hostScreen) return yield* hostScreen(context);
-  if (hasWorkspaceRoute(context.path) && (!/^\/projects\/[^/]+\/database\/?$/.test(context.path) || context.url.searchParams.get("workspaceMode") === "full")) {
+  if (hasWorkspaceRoute(context.path)) {
     if (context.path !== "/login" && context.path !== "/setup" && context.path !== "/logout") {
       const list = yield* projects(context.config);
       context.projectsNavigation(list);
@@ -340,8 +324,6 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
     }
     return workspaceFrame(context.url);
   }
-  if (context.path === "/setup") return yield* authScreen(context, true);
-  if (context.path === "/login") return yield* authScreen(context, false);
   if (context.projectId) return yield* projectScreen(context);
   const servicePage = yield* servicePageScreen(context.config, context.path);
   if (servicePage) return servicePage;

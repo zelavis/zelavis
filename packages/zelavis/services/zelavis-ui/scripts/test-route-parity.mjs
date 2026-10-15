@@ -42,32 +42,32 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const context = yield* io(() => browser.newContext({ viewport: { width: 1440, height: 1000 } }));
   const page = yield* io(() => context.newPage());
   page.setDefaultTimeout(15000);
-  yield* Effect.addFinalizer(() => io(async () => { console.log("Final route:", page.url()); console.log("Final workspace:", (await page.frameLocator("iframe[data-feature-workspace]").locator("body").innerText({ timeout: 1000 }).catch(() => "native workspace")).slice(-1800)); }).pipe(Effect.orDie));
+  yield* Effect.addFinalizer(() => io(async () => { console.log("Final route:", page.url()); console.log("Final errors:", await page.locator(".errors").innerText({ timeout: 1000 }).catch(() => "")); console.log("Final workspace:", (await page.frameLocator("iframe[data-feature-workspace]").locator("body").innerText({ timeout: 1000 }).catch(() => "native workspace")).slice(-1800)); }).pipe(Effect.orDie));
   const errors = [];
   page.on("pageerror", error => errors.push(error.stack ?? error.message));
   const workspace = () => page.frameLocator("iframe[data-feature-workspace]");
   yield* io(() => page.goto(origin + "/zelavis/projects", { waitUntil: "networkidle" }));
   yield* io(() => page.waitForURL(/\/zelavis\/setup/));
-  yield* io(() => workspace().getByRole("button", { name: "Get started", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Get started", exact: true }).click());
   yield* io(() => page.waitForURL(/step=owner/));
-  yield* io(() => workspace().getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
-  yield* io(() => workspace().getByLabel("Display name", { exact: false }).fill("Route qualification"));
-  yield* io(() => workspace().getByRole("button", { name: "Continue", exact: true }).click());
+  yield* io(() => page.getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
+  yield* io(() => page.getByLabel("Display name", { exact: false }).fill("Route qualification"));
+  yield* io(() => page.getByRole("button", { name: "Continue", exact: true }).click());
   yield* io(() => page.waitForURL(/step=security/));
-  yield* io(() => workspace().getByRole("button", { name: "Back", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Back", exact: true }).click());
   yield* io(() => page.waitForURL(/step=owner/));
-  assert.equal(yield* io(() => workspace().getByLabel("Email or username", { exact: true }).inputValue()), "parity@example.test", "Wizard identity survives step navigation");
-  yield* io(() => workspace().getByRole("button", { name: "Continue", exact: true }).click());
-  yield* io(() => workspace().getByLabel("One-time bootstrap token", { exact: true }).fill(token));
-  yield* io(() => workspace().getByLabel("Owner password", { exact: true }).fill(password));
-  yield* io(() => workspace().getByLabel("Confirm password", { exact: true }).fill(password));
-  yield* io(() => workspace().getByRole("button", { name: "Finish setup", exact: true }).click());
+  assert.equal(yield* io(() => page.getByLabel("Email or username", { exact: true }).inputValue()), "parity@example.test", "Wizard identity survives step navigation");
+  yield* io(() => page.getByRole("button", { name: "Continue", exact: true }).click());
+  yield* io(() => page.getByLabel("One-time bootstrap token", { exact: true }).fill(token));
+  yield* io(() => page.getByLabel("Owner password", { exact: true }).fill(password));
+  yield* io(() => page.getByLabel("Confirm password", { exact: true }).fill(password));
+  yield* io(() => page.getByRole("button", { name: "Finish setup", exact: true }).click());
   yield* io(() => page.waitForURL(/step=edge/));
   const status = yield* io(() => context.request.get(api + "/auth/bootstrap").then(response => response.json()));
   assert.equal(status.required, false, "The existing authority closes owner bootstrap");
-  yield* io(() => workspace().getByRole("button", { name: /Configure later/ }).click());
-  yield* io(() => workspace().getByRole("button", { name: "Finish setup", exact: true }).click());
-  yield* io(() => workspace().getByRole("button", { name: "Open dashboard", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: /Configure later/ }).click());
+  yield* io(() => page.getByRole("button", { name: "Finish setup", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Open dashboard", exact: true }).click());
   yield* io(() => page.waitForURL(/\/zelavis\/projects/));
   console.log("Wizard: welcome, owner, security, identity retention, durable owner claim, Edge and dashboard complete.");
   const request = (path, method = "GET", body) => io(async () => {
@@ -88,7 +88,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const workload = yield* request(proxy + "/workloads", "POST", { projectId: "parity-lab", type: "function", name: "route-fixture", route: "/api/parity", code: 'export default () => new Response("qualification")', enabled: true });
   const examples = { projectId: "parity-lab", contentType: "articles", entryId: "entry-a", workloadKind: "functions", workloadId: workload.id, managedSection: "domains", fabricSection: "nodes", fabricDetail: "health", collection: "articles" };
   const cases = workspaceRouteCatalog.filter(item => !["/setup", "/logout", "/_api/relations/:collection"].includes(item.path)).map(item => ({ ...item, example: item.path === "/*" ? "/not-a-dashboard-route" : item.path.replace(/:([a-zA-Z]+)/g, (_, key) => examples[key]) }));
-  for (const path of ["/server/fabric/placements", "/server/fabric/migrations", "/server/fabric/data", "/server/fabric/data/shards", "/server/fabric/data/replicas", "/server/fabric/data/schema-rollouts", "/server/fabric/infrastructure", "/server/fabric/infrastructure/providers", "/server/fabric/infrastructure/autoscaling", "/server/fabric/settings", "/server/fabric/settings/placement-policies", "/server/fabric/settings/networking", "/server/fabric/settings/limits", "/projects?new=1", "/projects/parity-lab/database?workspaceMode=full&databaseTable=articles"]) cases.push({ path, example: path, file: "nested/query workspace" });
+  for (const path of ["/server/fabric/placements", "/server/fabric/migrations", "/server/fabric/data", "/server/fabric/data/shards", "/server/fabric/data/replicas", "/server/fabric/data/schema-rollouts", "/server/fabric/infrastructure", "/server/fabric/infrastructure/providers", "/server/fabric/infrastructure/autoscaling", "/server/fabric/settings", "/server/fabric/settings/placement-policies", "/server/fabric/settings/networking", "/server/fabric/settings/limits", "/projects?new=1"]) cases.push({ path, example: path, file: "nested/query workspace" });
   const results = [{ path: "/setup", file: "routes/setup.tsx", status: "qualified wizard flow" }];
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     yield* io(() => page.setViewportSize(viewport));
@@ -97,7 +97,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
       else if (nativePaths.includes(entry.path)) {
-        yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty").first().waitFor());
+        yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty, .content .auth-card").first().waitFor());
         assert.equal(yield* io(() => page.locator("iframe[data-feature-workspace]").count()), 0, `${entry.file}: native page mounts no workspace frame`);
         const text = yield* io(() => page.locator(".content").innerText());
         assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
@@ -119,10 +119,10 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   const visit = path => io(() => page.goto(origin + "/zelavis" + path, { waitUntil: "networkidle" }));
   yield* visit("/projects/parity-lab/database/new");
-  const databaseLinks = yield* io(() => workspace().locator('a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
+  const databaseLinks = yield* io(() => page.locator('.content a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
   assert.ok(databaseLinks.length > 0 && databaseLinks.every(path => path.startsWith("/zelavis/")), "Feature links preserve the dashboard mount when opened in another tab");
-  yield* io(() => workspace().getByLabel("Table name").fill("ui_created_table"));
-  yield* io(() => workspace().getByRole("button", { name: "Create and Open Table", exact: true }).click());
+  yield* io(() => page.getByLabel("Table name").fill("ui_created_table"));
+  yield* io(() => page.getByRole("button", { name: "Create and Open Table", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/database") && url.searchParams.get("databaseTable") === "ui_created_table"));
   yield* io(() => page.locator("form.filters").getByLabel("Tenant ID").waitFor());
   assert.equal(yield* io(() => page.locator("form.filters").getByLabel("Tenant ID").inputValue()), "zelavis-app");
@@ -166,6 +166,18 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.ok(relationRequests.length > 0 && relationRequests.every(url => url.includes(proxy + "/database/")), "Relation resource loader never uses the Platform database");
   page.off("request", relationObserver);
   console.log("Action: relation picker resource loading and saving retain exact Project scope.");
+
+  yield* request(proxy + "/database/documents/ui-notes", "POST", { tenantId: "zelavis-app", id: "note-a", data: { title: "A note", slug: "a-note", excerpt: "Short", _content: "<p>Hello <strong>rich</strong> text</p>" } });
+  yield* visit("/projects/parity-lab/content/ui-notes/note-a");
+  yield* io(() => page.locator(".rte-surface").click());
+  yield* io(() => page.keyboard.press("End"));
+  yield* io(() => page.keyboard.type(" and more"));
+  yield* io(() => page.getByRole("button", { name: "Bold", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Save Entry", exact: true }).click());
+  yield* io(() => page.getByText("Saved note-a.", { exact: true }).waitFor());
+  const note = yield* request(proxy + "/database/documents/ui-notes/note-a?tenantId=zelavis-app");
+  assert.match(note.data._content, /Hello .*rich.* text.*and more/s, "The rich text editor saves what was typed: " + note.data._content);
+  console.log("Action: the vanilla Lexical editor loads stored HTML, takes typing and saves it.");
 
   yield* visit("/projects/parity-lab/workloads/new");
   yield* io(() => page.getByLabel("Name", { exact: true }).fill("ui-created-function"));
@@ -239,6 +251,16 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.getByRole("heading", { name: "Asset details", exact: true }).waitFor());
   console.log("Action: the media gallery island mounts.");
 
+  if (process.env.PARITY_SHOTS) {
+    // Looking is part of qualifying: every native page and island is captured so a person can compare it with the original.
+    yield* io(() => mkdir(process.env.PARITY_SHOTS, { recursive: true }));
+    for (const shot of ["/projects", "/projects?new=1", "/server", "/server/fabric", "/server/access/users", "/settings", "/marketplace", "/projects/parity-lab", "/projects/parity-lab/storage", "/projects/parity-lab/media", "/projects/parity-lab/workloads/new", "/projects/parity-lab/content", "/projects/parity-lab/content/articles", "/projects/parity-lab/content/articles/entry-a", "/projects/parity-lab/content/ui-notes/note-a", "/projects/parity-lab/content/ui-notes/fields?view=editor", "/projects/parity-lab/content/ui-notes/fields?view=settings", "/projects/parity-lab/settings", "/assistant", "/projects/parity-lab/database", "/projects/parity-lab/auth", "/projects/parity-lab/marketplace"]) {
+      yield* visit(shot);
+      yield* io(() => page.waitForTimeout(800));
+      yield* io(() => page.screenshot({ path: `${process.env.PARITY_SHOTS}/${shot.replace(/[^a-z0-9]+/gi, "_")}.png`, fullPage: true }));
+    }
+  }
+
   // The update banner: a newer version is announced everywhere, and Update now sends the one trusted request.
   const updateStatus = { current: "2.0.0-alpha.1", latest: "2.0.0-alpha.2", available: true, managed: true, state: "idle", channel: "alpha" };
   const applied = [];
@@ -259,13 +281,13 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.waitForURL(/\/zelavis\/login/));
   yield* visit("/projects/parity-lab/workloads/functions/" + id);
   yield* io(() => page.waitForURL(/\/zelavis\/login/));
-  yield* io(() => workspace().getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
-  yield* io(() => workspace().getByLabel("Password", { exact: true }).fill(password));
-  yield* io(() => workspace().getByRole("button", { name: "Login", exact: true }).click());
+  yield* io(() => page.getByLabel("Email or username", { exact: true }).fill("parity@example.test"));
+  yield* io(() => page.getByLabel("Password", { exact: true }).fill(password));
+  yield* io(() => page.getByRole("button", { name: "Login", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/workloads/functions/" + id)));
   assert.equal(yield* io(() => page.getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
   assert.ok(!page.url().includes("/zelavis/zelavis/"));
-  const localLinks = yield* io(() => workspace().locator('a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
+  const localLinks = yield* io(() => page.locator('.content a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
   assert.ok(localLinks.every(path => path.startsWith("/zelavis/") || path.startsWith("/zelavis?")), "Feature links preserve the dashboard mount when opened in another tab");
   assert.equal(errors.length, 0, errors.join("\n"));
   console.log("Actions: logout, protected route redirect and password login return to the original deep link passed.");

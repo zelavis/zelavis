@@ -210,6 +210,8 @@ const entryScreen = Effect.fn("ui.contentEntry")(function*(context: ScreenContex
       for (const entryField of fields) {
         const normalized = normalizeSchemaFieldValue(entryField.definition, draft[entryField.name]);
         if (normalized === undefined && entryField.definition.type !== "string") continue;
+        // An unset choice is absent, not an empty string no option allows.
+        if (normalized === "" && Array.isArray(entryField.definition.enum)) continue;
         updates[entryField.name] = normalized === undefined && entryField.definition.type === "string" ? "" : normalized;
       }
     } catch (cause) { context.run(Effect.fail(new ApiError({ message: cause instanceof Error ? cause.message : String(cause) }))); return; }

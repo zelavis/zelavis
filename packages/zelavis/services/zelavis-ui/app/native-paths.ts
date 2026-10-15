@@ -6,6 +6,9 @@
 export const nativePaths = [
   "/",
   "/projects",
+  "/login",
+  "/setup",
+  "/logout",
   "/projects?new=1",
   "/settings",
   "/settings/appearance",
@@ -20,6 +23,7 @@ export const nativePaths = [
   "/projects/:projectId/users",
   "/projects/:projectId/storage",
   "/projects/:projectId/media",
+  "/projects/:projectId/database/new",
   "/projects/:projectId/content",
   "/projects/:projectId/content/new",
   "/projects/:projectId/content/:contentType",

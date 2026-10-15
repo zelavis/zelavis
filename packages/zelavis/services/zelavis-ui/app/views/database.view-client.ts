@@ -24,8 +24,7 @@ export default {
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    const full = new URL(router.url()); full.searchParams.set("workspaceMode", "full");
-    host.replaceChildren(node("div", { class: "actions" }, link("Full database tools", stripMount(full.pathname) + full.search), link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, choices, paging, errors, gridHost, actions);
+    host.replaceChildren(node("div", { class: "actions" }, link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, choices, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());

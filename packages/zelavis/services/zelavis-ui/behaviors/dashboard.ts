@@ -112,7 +112,7 @@ export function mount(host: HTMLElement) {
     title.textContent = matched?.pageLabel ?? "Workspace";
   }
 
-  const isServerView = () => new URL(router!.url()).searchParams.get("workspaceMode") !== "full" && /\/projects\/[^/]+\/database\/?$/.test(new URL(router!.url()).pathname) && router!.route()?.kind === "page";
+  const isServerView = () => /\/projects\/[^/]+\/database\/?$/.test(new URL(router!.url()).pathname) && router!.route()?.kind === "page";
   function refreshPage() {
     if (isServerView()) void router!.navigate(router!.url(), { focus: "preserve", scroll: "preserve" }).catch(cause => errors.replaceChildren(message(String(cause), true)));
     else reload();
@@ -162,7 +162,7 @@ export function mount(host: HTMLElement) {
         : yield* loadScreen(context);
       if (!disposed && version === generation) {
         legacyContent.replaceChildren(screen);
-        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts"), "update-card": () => import("../app/update-views.ts"), "media-gallery": () => import("../app/media-view.ts"), "code-editor": () => import("../app/code-editor.ts"), "schema-builder": () => import("../app/schema-builder.ts"), "rich-text": () => import("../islands/rich-text.jsx") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
+        yield* Effect.acquireRelease(Effect.tryPromise({ try: signal => mountIslands(legacyContent, { "database-grid": () => import("../app/grids/controller.ts"), "terminal": () => import("../app/terminal-view.ts"), "update-card": () => import("../app/update-views.ts"), "media-gallery": () => import("../app/media-view.ts"), "code-editor": () => import("../app/code-editor.ts"), "schema-builder": () => import("../app/schema-builder.ts"), "rich-text": () => import("../app/rich-text-editor.ts") }, undefined, { signal }), catch: cause => new ApiError({ message: String(cause) }) }), cleanup => Effect.promise(cleanup));
         yield* Effect.never;
       }
     }).pipe(Effect.scoped, Effect.catch(error => Effect.sync(() => {
