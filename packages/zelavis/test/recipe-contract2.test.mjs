@@ -56,10 +56,15 @@ async function packageFor(base, version, contract, message) {
   return directory;
 }
 
-async function setup(t, first) {
+async function setup(t, first, { strict } = {}) {
   const base = await mkdtemp(join(tmpdir(), "zv-contract2-"));
   const directory = join(base, "projects");
-  const runner = createLocalAgentProcessRunner({ stateDirectory: join(directory, ".agent-processes") });
+  const local = createLocalAgentProcessRunner({ stateDirectory: join(directory, ".agent-processes") });
+  // Like the separately supervised Agent, which refuses a Project process that names no placement.
+  const runner = strict
+    ? { ...local, start: (command, options) => strict.enforced && !command.placement
+        ? Promise.reject(new Error("Project placement authority is required.")) : local.start(command, options) }
+    : local;
   const sources = {
     "1.0.0": await packageFor(base, "1.0.0", 1, "contract 1 configuration"),
     "2.0.0": await packageFor(base, "2.0.0", 2, "contract 2 configuration"),
@@ -81,7 +86,7 @@ async function setup(t, first) {
       digest: (path) => digestArtifactDirectory(path),
     },
   });
-  t.after(async () => { await driver.close().catch(() => undefined); await runner.close(); await rm(base, { recursive: true, force: true }); });
+  t.after(async () => { await driver.close().catch(() => undefined); await local.close(); await rm(base, { recursive: true, force: true }); });
   await driver.prepare(record, record.recipe);
   await driver.start(record);
   const state = JSON.parse(readFileSync(join(data, "recipe-state.json"), "utf8"));
@@ -112,4 +117,16 @@ test("a running contract 1 Project upgrades live to a contract 2 recipe without 
   assert.equal(after.mtimeMs, before.mtimeMs, "and was not written");
   assert.deepEqual(await readdir(join(project, "app")), ["site"], "app/ holds the application alone");
   assert.deepEqual((await readdir(join(project, ".zelavis", "server", "contract-1"))).sort(), ["server.js", "web.conf"], "contract 1's files are set aside, not deleted");
+});
+
+test("processes adopted without a placement are replaced under the placement the update carries", async (t) => {
+  // Started as an adopted Project's are known after a Platform update: by a controller that holds no placement.
+  const strict = { enforced: false };
+  const { project, driver, record, lock, ask, id } = await setup(t, "1.0.0", { strict });
+  strict.enforced = true;
+  const placement = { projectId: id, nodeId: "local", ownerSession: "owner", epoch: 1 };
+  const execution = await driver.prepareUpdate(record, { ...record, recipe: lock("2.0.0") }, placement);
+  await driver.applyUpdate(id, execution, async () => undefined);
+  assert.deepEqual(await ask(), { config: "contract 2 configuration", page: "the application's own page" });
+  assert.deepEqual(await readdir(join(project, "app")), ["site"]);
 });

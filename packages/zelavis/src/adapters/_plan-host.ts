@@ -20,7 +20,12 @@ const failure = (message: string) => new RecipeError({ operation: "start", messa
 export function makeAgentPlanHost(input: {
   readonly runner: ZelavisAgentProcessRunner;
   readonly workloadId: string;
-  readonly placement?: AgentPlacementIdentity;
+  /**
+   * The placement the Platform holds for the workload now. Read each time a process starts, never captured:
+   * a controller made by adoption knows none until the Platform next hands one over (a start or an update),
+   * and an Agent refuses a Project process that names none.
+   */
+  readonly placement?: () => AgentPlacementIdentity | undefined;
   readonly cwd: string;
   readonly commands: () => Readonly<Record<string, string>>;
   readonly ports: Readonly<Record<string, number>>;
@@ -31,11 +36,13 @@ export function makeAgentPlanHost(input: {
   readonly stopGrace?: Duration.Input;
   readonly disruption?: PlanHostApi["disruption"];
 }): PlanHostApi {
+  const placement = input.placement;
   return {
     workloadId: input.workloadId, cwd: input.cwd, commands: input.commands, ports: input.ports,
     baseEnvironment: input.baseEnvironment, resolveSecret: input.resolveSecret,
     ...(input.onOutput ? { onOutput: input.onOutput } : {}),
-    ...(input.placement ? { placement: input.placement } : {}),
+    // A getter on the host itself: a spread would copy the value once, at creation.
+    get placement() { return placement?.(); },
     ...(input.disruption ? { disruption: input.disruption } : {}),
     pollInterval: input.pollInterval ?? Duration.millis(250),
     stopGrace: input.stopGrace ?? Duration.seconds(10),

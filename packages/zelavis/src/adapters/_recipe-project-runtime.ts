@@ -317,6 +317,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
   /** What each running Project resolves its commands from; a recipe upgrade may swap it. */
   const liveCommands = new Map<string, Readonly<Record<string, string>>>();
+  /** The placement each Project runs under, as the Platform last handed it over (a start or an update). */
+  const placements = new Map<string, PlacementToken>();
 
   const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
     projectId: project.id,
@@ -374,11 +376,11 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   );
 
   /** A plan controller for a Project, listening to what its processes do so the Project's log tells it. */
-  const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, parsed: RecipeManifest, placement?: PlacementToken) {
+  const createController = Effect.fn("RecipeRuntime.controller")(function* (id: string, state: RecipeState, parsed: RecipeManifest) {
     const root = rootOf(id, parsed);
     const host = makeAgentPlanHost({
       runner: agent, workloadId: id, cwd: root, commands: () => liveCommands.get(id) ?? state.commands, ports: state.ports,
-      ...(placement ? { placement: placement as never } : {}),
+      placement: () => placements.get(id) as never,
       baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, LANG: "C.UTF-8" },
       resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
@@ -401,6 +403,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
 
   const forget = (id: string) => Effect.gen(function* () {
     controllers.delete(id);
+    placements.delete(id);
     liveCommands.delete(id);
     const listener = listeners.get(id);
     listeners.delete(id);
@@ -629,6 +632,8 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       const url = urlOf(parsed, state);
       const answer = () => ({ status: "running" as const, ...(url ? { url } : {}), startedAt: new Date().toISOString() });
 
+      // An adopted controller starts whatever is missing under the placement this start carries.
+      if (placement) placements.set(project.id, placement);
       let controller = controllers.get(project.id);
       if (controller === undefined) {
         // Nothing of this Project is known to run, so any socket here is a leftover. One left in place
@@ -640,7 +645,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
           const { uid, gid } = owner;
           yield* integration(() => chown(socketDirectory(state), uid, gid)).pipe(Effect.mapError(asRuntimeError));
         }
-        controller = yield* createController(project.id, state, parsed, placement);
+        controller = yield* createController(project.id, state, parsed);
       }
       const result = yield* phase(project.id, "start", state, parsed, PHASE_TIMEOUT_MS);
       if (result.phase !== "start") return yield* Effect.fail(failure("The start phase returned no process plan."));
@@ -701,7 +706,10 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       if (state) yield* integration(() => rm(socketDirectory(state), { recursive: true, force: true })).pipe(Effect.mapError(asRuntimeError));
     }),
 
-    prepareUpdate: Effect.fn("RecipeRuntime.prepareUpdate")(function* (previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord) {
+    prepareUpdate: Effect.fn("RecipeRuntime.prepareUpdate")(function* (previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, placement?: PlacementToken) {
+      // A controller adopted after a Platform update holds no placement; the processes this update replaces
+      // start under the one the Platform holds now.
+      if (placement) placements.set(previous.id, placement);
       return yield* withKit(prepareRecipeUpdate(previous, candidate)).pipe(Effect.mapError(asRuntimeError));
     }),
 
