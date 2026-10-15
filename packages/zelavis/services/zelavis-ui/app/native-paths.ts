@@ -10,6 +10,8 @@ export const nativePaths = [
   "/settings",
   "/settings/appearance",
   "/services",
+  "/marketplace",
+  "/projects/:projectId/marketplace",
   "/server/logs",
   "/server/terminal",
   "/server",

@@ -5,6 +5,8 @@ import { hostScreens } from "./host-pages.ts";
 import { fabricScreen } from "./fabric-pages.ts";
 import { projectsOverviewScreen } from "./projects-pages.ts";
 import { servicesScreen, settingsScreen } from "./settings-pages.ts";
+import { marketplaceScreen as platformMarketplace } from "./marketplace-pages.ts";
+import { notRunning, projectContext } from "./project-context.ts";
 import { pageNumber } from "./grids/model.ts";
 import { Effect } from "effect";
 import { ApiError, array, bootstrap, label, object, projectConfig, projects, request, uploadFile, storagePath, type Config, type Project } from "./api.ts";
@@ -318,6 +320,12 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   if (context.path === "/" || context.path === "/projects") return yield* projectsOverviewScreen(context);
   if (context.path.startsWith("/settings")) return yield* settingsScreen(context);
   if (context.path === "/services") return yield* servicesScreen(context);
+  if (context.path === "/marketplace") return yield* platformMarketplace(context, "platform");
+  if (context.projectId && /^\/projects\/[^/]+\/marketplace\/?$/.test(context.path)) {
+    const entered = yield* projectContext(context);
+    if (entered.missing) return entered.missing;
+    return entered.scoped ? yield* platformMarketplace(context, "project", entered.scoped) : notRunning();
+  }
   if (/^\/server\/fabric(\/|$)/.test(context.path)) return yield* fabricScreen(context);
   const hostScreen = (hostScreens as Record<string, typeof logsScreen>)[context.path.replace(/(.)\/$/, "$1")];
   if (hostScreen) return yield* hostScreen(context);
@@ -336,7 +344,6 @@ export const loadScreen = Effect.fn("new-ui.loadScreen")(function*(context: Scre
   const servicePage = yield* servicePageScreen(context.config, context.path);
   if (servicePage) return servicePage;
   if (context.path.startsWith("/server")) return yield* serverScreen(context);
-  if (context.path === "/marketplace") return yield* marketplaceScreen(context);
   if (context.path === "/assistant") return yield* assistantScreen(context);
   return empty("Page not found", "Choose a section from the sidebar to continue.");
 });
