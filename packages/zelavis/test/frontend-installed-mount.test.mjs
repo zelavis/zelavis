@@ -3,22 +3,22 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { readFrontendManifest, toServiceAppDefinition } from "../dist/core/service/frontend.js";
 import { injectFrontendBasePath, rewriteBundleAssetBase } from "../dist/service-app.js";
-// The committed copy of the built `index.html`. Reading `build/client`
-// directly would tie these tests to a full `react-router build`, which the
-// runtime test job does not run — the dashboard e2e job builds that.
-import { embeddedDashboardShell } from "@zelavis/ui/dashboard-assets";
+// The generic installable-frontend mechanism (a manifest-declared static bundle, mounted wherever the Platform puts
+// it) is exercised with the React dashboard's built shell, kept as a fixture: that dashboard declared exactly this
+// contract. The Fuzor dashboard is a bundled frontend with its own adapter and is covered by its package's tests.
+const frontendManifest = {
+  name: "@test/installable-frontend",
+  version: "1.0.0",
+  zelavis: { kind: "frontend", namespace: "installable", frontend: { runtime: "static", bundle: "build/client", mode: "spa", assetBase: "/assets/", basePathGlobal: "__ZELAVIS_BASE_PATH__" } },
+};
+const shell = await readFile(new URL("./fixtures/installable-frontend-shell.html", import.meta.url), "utf8");
 
 async function dashboardManifest() {
-  return JSON.parse(
-    await readFile(
-      new URL("../services/zelavis-ui/package.json", import.meta.url),
-      "utf8",
-    ),
-  );
+  return frontendManifest;
 }
 
 function dashboardIndexHtml() {
-  return embeddedDashboardShell;
+  return shell;
 }
 
 test("the dashboard bundle carries the script that applies its mount", async () => {

@@ -3381,6 +3381,7 @@ function resolvePlatformFrontend(
   context: {
     rootPath: string;
     createRuntimeConfig: () => Promise<unknown>;
+    fetch: (request: Request) => Promise<Response>;
   },
 ): Promise<ZelavisPlatformFrontend | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<ZelavisPlatformFrontend | undefined, IntegrationFailure> {
@@ -3400,6 +3401,7 @@ function resolvePlatformFrontend(
       return devServerUrl ? { devServerUrl } : {};
     })(),
     createRuntimeConfig: context.createRuntimeConfig,
+    fetch: context.fetch,
   })));
 }));
   }
@@ -6461,9 +6463,14 @@ export function zelavis(
         // configuration in return, so it receives a thunk rather than the document —
         // a frontend reads it when serving a request, long after composition.
         let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
+        // Set once the runtime is mounted; a frontend calls it while serving, never during composition.
+        let mountedFetch: ZelavisServerFetchHandler | undefined;
         const platformFrontend = yield* integration(() =>
           resolvePlatformFrontend(options.frontend, {
             rootPath,
+            fetch: (request) => mountedFetch
+              ? mountedFetch(request)
+              : Promise.reject(new Error("The Platform was called before composition finished.")),
             createRuntimeConfig: () => {
               return present(
                 Effect.gen(function* () {
@@ -7452,6 +7459,7 @@ export function zelavis(
         // routes mounting produced rather than recomputing them from the service
         // list with inputs that were never guaranteed to match.
         mountedRoutes = runtime.routes as readonly ZelavisResolvedRoute[];
+        mountedFetch = (request) => runtime.fetch(request);
         let closePromise: Promise<void> | undefined;
         const close = (): Promise<void> => {
           closePromise ??= present(

@@ -1,69 +1,28 @@
-import { type RouteConfig, index, route } from "@react-router/dev/routes";
+import { workspaceRouteCatalog } from "../src/workspace-route-manifest.ts";
+import type { RouteDefinition } from "fuzor/runtime";
+export type DashboardHandle = { pageLabel: string; sidebarTrail: readonly string[] };
+const handle = (pageLabel: string, ...sidebarTrail: string[]): DashboardHandle => ({ pageLabel, sidebarTrail });
+const declared = workspaceRouteCatalog.filter(route => route.path !== "/*" && route.path !== "/_api/relations/:collection");
+export const clientRoutes: Record<string, string> = Object.fromEntries(declared.map(route => [route.path, route.path.startsWith("/projects/:projectId/") ? "/project-section/" : route.path === "/projects/:projectId" ? "/project/" : route.path.startsWith("/server/") ? "/server-section/" : route.path.startsWith("/settings/") ? "/settings/" : "/"]));
+Object.assign(clientRoutes, { "/:section*": "/", "/projects/:projectId/:section*": "/project-section/", "/server/:section*": "/server-section/", "/settings/:section*": "/settings/", "/projects/create": "/projects/create/" });
+const routeHandle = (path: string): DashboardHandle => {
+  if (path.startsWith("/projects/:projectId")) { const section = path.split("/")[3]; return handle(section ? section[0].toUpperCase() + section.slice(1) : "Project overview", "projects", "project", ...(section && !section.startsWith(":") ? [section] : [])); }
+  if (path.startsWith("/server")) return handle(path.split("/")[2] ?? "Server", "server");
+  if (path.startsWith("/settings")) return handle("Settings", "settings");
+  return handle(path === "/" ? "Projects" : path.slice(1));
+};
+export const routeTree: readonly RouteDefinition[] = [{ id: "platform", path: "/", handle: handle("Projects"), children: [
+  ...[...new Map(declared.map(route => [route.path, route])).values()].filter(route => route.path !== "/").map(route => ({ id: route.file.replace(/\.tsx$/, ""), path: route.path, handle: routeHandle(route.path) })),
+  { id: "create-project", path: "/projects/create", handle: handle("Create project", "projects") },
+  { id: "project-section", path: "/projects/:projectId/:section*", handle: handle("Project", "projects", "project") },
+  { id: "service-page", path: "/:section*", handle: handle("Service page") }
+] }];
 
-export default [
-  index("routes/projects.index.tsx"),
-  route("login", "routes/login.tsx"),
-  route("setup", "routes/setup.tsx"),
-  route("logout", "routes/logout.tsx"),
-  route("assistant", "routes/assistant.tsx"),
-  route("projects", "routes/projects.tsx"),
-  route("services", "routes/services.tsx"),
-  route("marketplace", "routes/marketplace.tsx"),
-  route("server", "routes/server.tsx", [
-    route("resources", "routes/resources.tsx"),
-    route("security", "routes/security.tsx"),
-    route("runtimes", "routes/server.runtimes.tsx"),
-    route("domains", "routes/server.domains.tsx"),
-    route("access", "routes/server.access.tsx"),
-    route("access/users", "routes/server.access.users.tsx"),
-    route("access/permissions", "routes/server.access.permissions.tsx"),
-    route("backups", "routes/server.backups.tsx"),
-    route("logs", "routes/server.logs.tsx"),
-    route("terminal", "routes/server.terminal.tsx"),
-    route("database", "routes/server.database.tsx"),
-    route("fabric", "routes/server.fabric.tsx", [
-      route(":fabricSection", "routes/server.fabric.$fabricSection.tsx", [
-        route(
-          ":fabricDetail",
-          "routes/server.fabric.$fabricSection.$fabricDetail.tsx",
-        ),
-      ]),
-    ]),
-  ]),
-  route("settings", "routes/settings.tsx", [
-    route("appearance", "routes/settings.appearance.tsx"),
-  ]),
-  route("projects/:projectId", "routes/index.tsx"),
-  route("projects/:projectId/backend", "routes/backend.tsx"),
-  route("projects/:projectId/extensions", "routes/extensions.tsx"),
-  route("projects/:projectId/marketplace", "routes/project.marketplace.tsx"),
-  route("projects/:projectId/agents", "routes/agents.tsx"),
-  route("projects/:projectId/auth", "routes/auth.tsx"),
-  route("projects/:projectId/content", "routes/content.tsx", [
-    route("new", "routes/content.new.tsx"),
-    route(":contentType", "routes/content.$contentType.tsx", [
-      index("routes/content.$contentType.index.tsx"),
-      route("fields", "routes/content.$contentType.fields.tsx"),
-      route(":entryId", "routes/content.$contentType.$entryId.tsx"),
-    ]),
-  ]),
-  route("projects/:projectId/database", "routes/database.tsx"),
-  route("projects/:projectId/database/new", "routes/database.new.tsx"),
-  route("projects/:projectId/media", "routes/media.tsx"),
-  route("projects/:projectId/settings", "routes/project.settings.tsx"),
-  route("projects/:projectId/storage", "routes/storage.tsx"),
-  route("projects/:projectId/users", "routes/users.tsx"),
-  route("projects/:projectId/frontend", "routes/frontend.tsx"),
-  route("projects/:projectId/workloads", "routes/workloads.tsx"),
-  route("projects/:projectId/workloads/functions", "routes/workloads.functions.tsx"),
-  route("projects/:projectId/workloads/jobs", "routes/workloads.jobs.tsx"),
-  route("projects/:projectId/workloads/schedules", "routes/workloads.schedules.tsx"),
-  route("projects/:projectId/workloads/webhooks", "routes/workloads.webhooks.tsx"),
-  route("projects/:projectId/workloads/new", "routes/workloads.new.tsx"),
-  route("projects/:projectId/workloads/logs", "routes/workloads.logs.tsx"),
-  route("projects/:projectId/workloads/settings", "routes/workloads.settings.tsx"),
-  route("projects/:projectId/workloads/:workloadKind/:workloadId", "routes/workloads.$workloadId.tsx"),
-  route("projects/:projectId/:managedSection", "routes/project.managed.$managedSection.tsx"),
-  route("_api/relations/:collection", "routes/api.relations.$collection.tsx"),
-  route("*", "routes/$.tsx"),
-] satisfies RouteConfig;
+export const databaseRoutes = ["/projects/:projectId/database"];
+
+/** Explicit domain routes carry projectId but have no dynamic :section parameter. */
+export function dashboardSection(path: string, params: Readonly<Record<string, string | undefined>>): string | undefined {
+  if (params.section !== undefined) return params.section;
+  if (!params.projectId || !path.startsWith("/projects/")) return undefined;
+  return path.split("/").slice(3).join("/") || undefined;
+}

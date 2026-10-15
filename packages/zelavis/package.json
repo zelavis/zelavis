@@ -198,8 +198,10 @@
     "services/zelavis-marketplace/dist",
     "services/zelavis-marketplace/allowlist.snapshot.json",
     "services/zelavis-ui/dist",
-    "services/zelavis-ui/build/client",
-    "services/zelavis-cloud/bundle"
+    "services/zelavis-cloud/bundle",
+    "services/zelavis-ui/.fuzor/web/dist-spa",
+    "services/zelavis-ui/.fuzor/dist-backend",
+    "services/zelavis-ui/.fuzor/fuzor-build.json"
   ],
   "publishConfig": {
     "access": "public"

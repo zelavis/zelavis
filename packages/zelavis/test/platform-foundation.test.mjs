@@ -946,8 +946,8 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
 
     const childDashboardResponse = await fetch(`${projectRuntimeUrls.get("alpha")}/zelavis`);
     const childDashboardBody = await childDashboardResponse.text();
-    assert.doesNotMatch(childDashboardBody, /Zelavis Dashboard/);
-    assert.doesNotMatch(childDashboardBody, /__ZELAVIS_RUNTIME_CONFIG__/);
+    assert.doesNotMatch(childDashboardBody, /dashboard-shell|Zelavis · Fuzor/);
+    assert.doesNotMatch(childDashboardBody, /__zelavis__/);
 
     const updateSettingsResponse = await runtimeRequest(
       "/projects/alpha/proxy/zelavis/api/v1/runtime/settings",

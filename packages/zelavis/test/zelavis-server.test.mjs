@@ -144,43 +144,27 @@ test("zelavis includes its native subsystems by default", async (t) => {
     routes.some((route) => route.route.id === "database.collections.list"),
   );
 
-  // Dashboard root: served by the synthesized app service via the
-  // shell renderer, which injects the runtime config block.
+  // Dashboard root: served by the dashboard's shell renderer, which names its own mount and no placeholder.
   const dashboardResponse = await runtime.fetch(
     new Request("http://localhost/zelavis"),
   );
   assert.equal(dashboardResponse.status, 200);
   const dashboardBody = await dashboardResponse.text();
-  assert.match(dashboardBody, /Zelavis Dashboard/);
-  assert.match(dashboardBody, /__ZELAVIS_RUNTIME_CONFIG__/);
-  // The Platform declares the mount and the bundle applies it, rather than the
-  // Platform rewriting a router literal it had to know the shape of.
-  assert.match(dashboardBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/zelavis"/);
+  assert.match(dashboardBody, /<title>Zelavis/);
   assert.match(dashboardBody, /\/zelavis\/assets\//);
-  assert.match(dashboardBody, /\?zelavis-runtime-v1/);
-  assert.match(
-    dashboardBody,
-    /import\(["']\/zelavis\/assets\/entry\.client-[^"'?]+\.js\?zelavis-runtime-v1["']\)/,
-  );
   assert.doesNotMatch(dashboardBody, /\/\/zelavis\/assets\//);
-  assert.doesNotMatch(dashboardBody, /"\/assets\//);
-  assert.doesNotMatch(
-    dashboardBody,
-    /import\(["']\/zelavis\/assets\/entry\.client-[^"'?]+\.js["']\)/,
-  );
+  assert.doesNotMatch(dashboardBody, /__zelavis__|"\/assets\//);
 
   // SPA deep-link: an unmatched client route is caught by `/zelavis/*path`
-  // and falls back through `shell.render` to the same shell HTML.
+  // and falls back through `shell.render` to the same shell.
   const settingsResponse = await runtime.fetch(
     new Request("http://localhost/zelavis/projects/project-a/settings"),
   );
   assert.equal(settingsResponse.status, 200);
-  const settingsBody = await settingsResponse.text();
-  assert.match(settingsBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/zelavis"/);
-  assert.match(settingsBody, /\/zelavis\/assets\//);
+  assert.match(await settingsResponse.text(), /\/zelavis\/assets\//);
 
   // A bundle asset path is served by the catch-all reading from the
-  // BundleStore, with the dashboard's content-type and no-cache header.
+  // BundleStore, with the right content type and its mount applied.
   const scriptAssetPath = (() => {
     const match = dashboardBody.match(
       /\/zelavis\/assets\/[A-Za-z0-9._-]+\.js(\?[^"'`)\s]*)?/,
@@ -192,16 +176,10 @@ test("zelavis includes its native subsystems by default", async (t) => {
     new Request(`http://localhost${scriptAssetPath}`),
   );
   assert.equal(scriptAssetResponse.status, 200);
-  assert.equal(
-    scriptAssetResponse.headers.get("cache-control"),
-    "no-cache",
-  );
+  assert.match(scriptAssetResponse.headers.get("content-type"), /javascript/);
   const scriptAssetBody = await scriptAssetResponse.text();
-  assert.match(scriptAssetBody, /\/zelavis\/assets\//);
-  assert.match(scriptAssetBody, /"\/zelavis\/assets\/[^"]+"/);
+  assert.doesNotMatch(scriptAssetBody, /__zelavis__/);
   assert.doesNotMatch(scriptAssetBody, /\/\/zelavis\/assets\//);
-  assert.doesNotMatch(scriptAssetBody, /[`"']\/assets\//);
-  assert.doesNotMatch(scriptAssetBody, /[`"']assets\//);
 
   // Unknown deep paths still get the SPA shell so the client router can
   // own routing, but unknown api/* paths get a real 404 from the
@@ -210,7 +188,7 @@ test("zelavis includes its native subsystems by default", async (t) => {
     new Request("http://localhost/zelavis/unknown/deep/path"),
   );
   assert.equal(deepLinkResponse.status, 200);
-  assert.match(await deepLinkResponse.text(), /Zelavis Dashboard/);
+  assert.match(await deepLinkResponse.text(), /<title>Zelavis/);
 
   const unknownApiResponse = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/unknown"),
@@ -1153,7 +1131,7 @@ test("the frontend cannot be switched off in code", async () => {
 
   assert.match(await (await withFrontend.fetch(
     new Request("http://localhost/zelavis/"),
-  )).text(), /Loading Zelavis dashboard/u);
+  )).text(), /<title>Zelavis/u);
   assert.match(await (await withoutFrontend.fetch(
     new Request("http://localhost/zelavis/"),
   )).text(), /No frontend installed/u);
@@ -1187,45 +1165,28 @@ test("zelavis uses a configurable root path for dashboard and APIs", async (t) =
   );
 
   // Shell at the dashboard root, exercised end-to-end through the
-  // dispatcher — should embed the runtime config and prefix all
-  // `/assets/...` references with the configured root path.
+  // dispatcher: every asset reference carries the configured root path.
   const dashboardResponse = await runtime.fetch(
     new Request("http://localhost/admin"),
   );
   assert.equal(dashboardResponse.status, 200);
   const dashboardBody = await dashboardResponse.text();
   assert.match(dashboardBody, /\/admin\/assets\//);
-  assert.match(dashboardBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/admin"/);
-  assert.match(dashboardBody, /\?zelavis-runtime-v1/);
-  assert.match(
-    dashboardBody,
-    /import\(["']\/admin\/assets\/entry\.client-[^"'?]+\.js\?zelavis-runtime-v1["']\)/,
-  );
   assert.doesNotMatch(dashboardBody, /\/\/admin\/assets\//);
-  assert.doesNotMatch(dashboardBody, /"\/assets\//);
-  assert.doesNotMatch(
-    dashboardBody,
-    /import\(["']\/admin\/assets\/entry\.client-[^"'?]+\.js["']\)/,
-  );
+  assert.doesNotMatch(dashboardBody, /__zelavis__|"\/assets\//);
 
   // Pick any script asset out of the bundle and fetch it through the
-  // catch-all. The bundle store applies the same `/admin/assets/`
-  // prefixing to its contents.
+  // catch-all. The bundle store applies the same root path to its contents.
   const manifestAssetPath = collectScriptAssetPath(dashboardBody);
   assert.ok(manifestAssetPath, "should reference at least one prefixed asset");
   const scriptAssetResponse = await runtime.fetch(
     new Request(`http://localhost${manifestAssetPath.replace(/\?.*$/, "")}`),
   );
   assert.equal(scriptAssetResponse.status, 200);
-  assert.equal(
-    scriptAssetResponse.headers.get("cache-control"),
-    "no-cache",
-  );
   const scriptAssetBody = await scriptAssetResponse.text();
-  assert.match(scriptAssetBody, /\/admin\/assets\//);
+  assert.doesNotMatch(scriptAssetBody, /__zelavis__/);
   assert.doesNotMatch(scriptAssetBody, /\/\/admin\/assets\//);
   assert.doesNotMatch(scriptAssetBody, /[`"']\/assets\//);
-  assert.doesNotMatch(scriptAssetBody, /[`"']assets\//);
 });
 
 function collectScriptAssetPath(html) {

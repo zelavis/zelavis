@@ -157,8 +157,10 @@ test("the default services ship their manifest and built output, not their sourc
     assert.equal(await shipped(`services/${service}/package.json`), true, `${service} has no manifest`);
     assert.equal(await shipped(`services/${service}/dist`), true, `${service} has no built output`);
   }
-  assert.equal(await shipped("services/zelavis-ui/build/client"), true, "the dashboard's browser assets");
-  for (const leftover of ["app", "tests", "test-results", ".react-router", "node_modules"]) {
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/web/dist-spa"), true, "the dashboard's browser assets");
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/dist-backend/entry.mjs"), true, "the dashboard's server entry");
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/fuzor-build.json"), true, "which Fuzor built the dashboard");
+  for (const leftover of ["app", "tests", "test-results", "node_modules", "islands", "behaviors", "scripts", "src", "components", "pages", ".fuzor/legacy-output", ".fuzor/dist-spa"]) {
     assert.equal(await shipped(`services/zelavis-ui/${leftover}`), false, `services/zelavis-ui/${leftover} must not be published`);
   }
 });

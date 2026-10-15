@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const source = fileURLToPath(new URL("../app/styles.css", import.meta.url));
+const source = fileURLToPath(new URL("../../zelavis-ui-legacy/app/styles.css", import.meta.url));
 const output = fileURLToPath(
   new URL("../src/generated/service-page-styles.ts", import.meta.url),
 );
@@ -36,7 +36,7 @@ function extractBlock(selector) {
 const light = extractBlock(":root");
 const dark = extractBlock(".dark");
 
-const stylesheet = `/* Generated from @zelavis/ui app/styles.css. Do not edit. */
+const stylesheet = `/* Generated from the design tokens in the legacy dashboard stylesheet (zelavis-ui-legacy/app/styles.css). Do not edit. */
 :root {
 ${light}
   color-scheme: light;

@@ -1,94 +1,43 @@
-import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
-
-const zelavisDevServer =
-  process.env.ZELAVIS_DEV_SERVER ?? "http://127.0.0.1:3000";
-const zelavisUiBasePath = normalizeBasePath(
-  process.env.ZELAVIS_UI_BASE_PATH ?? "/",
-);
-
-/**
- * Dev proxy to the Zelavis runtime.
- *
- * `changeOrigin` only rewrites `Host`, so the browser's `Origin` header
- * (the dev server, e.g. http://127.0.0.1:3001) would still reach a runtime
- * serving a different origin (e.g. http://127.0.0.1:3000). The runtime issues
- * session cookies only to same-origin requests and would silently drop every
- * `set-cookie`, leaving login apparently successful but unauthenticated.
- *
- * The request genuinely is same-origin from the browser's point of view — the
- * proxy is transparent — so forward the runtime's own origin.
- */
-const runtimeProxy = {
-  target: zelavisDevServer,
-  changeOrigin: true,
-  configure: (proxy: { on: (event: string, handler: (...args: any[]) => void) => void }) => {
-    proxy.on("proxyReq", (proxyReq: { setHeader: (name: string, value: string) => void }) => {
-      proxyReq.setHeader("origin", new URL(zelavisDevServer).origin);
-    });
-  },
-};
-
-function normalizeBasePath(path: string): string {
-  if (!path || path === "/") {
-    return "/";
-  }
-
-  const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
-  return `${withLeadingSlash.replace(/\/+$/, "")}/`;
-}
-
-export default defineConfig({
-  base: zelavisUiBasePath,
-  plugins: [tailwindcss(), reactRouter()],
-  optimizeDeps: {
-    include: [
-      "@assistant-ui/core",
-      "@assistant-ui/react",
-      "@assistant-ui/store",
-      "@base-ui/react/avatar",
-      "@base-ui/react/button",
-      "@base-ui/react/collapsible",
-      "@base-ui/react/dialog",
-      "@base-ui/react/direction-provider",
-      "@base-ui/react/input",
-      "@base-ui/react/menu",
-      "@base-ui/react/merge-props",
-      "@base-ui/react/select",
-      "@base-ui/react/separator",
-      "@base-ui/react/switch",
-      "@base-ui/react/tooltip",
-      "@base-ui/react/use-render",
-      "class-variance-authority",
-      "clsx",
-      "embla-carousel-react",
-      "lucide-react",
-      "swiper/react",
-      "tailwind-merge",
-    ],
-  },
-  resolve: {
-    dedupe: [
-      "@assistant-ui/core",
-      "@assistant-ui/react",
-      "@assistant-ui/store",
-      "react",
-      "react-dom",
-      "react/jsx-runtime",
-    ],
-    alias: {
-      "#": fileURLToPath(new URL("./app", import.meta.url)),
-    },
-  },
+import { readFile } from "node:fs/promises";
+import { Effect } from "effect";
+import { defineConfig, type PluginOption } from "vite";
+import { fuzorPlugin } from "fuzor/vite";
+import { clientRoutes, routeTree, databaseRoutes } from "./app/routes.ts";
+const runtime = process.env.ZELAVIS_DEV_SERVER ?? "http://127.0.0.1:3000";
+// A build is compiled against a placeholder root that the frontend adapter replaces with the Platform's `rootPath`
+// (src/mount-rewrite.ts); the dev server has no adapter in front of it, so it mounts at `/zelavis` (ZELAVIS_UI_BASE_PATH).
+const mount = process.env.ZELAVIS_UI_BASE_PATH ? process.env.ZELAVIS_UI_BASE_PATH.replace(/\/+$/, "") : "/__zelavis__";
+const workspaceStyles = fileURLToPath(new URL("../zelavis-ui-legacy/app/styles.css", import.meta.url));
+export default defineConfig(({ isSsrBuild }) => ({
+  base: `${mount}/`,
+  // The client carries the placeholder, which the adapter replaces as it serves. The server entry is loaded by the
+  // adapter, which knows the real mount and shares it as `globalThis.__zelavisUiMount` before the first import.
+  define: { __ZELAVIS_ROOT__: isSsrBuild ? "globalThis.__zelavisUiMount" : JSON.stringify(mount) },
+  plugins: [{ name: "new-ui:workspace-styles", enforce: "pre", load(id) {
+    if (id.split("?")[0] !== workspaceStyles) return;
+    // Scan the React workspace sources, avoiding Fuzor's server templates in
+    // Tailwind's CSS watch graph. The authored stylesheet stays untouched.
+    return Effect.runPromise(Effect.tryPromise({ try: () => readFile(workspaceStyles, "utf8"), catch: cause => cause }).pipe(Effect.map(css => css.replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source ".";') + '\n/* The feature frame has no React shell header: retain its own Projects controls. */\n.workspace-projects [class~="lg:hidden"] { display: flex; }\n')));
+  } }, tailwindcss() as unknown as PluginOption, fuzorPlugin({
+    clientRoutes, routeTree,
+    // The Platform provides `effect` to the services it loads; Fuzor's server runtime is bundled into the entry so
+    // the shipped dashboard needs nothing installed beside it.
+    serverExternal: ["effect"],
+    serverComponents: { server: "app/views/dashboard.server.ts", references: "app/views", routes: databaseRoutes },
+    prefetch: "intent"
+  })],
+  // The dashboard targets current browsers. Vite's default list (down to safari14) asks esbuild to downlevel
+  // destructuring, which the esbuild a clean install resolves refuses to do.
+  build: { target: "es2022" },
+  esbuild: { jsx: "automatic" },
+  resolve: { alias: { "#": fileURLToPath(new URL("../zelavis-ui-legacy/app", import.meta.url)) }, dedupe: ["effect", "react", "react-dom"] },
   server: {
-    proxy: {
-      "/api": {
-        ...runtimeProxy,
-        rewrite: (path) => path.replace(/^\/api/, "/zelavis/api"),
-      },
-      "/zelavis/api": runtimeProxy,
-    },
-  },
-});
+    host: "127.0.0.1",
+    fs: { allow: ["../../../../../fuzor", "../../../.."] },
+    proxy: { [`${mount}/api`]: { target: runtime, changeOrigin: true, configure(proxy) {
+      proxy.on("proxyReq", (request) => request.setHeader("origin", new URL(runtime).origin));
+    } } }
+  }
+}));

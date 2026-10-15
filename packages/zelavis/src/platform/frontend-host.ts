@@ -27,6 +27,14 @@ export interface ZelavisPlatformFrontendContext {
    * round trip; one that does not simply fetches `/runtime/config`.
    */
   readonly createRuntimeConfig: () => Promise<unknown>;
+  /**
+   * Calls this Platform's own API in-process, as the request's caller: the Platform resolves that caller from the
+   * request's cookie or authorization header exactly as it would for a request from the network. A frontend that
+   * renders on the server uses this rather than guessing its Platform's address, which no frontend can know (a
+   * Host header is the caller's, not the operator's). Available once composition has finished; before that it
+   * rejects.
+   */
+  readonly fetch: (request: Request) => Promise<Response>;
 }
 
 export interface ZelavisPlatformFrontend {
