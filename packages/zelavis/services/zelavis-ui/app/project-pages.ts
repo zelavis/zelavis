@@ -8,6 +8,7 @@ import { providerCard } from "./settings-pages.ts";
 import { servicePageScreen } from "./service-pages.ts";
 import { mediaScreen, storageScreen } from "./storage-pages.ts";
 import { workloadsScreen } from "./workloads-pages.ts";
+import { contentScreen } from "./content-pages.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -26,7 +27,7 @@ const MANAGED_SECTIONS: Record<string, readonly [title: string, detail: string]>
 };
 
 /** Sections that are still the React workspace. A page leaves this list when it is rebuilt natively. */
-const LEGACY_SECTIONS = new Set(["database", "content"]);
+const LEGACY_SECTIONS = new Set(["database"]);
 
 const usable = (scoped: Config, name: string, hosted: boolean) => { const entry = object(object(scoped.capabilities)[name]); return entry.available === true && (!hosted || entry.used === true); };
 
@@ -45,6 +46,7 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   const base = `/projects/${encodeURIComponent(project.id)}`;
   if (section === "") return yield* overviewScreen(context, project, scoped, hosted);
   if (section === "workloads") return yield* workloadsScreen(context);
+  if (section === "content" && scoped) return yield* contentScreen(context, project, scoped);
   if (section === "settings") return yield* settingsScreen(context, project);
   if (section === "extensions") return extensionsScreen(base);
   if (section === "agents") return empty("No agents connected", "The dashboard shell is ready for the agent service boundary.");

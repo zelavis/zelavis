@@ -124,11 +124,12 @@ const insertSample = Effect.fn("ui.insertStorageSample")(function*(scoped: Confi
 /** Project → Media: the gallery is an island that owns its own state (selection, order, filters). */
 export const mediaScreen = Effect.fn("ui.mediaScreen")(function*(context: ScreenContext, scoped: Config) {
   const enabled = array(scoped.services).some(service => object(service).name === "@zelavis/storage") || object(object(scoped.capabilities).storage).available === true;
-  const settings = object(yield* request(`${context.config.api.basePath}/runtime/settings`).pipe(Effect.catch(() => Effect.succeed({}))));
+  // Gallery order is a Project preference, so it is read from and written to the Project's own runtime.
+  const settings = object(yield* request(`${scoped.api.basePath}/runtime/settings`).pipe(Effect.catch(() => Effect.succeed({}))));
   const orderedPaths = array(object(object(settings.preferences).media).orderedPaths).map(String);
   const island = document.createElement("fuzor-island");
   island.setAttribute("src", "media-gallery");
-  island.setAttribute("props", JSON.stringify({ apiBase: scoped.api.basePath, controlApi: context.config.api.basePath, orderedPaths }));
+  island.setAttribute("props", JSON.stringify({ apiBase: scoped.api.basePath, settingsApi: scoped.api.basePath, orderedPaths }));
   return page(
     node("div", { class: "actions" }, link("Open Backend Storage", `/projects/${encodeURIComponent(context.projectId ?? "")}/storage`)),
     ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable the storage core service to use the media gallery.")]),

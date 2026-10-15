@@ -30,7 +30,7 @@ export function moveBefore(order: readonly string[], dragged: string, target: st
 
 export function mount(host: HTMLElement, props: Record<string, unknown>) {
   const api = String(props.apiBase);
-  const control = String(props.controlApi);
+  const settingsApi = String(props.settingsApi);
   const params = new URL(location.href).searchParams;
   const state = {
     files: [] as Asset[], ordered: array(props.orderedPaths).map(String), selected: new Set<string>(), inspected: params.get("path") ?? "",
@@ -74,7 +74,7 @@ export function mount(host: HTMLElement, props: Record<string, unknown>) {
 
   const persist = (order: string[]) => {
     const merged = [...order, ...array(props.orderedPaths).map(String).filter(path => !order.includes(path))];
-    fork(request(`${control}/runtime/settings`, "PATCH", { preferences: { media: { orderedPaths: merged } } }));
+    fork(request(`${settingsApi}/runtime/settings`, "PATCH", { preferences: { media: { orderedPaths: merged } } }));
   };
 
   function render() {
