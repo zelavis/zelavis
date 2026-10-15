@@ -1,5 +1,12 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.33
+
+### Patch Changes
+
+- Updated dependencies [a68c62c]
+  - zelavis@2.0.0-alpha.33
+
 ## 1.1.0-alpha.32
 
 ### Patch Changes
