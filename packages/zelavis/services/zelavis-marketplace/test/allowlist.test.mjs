@@ -22,7 +22,7 @@ function list(overrides = {}) {
     services: [{
       name: "@zelavis/wordpress", kind: "app", maintainer: "zelavis", title: "WordPress",
       summary: "A managed WordPress site.", categories: ["apps", "cms"], runtimeKinds: ["native"],
-      versions: [{ version: "7.1.0", integrity: INTEGRITY }, { version: "7.0.0", integrity: OTHER_INTEGRITY, deprecated: "old" }],
+      versions: [{ version: "7.1.0", integrity: INTEGRITY, platform: "2.0.0" }, { version: "7.0.0", integrity: OTHER_INTEGRITY, platform: "1.0.0", deprecated: "old" }],
       latest: "7.1.0",
     }],
     ...overrides,
@@ -54,8 +54,10 @@ test("the list itself is validated strictly", () => {
     list({ services: [{ ...service, kind: "core" }] }),
     list({ services: [{ ...service, latest: "9.9.9" }] }),
     list({ services: [{ ...service, versions: [] }] }),
-    list({ services: [{ ...service, versions: [{ version: "^7.0.0", integrity: INTEGRITY }], latest: "^7.0.0" }] }),
-    list({ services: [{ ...service, versions: [{ version: "7.1.0", integrity: "sha1-abc" }] }] }),
+    list({ services: [{ ...service, versions: [{ version: "^7.0.0", integrity: INTEGRITY, platform: "2.0.0" }], latest: "^7.0.0" }] }),
+    list({ services: [{ ...service, versions: [{ version: "7.1.0", integrity: "sha1-abc", platform: "2.0.0" }] }] }),
+    list({ services: [{ ...service, versions: [{ version: "7.1.0", integrity: INTEGRITY }] }] }),
+    list({ services: [{ ...service, versions: [{ version: "7.1.0", integrity: INTEGRITY, platform: ">=2.0.0" }] }] }),
     list({ services: [{ ...service, title: "two\nlines" }] }),
     "not an object",
   ];
@@ -168,7 +170,7 @@ test("the gate vouches only for listed versions with the listed digest", async (
   const client = createAllowlistClient({
     sources: [], cache: memoryCache(), bundled: parseAllowlist(list()), now: () => NOW,
   });
-  const gate = createAllowlistGate(client);
+  const gate = createAllowlistGate(client, { platform: "2.0.0" });
   const ok = await gate.authorize({ name: "@zelavis/wordpress", version: "7.1.0" });
   assert.equal(ok.service.maintainer, "zelavis");
   await gate.verifyAcquired({ name: "@zelavis/wordpress", version: "7.1.0", integrity: INTEGRITY });
@@ -180,16 +182,16 @@ test("the gate vouches only for listed versions with the listed digest", async (
   await refusal(gate.authorize({ name: "@zelavis/wordpress", version: "latest" }), "version_not_listed");
   await refusal(gate.verifyAcquired({ name: "@zelavis/wordpress", version: "7.1.0", integrity: OTHER_INTEGRITY }), "digest_mismatch");
 
-  const none = createAllowlistGate(createAllowlistClient({ sources: [], now: () => NOW }));
+  const none = createAllowlistGate(createAllowlistClient({ sources: [], now: () => NOW }), { platform: "2.0.0" });
   await refusal(none.authorize({ name: "@zelavis/wordpress", version: "7.1.0" }), "unavailable");
   const late = createAllowlistGate(createAllowlistClient({
     sources: [], bundled: parseAllowlist(list()), now: () => Date.parse("2026-07-03T00:00:00Z"),
-  }));
+  }), { platform: "2.0.0" });
   await refusal(late.authorize({ name: "@zelavis/wordpress", version: "7.1.0" }), "expired");
 });
 
 test("the catalogue offers each service at its latest exact version", () => {
-  const [entry] = allowlistCatalogEntries(parseAllowlist(list()).services);
+  const [entry] = allowlistCatalogEntries(parseAllowlist(list()).services, "2.0.0");
   assert.equal(entry.specifier, "npm:@zelavis/wordpress@7.1.0");
   assert.equal(entry.status, "available");
   assert.equal(entry.source, "community", "the registry reserves official for what the host bundled");
@@ -202,8 +204,35 @@ test("the catalogue offers each service at its latest exact version", () => {
 test("managed recipe metadata survives parsing and catalogue publication; invalid declarations are refused", () => {
   const service = { ...list().services[0], managed: { adminTitle: "WordPress Admin", adminPath: "/wp-admin/" } };
   const parsed = parseAllowlist(list({ services: [service] }));
-  assert.deepEqual(allowlistCatalogEntries(parsed.services)[0].service.project.managed, service.managed);
+  assert.deepEqual(allowlistCatalogEntries(parsed.services, "2.0.0")[0].service.project.managed, service.managed);
   for (const managed of [null, true, [], { adminPath: "http://localhost" }, { adminPath: "/../private" }, { unexpected: true }])
     assert.throws(() => parseAllowlist(list({ services: [{ ...service, managed }] })), /managed/);
   assert.throws(() => parseAllowlist(list({ services: [{ ...service, kind: "plugin" }] })), /only for Project recipes/);
+});
+
+test("an older Platform is offered, and may install, only what it runs", async () => {
+  const service = {
+    ...list().services[0],
+    versions: [
+      { version: "7.2.0", integrity: INTEGRITY, platform: "2.0.0-alpha.40" },
+      { version: "7.1.0", integrity: OTHER_INTEGRITY, platform: "2.0.0-alpha.9" },
+      { version: "7.0.5", integrity: OTHER_INTEGRITY, platform: "2.0.0-alpha.3", deprecated: "broken" },
+      { version: "7.0.0", integrity: OTHER_INTEGRITY, platform: "2.0.0-alpha.1" },
+    ],
+    latest: "7.2.0",
+  };
+  const parsed = parseAllowlist(list({ services: [service] }));
+  const offered = (platform) => allowlistCatalogEntries(parsed.services, platform)[0].service.version;
+  assert.equal(offered("2.0.0-alpha.40"), "7.2.0");
+  assert.equal(offered("2.0.0"), "7.2.0", "a stable release runs what its prereleases ran");
+  assert.equal(offered("2.0.0-alpha.39"), "7.1.0", "the newest version this Platform runs, by numeric prerelease order");
+  assert.equal(offered("2.0.0-alpha.8"), "7.0.0", "a deprecated version is not offered");
+  assert.equal(offered("1.9.0"), "7.2.0", "listed so it is found; the gate says what it needs");
+  assert.equal(allowlistCatalogEntries(parsed.services, "2.0.0-alpha.39")[0].specifier, "npm:@zelavis/wordpress@7.1.0");
+
+  const gate = createAllowlistGate(createAllowlistClient({ sources: [], bundled: parsed, now: () => NOW }), { platform: "2.0.0-alpha.39" });
+  await gate.authorize({ name: "@zelavis/wordpress", version: "7.1.0" });
+  await assert.rejects(gate.authorize({ name: "@zelavis/wordpress", version: "7.2.0" }), (error) =>
+    error instanceof AllowlistRefusal && error.code === "platform_too_old"
+      && /needs Zelavis 2\.0\.0-alpha\.40 or newer, and this Platform runs 2\.0\.0-alpha\.39\. Update Zelavis first/.test(error.message));
 });

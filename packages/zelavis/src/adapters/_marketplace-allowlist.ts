@@ -23,6 +23,7 @@ import type {
 } from "../index.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 import { resolveBundledServiceDirectory } from "./_local-runtime.js";
+import { ZELAVIS_VERSION } from "../version.js";
 
 export interface MarketplaceOptions {
   /**
@@ -66,8 +67,8 @@ interface MarketplaceModule {
     bundled?: unknown;
     fetch?: typeof fetch;
   }): MarketplaceAllowlistClient;
-  createAllowlistGate(client: MarketplaceAllowlistClient): MarketplaceAllowlistGate;
-  allowlistCatalogEntries(services: readonly unknown[], firstOrder?: number): readonly unknown[];
+  createAllowlistGate(client: MarketplaceAllowlistClient, options: { platform: string }): MarketplaceAllowlistGate;
+  allowlistCatalogEntries(services: readonly unknown[], platform: string, firstOrder?: number): readonly unknown[];
 }
 
 export interface MarketplaceAllowlistView {
@@ -340,7 +341,8 @@ export function createLocalMarketplace(input: {
     name: string;
   }[];
   const remote = module
-    .allowlistCatalogEntries(listed.filter((entry) => !input.bundledNames.has(entry.name)), 100) as unknown as readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+    // Offered at the newest version this runtime's own Zelavis runs: a Project offers what its engine runs.
+    .allowlistCatalogEntries(listed.filter((entry) => !input.bundledNames.has(entry.name)), ZELAVIS_VERSION, 100) as unknown as readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
 
   // Development: an official service in the operator's own checkout stands in
   // for its npm copy, so it can be tried without publishing anything.
@@ -386,7 +388,7 @@ export function createLocalMarketplace(input: {
           },
         }
       : {};
-  const gate = options.allowlist === false ? undefined : module.createAllowlistGate(client);
+  const gate = options.allowlist === false ? undefined : module.createAllowlistGate(client, { platform: ZELAVIS_VERSION });
 
   const localRuntimes = new Set(local.filter((entry) => entry.providesRuntime).map((entry) => entry.name));
   return {

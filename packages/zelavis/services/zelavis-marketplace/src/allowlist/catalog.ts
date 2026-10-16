@@ -1,3 +1,4 @@
+import { selectListedVersion } from "./select.js";
 import type { AllowlistService } from "./types.js";
 
 /**
@@ -36,31 +37,41 @@ export interface AllowlistCatalogEntry {
   readonly order: number;
 }
 
+/**
+ * One entry per listed service, at the newest version a Platform at `platform`
+ * runs. A service none of whose versions runs there is still listed, at its
+ * latest, so the operator learns it exists; installing it is refused by the gate
+ * with the Platform version it needs.
+ */
 export function allowlistCatalogEntries(
   services: readonly AllowlistService[],
+  platform: string,
   firstOrder = 100,
 ): readonly AllowlistCatalogEntry[] {
-  return services.map((entry, index) => ({
-    service: {
-      name: entry.name,
-      kind: entry.kind,
-      version: entry.latest,
-      service: {},
-      api: {},
-      marketplace: {
-        title: entry.title,
-        ...(entry.summary ? { summary: entry.summary } : {}),
-        ...(entry.categories ? { categories: entry.categories } : {}),
-        ...(entry.tags ? { tags: entry.tags } : {}),
+  return services.map((entry, index) => {
+    const version = selectListedVersion(entry, platform)?.version ?? entry.latest;
+    return {
+      service: {
+        name: entry.name,
+        kind: entry.kind,
+        version,
+        service: {},
+        api: {},
+        marketplace: {
+          title: entry.title,
+          ...(entry.summary ? { summary: entry.summary } : {}),
+          ...(entry.categories ? { categories: entry.categories } : {}),
+          ...(entry.tags ? { tags: entry.tags } : {}),
+        },
+        ...(entry.kind === "app" && entry.runtimeKinds
+          ? { project: { runtimeKinds: entry.runtimeKinds, ...(entry.hostPackages ? { hostPackages: entry.hostPackages } : {}), ...(entry.managed ? { managed: entry.managed } : {}) } }
+          : {}),
       },
-      ...(entry.kind === "app" && entry.runtimeKinds
-        ? { project: { runtimeKinds: entry.runtimeKinds, ...(entry.hostPackages ? { hostPackages: entry.hostPackages } : {}), ...(entry.managed ? { managed: entry.managed } : {}) } }
-        : {}),
-    },
-    specifier: `npm:${entry.name}@${entry.latest}`,
-    status: "available" as const,
-    source: "community" as const,
-    maintainer: entry.maintainer,
-    order: firstOrder + index,
-  }));
+      specifier: `npm:${entry.name}@${version}`,
+      status: "available" as const,
+      source: "community" as const,
+      maintainer: entry.maintainer,
+      order: firstOrder + index,
+    };
+  });
 }

@@ -19,6 +19,12 @@ export interface AllowlistVersion {
   readonly version: string;
   /** npm subresource integrity of the published tarball (`sha512-…`). */
   readonly integrity: string;
+  /**
+   * The oldest Zelavis Platform this version runs on, exact: the package's own
+   * `peerDependencies.zelavis` (`>=` this version). An installation is offered,
+   * and may install, only versions whose Platform it already is or is newer than.
+   */
+  readonly platform: string;
   /** Set when a version should no longer be chosen; it stays installable. */
   readonly deprecated?: string;
 }
@@ -44,7 +50,11 @@ export interface AllowlistService {
   readonly hostPackages?: readonly string[];
   readonly managed?: ZelavisProjectManagedDefinition;
   readonly versions: readonly AllowlistVersion[];
-  /** The version the marketplace offers by default; always one of `versions`. */
+  /**
+   * The newest version, always one of `versions`. What an installation is offered
+   * is the newest one its Platform can run (`selectListedVersion`), which is this
+   * one unless it needs a newer Platform.
+   */
   readonly latest: string;
 }
 

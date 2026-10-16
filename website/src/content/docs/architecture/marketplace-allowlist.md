@@ -20,6 +20,19 @@ Each service names its npm package, kind (`app`, `plugin` or `frontend`),
 maintainer, marketplace card, and its exact versions with the sha512 integrity of
 each published tarball. A range or a tag is never a listed version.
 
+Each version also names `platform`: the oldest Zelavis it runs on, exact, taken
+from that version's own `peerDependencies.zelavis` (which must be `>=` an exact
+version). One list is read by every installation, old ones too, so it also lists
+versions an older Platform cannot run. An installation is offered each service at
+the newest version its own Zelavis runs (`latest` when it can, otherwise the newest
+earlier version that is not deprecated), and installing, updating and the recipe a
+new Project or an upgrade takes all follow that choice. The gate refuses a version
+that needs a newer Platform before anything is fetched, and says which Zelavis it
+needs: update the Platform first, then install it. A service none of whose versions
+runs is still listed at its latest, so it can be found. A Project's marketplace
+decides by the Zelavis its own engine runs. Platforms released before `platform`
+existed ignore the field and are offered `latest` whatever it needs.
+
 ## Why it can be fetched from anywhere
 
 The list is signed, so a copy from a mirror, a gist or an API is exactly as

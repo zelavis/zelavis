@@ -304,6 +304,11 @@ Rules that hold for every change:
   https-only, no-redirect and size bounds.
 - The install gate authorizes an exact listed version before any fetch and
   verifies the listed digest after; a tag or range is never a listed version.
+  Each listed version names `platform`, the oldest Zelavis it runs on (from that
+  version's published `peerDependencies.zelavis`, which must be `>=<exact>`). An
+  installation is offered the newest version its own Zelavis runs, and the gate
+  refuses one that needs a newer Platform (`platform_too_old`). Never pick a listed
+  version anywhere else than `selectListedVersion`.
   Registry `official` is reserved for what the host bundled, so listed services
   are `community` in the registry and their maintainer is separate metadata.
 - The development shortcut (`ZELAVIS_OFFICIAL_SERVICES_DIR`) only ever names

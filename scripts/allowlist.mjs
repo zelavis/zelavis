@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertReleaseAllowlist } from "./release-allowlist.mjs";
+import { assertReleaseAllowlist, minimumPlatform } from "./release-allowlist.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const marketplace = join(root, "packages/zelavis/services/zelavis-marketplace");
@@ -82,6 +82,15 @@ function publishedIntegrity(name, version) {
   }
 }
 
+/** The `peerDependencies` npm serves for a published version, which is what an installation would run. */
+function publishedPeers(name, version) {
+  const output = execFileSync("npm", ["view", `${name}@${version}`, "peerDependencies", "--json"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  }).trim();
+  return output ? JSON.parse(output) : {};
+}
+
 /**
  * The digest of the tarball this checkout packs, for a version npm does not have yet. Packing is
  * deterministic, and npm's digest is the digest of the uploaded tarball, so publishing that tarball makes
@@ -115,7 +124,19 @@ async function update() {
       const published = publishedIntegrity(manifest.name, manifest.version);
       const integrity = published ?? packedIntegrity(manifest);
       if (!published) console.log(`${manifest.name}@${manifest.version} is not on npm yet: listed with the digest of its local pack.`);
-      versions.set(manifest.version, { version: manifest.version, integrity });
+      versions.set(manifest.version, {
+        version: manifest.version,
+        integrity,
+        platform: minimumPlatform(manifest.peerDependencies?.zelavis, `${manifest.name}@${manifest.version}`),
+      });
+    }
+    // A version listed before minimums were recorded gets the one its published manifest declares.
+    for (const [version, entry] of versions) {
+      if (entry.platform) continue;
+      versions.set(version, {
+        ...entry,
+        platform: minimumPlatform(publishedPeers(manifest.name, version).zelavis, `${manifest.name}@${version} on npm`),
+      });
     }
     const marketplaceInfo = manifest.zelavis.marketplace ?? {};
     const ordered = [...versions.values()];

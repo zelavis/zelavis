@@ -713,7 +713,7 @@ export interface ZelavisMarketplaceControl {
   refresh(): Promise<ZelavisMarketplaceRefreshReport>;
 }
 
-export { ZelavisUpdateRefusal } from "./updates.js";
+export { compareVersions, isExactVersion, ZelavisUpdateRefusal } from "./updates.js";
 export type {
   ZelavisUpdateControl,
   ZelavisUpdateRun,

@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { AllowlistClient } from "./client.js";
+import { runsOn } from "./select.js";
 import type { AllowlistService, AllowlistVersion } from "./types.js";
 
 export type AllowlistRefusalCode =
@@ -7,6 +8,7 @@ export type AllowlistRefusalCode =
   | "expired"
   | "not_listed"
   | "version_not_listed"
+  | "platform_too_old"
   | "digest_mismatch";
 
 export class AllowlistRefusal extends Error {
@@ -45,8 +47,11 @@ function sameDigest(left: string, right: string): boolean {
   return difference === 0;
 }
 
-/** The install decision: only what the current, unexpired allow-list vouches for. */
-export function createAllowlistGate(client: AllowlistClient): AllowlistGate {
+/**
+ * The install decision: only what the current, unexpired allow-list vouches for,
+ * and only a version that runs on this Platform (`platform`, its exact version).
+ */
+export function createAllowlistGate(client: AllowlistClient, options: { readonly platform: string }): AllowlistGate {
   const authorize = Effect.fn("allowlist.authorize")(function* (input: { name: string; version: string }) {
     const view = yield* Effect.tryPromise({ try: () => client.current(), catch: (cause) => cause });
     if (!view) {
@@ -69,6 +74,12 @@ export function createAllowlistGate(client: AllowlistClient): AllowlistGate {
       return yield* Effect.fail(new AllowlistRefusal(
         "version_not_listed",
         `Version ${input.version} of "${input.name}" is not on the marketplace allow-list.`,
+      ));
+    }
+    if (!runsOn(version, options.platform)) {
+      return yield* Effect.fail(new AllowlistRefusal(
+        "platform_too_old",
+        `${input.name}@${input.version} needs Zelavis ${version.platform} or newer, and this Platform runs ${options.platform}. Update Zelavis first, then install it.`,
       ));
     }
     return { service, version };
