@@ -1,5 +1,13 @@
 # zelavis
 
+## 2.0.0-alpha.37
+
+### Patch Changes
+
+- 3548515: The Marketplace no longer offers a version your Zelavis cannot run. Each version on the allow-list now names the oldest Zelavis it needs, so a server is offered every app, plugin and frontend at the newest version it runs, and creating or upgrading a Project picks that version too. Installing a version that needs a newer Zelavis is refused before anything is downloaded, with a message naming the version to update to.
+- 659cb13: The dashboard is now built with Fuzor. It is the same dashboard to use: every page is there and every page is now native: the Database workspace uses three grid libraries with draft recovery, Content Studio, Workloads, Storage and Media, the Marketplaces, Server and Fabric, the Assistant, Settings and the first-run setup were rebuilt, and **Update now** is in the shell on every page. Uploads from the dashboard keep their label, alt text and purpose (the Gateway removed them before). One build now mounts at any root path (`/zelavis`, `/admin`, `/`), the dashboard calls the Platform it runs in directly rather than over a guessed address, and the package ships only built output that needs nothing installed beside it. The previous React dashboard stays in the repository as `@zelavis/ui-legacy`, private and no longer shipped. Development uses the Fuzor checkout next to the repository when there is one, and the pinned npm release otherwise.
+- 16739cd: Recipe updates that move an app to a new layout keep its site answering throughout. Reading a Project while it crossed to a new layout reported it stopped, and that closed its preview listener, so visitors were refused for a few seconds; a crossing Project now stays running to readers and to Edge. Processes a live upgrade starts now run from the new recipe's root, so after the next Platform update they are taken over instead of being started a second time (a duplicate web server, and a PHP-FPM that restarted every 15 seconds). Apps already upgraded by an earlier release are taken over too. A new release gate qualifies these against a server with a history: apps made by old releases, carried by live updates onto the new release, and every recipe upgrade answered without a single failed request.
+
 ## 2.0.0-alpha.36
 
 ### Patch Changes
