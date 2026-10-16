@@ -55,6 +55,7 @@ export function mount(host: HTMLElement) {
   const main = host.querySelector<HTMLElement>(".main")!;
   const sidebarController = createSidebar(host, sidebar, content, main, router, { onSignOut: signOut, config: () => config });
 
+  const menuSnapshots = new Map<string, string>();
   /** The sidebar's menus come from what the Platform reports; they load beside the page and replace the basic ones. */
   function loadMenu(projectId: string | undefined, project?: Project, runtime?: Config) {
     const control = config;
@@ -66,6 +67,11 @@ export function mount(host: HTMLElement) {
     const requested = new URL(router!.url()).pathname;
     fork(work.pipe(Effect.tap(items => Effect.sync(() => {
       if (disposed || new URL(router!.url()).pathname !== requested) return;
+      // Rebuilding the sidebar under someone's fingers loses their keypress, so an unchanged menu is left alone.
+      const serialized = JSON.stringify(items);
+      host.dataset.menuReady = projectId ?? "platform";
+      if (menuSnapshots.get(projectId ?? "") === serialized) return;
+      menuSnapshots.set(projectId ?? "", serialized);
       sidebarController.setWorkspaceNavigation(items, projectId);
       syncNavigation();
     })), Effect.catch(error => Effect.logWarning("The navigation menu could not be loaded", error))));

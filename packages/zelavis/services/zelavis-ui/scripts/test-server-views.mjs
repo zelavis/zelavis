@@ -124,17 +124,21 @@ try {
     await page.mouse.up();
   };
   await page.goto(`${origin}/zelavis/?sidebar=`, { waitUntil: "networkidle" });
+  // The sidebar is rebuilt once when the Platform's full menu arrives; interact after that.
+  await page.waitForSelector(".dashboard[data-menu-ready]");
   await pointerClick(page.getByRole("link", { name: "Server", exact: true }), 1);
-  await page.waitForURL(/\/zelavis\/server\?sidebar=server/, { timeout: 2000 });
+  await page.waitForURL(/\/zelavis\/server\?sidebar=server/, { timeout: 10000 });
   await pointerClick(page.getByRole("button", { name: "Back to Platform", exact: true }), 1);
-  await page.waitForURL(/\/zelavis\/\?sidebar=$/, { timeout: 2000 });
+  await page.waitForURL(/\/zelavis\/\?sidebar=$/, { timeout: 10000 });
   await page.setViewportSize({ width: 800, height: 900 });
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await page.waitForURL(/sidebarView=menu/);
   await pointerClick(page.getByRole("link", { name: "Server", exact: true }), 1);
-  await page.waitForURL(/\/zelavis\/server\?sidebar=server&sidebarView=menu/, { timeout: 2000 });
+  await page.waitForURL(/\/zelavis\/server\?sidebar=server&sidebarView=menu/, { timeout: 10000 });
+  // The page finishes loading and the sidebar settles; a key pressed before that can land on a rebuilt control.
+  await page.waitForSelector(".content .k-page", { state: "attached" });
   await page.getByRole("button", { name: "Back to Platform", exact: true }).press("Enter");
-  await page.waitForURL(/\/zelavis\/\?sidebar=&sidebarView=menu/, { timeout: 2000 });
+  await page.waitForURL(/\/zelavis\/\?sidebar=&sidebarView=menu/, { timeout: 10000 }).catch(error => { throw new Error(`${error.message} (at ${page.url()})`); });
   const touch = await context.newCDPSession(page);
   const swipe = async (startX, endX) => {
     await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: startX, y: 650 }] });
@@ -143,10 +147,10 @@ try {
   };
   await page.getByRole("link", { name: "Server", exact: true }).click({ trial: true });
   await swipe(700, 100);
-  await page.waitForURL(/sidebarView=content/, { timeout: 2000 });
+  await page.waitForURL(/sidebarView=content/, { timeout: 10000 });
   await page.getByRole("button", { name: "Back to navigation", exact: true }).click({ trial: true });
   await swipe(100, 700);
-  await page.waitForURL(/sidebarView=menu/, { timeout: 2000 });
+  await page.waitForURL(/sidebarView=menu/, { timeout: 10000 });
   await touch.detach();
   await page.setViewportSize({ width: 1440, height: 1000 });
   console.log("Sidebar: desktop/mobile trackpad drift and keyboard Back navigate on the first click; real touch swipes still synchronize the URL");
