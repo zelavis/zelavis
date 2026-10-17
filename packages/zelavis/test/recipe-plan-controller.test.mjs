@@ -354,8 +354,17 @@ test("a process that does not belong to the plan, or claims another workload, or
     const controller = await controllerFor();
     assert.match((await failureOf(controller.adopt(plan, [entry], {}))).message, /does not belong to this Project's plan/);
   }
-  const controller = await controllerFor();
-  assert.match((await failureOf(controller.adopt(plan, [survivor(directory, { args: ["app.js"] }).entry, survivor(directory, { args: ["app.js"] }).entry], {}))).message, /does not belong/);
+  // An identical second copy (a replacement an earlier failed update left running) is stopped, not adopted and not fatal.
+  const duplicated = await controllerFor();
+  const first = survivor(directory, { args: ["app.js"] });
+  const leftovers = [survivor(directory, { args: ["app.js"] }), survivor(directory, { args: ["app.js"] })];
+  await run(duplicated.adopt(plan, [first.entry, ...leftovers.map((extra) => extra.entry)], {}));
+  assert.equal(first.child.running, true, "the first copy is the one adopted");
+  assert.deepEqual(leftovers.map((extra) => extra.child.running), [false, false], "the leftovers are stopped");
+  assert.deepEqual(await run(duplicated.names), ["app"]);
+  // A surplus process that is not a copy of anything in the plan is still refused.
+  const stranger = await controllerFor();
+  assert.match((await failureOf(stranger.adopt(plan, [survivor(directory, { args: ["app.js"] }).entry, survivor(directory, { args: ["other.js"] }).entry], {}))).message, /does not belong/);
   // A process an earlier release started from the Project's former root is adopted only when that root is named.
   const moved = await controllerFor();
   await moved.adopt(plan, [survivor(directory, { args: ["app.js"], cwd: "/former/root" }).entry], {}, ["/former/root"]).pipe(Effect.runPromise);

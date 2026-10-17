@@ -150,6 +150,36 @@ const fail = (message: string) => new RecipeError({ operation: "start", message 
 /** Why a process that was started does not count as ready. */
 class NotReady extends Data.TaggedError("NotReady")<{}> {}
 
+const sameCommand = (a: ZelavisAgentAttachedProcess["command"], b: ZelavisAgentAttachedProcess["command"]) =>
+  a.executable === b.executable && a.cwd === b.cwd && (a.args?.length ?? 0) === (b.args?.length ?? 0) && (a.args ?? []).every((value, index) => b.args?.[index] === value);
+
+/** Why an attached process matched no planned one: the first planned process it differs from least, field by field. */
+function describeMismatch(
+  entry: ZelavisAgentAttachedProcess,
+  resolved: readonly { readonly name: string; readonly launch: { readonly executable: string; readonly args: readonly string[] } }[],
+  claimed: ReadonlySet<string>,
+  cwd: string,
+  formerRoots: readonly string[],
+): string {
+  const shown = (value: string) => (value.length > 120 ? `${value.slice(0, 117)}...` : value);
+  const args = entry.command.args ?? [];
+  const candidates = resolved.filter((candidate) => !claimed.has(candidate.name));
+  if (candidates.length === 0) return `it runs ${shown(entry.command.executable)} but every planned process is already matched.`;
+  const differences = candidates.map((candidate) => {
+    const parts: string[] = [];
+    if (entry.command.executable !== candidate.launch.executable) parts.push(`executable ${shown(entry.command.executable)} is not ${shown(candidate.launch.executable)}`);
+    if (entry.command.cwd !== cwd && !formerRoots.includes(entry.command.cwd)) parts.push(`working directory ${shown(entry.command.cwd)} is not ${shown(cwd)}`);
+    if (args.length !== candidate.launch.args.length) parts.push(`${args.length} arguments, expected ${candidate.launch.args.length}`);
+    else {
+      const index = candidate.launch.args.findIndex((value, at) => args[at] !== value);
+      if (index >= 0) parts.push(`argument ${index} is ${shown(args[index] ?? "")}, expected ${shown(candidate.launch.args[index] ?? "")}`);
+    }
+    if (entry.process.workloadId !== undefined && parts.length === 0) parts.push("it belongs to another workload or cannot be listened to");
+    return `${candidate.name}: ${parts.join("; ")}`;
+  });
+  return differences.join(" | ");
+}
+
 export const makePlanController: Effect.Effect<PlanController, never, PlanHost> = Effect.gen(function* () {
   const host = yield* PlanHost;
   const sha256 = host.digest;
@@ -311,14 +341,24 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
       if ((yield* Ref.get(table)).size > 0) return yield* Effect.fail(fail("Processes can only be adopted into a controller that runs none."));
       const resolved = yield* resolveAll(plan);
       const claimed = new Set<string>();
+      const claimedCommands: ZelavisAgentAttachedProcess["command"][] = [];
+      const surplus: ZelavisAgentProcess[] = [];
       for (const entry of attached) {
         const match = resolved.find((candidate) => !claimed.has(candidate.name) && entry.command.executable === candidate.launch.executable &&
           (entry.command.cwd === host.cwd || formerRoots.includes(entry.command.cwd)) && (entry.command.args?.length ?? 0) === candidate.launch.args.length &&
           candidate.launch.args.every((value, index) => entry.command.args?.[index] === value));
+        // A second copy of a process this plan already adopted is a leftover (a replacement an earlier failed update
+        // or recovery started and never stopped). It belongs to this Project and runs the same command, so it is
+        // stopped once the real one is adopted rather than blocking every later Platform update.
+        if (!match && entry.process.workloadId === host.workloadId && claimedCommands.some((command) => sameCommand(command, entry.command))) {
+          surplus.push(entry.process);
+          continue;
+        }
         if (!match || entry.process.workloadId !== host.workloadId || !entry.process.listen) {
-          return yield* Effect.fail(fail("The Agent returned a process that does not belong to this Project's plan."));
+          return yield* Effect.fail(fail(`The Agent returned a process that does not belong to this Project's plan: ${describeMismatch(entry, resolved, claimed, host.cwd, formerRoots)}`));
         }
         claimed.add(match.name);
+        claimedCommands.push(entry.command);
         const exited = yield* Deferred.make<ZelavisAgentProcessExit>();
         const note = record(match.name);
         entry.process.listen(note);
@@ -336,6 +376,9 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
           fingerprint: { launch: match.fingerprint.launch, config: match.configFiles === 0 ? match.fingerprint.config : (configs[match.name] ?? UNKNOWN_CONFIG) },
         });
       }
+      yield* Effect.forEach(surplus, (extra) => integration(() => extra.stop()).pipe(
+        Effect.catch((error) => Effect.logWarning(`A leftover duplicate process could not be stopped: ${String(error)}`)),
+      ), { concurrency: START_CONCURRENCY, discard: true });
     }));
   });
 
