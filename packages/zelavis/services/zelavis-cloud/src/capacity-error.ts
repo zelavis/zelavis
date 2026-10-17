@@ -4,7 +4,8 @@ export type CapacityErrorCode =
   | "node-cap-reached"
   | "not-managed"
   | "cloud"
-  | "state";
+  | "state"
+  | "superseded";
 
 /**
  * Every failure the capacity provider reports to its caller. A plain Error with

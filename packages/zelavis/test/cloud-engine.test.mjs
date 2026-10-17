@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Effect } from "effect";
-import { composeCloudCapacity, readCloudPolicy } from "../dist/platform/cloud-engine.js";
+import { claimCloudAuthority, composeCloudCapacity, readCloudPolicy } from "../dist/platform/cloud-engine.js";
 import { createNodeEnrollmentAuthority } from "../dist/platform/node-enrollment.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 import { generateAgentCertificate } from "../dist/adapters/_agent-certificate.js";
@@ -69,4 +69,16 @@ test("an installation without the bundle says so instead of starting", async () 
     store: createMemorySystemStore(), masterSecret: "s", platformId: "p", bundlePath: join(tmpdir(), "no-such-bundle.js"), policy: POLICY,
     endpoint: { url: "https://203.0.113.5:8444", fingerprint: FINGERPRINT }, workDir: tmpdir(),
   })), /could not be loaded/);
+});
+
+test("a later Platform process claims cloud authority and the earlier one stops being current", async () => {
+  const store = createMemorySystemStore();
+  const first = await run(claimCloudAuthority(store, "platform-1"));
+  assert.equal(first.epoch, 1);
+  assert.equal(await first.isCurrent(), true);
+  const second = await run(claimCloudAuthority(store, "platform-1"));
+  assert.equal(second.epoch, 2);
+  assert.equal(await first.isCurrent(), false, "the deposed process is no longer current");
+  assert.equal(await second.isCurrent(), true);
+  assert.equal((await run(claimCloudAuthority(store, "platform-2"))).epoch, 1, "authority is per Platform id");
 });

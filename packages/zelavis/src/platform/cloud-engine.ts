@@ -78,6 +78,27 @@ const loadBundle = (path: string) => integration(() => import(pathToFileURL(path
   Effect.mapError((error) => error instanceof CloudEngineError ? error : engineFailure("The cloud bundle could not be loaded.", error)),
 );
 
+const AUTHORITY_NAMESPACE = "fabric.cloud-authority.v1";
+const AUTHORITY_ATTEMPTS = 8;
+
+/**
+ * Claims cloud authority for this Platform process: a strictly increasing epoch in the System Store. A later process on
+ * the same store (a promoted standby, a restored copy) claims a higher one, and this process's `isCurrent` is false from
+ * then on, so a deposed Platform can no longer create or delete machines.
+ */
+export const claimCloudAuthority = (store: ZelavisSystemStore, platformId: string): Effect.Effect<{ readonly epoch: number; readonly isCurrent: () => Promise<boolean> }, CloudEngineError> => Effect.gen(function* () {
+  const epochOf = (value: unknown) => typeof value === "object" && value !== null && Number.isSafeInteger((value as { epoch?: unknown }).epoch) ? (value as { epoch: number }).epoch : 0;
+  for (let attempt = 0; attempt < AUTHORITY_ATTEMPTS; attempt++) {
+    const current = yield* integration(() => store.get(AUTHORITY_NAMESPACE, platformId)).pipe(Effect.mapError((cause) => engineFailure("Cloud authority could not be read.", cause)));
+    const epoch = current === undefined ? 1 : epochOf(current.value) + 1;
+    const claimed = current === undefined
+      ? yield* integration(() => store.setIfAbsent(AUTHORITY_NAMESPACE, platformId, { epoch })).pipe(Effect.map((result) => result.created), Effect.mapError((cause) => engineFailure("Cloud authority could not be claimed.", cause)))
+      : yield* integration(() => store.compareAndSet(AUTHORITY_NAMESPACE, platformId, current.updatedAt, { epoch }, current.value)).pipe(Effect.map((result) => result !== undefined), Effect.mapError((cause) => engineFailure("Cloud authority could not be claimed.", cause)));
+    if (claimed) return { epoch, isCurrent: async () => epochOf((await store.get(AUTHORITY_NAMESPACE, platformId))?.value) === epoch };
+  }
+  return yield* engineFailure("Cloud authority is contended; another Platform process keeps claiming it.");
+});
+
 export const composeCloudCapacity = (options: {
   readonly store: ZelavisSystemStore;
   readonly masterSecret: string;
@@ -94,6 +115,7 @@ export const composeCloudCapacity = (options: {
   readonly apiEndpoint?: string;
 }): Effect.Effect<CloudCapacityController, CloudEngineError> => Effect.gen(function* () {
   const bundle = yield* loadBundle(options.bundlePath);
+  const cloudAuthority = yield* claimCloudAuthority(options.store, options.platformId);
   const authority = options.authority ?? createNodeEnrollmentAuthority({ store: options.store, ...(options.now ? { now: options.now } : {}) });
   const secretKey = createHash("sha256").update(`${options.masterSecret}\u0000cloud-provisioning-state`).digest();
   const platformUrl = `${options.endpoint.url.replace(/\/+$/, "")}/zelavis`;
@@ -112,7 +134,7 @@ export const composeCloudCapacity = (options: {
       if (config.provider !== "hetzner") throw new Error(`No engine for provider ${config.provider}.`);
       return bundle.createHetznerCapacityProvider({
         token: config.token, platformId: options.platformId, workerId: `platform-${options.platformId}`,
-        workDir: options.workDir, store: options.store, secretKey,
+        workDir: options.workDir, store: options.store, secretKey, authority: cloudAuthority.isCurrent,
         defaults: options.policy,
         ...(options.apiEndpoint === undefined ? {} : { endpoint: options.apiEndpoint }),
         enrollment: { isEnrolled: (nodeId: string) => Effect.runPromise(authority.destination(nodeId)).then((destination) => destination !== undefined) },

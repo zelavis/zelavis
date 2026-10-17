@@ -25,6 +25,7 @@ export interface HetznerCapacityOptions {
   readonly defaults: CapacityProviderOptions["defaults"];
   readonly enrollment: CapacityProviderOptions["enrollment"];
   readonly userData?: CapacityProviderOptions["userData"];
+  readonly authority?: CapacityProviderOptions["authority"];
   /** Override the API root; for tests against a fake only. */
   readonly endpoint?: string;
 }
@@ -42,6 +43,7 @@ export function createHetznerCapacityProvider(options: HetznerCapacityOptions): 
     secrets: aesGcmSecretCodec(options.secretKey),
     defaults: options.defaults,
     enrollment: options.enrollment,
+    ...(options.authority === undefined ? {} : { authority: options.authority }),
     ...(options.userData === undefined ? {} : { userData: options.userData }),
   });
 }

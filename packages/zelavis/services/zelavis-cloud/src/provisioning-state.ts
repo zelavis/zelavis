@@ -129,6 +129,11 @@ export interface AcquireInput {
 export interface ProvisioningStateOptions {
   readonly store: ConditionalStore;
   readonly secrets: SecretCodec;
+  /**
+   * Whether the Platform that owns this state is still the current authority. It is asked on every acquire and on
+   * every read or write of a fenced state; a false answer fences the caller exactly as a newer owner would.
+   */
+  readonly authority?: () => Maybe<boolean>;
 }
 
 export interface FencedState {
@@ -245,6 +250,17 @@ export function createProvisioningState(options: ProvisioningStateOptions) {
     return { document: stored, updatedAt: record.updatedAt };
   });
 
+  const requireAuthority = (stack: string, stage: string, epoch: number) =>
+    options.authority === undefined
+      ? Effect.void
+      : call("authority", options.authority).pipe(
+          Effect.flatMap((current) =>
+            current
+              ? Effect.void
+              : Effect.fail(new StateFenced({ stack, stage, epoch, currentOwner: "superseded-platform", currentEpoch: undefined })),
+          ),
+        );
+
   /** Take ownership: a new epoch, which fences every earlier owner. */
   const acquire = Effect.fn("ProvisioningState.acquire")(function* (input: AcquireInput) {
     if (!validId(input.stack) || !validId(input.stage) || !validId(input.owner)) {
@@ -255,6 +271,7 @@ export function createProvisioningState(options: ProvisioningStateOptions) {
       });
     }
     const { stack, stage, owner } = input;
+    yield* requireAuthority(stack, stage, 0);
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const current = yield* readDocument(stack, stage);
       if (current === undefined) {
@@ -296,6 +313,7 @@ export function createProvisioningState(options: ProvisioningStateOptions) {
 
     const load = (forWrite = false) =>
       Effect.gen(function* () {
+        yield* requireAuthority(stack, stage, epoch);
         const current = yield* readDocument(stack, stage);
         if (current === undefined) {
           if (deletedByThisOwner && !forWrite) {

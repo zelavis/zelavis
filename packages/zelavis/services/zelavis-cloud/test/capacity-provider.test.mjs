@@ -25,7 +25,7 @@ const MACHINE_CLASSES = [
 ];
 const PLATFORM = "platform-1";
 
-async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault, now } = {}) {
+async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault, now, authority } = {}) {
   const fake = await startFakeHetzner();
   t.after(() => fake.close());
   const store = createMemorySystemStore();
@@ -52,6 +52,7 @@ async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault, now } = 
     defaults: { location: "nbg1", image: "ubuntu-24.04", machineClasses: MACHINE_CLASSES, maxNodes },
     enrollment: { isEnrolled: (nodeId) => enrolled.has(nodeId) },
     ...(now ? { now } : {}),
+    ...(authority ? { authority } : {}),
   });
   const creates = () => fake.log.filter((line) => line.startsWith("POST /servers")).length;
   return { fake, store, provider, enrolled, creates };
@@ -234,4 +235,27 @@ test("a new request sweeps orphans first, and a sweep that fails never fails the
   fake.faults.failListKeys = true;
   const second = await provider.provision(request("req-2"));
   assert.equal(second.id, capacityNodeName("req-2"));
+});
+
+test("a superseded Platform creates, releases and sweeps nothing", async (t) => {
+  let current = true;
+  const { provider, fake, creates } = await harness(t, { authority: () => current });
+  const node = await provider.provision(request("held"));
+  assert.equal(creates(), 1);
+  current = false;
+  await assert.rejects(provider.provision(request("late")), rejectsWith("superseded"));
+  await assert.rejects(provider.release(node.id), rejectsWith("superseded"));
+  await assert.rejects(provider.sweepOrphanKeys(), rejectsWith("superseded"));
+  assert.equal(creates(), 1, "no machine was created after authority moved");
+  assert.equal(fake.servers.size, 1, "and the existing one was not deleted");
+  current = true;
+  await provider.release(node.id);
+  assert.equal(fake.servers.size, 0, "authority regained: it works again");
+});
+
+test("authority lost while a request runs fences it at the state, before any machine call", async (t) => {
+  let calls = 0;
+  const { provider, fake } = await harness(t, { authority: () => ++calls <= 1 });
+  await assert.rejects(provider.provision(request("mid")), rejectsWith("superseded"));
+  assert.equal(fake.servers.size, 0);
 });

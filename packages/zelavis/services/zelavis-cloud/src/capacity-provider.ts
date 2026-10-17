@@ -67,6 +67,11 @@ export interface CapacityProviderOptions {
   readonly orphanKeyGraceMs?: number;
   /** The clock, for tests. */
   readonly now?: () => number;
+  /**
+   * Whether this Platform is still the one that holds authority over its cloud resources. A Platform that has been
+   * superseded creates and deletes nothing: every provision, release and sweep refuses with `superseded`.
+   */
+  readonly authority?: () => boolean | Promise<boolean>;
   /** First-boot script (for example, the Agent installer). Never contains this process's secrets. */
   readonly userData?: (context: { readonly nodeId: string }) => string | Promise<string>;
 }
@@ -139,14 +144,26 @@ export function createCapacityProvider(options: CapacityProviderOptions): CloudC
   if (defaults.machineClasses.length === 0) throw new TypeError("At least one machine class is required.");
   const platformHash = platformLabelValue(platformId);
   const allowedLocations = defaults.allowedLocations ?? [defaults.location];
-  const provisioning = createProvisioningState({ store, secrets });
+  const provisioning = createProvisioningState({ store, secrets, ...(options.authority === undefined ? {} : { authority: options.authority }) });
   const clock = options.now ?? Date.now;
   const orphanGraceMs = options.orphanKeyGraceMs ?? DEFAULT_ORPHAN_KEY_GRACE_MS;
+
+  const requireAuthority = Effect.gen(function* () {
+    if (options.authority === undefined) return;
+    const current = yield* Effect.tryPromise({
+      try: () => Promise.resolve(options.authority?.()),
+      catch: (cause) => new CapacityError("state", "Authority check failed", cause),
+    });
+    if (current !== true) throw new CapacityError("superseded", "This Platform no longer holds authority over its cloud resources.");
+  });
 
   const acquire = (name: string) =>
     provisioning
       .acquire({ stack: name, stage: STAGE, owner: workerId })
-      .pipe(Effect.mapError((error) => new CapacityError("state", `Provisioning state: ${error._tag}`, error)));
+      .pipe(Effect.mapError((error) =>
+        error._tag === "StateFenced" && error.currentOwner === "superseded-platform"
+          ? new CapacityError("superseded", "This Platform no longer holds authority over its cloud resources.", error)
+          : new CapacityError("state", `Provisioning state: ${error._tag}`, error)));
 
   const isOurs = (machine: CloudMachine) =>
     machine.labels[MANAGED_LABEL] === "true" && machine.labels[PLATFORM_LABEL] === platformHash;
@@ -188,6 +205,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): CloudC
    * grace period, and no machine this Platform manages would use it.
    */
   const sweepEffect = Effect.gen(function* () {
+    yield* requireAuthority;
     const [keys, machines] = yield* Effect.all([cloud.listManagedKeys(platformHash), cloud.listManaged(platformHash)]);
     const live = new Set(machines.map((machine) => deployKeyName(machine.name)));
     const now = clock();
@@ -204,6 +222,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): CloudC
 
   const provisionEffect = (input: ZelavisCapacityProvisionInput) =>
     Effect.gen(function* () {
+      yield* requireAuthority;
       if (input.platformId !== platformId) throw invalid("This provider serves a different Platform.");
       const userLabels = validateUserLabels(input.labels);
       const location = input.region ?? defaults.location;
@@ -243,6 +262,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): CloudC
 
   const releaseEffect = (nodeId: string) =>
     Effect.gen(function* () {
+      yield* requireAuthority;
       const machine = yield* cloud.find(nodeId);
       if (machine !== undefined && !isOurs(machine)) {
         throw new CapacityError("not-managed", "Refusing to release a machine this Platform did not create.");
