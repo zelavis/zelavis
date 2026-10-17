@@ -1,5 +1,12 @@
 # zelavis
 
+## 2.0.0-alpha.38
+
+### Patch Changes
+
+- acf44d8: A Platform update no longer fails because a Project has leftover duplicate processes. When adopting a Project's running processes, identical extra copies of a process the plan already adopted (left by a replacement an earlier failed update never stopped) are stopped instead of making the whole adoption fail, and a genuine mismatch now names the process and the field that differs.
+- c8c7ff0: A Project never runs two copies of the same process. Before a recipe process starts, any uncontrolled process of that Project running the exact same command (left behind when an engine was lost mid-start, or a failed update) is stopped first.
+
 ## 2.0.0-alpha.37
 
 ### Patch Changes
