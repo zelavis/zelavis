@@ -13,6 +13,8 @@ import {
   capacityNodeName,
   createCapacityProvider,
   createHetznerCloud,
+  deployKeyName,
+  platformLabelValue,
 } from "../dist/index.js";
 
 const GB = 1024 ** 3;
@@ -23,7 +25,7 @@ const MACHINE_CLASSES = [
 ];
 const PLATFORM = "platform-1";
 
-async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault } = {}) {
+async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault, now } = {}) {
   const fake = await startFakeHetzner();
   t.after(() => fake.close());
   const store = createMemorySystemStore();
@@ -49,6 +51,7 @@ async function harness(t, { maxNodes = 2, platformId = PLATFORM, fault } = {}) {
     secrets: aesGcmSecretCodec(randomBytes(32)),
     defaults: { location: "nbg1", image: "ubuntu-24.04", machineClasses: MACHINE_CLASSES, maxNodes },
     enrollment: { isEnrolled: (nodeId) => enrolled.has(nodeId) },
+    ...(now ? { now } : {}),
   });
   const creates = () => fake.log.filter((line) => line.startsWith("POST /servers")).length;
   return { fake, store, provider, enrolled, creates };
@@ -175,4 +178,60 @@ test("a crash after the cloud create is recovered by provisioning again", async 
   assert.equal(node.id, capacityNodeName("req-1"));
   assert.equal(fake.servers.size, 1);
   assert.equal(creates(), 1, "the retry created nothing");
+});
+
+const OLD = "2020-01-01T00:00:00.000Z";
+const ownLabels = () => ({ "zelavis.io/managed": "true", "zelavis.io/platform": platformLabelValue(PLATFORM) });
+const addKey = (fake, id, name, labels, created) => fake.sshKeys.set(id, { id, name, public_key: "ssh-ed25519 AAAA", fingerprint: `aa:${id}`, labels, created });
+
+test("the deploy key is named the way the cloud service expects (pinned to what Alchemy creates)", async (t) => {
+  const { provider, fake } = await harness(t);
+  const node = await provider.provision(request("req-1"));
+  assert.deepEqual([...fake.sshKeys.values()].map((key) => key.name), [deployKeyName(node.id)]);
+});
+
+test("releasing a machine whose provisioning state was lost also removes its deploy key", async (t) => {
+  const { provider, fake, store } = await harness(t);
+  const node = await provider.provision(request("req-1"));
+  assert.equal(fake.sshKeys.size, 1);
+  await store.delete(PROVISIONING_STATE_NAMESPACE, `${node.id}/capacity`);
+  await provider.release(node.id);
+  assert.equal(fake.servers.size, 0);
+  assert.equal(fake.sshKeys.size, 0, "no key is left behind for a machine that no longer exists");
+});
+
+test("a foreign key with the machine's key name is never removed", async (t) => {
+  const { provider, fake, store } = await harness(t);
+  const node = await provider.provision(request("req-1"));
+  await store.delete(PROVISIONING_STATE_NAMESPACE, `${node.id}/capacity`);
+  const ours = [...fake.sshKeys.values()][0];
+  ours.labels = { team: "someone-else" };
+  await provider.release(node.id);
+  assert.equal(fake.sshKeys.size, 1, "the key did not carry this Platform's labels, so it was left alone");
+});
+
+test("sweeping removes an old orphaned key and keeps young, live and foreign ones", async (t) => {
+  const clock = { at: Date.parse("2026-10-17T12:00:00Z") };
+  const { provider, fake } = await harness(t, { now: () => clock.at });
+  const node = await provider.provision(request("req-1"));
+  const live = [...fake.sshKeys.values()][0];
+  live.created = OLD;
+  addKey(fake, 9001, "zelavis-gone-aaaaaaaaaaaa-d", ownLabels(), OLD);
+  addKey(fake, 9002, "zelavis-young-bbbbbbbbbbbb-d", ownLabels(), new Date(clock.at - 60_000).toISOString());
+  addKey(fake, 9003, "zelavis-other-cccccccccccc-d", { team: "someone-else" }, OLD);
+  addKey(fake, 9004, "zelavis-other-platform-d", { "zelavis.io/managed": "true", "zelavis.io/platform": "0000" }, OLD);
+  assert.equal(await provider.sweepOrphanKeys(), 1);
+  assert.deepEqual([...fake.sshKeys.keys()].sort(), [live.id, 9002, 9003, 9004].sort());
+  assert.equal(fake.servers.size, 1, "the machine is untouched");
+  assert.equal(node.id, capacityNodeName("req-1"));
+});
+
+test("a new request sweeps orphans first, and a sweep that fails never fails the request", async (t) => {
+  const { provider, fake } = await harness(t, { now: () => Date.parse("2026-10-17T12:00:00Z") });
+  addKey(fake, 9001, "zelavis-gone-aaaaaaaaaaaa-d", ownLabels(), OLD);
+  await provider.provision(request("req-1"));
+  assert.equal(fake.sshKeys.has(9001), false, "the orphan was removed on the way");
+  fake.faults.failListKeys = true;
+  const second = await provider.provision(request("req-2"));
+  assert.equal(second.id, capacityNodeName("req-2"));
 });

@@ -21,6 +21,15 @@ export interface CloudMachine {
   readonly address?: string;
 }
 
+/** The SSH key generated beside a machine, as the cloud reports it. */
+export interface CloudKey {
+  readonly id: string;
+  readonly name: string;
+  readonly labels: Readonly<Record<string, string>>;
+  /** Milliseconds since the epoch, or 0 when the cloud did not say. */
+  readonly createdAt: number;
+}
+
 export interface EnsureMachineInput {
   readonly identity: CapacityIdentity;
   readonly machineClass: MachineClass;
@@ -49,10 +58,14 @@ export interface CloudPort {
   find(name: string): Effect.Effect<CloudMachine | undefined, CapacityError>;
   /** Machines labeled as managed by this platform. */
   listManaged(platformHash: string): Effect.Effect<readonly CloudMachine[], CapacityError>;
+  /** Deploy keys labeled as managed by this platform, whether or not their machine still exists. */
+  listManagedKeys(platformHash: string): Effect.Effect<readonly CloudKey[], CapacityError>;
+  /** Delete one deploy key directly; a key that is already gone is not an error. */
+  deleteKey(key: CloudKey): Effect.Effect<void, CapacityError>;
   /**
    * Delete a machine directly. Only the provider calls this, and only after it
    * proved the machine carries this platform's labels and provisioning state
-   * could not remove it (state lost).
+   * could not remove it (state lost). The machine's deploy key goes with it.
    */
   forceDelete(machine: CloudMachine): Effect.Effect<void, CapacityError>;
 }

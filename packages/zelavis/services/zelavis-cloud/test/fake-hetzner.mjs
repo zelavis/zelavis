@@ -7,6 +7,7 @@
 // Faults are consumed once:
 //   faults.dropResponseAfterCreate = n   commit the create, then close the socket
 //   faults.failCreateWith = [[status, code]]   answer the next creates with an error
+//   faults.failListKeys = true   answer every label-selector key listing with a 403 until cleared
 import http from "node:http";
 
 export function startFakeHetzner({ token = "test-token" } = {}) {
@@ -16,7 +17,7 @@ export function startFakeHetzner({ token = "test-token" } = {}) {
   let nextId = 1000;
   const log = [];
   // Faults: each is consumed once.
-  const faults = { dropResponseAfterCreate: 0, failCreateWith: [] };
+  const faults = { dropResponseAfterCreate: 0, failCreateWith: [], failListKeys: false };
 
   const now = () => new Date().toISOString();
   const pagination = (n) => ({
@@ -98,7 +99,9 @@ export function startFakeHetzner({ token = "test-token" } = {}) {
     if (m === "GET" && path === "/ssh_keys") {
       const name = url.searchParams.get("name");
       const fp = url.searchParams.get("fingerprint");
-      const list = [...sshKeys.values()].filter((k) => (!name || k.name === name) && (!fp || k.fingerprint === fp));
+      const sel = url.searchParams.get("label_selector");
+      if (sel && faults.failListKeys) return apiError(res, 403, "forbidden", "this token cannot list keys");
+      const list = [...sshKeys.values()].filter((k) => (!name || k.name === name) && (!fp || k.fingerprint === fp) && matchesSelector(k.labels, sel));
       return send(res, 200, { ssh_keys: list.map(sshJson), meta: pagination(list.length) });
     }
     if (m === "POST" && path === "/ssh_keys") {

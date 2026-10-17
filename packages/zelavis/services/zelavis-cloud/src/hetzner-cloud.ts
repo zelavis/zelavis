@@ -6,9 +6,9 @@ import * as Alchemy from "alchemy";
 import * as AlchemyHetzner from "alchemy/Hetzner";
 import type { State } from "alchemy/State";
 import { makeAlchemyRunner } from "./alchemy-runner.js";
-import { MANAGED_LABEL, PLATFORM_LABEL } from "./capacity-naming.js";
+import { MANAGED_LABEL, PLATFORM_LABEL, deployKeyName } from "./capacity-naming.js";
 import { CapacityError } from "./capacity-error.js";
-import type { CloudMachine, CloudPort, EnsureMachineInput, RemoveMachineInput } from "./cloud-port.js";
+import type { CloudKey, CloudMachine, CloudPort, EnsureMachineInput, RemoveMachineInput } from "./cloud-port.js";
 
 /**
  * The Hetzner implementation of `CloudPort`.
@@ -98,6 +98,20 @@ const machineFrom = (server: HetznerServerLike): CloudMachine => ({
   ...(server.public_net.ipv4?.ip === undefined ? {} : { address: server.public_net.ipv4.ip }),
 });
 
+interface HetznerKeyLike {
+  readonly id: number;
+  readonly name: string;
+  readonly labels?: Readonly<Record<string, string>> | null;
+  readonly created?: string | null;
+}
+
+const keyFrom = (key: HetznerKeyLike): CloudKey => ({
+  id: String(key.id),
+  name: key.name,
+  labels: { ...(key.labels ?? {}) },
+  createdAt: key.created ? Date.parse(key.created) || 0 : 0,
+});
+
 export function createHetznerCloud(options: HetznerCloudOptions): CloudPort {
   const config: Record<string, string> = { HCLOUD_TOKEN: options.token };
   if (options.endpoint !== undefined) config.HCLOUD_ENDPOINT = options.endpoint;
@@ -112,6 +126,14 @@ export function createHetznerCloud(options: HetznerCloudOptions): CloudPort {
 
   const cloudFailure = (operation: string) => (cause: unknown) =>
     cause instanceof CapacityError ? cause : new CapacityError("cloud", `Hetzner ${operation} failed`, cause);
+
+  const removeKey = (key: CloudKey) =>
+    Hetzner.sshKeys.deleteSshKey({ id: Number(key.id) }).pipe(
+      Effect.asVoid,
+      Effect.catchTag("NotFound", () => Effect.void),
+      Effect.provide(api),
+      Effect.mapError(cloudFailure("key delete")),
+    );
 
   const find = (name: string) =>
     Hetzner.servers.listServers({ name, per_page: PAGE_SIZE }).pipe(
@@ -169,12 +191,35 @@ export function createHetznerCloud(options: HetznerCloudOptions): CloudPort {
         });
         yield* runner.destroy({ stack, stage: input.state.stage, state: input.state });
       }).pipe(Effect.mapError(cloudFailure("delete"))),
+    listManagedKeys: (platformHash: string) =>
+      Effect.gen(function* () {
+        const found: CloudKey[] = [];
+        for (let page = 1; page <= MAX_PAGES; page++) {
+          const response = yield* Hetzner.sshKeys.listSshKeys({
+            label_selector: `${MANAGED_LABEL}=true,${PLATFORM_LABEL}=${platformHash}`,
+            per_page: PAGE_SIZE,
+            page,
+          });
+          for (const key of response.ssh_keys ?? []) found.push(keyFrom(key as never));
+          if (!response.meta?.pagination?.next_page) return found;
+        }
+        return yield* Effect.fail(new CapacityError("cloud", `More than ${MAX_PAGES * PAGE_SIZE} managed keys; refusing to list`));
+      }).pipe(Effect.provide(api), Effect.mapError(cloudFailure("key list"))),
+    deleteKey: (key: CloudKey) => removeKey(key),
     forceDelete: (machine: CloudMachine) =>
-      Hetzner.servers.deleteServer({ id: Number(machine.id) }).pipe(
-        Effect.asVoid,
-        Effect.catchTag("NotFound", () => Effect.void),
-        Effect.provide(api),
-        Effect.mapError(cloudFailure("delete")),
-      ),
+      Effect.gen(function* () {
+        yield* Hetzner.servers.deleteServer({ id: Number(machine.id) }).pipe(
+          Effect.asVoid,
+          Effect.catchTag("NotFound", () => Effect.void),
+          Effect.provide(api),
+          Effect.mapError(cloudFailure("delete")),
+        );
+        // The deploy key Alchemy generated beside it. Its name is derived from the machine's, and it is removed only
+        // when it carries this platform's labels, so a foreign key of the same name is never touched.
+        const keyName = deployKeyName(machine.name);
+        const { ssh_keys } = yield* Hetzner.sshKeys.listSshKeys({ name: keyName, per_page: PAGE_SIZE }).pipe(Effect.provide(api), Effect.mapError(cloudFailure("key lookup")));
+        const key = (ssh_keys ?? []).map(key => keyFrom(key as never)).find(candidate => candidate.name === keyName);
+        if (key !== undefined && key.labels[MANAGED_LABEL] === "true" && key.labels[PLATFORM_LABEL] === machine.labels[PLATFORM_LABEL]) yield* removeKey(key);
+      }),
   };
 }

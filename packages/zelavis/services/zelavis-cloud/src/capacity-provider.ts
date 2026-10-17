@@ -11,6 +11,7 @@ import {
   PLATFORM_LABEL,
   USER_LABEL_PREFIX,
   capacityIdentity,
+  deployKeyName,
   platformLabelValue,
 } from "./capacity-naming.js";
 import type { CloudMachine, CloudPort, MachineClass } from "./cloud-port.js";
@@ -59,6 +60,13 @@ export interface CapacityProviderOptions {
     /** True once the Platform has verified this node's Agent. */
     readonly isEnrolled: (nodeId: string) => boolean | Promise<boolean>;
   };
+  /**
+   * How long a deploy key may exist with no machine before it is treated as an orphan. A key is created just before
+   * its machine, so a younger one may belong to a request still in flight. Defaults to 15 minutes.
+   */
+  readonly orphanKeyGraceMs?: number;
+  /** The clock, for tests. */
+  readonly now?: () => number;
   /** First-boot script (for example, the Agent installer). Never contains this process's secrets. */
   readonly userData?: (context: { readonly nodeId: string }) => string | Promise<string>;
 }
@@ -115,7 +123,15 @@ function chooseMachineClass(
   return chosen;
 }
 
-export function createCapacityProvider(options: CapacityProviderOptions): CapacityProvider {
+/** The provider the Platform sees, plus the sweep an operator or controller may run on demand. */
+export interface CloudCapacityProvider extends CapacityProvider {
+  /** Remove deploy keys this Platform left behind with no machine. Returns how many were removed. */
+  sweepOrphanKeys(): Promise<number>;
+}
+
+const DEFAULT_ORPHAN_KEY_GRACE_MS = 15 * 60_000;
+
+export function createCapacityProvider(options: CapacityProviderOptions): CloudCapacityProvider {
   const { platformId, workerId, cloud, store, secrets, defaults, enrollment } = options;
   if (!Number.isSafeInteger(defaults.maxNodes) || defaults.maxNodes < 1) {
     throw new TypeError("maxNodes must be a positive integer.");
@@ -124,6 +140,8 @@ export function createCapacityProvider(options: CapacityProviderOptions): Capaci
   const platformHash = platformLabelValue(platformId);
   const allowedLocations = defaults.allowedLocations ?? [defaults.location];
   const provisioning = createProvisioningState({ store, secrets });
+  const clock = options.now ?? Date.now;
+  const orphanGraceMs = options.orphanKeyGraceMs ?? DEFAULT_ORPHAN_KEY_GRACE_MS;
 
   const acquire = (name: string) =>
     provisioning
@@ -164,6 +182,26 @@ export function createCapacityProvider(options: CapacityProviderOptions): Capaci
       } satisfies ZelavisCapacityNode;
     });
 
+  /**
+   * A deploy key with no machine is left by a crash between the key and the machine, with the provisioning state
+   * lost, or by a release that could not remove it. It is removed only when it is this Platform's, is older than the
+   * grace period, and no machine this Platform manages would use it.
+   */
+  const sweepEffect = Effect.gen(function* () {
+    const [keys, machines] = yield* Effect.all([cloud.listManagedKeys(platformHash), cloud.listManaged(platformHash)]);
+    const live = new Set(machines.map((machine) => deployKeyName(machine.name)));
+    const now = clock();
+    let removed = 0;
+    for (const key of keys) {
+      if (live.has(key.name) || key.createdAt === 0 || now - key.createdAt < orphanGraceMs) continue;
+      yield* cloud.deleteKey(key);
+      removed++;
+    }
+    return removed;
+  });
+  /** Housekeeping must never decide whether a request succeeds. */
+  const sweepQuietly = sweepEffect.pipe(Effect.catch((error) => Effect.logWarning("Orphan deploy key sweep failed", error).pipe(Effect.as(0))));
+
   const provisionEffect = (input: ZelavisCapacityProvisionInput) =>
     Effect.gen(function* () {
       if (input.platformId !== platformId) throw invalid("This provider serves a different Platform.");
@@ -184,6 +222,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): Capaci
         }
       }
 
+      if (existing === undefined) yield* sweepQuietly;
       const userData = options.userData === undefined
         ? undefined
         : yield* Effect.tryPromise({
@@ -217,6 +256,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): Capaci
         if (!isOurs(remaining)) throw new CapacityError("not-managed", "Machine changed owner during release.");
         yield* cloud.forceDelete(remaining);
       }
+      yield* sweepQuietly;
     });
 
   const inflight = new Map<string, Promise<ZelavisCapacityNode>>();
@@ -231,6 +271,7 @@ export function createCapacityProvider(options: CapacityProviderOptions): Capaci
     );
 
   return {
+    sweepOrphanKeys: () => toPromise(sweepEffect),
     provision(input) {
       let key: string;
       try {

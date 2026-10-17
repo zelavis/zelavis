@@ -88,3 +88,14 @@ export function capacityIdentity(input: CapacityIdentityInput): CapacityIdentity
     labels: capacityLabels(input),
   };
 }
+
+/**
+ * The name of the SSH key Alchemy's Hetzner server generates beside a machine (`<name, at most 55 characters>-d`).
+ * Alchemy computes it from the server name alone, so it is known without any state: that is what lets a machine
+ * whose provisioning state was lost still have its key found and removed. A test pins this to what Alchemy
+ * really creates, so a version bump that renames it fails loudly instead of orphaning keys.
+ */
+export function deployKeyName(machineName: string): string {
+  requireText("machineName", machineName);
+  return `${machineName.slice(0, 55)}-d`;
+}
