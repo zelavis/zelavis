@@ -374,6 +374,24 @@ test("a process that does not belong to the plan, or claims another workload, or
   void existsSync;
 });
 
+test("a process an earlier controller left behind is stopped before the same command starts again", { timeout: 60_000 }, async (t) => {
+  const { controllerFor, directory, runner, makeHost, proc, ports, ask } = await setup(t);
+  const plan = { processes: [proc("web", "web")] };
+  const { resolved } = { resolved: proc("web", "web") };
+  const stray = survivor(directory, { args: resolved.args });
+  const other = survivor(directory, { args: ["unrelated.js"] });
+  const asking = [];
+  const withStrays = Object.assign(Object.create(runner), { attach: async (workload) => { asking.push(workload); return [stray.entry, other.entry]; } });
+  const controller = await controllerFor(makeHost({ runner: withStrays }));
+  await run(controller.reconcile(plan));
+  assert.deepEqual(asking, ["p1"], "the Agent was asked about this workload before the start");
+  assert.equal(stray.child.running, false, "the identical leftover is stopped");
+  assert.equal(other.child.running, true, "a different command is not touched");
+  assert.ok(await ask("web"), "and the new process serves");
+  await run(controller.stop);
+  void ports;
+});
+
 test("output is kept, bounded, and attributed to its process", { timeout: 60_000 }, async (t) => {
   const { controllerFor, ports } = await setup(t);
   const controller = await controllerFor();

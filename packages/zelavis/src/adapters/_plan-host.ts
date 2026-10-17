@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { Duration, Effect } from "effect";
 import type { AgentPlacementIdentity } from "../core/agent/placement-lease.js";
-import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
+import type { ZelavisAgentProcessCommand, ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import { integration } from "../core/runtime/effect-boundary.js";
 import { RecipeError, type PlanHostApi } from "../core/recipe/index.js";
 import { loopbackPortAccepts } from "./_loopback-probe.js";
@@ -11,6 +11,22 @@ import { loopbackPortAccepts } from "./_loopback-probe.js";
 export const ABSENT_FILE = "absent";
 
 const failure = (message: string) => new RecipeError({ operation: "start", message });
+
+/**
+ * Stops the workload's uncontrolled processes that run exactly `command`. The Agent hands out only processes no
+ * live connection drives, so a process this controller (or any live one) started is never among them.
+ */
+const reclaimIdentical = (runner: ZelavisAgentProcessRunner, command: ZelavisAgentProcessCommand, grace: Duration.Input) =>
+  integration(() => runner.attach!(command.workloadId)).pipe(
+    Effect.flatMap((attached) => {
+      const same = attached.filter((entry) => entry.process.running && entry.command.executable === command.executable &&
+        entry.command.cwd === command.cwd && (entry.command.args?.length ?? 0) === (command.args?.length ?? 0) &&
+        (command.args ?? []).every((value, index) => entry.command.args?.[index] === value));
+      return Effect.forEach(same, (entry) => integration(() => entry.process.stop({ graceMs: Duration.toMillis(Duration.fromInputUnsafe(grace)) })),
+        { concurrency: 4, discard: true }).pipe(Effect.as(same.length));
+    }),
+    Effect.mapError(() => failure("Leftover processes could not be stopped before a start.")),
+  );
 
 /**
  * The machine behind a plan controller: the Agent that runs the processes, the loopback ports
@@ -57,6 +73,7 @@ export function makeAgentPlanHost(input: {
       : integration(() => process.signal!(signal)).pipe(
           Effect.flatMap((sent) => sent ? Effect.void : Effect.fail(failure("The process could not be signalled."))),
           Effect.mapError((error) => error instanceof RecipeError ? error : failure("The process could not be signalled."))),
+    ...(input.runner.attach ? { reclaim: (command) => reclaimIdentical(input.runner, command, input.stopGrace ?? Duration.seconds(10)) } : {}),
     digest: (text) => Effect.sync(() => createHash("sha256").update(text).digest("hex")),
     probePort: loopbackPortAccepts,
     pathExists: (path) => integration(() => access(path)).pipe(Effect.as(true), Effect.orElseSucceed(() => false)),

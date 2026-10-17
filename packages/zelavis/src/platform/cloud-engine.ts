@@ -94,7 +94,7 @@ export const claimCloudAuthority = (store: ZelavisSystemStore, platformId: strin
     const claimed = current === undefined
       ? yield* integration(() => store.setIfAbsent(AUTHORITY_NAMESPACE, platformId, { epoch })).pipe(Effect.map((result) => result.created), Effect.mapError((cause) => engineFailure("Cloud authority could not be claimed.", cause)))
       : yield* integration(() => store.compareAndSet(AUTHORITY_NAMESPACE, platformId, current.updatedAt, { epoch }, current.value)).pipe(Effect.map((result) => result !== undefined), Effect.mapError((cause) => engineFailure("Cloud authority could not be claimed.", cause)));
-    if (claimed) return { epoch, isCurrent: async () => epochOf((await store.get(AUTHORITY_NAMESPACE, platformId))?.value) === epoch };
+    if (claimed) return { epoch, isCurrent: () => Effect.runPromise(integration(() => store.get(AUTHORITY_NAMESPACE, platformId)).pipe(Effect.map((record) => epochOf(record?.value) === epoch))) };
   }
   return yield* engineFailure("Cloud authority is contended; another Platform process keeps claiming it.");
 });

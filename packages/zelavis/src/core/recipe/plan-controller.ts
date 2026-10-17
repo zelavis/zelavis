@@ -59,6 +59,13 @@ export interface PlanHostApi {
   readonly resolveSecret: (name: string) => Effect.Effect<string, RecipeError>;
   readonly start: (command: ZelavisAgentProcessCommand, options: ZelavisAgentProcessStartOptions) => Effect.Effect<ZelavisAgentProcess, RecipeError>;
   readonly stop: (process: ZelavisAgentProcess, grace: Duration.Input) => Effect.Effect<void, RecipeError>;
+  /**
+   * Stops every process this workload has running that nobody controls and that runs exactly this command, and
+   * says how many it stopped. A process the Agent still holds after its controller was lost (an engine killed
+   * mid-start, a failed update) would otherwise run beside the one about to start. Absent where the Agent
+   * cannot tell such processes apart.
+   */
+  readonly reclaim?: (command: ZelavisAgentProcessCommand) => Effect.Effect<number, RecipeError>;
   readonly signal: (process: ZelavisAgentProcess, signal: string) => Effect.Effect<void, RecipeError>;
   /** Whether something accepts connections on this loopback port right now. */
   readonly probePort: (port: number, options?: { readonly greeting?: boolean }) => Effect.Effect<boolean>;
@@ -256,10 +263,16 @@ export const makePlanController: Effect.Effect<PlanController, never, PlanHost> 
     const exited = yield* Deferred.make<ZelavisAgentProcessExit>();
     const note = record(wanted.name);
     let ready = false;
-    const child = yield* host.start({
+    const command: ZelavisAgentProcessCommand = {
       workloadId: host.workloadId, ...(host.placement ? { placement: host.placement } : {}),
       executable: wanted.launch.executable, args: wanted.launch.args, cwd: host.cwd, env: wanted.launch.env,
-    }, {
+    };
+    // One process per command: whatever an earlier controller left running goes before the new one starts.
+    if (host.reclaim) {
+      const reclaimed = yield* host.reclaim(command);
+      if (reclaimed > 0) yield* Effect.logWarning(`"${wanted.name}": stopped ${reclaimed} leftover process(es) running the same command before starting it.`);
+    }
+    const child = yield* host.start(command, {
       onOutput: note,
       onExit: (exit) => {
         Deferred.doneUnsafe(exited, Effect.succeed(exit));
