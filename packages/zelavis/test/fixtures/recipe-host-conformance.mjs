@@ -175,7 +175,7 @@ export function recipeHostConformance(test, makeHost) {
 
     const echoed = await succeed(host.run({ command: "node", args: ["-e", "console.log(process.env.PASSWORD); console.error(process.argv[1])", reference], env: { PASSWORD: reference }, timeoutMs: 10_000 }));
     assert.ok(!echoed.stdout.includes(value) && !echoed.stderr.includes(value), "a secret the command prints is removed from what comes back");
-    assert.match(echoed.stdout, /\[secret\]/);
+    assert.match(echoed.stdout, /\[secret\]/, `exit ${echoed.code}, stdout ${JSON.stringify(echoed.stdout)}, stderr ${JSON.stringify(echoed.stderr)}`);
 
     await failure(host.secret("../escape"));
     await failure(host.secret("Upper"));
