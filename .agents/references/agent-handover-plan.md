@@ -8,6 +8,29 @@ This document is written for an agent that has not seen the conversation behind 
 bottom, then read the files named in "Where the code is". Verify every claim about current behaviour
 against the code before relying on it; line numbers drift.
 
+## 0. How much to trust this plan
+
+It was written by reading the code, not by building or running any of it. Nothing below has been
+tested. Treat the design as a well-reasoned hypothesis and prove it step by step (section 5 orders the
+work so the riskiest unknowns are tested first). The two largest unknowns:
+
+1. **systemd behaviour.** Whether `KillMode=process` with `Delegate=yes` and the Agent's own cgroup
+   layout really leaves children running across `systemctl restart`, without systemd marking the unit
+   failed or killing stragglers later. This must be proved in the Docker systemd gate, not by reasoning
+   (sections 4.3E and 9).
+2. **Who relies on "a closed connection means the process exited".** The current client settles every
+   process as exited when the socket closes. The reconnecting client changes that for all users of the
+   client (Platform drivers, remote environment sessions, dev-mode Agent). Find every user before
+   changing it (section 9, question 1).
+
+One consequence is certain regardless of the unknowns: an installation whose Agent predates this
+change (the owner's VPS runs alpha.27) cannot hand over, so the first update that carries the new Agent
+restarts its Projects once (section 7). Say so in the release notes and the dashboard when it happens.
+
+Do the riskiest proofs first: a throwaway test that starts real child processes with file-based output,
+kills the "Agent", and has a second runner adopt them (step 1), and a Docker/systemd check that a
+`KillMode=process` unit restart leaves children alive (before step 4), before building the rest on top.
+
 ## 1. The problem, with evidence
 
 There are two helper programs next to the Platform on a system installation:
