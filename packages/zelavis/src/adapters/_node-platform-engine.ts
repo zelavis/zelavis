@@ -151,6 +151,13 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
             if (!driver.capabilities(project).survivesControlPlaneRestart) throw new Error(`Project ${project.id} has no qualified Agent custody for a Platform handover.`);
           });
           const state = yield* effectOperations(driver, ["capabilities", "supportsLiveUpdate"]).status(project.id);
+          // A Project that is down (stopped, or failed to start) is not one this update could keep serving: the
+          // outgoing engine could not serve it either, and rolling the whole Platform back would not bring it up.
+          // It is reported, and ordinary restoration of desired-running Projects keeps trying. A Project that runs
+          // elsewhere than its stable address, or is stuck mid-transition, is a broken takeover and still fails.
+          if (state.status === "stopped" || state.status === "failed") {
+            return yield* Effect.logWarning(`Project ${project.id} is ${state.status} after the engine handover and was left for restoration${state.error ? `: ${state.error}` : ""}.`);
+          }
           yield* evaluate(() => { if (state.status !== "running" || state.url !== project.runtime.url) throw new Error(`Project ${project.id} was not adopted at its stable address: ${state.error ?? state.status}.`); });
         }), { concurrency: 4, discard: true });
         incomingContinuity = [];
