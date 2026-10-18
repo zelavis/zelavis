@@ -1,5 +1,15 @@
 # @zelavis/ui
 
+## 1.1.0-alpha.39
+
+### Patch Changes
+
+- c038a76: The terminal fills its window: it was fitted to nine columns because the island holding it was an inline element, which also made typed text hard to follow. API keys are now a section of Server → Access with presets (Debug read-only, Operator, Project client), one-time display, rotation and revocation. A new read-only diagnostic, `zelavis debug processes` (`client.debug.processes`, `GET /runtime/debug/processes`, permission `server.debug.read`), lists the Platform account's Zelavis processes with secrets removed and flags a command running more than once side by side.
+- Updated dependencies [c038a76]
+- Updated dependencies [84b8e68]
+- Updated dependencies [5745c67]
+  - zelavis@2.0.0-alpha.39
+
 ## 1.1.0-alpha.38
 
 ### Patch Changes

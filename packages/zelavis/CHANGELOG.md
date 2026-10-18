@@ -1,5 +1,13 @@
 # zelavis
 
+## 2.0.0-alpha.39
+
+### Patch Changes
+
+- c038a76: The terminal fills its window: it was fitted to nine columns because the island holding it was an inline element, which also made typed text hard to follow. API keys are now a section of Server → Access with presets (Debug read-only, Operator, Project client), one-time display, rotation and revocation. A new read-only diagnostic, `zelavis debug processes` (`client.debug.processes`, `GET /runtime/debug/processes`, permission `server.debug.read`), lists the Platform account's Zelavis processes with secrets removed and flags a command running more than once side by side.
+- 84b8e68: Two more read-only diagnostics behind `server.debug.read`: `zelavis debug updates` shows the last ten finished updates with the installer's output, which the updater now keeps so a failed update can still be read after the next attempt; `zelavis debug project <id>` gathers one Project's record, runtime log, related Platform log entries and processes in one answer.
+- 5745c67: A Platform update is no longer rolled back because a Project is down. After the new engine takes over, a Project that is stopped or failed is reported in the log and left to the normal restoration of Projects that should be running; only a Project running at the wrong address, or stuck mid-transition, still fails the update.
+
 ## 2.0.0-alpha.38
 
 ### Patch Changes

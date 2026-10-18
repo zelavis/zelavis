@@ -1,5 +1,14 @@
 # @zelavis/app
 
+## 1.0.1-alpha.39
+
+### Patch Changes
+
+- Updated dependencies [c038a76]
+- Updated dependencies [84b8e68]
+- Updated dependencies [5745c67]
+  - zelavis@2.0.0-alpha.39
+
 ## 1.0.1-alpha.38
 
 ### Patch Changes
