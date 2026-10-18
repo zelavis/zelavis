@@ -22,6 +22,9 @@ export function mount(host: HTMLElement, props: Record<string, unknown>) {
   const id = encodeURIComponent(String(props.sessionId));
   const base = `${api}/runtime/terminal/sessions/${id}`;
   host.classList.add("terminal-host");
+  // An island is an inline element until told otherwise: inline, it takes the width of its content, which is
+  // what pressed the terminal's text against the left edge.
+  host.style.display = "block";
 
   const program = Effect.gen(function*() {
     const [{ Terminal }, { FitAddon }] = yield* Effect.tryPromise({ try: () => Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]), catch: cause => new ApiError({ message: String(cause) }) });
