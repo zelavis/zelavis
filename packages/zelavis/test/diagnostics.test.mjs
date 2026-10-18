@@ -105,3 +105,75 @@ test("an API key made with the debug permissions reads diagnostics over HTTP, th
   } finally { globalThis.fetch = originalFetch; console.log = originalLog; }
   assert.equal(JSON.parse(printed.join("\n")).duplicates[0].pids.length, 2);
 });
+
+test("one Project's diagnostics gather its record, runtime log, Platform log entries and processes, and need server.debug.read", async (t) => {
+  const { createMemorySystemStore, zelavis } = await import("../dist/index.js");
+  const digest = `sha256:${"a".repeat(64)}`;
+  const recipe = { name: "@zelavis/app", title: "Zelavis App", version: "1.0.0", specifier: "@zelavis/app", runtimeKinds: ["native"], artifact: { digest } };
+  const running = new Set();
+  const runtime = {
+    name: "fixture", runtimeKinds: ["native"],
+    capabilities: () => ({ zeroDowntimeUpdates: false, independentRuntimeVersion: false }), supportsLiveUpdate: () => false,
+    async prepare() {},
+    async start(project) { running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
+    async stop(id) { running.delete(id); return { status: "stopped" }; },
+    async status(id) { return { status: running.has(id) ? "running" : "stopped", ...(running.has(id) ? { url: "http://127.0.0.1:1" } : {}) }; },
+    async logs() { return Array.from({ length: 150 }, (_, index) => ({ at: NOW.toISOString(), stream: "stdout", line: `line ${index}` })); },
+    async destroy(id) { running.delete(id); }, async close() {},
+  };
+  const copies = { generatedAt: NOW.toISOString(), user: "zelavis", truncated: false,
+    processes: [
+      { pid: 7, parentPid: 1, user: "zelavis", startedAt: "", elapsed: "", projectId: "alpha", command: "caddy run" },
+      { pid: 8, parentPid: 1, user: "zelavis", startedAt: "", elapsed: "", projectId: "other", command: "caddy run" }],
+    duplicates: [{ command: "caddy run", projectId: "alpha", pids: [7, 9] }, { command: "caddy run", projectId: "other", pids: [8, 10] }] };
+  const zv = await zelavis({
+    systemStore: createMemorySystemStore(), projectRuntime: runtime,
+    serviceRegistry: { catalog: [{ service: { ...recipe, kind: "app", project: { runtimeKinds: ["native"] } }, specifier: "@zelavis/app", source: "official", status: "available" }] },
+    diagnostics: { processes: async () => copies },
+  });
+  t.after(() => zv.close());
+  const owner = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
+  const debugKey = { id: "key", type: "service", permissions: ["server.debug.read"] };
+  const as = (principal) => createZelavisClient({ baseUrl: "http://localhost", fetch: (url, init) => zv.fetch(new Request(url, init), { principal }) });
+  await as(owner).projects.create({ id: "alpha", name: "Alpha" });
+
+  const snapshot = await as(debugKey).debug.project("alpha");
+  assert.equal(snapshot.project.id, "alpha");
+  assert.equal(snapshot.logs.length, 100, "the runtime log is bounded to its newest lines");
+  assert.equal(snapshot.logs.at(-1).line, "line 149");
+  assert.deepEqual(snapshot.processes.map((entry) => entry.pid), [7], "only this Project's processes");
+  assert.deepEqual(snapshot.duplicates.map((copy) => copy.pids), [[7, 9]]);
+  assert.ok(snapshot.platformLog.every((entry) => entry.message.includes("alpha")));
+  await assert.rejects(as(debugKey).debug.project("missing"), { status: 404 });
+  await assert.rejects(as({ id: "k", type: "service", permissions: ["server.logs.read", "project.view"] }).debug.project("alpha"), { status: 403 });
+});
+
+test("the update history is readable with the debug permission over HTTP, the SDK and the CLI", async (t) => {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { runCli } = await import("../dist/cli/commands.js");
+  const data = await mkdtemp(join(tmpdir(), "zelavis-debug-updates-"));
+  t.after(() => rm(data, { recursive: true, force: true }));
+  await mkdir(join(data, "update"), { recursive: true });
+  const run = { id: "r1", state: "rolled-back", from: "2.0.0-alpha.36", to: "2.0.0-alpha.38", startedAt: "2026-10-18T09:00:00.000Z", finishedAt: "2026-10-18T09:03:00.000Z",
+    message: "The installer stopped with an error (exit 1). Rolled back.", log: ["Project locus was not adopted at its stable address: stopped."] };
+  await writeFile(join(data, "update", "history.json"), JSON.stringify([run, { not: "a run" }]));
+  const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: data, services: false, projects: false, terminal: false }) });
+  t.after(() => zv.close());
+  const debugKey = { id: "key", type: "service", permissions: ["server.debug.read"] };
+  const through = (principal) => (input, init) => zv.fetch(new Request(input, init), { principal });
+  const client = createZelavisClient({ baseUrl: "http://localhost", rootPath: "/zelavis", fetch: through(debugKey) });
+  const { status, history } = await client.debug.updates();
+  assert.deepEqual(history.map((entry) => [entry.id, entry.state]), [["r1", "rolled-back"]], "damaged entries are skipped");
+  assert.match(history[0].log[0], /locus was not adopted/);
+  assert.equal(typeof status.current, "string");
+  await assert.rejects(createZelavisClient({ baseUrl: "http://localhost", rootPath: "/zelavis", fetch: through({ id: "k", type: "service", permissions: ["system.updates.view"] }) }).debug.updates(), { status: 403 });
+
+  const originalFetch = globalThis.fetch, originalLog = console.log;
+  const printed = [];
+  globalThis.fetch = (input, init) => zv.fetch(new Request(input, init), { principal: debugKey });
+  console.log = (value) => printed.push(value);
+  try { await runCli(["debug", "updates", "--url", "http://localhost/zelavis", "--token", "ignored"]); }
+  finally { globalThis.fetch = originalFetch; console.log = originalLog; }
+  assert.match(printed.join("\n"), /rolled-back.*2\.0\.0-alpha\.36 -> 2\.0\.0-alpha\.38/);
+  assert.match(printed.join("\n"), /Project locus was not adopted/);
+});

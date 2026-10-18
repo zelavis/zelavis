@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { integration, IntegrationFailure, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient, type ZelavisProcessReport } from "../sdk/fetch.js";
 
-const usage = "zelavis debug processes [--url URL] [--token TOKEN] [--json]";
+const usage = "zelavis debug processes|updates|project <id> [--url URL] [--token TOKEN] [--json]";
 
 const render = (report: ZelavisProcessReport) => {
   const lines = [`${report.processes.length} Zelavis process(es) of ${report.user} at ${report.generatedAt}${report.truncated ? " (list truncated)" : ""}`];
@@ -23,7 +23,12 @@ const runDebugCommandProgram = Effect.fn("DebugCLI.run")(function* (args: readon
   let json = false;
   const [subject, ...rest] = args;
   if (subject === "--help" || subject === "-h" || subject === undefined) { console.log(usage); return; }
-  if (subject !== "processes") return yield* new IntegrationFailure(new Error(`Unknown debug subject "${subject}". ${usage}`));
+  if (subject !== "processes" && subject !== "project" && subject !== "updates") return yield* new IntegrationFailure(new Error(`Unknown debug subject "${subject}". ${usage}`));
+  let projectId: string | undefined;
+  if (subject === "project") {
+    projectId = rest.shift();
+    if (!projectId || projectId.startsWith("--")) return yield* new IntegrationFailure(new Error(`debug project needs a Project id. ${usage}`));
+  }
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index]!;
     if (arg === "--json") { json = true; continue; }
@@ -36,6 +41,30 @@ const runDebugCommandProgram = Effect.fn("DebugCLI.run")(function* (args: readon
   }
   const base = new URL(url);
   const client = createZelavisClient({ baseUrl: base.origin, rootPath: base.pathname, headers: token ? { authorization: `Bearer ${token}` } : undefined });
+  if (projectId !== undefined) {
+    const snapshot = yield* integration(() => client.debug.project(projectId));
+    if (json) { console.log(JSON.stringify(snapshot, null, 2)); return; }
+    const runtime = (snapshot.project.runtime ?? {}) as { status?: string; error?: string; url?: string };
+    console.log([
+      `Project ${projectId}: ${runtime.status ?? "unknown"}${runtime.error ? ` (${runtime.error})` : ""}${runtime.url ? ` at ${runtime.url}` : ""}`,
+      `${snapshot.processes.length} process(es)${snapshot.duplicates.length ? `, ${snapshot.duplicates.length} command(s) running more than once` : ""}`,
+      ...snapshot.processes.map((entry) => `  ${entry.pid} ${entry.startedAt} ${entry.command}`),
+      `${snapshot.platformLog.length} Platform log entr${snapshot.platformLog.length === 1 ? "y" : "ies"} name it; ${snapshot.logs.length} runtime log line(s). Use --json for the record and the logs.`,
+    ].join("\n"));
+    return;
+  }
+  if (subject === "updates") {
+    const { status, history } = yield* integration(() => client.debug.updates());
+    if (json) { console.log(JSON.stringify({ status, history }, null, 2)); return; }
+    const lines = [`Running ${status.current}${status.latest ? `, newest ${status.latest}` : ""}; update state: ${status.state}.`];
+    if (history.length === 0) lines.push("No finished updates are kept yet.");
+    for (const run of history) {
+      lines.push("", `${run.finishedAt ?? run.startedAt}  ${run.state}  ${run.from} -> ${run.to ?? "?"}  ${run.message ?? ""}`);
+      for (const line of run.log ?? []) lines.push(`    ${line}`);
+    }
+    console.log(lines.join("\n"));
+    return;
+  }
   const report = yield* integration(() => client.debug.processes());
   console.log(json ? JSON.stringify(report, null, 2) : render(report));
 });

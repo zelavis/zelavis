@@ -438,3 +438,40 @@ test("concurrent checks share a registry lookup and concurrent apply requests pu
   const files = await readdir(join(data, "update"));
   assert.deepEqual(files, ["request.json"]);
 });
+
+test("each finished update is kept, with the installer's output, after the next attempt overwrites the status", async (t) => {
+  const state = await installation(t);
+  const history = async () => JSON.parse(await readFile(join(state.dataDirectory, "update", "history.json"), "utf8"));
+
+  await request(state.dataDirectory, { id: "first" });
+  const failing = updater(t, state, {
+    async run(command, args) {
+      if (command === "sh") return { code: 0, output: "Prepared.\n" };
+      if (args.includes("--allow-downgrade")) return { code: 0, output: "back\n" };
+      return { code: 1, output: "Command failed: select\nProject locus was not adopted at its stable address: stopped.\n" };
+    },
+    healthy: async () => true,
+  });
+  const failed = await runUpdate(failing.options);
+  assert.equal(failed.state, "rolled-back");
+
+  await request(state.dataDirectory, { id: "second" });
+  const succeeded = await runUpdate(updater(t, state).options);
+  assert.equal(succeeded.state, "succeeded");
+
+  assert.equal((await status(state.dataDirectory)).id, "second", "the status shows only the latest run");
+  const kept = await history();
+  assert.deepEqual(kept.map((run) => [run.id, run.state]), [["first", "rolled-back"], ["second", "succeeded"]]);
+  assert.ok(kept[0].log.some((line) => line.includes("Project locus was not adopted")), "why the first one failed is still there");
+  assert.ok(!JSON.stringify(kept).includes("SECRET"));
+});
+
+test("only the last ten finished updates are kept", async (t) => {
+  const state = await installation(t);
+  for (let index = 0; index < 12; index += 1) {
+    await request(state.dataDirectory, { id: `run-${index}` });
+    await runUpdate({ ...updater(t, state).options, channelVersion: async () => state.version });
+  }
+  const kept = JSON.parse(await readFile(join(state.dataDirectory, "update", "history.json"), "utf8"));
+  assert.deepEqual(kept.map((run) => run.id), Array.from({ length: 10 }, (_, index) => `run-${index + 2}`));
+});

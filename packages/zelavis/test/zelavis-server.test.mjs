@@ -1328,6 +1328,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.terminal.resize",
       "runtime.terminal.close",
       "runtime.debug.processes",
+      "runtime.debug.project",
+      "runtime.debug.updates",
       "runtime.logs.read",
       "runtime.updates.read",
       "runtime.updates.check",

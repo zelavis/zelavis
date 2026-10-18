@@ -1,10 +1,10 @@
-import type { ZelavisProcessReport } from "../diagnostics.js";
+import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
-import type { ZelavisUpdateStatus } from "../updates.js";
+import type { ZelavisUpdateRun, ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
 import type { PublicServiceRegistryIdentity, ServiceSourceDiagnostic, ServiceUpdateResult } from "../platform/service-registry-view.js";
 import type {
@@ -667,7 +667,7 @@ export interface ZelavisLogsClient {
   read(query?: ZelavisLogQuery): Promise<ZelavisLogPage>;
 }
 
-export type { ZelavisProcessReport, ZelavisProcessEntry, ZelavisDuplicateProcesses } from "../diagnostics.js";
+export type { ZelavisProcessReport, ZelavisProcessEntry, ZelavisDuplicateProcesses, ZelavisProjectDiagnostics } from "../diagnostics.js";
 
 export interface ZelavisDebugClient {
   /**
@@ -675,6 +675,17 @@ export interface ZelavisDebugClient {
    * run more than once side by side. Read-only; needs `server.debug.read` in system scope.
    */
   processes(): Promise<ZelavisProcessReport>;
+  /**
+   * One Project in a single answer: its record (runtime state, placement, locked recipe, unfinished update or
+   * deletion), recent runtime log lines, the Platform log entries that name it, and its processes. Read-only;
+   * needs `server.debug.read` in system scope.
+   */
+  project(projectId: string): Promise<ZelavisProjectDiagnostics>;
+  /**
+   * The current update status and the last finished updates, each with the installer's output tail, so a failed
+   * or rolled-back update can be read after the next attempt. Needs `server.debug.read` in system scope.
+   */
+  updates(): Promise<{ readonly status: ZelavisUpdateStatus; readonly history: readonly ZelavisUpdateRun[] }>;
 }
 
 export interface ZelavisUpdatesClient {
@@ -1152,6 +1163,8 @@ export function createZelavisClient(
     },
     debug: {
       processes: () => json<ZelavisProcessReport>("/runtime/debug/processes"),
+      updates: () => json<{ status: ZelavisUpdateStatus; history: readonly ZelavisUpdateRun[] }>("/runtime/debug/updates"),
+      project: (projectId) => json<ZelavisProjectDiagnostics>(`/runtime/debug/projects/${encodeURIComponent(projectId)}`),
     },
     updates: {
       status: () => json<ZelavisUpdateStatus>("/runtime/updates"),

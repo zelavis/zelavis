@@ -124,7 +124,7 @@ import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
 import { compareVersions, isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
-import type { ZelavisDiagnosticsControl } from "./diagnostics.js";
+import { DIAGNOSTICS_PLATFORM_LOG_ENTRIES, DIAGNOSTICS_PROJECT_LOG_LINES, type ZelavisDiagnosticsControl, type ZelavisProjectDiagnostics } from "./diagnostics.js";
 import { isTerminalSessionId, ZelavisTerminalRefusal, type ZelavisTerminalControl } from "./terminal.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
@@ -1920,6 +1920,8 @@ function resolveRuntimeManagementCore(
     updates?: ZelavisUpdateControl;
     terminal?: ZelavisTerminalControl;
     diagnostics?: ZelavisDiagnosticsControl;
+    /** Read by the Project diagnostic; the Project routes themselves are not part of the runtime management routes. */
+    projects?: ZelavisProjectManager;
     /** The Platform's own recent log, read through `runtime/logs`. */
     platformLog?: PlatformLog;
     serviceActivation?: ZelavisServiceActivationController;
@@ -2724,6 +2726,53 @@ function resolveRuntimeManagementCore(
             if (!context.diagnostics) return { status: 404, body: { error: "This runtime has no diagnostics." } };
             context.platformLog?.record({ level: "info", source: "diagnostics", message: `Processes read (principal ${principal?.id ?? "unknown"})` });
             return { status: 200, headers: { "cache-control": "no-store" }, body: yield* integration(() => context.diagnostics!.processes()) };
+          })),
+        },
+        {
+          id: "runtime.debug.project",
+          spec: {
+            operationId: "getProjectDiagnostics",
+            summary: "One Project's record, runtime log, Platform log entries and processes in a single read-only answer",
+            tags: ["runtime"],
+            responses: { 200: { description: "Project diagnostics" }, 404: { description: "No such Project, or no diagnostics here" } },
+          },
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/debug/projects/:projectId"),
+          access: { permissions: ["server.debug.read"], scope: { type: "system" } },
+          handler: ({ params, principal }: { params: Record<string, string>; principal?: { id: string } }) => present(Effect.gen(function* () {
+            const projects = context.projects;
+            if (!projects) return { status: 404, body: { error: "This runtime has no Projects." } };
+            const id = params.projectId ?? "";
+            const project = yield* integration(() => projects.get(id));
+            if (!project) return { status: 404, body: { error: `Project "${id}" was not found.` } };
+            context.platformLog?.record({ level: "info", source: "diagnostics", message: `Project ${id} read (principal ${principal?.id ?? "unknown"})` });
+            const logs = (yield* integration(() => projects.logs(id)).pipe(Effect.catch(() => Effect.succeed([] as readonly unknown[])))).slice(-DIAGNOSTICS_PROJECT_LOG_LINES);
+            const named = (context.platformLog?.read({ limit: 1000 }).entries ?? []).filter((entry: { message: string }) => entry.message.includes(id)).slice(-DIAGNOSTICS_PLATFORM_LOG_ENTRIES);
+            const listed = context.diagnostics ? yield* integration(() => context.diagnostics!.processes()).pipe(Effect.catch(() => Effect.succeed(undefined))) : undefined;
+            const mine = (listed?.processes ?? []).filter((entry) => entry.projectId === id);
+            const body: ZelavisProjectDiagnostics = {
+              generatedAt: new Date().toISOString(), project: project as unknown as Record<string, unknown>, logs, platformLog: named,
+              processes: mine, duplicates: (listed?.duplicates ?? []).filter((copy) => copy.projectId === id),
+            };
+            return { status: 200, headers: { "cache-control": "no-store" }, body };
+          })),
+        },
+        {
+          id: "runtime.debug.updates",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/debug/updates"),
+          access: { permissions: ["server.debug.read"], scope: { type: "system" } },
+          spec: {
+            operationId: "getUpdateHistory",
+            summary: "The current update status and the last finished updates with the installer's output tail",
+            tags: ["runtime"],
+            responses: { 200: { description: "Update status and history" }, 404: { description: "This runtime does not manage updates" } },
+          },
+          handler: () => present(Effect.gen(function* () {
+            if (!context.updates) return { status: 404, body: { error: "This runtime does not manage updates." } };
+            const status = yield* integration(() => context.updates!.status());
+            const history = context.updates.history ? yield* integration(() => context.updates!.history!()) : [];
+            return { status: 200, headers: { "cache-control": "no-store" }, body: { status, history } };
           })),
         },
         {
@@ -7265,6 +7314,7 @@ export function zelavis(
             updates: options.updates,
             terminal: options.terminal,
             diagnostics: options.diagnostics,
+            ...(projects ? { projects } : {}),
             platformLog,
             serviceActivation: options.serviceActivation,
             rootPath,

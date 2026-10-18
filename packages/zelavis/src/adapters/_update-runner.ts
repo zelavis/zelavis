@@ -8,7 +8,7 @@ import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from
 import { join } from "node:path";
 import { installationInstanceScope } from "../core/runtime/installation-instance.js";
 import { compareVersions, isExactVersion, updateChannel, type ZelavisUpdateRun } from "../updates.js";
-import { UPDATE_REQUEST_FILE, UPDATE_STATUS_FILE } from "./_node-updates.js";
+import { readUpdateHistory, UPDATE_HISTORY_FILE, UPDATE_HISTORY_LIMIT, UPDATE_REQUEST_FILE, UPDATE_STATUS_FILE } from "./_node-updates.js";
 import { NODE_RUNTIME_PROTOCOL } from "./_node-runtime-protocol.js";
 const LOG_LINES = 40;
 export interface UpdateRunnerOptions {
@@ -54,6 +54,20 @@ const writeStatus = Effect.fn("PlatformUpdate.writeStatus")(function* (directory
     const temporary = `${file}.${randomUUID()}`;
     yield* Effect.gen(function* () {
         yield* integration(() => writeFile(temporary, `${JSON.stringify(run)}\n`, { mode: 0o644, flag: "wx" }));
+        yield* integration(() => rename(temporary, file));
+    }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
+});
+/**
+ * Keeps the last finished runs, so the next attempt overwriting the status does not erase why this one failed.
+ * Bookkeeping only: it can fail without costing the update anything.
+ */
+const recordHistory = Effect.fn("PlatformUpdate.recordHistory")(function* (directory: string, run: ZelavisUpdateRun): Effect.fn.Return<void, TaggedFailure> {
+    const kept = yield* readUpdateHistory(directory);
+    const next = [...kept.filter((entry) => entry.id !== run.id), run].slice(-UPDATE_HISTORY_LIMIT);
+    const file = join(directory, UPDATE_HISTORY_FILE);
+    const temporary = `${file}.${randomUUID()}`;
+    yield* Effect.gen(function* () {
+        yield* integration(() => writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o644, flag: "wx" }));
         yield* integration(() => rename(temporary, file));
     }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
 });
@@ -132,6 +146,7 @@ export const runUpdateProgram = Effect.fn("PlatformUpdate.runUpdate")(function* 
     const finish = Effect.fn("PlatformUpdate.step")(function* (state: ZelavisUpdateRun["state"], message: string, extra: Partial<ZelavisUpdateRun> = {}) {
         run = { ...run, ...extra, state, message, finishedAt: now().toISOString() };
         yield* writeStatus(directory, run);
+        yield* recordHistory(directory, run).pipe(Effect.catch((error) => Effect.logWarning(`The update history could not be written: ${String(error)}`)));
         return run;
     });
     const channel = updateChannel(receipt.version);

@@ -42,6 +42,23 @@ export interface ZelavisProcessReport {
   readonly truncated: boolean;
 }
 
+/** Everything worth reading about one Project in a single answer, so a debugging session starts from facts. */
+export interface ZelavisProjectDiagnostics {
+  readonly generatedAt: string;
+  /** The Project record: lifecycle and runtime state, placement, the locked recipe, any unfinished update or deletion. */
+  readonly project: Readonly<Record<string, unknown>>;
+  /** The Project's own recent runtime log lines, oldest first. */
+  readonly logs: readonly unknown[];
+  /** The Platform log's recent entries that name this Project, oldest first. */
+  readonly platformLog: readonly unknown[];
+  /** This Project's processes on the Platform account, when the host can list them. */
+  readonly processes: readonly ZelavisProcessEntry[];
+  readonly duplicates: readonly ZelavisDuplicateProcesses[];
+}
+
+export const DIAGNOSTICS_PROJECT_LOG_LINES = 100;
+export const DIAGNOSTICS_PLATFORM_LOG_ENTRIES = 50;
+
 export interface ZelavisDiagnosticsControl {
   /** The Platform account's processes that belong to Zelavis (its data folder or its name in the command line). */
   processes(): Promise<ZelavisProcessReport>;

@@ -78,7 +78,7 @@ command tree.
   generic message and a reference; `--ref` prints the cause recorded under that reference.
   The log is bounded and kept in memory (it is emptied by a restart, and the same error lines
   are written to the service journal), and secrets are redacted when an entry is written.
-- `debug processes [--json]` lists the Zelavis processes of the account the Platform runs as, with
+- `debug processes|updates|project <id> [--json]` is read-only diagnostics for whoever debugs a server (`client.debug.processes|updates|project`, `GET /zelavis/api/v1/runtime/debug/processes|updates|projects/:id`, permission `server.debug.read` in system scope, which the terminal and log permissions do not imply; each read is written to the Platform log with the principal). `updates` shows the running version and the last ten finished updates with the installer's output tail, which the updater keeps in `<data>/update/history.json` so a failed or rolled-back update can be read after the next attempt. `project` gathers one Project's record (runtime state, placement, locked recipe, unfinished update or deletion), its newest 100 runtime log lines, the Platform log entries that name it and its processes. `processes` lists the Zelavis processes of the account the Platform runs as, with
   secrets removed from their command lines, and flags a command running more than once side by side
   (a leftover copy). It is read-only (`client.debug.processes`,
   `GET /zelavis/api/v1/runtime/debug/processes`, permission `server.debug.read` in system scope, which
