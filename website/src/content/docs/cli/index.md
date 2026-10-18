@@ -78,6 +78,13 @@ command tree.
   generic message and a reference; `--ref` prints the cause recorded under that reference.
   The log is bounded and kept in memory (it is emptied by a restart, and the same error lines
   are written to the service journal), and secrets are redacted when an entry is written.
+- `debug processes [--json]` lists the Zelavis processes of the account the Platform runs as, with
+  secrets removed from their command lines, and flags a command running more than once side by side
+  (a leftover copy). It is read-only (`client.debug.processes`,
+  `GET /zelavis/api/v1/runtime/debug/processes`, permission `server.debug.read` in system scope, which
+  the terminal and log permissions do not imply). Each read is written to the Platform log with the
+  principal. Give a script or an agent a key made with the **Debug (read-only)** preset (Server → Access
+  → API keys) and it can answer these questions without a shell.
 - `update status|check|apply [--wait]` shows the running version and the newest one on
   its channel, looks again, or asks the installation to update itself and, with
   `--wait`, follows it to the end. It calls the same routes as the dashboard

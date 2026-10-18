@@ -124,6 +124,7 @@ import { loadPlatformMasterSecret } from "./platform/master-secret.js";
 import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 import { principalHasPermission } from "./core/runtime/request-dispatcher.js";
 import { compareVersions, isExactVersion, ZelavisUpdateRefusal, type ZelavisUpdateControl } from "./updates.js";
+import type { ZelavisDiagnosticsControl } from "./diagnostics.js";
 import { isTerminalSessionId, ZelavisTerminalRefusal, type ZelavisTerminalControl } from "./terminal.js";
 import type { ZelavisPrincipal, ZelavisRouteResponse } from "./core/runtime/contracts.js";
 export {
@@ -530,6 +531,7 @@ export interface ZelavisServerOptions {
   marketplace?: ZelavisMarketplaceControl;
   updates?: ZelavisUpdateControl;
   terminal?: ZelavisTerminalControl;
+  diagnostics?: ZelavisDiagnosticsControl;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
   subsystems?: ZelavisSubsystemOptions;
@@ -778,6 +780,8 @@ export interface ZelavisPlatformResources {
   updates?: ZelavisUpdateControl;
   /** A shell on this server for its owner, inside tmux. */
   terminal?: ZelavisTerminalControl;
+  /** Read-only answers to the questions that otherwise need a shell: which processes run, and which are copies. */
+  diagnostics?: ZelavisDiagnosticsControl;
   /** Cloud capacity: the provider connection and machines requested through it. */
   cloudCapacity?: CloudCapacityController;
   projectInstallHost?: () => Promise<ZelavisProjectInstallHost>;
@@ -1915,6 +1919,7 @@ function resolveRuntimeManagementCore(
     marketplace?: ZelavisMarketplaceControl;
     updates?: ZelavisUpdateControl;
     terminal?: ZelavisTerminalControl;
+    diagnostics?: ZelavisDiagnosticsControl;
     /** The Platform's own recent log, read through `runtime/logs`. */
     platformLog?: PlatformLog;
     serviceActivation?: ZelavisServiceActivationController;
@@ -2704,6 +2709,23 @@ function resolveRuntimeManagementCore(
           })),
         },
         ...terminalRoutes(context),
+        {
+          id: "runtime.debug.processes",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/debug/processes"),
+          access: { permissions: ["server.debug.read"], scope: { type: "system" } },
+          spec: {
+            operationId: "getDebugProcesses",
+            summary: "The Platform account's Zelavis processes, with command lines redacted and copies of one command flagged",
+            tags: ["runtime"],
+            responses: { 200: { description: "Processes and duplicates" }, 404: { description: "This runtime has no diagnostics" } },
+          },
+          handler: ({ principal }: { principal?: { id: string } }) => present(Effect.gen(function* () {
+            if (!context.diagnostics) return { status: 404, body: { error: "This runtime has no diagnostics." } };
+            context.platformLog?.record({ level: "info", source: "diagnostics", message: `Processes read (principal ${principal?.id ?? "unknown"})` });
+            return { status: 200, headers: { "cache-control": "no-store" }, body: yield* integration(() => context.diagnostics!.processes()) };
+          })),
+        },
         {
           id: "runtime.logs.read",
           method: "GET",
@@ -7242,6 +7264,7 @@ export function zelavis(
             marketplace: options.marketplace,
             updates: options.updates,
             terminal: options.terminal,
+            diagnostics: options.diagnostics,
             platformLog,
             serviceActivation: options.serviceActivation,
             rootPath,
@@ -7760,6 +7783,7 @@ function mergeZelavisServerOptions(
     marketplace: override.marketplace ?? base.marketplace,
     updates: override.updates ?? base.updates,
     terminal: override.terminal ?? base.terminal,
+    diagnostics: override.diagnostics ?? base.diagnostics,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
@@ -8067,6 +8091,7 @@ export class Zelavis {
           marketplace: platformResources.marketplace,
           updates: platformResources.updates,
           terminal: platformResources.terminal,
+          diagnostics: platformResources.diagnostics,
           serviceActivation: platformResources.services,
           bundleStore,
           domainBindings,

@@ -42,6 +42,12 @@ leads to the cause that the generic message hides. It reads `GET /zelavis/api/v1
 (`client.logs.read`, `zelavis logs`) and needs `server.logs.read` in system scope. Entries are
 kept in memory only and a restart empties them; Project logs stay in each Project.
 
+**Server → Access → API keys** creates, rotates and revokes keys for scripts, CI, agents and debugging
+sessions. A key is a service account with a token shown once. Presets: **Debug (read-only)** (logs,
+processes, nodes, updates, Projects), **Operator** (that plus updates, services, settings, nodes, Edge,
+cloud and Project lifecycle; never the terminal, users or deletion) and **Project client**. They call
+`/zelavis/api/v1/auth/service-accounts` (`client.auth.admin`, `zelavis auth service-accounts`).
+
 **Server → Terminal** (`/zelavis/server/terminal`) opens a shell on the server inside the
 browser (xterm.js) for principals with `server.terminal.use` in system scope, normally the owner.
 The shell runs in tmux as the unprivileged account the Platform runs as, so closing the page

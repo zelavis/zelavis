@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { array, label, object, request } from "./api.ts";
 import { button, empty, field, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, facts, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
+import { API_KEY_PRESETS } from "./api-key-presets.ts";
 import type { ScreenContext } from "./screens.ts";
 
 type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
@@ -237,21 +238,26 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
   const status = node("p", { class: "muted", role: "status" });
   const token = node("div", { class: "k-notice", hidden: "" });
 
-  const nameField = field("name", "Client name", "text", "", true);
-  const projectField = field("projectId", "Project ID for scoped grants (optional)", "text", "", false);
-  const form = node("form", { class: "k-inline" }, nameField, projectField, node("button", { type: "submit", class: "primary" }, "Create client"));
+  const nameField = field("name", "Key name", "text", "", true);
+  const projectField = field("projectId", "Project ID for a Project client's scoped grants (optional)", "text", "", false);
+  const presetField = node("label", {}, node("span", {}, "What it can do"), node("select", { name: "preset" }, ...API_KEY_PRESETS.map(preset => node("option", { value: preset.id }, `${preset.title}: ${preset.detail}`))));
+  const daysField = field("days", "Valid for (days)", "number", "90", true);
+  const form = node("form", { class: "k-inline" }, nameField, presetField, daysField, projectField, node("button", { type: "submit", class: "primary" }, "Create API key"));
+  const showToken = (issued: Record<string, unknown>) => {
+    token.hidden = false;
+    token.replaceChildren(node("p", { class: "k-row-label" }, "One-time API key"), node("input", { readonly: "", value: label(issued.token, ""), "aria-label": "Issued API key" }),
+      node("p", { class: "k-row-detail" }, `Use it as a bearer token: zelavis debug processes --url ${location.origin}${context.config.api.basePath.replace(/\/api\/v1$/, "")} --token <key>`));
+    status.textContent = "Key issued. Copy it now; Zelavis will not show it again.";
+  };
   form.addEventListener("submit", event => {
     event.preventDefault();
     const data = new FormData(form);
     const name = String(data.get("name") ?? "").trim();
     const projectId = String(data.get("projectId") ?? "").trim();
-    const grants = projectId ? ["project.view", "project.runtime.manage", "project.settings.manage", "project.users.manage"].map(permission => ({ permission, scope: { type: "project", projectId } })) : [];
-    context.run(request(`${api}/service-accounts`, "POST", { name, permissions: ["projects.list", "projects.create"], grants, expiresInDays: 365 }), result => {
-      const issued = object(result);
-      token.hidden = false;
-      token.replaceChildren(node("p", { class: "k-row-label" }, "One-time token"), node("input", { readonly: "", value: label(issued.token, ""), "aria-label": "Issued service account token" }));
-      status.textContent = "Token issued. Copy it now; Zelavis will not show it again.";
-    });
+    const preset = API_KEY_PRESETS.find(candidate => candidate.id === data.get("preset")) ?? API_KEY_PRESETS[0];
+    const days = Math.max(1, Math.min(3650, Number(data.get("days")) || 90));
+    const grants = preset.id === "client" && projectId ? ["project.view", "project.runtime.manage", "project.settings.manage", "project.users.manage"].map(permission => ({ permission, scope: { type: "project", projectId } })) : [];
+    context.run(request(`${api}/service-accounts`, "POST", { name, permissions: [...preset.permissions], grants, expiresInDays: days }), result => showToken(object(result)));
   });
 
   return page(
@@ -262,11 +268,13 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
     rowsCard("Platform users", ...people.map(account => dataRow(
       label(account.displayName ?? account.email ?? account.username ?? account.id), label(account.email ?? account.username ?? account.id),
       badge(label(array(account.roles)[0], account.verified === true ? "verified" : "unverified"))))),
-    card("Service accounts", form, token, status),
-    rowsCard("Clients", ...serviceAccounts.map(account => dataRow(
-      label(account.displayName ?? account.id), `${label(account.id)} · ${array(account.grants).length} scoped grants`,
-      button("Revoke", () => context.run(request(`${api}/service-accounts/${encodeURIComponent(label(account.id, ""))}`, "DELETE"), () => context.refresh()), { class: "danger" })))),
-    resourceNotice("Use service accounts for software", "Fluxgent, CI, scripts, and agents should use revocable service tokens. They should never reuse an owner's browser session or an app user's credentials."));
+    card("API keys", form, token, status),
+    rowsCard("Keys", ...serviceAccounts.map(account => dataRow(
+      label(account.displayName ?? account.id), `${label(account.id)} · ${array(account.permissions).length} permissions · ${array(account.grants).length} scoped grants`,
+      node("span", {},
+        button("Rotate", () => context.run(request(`${api}/service-accounts/${encodeURIComponent(label(account.id, ""))}/token`, "POST", { expiresInDays: 90 }), result => showToken(object(result)))),
+        button("Revoke", () => context.run(request(`${api}/service-accounts/${encodeURIComponent(label(account.id, ""))}`, "DELETE"), () => context.refresh()), { class: "danger" }))))),
+    resourceNotice("Use API keys for software", "Scripts, CI, agents and debugging sessions should use a revocable key with only what they need. They should never reuse an owner's browser session or an app user's credentials. Rotating a key revokes the old token at once."));
 });
 
 export const hostScreens = {

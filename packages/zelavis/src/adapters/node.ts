@@ -56,6 +56,7 @@ import { createBuiltinDeploymentBackends } from "../backends/index.js";
 import { createNodeBackendHostProbes } from "./_node-backend-host.js";
 import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
 import { createNodeUpdateControl } from "./_node-updates.js";
+import { createNodeDiagnosticsControl } from "./_node-diagnostics.js";
 import { createNodeTerminalControl } from "./_node-terminal.js";
 import type { ZelavisTerminalControl } from "../terminal.js";
 import { readOrCreatePlatformAuthorityKey } from "./_platform-authority-key.js";
@@ -576,6 +577,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           servicePackages: serviceSources.servicePackages,
           ...(serviceSources.marketplace ? { marketplace: serviceSources.marketplace.control } : {}),
           ...(!isProjectRuntime && systemStore ? { updates: createNodeUpdateControl({ dataDirectory }) } : {}),
+          ...(!isProjectRuntime && systemStore ? { diagnostics: createNodeDiagnosticsControl({ dataDirectory }) } : {}),
           ...(!isProjectRuntime && systemStore && options.terminal !== false ? { terminal: options.terminal ?? createNodeTerminalControl({ dataDirectory }) } : {}),
         },
         metadata: {

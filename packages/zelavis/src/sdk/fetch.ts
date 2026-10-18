@@ -1,3 +1,4 @@
+import type { ZelavisProcessReport } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
@@ -290,6 +291,7 @@ export interface ZelavisClient {
   readonly marketplace: ZelavisMarketplaceClient;
   readonly updates: ZelavisUpdatesClient;
   readonly logs: ZelavisLogsClient;
+  readonly debug: ZelavisDebugClient;
   readonly terminal: ZelavisTerminalClient;
   /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
   readonly nodes: ZelavisNodesClient;
@@ -663,6 +665,16 @@ export interface ZelavisLogPage {
 export interface ZelavisLogsClient {
   /** The Platform's recent log, newest last; memory only, emptied by a restart. Needs `server.logs.read`. */
   read(query?: ZelavisLogQuery): Promise<ZelavisLogPage>;
+}
+
+export type { ZelavisProcessReport, ZelavisProcessEntry, ZelavisDuplicateProcesses } from "../diagnostics.js";
+
+export interface ZelavisDebugClient {
+  /**
+   * The Platform account's Zelavis processes with secrets removed from their command lines, and the commands that
+   * run more than once side by side. Read-only; needs `server.debug.read` in system scope.
+   */
+  processes(): Promise<ZelavisProcessReport>;
 }
 
 export interface ZelavisUpdatesClient {
@@ -1137,6 +1149,9 @@ export function createZelavisClient(
         const text = params.toString();
         return json<ZelavisLogPage>(`/runtime/logs${text ? `?${text}` : ""}`);
       },
+    },
+    debug: {
+      processes: () => json<ZelavisProcessReport>("/runtime/debug/processes"),
     },
     updates: {
       status: () => json<ZelavisUpdateStatus>("/runtime/updates"),
