@@ -3,7 +3,7 @@ import test from 'node:test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, open, readFile, readdir, readlink, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createLocalAgentProcessRunner } from '../dist/adapters/_agent-process-runner.js';
@@ -80,6 +80,22 @@ test('survivable runner publishes no environment, streams output and preserves a
   assert.equal((await attached.process.stop()).requested, true);
   assert.equal(attached.process.running, false);
   assert.equal((await readdir(stateDirectory)).some(name => name.endsWith('.json')), false);
+});
+
+test('exec gate searches the supplied PATH for bare programs and never falls back to the Agent PATH', { skip: !linux, timeout: 10000 }, async t => {
+  const directory = await root(t), stateDirectory = join(directory, 'records');
+  const runner = createLocalAgentProcessRunner({ survivable: true, stateDirectory });
+  cleanAfter(t, () => runner.close());
+  const lines = [];
+  const child = await runner.start({ ...command(directory, "console.log('path-ready');setInterval(()=>{},1000)"),
+    executable: basename(process.execPath), env: { PATH: `${join(directory, 'absent')}:${dirname(process.execPath)}` } },
+    { onOutput: output => lines.push(output.line) });
+  await waitFor(() => lines.includes('path-ready'));
+  assert.equal(child.running, true);
+  assert.equal((await child.stop()).requested, true);
+  const missing = await runner.start({ ...command(directory, "throw Error('must never run')"),
+    executable: basename(process.execPath), env: { PATH: join(directory, 'absent') } });
+  assert.equal((await missing.exit).code, 127);
 });
 
 test('kernel lock refuses concurrent recovery and corrupted records refuse admission', { skip: !linux }, async t => {

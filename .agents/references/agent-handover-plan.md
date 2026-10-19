@@ -95,6 +95,12 @@ login/database writes, healthy doctor and complete uninstall. The primitive proo
 and all 19 Linux tests pass again. History and final full release qualification
 remain pending. Proof: `/tmp/zelavis-agent-update-proof.json`; log:
 `/tmp/zelavis-agent-update-temp-candidate.log`.
+History qualification exposed another real exec-gate issue: the alpha.25
+WordPress runtime stores bare commands (`mariadbd`, `nginx`, `php-fpm8.2`),
+whereas `execve` does not search PATH. The launcher now resolves the supplied
+command PATH before exec and never substitutes the Agent's PATH. All 20 Linux
+tests pass, including the bare-command/missing-program regression. Re-run history
+through the old fleet before the final release check.
 The Docker systemd primitive proof and all 19 Linux tests pass, including the
 expected delegated-layout negative control. Full installed update/history and
 release qualification are still pending. A browser rerun also encountered the
