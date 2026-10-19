@@ -2,27 +2,15 @@ import "./fuzor-source.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { chromium } from "@playwright/test";
-import { createNodeServer, closeNodeServer } from "fuzor/server/node";
+import { createNodeHttpServer } from "../../../dist/core/runtime/node-http.js";
+import { closeNodeServer } from "zelavis/runtimes/node";
 import { serverNavigationMenu } from "../src/server-navigation.ts";
-import { packageRoot } from "./fuzor-source.mjs";
-import { resolve, join, extname } from "node:path";
-import { mkdtemp, readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { mountOf, replacePlaceholder, requestIntoBuild, responseOutOfBuild } from "../src/mount-rewrite.ts";
+import { zelavisUiFrontend } from "../src/frontend.ts";
+import { mountOf, requestIntoBuild, responseOutOfBuild } from "../src/mount-rewrite.ts";
 
-// This script serves the build itself, without a Platform, so it does what the frontend adapter does: the build's
-// placeholder root is replaced by the real mount in the assets it serves and in what the server handler answers.
+// Keep the API isolated while serving the compiled views through the production HTTP boundary and asset loader.
+// Fuzor's standalone Node server is not the server an installed Zelavis dashboard uses.
 const mount = mountOf("/zelavis");
-async function copyForMount(from, to) {
-  await mkdir(to, { recursive: true });
-  for (const entry of await readdir(from, { withFileTypes: true })) {
-    const source = join(from, entry.name), target = join(to, entry.name);
-    if (entry.isDirectory()) await copyForMount(source, target);
-    else if ([".js", ".css", ".html", ".json", ".svg", ".txt"].includes(extname(entry.name))) await writeFile(target, replacePlaceholder(await readFile(source, "utf8"), mount));
-    else await writeFile(target, await readFile(source));
-  }
-}
-const assetsCopy = await mkdtemp(join(tmpdir(), "zelavis-ui-assets-"));
 
 let revision = 1, saved = 0, denySave = false;
 const documents = [{ id: "row-a", version: 1, data: { title: "Server A", count: 1, "literal.key": true, ["__proto__"]: { independent: true }, constructor: "database field" } }, { id: "row-b", version: 1, data: { title: "Server B", count: 2 } }];
@@ -92,17 +80,23 @@ try {
   await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
   const upstreamOrigin = `http://127.0.0.1:${upstream.address().port}`;
   process.env.ZELAVIS_DEV_SERVER = upstreamOrigin;
-  await copyForMount(resolve(packageRoot, ".fuzor/web/dist-spa"), assetsCopy);
-  globalThis.__zelavisUiMount = mount;
+  const fixtureFetch = async request => {
+    const url = new URL(request.url);
+    const headers = new Headers(request.headers); headers.set("origin", upstreamOrigin);
+    return fetch(new URL(url.pathname + url.search, upstreamOrigin), { method: request.method, headers, signal: request.signal, ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.text() }) });
+  };
+  const frontend = await zelavisUiFrontend({ rootPath: mount, createRuntimeConfig: async () => config, fetch: fixtureFetch });
   const { handler: buildHandler } = await import(new URL("../.fuzor/dist-backend/entry.mjs", import.meta.url));
   const handler = async request => { const entering = requestIntoBuild(request, mount); return entering ? responseOutOfBuild(await buildHandler(entering), mount) : new Response("Not found", { status: 404 }); };
-  app = createNodeServer({ assetsDir: assetsCopy, base: "/zelavis/", handler: async request => {
+  app = createNodeHttpServer({ fetch: async request => {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/zelavis/api/")) {
-      const headers = new Headers(request.headers); headers.set("origin", upstreamOrigin);
-      return fetch(new URL(url.pathname + url.search, upstreamOrigin), { method: request.method, headers, signal: request.signal, ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.text() }) });
-    }
-    return handler(request);
+    if (url.pathname.startsWith(`${mount}/api/`)) return fixtureFetch(request);
+    const result = await handler(request);
+    if (result.status !== 404 || !["GET", "HEAD"].includes(request.method) || !url.pathname.startsWith(`${mount}/assets/`)) return result;
+    const asset = await frontend.bundleStore.read(undefined, url.pathname.slice(mount.length + 1));
+    if (!asset) return result;
+    await result.body?.cancel();
+    return new Response(asset.body, { headers: { "content-type": asset.contentType, "cache-control": asset.cacheControl } });
   } });
   await new Promise(resolve => app.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${app.address().port}`;
@@ -309,7 +303,7 @@ try {
   assert.equal(errors.length, 0, errors.join("\n"));
   console.log("Generated SSR registry, project proxy authorization, and all three MIT grid adapters passed against the isolated API fixture.");
 } finally {
-  await browser?.close(); if (app) await closeNodeServer(app); await rm(assetsCopy, { recursive: true, force: true });
+  await browser?.close(); if (app) await closeNodeServer(app);
   await new Promise(resolve => upstream.close(resolve));
   if (previous === undefined) delete process.env.ZELAVIS_DEV_SERVER; else process.env.ZELAVIS_DEV_SERVER = previous;
 }
