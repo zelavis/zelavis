@@ -77,6 +77,11 @@ assertion: conversion legitimately refreshes `updatedAt` while preserving every
 other field. The gate now permits only that one conversion timestamp change and
 requires byte-for-byte stability afterward; forward continuity also compares
 `/proc` start ticks and debug process identities with no duplicates.
+That stronger check exposed false duplicate reports for legitimate hosts/workers
+whose Project identity existed only in their private environment. New host and
+worker command lines carry non-secret Project-root/workload labels; real listing
+tests still detect two copies of the same workload. Diagnostics, conversion and
+17 persistent host/supervisor tests pass with those labels.
 The Docker systemd primitive proof and all 19 Linux tests pass, including the
 expected delegated-layout negative control. Full installed update/history and
 release qualification are still pending. A browser rerun also encountered the

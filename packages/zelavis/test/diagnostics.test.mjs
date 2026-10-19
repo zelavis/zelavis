@@ -55,6 +55,19 @@ test("real copies of one command are found by the real listing", async (t) => {
   assert.deepEqual([...ours.pids].sort(), copies.map((child) => child.pid).sort());
 });
 
+test("visible workload labels distinguish real engine workers but still expose a duplicate of one workload", async (t) => {
+  const marker = `zelavis-engine-${process.pid}-${Date.now()}`;
+  const workers = ["alpha", "beta", "alpha"].map(workload => spawn(process.execPath,
+    ["-e", "setInterval(() => {}, 1000)", marker, "--workload", workload], { stdio: "ignore" }));
+  t.after(() => workers.forEach(child => child.kill("SIGKILL")));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const report = await createNodeDiagnosticsControl({ dataDirectory: "/nonexistent-data" }).processes();
+  const duplicates = report.duplicates.filter(copy => copy.command.includes(marker));
+  assert.equal(duplicates.length, 1);
+  assert.deepEqual([...duplicates[0].pids].sort(), [workers[0].pid, workers[2].pid].sort());
+  assert.ok(!duplicates[0].pids.includes(workers[1].pid), "another workload is not a stale copy");
+});
+
 test("debug is a permission of its own: HTTP and the SDK need server.debug.read in system scope", async (t) => {
   const data = await mkdtemp(join(tmpdir(), "zelavis-debug-"));
   t.after(() => rm(data, { recursive: true, force: true }));

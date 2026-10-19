@@ -60,7 +60,7 @@ export const createNodeRuntimeSupervisor = Effect.fn("RuntimeSupervisor.create")
     return yield* Effect.uninterruptibleMask(restore => Effect.gen(function* () {
       const child = yield* integration(() => options.agent.start({
         workloadId: `${options.workloadId}:engine:${randomUUID()}`,
-        executable: command.executable, args: [command.worker], cwd: command.cwd, stdin: "pipe",
+        executable: command.executable, args: [command.worker, "--workload", options.workloadId], cwd: command.cwd, stdin: "pipe",
         env: { ...command.environment, ZELAVIS_RUNTIME_ENGINE_MODULE: command.module,
           ZELAVIS_RUNTIME_ENGINE_CONFIGURATION: JSON.stringify(command.configuration) },
       }, {

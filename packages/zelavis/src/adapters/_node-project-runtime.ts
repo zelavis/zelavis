@@ -618,7 +618,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 workloadId: project.id,
                 ...(placement ? { placement } : {}),
                 executable,
-                args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : [])],
+                // Visible identity lets process diagnostics distinguish hosts
+                // without inspecting their private environment or credentials.
+                args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : []), "--project-root", directory],
                 cwd: directory,
                 control: nodeProjectControlPaths(directory, options.integrationOnly),
                 env: {
