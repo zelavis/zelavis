@@ -209,7 +209,7 @@ independent of the Agent release.
 An Agent from before this protocol needs one conversion during Update now:
 Project and preview admission pause, the old Agent and its children stop,
 and desired-running Projects restart under the new Agent, including managed Apps'
-private integrations. The request hold is prepared before root inventory is
+private Zelavis runtimes. The request hold is prepared before root inventory is
 acknowledged; replacement/recovery then runs outside the older host's commit
 deadline. Health, configuration and update/debug status reads remain available. Update status and
 history name that one restart. Subsequent supported replacements preserve Project
