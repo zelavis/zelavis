@@ -1,7 +1,7 @@
 # Project Agent handover: implemented contract and qualification
 
-Status: **released in `2.0.0-alpha.40`; Linux system-installation qualification
-passed on 2026-10-19**. The historical filename is retained
+Status: **corrected in `2.0.0-alpha.41`; Linux installed qualification and a live
+VPS update passed on 2026-10-19**. The historical filename is retained
 because `AGENTS.md` and the core-platform skill link here. This is the current
 reference, not an implementation task list. Release procedure belongs in
 `../skills/zelavis-release-maintainer/SKILL.md`; public behavior is documented in
@@ -10,7 +10,7 @@ reference, not an implementation task list. Release procedure belongs in
 **Production correction, 2026-10-19:** alpha.40's conversion failure could close
 the entire Platform request gate indefinitely, including its repair APIs and
 all Project previews. Successful installed qualification missed this fault.
-The correction in the working tree is not yet a published release. See the
+The correction is published and verified on the owner's VPS. See the
 incident findings below before relying on the earlier qualification claims.
 
 ## Purpose and scope
@@ -98,8 +98,8 @@ The outer Project host startup deadline is 90 seconds rather than 15, allowing
 its inner supervisor's 30-second stages. Deterministic clock tests cover slow
 readiness, startup cleanup, stalled recovery and coordination expiry; a real
 Platform test covers dashboard, authentication, status, logs and nested diagnostics
-during a conversion hold. The private work record contains the live timeline
-and the remaining release/production verification.
+during a conversion hold. The private work record contains the live timeline;
+completed release and VPS verification are recorded below.
 
 The same correction preserves lazy backend startup during conversion: only a
 previously used managed integration with an existing regular host journal is
@@ -166,6 +166,30 @@ qualification gate green. History recipe upgrades served 506 WordPress and
 tarballs for the Platform and four bundled packages matched the publisher's
 packed digests. The release log is `/tmp/zelavis-alpha40-release-check.log`.
 
+The corrected alpha.41 passed the full gate on clean commit
+`1eb013ea3dbfa32c7a5097ca0152d32573249903`: 2,152 Platform tests passed,
+31 skipped, complete browser suites and all installed gates green. Both the
+actual npm alpha.40 update and direct alpha.39 conversion ran on 2 CPUs / 4 GiB;
+the latter completed its update in 58,110ms. History recipe upgrades answered
+1,047 WordPress and 605 DokuWiki requests without failure. The authoritative
+log is `/tmp/zelavis-alpha41-release-check.log`. All five published npm tarballs,
+registry integrities and alpha tags matched the publisher's digests.
+
+The owner's live Linux VPS then updated through the ordinary authenticated API
+from alpha.40 to alpha.41 in 54,751ms. Platform and Agent both report alpha.41.
+WordPress's database/PHP/web processes, DokuWiki's PHP/web processes, the native
+App host and worker, the persistent Platform host and Traefik retained their
+PIDs and kernel start ticks. Project recipe locks, preview ports and runtime
+start times remained unchanged; the native App retained its alpha.36 engine pin.
+Both managed private runtimes and the native App answered their runtime config
+APIs with 200. Across the update and private cold starts, 675 HTTP checks matched
+the expected dashboard/site responses and native App no-frontend placeholder,
+with zero unexpected failures; the longest observed request was 5,077ms. This
+proves continuity for this update, not absence of downtime in the earlier incident
+or exhaustive application-data integrity. Local proofs are
+`/tmp/zelavis-alpha41-vps-update-proof.json` and
+`/tmp/zelavis-alpha41-vps-http-proof.json`.
+
 Linux production tests cover repeated App handover/crash and re-key,
 lost-start adoption, markerless/stale-marker stop, stop during disconnect,
 log replay/truncation and inode replacement, PID reuse, locks, leader-first
@@ -206,8 +230,8 @@ portable dependencies. The maintained private work record is `pnotes/TODO.md`.
   with a deterministic case sharing the same test body. Neither fix changes
   production runtime behavior.
 - Qualify remote-worker/Bun replacement and multi-host partition recovery
-  separately before extending the continuity claim. No live VPS continuity
-  claim follows from the local gates.
+  separately before extending the continuity claim. The live proof above covers
+  one local Linux Node installation and does not qualify those other paths.
 - Remove the explicit pre-protocol conversion when no supported installation
   needs it, preserving deliberate coverage of historical update paths.
 
