@@ -103,12 +103,23 @@ and the remaining release/production verification.
 
 The same correction preserves lazy backend startup during conversion: only a
 previously used managed integration with an existing regular host journal is
-warmed, sequentially to limit cold-start contention. This hint grants no
+warmed independently with concurrency two and a separate 90-second budget each.
+Agent conversion completes after public recovery; private warmup does not extend
+or fail that Agent transaction. This hint grants no
 execution authority; the ordinary manager still verifies the recipe, journal,
 placement and ownership. Private startup failures are retained in the runtime
 log and merged boundedly into the owning Project's logs with an integration
 label. Process diagnostics associate path-ending Project hosts and their engine
 children with that Project, including private integration hosts.
+
+Additional qualification caught a remaining defect after the first correction's
+main gate passed: direct alpha.39 conversion on 2 CPUs / 4 GiB exhausted the
+updater's 75-second report window while private warmup shared the engine's
+90-second recovery window. The final design separates private restoration as
+above and derives the updater's longer reporting/total budgets from the same
+public recovery constant. `release:check` now requires the direct alpha.39
+conversion in addition to the actual previous npm release. Both installed gates
+run on a fixed 2-CPU / 4-GiB budget, rather than borrowing the owner's whole Mac.
 
 Complete installed qualification found two defects that primitive PID proofs
 missed:

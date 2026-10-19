@@ -32,7 +32,7 @@
     "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
     "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
-    "release:check": "pnpm run verify && pnpm run ci:ui && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs && pnpm run distribution:test && pnpm run release:qualify:agent && pnpm run release:qualify:update && pnpm run release:qualify:history && pnpm run distribution:qualify:worker && node scripts/release-qualified.mjs",
+    "release:check": "pnpm run verify && pnpm run ci:ui && pnpm run docs:check && pnpm allowlist check && node --test scripts/test/*.test.mjs && pnpm run distribution:test && pnpm run release:qualify:agent && pnpm run release:qualify:update && pnpm run release:qualify:conversion && pnpm run release:qualify:history && pnpm run distribution:qualify:worker && node scripts/release-qualified.mjs",
     "release:status": "changeset status --verbose",
     "release:version": "node scripts/release-version.mjs stable",
     "release:version:alpha": "node scripts/release-version.mjs alpha",
@@ -53,6 +53,7 @@
     "check:effect-usage": "node scripts/check-effect-usage.mjs",
     "release:qualify:agent": "bash distribution/scripts/qualify-agent-survival.sh",
     "release:qualify:update": "bash distribution/scripts/qualify-update.sh",
+    "release:qualify:conversion": "ZELAVIS_PROVISIONING_FROM_NPM=2.0.0-alpha.39 bash distribution/scripts/qualify-update.sh",
     "release:qualify:history": "bash distribution/scripts/qualify-history.sh",
     "check:tigerstyle": "node scripts/check-tigerstyle.mjs",
     "test:repo-rules": "node --test scripts/test/check-effect-usage.test.mjs scripts/test/check-tigerstyle.test.mjs"

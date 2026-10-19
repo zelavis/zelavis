@@ -683,6 +683,9 @@ remote-worker/Bun replacement and multi-host partition recovery remain unqualifi
 Conversion restores only previously used private integrations; an unused hosting
 Project must not acquire a backend merely because the Platform updates. Include
 private integration startup failures in that Project's ordinary logs and diagnostics.
+Private restoration runs after public recovery, with its own bounded concurrency
+and per-Project deadlines; it must not extend or fail a completed Agent conversion.
+The updater's reporting window must exceed the engine's public recovery window.
 Read `.agents/references/agent-handover-plan.md` for verified design corrections and
 qualification evidence; primitive proofs alone do not qualify a release.
 
@@ -1617,7 +1620,10 @@ The current pre-handover manual conversion is a known gap to eliminate; do not
 use it as precedent for future releases or add permanent legacy runtime paths.
 The release gate `pnpm release:qualify:update` starts from the actual previous npm
 release in disposable Linux/systemd and qualifies the packed candidate with
-continuous dashboard/App/WordPress traffic. `pnpm release:qualify:history` qualifies a
+continuous dashboard/App/WordPress traffic. `pnpm release:qualify:conversion` also
+starts directly from alpha.39, the last pre-survival Agent, until that conversion
+is retired. Both run with 2 CPUs and 4 GiB rather than the Mac's full resources.
+`pnpm release:qualify:history` qualifies a
 server with a history: apps made by old releases (`distribution/history.json`: a
 hand-written WordPress from alpha.25, a contract-1 DokuWiki from alpha.29), opened so
 their integration hosts start, carried by live updates (never the installer) through the

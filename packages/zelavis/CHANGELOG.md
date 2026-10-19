@@ -13,6 +13,9 @@
   Keep unused hosting backends lazy during conversion, include private integration
   failures in the owning Project's logs, and show App hosts and workers in their
   Project diagnostics.
+  Private Project runtimes restore asynchronously after public recovery, with
+  separate per-Project deadlines. Qualification covers both the previous-release
+  update and the direct pre-survival Agent conversion on two CPUs and 4 GB.
 
 ## 2.0.0-alpha.40
 

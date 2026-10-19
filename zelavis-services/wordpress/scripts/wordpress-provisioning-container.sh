@@ -19,7 +19,8 @@ if [[ -z "${ZELAVIS_PROVISIONING_FROM_NPM:-}" || "${ZELAVIS_QUALIFY_UPDATE:-}" =
   (cd "$REPO_ROOT" && pnpm --filter zelavis pack --pack-destination "$STAGE")
   mv "$STAGE"/zelavis-*.tgz "$STAGE/zelavis.tgz"
 fi
-docker run -d ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DOCKER_PLATFORM"} --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
+# Qualify cold starts on a small server instead of borrowing every Mac core.
+docker run -d ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DOCKER_PLATFORM"} --name "$CONTAINER" --cpus 2 --memory 4g --memory-swap 4g --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_PROVISIONING_FROM_NPM=${ZELAVIS_PROVISIONING_FROM_NPM:-}" \

@@ -7,6 +7,8 @@ import type { ZelavisProjectManager } from "../project.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { serveNodeRuntimeControl } from "./_node-runtime-control.js";
 
+export const AGENT_CONVERSION_RECOVERY_TIMEOUT_MS = 90_000;
+
 /** Installer-local conversion control, protected by the engine's kernel writer
  * ownership and a 0600 socket. Uses the existing Project manager's authority,
  * lifecycle permits and reconciliation; it never starts a driver directly.
@@ -22,6 +24,7 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
   yield* Effect.addFinalizer(() => admission.close);
   let nonce: string | undefined, phase = "ready", failure: string | undefined;
   let expected: string[] = [], integrations: string[] = [];
+  let privateRecovery = { pending: 0, failed: 0 };
   const release = Effect.gen(function* () {
     yield* evaluate(() => options.holdPreviews?.(false));
     yield* admission.resume;
@@ -35,6 +38,19 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
     // one failed recovery must not hold the healthy fleet indefinitely.
     yield* release;
   });
+  const warm = Effect.fn("AgentEngineControl.warm")(function* (ids: readonly string[]) {
+    const gatewayTarget = options.projects ? effectOperations(options.projects).gatewayTarget : undefined;
+    yield* Effect.forEach(ids, id => (gatewayTarget ? gatewayTarget(id).pipe(Effect.asVoid) : Effect.void).pipe(
+      Effect.timeoutOrElse({ duration: AGENT_CONVERSION_RECOVERY_TIMEOUT_MS,
+        orElse: () => Effect.fail(new IntegrationFailure(new Error(`Private Project ${id} recovery timed out.`))),
+      }),
+      Effect.catch(error => Effect.gen(function* () {
+        privateRecovery.failed++;
+        yield* Effect.logError(`Private Project ${id} recovery failed: ${error.message}`);
+      })),
+      Effect.ensuring(Effect.sync(() => { privateRecovery.pending--; })),
+    ), { concurrency: 2, discard: true });
+  });
   const restore = Effect.fn("AgentEngineControl.restore")(function* (projectIds: readonly string[], integrationIds: readonly string[], restoringNonce: string) {
     if (!options.projects) return;
     while (true) {
@@ -42,12 +58,14 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
       const current = yield* effectOperations(options.projects!).list();
       if (nonce !== restoringNonce || phase !== "restoring") return;
       if (projectIds.every(id => current.find(project => project.id === id)?.runtime.status === "running")) {
-        // Public workloads are back. Private integration startup must never
-        // keep those workloads behind a fleet-wide hold. Its result still
-        // determines whether the installer reports a complete conversion.
+        // Conversion is complete when the Agent and public workloads recover.
+        // Private Apps restore in their own bounded lifecycle, just as during
+        // ordinary startup. One cold or failed backend must not extend the
+        // Agent transaction or prevent another backend's restoration attempt.
+        phase = "ready";
         yield* release;
-        const gatewayTarget = effectOperations(options.projects!).gatewayTarget;
-        yield* Effect.forEach(integrationIds, id => gatewayTarget ? gatewayTarget(id).pipe(Effect.asVoid) : Effect.void, { concurrency: 1, discard: true });
+        privateRecovery = { pending: integrationIds.length, failed: 0 };
+        yield* Effect.forkIn(warm(integrationIds), scope);
         return;
       }
       yield* Effect.sleep(100);
@@ -63,6 +81,7 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
         if (nonce !== input.nonce) return yield* new IntegrationFailure(new Error("Another Agent conversion is in progress."));
         return { phase };
       }
+      if (privateRecovery.pending > 0) return yield* new IntegrationFailure(new Error("Private Project recovery is still running."));
       if (nonce === input.nonce) return yield* new IntegrationFailure(new Error("Agent conversion nonce is stale."));
       nonce = String(input.nonce); failure = undefined;
       const projects = options.projects ? yield* integration(() => options.projects!.list()) : [];
@@ -88,15 +107,19 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
       const preparedNonce = nonce;
       yield* Effect.forkIn(Effect.gen(function* () {
         yield* Effect.sleep(120_000);
-        if (nonce === preparedNonce && (phase === "held" || phase === "restoring")) yield* fail("Agent conversion coordination expired.");
+        if (nonce === preparedNonce && phase === "held") yield* fail("Agent conversion coordination expired.");
       }), scope);
     } else {
       if (input.nonce !== nonce) return yield* new IntegrationFailure(new Error("Agent conversion nonce is stale."));
       if (input.action === "restore" && phase === "held") {
         phase = "restoring";
         const restoringNonce = String(input.nonce);
+        yield* Effect.forkIn(Effect.gen(function* () {
+          yield* Effect.sleep(120_000);
+          if (nonce === restoringNonce && phase === "restoring") yield* fail("Agent conversion recovery coordination expired.");
+        }), scope);
         yield* Effect.forkIn(restore(expected, integrations, restoringNonce).pipe(
-          Effect.timeoutOrElse({ duration: 90_000,
+          Effect.timeoutOrElse({ duration: AGENT_CONVERSION_RECOVERY_TIMEOUT_MS,
             orElse: () => Effect.fail(new IntegrationFailure(new Error("Projects did not recover before the Agent conversion deadline."))),
           }),
           Effect.andThen(Effect.gen(function* () {
@@ -106,7 +129,7 @@ export const serveAgentEngineControl = Effect.fn("AgentEngineControl.serve")(fun
         ), scope);
       } else if (input.action !== "status") return yield* new IntegrationFailure(new Error("Unknown or out-of-order Agent conversion command."));
     }
-    return { phase, ...(failure ? { failure } : {}) };
+    return { phase, privateRecovery, ...(failure ? { failure } : {}) };
   }));
   return admission;
 });

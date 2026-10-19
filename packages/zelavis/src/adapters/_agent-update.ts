@@ -11,6 +11,7 @@ import type { ZelavisUpdateRun } from "../updates.js";
 import { createAgentProcessClient, type AgentInspection } from "./_agent-ipc.js";
 import { prepareAgentHandover, readAgentDescriptor } from "./_agent-lifecycle.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
+import { AGENT_CONVERSION_RECOVERY_TIMEOUT_MS } from "./_agent-engine-control.js";
 
 interface AgentUpdateReport { readonly id: string; readonly target: string; readonly converted: boolean; readonly message: string; readonly degraded: boolean }
 const reportSchema = objectFields<AgentUpdateReport>({ id: isString, target: isString, converted: isBoolean, message: isString, degraded: isBoolean });
@@ -142,7 +143,7 @@ export const prepareInstalledProjectAgentUpdate = Effect.fn("AgentUpdate.prepare
     if (!ready) return yield* new IntegrationFailure(new Error("Selected Agent did not become ready and rebind its clients."));
     if (converted) {
       yield* control("restore");
-      const deadline = Date.now() + 75_000;
+      const deadline = Date.now() + AGENT_CONVERSION_RECOVERY_TIMEOUT_MS + 15_000;
       while (Date.now() < deadline) {
         const status = yield* control("status");
         if (status.phase === "ready") return;
@@ -153,10 +154,10 @@ export const prepareInstalledProjectAgentUpdate = Effect.fn("AgentUpdate.prepare
       // but never report success before desired-running Projects are proved back.
       return yield* new IntegrationFailure(new Error("Agent converted, but Project recovery did not finish before its reporting deadline. Check Project diagnostics."));
     }
-  }).pipe(Effect.timeoutOrElse({ duration: 95_000, orElse: () => Effect.fail(new IntegrationFailure(new Error("Agent update exceeded its bounded recovery window."))) })));
+  }).pipe(Effect.timeoutOrElse({ duration: AGENT_CONVERSION_RECOVERY_TIMEOUT_MS + 55_000, orElse: () => Effect.fail(new IntegrationFailure(new Error("Agent update exceeded its bounded recovery window."))) })));
   const message = outcome._tag === "Failure"
     ? `Platform ${options.target} remains selected; Project Agent is degraded: ${outcome.failure.message}`
-    : converted ? "The old Project Agent was converted; Projects restarted once. Subsequent Agent updates preserve their processes."
+    : converted ? "The old Project Agent was converted; Projects restarted once. Previously used private Project runtimes restore asynchronously; their failures appear in Project logs. Subsequent Agent updates preserve Project processes."
       : `Project Agent updated to ${options.target} without restarting Projects.`;
   yield* recordReport(updates, { id: run.id, target: options.target, converted, degraded: outcome._tag === "Failure", message });
   console.log(message);

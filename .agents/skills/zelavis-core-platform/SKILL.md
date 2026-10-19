@@ -77,6 +77,9 @@ before editing.
   fencing. Test stalled recovery, failed integration and expired coordination.
   Restore previously used private integrations without starting backends for
   hosting-only Projects. Surface private startup failures in ordinary Project logs.
+  Complete Agent conversion at public workload recovery; restore private Apps
+  independently with bounded concurrency and a deadline per Project. The root
+  updater must wait longer than the engine's public recovery budget.
   Live updates refuse unsupported protocols. Future protocol evolution must ship
   through Update now and pass the real previous-release update gate; do not
   use a manual installer conversion as a release procedure.

@@ -218,7 +218,10 @@ repair controls remain available. Recovered public workloads resume before
 private Project runtimes finish warming. A failed or expired conversion releases
 its coordination hold and reports degradation; individual Project readiness and
 ownership checks still apply. Update status and history name that one restart.
-Conversion restores private Project runtimes that had already been used. A hosting-only
+Conversion completes when its public workloads recover. Private Project runtimes
+that had already been used restore asynchronously, with bounded concurrency and
+a separate timeout per Project. Their startup failures do not fail the Agent
+update. A hosting-only
 Project keeps its backend unstarted until its Project APIs need it. Private
 integration startup failures appear in the Project's logs with a
 `[Zelavis integration]` label and in its diagnostics.

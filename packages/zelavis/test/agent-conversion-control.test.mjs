@@ -40,7 +40,9 @@ for (const failure of [false, true]) test(`conversion restores public admission 
   const waiting = Effect.runFork(admission.enter);
   assert.equal((await command('restore')).phase, 'restoring');
   await run(Deferred.await(warmed));
-  assert.equal((await command('status')).phase, 'restoring');
+  const recovering = await command('status');
+  assert.equal(recovering.phase, 'ready', 'Agent conversion completes independently of private App warmup');
+  assert.deepEqual(recovering.privateRecovery, { pending: 1, failed: 0 });
   const result = await run(Fiber.await(waiting));
   assert.equal(Exit.isSuccess(result), true, 'a private integration must not hold recovered public traffic');
   result.value();
@@ -49,11 +51,12 @@ for (const failure of [false, true]) test(`conversion restores public admission 
   let status;
   for (let attempt = 0; attempt < 100; attempt++) {
     status = await command('status');
-    if (status.phase !== 'restoring') break;
+    if (status.privateRecovery.pending === 0) break;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
   if (failure) {
-    assert.equal(status.phase, 'failed'); assert.match(status.failure, /Integration recovery failed/);
+    assert.equal(status.phase, 'ready'); assert.deepEqual(status.privateRecovery, { pending: 0, failed: 1 });
+    assert.equal(status.failure, undefined);
     assert.equal(previewsHeld, false);
   } else {
     assert.equal(status.phase, 'ready'); assert.equal(previewsHeld, false);
@@ -79,10 +82,37 @@ for (const fault of ['coordination', 'reconcile', 'integration']) test(`conversi
     yield* TestClock.adjust(fault === 'coordination' ? '120 seconds' : '90 seconds');
     const released = yield* Fiber.join(waiting); released();
     const status = yield* command('status');
-    assert.equal(status.phase, 'failed');
-    assert.match(status.failure, fault === 'coordination' ? /coordination expired/ : /recovery deadline|conversion deadline/);
+    if (fault === 'integration') {
+      assert.equal(status.phase, 'ready'); assert.deepEqual(status.privateRecovery, { pending: 0, failed: 1 });
+    } else {
+      assert.equal(status.phase, 'failed');
+      assert.match(status.failure, fault === 'coordination' ? /coordination expired/ : /recovery deadline|conversion deadline/);
+    }
     assert.equal(previewsHeld, false);
     assert.equal(admission.snapshot().closed, false);
+  }).pipe(Effect.provide(TestClock.layer()), Effect.scoped));
+});
+
+test('one stalled private backend does not prevent another backend from recovering', { timeout: 10000 }, async t => {
+  const directory = await mkdtemp('/tmp/zv-convert-independent-');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const id of ['stalled', 'healthy']) await usedIntegration(directory, id);
+  await run(Effect.gen(function* () {
+    let recovered = false;
+    const projects = presentOperations({
+      list: () => Effect.succeed(['stalled', 'healthy'].map(id => ({ id, recipe: { managed: {} }, desiredState: 'running', runtime: { status: 'running' } }))),
+      reconcile: () => Effect.void,
+      gatewayTarget: id => id === 'stalled' ? Effect.never : Effect.sync(() => { recovered = true; return 'http://127.0.0.1:1234'; }),
+    });
+    const admission = yield* serveAgentEngineControl({ directory, generation: 1, projects });
+    const nonce = randomUUID(), command = action => requestNodeRuntimeControl(join(directory, 'agent-update.sock'), { action, nonce, release: ZELAVIS_VERSION, generation: 1 });
+    yield* command('prepare'); yield* command('restore');
+    yield* TestClock.adjust('1 millis');
+    assert.equal(recovered, true);
+    assert.equal((yield* command('status')).phase, 'ready');
+    assert.equal(admission.snapshot().paused, false);
+    yield* TestClock.adjust('90 seconds');
+    assert.deepEqual((yield* command('status')).privateRecovery, { pending: 0, failed: 1 });
   }).pipe(Effect.provide(TestClock.layer()), Effect.scoped));
 });
 
