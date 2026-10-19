@@ -103,10 +103,15 @@ test("release staging bounds file hashing and includes complete uninstall", asyn
   assert.match(builder, /share", "uninstall\.sh/u);
 });
 
-test("the Agent unit delegates cgroups and runs operations from the release tree", async () => {
-  const unit = await readFile(new URL("runtime/zelavis-agent.service", distribution), "utf8");
+test("Project supervision stays process-only and root operations retain delegated containment", async () => {
+  const project = await readFile(new URL("runtime/zelavis-agent.service", distribution), "utf8");
+  assert.match(project, /^User=zelavis$/m);
+  assert.match(project, /^KillMode=process$/m);
+  assert.doesNotMatch(project, /^Delegate=|--operations-root|--operation-cgroup/m);
+  const unit = await readFile(new URL("runtime/zelavis-host-agent.service", distribution), "utf8");
   assert.match(unit, /^Delegate=yes$/m);
-  assert.match(unit, /^User=zelavis$/m);
+  assert.match(unit, /^User=root$/m);
+  assert.match(unit, /^KillMode=control-group$/m);
   for (const flag of [
     "--operations-root /opt/zelavis/current/operations",
     "--platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json",
@@ -206,8 +211,14 @@ test("named templates use the instance's private Node launcher, account, config 
   }
   assert.match(platform, /serve --instance %i/);
   assert.match(platform, /EnvironmentFile=-\/etc\/zelavis-%i\/zelavis.env/);
-  assert.match(agent, /Delegate=yes/);
-  assert.match(agent, /\/var\/lib\/zelavis-%i\/system\/agent-authority/);
+  assert.match(agent, /^KillMode=process$/m);
+  assert.doesNotMatch(agent, /^Delegate=|--operations-root|--operation-cgroup/m);
+  const operations = await readFile(new URL("runtime/zelavis-host-agent@.service", distribution), "utf8");
+  assert.match(operations, /^User=root$/m);
+  assert.match(operations, /^Group=zelavis-%i$/m);
+  assert.match(operations, /^Delegate=yes$/m);
+  assert.match(operations, /^KillMode=control-group$/m);
+  assert.match(operations, /\/var\/lib\/zelavis-%i\/system\/agent-authority/);
   for (const script of ["scripts/build-stage.mjs", "scripts/build-deb.mjs"]) {
     const source = await readFile(new URL(script, distribution), "utf8");
     assert.match(source, /zelavis@\.service/); assert.match(source, /zelavis-agent@\.service/);
