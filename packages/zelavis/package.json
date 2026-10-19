@@ -214,7 +214,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "effect": "4.0.0",
+    "effect": "4.0.5",
     "jose": "^6.2.12",
     "picocolors": "^1.1.1"
   },
