@@ -3,6 +3,8 @@ import test from 'node:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Deferred, Effect, Exit, Fiber, Scope } from 'effect';
+import { TestClock } from 'effect/testing';
+import { presentOperations } from '../dist/core/runtime/effect-boundary.js';
 import { randomUUID } from 'node:crypto';
 import { serveAgentEngineControl } from '../dist/adapters/_agent-engine-control.js';
 import { requestNodeRuntimeControl } from '../dist/adapters/_node-runtime-control.js';
@@ -13,11 +15,18 @@ import { serveNodeProjectControl, nodeProjectControlPaths } from '../dist/adapte
 import { ZELAVIS_VERSION } from '../dist/version.js';
 
 const run = Effect.runPromise;
-for (const failure of [false, true]) test(`conversion ${failure ? 'failure closes' : 'recovery warms integrations before opening'} admission`, { timeout: 10000 }, async t => {
+const usedIntegration = async (directory, id) => {
+  const path = join(directory, 'projects', id, '.zelavis', 'integration');
+  await mkdir(path, { recursive: true });
+  await writeFile(join(path, 'runtime-handover.json'), '{}');
+};
+for (const failure of [false, true]) test(`conversion restores public admission before integration ${failure ? 'failure' : 'readiness'}`, { timeout: 10000 }, async t => {
   const directory = await mkdtemp('/tmp/zv-convert-'), scope = await run(Scope.make());
   t.after(async () => { await run(Deferred.succeed(ready, undefined)); await run(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); });
   const ready = Deferred.makeUnsafe(), warmed = Deferred.makeUnsafe();
-  const projects = { list: async () => [{ id: 'wordpress', desiredState: 'running', runtime: { status: 'running' } }],
+  await usedIntegration(directory, 'wordpress');
+  const projects = { list: async () => [{ id: 'wordpress', recipe: { managed: {} }, desiredState: 'running', runtime: { status: 'running' } },
+    { id: 'already-failed', recipe: {}, desiredState: 'running', runtime: { status: 'failed' } }],
     reconcile: async () => {}, gatewayTarget: async id => {
       assert.equal(id, 'wordpress'); await run(Deferred.succeed(warmed, undefined)); await run(Deferred.await(ready));
       if (failure) throw Error('Integration recovery failed');
@@ -32,16 +41,85 @@ for (const failure of [false, true]) test(`conversion ${failure ? 'failure close
   assert.equal((await command('restore')).phase, 'restoring');
   await run(Deferred.await(warmed));
   assert.equal((await command('status')).phase, 'restoring');
-  assert.equal(waiting.pollUnsafe(), undefined, 'accepted request remains waiting for the integration');
-  await run(Deferred.succeed(ready, undefined));
   const result = await run(Fiber.await(waiting));
-  if (failure) {
-    assert.equal(Exit.isFailure(result), true);
-    assert.equal((await command('status')).phase, 'failed'); assert.equal(previewsHeld, true);
-  } else {
-    assert.equal(Exit.isSuccess(result), true); result.value();
-    assert.equal((await command('status')).phase, 'ready'); assert.equal(previewsHeld, false);
+  assert.equal(Exit.isSuccess(result), true, 'a private integration must not hold recovered public traffic');
+  result.value();
+  assert.equal(previewsHeld, false);
+  await run(Deferred.succeed(ready, undefined));
+  let status;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    status = await command('status');
+    if (status.phase !== 'restoring') break;
+    await new Promise(resolve => setTimeout(resolve, 5));
   }
+  if (failure) {
+    assert.equal(status.phase, 'failed'); assert.match(status.failure, /Integration recovery failed/);
+    assert.equal(previewsHeld, false);
+  } else {
+    assert.equal(status.phase, 'ready'); assert.equal(previewsHeld, false);
+  }
+});
+
+for (const fault of ['coordination', 'reconcile', 'integration']) test(`conversion ${fault} deadline releases the hold and reports failure`, { timeout: 10000 }, async t => {
+  const directory = await mkdtemp('/tmp/zv-convert-deadline-');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  if (fault === 'integration') await usedIntegration(directory, 'one');
+  await run(Effect.gen(function* () {
+    const projects = presentOperations({
+      list: () => Effect.succeed([{ id: 'one', recipe: { managed: {} }, desiredState: 'running', runtime: { status: 'running' } }]),
+      reconcile: () => fault === 'reconcile' ? Effect.never : Effect.void,
+      gatewayTarget: () => Effect.never,
+    });
+    let previewsHeld = false;
+    const admission = yield* serveAgentEngineControl({ directory, generation: 1, projects, holdPreviews: value => { previewsHeld = value; } });
+    const nonce = randomUUID(), command = action => requestNodeRuntimeControl(join(directory, 'agent-update.sock'), { action, nonce, release: ZELAVIS_VERSION, generation: 1 });
+    yield* command('prepare');
+    const waiting = yield* Effect.forkChild(admission.enter);
+    if (fault !== 'coordination') yield* command('restore');
+    yield* TestClock.adjust(fault === 'coordination' ? '120 seconds' : '90 seconds');
+    const released = yield* Fiber.join(waiting); released();
+    const status = yield* command('status');
+    assert.equal(status.phase, 'failed');
+    assert.match(status.failure, fault === 'coordination' ? /coordination expired/ : /recovery deadline|conversion deadline/);
+    assert.equal(previewsHeld, false);
+    assert.equal(admission.snapshot().closed, false);
+  }).pipe(Effect.provide(TestClock.layer()), Effect.scoped));
+});
+
+test('conversion leaves a hosting-only Project backend lazy', { timeout: 10000 }, async t => {
+  const directory = await mkdtemp('/tmp/zv-convert-unused-'), scope = await run(Scope.make());
+  t.after(async () => { await run(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); });
+  let starts = 0;
+  const projects = { list: async () => [{ id: 'unused', recipe: { managed: {} }, desiredState: 'running', runtime: { status: 'running' } }],
+    reconcile: async () => {}, gatewayTarget: async () => { starts++; throw Error('An unused backend must stay lazy'); } };
+  const admission = await run(serveAgentEngineControl({ directory, generation: 1, projects }).pipe(Scope.provide(scope)));
+  const nonce = randomUUID(), command = action => run(requestNodeRuntimeControl(join(directory, 'agent-update.sock'), { action, nonce, release: ZELAVIS_VERSION, generation: 1 }));
+  await command('prepare'); await command('restore');
+  let status;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    status = await command('status'); if (status.phase !== 'restoring') break;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(status.phase, 'ready'); assert.equal(starts, 0);
+  assert.equal(admission.snapshot().paused, false);
+});
+
+test('an earlier conversion watchdog cannot expire a later conversion', { timeout: 10000 }, async t => {
+  const directory = await mkdtemp('/tmp/zv-convert-watchdog-');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await run(Effect.gen(function* () {
+    yield* serveAgentEngineControl({ directory, generation: 1 });
+    const command = (action, nonce) => requestNodeRuntimeControl(join(directory, 'agent-update.sock'), { action, nonce, release: ZELAVIS_VERSION, generation: 1 });
+    const first = randomUUID(), second = randomUUID();
+    yield* command('prepare', first); yield* command('restore', first);
+    yield* TestClock.adjust('119 seconds');
+    assert.equal((yield* command('status', first)).phase, 'ready');
+    yield* command('prepare', second);
+    yield* TestClock.adjust('1 second');
+    assert.equal((yield* command('status', second)).phase, 'held');
+    yield* TestClock.adjust('119 seconds');
+    assert.equal((yield* command('status', second)).phase, 'failed');
+  }).pipe(Effect.provide(TestClock.layer()), Effect.scoped));
 });
 
 test('Agent diagnostics mark a committed engine as degraded and retain explicit conversion history', async t => {

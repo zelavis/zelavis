@@ -151,7 +151,7 @@ export const prepareInstalledProjectAgentUpdate = Effect.fn("AgentUpdate.prepare
       }
       // Preserve the healthy engine and let its bounded reconciliation finish,
       // but never report success before desired-running Projects are proved back.
-      return yield* new IntegrationFailure(new Error("Agent converted, but Project recovery did not finish before its recovery deadline; admission remains held."));
+      return yield* new IntegrationFailure(new Error("Agent converted, but Project recovery did not finish before its reporting deadline. Check Project diagnostics."));
     }
   }).pipe(Effect.timeoutOrElse({ duration: 95_000, orElse: () => Effect.fail(new IntegrationFailure(new Error("Agent update exceeded its bounded recovery window."))) })));
   const message = outcome._tag === "Failure"

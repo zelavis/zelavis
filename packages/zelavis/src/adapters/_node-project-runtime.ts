@@ -58,7 +58,10 @@ interface NodeProjectProcess {
     snapshot: ZelavisProjectRuntimeSnapshot;
     stopping: boolean;
 }
-const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+// Installed hosts verify the complete immutable engine before preparing and
+// activating its worker. The outer deadline must cover the inner supervisor's
+// 30-second stages, including a cold start on a small production server.
+const DEFAULT_STARTUP_TIMEOUT_MS = 90_000;
 /** The first release whose persistent host verifies a recipe's identity only, never its content. */
 const IDENTITY_ONLY_HOST_SINCE = "2.0.0-alpha.36";
 /** The first release whose code reads each recipe manifest contract. */
@@ -690,6 +693,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     yield* integration(() => child.stop({ graceMs: 2000 })).pipe(Effect.ignore);
                     gatewaySecrets.delete(project.id);
                     state.snapshot = { status: "failed", stoppedAt: new Date().toISOString(), error: String(unwrapFailure(Cause.squash(cause))) };
+                    appendLog(state, "system", state.snapshot.error!);
                 })),
             ));
             }));

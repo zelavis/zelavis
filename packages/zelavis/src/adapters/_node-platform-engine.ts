@@ -181,11 +181,13 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
         return previewFetch.get(projectId)?.(new Request(request, { headers })) ?? Promise.resolve(new Response("Preview unavailable.", { status: 503 }));
       };
       return { runtime: { fetch: (request, context) => {
-        // Health and update diagnostics must remain readable if Project recovery
-        // fails. They grant no workload mutation and prevent an older updater
-        // from mistaking Agent degradation for a failed selected engine.
+        // Conversion coordinates Project traffic and lifecycle changes, never
+        // the management plane needed to diagnose or repair a failed recovery.
         const path = new URL(request.url).pathname;
-        if (request.method === "GET" && /^\/zelavis\/api\/v1\/(?:auth\/bootstrap|runtime\/(?:config|updates(?:\/history)?|debug\/[^/]+))$/.test(path)) return fetch(request, context);
+        const projectRequest = /^\/zelavis\/api\/v1\/runtime\/projects(?:\/|$)/.test(path);
+        const projectTraffic = /^\/zelavis\/api\/v1\/runtime\/projects\/[^/]+\/(?:proxy|data)(?:\/|$)/.test(path);
+        if (!request.headers.has(NODE_RUNTIME_PREVIEW_ID) && !projectTraffic &&
+          !(projectRequest && request.method !== "GET" && request.method !== "HEAD")) return fetch(request, context);
         return present(Effect.acquireUseRelease(agentAdmission.enter,
         () => integration(() => fetch(request, context)), release => Effect.sync(release)).pipe(
           Effect.catch(() => Effect.succeed(new Response("Agent conversion could not restore serving Projects.", { status: 503 }))),

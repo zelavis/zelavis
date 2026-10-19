@@ -672,9 +672,17 @@ identity, and never replays ambiguous starts or operation submissions. Explicit
 stops consume only a valid generation/boot/expiry marker; markerless shutdown
 stops workloads. Uninstall also kills the owned unit cgroup. Agent update failure
 reports degradation without rolling back the selected Platform engine.
-Pre-protocol Agents convert once through Update now with held admission and a
-Project restart. User-mode embedded Agents follow when their host next starts;
+Pre-protocol Agents convert once through Update now with held Project admission and a
+Project restart. This conversion hold must never gate the dashboard, authentication,
+Project status, logs, diagnostics or repair controls. Release public traffic when
+its workloads recover, independently of private integration warmup; failed recovery
+reports degradation and releases the coordination hold, while ordinary per-Project
+readiness and ownership fencing remain in force. Qualify failed and slow recovery,
+not only successful conversion. User-mode embedded Agents follow when their host next starts;
 remote-worker/Bun replacement and multi-host partition recovery remain unqualified.
+Conversion restores only previously used private integrations; an unused hosting
+Project must not acquire a backend merely because the Platform updates. Include
+private integration startup failures in that Project's ordinary logs and diagnostics.
 Read `.agents/references/agent-handover-plan.md` for verified design corrections and
 qualification evidence; primitive proofs alone do not qualify a release.
 

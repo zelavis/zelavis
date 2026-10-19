@@ -18,7 +18,7 @@ import { createMemorySystemStore } from "../dist/system-store.js";
 import { entry, sleep, sourcesIn } from "./fixtures/managed-live.mjs";
 
 
-async function fixture(t, rejectTarget, sourceOptions) {
+async function fixture(t, rejectTarget, sourceOptions, decorateAgent = agent => agent) {
   const base = await mkdtemp(join(tmpdir(), "zv-managed-live-"));
   t.after(() => rm(base, { recursive: true, force: true }));
   const sources = await sourcesIn(base, sourceOptions);
@@ -37,7 +37,7 @@ async function fixture(t, rejectTarget, sourceOptions) {
   } });
   const agent = createLocalAgentProcessRunner({ stateDirectory: join(projects, ".agent-processes") });
   const runtime = createLocalProjectRuntime({
-    directory: projects, agent,
+    directory: projects, agent: decorateAgent(agent),
     recipeRuntimes: { trusted: () => true, packageDirectory: (name, version) => name === "@acme/live" ? sources[version ?? "1.0.0"] : undefined },
   });
   t.after(async () => { await runtime.close().catch(() => undefined); await agent.close(); });
@@ -51,6 +51,28 @@ const web = (projects) => {
   return (name) => fetch(`http://127.0.0.1:${state.ports[name]}/`).then((response) => response.json());
 };
 const descriptor = (projects) => JSON.parse(readFileSync(join(projects, "live", "project.json"), "utf8"));
+
+test("a private integration failure is visible in Project logs while the managed site keeps serving", { timeout: 30_000 }, async t => {
+  let attempts = 0;
+  const f = await fixture(t, { on: false }, undefined, agent => ({ ...agent, start: async (command, options) => {
+    if (!command.args?.includes('--integration')) return agent.start(command, options);
+    attempts++;
+    const child = { running: true, stop: async () => { child.running = false; } };
+    queueMicrotask(() => {
+      options.onOutput?.({ stream: 'stderr', line: 'Integration fixture failed before readiness' });
+      child.running = false; options.onExit?.({ code: 1, signal: null, requested: false });
+    });
+    return child;
+  } }));
+  const manager = await f.managerFor('1.0.0'); t.after(() => manager.close());
+  await manager.create({ name: 'Live', id: 'live', recipeName: '@acme/live' });
+  const ask = web(f.projects), before = await ask('web');
+  assert.equal(attempts, 0, 'a hosting-only Project does not start a private backend');
+  await assert.rejects(manager.gatewayTarget('live'), /Integration fixture failed before readiness/);
+  assert.equal(attempts, 1);
+  assert.ok((await manager.logs('live')).some(entry => /\[Zelavis integration\].*Integration fixture failed before readiness/.test(entry.message)));
+  assert.equal((await ask('web')).pid, before.pid, 'the site kept its serving process');
+});
 
 test("a running managed Project upgrades its integration and its processes in one transaction, and nothing stops", { timeout: 90_000 }, async (t) => {
   const f = await fixture(t, { on: false });

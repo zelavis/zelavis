@@ -79,7 +79,7 @@ export function redactCommand(command: string): string {
 }
 
 const LINE = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d{4})\s+(\S+)\s+(.*)$/;
-const PROJECT_FOLDER = /\/projects\/([a-z0-9][a-z0-9_-]{0,127})\//;
+const PROJECT_FOLDER = /\/projects\/([a-z0-9][a-z0-9_-]{0,127})(?:\/|\s|$)/;
 
 /**
  * Reads `ps -o pid=,ppid=,user=,lstart=,etime=,args=` output and keeps what belongs to Zelavis: a command line that
@@ -103,7 +103,13 @@ export function readProcessListing(listing: string, scope: { readonly dataDirect
       command: command.length > DIAGNOSTICS_MAX_COMMAND_CHARACTERS ? `${command.slice(0, DIAGNOSTICS_MAX_COMMAND_CHARACTERS - 1)}…` : command,
     });
   }
-  return { generatedAt: scope.now.toISOString(), user: scope.user, processes: entries, duplicates: findDuplicates(entries), truncated };
+  const byPid = new Map(entries.map(entry => [entry.pid, entry]));
+  const processes = entries.map(entry => {
+    const parent = byPid.get(entry.parentPid);
+    return !entry.projectId && parent?.projectId && /_node-runtime-worker\.js(?:\s|$)/.test(entry.command)
+      ? { ...entry, projectId: parent.projectId } : entry;
+  });
+  return { generatedAt: scope.now.toISOString(), user: scope.user, processes, duplicates: findDuplicates(processes), truncated };
 }
 
 /** Same command, more than one root: a worker pool's children share their parent and are not a duplicate. */

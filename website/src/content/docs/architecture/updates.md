@@ -213,8 +213,16 @@ Project and preview admission pause, the old Agent and its children stop,
 and desired-running Projects restart under the new Agent, including managed Apps'
 private Zelavis runtimes. The request hold is prepared before root inventory is
 acknowledged; replacement/recovery then runs outside the older host's commit
-deadline. Health, configuration and update/debug status reads remain available. Update status and
-history name that one restart. Subsequent supported replacements preserve Project
+deadline. The dashboard, authentication, Project status, logs, diagnostics and
+repair controls remain available. Recovered public workloads resume before
+private integrations finish warming. A failed or expired conversion releases
+its coordination hold and reports degradation; individual Project readiness and
+ownership checks still apply. Update status and history name that one restart.
+Conversion restores private integrations that had already been used. A hosting-only
+Project keeps its backend unstarted until its Project APIs need it. Private
+integration startup failures appear in the Project's logs with a
+`[Zelavis integration]` label and in its diagnostics.
+Subsequent supported replacements preserve Project
 processes. Explicit stops without a valid, generation-bound handover marker stop
 workloads; uninstall also kills remaining processes in the owned unit cgroup.
 
@@ -231,6 +239,10 @@ A rollback engine can adopt existing hosts through the additive Agent protocol.
 A pre-protocol Platform engine cannot start a new stdin-controlled persistent host
 on a survivable Agent; that launch is refused. Use the current Platform to start
 Apps on their exact older worker engine instead.
+
+Project hosts have a bounded 90-second outer startup window, allowing the
+persistent host's 30-second preparation and activation stages on a cold server.
+An exhausted startup still stops its acquired process and reports failure.
 
 This path targets Node on Linux with procfs and `execve`. User-mode and local
 embedded Agents receive their new code when the persistent host next starts;

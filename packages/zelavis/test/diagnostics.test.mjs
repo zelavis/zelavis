@@ -44,6 +44,20 @@ test("a worker pool under one master is not a duplicate", () => {
   assert.deepEqual(findDuplicates(entries), []);
 });
 
+test("Project diagnostics include hosts whose root ends the command and their private engine workers", () => {
+  const listing = [
+    line(10, 1, "Mon Oct 19 10:35:04 2026", "/opt/zelavis/bin/zelavis"),
+    line(11, 10, "Mon Oct 19 10:35:05 2026", "/opt/zelavis/node _node-runtime-worker.js --workload platform"),
+    line(20, 1, "Mon Oct 19 10:35:51 2026", "/opt/zelavis/node _node-project-runner.js --project-root /var/lib/zelavis/projects/nexus"),
+    line(21, 20, "Mon Oct 19 10:35:59 2026", "/opt/zelavis/node _node-runtime-worker.js --workload nexus"),
+    line(30, 1, "Mon Oct 19 10:35:51 2026", "/opt/zelavis/node _node-project-runner.js --integration --project-root /var/lib/zelavis/projects/blogger"),
+    line(31, 30, "Mon Oct 19 10:35:59 2026", "/opt/zelavis/node _node-runtime-worker.js --workload blogger"),
+  ].join('\n');
+  const report = readProcessListing(listing, { dataDirectory: "/var/lib/zelavis", user: "zelavis", now: NOW });
+  assert.deepEqual(report.processes.map(entry => [entry.pid, entry.projectId]),
+    [[10, undefined], [11, undefined], [20, 'nexus'], [21, 'nexus'], [30, 'blogger'], [31, 'blogger']]);
+});
+
 test("real copies of one command are found by the real listing", async (t) => {
   const marker = `zelavis-copy-${process.pid}-${Date.now()}`;
   const copies = [0, 1].map(() => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", marker], { stdio: "ignore" }));

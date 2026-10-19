@@ -70,6 +70,13 @@ before editing.
   asynchronously and must remain ready despite an unavailable Project. Persist
   status refreshes under the Project lifecycle permit; Fabric fleet views remain
   read-only so scheduling cannot re-enter its own Project permit.
+  Agent conversion holds only Project traffic and lifecycle changes. Keep the
+  dashboard, authentication, status, logs, diagnostics and repair controls usable.
+  Resume recovered public workloads before private integration warmup; failed
+  conversion releases its coordination hold without weakening Project ownership
+  fencing. Test stalled recovery, failed integration and expired coordination.
+  Restore previously used private integrations without starting backends for
+  hosting-only Projects. Surface private startup failures in ordinary Project logs.
   Live updates refuse unsupported protocols. Future protocol evolution must ship
   through Update now and pass the real previous-release update gate; do not
   use a manual installer conversion as a release procedure.

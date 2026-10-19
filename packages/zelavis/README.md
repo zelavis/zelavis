@@ -1107,6 +1107,10 @@ transfer exclusive database ownership, and resume traffic after readiness and
 durable selection acknowledgement. A failed candidate is fenced before rollback.
 System installations use a separately supervised Project Agent so running Apps
 and qualified recipe processes survive a Platform engine handover.
+Project Agent conversion never holds the dashboard, authentication or repair
+APIs. Recovered public workloads resume independently of private integration
+warmup; failed conversion reports degradation and releases its coordination
+hold while Project ownership checks remain enforced.
 
 New Apps and explicit native App recipe upgrades use the latest qualified
 installed engine. Parent updates and rollbacks preserve existing App engine pins.

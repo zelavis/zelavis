@@ -584,7 +584,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         }),
         logs: Effect.fn("LocalProjects.logs")(function* (id) {
             const selected = yield* forProjectId(id);
-            return yield* effectOperations(selected).logs(id);
+            const application = yield* effectOperations(selected).logs(id);
+            if (!recipeDefinitions.get(id)?.definition.managed || selected === node || selected === serverFrontend) return application;
+            const bound = yield* integrationRuntime.logs(id);
+            return [...application, ...bound.map(entry => ({ ...entry, message: `[Zelavis integration] ${entry.message}` }))]
+                .sort((left, right) => left.timestamp.localeCompare(right.timestamp)).slice(-1000);
         }),
         destroy: Effect.fn("LocalProjects.step")(function* (id) {
             let selected: ZelavisProjectRuntimeDriver;

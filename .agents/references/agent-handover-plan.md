@@ -7,6 +7,12 @@ reference, not an implementation task list. Release procedure belongs in
 `../skills/zelavis-release-maintainer/SKILL.md`; public behavior is documented in
 `../../website/src/content/docs/architecture/updates.md`.
 
+**Production correction, 2026-10-19:** alpha.40's conversion failure could close
+the entire Platform request gate indefinitely, including its repair APIs and
+all Project previews. Successful installed qualification missed this fault.
+The correction in the working tree is not yet a published release. See the
+incident findings below before relying on the earlier qualification claims.
+
 ## Purpose and scope
 
 Previously, Update now replaced the Platform and root operations Agent but left
@@ -67,9 +73,42 @@ survivable remote-worker replacement.
 Pre-protocol conversion is two-phase. The candidate engine prepares private
 admission holds while its persistent host is drained, then acknowledges root
 inventory. Agent replacement and Project recovery follow outside older hosts'
-30-second commit deadline. Managed private runtimes are warmed before admission
-resumes. Preview listeners retain accepted sockets across temporary stopped
-snapshots; health/config/update/debug reads remain available during recovery.
+30-second commit deadline. Public workloads must resume before managed private
+runtimes finish warming. Preview listeners retain accepted sockets across
+temporary stopped snapshots; management and repair remain available throughout.
+
+The alpha.40 implementation violated that contract: a private integration
+startup/recovery timeout closed the shared conversion gate forever, and a small
+GET allow-list left dashboard, login, logs, nested Project diagnostics and repair
+behind that gate. Live inspection confirmed all three Project previews returned
+the same 503 even though their workload processes were running. A same-release
+Platform engine reload through the existing authenticated local host control
+recovered the dashboard, WordPress and DokuWiki without changing their process
+PIDs or kernel birth ticks. The native App API also recovered; its public root
+reported its existing no-frontend placeholder. This is a recovery proof, not
+evidence that the original update preserved availability.
+
+The correction limits the conversion gate to Project traffic and lifecycle
+mutations, releases public traffic before private integration warmup, and releases
+the coordination hold on recovery failure or deadline. It preserves ordinary
+Project ownership and readiness checks. Pre-existing failed Projects do not
+become fleet-wide readiness conditions. Recovery bounds cover reconciliation
+and integration calls; a nonce-bound watchdog cannot expire a later conversion.
+The outer Project host startup deadline is 90 seconds rather than 15, allowing
+its inner supervisor's 30-second stages. Deterministic clock tests cover slow
+readiness, startup cleanup, stalled recovery and coordination expiry; a real
+Platform test covers dashboard, authentication, status, logs and nested diagnostics
+during a conversion hold. The private work record contains the live timeline
+and the remaining release/production verification.
+
+The same correction preserves lazy backend startup during conversion: only a
+previously used managed integration with an existing regular host journal is
+warmed, sequentially to limit cold-start contention. This hint grants no
+execution authority; the ordinary manager still verifies the recipe, journal,
+placement and ownership. Private startup failures are retained in the runtime
+log and merged boundedly into the owning Project's logs with an integration
+label. Process diagnostics associate path-ending Project hosts and their engine
+children with that Project, including private integration hosts.
 
 Complete installed qualification found two defects that primitive PID proofs
 missed:
