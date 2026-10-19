@@ -26,6 +26,8 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeNodeProjectControl } from "./_node-project-control.js";
+import { createSurvivableAgentProcessRunner } from "./_agent-survivable-process-runner.js";
 
 import type {
   ZelavisAgentProcess,
@@ -93,7 +95,7 @@ function hasExited(child: ChildProcess): boolean {
  * child output produced a truncation on one machine and a 70KB line on
  * another.
  */
-function lineReader(emit: (line: string) => void): (chunk: Buffer) => void {
+export function lineReader(emit: (line: string) => void): (chunk: Buffer) => void {
   let buffer = "";
   // True while the remainder of an already-truncated line is being skipped.
   let skippingRest = false;
@@ -158,6 +160,8 @@ const samePlacement = (left: AgentPlacementIdentity | undefined, right: AgentPla
   left.ownerSession === right.ownerSession && left.epoch === right.epoch;
 
 export interface LocalAgentProcessRunnerOptions {
+  /** Linux daemon mode with durable records and append-file output. */
+  readonly survivable?: boolean;
   /** Default grace period before a stop escalates to SIGKILL. */
   readonly graceMs?: number;
   /**
@@ -232,6 +236,10 @@ const START_TIME_TOLERANCE_MS = 30_000;
 export function createLocalAgentProcessRunner(
   options: LocalAgentProcessRunnerOptions = {},
 ): ZelavisAgentProcessRunner {
+  if (options.survivable) {
+    if (!options.stateDirectory) throw new Error("Survivable execution requires a state directory.");
+    return createSurvivableAgentProcessRunner({ stateDirectory: options.stateDirectory, graceMs: options.graceMs });
+  }
   const defaultGraceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const started = new Set<ZelavisAgentProcess>();
   const startedPlacements = new Map<ZelavisAgentProcess, AgentPlacementIdentity>();
@@ -486,6 +494,7 @@ export function createLocalAgentProcessRunner(
       }
 
       const handle: ZelavisAgentProcess = {
+        pid: child.pid,
         workloadId: command.workloadId,
         get running() {
           return !settled && !hasExited(child);
@@ -509,6 +518,7 @@ export function createLocalAgentProcessRunner(
         },
         write(data) {
           return present(Effect.gen(function* () {
+            if (command.control && child.pid && !settled && !hasExited(child)) return yield* writeNodeProjectControl(command.control, child.pid, data);
             const stdin = child.stdin;
             if (settled || !stdin || stdin.destroyed || !stdin.writable) return false;
             if (stdin.write(data)) return true;

@@ -471,6 +471,7 @@ export function planZelavisUninstall(input: {
   if (input.user && input.hostCommands) throw new Error("User uninstall must not execute system maintenance commands.");
   if (input.hostCommands) {
     command("stop", ["stop", scope.socket, ...scope.units]);
+    command("agent-cgroup-kill", ["kill", "--kill-who=all", "--signal=SIGKILL", scope.units[1]!]);
     command("disable", ["disable", scope.socket, ...scope.units]);
     addStep(steps, "data-reservation", "Reserve Platform data after stopping the owned units", { kind: "reserve-data", path: paths.dataDirectory });
   }

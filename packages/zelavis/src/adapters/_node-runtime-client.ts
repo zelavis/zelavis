@@ -52,8 +52,8 @@ export function createNodeRuntimeClient(process: ZelavisAgentProcess, timeoutMs:
       const id = randomUUID(), reply = Deferred.makeUnsafe<Readonly<Record<string, unknown>>, TaggedFailure>();
       replies.set(id, { reply, commit: options?.commit, acknowledgements: new Set() });
       return yield* Effect.gen(function* () {
-        const written = yield* integration(() => process.write?.(`${JSON.stringify({ ...input, id })}\n`));
-        if (!written) return yield* new IntegrationFailure(new Error("Runtime host has no Agent command pipe."));
+        const written = yield* integration(() => process.write?.(`${JSON.stringify({ ...input, id, expiresAt: Date.now() + (options?.timeoutMs ?? timeoutMs) })}\n`));
+        if (!written) return yield* new IntegrationFailure(new Error("Runtime host control is unavailable."));
         return yield* Deferred.await(reply).pipe(Effect.timeoutOrElse({ duration: options?.timeoutMs ?? timeoutMs,
           orElse: () => Effect.fail(new IntegrationFailure(new Error("Runtime host command was not acknowledged before its deadline."))),
         }));

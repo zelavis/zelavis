@@ -1,5 +1,5 @@
 [Unit]
-Description=Zelavis Agent (Project processes and host operations)
+Description=Zelavis Project Agent
 Documentation=https://zelavis.com/docs
 After=network-online.target
 Before=zelavis.service
@@ -10,17 +10,11 @@ User=zelavis
 Group=zelavis
 WorkingDirectory=/var/lib/zelavis
 Environment=ZELAVIS_DATA_DIR=/var/lib/zelavis
-# Operations run in cgroups below this unit's delegated subtree: the Agent
-# moves itself into agent/ and runs each operation under operations/.
-Delegate=yes
-ExecStart=/opt/zelavis/current/bin/zelavis agent \
-  --operations-root /opt/zelavis/current/operations \
-  --platform-authority /var/lib/zelavis/system/agent-authority/platform-authority.json \
-  --require-root-owned-operations \
-  --operation-cgroup delegated \
-  --operation-pids-max 256 \
-  --operation-memory-max 536870912
-KillMode=control-group
+# Installed host operations use the separate root operations-only Agent.
+# Keep Project workloads in this unit; no delegated operation controllers.
+ExecStart=/opt/zelavis/current/bin/zelavis agent
+KillMode=process
+TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

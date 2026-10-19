@@ -13,7 +13,7 @@ assert.ok(['local', 'npm'].includes(mode));
 const previous = await realpath('/opt/zelavis/current');
 const from = JSON.parse(await readFile(join(previous, 'manifest.json'), 'utf8')).version;
 assert.equal(from, process.env.ZELAVIS_PROVISIONING_FROM_NPM);
-const to = JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
+let to = process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION || JSON.parse(await readFile('/workspace/packages/zelavis/package.json', 'utf8')).version;
 assert.notEqual(from, to, 'Qualification needs an actual previous release');
 import { installRecipeIfAvailable } from './lib/install-recipe.mjs';
 import { updateToLocalCandidate } from './lib/candidate-update.mjs';
@@ -81,7 +81,7 @@ const fingerprints = async () => { const site = await wpSite(); return Object.fr
     uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
 }))); };
 const appFilesBefore = await fingerprints();
-const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).map(async file => {
+const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).filter(file => file.endsWith('.json')).map(async file => {
   const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
   return `${value.workloadId}:${value.pid}`;
 }))).sort();
@@ -91,6 +91,8 @@ assert.equal(initialBound.services.find(service => service.name === '@zelavis/wo
 assert.equal((await wpClient.plugins.wordpress.integration.get()).revision, 'historical');
 const wpControl = `${baseUrl}/zelavis/api/v1/runtime/projects/${wp.id}/proxy/zelavis/api/v1/runtime/config`;
 const before = await identities();
+const agentDescriptor = async () => JSON.parse(await readFile('/var/lib/zelavis/agent/agent.json', 'utf8'));
+const agentBefore = await agentDescriptor().catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
 const hostPid = () => execFileSync('systemctl', ['show', 'zelavis.service', '-p', 'MainPID', '--value'], { encoding: 'utf8' }).trim();
 const initialPid = hostPid();
 // A changed installed template must be replaced by the selected release,
@@ -99,12 +101,13 @@ const unitFile = '/etc/systemd/system/zelavis.service';
 await writeFile(unitFile, `# Qualification marker: refresh during live root commit\n${await readFile(unitFile, 'utf8')}`);
 const urls = [`${baseUrl}/zelavis/`, `http://127.0.0.1:${app.preview.port}/`, `http://127.0.0.1:${wp.preview.port}/wp-admin/`, `http://127.0.0.1:${wp.preview.port}/integration-preserved.txt`];
 urls.push(`${baseUrl}/zelavis/api/v1/runtime/projects/${id}/proxy/zelavis/api/v1/plugins/engineproof/engine`, wpControl);
+let trafficTimeoutMs = agentBefore?.survivable ? 30_000 : 120_000;
 const counts = Object.fromEntries(urls.map(url => [url, 0]));
 async function underTraffic(operation, label = "live operation") {
   let finished = false; const started = Date.now();
   const traffic = Promise.all(urls.map(async url => {
     do {
-      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(30_000) })
+      const response = await fetch(url, { ...(new URL(url).pathname.startsWith("/zelavis/api/") ? { headers: { cookie } } : {}), redirect: 'manual', signal: AbortSignal.timeout(trafficTimeoutMs) })
         .catch(error => { throw Error(`${label}: ${url} failed after ${Date.now() - started}ms`, { cause: error }); });
       assert.ok([200, 302].includes(response.status), `${url}: ${response.status}`);
       await response.arrayBuffer(); counts[url]++;
@@ -137,8 +140,37 @@ await underTraffic(async () => {
   }
   await updateToLocalCandidate({ previous, to, baseUrl });
 });
+trafficTimeoutMs = 30_000;
 assert.equal(hostPid(), initialPid, 'Platform host must remain the same process');
-assert.deepEqual(await identities(), before, 'Project supervision must survive the update');
+const agentAfter = await agentDescriptor();
+assert.equal(agentAfter.release, to, 'Project Agent must execute the selected candidate');
+assert.equal(agentAfter.survivable, true);
+if (agentBefore?.survivable) assert.deepEqual(await identities(), before, 'Survivable Agent updates must preserve every Project PID');
+else {
+  assert.notDeepEqual(await identities(), before, 'The explicit pre-handover conversion restarts old piped workloads once');
+  const updated = await client.updates.status();
+  assert.match(updated.run.message, /Projects restarted once/);
+}
+// The published previous Agent cannot preserve processes on its first
+// conversion. A second explicitly versioned local hop proves the survivable
+// production updater, client rebind and real systemd unit under continuous traffic.
+if (process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION) {
+  assert.equal(mode, 'local');
+  assert.ok(process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION);
+  const selected = await realpath('/opt/zelavis/current'), processes = await identities();
+  const firstAgent = await agentDescriptor();
+  to = process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION;
+  process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION = to;
+  await underTraffic(() => updateToLocalCandidate({ previous: selected, to, baseUrl }), 'survivable Agent forward update');
+  const nextAgent = await agentDescriptor();
+  assert.equal(nextAgent.release, to); assert.notEqual(nextAgent.pid, firstAgent.pid);
+  assert.deepEqual(await identities(), processes, 'Forward Agent handover must preserve every Project process');
+  assert.equal(hostPid(), initialPid);
+  const status = await client.updates.status();
+  assert.equal(status.run.state, 'succeeded', JSON.stringify(status));
+  assert.match(status.run.message, /without restarting Projects/);
+  console.log('PASS: converted Agent updated again with every Project PID and all traffic preserved.');
+}
 assert.equal(JSON.parse(await readFile('/opt/zelavis/installation.json', 'utf8')).version, to);
 assert.ok(!(await readFile(unitFile, 'utf8')).includes('Qualification marker'), 'Live root commit must refresh installed unit templates');
 assert.equal((await descriptor(id)).engine.runtime.version, from, 'Parent update preserves App engine');
@@ -276,7 +308,9 @@ console.log('PASS: a catalogue recipe installed from npm runs, and runs again fo
 await client.projects.remove(catalogueApp.id);
 await client.projects.remove(historical.id); await client.projects.remove(latest.id); await client.projects.remove(id);
 const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated npm update action' : 'local candidate transport; published previous updater',
-  platformHostPreserved: true, projectProcessesPreserved: true, parentPreservesAppPin: true,
+  platformHostPreserved: true, projectProcessesPreserved: agentBefore?.survivable === true,
+  agent: { convertedOnce: agentBefore?.survivable !== true, forwardUpdateProved: Boolean(process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION), release: to },
+  parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
   managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
@@ -285,4 +319,4 @@ const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated 
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
   artifact: JSON.parse(await readFile(`/opt/zelavis/releases/${to}/runtime-artifact.json`, 'utf8')).digest };
 await writeFile('/tmp/zelavis-update-proof.json', JSON.stringify(proof, null, 2));
-console.log(`PASS: published ${from} updates to ${to}; no stopped Projects or refused HTTP requests (${mode}).`);
+console.log(`PASS: published ${from} updates to ${to}; explicit Agent conversion when needed, no refused HTTP requests (${mode}).`);

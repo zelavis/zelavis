@@ -4563,7 +4563,7 @@ function resolvePlatformEndpointGroup(
   }
 
   return createPlatformEndpointGroup({
-    context: {},
+    context: { projects },
     routes: [
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),

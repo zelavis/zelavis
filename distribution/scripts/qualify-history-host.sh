@@ -6,6 +6,7 @@ HISTORY=/workspace/distribution/history.json
 FROM=$(sed -n 's/.*"from": *"\([^"]*\)".*/\1/p' "$HISTORY")
 VIA=$(sed -n 's/.*"via": *\[\(.*\)\].*/\1/p' "$HISTORY" | tr -d '" ' | tr ',' ' ')
 TO=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /workspace/packages/zelavis/package.json | head -1)
+TO=${ZELAVIS_QUALIFY_CANDIDATE_VERSION:-$TO}
 cd /opt
 node_version=$(sed -n 's/.*"nodeVersion": "\([^"]*\)".*/\1/p' /workspace/distribution/release.json)
 case "$(uname -m)" in aarch64) architecture=arm64 ;; x86_64) architecture=x64 ;; *) exit 2 ;; esac

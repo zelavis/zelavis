@@ -117,8 +117,8 @@ failed update but cannot erase its intent without ownership proof.
 
 The App host keeps Gateway replay history across engine replacement. It accepts
 parent authority before queuing and creates fresh private worker authority after
-admission. Re-keying a surviving App host uses the authenticated Agent process
-pipe, not a public control endpoint.
+admission. Re-keying a surviving App host uses the authenticated private Agent-to-host control
+channel, not a public control endpoint.
 
 ## Updating a managed app recipe
 
@@ -188,6 +188,55 @@ releasing their placement custody. Local development keeps equivalent custody
 in the persistent host. Running native Apps and the qualified WordPress recipe
 can be adopted; a driver that cannot prove continuity refuses the handover
 before releasing the old engine.
+
+Linux system installations also replace the separately supervised Project Agent
+when Update now selects a new Platform release. The process-only Agent unit uses
+`KillMode=process`; privileged host operations remain in their separate root
+Agent and retain their cgroup controllers. Project children use private append
+logs and flushed records containing UUIDs, kernel start ticks and boot identity.
+Kernel locks exclude concurrent owners before recovery or endpoint changes.
+The replacement Agent adopts live processes and rebuilds placement lease
+supervision before offering handles. An expired placement fences its processes.
+
+The Platform reconnects and rebinds existing handles without reporting a process
+exit. Native App and managed integration hosts accept authenticated commands over
+private Unix sockets, so losing the Agent does not close an App's control pipe.
+Command IDs deduplicate retries; ambiguous starts and host-operation submissions
+are never replayed. A native start whose reply was lost first looks for its
+surviving exact host. Fabric custody and each App's selected worker engine remain
+independent of the Agent release.
+
+An Agent from before this protocol needs one conversion during Update now:
+Project and preview admission pause, the old Agent and its children stop,
+and desired-running Projects restart under the new Agent, including managed Apps'
+private integrations. The request hold is prepared before root inventory is
+acknowledged; replacement/recovery then runs outside the older host's commit
+deadline. Health, configuration and update/debug status reads remain available. Update status and
+history name that one restart. Subsequent supported replacements preserve Project
+processes. Explicit stops without a valid, generation-bound handover marker stop
+workloads; uninstall also kills remaining processes in the owned unit cgroup.
+
+Agent replacement failure does not roll back an already committed Platform
+engine. Update status/history report the Agent as degraded, and doctor reports
+its release and PID separately. The selected unit retries startup under systemd;
+surviving processes retain their records. The client bounds recovery at 90 seconds
+and then reports Agent unreachability rather than claiming a proved workload exit.
+Log retention is bounded by polling (8 MiB per stream while supervised); output
+can grow while the Agent is absent, and lines around truncation may be lost.
+Adopted processes report unknown exit code/signal when their original parent is gone.
+Interactive stdin sessions are disposable and stop during handover.
+A rollback engine can adopt existing hosts through the additive Agent protocol.
+A pre-protocol Platform engine cannot start a new stdin-controlled persistent host
+on a survivable Agent; that launch is refused. Use the current Platform to start
+Apps on their exact older worker engine instead.
+
+This path targets Node on Linux with procfs and `execve`. User-mode and local
+embedded Agents receive their new code when the persistent host next starts;
+first conversion there requires that host restart. Remote worker Agent replacement,
+Bun Agent replacement and multi-host partition recovery are not qualified by this
+system-installation path. Local tests cover real App crash/rebind and repeated
+Agent handover; installed update and long-history qualification remain required
+before shipping a release.
 
 Project preview listeners belong to the persistent host and share its admission
 queue. Their ports, visitor Host headers, redirects and site cookies survive

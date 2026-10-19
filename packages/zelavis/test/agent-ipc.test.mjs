@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -340,4 +340,20 @@ test("the Agent runs as its own process, outliving the Platform that drove it", 
   await agent.close();
   agentProcess.kill("SIGTERM");
   await new Promise((resolveExit) => agentProcess.once("exit", resolveExit));
+});
+
+test('a child that exits before start returns still delivers its output and exit exactly once', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'zv-ipc-early-'));
+  const exit = { code: 23, signal: null, requested: false };
+  const runner = { name: 'instant-exit', close: async () => {}, start: async (command, options) => {
+    options.onOutput?.({ stream: 'stdout', line: 'before-return' }); options.onExit?.(exit);
+    return { workloadId: command.workloadId, running: false, exit: Promise.resolve(exit), stop: async () => exit };
+  } };
+  const server = await createAgentProcessServer({ directory, runner }); closers.add(() => server.close());
+  t.after(async () => { await server.close(); await rm(directory, { recursive: true, force: true }); });
+  const agent = await client(directory), output = []; let exits = 0;
+  const child = await agent.start({ workloadId: 'instant', executable: '/bin/true', cwd: directory, env: {} },
+    { onOutput: value => output.push(value.line), onExit: () => exits++ });
+  assert.deepEqual(await child.exit, exit); assert.equal(child.running, false);
+  assert.deepEqual(output, ['before-return']); assert.equal(exits, 1);
 });

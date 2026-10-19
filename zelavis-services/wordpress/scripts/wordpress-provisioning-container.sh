@@ -24,6 +24,8 @@ docker run -d ${ZELAVIS_HARNESS_DOCKER_PLATFORM:+--platform "$ZELAVIS_HARNESS_DO
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_PROVISIONING_FROM_NPM=${ZELAVIS_PROVISIONING_FROM_NPM:-}" \
   -e "ZELAVIS_QUALIFY_UPDATE=${ZELAVIS_QUALIFY_UPDATE:-}" -e "ZELAVIS_HARNESS_SKIP=${ZELAVIS_HARNESS_SKIP:-}" \
+  -e "ZELAVIS_QUALIFY_CANDIDATE_VERSION=${ZELAVIS_QUALIFY_CANDIDATE_VERSION:-}" \
+  -e "ZELAVIS_QUALIFY_AGENT_NEXT_VERSION=${ZELAVIS_QUALIFY_AGENT_NEXT_VERSION:-}" \
   "$IMAGE" /sbin/init >/dev/null
 # Init needs a moment to establish its cgroup hierarchy. Bounded readiness, no host service changes.
 for attempt in $(seq 1 60); do

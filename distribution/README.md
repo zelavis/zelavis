@@ -80,8 +80,12 @@ preview ports. The updater prepares the new immutable release while the selected
 engine serves traffic, then uses `install --live` to drain accepted requests,
 transfer exclusive store ownership and probe the candidate. Root acknowledges
 the current link, private receipt and public version descriptor before admission
-resumes. Failed candidates are fenced before rollback. The host and separate
-Project Agent remain running; installed App engine pins remain unchanged.
+resumes. Failed candidates are fenced before rollback. The host remains running and installed App engine pins remain unchanged.
+Linux system installations then replace the process-only Project Agent with
+flushed process records, private host control and client rebind. Agents predating
+that protocol convert once under held admission and restart Projects. Later
+replacements preserve process identities. Agent degradation is recorded separately
+from the selected engine; user-mode embedded Agents follow on host restart.
 
 System installations have a dashboard socket unit and an enabled update path,
 which starts the root update helper when the Platform writes a request. A named
@@ -143,15 +147,16 @@ release secret.
 System installations enable `zelavis-agent.service` (or the named-instance
 unit) as a separately supervised unprivileged Project process Agent. The
 installer configures `ZELAVIS_AGENT_ENDPOINT`; this custody lets running Projects
-survive a Platform engine handover. The Agent delegates cgroups and refuses a
-host without required cgroup v2 containment rather than silently falling back.
+survive a Platform engine handover. The Project unit is process-only and keeps
+its children at the unit root. Required cgroup v2 containment belongs to the
+separate root operation Agent, which refuses unavailable containment.
 The packaged Debian/systemd qualification exercises this path, including
 WordPress daemon adoption, Platform handover and rollback.
 
 The Platform creates its Agent authority key under
-`/var/lib/zelavis/system/agent-authority/`; the Agent reads only its public
-`platform-authority.json`. Root provisioning uses the separate operation-only
-Agent below.
+`/var/lib/zelavis/system/agent-authority/`; the root operation Agent reads only
+its public `platform-authority.json`. Root provisioning uses that separate
+operation-only Agent below.
 
 `zelavis agent --operations-only` accepts only installed-operation catalog,
 submission and status messages. It requires `--operations-root` and
@@ -289,6 +294,11 @@ removes that shared inventory too. `--all` means all data of the selected
 instance, including its Projects; it does not remove every instance on the host.
 The instance directories, incoming Debian payload, descriptors, template units
 and Edge ownership files are covered by the destructive uninstall inventory and tests.
+The data inventory includes `agent/{agent.json,handover.json,agent.lock}`, the
+`projects/.agent-processes` runner lock/records/output, per-Project
+`.zelavis[/integration]/host-control.json`, root `p<hash>` control endpoints,
+`agent-update.sock` and `update/agent-updates.json` diagnostics. Removal performs
+an owned-unit cgroup kill after normal Agent stop to fence retained children.
 
 ## Package acquisition and user mode
 

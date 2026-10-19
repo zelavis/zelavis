@@ -1,6 +1,7 @@
 # Project Agent handover: updating the Agent without restarting Projects
 
-Status: **plan, not implemented** (written 2026-10-18). Owner decision: when Zelavis updates to the
+Status: **implementation complete; final release qualification pending** (2026-10-19).
+Owner decision: when Zelavis updates to the
 latest release, the Project Agent must really be on the latest release too, and customer Projects must
 keep serving while that happens ("option 2", the real handover, not a restart).
 
@@ -10,8 +11,8 @@ against the code before relying on it; line numbers drift.
 
 ## 0. How much to trust this plan
 
-It was written by reading the code, not by building or running any of it. Nothing below has been
-tested. Treat the design as a well-reasoned hypothesis and prove it step by step (section 5 orders the
+The original plan was written by reading the code, without running it. The verification below
+supersedes its assumptions; the rest remains a hypothesis. Prove it step by step (section 5 orders the
 work so the riskiest unknowns are tested first). The two largest unknowns:
 
 1. **systemd behaviour.** Whether `KillMode=process` with `Delegate=yes` and the Agent's own cgroup
@@ -30,6 +31,135 @@ restarts its Projects once (section 7). Say so in the release notes and the dash
 Do the riskiest proofs first: a throwaway test that starts real child processes with file-based output,
 kills the "Agent", and has a second runner adopt them (step 1), and a Docker/systemd check that a
 `KillMode=process` unit restart leaves children alive (before step 4), before building the rest on top.
+
+### Implementation progress on 2026-10-19 (dev)
+
+The audit below records the initial code, not the changed working tree. The
+implementation corrects the proposed design: installed Project units are
+process-only; the separate root operations Agent retains delegated controllers.
+Native/integration host control is an authenticated private socket, not a pipe.
+A transient exec gate prevents workload activation before durable record flush.
+Linux records use boot UUID/start ticks and file inode identity, not elapsed age.
+Stop intents persist exact descendant identities before group signals so an
+Agent crash or leader exit does not turn escalation into a PGID reuse guess.
+Conversion is now two-phase: prepare the candidate engine's private admission
+hold while the persistent host is drained; acknowledge root inventory; then replace
+the Agent and wait for Project + private integration recovery outside older hosts'
+30-second commit deadline. GET health/config/update/debug reads remain available
+so Agent failure cannot make the old updater roll back a healthy engine. The
+conversion hold also retains public preview listeners through temporary stopped
+Project snapshots, preserving accepted sockets. First
+conversion traffic has a 120-second test deadline; later continuity uses 30 seconds.
+
+Implemented: opt-in runner recovery, endpoint/runner kernel locks, bounded replay,
+Agent generation/marker lifecycle, IPC client rebind, native lost-start adoption,
+installed conversion/update diagnostics, doctor and uninstall cgroup cleanup.
+Linux tests cover real App crash/repeated handover, markerless/stale-marker stop,
+stop during disconnection, log inode replacement, PID reuse and concurrent owners.
+All 19 Linux runner/daemon/client tests pass, including a real controller
+(seed 3737844653), expired placement fencing and recovery exhaustion. Private
+control tests cover authenticated deduplication, deadlines and cache capacity.
+Root verification initially found two macOS socket-path failures; shortened
+opaque socket names fix them and focused regression tests pass. Browser and docs
+checks pass. Root `pnpm run verify` passes (2,139 Platform tests passed, 30
+platform-specific tests skipped). Installed gates still require their final run.
+Isolated installed candidate alpha.41 -> alpha.42 forward update passed with
+unchanged Project PID/start ticks and 4,355 successful requests, including managed
+integration; the Agent PID/release changed. The preliminary combined run exceeded
+30 seconds while root tests also ran, so final gates run sequentially. The first
+alpha.39 -> alpha.40 conversion now passes continuous traffic with retained public
+listeners. Full update/history/release checks still require their final isolated run.
+The Docker systemd primitive proof passes, including its expected delegated-layout
+negative control. Installed previous-release update/history and the final full
+release gate are still required. No publication or VPS mutation is authorized.
+
+Temporary candidate versioning is confined to disposable Docker qualification:
+when source and latest npm both say alpha.39, `ZELAVIS_QUALIFY_CANDIDATE_VERSION`
+versions only the staged payload as alpha.40. The checkout/tarball/npm stay
+unchanged. This is a local candidate proof, not publication of alpha.40.
+
+### Initial audit on 2026-10-18 (dev)
+
+
+**Step 1 is not complete.** No production runner option, adoption, protocol, unit or updater has
+changed. The retained throwaway prototype tests OS primitives, not production recovery. In particular
+it has no durable single-writer authority, bounded log reader or trustworthy new PID identity scheme.
+Do not enable survivable spawning until these are implemented and tested.
+
+Reproduce from the root, after building the current package:
+
+```sh
+node --test packages/zelavis/test/agent-survival-proof.test.mjs
+bash distribution/scripts/qualify-agent-survival.sh
+```
+
+The second command uses the existing Docker systemd image recipe, an unprivileged test service,
+read-only repo mount and disposable container. It now asserts the expected failure of the historical
+delegated-controller restart as a negative control. `ZELAVIS_QUALIFY_IMAGE=zelavis-systemd-test` reuses the local
+image. It is a primitive probe, not the installed-update or history release gate.
+
+| Claim / proof | Observed result and code evidence |
+|---|---|
+| Detached processes with ignored stdin and append-file output can survive the owner | Passed: SIGKILL owner; output keeps growing; second-runner prototype reads readiness with the original PID, sends SIGUSR1, observes stderr, sends SIGTERM and detects disappearance. A record dated a day earlier is refused without signalling. `test/agent-survival-proof.test.mjs` and `test/fixtures/agent-survival-proof.mjs`. This does not prove truncation, production stop escalation or interrupted publication. |
+| All Project processes have ignored stdin | **False and blocking.** `_node-project-runtime.ts` starts native App **and managed integration hosts** with `stdin: "pipe"`. `_node-project-runner.ts` waits on `serveNodeRuntimeCommands` and closes its workers on EOF. The negative control runs that actual command consumer through the production local runner, kills its owner and proves EOF completion. Ignoring stdin or stopping piped processes during handover would restart customer Apps. A reconnectable, private authenticated host-control transport must be designed and tested first; never persist Gateway keys in process records or log them. |
+| `KillMode=process` restart/crash leaves children, and a replacement starts | Passed **without enabled subtree controllers**: PID, `/proc` start ticks, output, `agent/` membership and actual unit `memory.max` / `pids.max` remain unchanged. Marker-less shutdown stops the test workload; post-stop `systemctl kill --kill-who=all` also removes a deliberately retained survivor in this environment. |
+| The same works with today's delegated layout/controllers | **Failed and blocking**, repeatedly, as root and as `nobody`, Debian systemd `252.39-1~deb12u2`, LinuxKit `6.12.54`. After `+memory +pids` at the unit root, replacement main processes exit `219/CGROUP`, then reach the restart limit; the workload keeps writing. The probe mirrors `prepareDelegatedCgroupLayout`, not the complete Agent daemon. Resolve and qualify placement of the replacement main process before editing production units. Do not silently disable required operation controllers to pass. |
+| Children stay at the unit root when the Agent moves into `agent/` | **False.** `cli/agent.ts` prepares the layout before serving process starts. `spawn` inherits the Agent's `agent/` leaf. Both code and `/proc/<child>/cgroup` in the probe confirm it. |
+| The endpoint already prevents two live Agents | **False and blocking for adoption.** `createAgentProcessServer` unconditionally removes the socket path before listening. A second listener can replace its pathname while the first keeps its existing connections. Obtain a kernel lock **before any record sweep, adoption, token or socket mutation**, not after listening. Socket ownership is not the lock. |
+| Record recovery is always fail-closed | Only `fencePlacement` refuses unreadable/invalid records. `readRecords` silently skips them and `reclaim` can return zero; `start` may then launch more processes. Ordinary record writes are best-effort; only placement-bearing commands require a record. A file write is neither an atomic rename nor an fsync. Survivable mode needs explicit fail-closed publication/recovery and interruption tests. |
+| Age checking proves PID identity | Existing `processAgeMs` uses second-resolution `ps etime` with **30 seconds tolerance**. The distant mismatch proof passes, but reuse within the window is not distinguished; `kill(pid, 0)` also considers zombies alive. Stronger start/boot identity and identity verification immediately before every adopted-process/group signal remain required. |
+| Current runner / daemon behavior in section 3 | Confirmed: pipe output, exit-hook SIGTERM, no local `attach`, restart-survival false, startup reclaim, normal server close stops the runner, IPC generation-local `p<n>` IDs and a 500-line replay. `test/agent-process-runner.test.mjs`, `agent-ipc.test.mjs` and `agent-adoption.test.mjs` plus the three new proofs passed together (39 tests). |
+| Update now changes the Project Agent | Confirmed absent: live `installation-plan.ts` runs runtime selection and `host-agent-restart`; normal install uses `enable --now` for Project Agent, with no restart. `_update-runner.ts` stages then runs `install --live`, health checks and rolls back the engine on failure. Agent-degraded history/rollback handling does not exist. |
+| Owner's alpha.27 / alpha.39 live-server observation | Historical evidence supplied in this plan; **not rechecked on the VPS**. Local code verifies the mechanism, not those live PIDs or release selections. No live credentials were used. |
+
+Paths in the table are relative to `packages/zelavis/src/adapters` unless otherwise named.
+
+**Client-user inventory (section 9.1, before changing disconnect semantics):**
+
+- `adapters/node.ts` creates the Project client used by native App hosts, recipe plan controllers,
+  server frontends and `createAgentRemoteEnvironment`. It separately creates the operations-only
+  host client. A disconnect currently fails all pending requests and settles every process handle
+  `{ code: null, signal: null, requested: false }`; no reconnect exists.
+- `adapters/_remote-project-agent.ts` creates a local server and client inside the HTTPS worker,
+  using the same local runner and startup reclaim. It needs its own adoption/lease qualification,
+  not just changing the local `zelavis agent` branch.
+- `adapters/_node-platform-host.ts` creates the dev/user host's in-process server; replaceable
+  Platform engines reach it through the same `node.ts` client. Persistent hosts and their engine
+  workers also use local runners directly (`_node-project-host.ts`, `_node-runtime-supervisor.ts`).
+- `core/recipe/plan-controller.ts` publishes unrequested `Exited` for started and adopted handles;
+  native App driver exits settle its state; `_agent-remote-environment.ts` maps unknown exits to
+  `failed`. Reconnection must preserve genuine exit/failure delivery for every consumer. Ambiguous
+  in-flight operation submissions must not be replayed as new operations on reconnect.
+
+**Other conclusions:** Fabric custody in `_node-platform-host.ts` persists an owner-session UUID;
+placement identity is `{ projectId, nodeId, ownerSession, epoch }`, not Agent PID/generation. Preserve
+that authority through adoption and revalidate expired leases before offering handles. User-mode
+startup has no separately restarted `zelavis agent` child: its persistent Platform host embeds the
+server/runner. "Agent follows on next start" must refer to restarting that host; seamless replacement
+there is still unimplemented. Adopted exit codes remain unknown without a parent/holder; controllers
+consume null codes already, but death detection must still resolve handles truthfully.
+
+Original implementation order: settle native/integration host control continuity and delegated cgroup
+restart, then implement the opt-in runner of step 1 (validated durable records, kernel ownership,
+bounded replay/tailing, group control, safe death detection and all failure tests). Keep steps 2–6
+unmarked. Installed-update/history gates and live traffic continuity have **not** been run for this
+proposal; none of these proofs qualifies an Agent update release.
+
+For the cgroup issue, first assess making the installed Project Agent process-only: the installation
+already has a separate root `--operations-only` Agent, but its Project unit still passes
+`--operations-root` and enables operation controllers. Prove that every installed host operation
+uses the separate endpoint before removing those responsibilities from the Project unit. The
+combined/manual Agent and remote worker contracts need an explicit supported layout as well.
+This is a candidate design correction, not a tested production change.
+
+Workspace validation for this audit: `docs:check` and `git diff --check` passed.
+`pnpm run verify` passed its policy gates, build and typecheck, then failed the runtime suite at
+`test/fixtures/recipe-host-conformance.mjs`'s **"interrupting a phase stops its command"**:
+`process.kill(pid, 0)` still succeeded after the test's 300 ms wait. Runtime totals were 2,132
+passed, 11 skipped, one failed; all new proofs passed. The failing test passed when rerun alone
+with `node --test --test-name-pattern='interrupting a phase stops its command'
+packages/zelavis/test/recipe-host.test.mjs`. Its cause remains unproven; a passing isolated retry
+does not turn the workspace run green. No production change was made to hide this failure.
 
 ## 1. The problem, with evidence
 
@@ -146,6 +276,10 @@ the in-process runner used in dev stays as is).
   directory 0700). No pipes: when the Agent exits, the child must not get SIGPIPE on its next write.
 - Do **not** call `registerChild`'s "SIGTERM on exit" for survivable children; that hook is what kills
   children when the Agent process exits today.
+- **Blocking correction from verification:** native App and managed integration hosts also use
+  `stdin: "pipe"`; their private control channel must first become reconnectable without losing
+  authentication, key rotation or commit acknowledgements. The following exception is safe only
+  for deliberately disposable interactive sessions, not all piped processes.
 - `stdin: "pipe"` processes (remote environment sessions) are **not survivable**: keep the existing pipe
   behaviour for them and mark them `survivable: false` in the record; they are stopped on handover and
   recreated by their owner. Project processes use `stdin: "ignore"`.
@@ -217,6 +351,8 @@ the previous release, kept for rollback, still works with a new Agent).
 - `KillMode=process` so systemd signals only the Agent's main pid on stop/restart and leaves children.
   (The Agent itself stops its children on a normal, marker-less shutdown, see B.) Keep `Delegate=yes`.
   Consider `SendSIGKILL=no` for the same reason and `TimeoutStopSec` long enough for a normal shutdown.
+- **Blocking correction from verification:** replacement startup fails `219/CGROUP` on the tested
+  systemd 252 layout with subtree controllers enabled; `KillMode=process` alone is insufficient.
 - Think through cgroup consequences: leftover processes stay in the unit's cgroup after the main pid
   exits; the restarted unit shares that cgroup. Confirm `systemd` does not stop the unit as "deactivating"
   while stragglers run (`KillMode=process` leaves them with a warning) and that cgroup limits still apply.
@@ -276,9 +412,10 @@ define the equivalent handover or state plainly that user-mode Agent follows on 
 - pid reuse between Agent generations (existing `processAgeMs` rule; never signal on doubt).
 - Log file deleted or replaced under a running process (the Agent must not crash or follow a symlink: use
   `lstat` and `O_NOFOLLOW`, keep the directory 0700 owned by the Agent user).
-- Two Agents at once (a stale unit and a manual run): the endpoint directory/socket already refuses a
-  second listener; add a kernel lock on `<data>/agent/agent.lock` held for the Agent's life so adoption
-  is single-writer. Never emulate the lock with a read-then-write.
+- Two Agents at once (a stale unit and a manual run): the current server unlinks a live socket path
+  without checking its listener. Add a kernel lock on `<data>/agent/agent.lock` held for the Agent's
+  life **before recovery or endpoint mutation**, so adoption is single-writer. Never emulate the lock
+  with a read-then-write.
 - Platform engine rolled back after the Agent moved forward: the previous engine must work against the
   new Agent (additive protocol only). Test with the previous release's client code if feasible.
 - Placement lease expires while no Agent runs (handover window): the new Agent's first check fences the
@@ -329,7 +466,8 @@ Agent must therefore restart that old Agent the old way once. Make it explicit a
 3. macOS/user-mode installs have no systemd: what is the supported Agent handover there (the persistent
    host starts the Agent)? Minimum: document and test that the Agent follows at next start.
 4. Is a long-lived `KillMode=process` unit acceptable with `Delegate=yes` and the operation cgroup layout in
-   `_linux-cgroup-supervisor.ts` (the Agent moves itself into `agent/`; children stay in the unit root)?
+   `_linux-cgroup-supervisor.ts` (the Agent moves itself into `agent/`; children inherit that leaf)?
+   Initial probe failed replacement startup with enabled subtree controllers; see section 0.
 5. Whether the exit status of adopted processes matters enough to justify per-child shims later.
 
 ## 10. Practical notes for the implementing agent

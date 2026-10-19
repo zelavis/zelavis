@@ -10,6 +10,7 @@ import { planZelavisRuntimeHostAssetsProgram, readNativeInstallationReceiptProgr
 import { assertInstallationPath, planZelavisProductionEdgeDirectories } from "../core/runtime/installation-plan.js";
 import { assertProductionEdgePortsProgram } from "../core/runtime/installation-health.js";
 import { isExactVersion } from "../updates.js";
+import { prepareInstalledProjectAgentUpdate } from "./_agent-update.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 
 const flushDirectory = (path: string) => process.platform === "win32" ? Effect.void : Effect.acquireUseRelease(
@@ -70,7 +71,8 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
     for (const step of planZelavisProductionEdgeDirectories(paths)) yield* integration(() => host.execute(step.action));
   }
   const completed = Deferred.makeUnsafe<Readonly<Record<string, unknown>>, TaggedFailure>();
-  return yield* Effect.scoped(Effect.gen(function* () {
+  let agentUpdate: Effect.Effect<void, TaggedFailure> | undefined;
+  const result = yield* Effect.scoped(Effect.gen(function* () {
     yield* Effect.forkChild(requestNodeRuntimeControl(endpoint, { action: "select", version: options.version, commit: true }).pipe(
       Effect.onExit(exit => Deferred.done(completed, exit).pipe(Effect.asVoid)),
       Effect.ignore,
@@ -112,6 +114,10 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
               yield* integration(() => createNodeInstallHost().execute({ kind: "command", command: "systemctl", args: ["enable", "zelavis-traefik.service"] }));
             }
           }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
+          if (receipt.mode === "system") agentUpdate = yield* prepareInstalledProjectAgentUpdate({ prefix: options.prefix, instance: options.instance,
+            dataDirectory: options.dataDirectory, target: pending.release.version, engineGeneration: pending.generation }).pipe(
+              Effect.catch(error => Effect.logError(`Agent update preparation failed; selected engine retained: ${error.message}`).pipe(Effect.as(undefined))),
+            );
         }));
         yield* requestNodeRuntimeControl(endpoint, { action: "commit", nonce: pending.nonce, version: pending.release.version,
           generation: pending.generation, accepted: committed._tag === "Success" });
@@ -123,4 +129,6 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
   })).pipe(Effect.timeoutOrElse({ duration: 150_000,
     orElse: () => Effect.fail(new IntegrationFailure(new Error("Runtime inventory selection did not complete within its bounded handover window."))),
   }));
+  if (agentUpdate) yield* agentUpdate.pipe(Effect.catch(error => Effect.logError(`Agent update bookkeeping failed; selected engine retained: ${error.message}`)));
+  return result;
 });

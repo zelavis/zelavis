@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { evaluate } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeRuntimeClient } from "./_node-runtime-client.js";
+import { nodeProjectControlPaths } from "./_node-project-control.js";
 import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
 import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_TTL_MS, } from "../platform/gateway-authority.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
@@ -260,6 +261,97 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         survivesControlPlaneRestart: agent.survivesControlPlaneRestart === true,
         description: "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
     };
+    const adopt = Effect.fn("NodeProjects.adopt")(function* (onlyProjectId?: string) {
+            if (!agent.attach)
+                return;
+            const directories = onlyProjectId ? [onlyProjectId] : ((yield* Effect.orElseSucceed(integration(() => readdir(projectsDirectory, { withFileTypes: true })), () => [])))
+                .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+                .map(entry => entry.name);
+            for (const projectId of directories) {
+                if (processes.get(projectId)?.process?.running) continue;
+                const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
+                if (frozenManifest) {
+                    const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
+                    if (options.integrationOnly ? !customRuntime : customRuntime) continue;
+                }
+                // A canonical recipe swap can be interrupted while a verified
+                // snapshot is serving. Adoption must still reach that host so
+                // durable intent recovery can restore the selected recipe.
+                const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
+                if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
+                const attached = yield* integration(() => agent.attach!(projectId));
+                for (const { process: child, command, replay } of attached) {
+                    const runner = command.args?.[0];
+                    if (!runner?.endsWith("/_node-project-runner.js") || command.cwd !== projectDirectory(projectId) ||
+                        command.args?.includes("--integration") !== (options.integrationOnly === true)) continue;
+                    if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
+                    if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
+                    const state: NodeProjectProcess = {
+                        process: child,
+                        runner,
+                        logs: [],
+                        snapshot: { status: "running" },
+                        stopping: false,
+                    };
+                    state.control = createNodeRuntimeClient(child, startupTimeoutMs);
+                    processes.set(projectId, state);
+                    for (const { stream, line } of replay) {
+                        const url = readyUrl(line);
+                        if (url) {
+                            state.snapshot = { status: "running", url };
+                            continue;
+                        }
+                        appendLog(state, stream, line);
+                    }
+                    appendLog(state, "system", state.snapshot.url
+                        ? `Re-attached to a running Project at ${state.snapshot.url}.`
+                        : "Re-attached to a running Project whose address is no longer in the Agent's buffer.");
+                    child.listen?.(({ stream, line }) => {
+                        if (stream === "stdout" && state.control?.accept(line)) return;
+                        const url = readyUrl(line);
+                        if (url) {
+                            state.snapshot = { status: "running", url };
+                            appendLog(state, "system", `Project ready at ${url}.`);
+                            return;
+                        }
+                        appendLog(state, stream, line);
+                    });
+                    void child.exit.then(({ code, signal, requested }) => {
+                        state.control?.exited();
+                        const stoppedAt = new Date().toISOString();
+                        state.snapshot =
+                            requested || state.stopping || code === 0
+                                ? { status: "stopped", stoppedAt }
+                                : {
+                                    status: "failed",
+                                    stoppedAt,
+                                    error: formatProjectProcessExitError({
+                                        code,
+                                        signal: signal as NodeJS.Signals | null,
+                                        logs: state.logs,
+                                    }),
+                                };
+                    });
+                    if (command.control) {
+                        const deadline = Date.now() + startupTimeoutMs;
+                        while (true) {
+                            const ready = yield* integration(() => lstat(command.control!.credentialsFile)).pipe(
+                                Effect.as(true), Effect.catchIf(isMissingFileError, () => Effect.succeed(false)));
+                            if (ready) break;
+                            if (!child.running || Date.now() >= deadline) return yield* new IntegrationFailure(new Error("Recovered Project host did not publish private control before its startup deadline."));
+                            yield* Effect.sleep(25);
+                        }
+                    }
+                    const secret = createGatewayAuthoritySecret();
+                    const reply = yield* state.control.request({ action: "rotate-key", secret });
+                    if (reply.type !== "key-rotated") return yield* new IntegrationFailure(new Error("Project host did not acknowledge Gateway re-keying."));
+                    const url = readyUrl(JSON.stringify({ type: "ready", url: reply.url }));
+                    if (!url) return yield* new IntegrationFailure(new Error("Project host did not report its persistent ingress address."));
+                    state.snapshot = { ...state.snapshot, status: "running", url };
+                    gatewaySecrets.set(projectId, secret);
+                }
+            }
+        });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "node-process",
         runtimeKinds: Object.freeze(["native"]),
@@ -428,90 +520,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 },
             }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }));
         }),
-        adopt: Effect.fn("NodeProjects.adopt")(function* () {
-            if (!agent.attach)
-                return;
-            const directories = ((yield* Effect.orElseSucceed(integration(() => readdir(projectsDirectory, { withFileTypes: true })), () => [])))
-                .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
-                .map(entry => entry.name);
-            for (const projectId of directories) {
-                const frozenManifest = yield* integration(() => readFile(join(projectDirectory(projectId), ".zelavis", "recipe", "package", "package.json"), "utf8")).pipe(Effect.catchIf(isMissingFileError, () => Effect.void));
-                if (frozenManifest) {
-                    const customRuntime = yield* evaluate(() => Boolean(JSON.parse(frozenManifest).zelavis?.project?.runtime));
-                    if (options.integrationOnly ? !customRuntime : customRuntime) continue;
-                }
-                // A canonical recipe swap can be interrupted while a verified
-                // snapshot is serving. Adoption must still reach that host so
-                // durable intent recovery can restore the selected recipe.
-                const descriptor = yield* integration(() => readFile(join(projectDirectory(projectId), "project.json"), "utf8"));
-                if ((yield* evaluate(() => JSON.parse(descriptor).kind)) === "frontend") continue;
-                const attached = yield* Effect.catch(integration(() => agent.attach!(projectId)), Effect.fn("NodeProjects.recover")(function* () { return []; }));
-                for (const { process: child, command, replay } of attached) {
-                    const runner = command.args?.[0];
-                    if (!runner?.endsWith("/_node-project-runner.js") || command.cwd !== projectDirectory(projectId) ||
-                        command.args?.includes("--integration") !== (options.integrationOnly === true)) continue;
-                    if (child.workloadId !== projectId) return yield* new IntegrationFailure(new Error("Agent returned a runtime for another Project."));
-                    if (!child.listen || !child.write) return yield* new IntegrationFailure(new Error("Agent cannot authenticate re-keying of this persistent Project host."));
-                    const state: NodeProjectProcess = {
-                        process: child,
-                        runner,
-                        logs: [],
-                        snapshot: { status: "running" },
-                        stopping: false,
-                    };
-                    state.control = createNodeRuntimeClient(child, startupTimeoutMs);
-                    processes.set(projectId, state);
-                    for (const { stream, line } of replay) {
-                        const url = readyUrl(line);
-                        if (url) {
-                            state.snapshot = { status: "running", url };
-                            continue;
-                        }
-                        appendLog(state, stream, line);
-                    }
-                    appendLog(state, "system", state.snapshot.url
-                        ? `Re-attached to a running Project at ${state.snapshot.url}.`
-                        : "Re-attached to a running Project whose address is no longer in the Agent's buffer.");
-                    child.listen?.(({ stream, line }) => {
-                        if (stream === "stdout" && state.control?.accept(line)) return;
-                        const url = readyUrl(line);
-                        if (url) {
-                            state.snapshot = { status: "running", url };
-                            appendLog(state, "system", `Project ready at ${url}.`);
-                            return;
-                        }
-                        appendLog(state, stream, line);
-                    });
-                    void child.exit.then(({ code, signal, requested }) => {
-                        state.control?.exited();
-                        const stoppedAt = new Date().toISOString();
-                        state.snapshot =
-                            requested || state.stopping || code === 0
-                                ? { status: "stopped", stoppedAt }
-                                : {
-                                    status: "failed",
-                                    stoppedAt,
-                                    error: formatProjectProcessExitError({
-                                        code,
-                                        signal: signal as NodeJS.Signals | null,
-                                        logs: state.logs,
-                                    }),
-                                };
-                    });
-                    const secret = createGatewayAuthoritySecret();
-                    const reply = yield* state.control.request({ action: "rotate-key", secret });
-                    if (reply.type !== "key-rotated") return yield* new IntegrationFailure(new Error("Project host did not acknowledge Gateway re-keying."));
-                    const url = readyUrl(JSON.stringify({ type: "ready", url: reply.url }));
-                    if (!url) return yield* new IntegrationFailure(new Error("Project host did not report its persistent ingress address."));
-                    state.snapshot = { ...state.snapshot, status: "running", url };
-                    gatewaySecrets.set(projectId, secret);
-                }
-            }
-        }),
+        adopt: () => adopt(),
         start: Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
             if (closed) {
                 return yield* new IntegrationFailure(new Error("The Node project runtime is shutting down."));
             }
+            // A lost start reply can leave an unbound durable host. Reuse its
+            // exact identity and private control before considering another spawn.
+            if (!processes.get(project.id)?.process?.running) yield* adopt(project.id);
             const current = processes.get(project.id);
             if (current?.process?.running &&
                 (current.snapshot.status === "starting" || current.snapshot.status === "running")) {
@@ -570,7 +586,11 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             let executable = process.execPath, selectedRunner = runnerPath;
             if (catalogOptions) {
                 if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
-                const execution = yield* createNodeRuntimeCatalog(catalogOptions).resolve(engine.runtime, "project", {}, {});
+                // The host is supervision/control plumbing of this Platform.
+                // Its workers still execute the Project's exact locked engine
+                // and private Node through the catalog inside that host.
+                const catalog = createNodeRuntimeCatalog(catalogOptions);
+                const execution = yield* catalog.resolve(yield* catalog.select(ZELAVIS_VERSION), "project", {}, {});
                 executable = execution.executable;
                 selectedRunner = join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
             }
@@ -600,7 +620,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 executable,
                 args: [selectedRunner, ...(options.integrationOnly ? ["--integration"] : [])],
                 cwd: directory,
-                stdin: "pipe",
+                control: nodeProjectControlPaths(directory, options.integrationOnly),
                 env: {
                     ...projectProcessEnvironment(),
                     PORT: "0",

@@ -122,10 +122,14 @@ test("a configuration change reloads a process that can, in place, with no faile
   // Traffic runs the whole time.
   let stop = false; let failures = 0; let served = 0; const bodies = new Set();
   const traffic = (async () => { while (!stop) { try { bodies.add((await ask("web")).config); served += 1; } catch { failures += 1; } await sleep(5); } })();
-  await sleep(100);
+  // Collect enough real responses on each side of the change. Fixed 100 ms
+  // windows accidentally tested machine speed when qualification ran under load.
+  const beforeDeadline = Date.now() + 5000;
+  while (served <= 10 && Date.now() < beforeDeadline) await sleep(5);
   writeFileSync(config("web"), "version two");
   const report = await run(controller.reconcile(plan));
-  await sleep(100);
+  const afterDeadline = Date.now() + 5000;
+  while ((served <= 20 || !bodies.has("version two")) && Date.now() < afterDeadline) await sleep(5);
   stop = true; await traffic;
 
   assert.deepEqual(report.reloaded, ["web"]);

@@ -129,6 +129,15 @@ if (phase === 'create-wordpress') {
 } else if (phase === 'candidate') {
   const { updateToLocalCandidate } = await import('./lib/candidate-update.mjs');
   await updateToLocalCandidate({ previous: await realpath('/opt/zelavis/current'), to: process.env.ZELAVIS_HISTORY_TO, baseUrl });
+  const agent = JSON.parse(await readFile('/var/lib/zelavis/agent/agent.json', 'utf8'));
+  assert.equal(agent.release, process.env.ZELAVIS_HISTORY_TO);
+  assert.equal(agent.survivable, true);
+  const { client } = await sdk();
+  const status = await client.updates.status();
+  assert.equal(status.run.state, 'succeeded', JSON.stringify(status));
+  assert.match(status.run.message, /Projects restarted once/);
+  console.log('PASS: historical Agent conversion is explicit and desired Projects recovered.');
+
 } else if (phase === 'unlist') {
   // Run as root with the Platform stopped: the server forgets it installed WordPress, as one whose WordPress
   // came with an earlier Platform never had it installed.

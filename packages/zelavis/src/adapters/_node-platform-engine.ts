@@ -2,14 +2,15 @@ import { isUnknown, optional, objectFields, recordOf, parseJson } from "../core/
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
+import { serveAgentEngineControl } from "./_agent-engine-control.js";
 import { Zelavis, defineAdapter, type ZelavisPlatformResources } from "../index.js";
 import { nodeAdapter, type NodeAdapterProjectOptions } from "./node.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
 import { resolveBundledServiceDirectory } from "./_local-runtime.js";
 import { resolveBundledFrontend } from "../cli/bundled-frontend.js";
 import { effectOperations, evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
-import type { ZelavisProjectRecord, ZelavisProjectRuntimeDriver } from "../project.js";
+import type { ZelavisProjectManager, ZelavisProjectRecord, ZelavisProjectRuntimeDriver } from "../project.js";
 import { createZelavisEdgePreviews, type ZelavisEdgePreviews } from "../edge/previews.js";
 import { requestNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
@@ -48,9 +49,10 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
     });
   }
   return {
-    open: Effect.fn("PlatformEngine.open")(function* () {
+    open: Effect.fn("PlatformEngine.open")(function* (generation) {
       let resources: ZelavisPlatformResources | undefined;
       let previews: ZelavisEdgePreviews | undefined;
+      let conversionHoldsPreviews = false;
       let incomingContinuity: ZelavisProjectRecord[] = [];
       let initialProbe = true;
       const previewFetch = new Map<string, (request: Request) => Promise<Response>>();
@@ -95,6 +97,10 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
                 yield* evaluate(() => { if (!Number.isInteger(result.port) || Number(result.port) < 1024 || Number(result.port) > 65535) throw new Error("Persistent preview host returned an invalid port."); });
                 previewFetch.set(projectId, fetch);
                 return { port: Number(result.port), close: () => present(Effect.gen(function* () {
+                  // Conversion observes stopped runtime snapshots while desired
+                  // Projects are being restored. Keep the persistent public
+                  // listener and queued sockets through that temporary state.
+                  if (conversionHoldsPreviews) return;
                   previewFetch.delete(projectId);
                   yield* requestNodeRuntimeControl(authority.endpoint, { action: "preview-close", projectId }, authority.token);
                 })) };
@@ -162,14 +168,31 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
         }), { concurrency: 4, discard: true });
         incomingContinuity = [];
       });
-      return { runtime: { fetch: (request, context) => {
+      const controlScope = yield* Scope.make();
+      const agentAdmission = yield* serveAgentEngineControl({ directory: options.dataDirectory, generation,
+        projects: runtime.endpointGroups["platform.control-plane"]?.context.projects as ZelavisProjectManager | undefined,
+        holdPreviews: held => { conversionHoldsPreviews = held; },
+      }).pipe(Scope.provide(controlScope), Effect.onError(() => Scope.close(controlScope, Exit.void)));
+      const fetch = (request: Request, context?: Parameters<typeof runtime.fetch>[1]) => {
         const projectId = request.headers.get(NODE_RUNTIME_PREVIEW_ID);
         if (!projectId) return runtime.fetch(request, context);
         if (!options.custody || request.headers.get(NODE_RUNTIME_PREVIEW_KEY) !== options.custody.token) return Promise.resolve(new Response("Private preview authority required.", { status: 401 }));
         const headers = new Headers(request.headers); headers.delete(NODE_RUNTIME_PREVIEW_ID); headers.delete(NODE_RUNTIME_PREVIEW_KEY);
         return previewFetch.get(projectId)?.(new Request(request, { headers })) ?? Promise.resolve(new Response("Preview unavailable.", { status: 503 }));
+      };
+      return { runtime: { fetch: (request, context) => {
+        // Health and update diagnostics must remain readable if Project recovery
+        // fails. They grant no workload mutation and prevent an older updater
+        // from mistaking Agent degradation for a failed selected engine.
+        const path = new URL(request.url).pathname;
+        if (request.method === "GET" && /^\/zelavis\/api\/v1\/(?:auth\/bootstrap|runtime\/(?:config|updates(?:\/history)?|debug\/[^/]+))$/.test(path)) return fetch(request, context);
+        return present(Effect.acquireUseRelease(agentAdmission.enter,
+        () => integration(() => fetch(request, context)), release => Effect.sync(release)).pipe(
+          Effect.catch(() => Effect.succeed(new Response("Agent conversion could not restore serving Projects.", { status: 503 }))),
+        ));
       } }, qualify, close: reason => Effect.gen(function* () {
         preserve = Boolean(options.custody) && (reason !== "shutdown" || options.custody!.preserveOnShutdown);
+        yield* Scope.close(controlScope, Exit.void);
         yield* integration(() => zv.close());
       }) };
     }),

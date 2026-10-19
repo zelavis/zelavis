@@ -658,6 +658,24 @@ when `Zelavis.close()` runs. Production worker Agents must be supervised
 separately so customer runtimes survive control-plane restarts while remaining
 subject to the one logical Platform authority.
 
+Linux Node system Project Agents use an opt-in survivable runner: flush validated
+UUID/boot/start-tick records before exec activation, keep append-file output,
+recover under kernel locks, and revalidate placement leases before exposing
+handles. Native and managed integration hosts use authenticated private socket
+control with command deduplication; never persist Gateway keys in process records
+or logs. The Project Agent unit is process-only (`KillMode=process`, no delegated
+operation controllers); the separate root operation Agent retains its containment.
+A reconnecting client keeps handles through bounded transport loss, rebinds by
+identity, and never replays ambiguous starts or operation submissions. Explicit
+stops consume only a valid generation/boot/expiry marker; markerless shutdown
+stops workloads. Uninstall also kills the owned unit cgroup. Agent update failure
+reports degradation without rolling back the selected Platform engine.
+Pre-protocol Agents convert once through Update now with held admission and a
+Project restart. User-mode embedded Agents follow when their host next starts;
+remote-worker/Bun replacement and multi-host partition recovery remain unqualified.
+Read `.agents/references/agent-handover-plan.md` for verified design corrections and
+qualification evidence; primitive proofs alone do not qualify a release.
+
 Platform and Zelavis App engine updates use one shared handover design:
 `core/runtime/admission.ts` and `handover.ts`, with concrete Node execution under
 `adapters/_node-runtime-*`. Prepare code without opening live stores, drain

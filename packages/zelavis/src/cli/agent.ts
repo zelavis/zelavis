@@ -1,4 +1,4 @@
-import { Cause, Effect, Fiber } from "effect";
+import { Cause, Effect, Fiber, type Scope } from "effect";
 import { evaluate, integration, present, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * `zelavis agent` — run the Agent as its own process.
@@ -9,10 +9,9 @@ import { evaluate, integration, present, integrationValue, unwrapFailure, type I
  * launchd, whatever the host uses — so a Platform restart is not a restart of
  * everything the Platform was running.
  *
- * It runs until it is signalled, then stops the processes it owns. Stopping
- * them is the right shutdown behaviour for a supervisor going away on purpose:
- * a supervisor that exits leaving unsupervised children behind is the leak
- * this whole line of work exists to close.
+ * Ordinary shutdown stops owned processes. A valid generation-bound handover
+ * marker lets Linux survivable mode release supervision to its replacement;
+ * durable records and placement leases remain authoritative across that gap.
  */
 import { access, lstat, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -32,6 +31,7 @@ import {
   type AgentHostOperationService,
 } from "../adapters/_agent-host-operations.js";
 import { prepareDelegatedCgroupLayout } from "../adapters/_linux-cgroup-supervisor.js";
+import { consumeAgentHandover, publishAgentDescriptor } from "../adapters/_agent-lifecycle.js";
 
 export interface RunAgentCommandOptions {
   /** Defaults to the same `.zelavis` directory the Platform uses. */
@@ -73,7 +73,7 @@ export type RunAgentCommandReady = (agent: {
 export function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
-  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+  return present(Effect.scoped(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure, Scope.Scope> {
   const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   if (options.operationsOnly && (!options.operationsRoot || !options.platformAuthority)) {
     throw new Error("--operations-only requires --operations-root and --platform-authority.");
@@ -167,7 +167,7 @@ export function runAgentCommand(
   }
   const endpointDirectory = join(dataDirectory, "agent");
 
-  const runner: ZelavisAgentProcessRunner = options.operationsOnly ? {
+  const runner: ZelavisAgentProcessRunner = yield* Effect.acquireRelease(evaluate((): ZelavisAgentProcessRunner => options.operationsOnly ? {
     name: "host-operations-only",
     start: () => present(Effect.gen(function* () { throw new Error("This Agent executes installed host operations only."); })),
     close: () => present(Effect.gen(function* () {})),
@@ -176,11 +176,11 @@ export function runAgentCommand(
     // installation that switches between the two does not lose track of what
     // the other started.
     stateDirectory: join(dataDirectory, "projects", ".agent-processes"),
-  });
+    survivable: process.platform === "linux" && !options.operationsRoot,
+  })), runner => integration(() => runner.detach ? runner.detach() : runner.close()).pipe(Effect.orDie));
 
-  // Anything a previous Agent or Platform left running is stopped before this
-  // one starts accepting work, so the first Project start does not race a
-  // leftover holding its port.
+  // Survivable mode validates and adopts under its kernel lock. Ordinary
+  // pipe runners still reclaim a dead owner's abandoned processes.
   const reclaimed = (yield* integration(() => runner.reclaim?.())) ?? 0;
   if (reclaimed > 0) {
     console.log(`Reclaimed ${reclaimed} process(es) left by an earlier run.`);
@@ -232,10 +232,10 @@ export function runAgentCommand(
     throw new Error("Host operation options require --operations-root.");
   }
 
-  const placementStore = options.operationsOnly ? undefined : createLocalSqliteSystemStore({
+  const placementStore = options.operationsOnly ? undefined : yield* Effect.acquireRelease(evaluate(() => createLocalSqliteSystemStore({
     filename: resolve(options.placementStore ?? join(dataDirectory, "system", "zelavis.sqlite")),
-  });
-  const server = yield* integrationValue(createAgentProcessServer({
+  })), store => integration(() => store.close?.()).pipe(Effect.orDie));
+  const server = yield* Effect.acquireRelease(integrationValue(createAgentProcessServer({
     directory: endpointDirectory,
     runner,
     operationsOnly: options.operationsOnly,
@@ -245,15 +245,15 @@ export function runAgentCommand(
       isProjectWorkload: (id: string) => !id.startsWith(REMOTE_ENVIRONMENT_WORKLOAD_PREFIX),
       read: (projectId: string) => readLocalProjectPlacementLease(placementStore, projectId),
     } } : {}),
-  }));
+  })), server => integration(() => server.close({ preserveProcesses: runner.detach !== undefined })).pipe(Effect.orDie));
 
   console.log(`Zelavis Agent listening on ${server.socketPath}`);
-  options.onReady?.({ socketPath: server.socketPath, ...(operations ? { operations } : {}) });
+  const descriptor = yield* publishAgentDescriptor(endpointDirectory, runner.recover !== undefined);
 
   let closing: Promise<void> | undefined;
   const shutdown = () => {
-    closing ??= present(integration(() => server.close()).pipe(
-      Effect.ensuring(integration(() => placementStore?.close?.()).pipe(Effect.orDie)),
+    closing ??= present(consumeAgentHandover(endpointDirectory, descriptor).pipe(
+      Effect.flatMap(preserveProcesses => integration(() => server.close({ preserveProcesses }))),
       Effect.catchCause((cause) => Effect.sync(() => {
         const error = unwrapFailure(Cause.squash(cause));
         console.error(error instanceof Error ? error.message : String(error));
@@ -263,8 +263,13 @@ export function runAgentCommand(
     return closing;
   };
 
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
+  const signalled = () => { void shutdown(); };
+  process.once("SIGINT", signalled);
+  process.once("SIGTERM", signalled);
+  yield* Effect.addFinalizer(() => Effect.sync(() => {
+    process.off("SIGINT", signalled); process.off("SIGTERM", signalled);
+  }));
+  options.onReady?.({ socketPath: server.socketPath, ...(operations ? { operations } : {}) });
 
   const stopSignal = options.signal;
   if (stopSignal) {
@@ -275,7 +280,7 @@ export function runAgentCommand(
 
   while (!closing) yield* Effect.sleep(100);
   yield* integrationValue(closing);
-  }));
+  })));
 }
 
 /** Completes when the signal aborts; a listener left behind by an interrupted wait is removed. */

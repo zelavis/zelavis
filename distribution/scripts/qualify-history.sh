@@ -22,6 +22,7 @@ docker run -d --name "$CONTAINER" --privileged --cgroupns=private --tmpfs /run -
   --mount "type=bind,source=$REPO_ROOT,target=/workspace,readonly" \
   --mount "type=bind,source=$STAGE,target=/input,readonly" \
   -e ZELAVIS_PROVISIONING_DISPOSABLE=1 -e "ZELAVIS_HISTORY_PREVIOUS=$PREVIOUS" \
+  -e "ZELAVIS_QUALIFY_CANDIDATE_VERSION=${ZELAVIS_QUALIFY_CANDIDATE_VERSION:-}" \
   "$IMAGE" /sbin/init >/dev/null
 for attempt in $(seq 1 60); do
   state=$(docker exec "$CONTAINER" systemctl is-system-running 2>/dev/null || true)

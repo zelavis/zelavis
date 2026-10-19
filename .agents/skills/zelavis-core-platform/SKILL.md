@@ -56,7 +56,7 @@ before editing.
   Prepare an immutable candidate without replacing canonical files. Recover an
   unfinished intent from proved host selection; deletion takes precedence. Stop
   may fence failed ownership, but never erase the intent without proof. Re-key
-  surviving App hosts only over the authenticated Agent process pipe. Installed
+  surviving App hosts only over the authenticated private Agent-to-host control channel. Installed
   Apps execute their exact engine/private Node and the updater retains qualified
   engines. The main Platform uses the same persistent host, retains preview
   listeners through its shared admission gate, and requires root acknowledgement
@@ -265,6 +265,18 @@ before editing.
   contracts. The local Node process driver is Platform-owned and stops children
   during `Zelavis.close()`; production worker Agents should be separately
   supervised.
+- Linux Node system Project Agent handover uses validated boot/start-tick
+  records flushed before exec, kernel endpoint/runner locks, append-file output,
+  lease checks before adoption and bounded client rebind. Native/integration
+  hosts use authenticated private socket control with deduplicated commands.
+  Never replay ambiguous starts/operation submissions or persist Gateway keys.
+  Project units are process-only; root operation units retain cgroup controllers.
+  Markerless stop stops workloads; uninstall kills remaining owned cgroup members.
+  Pre-protocol conversion is one explicit Update now restart under held admission.
+  Agent degradation must not roll back the committed engine. Embedded user Agents
+  follow on host restart; remote/Bun handover remains unqualified. See
+  `../../references/agent-handover-plan.md` for current qualification evidence.
+
 - Project/service grants require exact route scopes and cannot authorize
   unscoped routes. Unscoped/system grants match runtime-wide routes; top-level
   permissions span scopes. Signed Gateway audiences confine concrete local

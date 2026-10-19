@@ -282,6 +282,15 @@ test("system updates wire a distinct root operation Agent and uninstall owns its
   assert.match(operationUnit, /--operations-only --endpoint-group-access/);
   assert.match(operationUnit, /--require-root-owned-operations --operation-cgroup delegated/);
   assert.match(operationUnit, /^Group=zelavis$/m);
+  for (const name of ["zelavis-agent.service", "zelavis-agent@.service"]) {
+    const source = await readFile(new URL(`../../../distribution/runtime/${name}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /--operations-root|--operation-cgroup|Delegate=yes/);
+  }
+  for (const name of ["zelavis.service", "zelavis@.service"]) {
+    const source = await readFile(new URL(`../../../distribution/runtime/${name}`, import.meta.url), "utf8");
+    assert.match(source, /^Wants=.*zelavis-agent/m);
+    assert.doesNotMatch(source, /^Requires=.*zelavis-agent/m);
+  }
   assert.deepEqual(plan.steps.find((step) => step.id === "host-agent-environment").action, { kind: "agent-environment", path: "/etc/zelavis/zelavis.env", endpoint: "/opt/zelavis/host-agent/agent", variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
   assert.ok(plan.steps.findIndex((step) => step.id === "host-agent-enable") < plan.steps.findIndex((step) => step.id === "platform-enable"));
   assert.equal(plan.steps.some((step) => step.action.command === "apt-get"), false);
