@@ -1,7 +1,7 @@
 # Project Agent handover: implemented contract and qualification
 
-Status: **implemented on `dev`; Linux system-installation qualification passed
-on 2026-10-19; runtime release pending**. The historical filename is retained
+Status: **released in `2.0.0-alpha.40`; Linux system-installation qualification
+passed on 2026-10-19**. The historical filename is retained
 because `AGENTS.md` and the core-platform skill link here. This is the current
 reference, not an implementation task list. Release procedure belongs in
 `../skills/zelavis-release-maintainer/SKILL.md`; public behavior is documented in
@@ -108,6 +108,14 @@ systemd primitive, all 20 Linux Agent tests, installed update, long history and
 worker enrollment/update/removal gates. This qualifies that source commit;
 versioning a release creates a new commit that must be qualified again.
 
+The actual alpha.40 release then passed the full gate on clean commit
+`88c4614e7fb5c603e4aff44204926c18a0c0124d`: 2,141 Platform tests passed,
+31 platform-specific skips, the complete browser suites and every installed
+qualification gate green. History recipe upgrades served 506 WordPress and
+430 DokuWiki responses without failure. npm metadata, alpha tags and downloaded
+tarballs for the Platform and four bundled packages matched the publisher's
+packed digests. The release log is `/tmp/zelavis-alpha40-release-check.log`.
+
 Linux production tests cover repeated App handover/crash and re-key,
 lost-start adoption, markerless/stale-marker stop, stop during disconnect,
 log replay/truncation and inode replacement, PID reuse, locks, leader-first
@@ -133,15 +141,20 @@ Local evidence was recorded in `/tmp/zelavis-agent-release-check.log`,
 `/tmp/zelavis-agent-history-final.log`. These are ephemeral local logs, not
 portable dependencies. The maintained private work record is `pnotes/TODO.md`.
 
-## Remaining qualification and release work
+## Remaining qualification and maintenance
 
-- Version and qualify the actual release commit before npm publication. The
+- Future releases must version and qualify their actual commit before npm publication. The
   temporary candidate versions alter disposable payloads, not the checkout or
   npm. Use `ZELAVIS_FUZOR=npm pnpm release:check` from the root, with no concurrent
   build in this checkout.
-- Keep the known Fuzor 0.5.1 dev-server aborted-request failure visible. It
-  interrupted one intermediate browser run; the final full gate passed.
-  Its external fix remains unpublished; a passing retry does not explain it.
+- The Fuzor 0.5.1 standalone Node adapter's aborted-stream failure recurred
+  during alpha.40 qualification. The isolated server-view fixture now uses
+  Zelavis's production HTTP boundary and dashboard asset loader, retaining
+  every browser assertion. Installed Zelavis already uses that boundary;
+  the external Fuzor fix remains unpublished. Alpha.40 qualification also fixed
+  a secret-test command missing `--` before a potentially leading-dash secret,
+  with a deterministic case sharing the same test body. Neither fix changes
+  production runtime behavior.
 - Qualify remote-worker/Bun replacement and multi-host partition recovery
   separately before extending the continuity claim. No live VPS continuity
   claim follows from the local gates.
