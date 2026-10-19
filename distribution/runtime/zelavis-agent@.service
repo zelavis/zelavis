@@ -18,7 +18,7 @@ TimeoutStopSec=95
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
-PrivateTmp=true
+# Project temporary storage must outlive this Agent's mount namespace.
 
 [Install]
 WantedBy=multi-user.target

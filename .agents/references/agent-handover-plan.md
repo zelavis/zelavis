@@ -82,6 +82,19 @@ whose Project identity existed only in their private environment. New host and
 worker command lines carry non-secret Project-root/workload labels; real listing
 tests still detect two copies of the same workload. Diagnostics, conversion and
 17 persistent host/supervisor tests pass with those labels.
+The installed gate then reproduced a real post-handover database-write failure:
+MariaDB survives but cannot create temporary tables in `/tmp` (ENOENT), so
+WordPress issues login cookies whose session-token writes silently fail. A plain
+`PrivateTmp` unit restart, even with daemon-reload, did not reproduce that loss;
+the initial explanation is incomplete. The candidate Project units now omit the
+Agent-private namespace, and the primitive proof creates temporary files during
+restart/crash. With that change the complete installed sequence PASSES: 24,558
+HTTP requests, conversion and survivable Agent replacement, Platform rollback,
+live App selection both ways, WordPress integration upgrade, post-Platform-restart
+login/database writes, healthy doctor and complete uninstall. The primitive proof
+and all 19 Linux tests pass again. History and final full release qualification
+remain pending. Proof: `/tmp/zelavis-agent-update-proof.json`; log:
+`/tmp/zelavis-agent-update-temp-candidate.log`.
 The Docker systemd primitive proof and all 19 Linux tests pass, including the
 expected delegated-layout negative control. Full installed update/history and
 release qualification are still pending. A browser rerun also encountered the

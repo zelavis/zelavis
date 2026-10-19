@@ -20,7 +20,7 @@ fi
 if [ -f "$root/child.pid" ] && kill -0 "$(cat "$root/child.pid")" 2>/dev/null; then
   child=$(cat "$root/child.pid")
 else
-  setsid sh -c 'while :; do echo alive; sleep 0.1; done' >> "$root/output" 2>> "$root/errors" &
+  setsid sh -c 'umask 077; file=/tmp/zelavis-agent-survival-$$.tmp; while :; do if : > "$file"; then rm "$file"; echo alive; else echo tmp-failed >&2; exit 1; fi; sleep 0.1; done' >> "$root/output" 2>> "$root/errors" &
   child=$!
   echo "$child" > "$root/child.pid"
 fi
@@ -36,8 +36,7 @@ sleep infinity &
 idle=$!
 wait "$idle"
 AGENT
-# Use the authored Project unit with test-only paths, account and KillMode.
-# Survivable runner integration will switch the authored KillMode later.
+# Use the authored Project unit with test-only paths, account and restart timing.
 sed -e 's/^User=.*/User=nobody/' -e 's/^Group=.*/Group=nogroup/' \
   -e "s|^WorkingDirectory=.*|WorkingDirectory=$root|" \
   -e "s|^ExecStart=.*|ExecStart=/bin/sh $root/agent.sh|" \
@@ -103,7 +102,7 @@ for operation in restart crash; do
   group=$(systemctl show "$unit" -p ControlGroup --value)
   [ "$(cat "/sys/fs/cgroup$group/memory.max")" = 134217728 ]
   [ "$(cat "/sys/fs/cgroup$group/pids.max")" = 64 ]
-  echo "PASS $operation: child $child and Platform retain PID, start time, output and unit limits"
+  echo "PASS $operation: child $child and Platform retain PID, start time, temporary-file access, output and unit limits"
 done
 # A marker-less stop must rely on the Agent, not KillMode, for cleanup.
 systemctl stop "$unit"

@@ -148,7 +148,8 @@ System installations enable `zelavis-agent.service` (or the named-instance
 unit) as a separately supervised unprivileged Project process Agent. The
 installer configures `ZELAVIS_AGENT_ENDPOINT`; this custody lets running Projects
 survive a Platform engine handover. The Project unit is process-only and keeps
-its children at the unit root. Required cgroup v2 containment belongs to the
+its children at the unit root. It omits `PrivateTmp` so replacement cannot remove
+the temporary directory of a surviving database. Required cgroup v2 containment belongs to the
 separate root operation Agent, which refuses unavailable containment.
 The packaged Debian/systemd qualification exercises this path, including
 WordPress daemon adoption, Platform handover and rollback.

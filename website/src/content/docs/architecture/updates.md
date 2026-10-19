@@ -39,8 +39,8 @@ and public version descriptor before traffic resumes. System installations also
 refresh the selected release's authored systemd templates and reload the unit
 catalogue at that acknowledgement; they do not restart the host or Project Agent.
 Rollback restores the previous release's templates. The host and its public
-listeners keep running throughout. The one service restarted after the release is
-selected is the root operation Agent: it reads its operation manifests when it starts,
+listeners keep running throughout. The root operation Agent also restarts after
+selection: it reads its operation manifests when it starts,
 so a release's new or changed host operations exist only for an Agent started after the
 selection, and it holds no Project and no traffic.
 
@@ -192,7 +192,9 @@ before releasing the old engine.
 Linux system installations also replace the separately supervised Project Agent
 when Update now selects a new Platform release. The process-only Agent unit uses
 `KillMode=process`; privileged host operations remain in their separate root
-Agent and retain their cgroup controllers. Project children use private append
+Agent and retain their cgroup controllers. The Project unit omits `PrivateTmp`
+so temporary storage is independent of the Agent's mount namespace.
+Project children use private append
 logs and flushed records containing UUIDs, kernel start ticks and boot identity.
 Kernel locks exclude concurrent owners before recovery or endpoint changes.
 The replacement Agent adopts live processes and rebuilds placement lease

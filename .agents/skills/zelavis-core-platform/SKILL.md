@@ -271,6 +271,8 @@ before editing.
   hosts use authenticated private socket control with deduplicated commands.
   Never replay ambiguous starts/operation submissions or persist Gateway keys.
   Project units are process-only; root operation units retain cgroup controllers.
+  Project units omit `PrivateTmp` so temporary storage is independent of the Agent.
+  Prove database writes after the full installed sequence, not just PID survival.
   Markerless stop stops workloads; uninstall kills remaining owned cgroup members.
   Pre-protocol conversion is one explicit Update now restart under held admission.
   Agent degradation must not roll back the committed engine. Embedded user Agents

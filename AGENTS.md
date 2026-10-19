@@ -665,6 +665,8 @@ handles. Native and managed integration hosts use authenticated private socket
 control with command deduplication; never persist Gateway keys in process records
 or logs. The Project Agent unit is process-only (`KillMode=process`, no delegated
 operation controllers); the separate root operation Agent retains its containment.
+Project units omit `PrivateTmp` so surviving databases do not depend on an
+Agent-owned temporary namespace. Qualify writes after the full update sequence.
 A reconnecting client keeps handles through bounded transport loss, rebinds by
 identity, and never replays ambiguous starts or operation submissions. Explicit
 stops consume only a valid generation/boot/expiry marker; markerless shutdown
