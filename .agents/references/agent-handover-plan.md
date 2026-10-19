@@ -69,9 +69,19 @@ integration; the Agent PID/release changed. The preliminary combined run exceede
 30 seconds while root tests also ran, so final gates run sequentially. The first
 alpha.39 -> alpha.40 conversion now passes continuous traffic with retained public
 listeners. Full update/history/release checks still require their final isolated run.
-The Docker systemd primitive proof passes, including its expected delegated-layout
-negative control. Installed previous-release update/history and the final full
-release gate are still required. No publication or VPS mutation is authorized.
+The full gate reached the installed alpha.39 -> fixture alpha.40 conversion
+(77 seconds) and alpha.40 -> alpha.41 survivable forward update (33 seconds),
+with no failed traffic and unchanged supervised processes after conversion.
+Platform rollback/reselection also passed. It then exposed an outdated descriptor
+assertion: conversion legitimately refreshes `updatedAt` while preserving every
+other field. The gate now permits only that one conversion timestamp change and
+requires byte-for-byte stability afterward; forward continuity also compares
+`/proc` start ticks and debug process identities with no duplicates.
+The Docker systemd primitive proof and all 19 Linux tests pass, including the
+expected delegated-layout negative control. Full installed update/history and
+release qualification are still pending. A browser rerun also encountered the
+known Fuzor 0.5.1 aborted-request failure; the next unchanged run passed.
+No publication or VPS mutation is authorized.
 
 Temporary candidate versioning is confined to disposable Docker qualification:
 when source and latest npm both say alpha.39, `ZELAVIS_QUALIFY_CANDIDATE_VERSION`

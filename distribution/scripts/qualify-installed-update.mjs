@@ -81,10 +81,24 @@ const fingerprints = async () => { const site = await wpSite(); return Object.fr
     uid: metadata.uid, gid: metadata.gid, mode: metadata.mode, inode: metadata.ino, modified: metadata.mtimeMs }];
 }))); };
 const appFilesBefore = await fingerprints();
-const identities = async () => (await Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).filter(file => file.endsWith('.json')).map(async file => {
-  const value = JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'));
-  return `${value.workloadId}:${value.pid}`;
+const processRecords = async () => Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).filter(file => file.endsWith('.json')).map(async file =>
+  JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'))));
+const identities = async () => (await Promise.all((await processRecords()).map(async value => {
+  const source = await readFile(`/proc/${value.pid}/stat`, 'utf8');
+  const startTicks = source.slice(source.lastIndexOf(')') + 2).split(' ')[19];
+  assert.match(startTicks, /^\d+$/);
+  return `${value.workloadId}:${value.pid}:${startTicks}`;
 }))).sort();
+const diagnosticIdentities = async () => {
+  const report = await client.debug.processes();
+  assert.equal(report.truncated, false);
+  assert.deepEqual(report.duplicates, [], 'Process diagnostics must show no duplicate workloads');
+  return (await processRecords()).map(value => {
+    const process = report.processes.find(entry => entry.pid === value.pid);
+    assert.ok(process, `Diagnostics must include supervised process ${value.pid}`);
+    return `${value.workloadId}:${process.pid}:${process.startedAt}`;
+  }).sort();
+};
 const wpClient = projectClient(wp.id);
 const initialBound = await wpClient.runtime.config();
 assert.equal(initialBound.services.find(service => service.name === '@zelavis/wordpress').menus[0].title, 'Historical SDK integration');
@@ -151,6 +165,16 @@ else {
   const updated = await client.updates.status();
   assert.match(updated.run.message, /Projects restarted once/);
 }
+const catalogueAfterConversion = await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8');
+if (agentBefore?.survivable) assert.equal(catalogueAfterConversion, catalogueDescriptor);
+else {
+  // A deliberate restart prepares the same frozen recipe again with the
+  // restored Project's current timestamp. Every other descriptor field stays.
+  const { updatedAt: beforeTimestamp, ...beforeDescriptor } = JSON.parse(catalogueDescriptor);
+  const { updatedAt: afterTimestamp, ...afterDescriptor } = JSON.parse(catalogueAfterConversion);
+  assert.deepEqual(afterDescriptor, beforeDescriptor, 'Conversion must preserve the frozen recipe and runtime configuration');
+  assert.ok(Date.parse(afterTimestamp) > Date.parse(beforeTimestamp), 'Conversion records its deliberate restart');
+}
 // The published previous Agent cannot preserve processes on its first
 // conversion. A second explicitly versioned local hop proves the survivable
 // production updater, client rebind and real systemd unit under continuous traffic.
@@ -158,6 +182,7 @@ if (process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION) {
   assert.equal(mode, 'local');
   assert.ok(process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION);
   const selected = await realpath('/opt/zelavis/current'), processes = await identities();
+  const diagnostics = await diagnosticIdentities();
   const firstAgent = await agentDescriptor();
   to = process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION;
   process.env.ZELAVIS_QUALIFY_CANDIDATE_VERSION = to;
@@ -165,6 +190,7 @@ if (process.env.ZELAVIS_QUALIFY_AGENT_NEXT_VERSION) {
   const nextAgent = await agentDescriptor();
   assert.equal(nextAgent.release, to); assert.notEqual(nextAgent.pid, firstAgent.pid);
   assert.deepEqual(await identities(), processes, 'Forward Agent handover must preserve every Project process');
+  assert.deepEqual(await diagnosticIdentities(), diagnostics, 'Diagnostics must retain each supervised PID and start time');
   assert.equal(hostPid(), initialPid);
   const status = await client.updates.status();
   assert.equal(status.run.state, 'succeeded', JSON.stringify(status));
@@ -220,7 +246,7 @@ assert.equal(catalogueAfter.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(catalogueAfter.recipe.version, catalogueApp.recipe.version);
 assert.equal(catalogueAfter.runtime.url, catalogueApp.runtime.url);
 assert.equal(catalogueAfter.preview.port, catalogueApp.preview.port);
-assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueDescriptor, 'Fixing Open never rewrites the frozen host descriptor');
+assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/project.json', 'utf8'), catalogueAfterConversion, 'Forward updates and Open never rewrite the frozen host descriptor');
 const catalogueConfig = await projectClient(catalogueApp.id).runtime.config();
 assert.equal(catalogueConfig.services.find(service => service.name === '@zelavis/wordpress').kind, 'app');
 for (const capability of ['database', 'identity', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
@@ -313,7 +339,7 @@ const proof = { from, to, acquisition: mode === 'npm' ? 'ordinary authenticated 
   parentPreservesAppPin: true,
   installedTemplatesRefreshed: true,
   productionIngress: { domainRequired: false, dashboardAndAssetsProved: true, enabled: true, proxyProcessPreserved: true, platformSelections: [from, to], continuousHTTP: true },
-  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchanged: true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
+  managedOpen: { previousStatus: catalogueBeforeStatus, configAfterUpdate: 200, descriptorUnchangedAfterConversion: true, conversionRefreshedTimestamp: agentBefore?.survivable !== true, recipeVersionUnchanged: true, unusedAPIsHidden: true, freshNpmCatalogueProjectProved: true, installedCatalogueRecipeLocksInstall: true },
   managedRecipe: { from: wp.recipe.version, to: integration.recipe.version, historicalFixture: true,
     processesPreserved: true, appFilesAndConfigurationPreserved: true, previewPreserved: true, sdkMenuAndOperationRemovalProved: true, integrationGatewayContinuous: true },
   liveSelection: [to, from], executingEngineVersionsProved: true, dataRetained: true, requests: counts,
