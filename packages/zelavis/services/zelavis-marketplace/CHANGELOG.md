@@ -1,5 +1,12 @@
 # @zelavis/marketplace
 
+## 1.1.0-alpha.40
+
+### Patch Changes
+
+- Updated dependencies [d07cc80]
+  - zelavis@2.0.0-alpha.40
+
 ## 1.1.0-alpha.39
 
 ### Patch Changes
