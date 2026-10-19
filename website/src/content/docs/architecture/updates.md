@@ -215,10 +215,10 @@ private Zelavis runtimes. The request hold is prepared before root inventory is
 acknowledged; replacement/recovery then runs outside the older host's commit
 deadline. The dashboard, authentication, Project status, logs, diagnostics and
 repair controls remain available. Recovered public workloads resume before
-private integrations finish warming. A failed or expired conversion releases
+private Project runtimes finish warming. A failed or expired conversion releases
 its coordination hold and reports degradation; individual Project readiness and
 ownership checks still apply. Update status and history name that one restart.
-Conversion restores private integrations that had already been used. A hosting-only
+Conversion restores private Project runtimes that had already been used. A hosting-only
 Project keeps its backend unstarted until its Project APIs need it. Private
 integration startup failures appear in the Project's logs with a
 `[Zelavis integration]` label and in its diagnostics.
