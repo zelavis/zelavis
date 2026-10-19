@@ -51,8 +51,8 @@ Give the Platform a hostname with HTTPS first, or pin its self-signed certificat
 For a Platform reached by IP address, the Platform can serve a narrow HTTPS listener
 (`adapters/_enrollment-listener.ts`) with its own self-signed certificate
 (`adapters/_platform-tls.ts`; key kept at 0600 in the Platform data directory, renewed when it
-stops covering the addresses or nears expiry). The listener forwards exactly one request to the
-runtime, `POST` to the enrollment path; every other path is a 404 that never reaches the
+stops covering the addresses or nears expiry). The listener forwards only the enrollment and
+public-trust refresh `POST` paths to the runtime; every other path is a 404 that never reaches the
 runtime, bodies are capped at 64 KiB and connections at 64, so opening its port exposes no
 dashboard, API or Project. The host publishes where it listens and the certificate fingerprint
 (`GET /runtime/nodes/platform`, `client.nodes.platform()`, `zelavis nodes platform`; needs
@@ -64,7 +64,7 @@ Turn it on with `zelavis serve --enrollment-port 8444 [--enrollment-address <ip-
 (a port from 1024; addresses default to the machine's first routable IPv4 and `localhost`, and
 become the certificate's names). The **persistent host** serves it, so it survives an engine
 replacement and drains with the engine; it forwards only
-`POST /zelavis/api/v1/runtime/nodes/enroll` to the engine and answers 404 to everything else
+`POST /zelavis/api/v1/runtime/nodes/enroll` and `POST /zelavis/api/v1/runtime/nodes/trust` to the engine and answers 404 to everything else
 without admitting the request. The engine publishes the endpoint, and enabling it also turns
 remote dispatch on, so enrolled nodes receive Projects. Open the port in the firewall yourself:
 nothing here changes the host firewall. Tested through the real host and engine (a machine
@@ -87,10 +87,10 @@ A worker is **not updated from the dashboard**: updating means running the insta
 on it, and the Platform only checks the worker's version when it joins (see Versions).
 `zelavis doctor` inspects a worker too (receipt, release, account, data ownership, whether it has joined, the path and Agent units, and that the Agent port is listening); it cannot tell whether the Platform can reach that port through a firewall. A default Platform install is HTTP-only until a
 hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
-only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that). Automatic
-provisioning of cloud machines (which would put the credential in first-boot data) is not
-shipped. Trust keys are delivered once, at enrollment; the Platform's signing keys rotate
-before they expire, so a refresh path is needed and is not built. The caller's address is
+only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that).
+Cloud first-boot generation and provider composition are implemented, but booting a real cloud
+machine through enrollment and Fabric health/readiness remains unqualified. Workers refresh
+the Platform's public trust keys at startup and daily (see Key rotation). The caller's address is
 not known to the route (a proxy may sit in front), so the credential is not bound to a
 source address.
 

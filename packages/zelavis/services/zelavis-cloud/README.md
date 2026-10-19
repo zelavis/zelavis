@@ -2,7 +2,7 @@
 
 Cloud capacity service for Zelavis (`private`). The Platform side (`packages/zelavis/src/platform/cloud-capacity.ts`, `cloud-routes.ts`, SDK `client.cloud`, `zelavis cloud`) loads the bundle this package builds (`bundle/index.js`, `scripts/bundle.mjs`) through `platform/cloud-engine.ts` when `ZELAVIS_CLOUD_POLICY` is set. `createHetznerCapacityProvider` is the one entry it calls.
 
-It will implement the `CapacityProvider` contract (`zelavis/provider`) with Alchemy as the provisioning engine, bundled with the Platform and never installed by a self-hoster. Fabric keeps all placement, fencing and draining authority; this service only creates and releases machines. Direction, measurements and open tests: `.agents/references/alchemy-architecture-brief.md`, and "Cloud Capacity And Alchemy" in `AGENTS.md`.
+It implements the `CapacityProvider` contract (`zelavis/provider`) with Alchemy as the provisioning engine, bundled with the Platform and never installed by a self-hoster. Fabric keeps all placement, fencing and draining authority; this service only creates and releases machines. Direction, measurements and remaining qualification: `.agents/references/alchemy-architecture-brief.md`, and "Cloud Capacity And Alchemy" in `AGENTS.md`.
 
 ## Today
 
@@ -14,10 +14,12 @@ It will implement the `CapacityProvider` contract (`zelavis/provider`) with Alch
 - [`src/cloud-port.ts`](src/cloud-port.ts), [`src/hetzner-cloud.ts`](src/hetzner-cloud.ts): one cloud behind a small port. Create and delete through Alchemy; find, list and orphan removal straight to the API.
 - [`src/capacity-provider.ts`](src/capacity-provider.ts): `createCapacityProvider`, the `CapacityProvider` implementation. Deterministic node ids, smallest-fit sizing from approved classes, a node ceiling, single-flight per request, ready only after enrollment, and deletes only machines carrying this Platform's labels.
 
-## Not yet
+The Platform controller validates policy, seals provider tokens, audits their use and gates scale-out on consent, sustained demand, caps and cooldown. `platform/cloud-engine.ts` derives the state-sealing key from the Platform master secret and claims a conditional cloud-authority epoch. It supplies a real single-use enrollment token to [`src/first-boot.ts`](src/first-boot.ts), which generates the worker installer/join script. Bundle and Platform-composition tests exercise this against the fake API, including enrollment.
 
-The capacity controller (policy, caps, demand), first-boot data and Agent enrollment (blocked on Platform work: a worker install mode, a runtime node registry and an enrollment protocol; see `.agents/references/node-enrollment-design.md`), the bundle build with its `import.meta.resolve` patch, and any run against a real cloud.
+## Remaining qualification
+
+Real cloud creation, cloud-init, pinned enrollment, Fabric health/readiness and drain/fence/release have not been qualified together. The fake API does not prove provider rate limits, eventual consistency, real failure shapes or a Linux boot without a compiler. Worker install/join/doctor, public trust refresh and the enrollment listener exist; see `.agents/references/node-enrollment-design.md` for their contract and limits. Dashboard-driven worker updates, provider detection/adoption conveniences and the optional local deploy tool remain separate work.
 
 `alchemy` is a dev dependency: it is bundled at build time and never shipped as a dependency. Pin it exactly and re-verify the scenarios on every bump.
 
-Open for the state store: the secret key's source (the Platform's key management) is not decided, a deletion participant for Project cleanup is not written, `acquire` is not yet tied to a Fabric lease, and values Alchemy does not mark `Redacted` are stored as given.
+The conditional cloud/state epochs do not prove cancellation of an in-flight cloud call or implement a distributed Fabric lease. Recipe-declared external resources need their own checkpointed deletion participant before they are introduced. Values Alchemy does not mark `Redacted` are stored as given; the secret codec does not seal every string.
