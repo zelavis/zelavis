@@ -156,8 +156,14 @@ export function recipeHostConformance(test, makeHost) {
     assert.ok(result.stdout.length <= 256 * 1024);
   });
 
-  test("a secret is generated once, kept outside the project, private, and only ever passed by reference", async (t) => {
+  for (const initialValue of [undefined, "--recipe-secret-with-a-leading-dash"]) test(initialValue === undefined
+    ? "a secret is generated once, kept outside the project, private, and only ever passed by reference"
+    : "a stored leading-dash secret stays private, stable and redacted when passed by reference", async (t) => {
     const { host, root, secretsDirectory } = await sandbox(t);
+    if (initialValue !== undefined) {
+      await mkdir(secretsDirectory, { mode: 0o700 });
+      await writeFile(join(secretsDirectory, "db-password"), initialValue, { mode: 0o600 });
+    }
     const reference = await succeed(host.secret("db-password"));
     assert.deepEqual(reference, { secret: "db-password" });
     const file = join(secretsDirectory, "db-password");
@@ -173,9 +179,11 @@ export function recipeHostConformance(test, makeHost) {
     assert.equal(await readFile(join(root, "config.txt"), "utf8"), value);
     assert.equal(statSync(join(root, "config.txt")).mode & 0o077, 0, "a file carrying a secret is private");
 
-    const echoed = await succeed(host.run({ command: "node", args: ["-e", "console.log(process.env.PASSWORD); console.error(process.argv[1])", reference], env: { PASSWORD: reference }, timeoutMs: 10_000 }));
+    const echoed = await succeed(host.run({ command: "node", args: ["-e", "console.log(process.env.PASSWORD); console.error(process.argv[1])", "--", reference], env: { PASSWORD: reference }, timeoutMs: 10_000 }));
+    assert.equal(echoed.code, 0, JSON.stringify(echoed));
     assert.ok(!echoed.stdout.includes(value) && !echoed.stderr.includes(value), "a secret the command prints is removed from what comes back");
     assert.match(echoed.stdout, /\[secret\]/, `exit ${echoed.code}, stdout ${JSON.stringify(echoed.stdout)}, stderr ${JSON.stringify(echoed.stderr)}`);
+    assert.match(echoed.stderr, /\[secret\]/);
 
     await failure(host.secret("../escape"));
     await failure(host.secret("Upper"));
