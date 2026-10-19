@@ -1898,6 +1898,12 @@ When the owner asks for a release ("release", "release a new alpha", "publish a 
 command, what only the owner does (npm login and 2FA, approving pushes and deploys), and what
 must be green before anything is published. Do not ask the owner to explain the procedure.
 
+Publishing the allow-list to zelavis.com is part of every release, never optional and never
+only "when services changed": after the npm publish, run `pnpm allowlist publish`, ask the owner
+to approve the website deploy, and deploy it. A release is not finished until
+`https://zelavis.com/allowlist.json` serves the shipped snapshot's `sequence`; report it as
+unfinished until then.
+
 ## Documentation Expectations
 
 - Each package should have a focused README with purpose, scope, and basic usage.

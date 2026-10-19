@@ -23,6 +23,8 @@ Use this skill for:
 
 A release is a sequence with a human in it: the owner types npm's login and approves
 2FA in their browser, and approves every outward step (publish, push, website deploy).
+A release has three outward parts and is finished only when all three are done: npm
+serves the version, `dev` is pushed, and zelavis.com serves the new allow-list (step 9).
 Everything else is the agent's. Say how long a step takes before starting it, run
 long steps in the background, and keep the machine awake (lid open) while they run.
 
@@ -64,10 +66,17 @@ long steps in the background, and keep the machine awake (lid open) while they r
 8. **Merge back:** in the main checkout, `git merge --ff-only <release commit>` (the worktree
    is `dev` plus the release commits), then push `dev` when the owner agrees. `dev` must
    hold exactly what was published.
-9. **Website, when services changed:** `pnpm allowlist publish` writes
-   `website/public/allowlist.json`; deploy `website/` with
-   `wrangler pages deploy dist --project-name zelavis-website --branch main` only after the
-   owner approves that deploy.
+9. **Website allow-list, every release, never skipped.** Every release publishes the
+   allow-list to zelavis.com, whether or not a service changed: installed servers learn new
+   versions, minimum Platform versions and a renewed expiry only from it, and a missed one
+   went unnoticed for three releases (alpha.37 to .39 shipped sequence 15 while zelavis.com
+   still served 12). In the main checkout after the merge-back, `pnpm allowlist publish`
+   writes `website/public/allowlist.json` from the shipped snapshot; commit it. Then ask the
+   owner to approve the deploy, in the same message that reports the publish, and after the
+   approval build and deploy `website/` with
+   `wrangler pages deploy dist --project-name zelavis-website --branch main`. The release is
+   not finished until `curl -fsS https://zelavis.com/allowlist.json` answers with the
+   snapshot's `sequence`; until then say so plainly in every status update.
 10. **Record** the release in `pnotes/TODO.md` (what shipped, what the gate proved, anything
     learnt), commit and push it separately.
 11. **After publishing:** installed servers offer the version in **Update now**. Optionally
