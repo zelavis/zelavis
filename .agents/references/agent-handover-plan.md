@@ -1,6 +1,6 @@
 # Project Agent handover: updating the Agent without restarting Projects
 
-Status: **implementation complete; final release qualification pending** (2026-10-19).
+Status: **implemented; Linux Agent, installed-update and long-history proofs pass** (2026-10-19).
 Owner decision: when Zelavis updates to the
 latest release, the Project Agent must really be on the latest release too, and customer Projects must
 keep serving while that happens ("option 2", the real handover, not a restart).
@@ -34,83 +34,74 @@ kills the "Agent", and has a second runner adopt them (step 1), and a Docker/sys
 
 ### Implementation progress on 2026-10-19 (dev)
 
-The audit below records the initial code, not the changed working tree. The
-implementation corrects the proposed design: installed Project units are
-process-only; the separate root operations Agent retains delegated controllers.
-Native/integration host control is an authenticated private socket, not a pipe.
-A transient exec gate prevents workload activation before durable record flush.
-Linux records use boot UUID/start ticks and file inode identity, not elapsed age.
-Stop intents persist exact descendant identities before group signals so an
-Agent crash or leader exit does not turn escalation into a PGID reuse guess.
-Conversion is now two-phase: prepare the candidate engine's private admission
-hold while the persistent host is drained; acknowledge root inventory; then replace
-the Agent and wait for Project + private integration recovery outside older hosts'
-30-second commit deadline. GET health/config/update/debug reads remain available
-so Agent failure cannot make the old updater roll back a healthy engine. The
-conversion hold also retains public preview listeners through temporary stopped
-Project snapshots, preserving accepted sockets. First
-conversion traffic has a 120-second test deadline; later continuity uses 30 seconds.
+The initial audit below describes the original code. The implementation corrects
+its proposed design: Project units are process-only, without delegated controllers
+or an Agent-private temporary namespace. The separate root operations Agent keeps
+its containment. Native and managed integration hosts use an authenticated private
+socket instead of stdin control. Kernel locks protect endpoint and runner recovery;
+records use boot UUID/start ticks and log inode identity. A transient exec gate
+flushes the record before activation and resolves bare commands through the
+command's PATH, never the Agent's PATH. Stop intents preserve exact descendant
+identities before signals, including escalation after the leader exits.
 
-Implemented: opt-in runner recovery, endpoint/runner kernel locks, bounded replay,
-Agent generation/marker lifecycle, IPC client rebind, native lost-start adoption,
-installed conversion/update diagnostics, doctor and uninstall cgroup cleanup.
-Linux tests cover real App crash/repeated handover, markerless/stale-marker stop,
-stop during disconnection, log inode replacement, PID reuse and concurrent owners.
-All 19 Linux runner/daemon/client tests pass, including a real controller
-(seed 3737844653), expired placement fencing and recovery exhaustion. Private
-control tests cover authenticated deduplication, deadlines and cache capacity.
-Root verification initially found two macOS socket-path failures; shortened
-opaque socket names fix them and focused regression tests pass. Browser and docs
-checks pass. Root `pnpm run verify` passes (2,139 Platform tests passed, 30
-platform-specific tests skipped). Installed gates still require their final run.
-Isolated installed candidate alpha.41 -> alpha.42 forward update passed with
-unchanged Project PID/start ticks and 4,355 successful requests, including managed
-integration; the Agent PID/release changed. The preliminary combined run exceeded
-30 seconds while root tests also ran, so final gates run sequentially. The first
-alpha.39 -> alpha.40 conversion now passes continuous traffic with retained public
-listeners. Full update/history/release checks still require their final isolated run.
-The full gate reached the installed alpha.39 -> fixture alpha.40 conversion
-(77 seconds) and alpha.40 -> alpha.41 survivable forward update (33 seconds),
-with no failed traffic and unchanged supervised processes after conversion.
-Platform rollback/reselection also passed. It then exposed an outdated descriptor
-assertion: conversion legitimately refreshes `updatedAt` while preserving every
-other field. The gate now permits only that one conversion timestamp change and
-requires byte-for-byte stability afterward; forward continuity also compares
-`/proc` start ticks and debug process identities with no duplicates.
-That stronger check exposed false duplicate reports for legitimate hosts/workers
-whose Project identity existed only in their private environment. New host and
-worker command lines carry non-secret Project-root/workload labels; real listing
-tests still detect two copies of the same workload. Diagnostics, conversion and
-17 persistent host/supervisor tests pass with those labels.
-The installed gate then reproduced a real post-handover database-write failure:
-MariaDB survives but cannot create temporary tables in `/tmp` (ENOENT), so
-WordPress issues login cookies whose session-token writes silently fail. A plain
-`PrivateTmp` unit restart, even with daemon-reload, did not reproduce that loss;
-the initial explanation is incomplete. The candidate Project units now omit the
-Agent-private namespace, and the primitive proof creates temporary files during
-restart/crash. With that change the complete installed sequence PASSES: 24,558
-HTTP requests, conversion and survivable Agent replacement, Platform rollback,
-live App selection both ways, WordPress integration upgrade, post-Platform-restart
-login/database writes, healthy doctor and complete uninstall. The primitive proof
-and all 19 Linux tests pass again. History and final full release qualification
-remain pending. Proof: `/tmp/zelavis-agent-update-proof.json`; log:
-`/tmp/zelavis-agent-update-temp-candidate.log`.
-History qualification exposed another real exec-gate issue: the alpha.25
-WordPress runtime stores bare commands (`mariadbd`, `nginx`, `php-fpm8.2`),
-whereas `execve` does not search PATH. The launcher now resolves the supplied
-command PATH before exec and never substitutes the Agent's PATH. All 20 Linux
-tests pass, including the bare-command/missing-program regression. Re-run history
-through the old fleet before the final release check.
-The Docker systemd primitive proof and all 19 Linux tests pass, including the
-expected delegated-layout negative control. Full installed update/history and
-release qualification are still pending. A browser rerun also encountered the
-known Fuzor 0.5.1 aborted-request failure; the next unchanged run passed.
-No publication or VPS mutation is authorized.
+Pre-protocol conversion is two-phase: prepare the candidate engine's private
+admission hold while the persistent host is drained; acknowledge root inventory;
+then replace the Agent and recover Projects outside older hosts' 30-second commit
+deadline. Managed private runtimes are warmed before requests resume. Public
+preview listeners survive temporary stopped snapshots, retaining accepted sockets.
+Health/config/update/debug reads stay available during recovery. Agent degradation
+is recorded separately and cannot roll back the committed healthy Platform.
 
-Temporary candidate versioning is confined to disposable Docker qualification:
-when source and latest npm both say alpha.39, `ZELAVIS_QUALIFY_CANDIDATE_VERSION`
-versions only the staged payload as alpha.40. The checkout/tarball/npm stay
-unchanged. This is a local candidate proof, not publication of alpha.40.
+Verified locally:
+
+- Root workspace verification, browser suites and docs passed during implementation.
+  The final full release command must qualify the final clean commit; its result
+  is recorded in `pnotes/TODO.md` and `/tmp/zelavis-agent-release-check.log`.
+- The Docker/systemd primitive proof preserves child/Platform PID, birth ticks,
+  temporary-file creation, output and unit limits across restart and crash. Its
+  delegated-controller negative control reproduces the historical 219/CGROUP.
+- All 20 Linux production tests pass: repeated real App handover/crash and re-key,
+  lost-start adoption, markerless/stale-marker stop, stop during disconnect, bounded
+  log replay/truncation, inode replacement, PID reuse, single-writer locks,
+  leader-first escalation, private stdin fencing, expired placement, reconnect
+  exhaustion, transient EIO backoff and a real controller (seed 3737844653).
+  PATH tests prove a bare executable works and an absent supplied PATH cannot fall
+  back to the Agent environment. Private control tests cover authentication,
+  deduplication, deadlines and full-cache refusal. Host/supervisor regression tests pass.
+- Complete installed alpha.39 -> disposable candidate alpha.40 -> alpha.41 passed:
+  24,558 successful HTTP requests, explicit one-time conversion, then unchanged
+  supervised PID and `/proc` birth ticks during forward Agent replacement, with
+  matching debug identities and no duplicate workloads. Platform rollback/reselection,
+  live App selection both ways, retained data, WordPress integration upgrade,
+  post-Platform-restart login, healthy doctor and complete uninstall pass.
+  Proof: `/tmp/zelavis-agent-update-proof.json`; log:
+  `/tmp/zelavis-agent-update-temp-candidate.log`.
+- Long history passed: alpha.25 WordPress and alpha.29 DokuWiki survive live updates
+  through alpha.39 onto the candidate, recover through Agent conversion, upgrade
+  their exact recipes under traffic (729 and 455 responses, zero failures), and
+  restart with exactly one process per service. Log:
+  `/tmp/zelavis-agent-history-final.log`.
+
+Installed qualification found two issues primitive PID tests missed. An Agent-private
+`/tmp` dependency left MariaDB unable to create temporary tables after the complete
+update/restart sequence; WordPress issued cookies but could not save session tokens.
+Removing that namespace makes the complete sequence pass. A plain PrivateTmp restart
+plus daemon-reload did not reproduce the loss, so that smaller probe alone does not
+explain the full cleanup interaction. Historical recipes also store bare executable
+names; direct execve lacked PATH search, now covered by a production regression.
+Non-secret Project-root/workload command labels prevent legitimate App hosts/workers
+from being reported as duplicates. Short opaque private socket names fix macOS path
+limits found by root verification. A known Fuzor 0.5.1 aborted-request error stopped
+one browser run; the unchanged retry passed. Keep that external failure visible.
+
+Temporary candidate versions exist only in disposable Docker payloads:
+`ZELAVIS_QUALIFY_CANDIDATE_VERSION` and `ZELAVIS_QUALIFY_AGENT_NEXT_VERSION` let a
+source tarball whose version equals latest npm exercise real forward transitions.
+The checkout/tarball/npm version is unchanged. Remote/Bun Agent replacement remains
+unqualified; embedded user Agents receive new code when their host next starts.
+No npm publication, Git push, extra worktree or VPS mutation is authorized. The owner
+subsequently authorized an independent website allow-list refresh; its sequence 12
+was stale while releases ship sequence 15, unrelated to the reproduced Agent failures.
 
 ### Initial audit on 2026-10-18 (dev)
 
