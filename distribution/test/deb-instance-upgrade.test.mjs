@@ -38,6 +38,18 @@ test("Debian payload replacement leaves independently selected persistent releas
     const postinst = await readFile(join(packageRoot, "DEBIAN/postinst"), "utf8");
     assert.match(postinst, /\/opt\/zelavis\/package\/runtime\/node\/bin\/node/);
     assert.match(postinst, /--from-release \/opt\/zelavis\/package --installed-by deb/);
+    const maintainerTools = join(root, "maintainer-tools");
+    await mkdir(maintainerTools, {recursive: true});
+    const calls = join(root, `maintainer-${version}.log`);
+    await writeFile(join(maintainerTools, "systemctl"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$ZELAVIS_MAINTAINER_CALLS\"\n", {mode: 0o755});
+    const prerm = join(packageRoot, "DEBIAN/prerm");
+    const maintainerEnv = {...process.env, PATH: maintainerTools, ZELAVIS_MAINTAINER_CALLS: calls};
+    execFileSync("/bin/sh", [prerm, "upgrade"], {env: maintainerEnv});
+    await assert.rejects(readFile(calls), {code: "ENOENT"}, "unpacking a newer payload must leave running services alone");
+    execFileSync("/bin/sh", [prerm, "remove"], {env: maintainerEnv});
+    const stopped = await readFile(calls, "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
+    const removalUnits = "zelavis-update.path zelavis-update.service zelavis.socket zelavis.service zelavis-traefik.service";
+    assert.deepEqual(stopped.trim().split("\n"), [`stop ${removalUnits}`, `disable ${removalUnits}`], "package removal must stop and disable the Platform, ingress and their activation units");
     assert.equal(await readlink(join(packageRoot, "usr/bin/zelavis")), "/opt/zelavis/current/bin/zelavis");
     // Model dpkg replacing only the files the new package actually owns.
     await mkdir(prefix, {recursive: true});

@@ -47,7 +47,8 @@ test("the Debian package manages Traefik unit, conffiles, and enables production
   assert.match(builder, /cli\.js install --from-release/);
   const plan = await readFile(new URL("../../packages/zelavis/src/core/runtime/installation-plan.ts", import.meta.url), "utf8");
   assert.match(plan, /\["enable", "zelavis-traefik\.service"\]/);
-  assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
+  // deb-instance-upgrade.test.mjs executes the generated removal hook and
+  // verifies ingress and activation lifecycle behavior.
 });
 
 test("the bootstrap acquires only Node and the npm package, and trusts nothing else", async () => {

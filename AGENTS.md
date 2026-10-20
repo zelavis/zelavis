@@ -100,6 +100,9 @@ integration needs access to repo-maintained guidance, point it at `AGENTS.md`
 or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
 `.agents/`. The tracked Claude session-start hook should keep those symlinks
 current automatically.
+The hook locates the ancestor containing `.agents/skills/` before creating links,
+including when invoked inside the nested private `pnotes/` Git repository.
+`pnotes/` needs no separate `.claude/` configuration or skill copies.
 
 ## Service Loading Rules
 
@@ -1518,21 +1521,19 @@ those grants, while endpoints remain the authority layer.
   focused `zelavis/*` subpaths and does not own product menus or root authority.
 - `pnotes/` is the ignored, separate private repository holding one file,
   `pnotes/TODO.md`: the maintained private roadmap, decisions and open work
-  (design notes, plans, handovers and evidence are condensed into it rather than
-  kept as separate files). Never stage or publish its contents in the main
+  (keep design context only where it supports unfinished work; do not turn it
+  into a release history, audit log or completed-work archive). Never stage or publish its contents in the main
   repository, and never make public documentation checks or CI depend on it.
 - When available, update `pnotes/TODO.md` (its checkbox sections, such as
   "Platform, Fabric and Agents" or "Cleanup list") when a core, App-versioning,
   or Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.
-- Keep that roadmap current in the same change, never afterwards. A change
-  that finishes an item marks it done in its own commit and says what it now
-  does and what it cost — the numbers, where they were measured. Anything the
-  work turned up goes in as a new open item then, while it is still known: a
-  follow-up, a limit hit, a cost worth paying down later. And check what you
-  touched on the way past: an item left open because nobody revisited it reads
-  as work outstanding, which is the same defect as a stale comment, and the
-  next reader plans around it.
+- Keep that roadmap current in the same change, never afterwards. Remove
+  completed items and their progress/validation history so the TODO shrinks;
+  do not retain checked-off entries or add a Done section. Preserve unfinished
+  follow-ups as concise open items, including any limits the work uncovered.
+  Completed behavior belongs in tests, maintained documentation and Git history.
+  Revisit nearby stale entries rather than leaving finished work marked open.
 - `packages/zelavis/src/app` owns the built-in App stack exported as `zelavis/app`
   (identity primitives and Project-scoped workloads; the document-first database
   is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`

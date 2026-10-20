@@ -59,6 +59,7 @@ const runReleaseInstallProgram = Effect.fn("InstallationCLI.runReleaseInstall")(
     return yield* runWorkerInstallProgram({ source, npmPrepared, dryRun, json, force, allowDowngrade, installedBy: (["script", "create", "cli"] as const).find((origin) => origin === (installedBy as string)) ?? "cli", invokingPath, platformOnly });
   }
   if (source && npmPrepared) return yield* new IntegrationFailure(new Error("Choose either --from-release <path> or --from-npm <path>."));
+  if (stageOnly && dryRun) return yield* new IntegrationFailure(new Error("--stage-only cannot be combined with --dry-run; staging writes a release."));
   if (stageOnly && !npmPrepared) return yield* new IntegrationFailure(new Error("--stage-only prepares a release from --from-npm; there is nothing to prepare from a staged tree."));
   if (stageOnly && live) return yield* new IntegrationFailure(new Error("Choose either --stage-only or --live."));
   if (!source && !npmPrepared) return yield* new IntegrationFailure(new Error("zelavis install requires --from-release <absolute staged-release path> or --from-npm <absolute prepared path>."));

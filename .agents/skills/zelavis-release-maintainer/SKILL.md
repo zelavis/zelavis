@@ -79,8 +79,10 @@ long steps in the background, and keep the machine awake (lid open) while they r
    `wrangler pages deploy dist --project-name zelavis-website --branch main`. The release is
    not finished until `curl -fsS https://zelavis.com/allowlist.json` answers with the
    snapshot's `sequence`; until then say so plainly in every status update.
-10. **Record** the release in `pnotes/TODO.md` (what shipped, what the gate proved, anything
-    learnt), commit and push it separately.
+10. **Prune the roadmap:** remove completed release tasks from `pnotes/TODO.md` and keep
+    only unfinished follow-ups. Do not append a release history or validation log;
+    completed behavior belongs in tests, maintained documentation and Git history.
+    Commit and push private notes separately.
 11. **After publishing:** installed servers offer the version in **Update now**. Optionally
     qualify the published path with real npm acquisition (`ZELAVIS_QUALIFY_UPDATE=npm`,
     below). Tell the owner what to do on their server, if anything.
@@ -128,6 +130,13 @@ pnpm release:publish:latest
 pnpm allowlist update
 pnpm allowlist publish
 ```
+
+For an already-published release, `pnpm distribution:qualify:installer` runs the
+broader Debian/Ubuntu installer-entry and instance lifecycle matrix. Run it on
+each native architecture; an emulated image does not prove native coverage.
+The [distribution guide](../../../distribution/README.md) defines its scope,
+focused phases and proof output. The unpublished-candidate release gates below
+remain part of `release:check`.
 
 `pnpm release:check` includes `release:qualify:update` against the actual previous
 npm release in disposable Linux/systemd. Docker is required for this release gate,

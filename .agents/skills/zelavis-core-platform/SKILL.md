@@ -393,6 +393,9 @@ before editing.
   to it.
 - When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
+  Remove completed items and their progress/validation history so the TODO
+  shrinks; retain only unfinished follow-ups and the context they need. Do not
+  append checked-off entries, release histories or audit logs.
 - Keep `AGENTS.md` as the canonical durable instruction source; there is no
   `CLAUDE.md`, so do not add one.
 - If durable Platform guidance changes, update this skill or a focused

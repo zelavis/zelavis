@@ -164,8 +164,9 @@ command tree.
 ## Host-local install and doctor
 
 `zelavis install --from-release /absolute/release` uses a staged release, while
-`zelavis install --from package --version <exact-version>` acquires its matching
-verified prebuilt archive. Both use the same plan; `--dry-run` inspects it,
+`zelavis install --from-npm /absolute/prepared-tree` completes the private Node
+and npm package tree acquired by the canonical bootstrap. Both use the same
+plan; `--dry-run` inspects it,
 `--user` selects user mode and `--json` selects structured output. Existing
 receipts identify the source, entry, mode, selected instance, port and Edge ownership. Foreign layouts,
 live data owners and occupied or reserved instance ports are refused. `--force` only permits

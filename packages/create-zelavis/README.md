@@ -13,9 +13,11 @@ npm create zelavis@latest -- --yes
 Linux defaults to system mode when root or sudo is available: `/opt/zelavis`
 contains versioned releases, `/var/lib/zelavis` contains data, and `/etc/zelavis`
 contains configuration. The Platform starts through systemd using the release's
-private Node. On a server the dashboard listens on all interfaces at port 3000 and the
-installer prints the URL to open; the first-owner token gates who can claim the account.
-System mode enables the separately supervised Project Agent.
+private Node. The default system instance enables Traefik ingress at
+`http://<server-ip>/zelavis/`; the management listener stays on `127.0.0.1:3000`
+unless `--public` is given. The installer prints the URL to open, and the
+first-owner token gates who can claim the account. System mode enables the
+separately supervised Project Agent. Named instances keep host Edge off.
 
 macOS and Linux without sudo default to user mode. Select it explicitly with:
 
