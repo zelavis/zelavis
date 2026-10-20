@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "sequence": 15,
-  "issuedAt": "2026-10-18T15:44:18.098Z",
-  "expiresAt": "2027-10-18T15:44:18.098Z",
+  "sequence": 16,
+  "issuedAt": "2026-10-20T08:08:34.881Z",
+  "expiresAt": "2027-10-20T08:08:34.881Z",
   "services": [
     {
       "name": "@zelavis/app-auth-oidc",
