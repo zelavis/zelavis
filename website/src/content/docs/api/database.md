@@ -144,6 +144,15 @@ await zv.db.projections.register({
 });
 ```
 
+A projection's `apply` runs at least once per event. The checkpoint advances
+after a page of events has been applied, and `apply` writes wherever it likes,
+so the two cannot commit together: a run cut off between them applies that
+page again. Make `apply` idempotent by keying what it writes on
+`event.eventId`, which names the record and the version it reached and stays
+the same when the Tenant moves to another shard. A rebuild clears the
+checkpoint before calling `reset`, so a rebuild cut off at any point is
+finished by the next run, which starts from the beginning.
+
 ## Time-series
 
 Definitions are logical and Tenant-neutral; reads are Tenant-bound:
@@ -168,3 +177,12 @@ const total = await handle.aggregate({ op: 'count' });
 
 The same definition can be queried for another Tenant through a different
 `forTenant(...)` handle without changing its mapping logic.
+
+A time series is stored beside the log it consumes, so `ingest` commits each
+batch of points together with the place in the log it reached: an ingest cut
+off and run again stores every point exactly once. `rebuild` builds a new
+copy of the series next to the one reads use and replaces it in the same
+commit as its last points; until then reads see the old series, and a rebuild
+cut off part way leaves the old series serving. While a Tenant is being moved
+to another shard, `ingest`, `rebuild` and projection runs fail with
+`TenantMoving` (409 over HTTP); retry once the move has finished.

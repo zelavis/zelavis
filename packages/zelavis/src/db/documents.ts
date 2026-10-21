@@ -8,7 +8,7 @@ import {
   RESERVED_COLLECTION_PREFIX,
 } from "./naming.js";
 import {
-  COLLECTION_NAMESPACE, documentNamespace, IDEMPOTENCY_NAMESPACE, MOVE_FENCE_NAMESPACE,
+  COLLECTION_NAMESPACE, documentNamespace, IDEMPOTENCY_NAMESPACE,
   TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE,
 } from "./tenancy.js";
 import {
@@ -21,6 +21,7 @@ import {
   InvalidCollectionName,
   InvalidDocumentValue,
   TenantMoving,
+  dieUnlessMoving,
   CursorMismatch,
   IndexExists,
   InvalidIndex,
@@ -811,7 +812,6 @@ export const collectionRecord = objectFields<StoredCollection>({ name: isString,
   referencedBy: optional(arrayOf(objectFields<{ collection: string; reference: string }>({ collection: isString, reference: isString }))),
 });
 const receiptRecord = objectFields<Receipt>({ key: isString, fingerprint: isString, request: isString, result: isUnknown, at: isTimestamp });
-const renameFenceRecord = objectFields<{ from: string; to: string }>({ from: isString, to: isString });
 
 const publicIndex = (index: StoredIndex): CollectionIndex => ({
   name: index.name,
@@ -2189,24 +2189,11 @@ export const documentsFor = (
   // respond to — a duplicate id, a missing collection, a stale version.
   const lookup = (namespace: string, key: string) => Effect.orDie(store.lookup(namespace, key));
   const readObject = (seq: Seq) => Effect.orDie(store.read(seq));
-  const nextSeq = Effect.orDie(store.nextSeq);
+  const nextSeq = dieUnlessMoving(store.nextSeq);
   const resolveQuery = (query: Query): Stream.Stream<Seq> => Stream.orDie(store.resolve(query));
   const termsOf = (field: string, prefix?: string) => Effect.orDie(store.terms(field, prefix));
-  /**
-   * A change that is refused, inside its own transaction, when the tenant is
-   * being moved off this shard.
-   *
-   * The partition admits one writer at a time and the fence is written through
-   * it, so the fence lands either before this check, and the change is refused,
-   * or after this commit, which the move's last catch-up then carries. Checked
-   * before the transaction only, a change could read no fence, wait while the
-   * fence went on and the last catch-up read the log, and land behind both.
-   */
-  const fenced = <A, E>(change: (txn: Txn) => Effect.Effect<A, E>) =>
-    (txn: Txn): Effect.Effect<A, E | TenantMoving> => Effect.flatMap(assertNotMoving, () => change(txn));
-
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
-    Effect.orDie(store.transact(fenced(f)));
+    Effect.orDie(store.transact(f));
 
   const projectionIndexes = new Map<string, VectorProjectionIndex>();
 
@@ -2251,7 +2238,7 @@ export const documentsFor = (
   const transactChecked = <A, E>(
     change: (txn: Txn) => Effect.Effect<A, E | DbError>,
   ): Effect.Effect<A, Exclude<E, DbError> | TenantMoving> =>
-    store.transact(fenced(change)).pipe(
+    store.transact(change).pipe(
       Effect.catch((error) =>
         STORE_FAILURES.has((error as { readonly _tag: string })._tag)
           ? Effect.die(error)
@@ -2314,22 +2301,12 @@ export const documentsFor = (
     Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode(o.bytes, documentRecord)));
 
   /**
-   * Refuse a write to a tenant that is being relocated off this shard.
-   *
-   * One point lookup ahead of each write. That is a real cost on a hot path for
-   * an operation that happens rarely, and it is the price of the alternative
-   * being a write that lands in records nobody will read again — a move would
-   * otherwise have to take the tenant offline for reads as well, just to keep
-   * the two copies from diverging.
+   * Refuse early a change to a tenant that is being moved off this shard,
+   * before work its commit would be refused for anyway. Costs nothing: the
+   * store keeps whether its partition is fenced, and refuses the commit itself
+   * whether or not this ran.
    */
-  const assertNotMoving = Effect.gen(function* () {
-    const seq = yield* lookup(MOVE_FENCE_NAMESPACE, tenant);
-    if (seq === undefined) return;
-    const fence = yield* readObject(seq);
-    if (fence === undefined) return;
-    const { from, to } = decode(fence.bytes, renameFenceRecord);
-    return yield* new TenantMoving({ tenant, from, to });
-  });
+  const assertNotMoving = dieUnlessMoving(store.writable);
 
   /**
    * H3, loaded once and kept.
@@ -2348,7 +2325,7 @@ export const documentsFor = (
     });
 
   const transactOrDie = <A>(f: (txn: Txn) => Effect.Effect<A, DbError>): Effect.Effect<A> =>
-    Effect.orDie(store.transact(fenced(f)));
+    Effect.orDie(store.transact(f));
 
   const collectionPut = (txn: Txn, seq: Seq, collection: StoredCollection) =>
     txn.put(seq, encode(collection), {
@@ -4210,7 +4187,6 @@ const generateHighlights = (
         const seq = yield* nextSeq;
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
-            yield* assertNotMoving;
             return yield* applyInsert(txn, nothingPending(), {
               collection: input.collection, id, data: input.data,
             }, seq);
@@ -4467,7 +4443,6 @@ const generateHighlights = (
         // same version and have one silently undo the other.
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
-            yield* assertNotMoving;
             return yield* applyUpdate(txn, nothingPending(), input);
           }));
       }),
@@ -4481,7 +4456,6 @@ const generateHighlights = (
         });
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
-            yield* assertNotMoving;
             return yield* applyDelete(txn, nothingPending(), input);
           }),
           // Nothing happened, so there is nothing to remember: a later retry
@@ -4957,7 +4931,6 @@ const generateHighlights = (
         }
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
-            yield* assertNotMoving;
             // One overlay for the batch: each change sees what the ones before
             // it wrote, which is what makes them one change rather than several.
             const pending = nothingPending();

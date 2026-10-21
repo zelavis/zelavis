@@ -3,6 +3,7 @@ import { equals } from "./query.js";
 import {
   BackupFormatUnsupported,
   BackupTenantMismatch,
+  type TenantMoving,
   TenantNotEmpty,
 } from "./errors.js";
 import { asSeq, emptyManifest, type IndexManifest, type ObjectIdentity, type Seq } from "./model.js";
@@ -104,13 +105,15 @@ export interface BackupsApi {
    * refuses, because replaying blindly over live data would repoint each name
    * at a new record while leaving the old one indexed — matching queries,
    * reachable by nothing. `purge` and `merge` are the two coherent answers.
+   * A tenant being moved off this shard refuses the restore (`TenantMoving`),
+   * as it refuses every other write.
    */
   readonly restoreTenant: (
     backup: TenantBackupV1,
     options?: RestoreOptions,
   ) => Effect.Effect<
     RestoreResult,
-    BackupFormatUnsupported | BackupTenantMismatch | TenantNotEmpty
+    BackupFormatUnsupported | BackupTenantMismatch | TenantNotEmpty | TenantMoving
   >;
 }
 

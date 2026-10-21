@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServiceRuntime } from "../dist/core/index.js";
 import { defineDatabaseService } from "../dist/db/index.js";
+import { TenantMoving } from "../dist/db/errors.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
 /**
@@ -845,4 +846,17 @@ test("an empty database menu needs no fabricated Tenant and discovers later tabl
   const items = (await call(route, { service: api })).body.items;
   assert.deepEqual(items.filter(item => item.search.databaseTable).map(item => [item.title, item.search.databaseTenant]),
     [["a · invoices", "a"], ["b · invoices", "b"]]);
+});
+
+test("a write refused because its tenant is mid-move is a conflict that says to retry", async () => {
+  const moving = new TenantMoving({ tenant: "acme", from: "shard-0", to: "shard-1" });
+  const api = { forTenant: () => ({ documents: { insert: () => Promise.reject(moving) } }) };
+  const service = defineDatabaseService(api);
+  const response = await call(routeOf(service, "database.documents.insert"), {
+    service: api,
+    params: { collection: "posts" },
+    body: { tenantId: "acme", data: {} },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error, 'Tenant "acme" is being moved to another shard; retry shortly.');
 });

@@ -66,6 +66,13 @@ export interface Txn {
 
   /** Remove an object and every posting its manifest recorded. */
   readonly retract: (seq: Seq) => Effect.Effect<void, DbError>;
+
+  /**
+   * The next identifier, allocated inside this transaction: a change that
+   * creates records commits them and their identifiers together, or neither,
+   * and costs no commit of its own per record.
+   */
+  readonly allocate: Effect.Effect<Seq, DbError>;
 }
 
 /**
@@ -291,6 +298,22 @@ export interface ObjectStoreApi {
     f: (txn: Txn) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | DbError, R>;
 
+  /**
+   * Fence the partition on the shard a move is taking it from: from here every
+   * change to it — a transaction, an allocated identifier, applied or followed
+   * events, a seed — fails with `TenantMoving`. Reads, upkeep and removal go
+   * on. The check is made under the partition's writer, so a change either
+   * committed before the fence or is refused; none lands after it.
+   */
+  readonly fence: (move: { readonly from: string; readonly to: string }) => Effect.Effect<void, DbError>;
+
+  /**
+   * Fails with `TenantMoving` when the partition is fenced. Free once the
+   * handle knows, which it keeps; for refusing early, before work a commit
+   * would refuse anyway.
+   */
+  readonly writable: Effect.Effect<void, DbError>;
+
   readonly read: (seq: Seq) => Effect.Effect<DbObject | undefined, DbError>;
 
   /**
@@ -408,13 +431,13 @@ export interface ShardStoreApi {
    * Remove a partition — records, log, lenses and meta — in bounded batches.
    * Answers how many records it held.
    *
-   * With `keep`, the record of that name stays and the rest goes: a tenant
+   * With `keepFence`, the partition's fence stays and the rest goes: a tenant
    * moved off a shard leaves its fence there, so a write still on its way to
    * the old shard is refused rather than landing where nothing reads it.
    */
   readonly drop: (
     partition: PartitionKey,
-    options?: { readonly keep?: ObjectIdentity },
+    options?: { readonly keepFence?: boolean },
   ) => Effect.Effect<number, DbError>;
 }
 

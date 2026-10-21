@@ -410,6 +410,9 @@ const CONFLICT_TAGS = new Set([
   "UniqueViolation",
   "DocumentConflict",
   "SchemaVersionExists",
+  // Refused only while a move is fenced; the same request succeeds once
+  // routing points at the new shard.
+  "TenantMoving",
 ]);
 
 const NOT_FOUND_TAGS = new Set([
@@ -521,6 +524,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Constraint "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
     case "ConstraintExists":
       return `Collection "${failure.collection}" already has a constraint named "${failure.name}".`;
+    case "TenantMoving":
+      return `Tenant "${failure.tenant}" is being moved to another shard; retry shortly.`;
     default:
       return failure._tag;
   }

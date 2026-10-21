@@ -94,7 +94,23 @@ test("identifiers are refused at the limit rather than wrapped", () => run(Effec
   assert.equal(Number(yield* store.nextSeq), MAX_SEQ, "the last identifier is still handed out");
   const refused = yield* Effect.flip(store.nextSeq);
   assert.equal(refused._tag, "PartitionExhausted");
+  assert.equal(refused.resource, "identifiers");
   assert.equal(refused.limit, MAX_SEQ);
+  const inside = yield* Effect.flip(store.transact((txn) => txn.allocate));
+  assert.equal(inside.resource, "identifiers", "allocating inside a transaction is refused the same way");
+})));
+
+test("a log at its last position refuses the next event rather than wrapping, and writes nothing", () => run(Effect.gen(function* () {
+  const engine = memoryKvEngine();
+  const store = yield* partitionOf(engine, "acme");
+  yield* put(store, 1, ["first"]);
+  yield* engine.write([{ op: "put", key: partitionKeys("acme").meta("head"), value: u64Bytes(Number.MAX_SAFE_INTEGER) }]);
+  const before = yield* store.stats;
+  // A failure the caller can see, not a defect: Effect.flip would rethrow one.
+  const refused = yield* Effect.flip(put(store, 2, ["second"]));
+  assert.equal(refused._tag, "PartitionExhausted");
+  assert.equal(refused.resource, "log");
+  assert.deepEqual(yield* store.stats, before);
 })));
 
 test("partitions on one shard read only their own records, words, names and history", () => run(Effect.gen(function* () {
@@ -277,11 +293,7 @@ test("a write that saw no fence before its transaction is still refused when the
 
   // The fence goes on between the write's own check and its transaction: the
   // window a move's last catch-up could otherwise miss a write in.
-  const fence = Effect.gen(function* () {
-    const seq = yield* store.nextSeq;
-    yield* store.transact((txn) => txn.put(seq, enc.encode(JSON.stringify({ from: "s0", to: "s1" })),
-      { terms: [], columns: [], measures: [], edges: [] }, { namespace: "zv.moving", key: "acme" }));
-  });
+  const fence = store.fence({ from: "s0", to: "s1" });
   let armed = true;
   const racing = {
     ...store,

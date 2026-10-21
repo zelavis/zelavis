@@ -135,11 +135,16 @@ test("the shard a tenant left stops holding it, and stops claiming it", async (t
       // Only the fence stays, so a write still on its way to s0 is refused
       // there rather than landing where nothing reads it.
       const left = yield* stores.get("s0").partition(from).liveRecords;
-      assert.deepEqual(left.map((record) => record.identity.namespace), ["zv.moving"],
-        `s0 still holds more than the fence for ${from}`);
+      assert.deepEqual(left, [], `s0 still holds records for ${from}`);
       const late = yield* Effect.flip(documentsFor(stores.get("s0").partition(from), from)
         .insert({ collection: "posts", id: "late", data: { title: "late" } }));
       assert.equal(late._tag, "TenantMoving", "a late write to the old shard is refused");
+      assert.deepEqual(yield* stores.get("s0").partition(from).liveRecords, [], "and left nothing behind");
+
+      // The fence is the source's alone: the copy takes writes the moment
+      // routing points at it.
+      assert.equal(yield* stores.get("s1").partition(from).writable, undefined);
+      yield* db.forTenant(from).documents.insert({ collection: "posts", id: "after", data: { title: "after" } });
 
       const targets = yield* db.scatter.targets();
       assert.ok(targets.every((target) => target.shard === "s1"),
@@ -160,11 +165,8 @@ test("a fenced tenant refuses every kind of write and none of the reads", async 
       // is set up rather than raced for.
       const source = stores.get("s0").partition(tenant);
       const enc = new TextEncoder();
-      const seq = yield* source.nextSeq;
-      yield* source.transact((txn) =>
-        txn.put(seq, enc.encode(JSON.stringify({ from: "s0", to: "s1" })),
-          { terms: [], columns: [], measures: [], edges: [] },
-          { namespace: "zv.moving", key: tenant }));
+      const held = yield* source.stats;
+      yield* source.fence({ from: "s0", to: "s1" });
 
       const docs = db.forTenant(tenant).documents;
       const refused = yield* Effect.flip(
@@ -183,6 +185,16 @@ test("a fenced tenant refuses every kind of write and none of the reads", async 
       assert.equal((yield* Effect.flip(docs.createCollection({ name: "other" })))._tag,
         "TenantMoving");
 
+      // The store refuses it, not the documents layer: whatever writes the
+      // partition around documents — time series points, projection
+      // checkpoints, a restore — is refused just the same, and nothing it tried
+      // is left behind.
+      assert.equal((yield* Effect.flip(source.nextSeq))._tag, "TenantMoving");
+      assert.equal((yield* Effect.flip(source.transact((txn) =>
+        txn.put(held.nextSeq + 1, enc.encode("{}"), { terms: [], columns: [], measures: [], edges: [] }))))._tag,
+        "TenantMoving");
+      assert.deepEqual(yield* source.stats, held, "nothing was written behind the fence");
+
       // Reads are untouched. The source still holds the data and nothing is
       // changing it, so taking the tenant offline for reading would buy nothing.
       const found = yield* docs.findMany({ collection: "posts" });
@@ -195,6 +207,41 @@ test("a fenced tenant refuses every kind of write and none of the reads", async 
       });
     }),
   );
+});
+
+test("a copy that does not match its source stops the move with TenantMoveFailed, leaving routing and the source as they were", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-move-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    // The target miscounts its records: what a copy that came up short shows.
+    const db = yield* makeDatabase({
+      partitionMap: partitionMapFor(["s0", "s1"]),
+      openShard: (shard) => Effect.map(makeNodeSqliteStore(shard, dir), (store) => shard !== "s1" ? store : {
+        ...store,
+        partition: (name) => {
+          const partition = store.partition(name);
+          return { ...partition, stats: Effect.map(partition.stats, (stats) => ({ ...stats, records: stats.records + 1 })) };
+        },
+      }),
+    });
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+    const before = yield* snapshot(db, tenant);
+
+    // A failure the caller can see, not a defect: Effect.flip would rethrow one.
+    const failure = yield* Effect.flip(db.movement.rebalance(allOn("s1", 2)));
+    assert.equal(failure._tag, "TenantMoveFailed");
+    assert.deepEqual([failure.from, failure.to], ["s0", "s1"]);
+    assert.match(failure.reason, /records at position/);
+
+    assert.equal(db.shardOf(tenant), "s0", "routing has not moved");
+    assert.deepEqual(yield* snapshot(db, tenant), before, "the source is intact");
+    const late = yield* Effect.flip(db.forTenant(tenant).documents.insert({
+      collection: "posts", id: "late", data: { title: "late" },
+    }));
+    assert.equal(late._tag, "TenantMoving", "and it stays fenced until the move is resumed");
+  })));
 });
 
 test("an interrupted move is resumed rather than repaired", async (t) => {
@@ -213,11 +260,7 @@ test("an interrupted move is resumed rather than repaired", async (t) => {
         tenant, from: "s0", to: "s1", phase: "copying",
         startedAt: new Date().toISOString(), map: allOn("s1", 2),
       };
-      const fenceSeq = yield* stores.get("s0").partition(tenant).nextSeq;
-      yield* stores.get("s0").partition(tenant).transact((txn) =>
-        txn.put(fenceSeq, enc.encode(JSON.stringify({ from: "s0", to: "s1" })),
-          { terms: [], columns: [], measures: [], edges: [] },
-          { namespace: "zv.moving", key: tenant }));
+      yield* stores.get("s0").partition(tenant).fence({ from: "s0", to: "s1" });
       const moveSeq = yield* topologyStore.nextSeq;
       yield* topologyStore.transact((txn) =>
         txn.put(moveSeq, enc.encode(JSON.stringify(record)),
@@ -360,12 +403,12 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
         if (!interruptCleanup || shard !== "s0") return store;
         return {
           ...store,
-          drop: (partition) => Effect.suspend(() => {
+          drop: (partition, options) => Effect.suspend(() => {
             if (db?.partitionMap.version === 2) {
               cleanupInterrupted = true;
               return Effect.die(new Error("injected interruption before source cleanup"));
             }
-            return store.drop(partition);
+            return store.drop(partition, options);
           }),
         };
       }),
@@ -396,13 +439,16 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
     assert.equal((yield* db.movement.pending)[0].phase, "routed");
     assert.deepEqual(yield* snapshot(db, tenant), before);
     assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);
+    // The fence outlived the process that set it.
+    assert.equal((yield* Effect.flip(stores.get("s0").partition(tenant).writable))._tag, "TenantMoving");
     const results = yield* db.movement.resume;
     assert.equal(results.length, 1);
     assert.equal(results[0].resumed, true);
     assert.equal(results[0].copied, 0);
     assert.ok(results[0].removed > 0, "the real source records were cleaned up");
-    assert.deepEqual((yield* stores.get("s0").partition(tenant).liveRecords).map((record) => record.identity.namespace),
-      ["zv.moving"], "only the fence is left on the source");
+    assert.deepEqual(yield* stores.get("s0").partition(tenant).liveRecords, [], "no records are left on the source");
+    assert.equal((yield* Effect.flip(stores.get("s0").partition(tenant).writable))._tag, "TenantMoving",
+      "only the fence is");
     assert.equal(db.partitionMap.version, 2);
     assert.deepEqual(yield* snapshot(db, tenant), before);
     assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);

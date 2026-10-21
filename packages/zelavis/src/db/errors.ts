@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   op: Schema.String,
@@ -66,7 +66,8 @@ export class IdempotencyKeyReused extends Schema.TaggedError<IdempotencyKeyReuse
  *
  * A move copies a tenant to another shard and then changes where it routes.
  * Between those two moments a write to the shard being left would land in
- * records nobody reads again, so it is refused instead. Reads are unaffected:
+ * records nobody reads again, so the store refuses it — every change to the
+ * fenced partition, whichever layer makes it. Reads are unaffected:
  * the source still holds the data until routing moves, and the target holds it
  * afterwards.
  */
@@ -74,6 +75,22 @@ export class TenantMoving extends Schema.TaggedError<TenantMoving>()("TenantMovi
   tenant: Schema.String,
   from: Schema.String,
   to: Schema.String,
+}) {}
+
+/**
+ * A move stopped because its copy did not match the source.
+ *
+ * Checked with writes fenced, just before routing would move, and the last
+ * moment it can be: afterwards the source is cleared and a copy that came up
+ * short would surface later as missing records, with nothing left to compare
+ * against. Routing has not moved and the source is intact; the tenant stays
+ * fenced until the move is resumed, which copies it again from scratch.
+ */
+export class TenantMoveFailed extends Schema.TaggedError<TenantMoveFailed>()("TenantMoveFailed", {
+  tenant: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+  reason: Schema.String,
 }) {}
 
 /**
@@ -378,14 +395,17 @@ export class LogCompacted extends Schema.TaggedError<LogCompacted>()("LogCompact
 }) {}
 
 /**
- * A partition has handed out every identifier it can.
+ * A partition has handed out every identifier, or used every log position, it
+ * can.
  *
  * Identifiers are never reused, so a partition that creates and deletes
  * constantly runs through them faster than it grows. Refused rather than
- * wrapped: a wrapped identifier would name a record that already exists.
+ * wrapped: a wrapped identifier would name a record that already exists, and a
+ * wrapped position an event already logged.
  */
 export class PartitionExhausted extends Schema.TaggedError<PartitionExhausted>()("PartitionExhausted", {
   partition: Schema.String,
+  resource: Schema.Literals(["identifiers", "log"]),
   limit: Schema.Finite,
 }) {}
 
@@ -427,6 +447,15 @@ export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("Le
 }) {}
 
 /** Every failure the store contract can raise. */
+/**
+ * A store's failures as defects, but for `TenantMoving`: a write refused while
+ * its tenant is being moved is the caller's to see, and succeeds once routing
+ * points at the new shard. Anything else a store fails with is a broken engine
+ * or a broken invariant.
+ */
+export const dieUnlessMoving = <A, R>(effect: Effect.Effect<A, DbError, R>): Effect.Effect<A, TenantMoving, R> =>
+  Effect.catch(effect, (error) => error._tag === "TenantMoving" ? Effect.fail(error) : Effect.die(error));
+
 export type DbError =
   | StoreError
   | WriterFenced
@@ -435,4 +464,5 @@ export type DbError =
   | LogCompacted
   | PartitionUnavailable
   | PartitionExhausted
-  | LensesRebuilding;
+  | LensesRebuilding
+  | TenantMoving;

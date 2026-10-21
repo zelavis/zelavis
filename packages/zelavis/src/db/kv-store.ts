@@ -1,7 +1,7 @@
 import { Effect, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
-  PartitionExhausted, ReplicaDiverged, StoreError, TenantNotEmpty, WriterFenced,
+  PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, WriterFenced,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
@@ -17,7 +17,8 @@ import {
   containerOf, decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
 } from "./segments.js";
 import {
-  decodeEvent, decodeRecord, encodeEvent, encodeRecord, type StoredEvent, type StoredRecord,
+  decodeEvent, decodeFence, decodeRecord, encodeEvent, encodeFence, encodeRecord,
+  type StoredEvent, type StoredFence, type StoredRecord,
 } from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
 import type {
@@ -111,6 +112,13 @@ const META_LENSES = "lenses";
 const LENSES_READY = 0;
 const LENSES_REBUILDING = 1;
 const LENSES_REINDEXING = 2;
+
+/**
+ * Set by a move on the shard a partition is leaving: where it is going. Every
+ * change to the partition is refused from then on (`TenantMoving`), and a
+ * removal that keeps the fence leaves it as the only thing there.
+ */
+const META_FENCE = "fence";
 
 /** The highest version a record can reach: four bytes in every record and event. */
 const MAX_VERSION = 0xffffffff;
@@ -303,7 +311,7 @@ const openPartition = (
   partition: PartitionKey,
 ): {
   readonly api: ObjectStoreApi;
-  readonly drop: (keep?: ObjectIdentity) => Effect.Effect<number, StoreError | WriterFenced>;
+  readonly drop: (keepFence: boolean) => Effect.Effect<number, StoreError | WriterFenced>;
 } => {
   const { engine, origin, probeCap } = context;
   const { generation, session } = context.claim;
@@ -333,7 +341,40 @@ const openPartition = (
    * takes it.
    */
   const withPermit = Semaphore.withPermit(Semaphore.makeUnsafe(1));
+
+  /**
+   * What this handle believes about the partition, kept rather than read for
+   * every write.
+   *
+   * The handle is the partition's one writer for as long as its claim is
+   * current — a shard store keeps one handle per partition, and a newer claim
+   * fences this one — so what it last wrote is what the partition holds. A
+   * write therefore reads nothing before its work: the conditional commit
+   * already checks the writer and the revision, and a belief that has gone
+   * stale (a newer owner, or anything that wrote the partition around this
+   * handle) is caught there, refused, and dropped, so the next operation reads
+   * the partition afresh. A failed commit drops it too: an engine that errors
+   * may still have applied the batch.
+   *
+   * Only an operation holding the permit, or one finding the belief already
+   * there, uses it as it is. A read outside the permit that finds it missing
+   * reads the partition and keeps what it found only if nothing changed the
+   * belief meanwhile — `epoch` moves whenever it is dropped, and every change
+   * made through the handle sets it — so a read begun before a change cannot
+   * store what it saw over what the change wrote.
+   */
+  let epoch = 0;
   let revision: Uint8Array | undefined;
+  let revisionKnown = false;
+  let lenses: number | undefined;
+  let fence: StoredFence | null | undefined;
+
+  const forget = () => {
+    epoch += 1;
+    revisionKnown = false;
+    lenses = undefined;
+    fence = undefined;
+  };
 
   const assertCurrent = Effect.gen(function* () {
     const current = yield* generationOf(engine);
@@ -345,30 +386,57 @@ const openPartition = (
 
   const exclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) => withPermit(
     Effect.gen(function* () {
-      revision = yield* engine.get(revisionKey);
-      yield* assertCurrent;
+      if (!revisionKnown) {
+        revision = yield* engine.get(revisionKey);
+        revisionKnown = true;
+      }
       return yield* effect;
     }),
   );
 
   /**
    * Whether this partition's lenses can be read and written: not while a
-   * rebuild or reindex is under way, nor after one was interrupted. Read from
-   * the partition once and then kept, because only this handle — the
-   * partition's one writer — changes it.
+   * rebuild or reindex is under way, nor after one was interrupted.
    */
-  let lenses: number | undefined;
   const lensesReady = Effect.gen(function* () {
-    if (lenses === undefined) lenses = yield* readMeta(META_LENSES);
-    if (lenses !== LENSES_READY) {
+    let state = lenses;
+    if (state === undefined) {
+      const seen = epoch;
+      const stored = yield* readMeta(META_LENSES);
+      if (lenses === undefined && epoch === seen) lenses = stored;
+      state = lenses ?? stored;
+    }
+    if (state !== LENSES_READY) {
       return yield* new LensesRebuilding({
         partition,
-        operation: lenses === LENSES_REBUILDING ? "rebuild" : "reindex",
+        operation: state === LENSES_REBUILDING ? "rebuild" : "reindex",
       });
     }
   });
   const ready = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.flatMap(lensesReady, () => effect);
   const exclusiveReady = <A, E, R>(effect: Effect.Effect<A, E, R>) => exclusive(ready(effect));
+
+  /** Where the partition is moving, if a move has fenced it. */
+  const fenceHeld = Effect.gen(function* () {
+    if (fence !== undefined) return fence;
+    const seen = epoch;
+    const bytes = yield* engine.get(keys.meta(META_FENCE));
+    const stored = bytes === undefined ? null : yield* decodeOrDie("fence.read", () => decodeFence(bytes));
+    if (fence === undefined && epoch === seen) fence = stored;
+    return fence === undefined ? stored : fence;
+  });
+
+  /** Refused once a move has fenced the partition: see `ObjectStoreApi.fence`. */
+  const unfenced = Effect.flatMap(fenceHeld, (held) =>
+    held === null ? Effect.void : Effect.fail(new TenantMoving({ tenant: partition, from: held.from, to: held.to })));
+
+  /**
+   * A change to what the partition holds: under the permit, with the lenses
+   * whole, and not once a move has fenced it. Upkeep and removal are not
+   * changes of that kind and take only `exclusive`.
+   */
+  const exclusiveWrite = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    exclusiveReady(Effect.flatMap(unfenced, () => effect));
 
   const conditions = () => [
     { key: shardMetaKey(SHARD_GENERATION), value: u64Bytes(generation) },
@@ -380,7 +448,8 @@ const openPartition = (
    * Commit one batch, checked against the writer and the revision the batch was
    * built on, and advance the revision with it. The shard's generation and
    * session fence a stale owner; the partition's revision catches anything else
-   * that wrote it since the batch began reading.
+   * that wrote it since this handle last did. A refusal is the one time the
+   * writer is read: it says which of the two it was.
    */
   const write = Effect.fn("store.conditionalWrite")(function*(writes: ReadonlyArray<KvWrite>) {
     if (engine.conditionalWrite === undefined) {
@@ -390,10 +459,11 @@ const openPartition = (
     const accepted = yield* engine.conditionalWrite(
       [...writes, { op: "put", key: revisionKey, value: nextRevision }],
       conditions(),
-    );
+    ).pipe(Effect.onError(() => Effect.sync(forget)));
     if (!accepted) {
+      forget();
       yield* assertCurrent;
-      return yield* new StoreError({ op: "store.conflict", cause: "Partition changed while building the batch; retry the complete operation" });
+      return yield* new StoreError({ op: "store.conflict", cause: "Partition changed since this handle last wrote it; retry the complete operation" });
     }
     revision = nextRevision;
   });
@@ -575,11 +645,11 @@ const openPartition = (
     /** The newest position this batch has reached. */
     readonly head: () => number;
     /** Append to the log, answering the position the entry took. */
-    readonly append: (event: StoredEvent) => number;
+    readonly append: (event: StoredEvent) => Effect.Effect<number, PartitionExhausted>;
   }
 
   const commit = <A, E, R>(f: (into: Commit) => Effect.Effect<A, E, R>) =>
-    exclusiveReady(Effect.gen(function* () {
+    exclusiveWrite(Effect.gen(function* () {
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
       const start = yield* readMeta(META_HEAD);
@@ -587,11 +657,13 @@ const openPartition = (
       const sealed = (yield* readMeta(META_SEALED)) > 0;
       const counters: Counters = { records: 0, bytes: 0 };
 
-      const append = (event: StoredEvent): number => {
-        if (head >= Number.MAX_SAFE_INTEGER) throw new RangeError(`The log of "${partition}" is full.`);
+      const append = (event: StoredEvent): Effect.Effect<number, PartitionExhausted> => {
+        if (head >= Number.MAX_SAFE_INTEGER) {
+          return Effect.fail(new PartitionExhausted({ partition, resource: "log", limit: Number.MAX_SAFE_INTEGER }));
+        }
         head += 1;
         view.put(keys.event(head), encodeEvent(event));
-        return head;
+        return Effect.succeed(head);
       };
 
       const result = yield* f({ view, sealed, counters, head: () => head, append });
@@ -620,7 +692,7 @@ const openPartition = (
       Effect.gen(function* () {
         const current = yield* readRecord(into.view, seq);
         const version = yield* nextVersion(current);
-        into.append({
+        yield* into.append({
           kind: "put", generation, seq, version, at: Date.now(), origin,
           ...(identity === undefined ? {} : { identity }), manifest, body: bytes,
         });
@@ -634,12 +706,20 @@ const openPartition = (
         const current = yield* readRecord(into.view, seq);
         if (current === undefined || !current.live) return;
         const version = yield* nextVersion(current);
-        const position = into.append({
+        const position = yield* into.append({
           kind: "retract", generation, seq, version, at: Date.now(), origin,
           ...(current.identity === undefined ? {} : { identity: current.identity }),
         });
         yield* retire(into, seq, current, version, position);
       }),
+
+    allocate: Effect.gen(function* () {
+      const held = yield* into.view.get(keys.meta(META_NEXT_SEQ));
+      const next = (yield* decodeOrDie("meta.read", () => counterOf(held))) + 1;
+      if (next > MAX_SEQ) return yield* new PartitionExhausted({ partition, resource: "identifiers", limit: MAX_SEQ });
+      into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(next));
+      return asSeq(next);
+    }),
   });
 
   /** An event as it is stored, whoever wrote it. */
@@ -1337,7 +1417,7 @@ const openPartition = (
               return yield* new EventGap({ partition, expected: head + 1, received: position });
             }
             const current = yield* readRecord(into.view, stored.seq);
-            into.append(stored);
+            yield* into.append(stored);
             if (current === undefined || current.version < stored.version) {
               yield* applyEffects(into, current, stored, position);
             }
@@ -1367,7 +1447,7 @@ const openPartition = (
           // projecting it. Without that a replica holds the right rows and an
           // empty history, so anything reading the log there — a projection, a
           // rebuild, a backup — sees nothing to replay.
-          const position = into.append(stored);
+          const position = yield* into.append(stored);
           yield* applyEffects(into, current, stored, position);
         })),
 
@@ -1674,27 +1754,20 @@ const openPartition = (
   });
 
   /**
-   * Remove the whole partition in bounded batches, but for one named record
-   * when `keep` names one.
+   * Remove the whole partition in bounded batches, but for its fence when
+   * `keepFence` is set.
    *
-   * Kept, the record outlives everything else in the same pass, under the same
+   * Kept, the fence outlives everything else in the same pass, under the same
    * permit, so nothing written for the partition can find it gone before the
-   * rest: what a move keeps on the shard a tenant left is its fence, which a
-   * write still on its way there must find. Removed entirely, the revision goes
-   * last: every batch before it is checked against it, so an owner fenced
-   * halfway stops there rather than deleting under a new one.
+   * rest: a write still on its way to the shard a tenant left must find it.
+   * Removed entirely, the revision goes last: every batch before it is checked
+   * against it, so an owner fenced halfway stops there rather than deleting
+   * under a new one.
    */
-  const drop = (keep?: ObjectIdentity) => exclusive(Effect.gen(function* () {
+  const drop = (keepFence: boolean) => exclusive(Effect.gen(function* () {
     const records = yield* readMeta(META_RECORDS);
     const kept = new Set<string>([keyId(revisionKey)]);
-    if (keep !== undefined) {
-      const identity = keys.identity(keep.namespace, keep.key);
-      const held = yield* engine.get(identity);
-      if (held !== undefined && held.length === SEQ_BYTES) {
-        kept.add(keyId(identity));
-        kept.add(keyId(keys.record(readSeqAt(held, 0))));
-      }
-    }
+    if (keepFence) kept.add(keyId(keys.meta(META_FENCE)));
     // More than the kept keys per scan, so a scan that returns only kept keys
     // has nothing else left to find.
     for (;;) {
@@ -1704,16 +1777,20 @@ const openPartition = (
       if (chunk.length === 0) break;
       yield* write(chunk.map((key): KvWrite => ({ op: "delete", key })));
     }
-    if (keep !== undefined) return records;
+    lenses = LENSES_READY;
+    if (keepFence) return records;
     if (engine.conditionalWrite === undefined) {
       return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
     }
-    const accepted = yield* engine.conditionalWrite([{ op: "delete", key: revisionKey }], conditions());
+    const accepted = yield* engine.conditionalWrite([{ op: "delete", key: revisionKey }], conditions())
+      .pipe(Effect.onError(() => Effect.sync(forget)));
     if (!accepted) {
+      forget();
       yield* assertCurrent;
       return yield* new StoreError({ op: "store.conflict", cause: "Partition changed while it was being removed" });
     }
     revision = undefined;
+    fence = null;
     return records;
   }));
 
@@ -1744,7 +1821,7 @@ const openPartition = (
    * else.
    */
   const seed = (source: ObjectStoreApi): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
-    exclusiveReady(Effect.gen(function* () {
+    exclusiveWrite(Effect.gen(function* () {
       const held = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: 2 })))]
         .filter((entry) => compareKeys(entry.key, revisionKey) !== 0);
       if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
@@ -2136,14 +2213,22 @@ const openPartition = (
         return out;
       }),
 
-    nextSeq: exclusiveReady(Effect.gen(function* () {
+    nextSeq: exclusiveWrite(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;
-      if (next > MAX_SEQ) return yield* new PartitionExhausted({ partition, limit: MAX_SEQ });
+      if (next > MAX_SEQ) return yield* new PartitionExhausted({ partition, resource: "identifiers", limit: MAX_SEQ });
       yield* write([{ op: "put", key: keys.meta(META_NEXT_SEQ), value: u64Bytes(next) }]);
       return asSeq(next);
     })),
 
     transact: (f) => commit((into) => f(txnFor(into))),
+
+    fence: (move) =>
+      exclusive(Effect.gen(function* () {
+        yield* write([{ op: "put", key: keys.meta(META_FENCE), value: encodeFence(move) }]);
+        fence = { from: move.from, to: move.to };
+      })),
+
+    writable: unfenced,
 
     read: (seq) =>
       Effect.map(ready(readRecord(pendingView(new Map()), seq)), (record) =>
@@ -2263,7 +2348,7 @@ export const shardOverKv = (
       return out;
     }),
 
-    drop: (partition, options) => handleOf(partition).drop(options?.keep),
+    drop: (partition, options) => handleOf(partition).drop(options?.keepFence === true),
   };
 };
 

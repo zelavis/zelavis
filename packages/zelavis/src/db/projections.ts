@@ -2,7 +2,7 @@ import { parseJson, objectFields, isString } from "../core/json-validation.js";
 import { Effect } from "effect";
 import type { DomainEvent, DomainEventsApi, DomainEventType } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
-import { ProjectionNotFound } from "./errors.js";
+import { dieUnlessMoving, ProjectionNotFound, type TenantMoving } from "./errors.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
 
@@ -15,9 +15,21 @@ export interface ProjectionDefinition {
   readonly name: string;
   readonly description?: string;
   readonly source?: ProjectionSource;
-  /** Applied in log order. Must be deterministic: a rebuild replays it. */
+  /**
+   * Applied in log order, at least once. The checkpoint advances once per page
+   * of events, after `apply` has run for all of them, and `apply` writes
+   * wherever it likes — so the two cannot commit together, and a run cut off
+   * between them applies that page again. Make `apply` idempotent: key what it
+   * writes by `event.eventId`, which names the record and the version it
+   * reached and stays the same when the tenant moves. It must also be
+   * deterministic: a rebuild replays it.
+   */
   readonly apply: (event: DomainEvent) => Effect.Effect<void>;
-  /** Discard derived state before a rebuild replays the log into it. */
+  /**
+   * Discard derived state before a rebuild replays the log into it. Runs after
+   * the checkpoint is cleared, so a rebuild cut off at any point is finished by
+   * the next `run`, which then starts from the beginning.
+   */
   readonly reset?: () => Effect.Effect<void>;
 }
 
@@ -38,10 +50,13 @@ export interface ProjectionRunResult {
 export interface ProjectionsApi {
   readonly register: (definition: ProjectionDefinition) => Effect.Effect<void>;
   readonly list: Effect.Effect<ReadonlyArray<ProjectionSummary>>;
-  /** Apply everything after the stored checkpoint, then advance it. */
-  readonly run: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound>;
+  /**
+   * Apply everything after the stored checkpoint, then advance it. Refused
+   * with `TenantMoving` while the tenant is being moved.
+   */
+  readonly run: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound | TenantMoving>;
   /** Discard derived state and replay the whole log into it. */
-  readonly rebuild: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound>;
+  readonly rebuild: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound | TenantMoving>;
 }
 
 /**
@@ -112,7 +127,14 @@ export const projectionsFor = (
           { namespace: CHECKPOINT_NS, key },
         ),
       );
-    }).pipe(Effect.orDie);
+    }).pipe(dieUnlessMoving);
+
+  /** Forget where a projection had got to, so the next run starts from the beginning. */
+  const clearCheckpoint = (name: string) =>
+    Effect.gen(function* () {
+      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(name));
+      if (seq !== undefined) yield* store.transact((txn) => txn.retract(seq));
+    }).pipe(dieUnlessMoving);
 
   const drain = (definition: ProjectionDefinition, from: EventCursor | undefined) =>
     Effect.gen(function* () {
@@ -183,6 +205,9 @@ export const projectionsFor = (
     rebuild: (name) =>
       Effect.gen(function* () {
         const definition = yield* require_(name);
+        // Cleared first: a rebuild cut off after its reset must not leave a
+        // checkpoint saying the discarded state was still applied.
+        yield* clearCheckpoint(name);
         if (definition.reset !== undefined) yield* definition.reset();
         return yield* drain(definition, undefined);
       }),

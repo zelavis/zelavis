@@ -1,11 +1,15 @@
-import { parseJson, objectFields, isFiniteNumber, isJsonObject, isString, recordOf, optional } from "../core/json-validation.js";
+import {
+  arrayOf, parseJson, objectFields, isFiniteNumber, isJsonObject, isString, recordOf, optional,
+} from "../core/json-validation.js";
 import { Effect, Stream } from "effect";
-import type { DomainEvent } from "./domain-events.js";
-import { TimeSeriesNotFound } from "./errors.js";
+import type { DomainEvent, DomainEventsApi } from "./domain-events.js";
+import type { EventCursor } from "./events.js";
+import { dieUnlessMoving, TimeSeriesNotFound, type TenantMoving } from "./errors.js";
 import type { JsonObject } from "./json.js";
-import type { ProjectionsApi, ProjectionSource } from "./projections.js";
+import type { Seq } from "./model.js";
+import type { ProjectionSource } from "./projections.js";
 import { and, between, equals, or, type Query } from "./query.js";
-import type { ObjectStoreApi } from "./store.js";
+import type { ObjectStoreApi, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
 
 export type AggregateOperation =
@@ -185,10 +189,19 @@ export interface TimeSeriesApi {
   readonly define: (definition: TimeSeriesDefinition) => Effect.Effect<void>;
   readonly list: Effect.Effect<ReadonlyArray<TimeSeriesSummary>>;
   readonly get: (name: string) => TimeSeriesHandle;
-  /** Consume events appended since the last ingest into points. */
-  readonly ingest: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound>;
-  /** Discard every point and rebuild the series from the whole log. */
-  readonly rebuild: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound>;
+  /**
+   * Consume events appended since the last ingest into points. Each batch of
+   * points commits with the place in the log it reached, so an ingest cut off
+   * and run again adds every point exactly once. Refused with `TenantMoving`
+   * while the tenant is being moved.
+   */
+  readonly ingest: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TenantMoving>;
+  /**
+   * Rebuild the series from the whole log, beside the points reads use, and
+   * replace them with it once it has caught up. Reads see the old series until
+   * then; a rebuild cut off leaves it serving and is cleared by the next one.
+   */
+  readonly rebuild: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TenantMoving>;
 }
 
 /**
@@ -287,8 +300,54 @@ const instantColumn = (series: string) => `${series}@at`;
  * say which series it meant twice.
  */
 const tagColumn = (series: string, tag: string) => `${series}#${tag}`;
-/** Time series are projections; the prefix keeps them out of the projection listing. */
-export const TIME_SERIES_PROJECTION_PREFIX = "zv.timeseries/";
+/**
+ * Where a series stands, in the partition whose log it consumes.
+ *
+ * `generation` is the set of points reads use and `cursor` how far into the log
+ * it has got. A rebuild writes a new generation (`building`) beside it, which
+ * reads never see, and takes its place in the same transaction as its last
+ * points; the generation it replaces is `retired` until its points are gone.
+ * Every batch of points commits together with the cursor it brings its
+ * generation to, so an ingest or rebuild cut off at any moment leaves each
+ * generation exactly as far as its cursor says, and running again neither
+ * repeats a point nor skips one.
+ */
+interface SeriesState {
+  readonly generation: number;
+  readonly cursor?: string;
+  readonly building?: { readonly generation: number; readonly cursor?: string };
+  readonly retired: ReadonlyArray<number>;
+}
+
+const seriesState = objectFields<SeriesState>({
+  generation: isFiniteNumber,
+  cursor: optional(isString),
+  building: optional(objectFields<{ generation: number; cursor?: string }>({
+    generation: isFiniteNumber, cursor: optional(isString),
+  })),
+  retired: arrayOf(isFiniteNumber),
+});
+
+const STATE_NAMESPACE = "zv.timeseries.state";
+const FRESH: SeriesState = { generation: 0, retired: [] };
+
+/** A generation's points are told apart by this key; the last `/` separates the generation. */
+const generationKey = (series: string, generation: number) => `${series}/${generation}`;
+
+/** Events read from the log at a time. */
+const PAGE = 512;
+/** Points committed per transaction, with the cursor of the last event they came from. */
+const POINT_BATCH = 1024;
+/** Retired points removed per transaction. */
+const SWEEP_BATCH = 1024;
+/**
+ * Times a batch may find its generation moved by another run before this one
+ * gives up. Each loss means the other run made the progress, so a handful is
+ * generous.
+ */
+const RACE_LIMIT = 16;
+
+const EMPTY_MANIFEST = { terms: [], columns: [], measures: [], edges: [] } as const;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -301,38 +360,215 @@ const toEpoch = (value: Timestamp): number => {
   return parsed;
 };
 
-const seriesKey = (series: string) => series;
+const matchesSource = (source: ProjectionSource | undefined, event: DomainEvent): boolean => {
+  if (source === undefined) return true;
+  if (source.collections !== undefined && source.collections.length > 0
+    && !source.collections.includes(event.collection)) return false;
+  if (source.eventTypes !== undefined && source.eventTypes.length > 0
+    && !source.eventTypes.includes(event.type)) return false;
+  return true;
+};
+
+/** What a definition makes of one event, as stored points. */
+const pointsOf = (definition: TimeSeriesDefinition, event: DomainEvent): ReadonlyArray<TimeSeriesPoint> => {
+  const produced = definition.map(event, { series: definition.name });
+  if (produced === null || produced === undefined) return [];
+  const points = Array.isArray(produced) ? produced : [produced as TimeSeriesInputPoint];
+  return points.map((point) => ({
+    timestamp: toEpoch(point.timestamp),
+    value: point.value,
+    ...(point.tags === undefined ? {} : { tags: point.tags }),
+    ...(point.fields === undefined ? {} : { fields: point.fields }),
+  }));
+};
+
+/** Which run a batch belongs to: the generation reads use, or the one a rebuild is building. */
+type Target = "active" | "building";
 
 export const timeSeriesFor = (
   store: ObjectStoreApi,
-  projections: ProjectionsApi,
+  events: DomainEventsApi,
   tenant: TenantId,
 ): TimeSeriesApi => {
   const definitions = new Map<string, TimeSeriesDefinition>();
 
-  const writePoint = (series: string, point: TimeSeriesPoint) =>
+  const stateRecord = (series: string) =>
     Effect.gen(function* () {
-      const seq = yield* store.nextSeq;
-      yield* store.transact((txn) =>
-        // No identity: points are appended, never addressed by name. That also
-        // keeps them out of the domain event log, so ingesting a series cannot
-        // feed itself.
-        txn.put(seq, enc.encode(JSON.stringify(point)), {
-          terms: [],
-          columns: [
-            [SERIES_COLUMN, seriesKey(series)],
-            // The instant itself, which the ordered lens sorts by value: one
-            // posting, and a window is a range over it.
-            [instantColumn(seriesKey(series)), point.timestamp] as const,
-            ...Object.entries(point.tags ?? {}).map(
-              ([tag, value]) => [tagColumn(seriesKey(series), tag), value] as const,
-            ),
-          ],
-          measures: [[seriesKey(series), point.value]],
-          edges: [],
-        }),
-      );
-    }).pipe(Effect.orDie);
+      const seq = yield* store.lookup(STATE_NAMESPACE, series);
+      if (seq === undefined) return { seq: undefined, state: FRESH };
+      const object = yield* store.read(seq);
+      return {
+        seq,
+        state: object === undefined ? FRESH : parseJson(dec.decode(object.bytes), seriesState),
+      };
+    });
+
+  const writeState = (txn: Txn, seq: Seq | undefined, series: string, state: SeriesState) =>
+    Effect.gen(function* () {
+      yield* txn.put(seq ?? (yield* txn.allocate), enc.encode(JSON.stringify(state)), EMPTY_MANIFEST,
+        { namespace: STATE_NAMESPACE, key: series });
+    });
+
+  const positionOf = (state: SeriesState, target: Target) =>
+    target === "active" ? { generation: state.generation, cursor: state.cursor } : state.building;
+
+  /** A point as stored: indexed under its generation, its instant and its tags. */
+  const putPoint = (txn: Txn, key: string, point: TimeSeriesPoint) =>
+    Effect.gen(function* () {
+      // No identity: points are appended, never addressed by name. That also
+      // keeps them out of the domain event log, so ingesting a series cannot
+      // feed itself.
+      yield* txn.put(yield* txn.allocate, enc.encode(JSON.stringify(point)), {
+        terms: [],
+        columns: [
+          [SERIES_COLUMN, key],
+          // The instant itself, which the ordered lens sorts by value: one
+          // posting, and a window is a range over it.
+          [instantColumn(key), point.timestamp] as const,
+          ...Object.entries(point.tags ?? {}).map(([tag, value]) => [tagColumn(key, tag), value] as const),
+        ],
+        measures: [[key, point.value]],
+        edges: [],
+      });
+    });
+
+  /**
+   * Commit a batch of points with the cursor they bring their generation to —
+   * provided the generation still stands where they were read from. Read
+   * inside the transaction, under the partition's writer, so two runs cannot
+   * both commit the same stretch of the log: the second finds the cursor moved
+   * and answers false. `finish` makes the generation being built the one reads
+   * use, in the same transaction as its last points.
+   */
+  const commitBatch = (
+    series: string,
+    target: Target,
+    from: { readonly generation: number; readonly cursor?: string },
+    points: ReadonlyArray<TimeSeriesPoint>,
+    cursor: string | undefined,
+    finish: boolean,
+  ) =>
+    store.transact((txn) =>
+      Effect.gen(function* () {
+        const { seq, state } = yield* stateRecord(series);
+        const at = positionOf(state, target);
+        if (at === undefined || at.generation !== from.generation || at.cursor !== from.cursor) return false;
+        const key = generationKey(series, from.generation);
+        for (const point of points) yield* putPoint(txn, key, point);
+        const next: SeriesState = target === "active"
+          ? { ...state, ...(cursor === undefined ? {} : { cursor }) }
+          : finish
+            ? {
+                generation: from.generation,
+                ...(cursor === undefined ? {} : { cursor }),
+                retired: [...state.retired, state.generation],
+              }
+            : { ...state, building: { generation: from.generation, ...(cursor === undefined ? {} : { cursor }) } };
+        yield* writeState(txn, seq, series, next);
+        return true;
+      }));
+
+  /**
+   * Consume the log into a generation, from where its cursor stands to the end.
+   *
+   * A page of events becomes batches of whole events, each committed with the
+   * cursor of the last event it holds; the page's own cursor, which is past the
+   * events that did not match as well, goes with the last batch. A page that
+   * reached the end with nothing in it moves nothing, because what it passed
+   * may be no more than this run's own last commit.
+   */
+  const drain = (series: string, definition: TimeSeriesDefinition, target: Target) =>
+    Effect.gen(function* () {
+      let applied = 0;
+      let points = 0;
+      let races = 0;
+      for (;;) {
+        const at = positionOf((yield* stateRecord(series)).state, target);
+        if (at === undefined) return { applied, points };
+        // The cursor came from this partition's own log and is handed back unchanged.
+        const page = yield* events.read({
+          ...(at.cursor === undefined ? {} : { after: at.cursor as EventCursor }), limit: PAGE,
+        });
+        let from = at;
+        let batch: TimeSeriesPoint[] = [];
+        let batched = 0;
+        let lost = false;
+        for (const event of page.events) {
+          if (!matchesSource(definition.source, event)) continue;
+          // The mapper is the caller's code; one that throws is a bug, reported as a defect.
+          batch.push(...(yield* Effect.sync(() => pointsOf(definition, event))));
+          batched += 1;
+          if (batch.length < POINT_BATCH) continue;
+          if (!(yield* commitBatch(series, target, from, batch, event.cursor, false))) {
+            lost = true;
+            break;
+          }
+          applied += batched;
+          points += batch.length;
+          from = { generation: from.generation, cursor: event.cursor };
+          batch = [];
+          batched = 0;
+        }
+        if (!lost) {
+          const advance = page.cursor !== undefined && page.cursor !== from.cursor
+            && (page.events.length > 0 || page.more);
+          const finish = target === "building" && !page.more;
+          if (batch.length > 0 || advance || finish) {
+            const cursor = advance ? page.cursor : from.cursor;
+            if (yield* commitBatch(series, target, from, batch, cursor, finish)) {
+              applied += batched;
+              points += batch.length;
+            } else {
+              lost = true;
+            }
+          }
+        }
+        if (lost) {
+          // Another run moved this generation on; carry on from where it is.
+          races += 1;
+          if (races > RACE_LIMIT) {
+            return yield* Effect.die(new Error(
+              `Time series "${series}" of "${tenant}" kept being moved on by another run (${RACE_LIMIT} times).`,
+            ));
+          }
+          continue;
+        }
+        if (!page.more) return { applied, points };
+      }
+    });
+
+  /** Remove the points of every retired generation, then the generation from the list. */
+  const sweep = (series: string) =>
+    Effect.gen(function* () {
+      for (const generation of (yield* stateRecord(series)).state.retired) {
+        yield* Stream.runForEach(
+          Stream.grouped(store.resolve(equals(SERIES_COLUMN, generationKey(series, generation))), SWEEP_BATCH),
+          (seqs) => store.transact((txn) => Effect.forEach(seqs, (seq) => txn.retract(seq), { discard: true })),
+        );
+        yield* store.transact((txn) =>
+          Effect.gen(function* () {
+            const { seq, state } = yield* stateRecord(series);
+            yield* writeState(txn, seq, series, { ...state, retired: state.retired.filter((g) => g !== generation) });
+          }));
+      }
+    });
+
+  /**
+   * Start building a new generation. One left by a rebuild that was cut off is
+   * retired rather than continued: nothing records which definition it was
+   * built with.
+   */
+  const begin = (series: string) =>
+    store.transact((txn) =>
+      Effect.gen(function* () {
+        const { seq, state } = yield* stateRecord(series);
+        const generation = Math.max(state.generation, state.building?.generation ?? 0, ...state.retired) + 1;
+        yield* writeState(txn, seq, series, {
+          ...state,
+          building: { generation },
+          retired: state.building === undefined ? state.retired : [...state.retired, state.building.generation],
+        });
+      }));
 
   const pointsMatching = (query: Query) =>
     Effect.gen(function* () {
@@ -353,9 +589,9 @@ export const timeSeriesFor = (
    * series column answers; a window with both ends never touches it, because
    * the instant column is per series already.
    */
-  const planWindow = (series: string, start?: number, end?: number): Query => {
-    const all = equals(SERIES_COLUMN, seriesKey(series));
-    const column = instantColumn(seriesKey(series));
+  const planWindow = (key: string, start?: number, end?: number): Query => {
+    const all = equals(SERIES_COLUMN, key);
+    const column = instantColumn(key);
     if (start !== undefined && end !== undefined) {
       return end < start ? all : between(column, start, end);
     }
@@ -374,18 +610,18 @@ export const timeSeriesFor = (
    * again.
    */
   const planRange = (
-    series: string,
+    key: string,
     start?: number,
     end?: number,
     tags?: TagFilter,
   ): Query => {
-    const window = planWindow(series, start, end);
+    const window = planWindow(key, start, end);
     const entries = Object.entries(tags ?? {});
     if (entries.length === 0) return window;
 
     const clauses: Query[] = [window];
     for (const [tag, value] of entries) {
-      const column = tagColumn(seriesKey(series), tag);
+      const column = tagColumn(key, tag);
       const values = Array.isArray(value) ? value : [value as string];
       clauses.push(values.length === 1
         ? equals(column, values[0]!)
@@ -403,54 +639,22 @@ export const timeSeriesFor = (
     Effect.gen(function* () {
       const from = start === undefined ? undefined : toEpoch(start);
       const to = end === undefined ? undefined : toEpoch(end);
+      // Reads see the generation in use, never one a rebuild is still building.
+      const { state } = yield* Effect.orDie(stateRecord(series));
       // The window is exact, so what the lens returns is the answer.
-      return yield* pointsMatching(planRange(series, from, to, tags));
+      return yield* pointsMatching(planRange(generationKey(series, state.generation), from, to, tags));
     });
-
-  const purge = (series: string) =>
-    Effect.gen(function* () {
-      const seqs = yield* Stream.runCollect(
-        store.resolve(equals(SERIES_COLUMN, seriesKey(series))),
-      );
-      for (const seq of seqs) yield* store.transact((txn) => txn.retract(seq));
-    }).pipe(Effect.orDie);
 
   const require_ = (name: string) =>
     definitions.has(name)
       ? Effect.succeed(definitions.get(name)!)
       : Effect.fail(new TimeSeriesNotFound({ name }));
 
-  let emitted = 0;
-
-  const projectionNameOf = (name: string) => `${TIME_SERIES_PROJECTION_PREFIX}${name}`;
 
   return {
     define: (definition) =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         definitions.set(definition.name, definition);
-        // A series is a projection over the same log with the same checkpoint
-        // machinery; giving it a second one would be two things to keep in step.
-        yield* projections.register({
-          name: projectionNameOf(definition.name),
-          ...(definition.description === undefined ? {} : { description: definition.description }),
-          ...(definition.source === undefined ? {} : { source: definition.source }),
-          apply: (event) =>
-            Effect.gen(function* () {
-              const produced = definition.map(event, { series: definition.name });
-              if (produced === null || produced === undefined) return;
-              const points = Array.isArray(produced) ? produced : [produced as TimeSeriesInputPoint];
-              for (const point of points) {
-                yield* writePoint(definition.name, {
-                  timestamp: toEpoch(point.timestamp),
-                  value: point.value,
-                  ...(point.tags === undefined ? {} : { tags: point.tags }),
-                  ...(point.fields === undefined ? {} : { fields: point.fields }),
-                });
-                emitted++;
-              }
-            }),
-          reset: () => purge(definition.name),
-        });
       }),
 
     list: Effect.sync(() =>
@@ -781,18 +985,26 @@ export const timeSeriesFor = (
 
     ingest: (name) =>
       Effect.gen(function* () {
-        yield* require_(name);
-        emitted = 0;
-        const result = yield* projections.run(projectionNameOf(name)).pipe(Effect.orDie);
-        return { name, applied: result.applied, points: emitted };
+        const definition = yield* require_(name);
+        return yield* dieUnlessMoving(Effect.gen(function* () {
+          yield* sweep(name);
+          return { name, ...(yield* drain(name, definition, "active")) };
+        }));
       }),
 
     rebuild: (name) =>
       Effect.gen(function* () {
-        yield* require_(name);
-        emitted = 0;
-        const result = yield* projections.rebuild(projectionNameOf(name)).pipe(Effect.orDie);
-        return { name, applied: result.applied, points: emitted };
+        const definition = yield* require_(name);
+        return yield* dieUnlessMoving(Effect.gen(function* () {
+          yield* sweep(name);
+          yield* begin(name);
+          // Clears what an earlier rebuild left half-built before building again.
+          yield* sweep(name);
+          const result = yield* drain(name, definition, "building");
+          // The generation it replaced.
+          yield* sweep(name);
+          return { name, ...result };
+        }));
       }),
   } satisfies TimeSeriesApi;
 };

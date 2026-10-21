@@ -20,15 +20,6 @@ export const documentNamespace = (collection: string): string => `${DOCUMENT_NAM
 export const IDEMPOTENCY_NAMESPACE = "zv.idempotency";
 
 /**
- * Marks a tenant as being relocated off the shard it is on.
- *
- * Lives in the tenant's own partition on the shard being left, and is read
- * inside each write's transaction, so a write either lands before the fence and
- * is carried by the last catch-up, or is refused.
- */
-export const MOVE_FENCE_NAMESPACE = "zv.moving";
-
-/**
  * Records that a tenant occupies its shard: written with its first collection,
  * removed with its last, so a shard can name the tenants it holds.
  */

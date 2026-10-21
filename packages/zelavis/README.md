@@ -647,7 +647,9 @@ cleans up its source without copying the target again. A move copies the
 Tenant's partition as it is — identifiers and log positions included — so
 edges, event cursors and projection checkpoints carry on after it, and the
 shard the Tenant left keeps only its move fence, so a late write there is
-refused. Reopening also finishes any lens rebuild or reindex a crash cut off;
+refused (`TenantMoving`, a 409 over HTTP) whichever layer makes it. The fence is
+never copied, so the Tenant takes writes on its new shard as soon as routing
+moves. Reopening also finishes any lens rebuild or reindex a crash cut off;
 until then that partition answers `LensesRebuilding`.
 
 Node hosts can persist content-addressed runtime objects with

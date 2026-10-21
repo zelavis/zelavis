@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { Effect, Stream } from "effect";
+import { Deferred, Effect, Stream } from "effect";
 import { claimGeneration, openShardOverKv, shardOverKv } from "../dist/db/kv-store.js";
-import { shardMetaKey } from "../dist/db/keys.js";
+import { partitionKeys, shardMetaKey } from "../dist/db/keys.js";
+import { StoreError } from "../dist/db/errors.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeLibsqlEngine } from "../dist/db/engines/libsql.js";
@@ -223,3 +224,91 @@ for (const [name, make] of makers) {
     }
   }))));
 }
+
+const hex = (bytes) => Buffer.from(bytes).toString("hex");
+
+test("a write reads nothing before its work: the commit itself checks the writer, the revision and the fence", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  const watched = new Set([
+    shardMetaKey("generation"), shardMetaKey("writer_session"),
+    partitionKeys("acme").meta("revision"), partitionKeys("acme").meta("fence"),
+  ].map(hex));
+  let reads = 0;
+  const engine = { ...base, get: (key) => { if (watched.has(hex(key))) reads++; return base.get(key); } };
+  const store = yield* openPartitionOver("acme", engine);
+  reads = 0;
+  yield* put(store, 1);
+  assert.ok(reads > 0, "the first write reads what the handle then keeps, so the counter does see these keys");
+  reads = 0;
+  for (let seq = 2; seq <= 20; seq++) yield* put(store, seq);
+  yield* store.nextSeq;
+  yield* store.writable;
+  assert.equal(reads, 0, "and no write after it reads any of them");
+})));
+
+test("something writing around a handle costs it one refused commit, after which it reads the partition afresh", () => run(Effect.gen(function* () {
+  const engine = memoryKvEngine();
+  const claim = yield* claimGeneration(engine);
+  const first = partitionOver("acme", engine, claim);
+  const second = partitionOver("acme", engine, claim);
+  yield* put(first, 1);
+  yield* put(second, 2);
+  const refused = yield* error(put(first, 3));
+  assert.equal(refused?.op, "store.conflict", "the stale revision is caught by the commit, not trusted");
+  yield* put(first, 3);
+  assert.equal((yield* first.stats).records, 3, "nothing either handle committed was lost");
+})));
+
+test("a commit the engine reports as failed may still have landed, so the handle forgets what it kept", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  let failNext = false;
+  const engine = {
+    ...base,
+    conditionalWrite: (writes, conditions) => {
+      if (!failNext) return base.conditionalWrite(writes, conditions);
+      failNext = false;
+      // Applied, then lost on the way back: the failure a remote engine can give.
+      return Effect.flatMap(base.conditionalWrite(writes, conditions),
+        () => Effect.fail(new StoreError({ op: "test.commit", cause: "connection reset" })));
+    },
+  };
+  const store = yield* openPartitionOver("acme", engine);
+  yield* put(store, 1);
+  failNext = true;
+  assert.equal((yield* error(put(store, 2)))?._tag, "StoreError");
+  // Kept, the revision from before that commit would refuse this one.
+  yield* put(store, 3);
+  assert.equal((yield* store.stats).records, 3);
+})));
+
+test("a fence is checked under the writer: every write either committed before it or is refused", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  const tenth = yield* Deferred.make();
+  let commits = 0;
+  // Each commit yields, so the fence can arrive while a write holds the writer.
+  const engine = {
+    ...base,
+    conditionalWrite: (writes, conditions) => Effect.gen(function* () {
+      yield* Effect.sleep(1);
+      const accepted = yield* base.conditionalWrite(writes, conditions);
+      if (++commits === 10) yield* Deferred.succeed(tenth, undefined);
+      return accepted;
+    }),
+  };
+  const store = yield* openPartitionOver("acme", engine);
+  // Spaced like separate requests, so the fence, waiting on the writer, gets
+  // its turn between two of them.
+  const writes = Effect.forEach(Array.from({ length: 40 }, (_, i) => i + 1),
+    (seq) => Effect.andThen(Effect.sleep(1), error(put(store, seq))));
+  const fence = Effect.gen(function* () {
+    yield* Deferred.await(tenth);
+    yield* store.fence({ from: "s0", to: "s1" });
+    return (yield* store.stats).head;
+  });
+  const [results, headAtFence] = yield* Effect.all([writes, fence], { concurrency: 2 });
+  const after = yield* store.stats;
+  assert.equal(after.head, headAtFence, "nothing landed after the fence");
+  assert.equal(results.filter((result) => result === undefined).length, after.records);
+  assert.ok(results.every((result) => result === undefined || result._tag === "TenantMoving"));
+  assert.ok(after.records > 0 && after.records < 40, "the fence went on part way through");
+})));

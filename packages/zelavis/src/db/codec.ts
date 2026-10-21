@@ -380,3 +380,24 @@ export const decodeEvent = (bytes: Uint8Array): StoredEvent => {
   const manifest = readManifest(input, "event");
   return { kind: "put", ...common, manifest, body: input.rest() };
 };
+
+/** Where a fenced partition is going: the shard it is leaving and the shard it is moving to. */
+export interface StoredFence {
+  readonly from: string;
+  readonly to: string;
+}
+
+export const encodeFence = (fence: StoredFence): Uint8Array => {
+  const out = new Writer();
+  out.string(fence.from);
+  out.string(fence.to);
+  return out.finish();
+};
+
+export const decodeFence = (bytes: Uint8Array): StoredFence => {
+  const input = new Reader(bytes, "fence");
+  const from = input.string();
+  const to = input.string();
+  input.end();
+  return { from, to };
+};

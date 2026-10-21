@@ -413,7 +413,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     const schemas = schemasFor(store, tenant);
     const projections = projectionsFor(store, events, tenant);
     const documents = documentsFor(store, tenant, schemas);
-    const timeSeries = timeSeriesFor(store, projections, tenant);
+    const timeSeries = timeSeriesFor(store, events, tenant);
     // The App's replicated collections as they sit on *this* shard, in the
     // partition of the tenant that owns them. Same shard, so no second store is
     // opened.

@@ -1092,6 +1092,11 @@ Key rules:
   and session, and the partition's revision observed before dependent reads.
   Advance the revision with every protected batch, including replication,
   allocation, maintenance and format upgrades. Generation acquisition is conditional and never wraps.
+  That conditional commit is the check: a partition handle keeps its revision,
+  lens state and fence rather than reading them, or the writer, before every
+  write, and a refused or failed commit drops what it kept so the next
+  operation reads afresh. A shard store keeps one handle per partition; a
+  second writer on the same claim is caught by the revision, never trusted.
   Reject unsupported coordination; do not emulate shared-writer fencing with
   a read followed by an unconditional write. RocksDB's exclusive-file mode
   is local single-process ownership, not concurrent takeover. LMDB batches use
@@ -1220,6 +1225,16 @@ Key rules:
   more }`, where `cursor` moves past everything it looked at, matching or not.
   Consumers continue from that cursor, never from the last matching event, or a
   long run of other writes is read again forever.
+- A consumer that writes into the partition whose log it reads commits each
+  batch of what it derives together with the cursor that batch reached, in one
+  transaction, re-reading its cursor inside it (`txn.allocate` hands out
+  identifiers there) — never the derived writes in one transaction and the
+  cursor in another, which repeats or skips work when a run is cut off between
+  them. A time series does this, and rebuilds into a new generation that
+  replaces the one reads use in the same transaction as its last points, so an
+  interrupted rebuild leaves the old series whole. A projection's `apply`
+  writes outside the store, so it is at least once: it must be idempotent,
+  keyed by `eventId`, and a rebuild clears the checkpoint before its reset.
 - A partition map carries routing and no data, so changing where an occupied
   range points is a relocation, not a map edit. `db.movement` copies the
   tenant's partition as it is (`seed`, then the source's log by `followAll` at
@@ -1228,8 +1243,11 @@ Key rules:
   one resumes. Identifiers and positions are the source's own, so edges, event
   cursors and projection checkpoints carry on after a move. The shard a tenant
   left keeps only its fence, removed with nothing else in the same pass, so a
-  write still on its way there is refused rather than lost. A write checks the
-  fence inside its own transaction, never only before it. Routing is one record for every tenant in a
+  write still on its way there is refused rather than lost. The fence is the
+  partition's own (`ObjectStoreApi.fence`), never copied, and the store checks
+  it under the partition's writer for every change — documents, time series,
+  checkpoints, a restore, an allocated identifier — so a change either committed
+  before it or is refused, and one last catch-up after fencing is complete. Routing is one record for every tenant in a
   rebalance, so it moves once, after all of them are copied — applying it while
   one was still uncopied would route a tenant to a shard that does not hold it.
   `topology.update` still refuses an occupied range. Routing is read
