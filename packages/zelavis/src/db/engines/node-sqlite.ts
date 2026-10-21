@@ -1,21 +1,14 @@
 import { present, integrationValue, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { Context, Effect, Layer, LayerMap, type Scope } from "effect";
+import { Effect, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import type { KvEngine } from "../kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import { ObjectStore, type ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
-
-/** Where partition files live. Supplied by the host runtime. */
-export class DbRoot extends Context.Service<DbRoot, { readonly directory: string }>()(
-  "zelavis/db/DbRoot",
-) {
-  static readonly layer = (directory: string) =>
-    Layer.effect(DbRoot, Effect.succeed({ directory }));
-}
 
 /**
  * Opens the SQLite file with the host's own binding.
@@ -78,32 +71,11 @@ export const makeNodeSqliteEngine = (
   );
 
 export const makeNodeSqliteStore = (
-  partition: PartitionKey,
+  shard: ShardId,
   directory: string,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  options?: OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeNodeSqliteEngine(partition, directory);
-    return yield* openStoreOverKv(partition, engine);
+    const engine = yield* makeNodeSqliteEngine(shard, directory);
+    return yield* openShardOverKv(shard, engine, options);
   });
-
-export const nodeSqliteStoreLayer = (partition: PartitionKey) =>
-  Layer.effect(
-    ObjectStore,
-    Effect.gen(function* () {
-      const root = yield* DbRoot;
-      return yield* makeNodeSqliteStore(partition, root.directory);
-    }),
-  );
-
-/**
- * One store per partition, opened on demand and released when idle.
- *
- * A plain cache is the wrong tool: evicting an entry drops the handle without
- * closing it, which leaks descriptors and, on a WAL database, risks corruption
- * rather than merely leaking. `LayerMap` ties each entry to a scope, so
- * eviction runs the release that closes the file.
- */
-export class Partitions extends LayerMap.Service<Partitions>()("zelavis/db/Partitions", {
-  lookup: (partition: PartitionKey) => nodeSqliteStoreLayer(partition),
-  idleTimeToLive: "5 minutes",
-}) {}

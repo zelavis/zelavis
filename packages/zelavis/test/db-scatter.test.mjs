@@ -168,9 +168,9 @@ test("a raw scatter names matches by shard and identity, not by bare identifier"
         query: equals(TENANT_COLUMN, TENANT_MARKER),
       });
 
-      // Every shard allocates from its own dense space, so the same number can
-      // come back from several shards naming different objects. Only the pair
-      // is a name.
+      // Every partition allocates from its own dense space, so the same number
+      // comes back from several places naming different objects. Only the
+      // shard, the partition and the number together are a name.
       const shards = new Set();
       for (const match of result.rows) {
         shards.add(match.shard);
@@ -180,8 +180,8 @@ test("a raw scatter names matches by shard and identity, not by bare identifier"
       assert.equal(result.rows.length, TENANTS.length);
       assert.ok(shards.size > 1);
 
-      const pairs = new Set(result.rows.map((match) => `${match.shard}:${match.seq}`));
-      assert.equal(pairs.size, result.rows.length, "shard and identifier together are unique");
+      const names = new Set(result.rows.map((match) => `${match.shard}:${match.tenant}:${match.seq}`));
+      assert.equal(names.size, result.rows.length, "shard, partition and identifier together are unique");
 
       // The point of carrying the shard: the bare identifiers really do
       // collide. Without this the test would pass on data where they happened
@@ -284,7 +284,7 @@ test("the identifier an edge names really does mean something else next door", a
 
       const enc = new TextEncoder();
       const put = (shard, seq, name, edges) =>
-        stores.get(shard).transact((txn) =>
+        stores.get(shard).partition("x").transact((txn) =>
           txn.put(
             asSeq(seq),
             enc.encode(JSON.stringify({ name })),

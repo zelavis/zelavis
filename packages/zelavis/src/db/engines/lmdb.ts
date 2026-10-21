@@ -3,9 +3,10 @@ import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
 import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * The slice of the `lmdb` package this engine uses.
@@ -169,10 +170,11 @@ export const makeLmdbEngine = (
   );
 
 export const makeLmdbStore = (
-  partition: PartitionKey,
+  shard: ShardId,
   directory: string,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  options?: OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeLmdbEngine(partition, directory);
-    return yield* openStoreOverKv(partition, engine);
+    const engine = yield* makeLmdbEngine(shard, directory);
+    return yield* openShardOverKv(shard, engine, options);
   });

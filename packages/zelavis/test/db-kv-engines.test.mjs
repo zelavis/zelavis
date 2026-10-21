@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Stream } from "effect";
-import { compareKeys, termKey, termPrefix, seqOf } from "../dist/db/keys.js";
+import { compareKeys, partitionKeys, seqOf } from "../dist/db/keys.js";
+
+const { term: termKey, termPrefix } = partitionKeys("kv");
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";

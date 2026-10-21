@@ -1,9 +1,9 @@
 import { Effect, Stream } from "effect";
 import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { compareKeys } from "../keys.js";
-import { openStoreOverKv } from "../kv-store.js";
-import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 import type { StoreError } from "../errors.js";
 
 /**
@@ -103,11 +103,12 @@ export const memoryKvEngine = (): KvEngine => {
   };
 };
 
-/** The whole store with nothing on disk, for tests and ephemeral workloads. */
+/** A whole shard with nothing on disk, for tests and ephemeral workloads. */
 export const makeMemoryStore = (
-  partition: PartitionKey,
-): Effect.Effect<ObjectStoreApi, StoreError> =>
+  shard: ShardId,
+  options?: OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError> =>
   Effect.gen(function* () {
     const engine = memoryKvEngine();
-    return yield* openStoreOverKv(partition, engine);
+    return yield* openShardOverKv(shard, engine, options);
   });

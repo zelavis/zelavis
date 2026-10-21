@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Effect } from "effect";
-import { makeDatabase, partitionMapFor, ZELAVIS_DB_BACKUP_V1 } from "../dist/db/index.js";
+import { Effect, Stream } from "effect";
+import { backupsFor, documentsFor, makeDatabase, partitionMapFor, ZELAVIS_DB_BACKUP_V1 } from "../dist/db/index.js";
+import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const fields = [
@@ -119,6 +120,84 @@ test("backup: restoring into a populated shard does not disturb its other tenant
     }),
   );
 });
+
+test("backup: a restore carries graph links to the records' new identifiers", async (t) => {
+  await withDb(t, (db, spare) =>
+    Effect.gen(function* () {
+      const source = db.forTenant("acme").documents;
+      yield* source.createCollection({ name: "people" });
+      yield* source.createCollection({
+        name: "teams",
+        edges: [{ name: "members", path: "members", collection: "people" }],
+      });
+      yield* source.insert({ collection: "people", id: "alice", data: { name: "Alice" } });
+      yield* source.insert({ collection: "people", id: "bob", data: { name: "Bob" } });
+      yield* source.insert({ collection: "teams", id: "core", data: { members: ["alice", "bob"] } });
+      const members = (docs) => Effect.map(
+        docs.findMany({ collection: "people", linked: { collection: "teams", id: "core", edge: "members" } }),
+        (found) => found.map((doc) => doc.id).sort(),
+      );
+      assert.deepEqual(yield* members(source), ["alice", "bob"]);
+      const backup = yield* db.forTenant("acme").backups.exportTenant;
+
+      // Another tenant already holds the low identifiers on the destination,
+      // so the restored records are given different ones, and an edge copied
+      // as it was would name the occupant's records or nothing.
+      const occupant = spare.forTenant("globex").documents;
+      yield* occupant.createCollection({ name: "people" });
+      for (let i = 0; i < 5; i++) {
+        yield* occupant.insert({ collection: "people", id: `g${i}`, data: { name: `G${i}` } });
+      }
+      yield* spare.forTenant("acme").backups.restoreTenant(backup);
+
+      const restored = spare.forTenant("acme").documents;
+      assert.deepEqual(yield* members(restored), ["alice", "bob"]);
+      const teams = yield* restored.findMany({
+        collection: "teams",
+        linked: { collection: "teams", id: "alice", edge: "members", direction: "inbound" },
+      });
+      assert.deepEqual(teams.map((doc) => doc.id), ["core"], "and inbound, through the reverse postings");
+    }),
+  );
+});
+
+test("backup: an export taken while writes continue restores to one moment", () =>
+  Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = (yield* makeMemoryStore("s0")).partition("acme");
+    const docs = documentsFor(store, "acme");
+    yield* docs.createCollection({ name: "pairs" });
+    for (const id of ["a", "b", "c"]) yield* docs.insert({ collection: "pairs", id, data: { n: 1 } });
+    const rewrite = (n) => docs.write({
+      operations: ["a", "b", "c"].map((id) => ({ _tag: "Update", collection: "pairs", id, data: { n } })),
+    });
+    const seqOfA = yield* store.lookup("doc/pairs", "a");
+
+    // The records are read while writes carry on. Stand in for one batch that
+    // commits partway through the read: everything up to "a" as it was before
+    // the batch, everything after it as the batch left it — what a scan racing
+    // a writer can see, and on its own no single moment.
+    const racing = {
+      ...store,
+      records: Stream.unwrap(Effect.gen(function* () {
+        const before = [...(yield* Stream.runCollect(store.records))];
+        yield* rewrite(2);
+        const after = [...(yield* Stream.runCollect(store.records))];
+        const cut = before.findIndex((entry) => Number(entry.seq) === Number(seqOfA));
+        return Stream.fromIterable([...before.slice(0, cut + 1), ...after.slice(cut + 1)]);
+      })),
+    };
+    const backup = yield* backupsFor(racing, "acme").exportTenant;
+
+    const copy = (yield* makeMemoryStore("s1")).partition("acme");
+    yield* backupsFor(copy, "acme").restoreTenant(backup);
+    const values = [];
+    for (const id of ["a", "b", "c"]) {
+      values.push((yield* documentsFor(copy, "acme").findById({ collection: "pairs", id })).data.n);
+    }
+    // The events logged after the read began bring every record to the last
+    // of them, so the batch is either wholly in the copy or not at all.
+    assert.deepEqual(values, [2, 2, 2]);
+  }))));
 
 test("backup: refuses a foreign format, a mismatched tenant, and a populated one", async (t) => {
   await withDb(t, (db, spare) =>

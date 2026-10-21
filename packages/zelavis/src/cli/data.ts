@@ -270,13 +270,17 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "kv-changes") {
-    const changes = (yield* integrationValue(api.kv.changes(requireCollection(), {
+    const page = (yield* integrationValue(api.kv.changes(requireCollection(), {
       ...(limit !== undefined ? { limit } : {}),
       ...(after !== undefined ? { after } : {}),
     })));
-    print({ changes }, () => changes.map((change) =>
-      `${change.type}\t${change.key}\tv${change.revision}\t${change.cursor}`,
-    ).join("\n") || "No changes.");
+    print(page, () => [
+      ...(page.changes.length === 0
+        ? ["No changes."]
+        : page.changes.map((change) => `${change.type}\t${change.key}\tv${change.revision}\t${change.cursor}`)),
+      ...(page.cursor === undefined ? [] : [`cursor\t${page.cursor}`]),
+      ...(page.more ? ["more\ttrue"] : []),
+    ].join("\n"));
     return;
   }
   if (action === "kv-write") {

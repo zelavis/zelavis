@@ -44,7 +44,7 @@ const exercise = (store) =>
       doc: yield* seqs(term("title", "atlas")),
       col: yield* seqs(equals("region", "eu-west")),
       cross: yield* seqs(and(term("title", "atlas"), equals("region", "eu-west"))),
-      measures: [...(yield* store.measure("visits"))],
+      measures: [...(yield* store.measure("visits"))].sort(([a], [b]) => a - b),
       events: (yield* Stream.runCollect(store.events.read())).length,
     };
   });
@@ -56,8 +56,8 @@ test("libsql and the built-in driver agree, running the same store logic", async
   const [viaLibsql, viaNode] = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const a = yield* makeLibsqlStore("acme", { directory: libsqlDir });
-        const b = yield* makeNodeSqliteStore("acme", nodeDir);
+        const a = (yield* makeLibsqlStore("acme", { directory: libsqlDir })).partition("acme");
+        const b = (yield* makeNodeSqliteStore("acme", nodeDir)).partition("acme");
         return [yield* exercise(a), yield* exercise(b)];
       }),
     ),
@@ -75,7 +75,7 @@ test("libsql: retraction, rebuild and identity behave as on the built-in driver"
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* makeLibsqlStore("acme", { directory: dir });
+        const store = (yield* makeLibsqlStore("acme", { directory: dir })).partition("acme");
         const seqs = (q) => Effect.map(Stream.runCollect(store.resolve(q)), (c) => [...c]);
 
         yield* store.transact((txn) =>

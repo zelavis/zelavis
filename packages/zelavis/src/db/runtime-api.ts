@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { DatabaseApi, TenantApi } from "./database.js";
-import type { KvCursor, KeyValueChange, KeyValueEntry, KeyValueWrite } from "./key-value.js";
+import type { KvChangePage, KvCursor, KeyValueEntry, KeyValueWrite } from "./key-value.js";
 import type {
   Collection,
   CollectionModalities,
@@ -28,7 +28,7 @@ import type {
   TraverseInput,
   TraverseResult,
 } from "./documents.js";
-import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
+import type { DomainEvent, DomainEventPage, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
 import type { ProjectionSummary } from "./projections.js";
@@ -85,7 +85,7 @@ export interface TenantRuntimeApi {
     readonly changes: (namespace: string, options?: {
       after?: DomainEvent["cursor"];
       limit?: number;
-    }) => Promise<ReadonlyArray<KeyValueChange>>;
+    }) => Promise<KvChangePage>;
     readonly write: (namespace: string, operations: ReadonlyArray<KeyValueWrite>, options?: {
       idempotencyKey?: string;
     }) => Promise<ReadonlyArray<KeyValueEntry | { readonly key: string; readonly deleted: boolean }>>;
@@ -195,7 +195,7 @@ export interface TenantRuntimeApi {
     }) => Promise<boolean>;
   };
   readonly events: {
-    readonly read: (input?: ReadDomainEventsInput) => Promise<ReadonlyArray<DomainEvent>>;
+    readonly read: (input?: ReadDomainEventsInput) => Promise<DomainEventPage>;
   };
   readonly schemas: {
     readonly save: (schema: CollectionSchema) => Promise<StoredCollectionSchema>;

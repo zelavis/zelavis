@@ -20,6 +20,13 @@ export interface ObjectPut {
   readonly at: number;
   readonly partition: PartitionKey;
   readonly generation: number;
+  /**
+   * The node that accepted the write.
+   *
+   * Carried by the event rather than supplied by whoever reads it, so a
+   * follower or a moved partition still says who wrote what.
+   */
+  readonly origin: string;
   readonly seq: Seq;
   readonly version: number;
   readonly bytes: Uint8Array;
@@ -33,6 +40,7 @@ export interface ObjectRetracted {
   readonly at: number;
   readonly partition: PartitionKey;
   readonly generation: number;
+  readonly origin: string;
   readonly seq: Seq;
   readonly version: number;
   /** Identity at deletion time, so a continuation can attribute the change without replaying old puts. */
@@ -67,6 +75,7 @@ export const DbEventWire = Schema.Union([
     cursor: Schema.String,
     partition: Schema.String,
     generation: Schema.Finite,
+    origin: Schema.String,
     at: Schema.Finite,
     seq: Schema.Finite,
     version: Schema.Finite,
@@ -80,6 +89,7 @@ export const DbEventWire = Schema.Union([
     cursor: Schema.String,
     partition: Schema.String,
     generation: Schema.Finite,
+    origin: Schema.String,
     at: Schema.Finite,
     seq: Schema.Finite,
     version: Schema.Finite,
@@ -90,15 +100,16 @@ export const DbEventWire = Schema.Union([
 ]);
 
 /**
- * An event as it is applied, without the cursor it was read at.
+ * An event as it is applied somewhere new, without the cursor it was read at.
  *
- * A cursor is a position in the log that issued it and means nothing in the log
- * it is being applied to, so a follower is not given one to misuse: its own
- * position comes from where the event lands locally.
+ * A cursor is a position in the log that issued it, and an event applied by a
+ * restore, a copy or a replica lands wherever the receiving log is up to. A
+ * follower that keeps the leader's positions uses `events.follow` instead.
+ * Without an `origin`, the receiving store records itself as the writer.
  */
 export type AppliedEvent =
-  | Omit<ObjectPut, "cursor">
-  | Omit<ObjectRetracted, "cursor">;
+  | (Omit<ObjectPut, "cursor" | "origin"> & { readonly origin?: string })
+  | (Omit<ObjectRetracted, "cursor" | "origin"> & { readonly origin?: string });
 
 export interface ReadEventsOptions {
   readonly after?: EventCursor;

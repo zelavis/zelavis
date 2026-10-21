@@ -1,42 +1,34 @@
-import { parseJson, objectFields, isString, isSafeInteger, isNonNegativeInteger, optional } from "../core/json-validation.js";
 import { Effect, Semaphore, Stream } from "effect";
 import {
-  CursorCompacted, CursorMismatch, ForeignCursor, LogCompacted, StoreError, WriterFenced,
+  CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
+  PartitionExhausted, ReplicaDiverged, StoreError, TenantNotEmpty, WriterFenced,
 } from "./errors.js";
+import type { DbError } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
-  edgeKey, edgePrefix, reverseEdgeKey, reverseEdgePrefix, eventKey, eventPrefix,
-  decodeIdentity, identityBySeqKey, identityKey, identityNamePrefix, identityPrefix,
-  manifestKey, measureKey, measurePrefix,
-  compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
-  seqOf, Tag, termKey, termPrefix, termPrefixKey, readTermKey, tombstoneKey, tombstonePrefix,
-  decodeOrderedKey, dirtyKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
-  snapshotKey, snapshotPrefix,
-  orderedValuePrefix, prefixEnd, type OrderedValue,
+  compareKeys, compareOrderedValues, inPrefixRange, MAX_SEQ, partitionKeys, partitionOf, partitionPrefix,
+  partitionSpace, prefixEnd, readSeqAt, readU64At, sameOrderedKind, SEQ_BYTES, seqBytes, seqOf, shardMetaKey,
+  Tag, u64Bytes, type OrderedValue,
 } from "./keys.js";
 import { equalBytes, type KvEngine, type KvScanOptions, type KvWrite } from "./kv.js";
-import {
-  asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq,
-} from "./model.js";
+import { asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq } from "./model.js";
 import * as Postings from "./postings.js";
 import {
-  decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
+  containerOf, decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
 } from "./segments.js";
+import {
+  decodeEvent, decodeRecord, encodeEvent, encodeRecord, type StoredEvent, type StoredRecord,
+} from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
 import type {
-  EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow, Txn,
+  EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
+  PartitionStats, RecordState, SeedResult, ShardStoreApi, Txn,
 } from "./store.js";
+import type { ShardId } from "./topology.js";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-const u32 = (value: number): Uint8Array =>
-  Uint8Array.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
-
-const readU32 = (bytes: Uint8Array, at = 0): number => {
-  if (!Number.isSafeInteger(at) || at < 0 || at + 4 > bytes.length) throw new Error("Truncated u32 record");
-  return ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
-};
+const EMPTY = new Uint8Array(0);
+const emptyManifest = (): IndexManifest => ({ terms: [], columns: [], measures: [], edges: [] });
 
 const f64 = (value: number): Uint8Array => {
   const out = new Uint8Array(8);
@@ -47,20 +39,6 @@ const f64 = (value: number): Uint8Array => {
 const readF64 = (bytes: Uint8Array): number =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getFloat64(0);
 
-/** `[version][body]` in one value, so reading an object is a single lookup. */
-const encodePayload = (version: number, body: Uint8Array): Uint8Array => {
-  const out = new Uint8Array(4 + body.length);
-  out.set(u32(version), 0);
-  out.set(body, 4);
-  return out;
-};
-
-const json = (value: unknown): Uint8Array => encoder.encode(JSON.stringify(value));
-const unjson = <A>(bytes: Uint8Array, check: (value: unknown) => value is A): A =>
-  parseJson(decoder.decode(bytes), check, "object-store record");
-const EMPTY = new Uint8Array(0);
-const emptyManifest = (): IndexManifest => ({ terms: [], columns: [], measures: [], edges: [] });
-
 /** Keys compare as bytes; a batch keyed by them needs a string. */
 const keyId = (key: Uint8Array): string => {
   let out = "";
@@ -68,52 +46,38 @@ const keyId = (key: Uint8Array): string => {
   return out;
 };
 
+/** The shard's own records. */
+const SHARD_GENERATION = "generation";
+const SHARD_OWNER = "writer_session";
+const SHARD_FORMAT = "format";
+
+/**
+ * The layout this code writes. A shard carries it so a layout change is caught
+ * on open instead of misread.
+ */
+const CURRENT_FORMAT = 3;
+
+/** One partition's own counters and marks. */
 const META_NEXT_SEQ = "next_seq";
-const META_NEXT_POSITION = "next_position";
-const META_GENERATION = "generation";
-const META_OWNER = "writer_session";
-const META_REVISION = "writer_revision";
-
-interface WriterClaim {
-  readonly generation: number;
-  readonly session: Uint8Array;
-}
-
-/** Old four-byte generations are widened without changing events or cursors. */
-const readGeneration = (bytes: Uint8Array | undefined): number => {
-  if (bytes === undefined) return 0;
-  if (bytes.length === 4) return readU32(bytes);
-  if (bytes.length !== 8) throw new Error("Malformed writer generation");
-  const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0);
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Writer generation exhausted");
-  return Number(value);
-};
-
-const generationBytes = (generation: number): Uint8Array => {
-  const bytes = new Uint8Array(8);
-  new DataView(bytes.buffer).setBigUint64(0, BigInt(generation));
-  return bytes;
-};
-
-const generationOf = (engine: KvEngine) => engine.get(metaKey(META_GENERATION)).pipe(
-  Effect.flatMap((bytes) => Effect.try({
-    try: () => readGeneration(bytes),
-    catch: (cause) => new StoreError({ op: "generation.read", cause }),
-  })),
-);
+const META_HEAD = "head";
+const META_REVISION = "revision";
+const META_RECORDS = "records";
+const META_BYTES = "bytes";
 /** The position everything at or below has been compacted away. */
 const META_COMPACTED_TO = "compacted_to";
 
 /**
- * The log position the stored snapshot covers, or 0 when there is none.
+ * The log position the stored snapshot covers, and which snapshot it is.
  *
  * A rebuild replays the log, so compaction takes that ability away: a
  * truncated log rebuilds a partial index. A snapshot gives it back — state as
  * of a position, plus the events after it — which keeps the operation that
- * checks the manifests rather than trusting them available on a store whose
- * history has been cut.
+ * checks the manifests rather than trusting them available on a partition
+ * whose history has been cut.
  */
 const META_SNAPSHOT_AT = "snapshot_at";
+const META_SNAPSHOT_ID = "snapshot_id";
+
 /**
  * Whether any blob exists, which is the write path's only question about them.
  *
@@ -131,20 +95,44 @@ const META_SEALED = "sealed";
  * Set once a seal has swept every live posting; cleared by a reindex or a
  * rebuild. A seal after a sweep visits only the groups marked dirty since. A
  * seal before one — or after a sweep that was cut short — sweeps again,
- * because a posting written before the store was sealed carries no mark.
+ * because a posting written before the partition was sealed carries no mark.
  */
 const META_SWEPT = "swept";
 
-/** Writes per batch while sealing, which also bounds the memory it holds. */
+/** Writes per batch for work that spans many batches, which also bounds the memory it holds. */
 const SEAL_BATCH = 4096;
 
 /**
- * What a rebuild drops and re-derives.
+ * Set while a rebuild or a reindex is under way, and left set by one that was
+ * interrupted: 1 for a rebuild, 2 for a reindex. Cleared in the batch that
+ * finishes the work.
+ */
+const META_LENSES = "lenses";
+const LENSES_READY = 0;
+const LENSES_REBUILDING = 1;
+const LENSES_REINDEXING = 2;
+
+/** The highest version a record can reach: four bytes in every record and event. */
+const MAX_VERSION = 0xffffffff;
+
+/**
+ * Postings one clause of a query reads before it is called broad.
+ *
+ * A broad clause is not read in full while a narrower one is there to drive
+ * the query: its few candidates are checked against their own manifests
+ * instead, one record read each. So the cap trades one record read per
+ * candidate against one posting read per member of the broad clause, and
+ * bounds what a selective query pays for a wide partner.
+ */
+const PROBE_CAP = 4096;
+
+/**
+ * What a reindex drops and re-derives.
  *
  * Postings hold nothing a manifest does not already say, so they can be
  * reconstructed from state alone. That is what makes compaction possible: the
- * payloads, manifests and identities are already a snapshot, so the log is
- * history rather than the only way back to a working index.
+ * records are already a snapshot, so the log is history rather than the only
+ * way back to a working index.
  */
 const DERIVED_TAGS = [
   Tag.Term, Tag.Measure, Tag.Edge, Tag.EdgeReverse, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
@@ -171,54 +159,37 @@ const SEALABLE_TAGS = [Tag.Term, Tag.Ordered, Tag.Edge, Tag.EdgeReverse] as cons
  */
 const MIN_SEALED_POSTINGS = 64;
 
-/** State a rebuild keeps, and compaction relies on. */
-const STATE_TAGS = [Tag.Payload, Tag.Manifest, Tag.Identity, Tag.IdentityBySeq] as const;
+/** State a rebuild clears and replays; a reindex keeps it. */
+const STATE_TAGS = [Tag.Record, Tag.Identity, Tag.Retired] as const;
 
 /** Everything a full replay from the log clears first. */
 const LENS_TAGS = [...STATE_TAGS, ...DERIVED_TAGS] as const;
-
-/** One live record as a snapshot holds it. */
-interface StoredSnapshot {
-  readonly version: number;
-  /** Base64, as an event body is: a stored value is JSON either way. */
-  readonly body: string;
-  readonly manifest: IndexManifest;
-  readonly identity?: ObjectIdentity;
-}
-
-interface StoredEvent {
-  readonly generation: number;
-  readonly seq: number;
-  readonly kind: "put" | "retract";
-  readonly version: number;
-  readonly at: number;
-  readonly body?: string;
-  readonly manifest?: IndexManifest;
-  readonly identity?: ObjectIdentity;
-}
-
-const identityRecord = objectFields<ObjectIdentity>({ namespace: isString, key: isString });
-const pairs = (value: unknown, check: (value: unknown) => boolean): boolean =>
-  Array.isArray(value) && value.every(pair => Array.isArray(pair) && pair.length === 2 && isString(pair[0]) && check(pair[1]));
-const manifestRecord = objectFields<IndexManifest>({
-  terms: (value): value is IndexManifest["terms"] => pairs(value, isString),
-  columns: (value): value is IndexManifest["columns"] => pairs(value, value => value === null || typeof value === "boolean" || typeof value === "string" || typeof value === "number" && Number.isFinite(value)),
-  measures: (value): value is IndexManifest["measures"] => pairs(value, value => typeof value === "number" && Number.isFinite(value)),
-  edges: (value): value is IndexManifest["edges"] => pairs(value, value => isNonNegativeInteger(value) && value <= 0xffffffff),
-});
-const snapshotRecord = objectFields<StoredSnapshot>({ version: isNonNegativeInteger, body: isString,
-  manifest: manifestRecord, identity: optional(identityRecord) });
-const eventFields = objectFields<StoredEvent>({ generation: isNonNegativeInteger, seq: isNonNegativeInteger,
-  kind: (value): value is StoredEvent["kind"] => value === "put" || value === "retract",
-  version: isNonNegativeInteger, at: isSafeInteger, body: optional(isString),
-  manifest: optional(manifestRecord), identity: optional(identityRecord) });
-const eventRecord = (value: unknown): value is StoredEvent => eventFields(value) &&
-  (value.kind === "retract" || typeof value.body === "string" && manifestRecord(value.manifest));
 
 const SEPARATOR = "|";
 
 const encodeCursor = (partition: PartitionKey, position: number): EventCursor =>
   Buffer.from(partition + SEPARATOR + String(position), "utf8").toString("base64url") as EventCursor;
+
+/**
+ * The position an event cursor names, refused when another partition issued it.
+ *
+ * A position is a place in one partition's log and means nothing in another's.
+ */
+const cursorPosition = (
+  partition: PartitionKey,
+  cursor: EventCursor,
+): Effect.Effect<number, ForeignCursor | StoreError> => {
+  const raw = Buffer.from(cursor, "base64url").toString("utf8");
+  const at = raw.lastIndexOf(SEPARATOR);
+  const owner = raw.slice(0, at);
+  if (at < 0 || owner !== partition) {
+    return Effect.fail(new ForeignCursor({ expected: partition, received: at < 0 ? raw : owner }));
+  }
+  const position = Number(raw.slice(at + 1));
+  return Number.isSafeInteger(position) && position >= 0
+    ? Effect.succeed(position)
+    : Effect.fail(new StoreError({ op: "cursor.decode", cause: "the cursor names no position" }));
+};
 
 /**
  * An ordered read's position: the last key it returned, with the partition,
@@ -234,35 +205,6 @@ const encodeOrderedCursor = (
     JSON.stringify({ p: partition, c: column, d: direction, k: Buffer.from(key).toString("hex") }),
     "utf8",
   ).toString("base64url") as OrderedCursor;
-
-const decodeOrderedCursor = (
-  partition: PartitionKey,
-  column: string,
-  direction: "asc" | "desc",
-  cursor: OrderedCursor,
-): Effect.Effect<Uint8Array, ForeignCursor | CursorMismatch> =>
-  Effect.gen(function* () {
-    const malformed = new CursorMismatch({ reason: "the cursor is not one an ordered read produced" });
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    } catch {
-      return yield* malformed;
-    }
-    if (typeof parsed !== "object" || parsed === null) return yield* malformed;
-    const { p, c, d, k } = parsed as Record<string, unknown>;
-    if (typeof p !== "string" || typeof c !== "string" || typeof k !== "string") return yield* malformed;
-    if (d !== "asc" && d !== "desc") return yield* malformed;
-    if (p !== partition) return yield* new ForeignCursor({ expected: partition, received: p });
-    if (c !== column || d !== direction) {
-      return yield* new CursorMismatch({
-        reason: `the cursor continues a ${d} read of "${c}", not a ${direction} read of "${column}"`,
-      });
-    }
-    const key = new Uint8Array(Buffer.from(k, "hex"));
-    if (!inPrefixRange(key, orderedColumnPrefix(column))) return yield* malformed;
-    return key;
-  });
 
 /** The smallest key above `key`: nothing sorts between a key and itself plus a zero byte. */
 const successorOf = (key: Uint8Array): Uint8Array => {
@@ -283,50 +225,119 @@ const scanOptions = (
   ...(limit === undefined ? {} : { limit }),
 });
 
-const decodeCursor = (partition: PartitionKey, cursor: EventCursor): number => {
-  const raw = Buffer.from(cursor, "base64url").toString("utf8");
-  const at = raw.lastIndexOf(SEPARATOR);
-  const owner = raw.slice(0, at);
-  if (owner !== partition) throw new ForeignCursor({ expected: partition, received: owner });
-  return Number(raw.slice(at + 1));
+/** A counter as a meta value holds it: eight bytes, or nothing for zero. */
+const counterOf = (bytes: Uint8Array | undefined): number => {
+  if (bytes === undefined) return 0;
+  if (bytes.length !== 8) throw new RangeError("A stored counter is not eight bytes.");
+  return readU64At(bytes, 0);
 };
 
+const generationOf = (engine: KvEngine) => engine.get(shardMetaKey(SHARD_GENERATION)).pipe(
+  Effect.flatMap((bytes) => Effect.try({
+    try: () => counterOf(bytes),
+    catch: (cause) => new StoreError({ op: "generation.read", cause }),
+  })),
+);
+
 /**
- * The store over an ordered key-value engine.
- *
- * Each lens is a key range rather than a table. A posting list is the entries
- * under one prefix, already sorted, and intersection walks them exactly as
- * before. That is the shape the design wanted from the start, and it is what
- * lets an engine with no tables back the same semantics.
+ * Whether a value falls within a range as the ordered lens reads one: by the
+ * lens's own order, and — with one bound — only among values of that bound's
+ * kind, as `orderedKindRange` stops a one-sided scan at the edge of the kind.
  */
-export const storeOverKv = (
+const inRange = (value: OrderedValue, lower: RangeBound | undefined, upper: RangeBound | undefined): boolean => {
+  if (lower !== undefined) {
+    const order = compareOrderedValues(value, lower.value);
+    if (order < 0 || (order === 0 && !lower.inclusive)) return false;
+    if (upper === undefined && !sameOrderedKind(value, lower.value)) return false;
+  }
+  if (upper !== undefined) {
+    const order = compareOrderedValues(value, upper.value);
+    if (order > 0 || (order === 0 && !upper.inclusive)) return false;
+    if (lower === undefined && !sameOrderedKind(value, upper.value)) return false;
+  }
+  return true;
+};
+
+const sameIdentity = (a: ObjectIdentity | undefined, b: ObjectIdentity | undefined): boolean =>
+  a === undefined || b === undefined ? a === b : a.namespace === b.namespace && a.key === b.key;
+
+export interface WriterClaim {
+  readonly generation: number;
+  readonly session: Uint8Array;
+}
+
+/** What every partition on one shard shares. */
+interface ShardContext {
+  readonly shard: ShardId;
+  readonly engine: KvEngine;
+  readonly claim: WriterClaim;
+  /** The node recorded as the writer of every event this shard accepts. */
+  readonly origin: string;
+  /** How many postings one clause of a query reads before it is checked per candidate instead. */
+  readonly probeCap: number;
+}
+
+/** A record as a projection is about to leave it. */
+interface NextRecord {
+  readonly version: number;
+  readonly identity?: ObjectIdentity;
+  readonly manifest: IndexManifest;
+  readonly body: Uint8Array;
+}
+
+/** What a batch has changed of the partition's counters, applied when it commits. */
+interface Counters {
+  records: number;
+  bytes: number;
+}
+
+/**
+ * One partition's store over the shard's engine.
+ *
+ * Each lens is a key range under the partition's prefix rather than a table. A
+ * posting list is the entries under one prefix, already sorted, and
+ * intersection walks them in order.
+ */
+const openPartition = (
+  context: ShardContext,
   partition: PartitionKey,
-  engine: KvEngine,
-  claim: WriterClaim,
-): ObjectStoreApi => {
-  const { generation, session } = claim;
+): {
+  readonly api: ObjectStoreApi;
+  readonly drop: (keep?: ObjectIdentity) => Effect.Effect<number, StoreError | WriterFenced>;
+} => {
+  const { engine, origin, probeCap } = context;
+  const { generation, session } = context.claim;
+  const keys = partitionKeys(partition);
+  const revisionKey = keys.meta(META_REVISION);
+
   const readMeta = (name: string) =>
-    Effect.map(engine.get(metaKey(name)), (bytes) => (bytes === undefined ? 0 : readU32(bytes)));
+    Effect.flatMap(engine.get(keys.meta(name)), (bytes) => Effect.try({
+      try: () => counterOf(bytes),
+      catch: (cause) => new StoreError({ op: "meta.read", cause }),
+    }));
 
   /**
-   * One writer at a time.
+   * One writer at a time, per partition.
    *
-   * Every write below reads store state and writes it back changed: a commit
-   * reads the log's next position, `nextSeq` the identifier counter, a seal the
+   * Every write below reads partition state and writes it back changed: a
+   * commit reads the log's head, `nextSeq` the identifier counter, a seal the
    * blobs it folds into. On an engine whose reads and writes are asynchronous,
    * two of those in flight at once read the same value and the second write
    * replaces the first — a commit that returned and left no trace. LMDB and
    * RocksDB each lost 31 of 32 concurrent commits that way.
    *
-   * Reads take no permit: they see committed state, which is all they promise.
-   * Nothing holding the permit calls another operation that takes it.
+   * The permit is the partition's, so writes to different partitions on one
+   * shard do not wait for each other; the engine still applies each batch
+   * atomically. Reads take no permit: they see committed state, which is all
+   * they promise. Nothing holding the permit calls another operation that
+   * takes it.
    */
   const withPermit = Semaphore.withPermit(Semaphore.makeUnsafe(1));
   let revision: Uint8Array | undefined;
 
   const assertCurrent = Effect.gen(function* () {
     const current = yield* generationOf(engine);
-    const owner = yield* engine.get(metaKey(META_OWNER));
+    const owner = yield* engine.get(shardMetaKey(SHARD_OWNER));
     if (current !== generation || !equalBytes(owner, session)) {
       return yield* new WriterFenced({ partition, claimed: generation, current });
     }
@@ -334,27 +345,55 @@ export const storeOverKv = (
 
   const exclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) => withPermit(
     Effect.gen(function* () {
-      revision = yield* engine.get(metaKey(META_REVISION));
+      revision = yield* engine.get(revisionKey);
       yield* assertCurrent;
       return yield* effect;
     }),
   );
 
+  /**
+   * Whether this partition's lenses can be read and written: not while a
+   * rebuild or reindex is under way, nor after one was interrupted. Read from
+   * the partition once and then kept, because only this handle — the
+   * partition's one writer — changes it.
+   */
+  let lenses: number | undefined;
+  const lensesReady = Effect.gen(function* () {
+    if (lenses === undefined) lenses = yield* readMeta(META_LENSES);
+    if (lenses !== LENSES_READY) {
+      return yield* new LensesRebuilding({
+        partition,
+        operation: lenses === LENSES_REBUILDING ? "rebuild" : "reindex",
+      });
+    }
+  });
+  const ready = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.flatMap(lensesReady, () => effect);
+  const exclusiveReady = <A, E, R>(effect: Effect.Effect<A, E, R>) => exclusive(ready(effect));
+
+  const conditions = () => [
+    { key: shardMetaKey(SHARD_GENERATION), value: u64Bytes(generation) },
+    { key: shardMetaKey(SHARD_OWNER), value: session },
+    { key: revisionKey, value: revision },
+  ];
+
+  /**
+   * Commit one batch, checked against the writer and the revision the batch was
+   * built on, and advance the revision with it. The shard's generation and
+   * session fence a stale owner; the partition's revision catches anything else
+   * that wrote it since the batch began reading.
+   */
   const write = Effect.fn("store.conditionalWrite")(function*(writes: ReadonlyArray<KvWrite>) {
     if (engine.conditionalWrite === undefined) {
       return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
     }
     const nextRevision = encoder.encode(crypto.randomUUID());
-    const accepted = yield* engine.conditionalWrite([
-      ...writes, { op: "put", key: metaKey(META_REVISION), value: nextRevision },
-    ], [
-      { key: metaKey(META_GENERATION), value: generationBytes(generation) },
-      { key: metaKey(META_OWNER), value: session },
-      { key: metaKey(META_REVISION), value: revision },
-    ]);
+    const accepted = yield* engine.conditionalWrite(
+      [...writes, { op: "put", key: revisionKey, value: nextRevision }],
+      conditions(),
+    );
     if (!accepted) {
       yield* assertCurrent;
-      return yield* new StoreError({ op: "store.conflict", cause: "Store changed while building the batch; retry the complete operation" });
+      return yield* new StoreError({ op: "store.conflict", cause: "Partition changed while building the batch; retry the complete operation" });
     }
     revision = nextRevision;
   });
@@ -363,8 +402,8 @@ export const storeOverKv = (
    * Reads see the batch being built.
    *
    * A put that follows a retract of the same identifier in one transaction has
-   * to observe the retraction, or it re-reads a manifest the batch already
-   * removed and deletes postings it just wrote.
+   * to observe the retraction, or it re-reads a record the batch already
+   * retired and drops postings it just wrote.
    */
   const pendingView = (pending: Map<string, KvWrite>) => ({
     get: (key: Uint8Array) => {
@@ -382,192 +421,320 @@ export const storeOverKv = (
 
   type View = ReturnType<typeof pendingView>;
 
-  /**
-   * Drop a posting from both tiers.
-   *
-   * The live key goes; a blob cannot be edited, so once anything has been
-   * sealed the removal leaves a tombstone for the read to subtract instead.
-   */
+  /** What a projection writes into, and what it needs to know about the tiers. */
+  interface Projection {
+    readonly view: View;
+    readonly sealed: boolean;
+    readonly counters: Counters;
+  }
+
+  const decodeOrDie = <A>(op: string, decode: () => A) =>
+    Effect.try({ try: decode, catch: (cause) => new StoreError({ op, cause }) });
+
+  const readRecord = (view: View, seq: number) =>
+    Effect.flatMap(view.get(keys.record(seq)), (bytes) =>
+      bytes === undefined
+        ? Effect.succeed<StoredRecord | undefined>(undefined)
+        : decodeOrDie("record.read", (): StoredRecord | undefined => decodeRecord(bytes)));
+
+  /** Every posting a manifest contributes for one record, keyed so two sets can be compared. */
+  const postingsOf = (manifest: IndexManifest, seq: number): Map<string, Uint8Array> => {
+    const out = new Map<string, Uint8Array>();
+    const add = (key: Uint8Array) => out.set(keyId(key), key);
+    for (const [field, term] of manifest.terms) add(keys.term(field, term, seq));
+    for (const [column, value] of manifest.columns) add(keys.ordered(column, value, seq));
+    for (const [edgeType, to] of manifest.edges) {
+      add(keys.edge(edgeType, seq, to));
+      add(keys.reverseEdge(edgeType, to, seq));
+    }
+    return out;
+  };
+
+  const measuresOf = (manifest: IndexManifest): Map<string, number> =>
+    new Map(manifest.measures.map(([column, value]) => [column, value] as const));
+
   /**
    * Mark the seal group a posting belongs to as changed since the last seal.
    * One key per group, overwritten rather than added to, however many of its
    * postings change.
    */
   const markDirty = (view: View, key: Uint8Array): void => {
-    view.put(dirtyKey(key.subarray(0, key.length - 4), segmentOf(seqOf(key))), EMPTY);
+    view.put(keys.dirty(key.subarray(0, key.length - SEQ_BYTES), segmentOf(seqOf(key))), EMPTY);
   };
 
+  /**
+   * Drop a posting from both tiers.
+   *
+   * The live key goes; a blob cannot be edited, so once anything has been
+   * sealed the removal leaves a tombstone for the read to subtract instead.
+   */
   const dropPosting = (view: View, key: Uint8Array, sealed: boolean): void => {
     view.del(key);
     if (sealed) {
-      view.put(tombstoneKey(key), EMPTY);
+      view.put(keys.tombstone(key), EMPTY);
       markDirty(view, key);
     }
   };
 
   /** Write a posting, cancelling any tombstone a previous version left. */
-  const addPosting = (
-    view: View, key: Uint8Array, value: Uint8Array, sealed: boolean,
-  ): void => {
-    view.put(key, value);
-    // An update that keeps a term retracts and re-adds it in one transaction.
-    // Without this the tombstone written a moment ago would hide the posting
-    // just written — the batch is keyed, so the later call is the one that
-    // lands.
+  const addPosting = (view: View, key: Uint8Array, sealed: boolean): void => {
+    view.put(key, EMPTY);
     if (sealed) {
-      view.del(tombstoneKey(key));
+      view.del(keys.tombstone(key));
       markDirty(view, key);
     }
   };
 
-  const unproject = (view: View, seq: Seq, sealed: boolean) =>
+  /** Remove the caller's name for a record, unless it has since been given to another. */
+  const releaseIdentity = (view: View, identity: ObjectIdentity, seq: number) =>
     Effect.gen(function* () {
-      const stored = yield* view.get(manifestKey(seq));
-      if (stored === undefined) return;
-      const manifest = unjson(stored, manifestRecord);
-      for (const [field, term] of manifest.terms) {
-        dropPosting(view, termKey(field, term, seq), sealed);
-      }
-      for (const [column, value] of manifest.columns) {
-        dropPosting(view, orderedKey(column, value, seq), sealed);
-      }
-      for (const [column] of manifest.measures) view.del(measureKey(column, seq));
-      for (const [edgeType, to] of manifest.edges) {
-        dropPosting(view, edgeKey(edgeType, seq, to), sealed);
-        dropPosting(view, reverseEdgeKey(edgeType, to, seq), sealed);
-      }
-      view.del(manifestKey(seq));
-
-      const identity = yield* view.get(identityBySeqKey(seq));
-      if (identity !== undefined) {
-        const decoded = unjson(identity, identityRecord);
-        view.del(identityKey(decoded.namespace, decoded.key));
-        view.del(identityBySeqKey(seq));
-      }
+      const key = keys.identity(identity.namespace, identity.key);
+      const held = yield* view.get(key);
+      if (held !== undefined && held.length === SEQ_BYTES && readSeqAt(held, 0) === seq) view.del(key);
     });
 
-  const project = (
-    view: View,
-    seq: Seq,
-    version: number,
-    body: Uint8Array,
-    manifest: IndexManifest,
-    sealed: boolean,
-    identity?: ObjectIdentity,
-  ) =>
+  /**
+   * Leave a record as `next` says, writing only what changed.
+   *
+   * An update that keeps most of a document keeps most of its postings, and
+   * rewriting those would cost a write each and mark their seal groups dirty
+   * for nothing. So the postings the record had and the ones it now has are
+   * compared, and only the difference is written.
+   */
+  const project = (into: Projection, seq: number, current: StoredRecord | undefined, next: NextRecord) =>
     Effect.gen(function* () {
-      yield* unproject(view, seq, sealed);
-      view.put(payloadKey(seq), encodePayload(version, body));
-      // A posting is a key with no value: the key itself is the fact.
-      for (const [field, term] of manifest.terms) {
-        addPosting(view, termKey(field, term, seq), EMPTY, sealed);
+      const { view, sealed, counters } = into;
+      const before = current?.live === true ? postingsOf(current.manifest, seq) : new Map<string, Uint8Array>();
+      const after = postingsOf(next.manifest, seq);
+      for (const [id, key] of before) if (!after.has(id)) dropPosting(view, key, sealed);
+      for (const [id, key] of after) if (!before.has(id)) addPosting(view, key, sealed);
+
+      const measuresBefore = current?.live === true ? measuresOf(current.manifest) : new Map<string, number>();
+      const measuresAfter = measuresOf(next.manifest);
+      for (const [column] of measuresBefore) if (!measuresAfter.has(column)) view.del(keys.measure(column, seq));
+      for (const [column, value] of measuresAfter) {
+        if (measuresBefore.get(column) !== value) view.put(keys.measure(column, seq), f64(value));
       }
-      for (const [column, value] of manifest.columns) {
-        addPosting(view, orderedKey(column, value, seq), EMPTY, sealed);
+
+      const held = current?.live === true ? current.identity : undefined;
+      if (held !== undefined && !sameIdentity(held, next.identity)) yield* releaseIdentity(view, held, seq);
+      if (next.identity !== undefined && !sameIdentity(held, next.identity)) {
+        view.put(keys.identity(next.identity.namespace, next.identity.key), seqBytes(seq));
       }
-      for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
-      for (const [edgeType, to] of manifest.edges) {
-        addPosting(view, edgeKey(edgeType, seq, to), EMPTY, sealed);
-        addPosting(view, reverseEdgeKey(edgeType, to, seq), EMPTY, sealed);
-      }
-      view.put(manifestKey(seq), json(manifest));
-      if (identity !== undefined) {
-        view.put(identityKey(identity.namespace, identity.key), u32(seq));
-        view.put(identityBySeqKey(seq), json(identity));
-      }
+
+      // A retired record coming back leaves the retired index, or compaction
+      // would later drop it as though it were still gone.
+      if (current !== undefined && !current.live) view.del(keys.retired(current.retiredAt, seq));
+      view.put(keys.record(seq), encodeRecord({
+        live: true,
+        version: next.version,
+        ...(next.identity === undefined ? {} : { identity: next.identity }),
+        manifest: next.manifest,
+        body: next.body,
+      }));
+      if (current?.live !== true) counters.records += 1;
+      counters.bytes += next.body.length - (current?.live === true ? current.body.length : 0);
     });
 
-  const versionOf = (view: View, seq: Seq) =>
-    Effect.map(view.get(payloadKey(seq)), (bytes) => (bytes === undefined ? 0 : readU32(bytes)));
+  /**
+   * Retire a record: drop everything it contributed and keep only its version
+   * and the position that retired it.
+   *
+   * What is kept is what makes a late event harmless: a put older than the
+   * retraction finds a version it is not newer than and changes nothing. A
+   * record that never existed here is retired all the same, so a retraction
+   * applied before the put it follows still wins.
+   */
+  const retire = (into: Projection, seq: number, current: StoredRecord | undefined, version: number, position: number) =>
+    Effect.gen(function* () {
+      const { view, sealed, counters } = into;
+      if (current?.live === true) {
+        for (const key of postingsOf(current.manifest, seq).values()) dropPosting(view, key, sealed);
+        for (const [column] of measuresOf(current.manifest)) view.del(keys.measure(column, seq));
+        if (current.identity !== undefined) yield* releaseIdentity(view, current.identity, seq);
+        counters.records -= 1;
+        counters.bytes -= current.body.length;
+      }
+      if (current !== undefined && !current.live) view.del(keys.retired(current.retiredAt, seq));
+      view.put(keys.record(seq), encodeRecord({ live: false, version, retiredAt: position }));
+      view.put(keys.retired(position, seq), EMPTY);
+    });
 
-  const bodyOf = (stored: StoredEvent): Uint8Array =>
-    stored.body === undefined ? EMPTY : new Uint8Array(Buffer.from(stored.body, "base64"));
+  /** What one log entry does to the state it lands on. */
+  const applyEffects = (into: Projection, current: StoredRecord | undefined, event: StoredEvent, position: number) =>
+    event.kind === "put"
+      ? project(into, event.seq, current, {
+          version: event.version,
+          ...(event.identity === undefined ? {} : { identity: event.identity }),
+          manifest: event.manifest,
+          body: event.body,
+        })
+      : retire(into, event.seq, current, event.version, position);
 
-  const commit = <A, E, R>(
-    f: (view: View, txn: Txn, append: (event: StoredEvent) => void) => Effect.Effect<A, E, R>,
-  ) =>
-    exclusive(Effect.gen(function* () {
+  interface Commit extends Projection {
+    /** The newest position this batch has reached. */
+    readonly head: () => number;
+    /** Append to the log, answering the position the entry took. */
+    readonly append: (event: StoredEvent) => number;
+  }
+
+  const commit = <A, E, R>(f: (into: Commit) => Effect.Effect<A, E, R>) =>
+    exclusiveReady(Effect.gen(function* () {
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
-      let position = yield* readMeta(META_NEXT_POSITION);
+      const start = yield* readMeta(META_HEAD);
+      let head = start;
       const sealed = (yield* readMeta(META_SEALED)) > 0;
+      const counters: Counters = { records: 0, bytes: 0 };
 
-      const append = (event: StoredEvent): void => {
-        position += 1;
-        view.put(eventKey(position), json(event));
+      const append = (event: StoredEvent): number => {
+        if (head >= Number.MAX_SAFE_INTEGER) throw new RangeError(`The log of "${partition}" is full.`);
+        head += 1;
+        view.put(keys.event(head), encodeEvent(event));
+        return head;
       };
 
-      const txn: Txn = {
-        put: (seq, bytes, manifest, identity) =>
-          Effect.gen(function* () {
-            yield* assertCurrent;
-            const version = (yield* versionOf(view, seq)) + 1;
-            append({
-              generation, seq, kind: "put", version, at: Date.now(),
-              body: Buffer.from(bytes).toString("base64"), manifest,
-              ...(identity === undefined ? {} : { identity }),
-            });
-            yield* project(view, seq, version, bytes, manifest, sealed, identity);
-          }),
-
-        retract: (seq) =>
-          Effect.gen(function* () {
-            yield* assertCurrent;
-            const version = yield* versionOf(view, seq);
-            if (version === 0) return;
-            const identityBytes = yield* view.get(identityBySeqKey(seq));
-            const identity = identityBytes === undefined
-              ? undefined
-              : unjson(identityBytes, identityRecord);
-            append({
-              generation, seq, kind: "retract", version: version + 1, at: Date.now(),
-              ...(identity === undefined ? {} : { identity }),
-            });
-            yield* unproject(view, seq, sealed);
-            view.del(payloadKey(seq));
-          }),
-      };
-
-      const result = yield* f(view, txn, append);
-      view.put(metaKey(META_NEXT_POSITION), u32(position));
-      // One batch: the whole transaction lands, or none of it does.
-      yield* write([...pending.values()]);
+      const result = yield* f({ view, sealed, counters, head: () => head, append });
+      if (head !== start) view.put(keys.meta(META_HEAD), u64Bytes(head));
+      if (counters.records !== 0) {
+        view.put(keys.meta(META_RECORDS), u64Bytes((yield* readMeta(META_RECORDS)) + counters.records));
+      }
+      if (counters.bytes !== 0) {
+        view.put(keys.meta(META_BYTES), u64Bytes((yield* readMeta(META_BYTES)) + counters.bytes));
+      }
+      // One batch: the whole transaction lands, or none of it does. A batch
+      // that changed nothing is not written at all.
+      if (pending.size > 0) yield* write([...pending.values()]);
       return result;
     }));
+
+  const nextVersion = (current: StoredRecord | undefined) => {
+    const version = (current?.version ?? 0) + 1;
+    return version > MAX_VERSION
+      ? Effect.fail(new StoreError({ op: "record.version", cause: `a record of "${partition}" has reached its last version` }))
+      : Effect.succeed(version);
+  };
+
+  const txnFor = (into: Commit): Txn => ({
+    put: (seq, bytes, manifest, identity) =>
+      Effect.gen(function* () {
+        const current = yield* readRecord(into.view, seq);
+        const version = yield* nextVersion(current);
+        into.append({
+          kind: "put", generation, seq, version, at: Date.now(), origin,
+          ...(identity === undefined ? {} : { identity }), manifest, body: bytes,
+        });
+        yield* project(into, seq, current, {
+          version, ...(identity === undefined ? {} : { identity }), manifest, body: bytes,
+        });
+      }),
+
+    retract: (seq) =>
+      Effect.gen(function* () {
+        const current = yield* readRecord(into.view, seq);
+        if (current === undefined || !current.live) return;
+        const version = yield* nextVersion(current);
+        const position = into.append({
+          kind: "retract", generation, seq, version, at: Date.now(), origin,
+          ...(current.identity === undefined ? {} : { identity: current.identity }),
+        });
+        yield* retire(into, seq, current, version, position);
+      }),
+  });
+
+  /** An event as it is stored, whoever wrote it. */
+  const storedOf = (event: AppliedEvent | DbEvent): StoredEvent => {
+    const common = {
+      generation: event.generation,
+      seq: event.seq,
+      version: event.version,
+      at: event.at,
+      origin: event.origin ?? origin,
+      ...(event.identity === undefined ? {} : { identity: event.identity }),
+    };
+    return event._tag === "ObjectPut"
+      ? { kind: "put", ...common, manifest: event.manifest, body: event.bytes }
+      : { kind: "retract", ...common };
+  };
+
+  const toEvent = (position: number, stored: StoredEvent): DbEvent => {
+    const common = {
+      cursor: encodeCursor(partition, position),
+      partition,
+      generation: stored.generation,
+      origin: stored.origin,
+      at: stored.at,
+      seq: asSeq(stored.seq),
+      version: stored.version,
+      ...(stored.identity === undefined ? {} : { identity: stored.identity }),
+    };
+    return stored.kind === "put"
+      ? { _tag: "ObjectPut", ...common, bytes: stored.body, manifest: stored.manifest }
+      : { _tag: "ObjectRetracted", ...common };
+  };
 
   /**
    * A posting list, read from both tiers.
    *
    * Sealed blobs carry everything up to the last seal, the live keys carry
    * everything written since, and tombstones carry what was removed from a
-   * blob that cannot be edited. The union minus the tombstones is the answer.
+   * blob that cannot be edited. A blob becomes a container as it is.
    *
-   * Both scans are ascending in identifier order — segments are keyed by index
-   * and live postings by their trailing identifier — so each side folds
-   * straight into a builder and a wide list never becomes a JavaScript array.
+   * A prefix can span several values — a term prefix spans every term it
+   * starts — and a tombstone cancels its own value's posting only. So each
+   * value's blobs lose that value's tombstones before the values are united: a
+   * document that lost "atlas" but kept "atlantic" still matches `at*`. A live
+   * key never has a tombstone beside it — re-adding a posting removes it — so
+   * the live tier is added after.
    */
   const postingsUnder = (prefix: Uint8Array) =>
     Effect.gen(function* () {
-      const sealed = new Postings.PostingsBuilder();
-      yield* Stream.runForEach(engine.scan(segmentPrefix(prefix)), (entry) =>
+      const removed = new Map<string, Postings.PostingsBuilder>();
+      yield* Stream.runForEach(engine.scan(keys.tombstonePrefix(prefix)), (entry) =>
         Effect.sync(() => {
-          const base = segmentIndexOf(entry.key) * SEGMENT_SPAN;
-          decodeSegment(entry.value, base, (id) => sealed.add(id));
+          const posting = keys.liveOfTombstone(entry.key);
+          const value = keyId(posting.subarray(0, posting.length - SEQ_BYTES));
+          let builder = removed.get(value);
+          if (builder === undefined) {
+            builder = new Postings.PostingsBuilder();
+            removed.set(value, builder);
+          }
+          builder.add(seqOf(posting));
         }));
+
+      // Blobs come in key order, which is value then segment, so each value's
+      // run arrives together and ascending.
+      let sealed: Postings.Postings = Postings.empty;
+      let value: string | undefined;
+      let segments: number[] = [];
+      let containers: Postings.Container[] = [];
+      const close = () => {
+        if (value === undefined) return;
+        const blobs: Postings.Postings = { segments, containers };
+        const gone = removed.get(value);
+        sealed = Postings.or(sealed, gone === undefined ? blobs : Postings.andNot(blobs, gone.build()));
+        segments = [];
+        containers = [];
+      };
+      yield* Stream.runForEach(engine.scan(keys.segmentPrefix(prefix)), (entry) =>
+        Effect.sync(() => {
+          const id = keyId(keys.liveOfSegment(entry.key));
+          if (id !== value) {
+            close();
+            value = id;
+          }
+          const container = containerOf(entry.value);
+          if (container === undefined) return;
+          segments.push(keys.segmentIndexOf(entry.key));
+          containers.push(container);
+        }));
+      close();
 
       const live = new Postings.PostingsBuilder();
       yield* Stream.runForEach(engine.scan(prefix), (entry) =>
         Effect.sync(() => live.add(seqOf(entry.key))));
 
-      const present = Postings.or(sealed.build(), live.build());
-
-      // Tombstones exist only where something sealed was later removed, so the
-      // common case is an empty range scan rather than a set operation.
-      const removed = new Postings.PostingsBuilder();
-      yield* Stream.runForEach(engine.scan(tombstonePrefix(prefix)), (entry) =>
-        Effect.sync(() => removed.add(seqOf(entry.key))));
-
-      return Postings.andNot(present, removed.build());
+      return Postings.or(sealed, live.build());
     });
 
   /**
@@ -579,22 +746,22 @@ export const storeOverKv = (
    * like with like; with neither, it is the whole column.
    */
   const rangeBounds = (column: string, lower?: RangeBound, upper?: RangeBound) => ({
-    prefix: orderedColumnPrefix(column),
+    prefix: keys.orderedColumnPrefix(column),
     from:
       lower !== undefined
         ? lower.inclusive
-          ? orderedValuePrefix(column, lower.value)
-          : prefixEnd(orderedValuePrefix(column, lower.value))
+          ? keys.orderedValuePrefix(column, lower.value)
+          : prefixEnd(keys.orderedValuePrefix(column, lower.value))
         : upper !== undefined
-          ? orderedKindRange(column, upper.value).start
+          ? keys.orderedKindRange(column, upper.value).start
           : undefined,
     to:
       upper !== undefined
         ? upper.inclusive
-          ? prefixEnd(orderedValuePrefix(column, upper.value))
-          : orderedValuePrefix(column, upper.value)
+          ? prefixEnd(keys.orderedValuePrefix(column, upper.value))
+          : keys.orderedValuePrefix(column, upper.value)
         : lower !== undefined
-          ? orderedKindRange(column, lower.value).end
+          ? keys.orderedKindRange(column, lower.value).end
           : undefined,
   });
 
@@ -614,12 +781,12 @@ export const storeOverKv = (
       const removed = new Set<string>();
       yield* Stream.runForEach(
         engine.scan(
-          tombstonePrefix(prefix),
-          scanOptions(from && tombstonePrefix(from), to && tombstonePrefix(to), false),
+          keys.tombstonePrefix(prefix),
+          scanOptions(from && keys.tombstonePrefix(from), to && keys.tombstonePrefix(to), false),
         ),
         (entry) =>
           Effect.sync(() => {
-            removed.add(hexOf(entry.key.subarray(1)));
+            removed.add(hexOf(keys.liveOfTombstone(entry.key)));
           }),
       );
       return removed;
@@ -629,26 +796,26 @@ export const storeOverKv = (
    * The live keys a sealed blob stands for, ascending, within `[from, to)`.
    *
    * A segment key is its live prefix — for the ordered lens, one value of one
-   * column — behind the segment tag, with the segment index after it. Putting
-   * each identifier back behind that prefix gives the keys the blob replaced,
-   * in the order the live tier would have held them.
+   * column — in the sealed tier, with the segment index after it. Putting each
+   * identifier back behind that prefix gives the keys the blob replaced, in
+   * the order the live tier would have held them.
    */
   const expandBlob = (
     blob: { readonly key: Uint8Array; readonly value: Uint8Array },
     from: Uint8Array | undefined,
     to: Uint8Array | undefined,
   ): Array<Uint8Array> => {
-    const livePrefix = blob.key.subarray(1, blob.key.length - 4);
-    const keys: Array<Uint8Array> = [];
-    decodeSegment(blob.value, segmentIndexOf(blob.key) * SEGMENT_SPAN, (id) => {
-      const key = new Uint8Array(livePrefix.length + 4);
+    const livePrefix = keys.liveOfSegment(blob.key);
+    const out: Array<Uint8Array> = [];
+    decodeSegment(blob.value, keys.segmentIndexOf(blob.key) * SEGMENT_SPAN, (id) => {
+      const key = new Uint8Array(livePrefix.length + SEQ_BYTES);
       key.set(livePrefix);
-      key.set(u32(id), livePrefix.length);
+      key.set(seqBytes(id), livePrefix.length);
       if (from !== undefined && compareKeys(key, from) < 0) return;
       if (to !== undefined && compareKeys(key, to) >= 0) return;
-      keys.push(key);
+      out.push(key);
     });
-    return keys;
+    return out;
   };
 
   /**
@@ -657,41 +824,33 @@ export const storeOverKv = (
    * Both tiers count: the live postings in range, and the blobs of every value
    * in range less what the tombstones removed. Range bounds fall on value
    * boundaries and a blob holds one value, so a blob is wholly inside the range
-   * or wholly outside it. Identifiers come out in value order and a postings set
-   * is kept in identifier order, so they are sorted — and de-duplicated, because
-   * a posting written again after a seal is in both tiers, and a manifest may
-   * give one object several values in a column.
+   * or wholly outside it. Identifiers come out in value order, which the
+   * builder sorts per segment and de-duplicates, because a posting written
+   * again after a seal is in both tiers, and a manifest may give one object
+   * several values in a column.
    */
   const rangePostings = (query: RangeQuery): Effect.Effect<Postings.Postings, StoreError> =>
     Effect.gen(function* () {
       const { prefix, from, to } = rangeBounds(query.column, query.lower, query.upper);
       const removed = yield* tombstonesIn(prefix, from, to);
-      const found: Array<number> = [];
+      const found = new Postings.PostingsBuilder();
       yield* Stream.runForEach(engine.scan(prefix, scanOptions(from, to, false)), (entry) =>
-        Effect.sync(() => {
-          found.push(seqOf(entry.key));
-        }));
+        Effect.sync(() => found.add(seqOf(entry.key))));
       yield* Stream.runForEach(
-        engine.scan(segmentPrefix(prefix), scanOptions(from && segmentPrefix(from), to && segmentPrefix(to), false)),
+        engine.scan(keys.segmentPrefix(prefix), scanOptions(from && keys.segmentPrefix(from), to && keys.segmentPrefix(to), false)),
         (entry) =>
           Effect.sync(() => {
             if (removed.size === 0) {
-              decodeSegment(entry.value, segmentIndexOf(entry.key) * SEGMENT_SPAN, (id) => found.push(id));
+              const container = containerOf(entry.value);
+              if (container !== undefined) found.addSegment(keys.segmentIndexOf(entry.key), container);
               return;
             }
             for (const key of expandBlob(entry, undefined, undefined)) {
-              if (!removed.has(hexOf(key))) found.push(seqOf(key));
+              if (!removed.has(hexOf(key))) found.add(seqOf(key));
             }
           }),
       );
-      const sorted = Uint32Array.from(found).sort();
-      const builder = new Postings.PostingsBuilder();
-      let previous = -1;
-      for (const seq of sorted) {
-        if (seq !== previous) builder.add(seq);
-        previous = seq;
-      }
-      return builder.build();
+      return found.build();
     });
 
   /** Live keys pulled per step of an ordered read. */
@@ -723,14 +882,14 @@ export const storeOverKv = (
     readonly sealedFrom: Uint8Array | undefined;
     readonly sealedTo: Uint8Array | undefined;
     readonly reverse: boolean;
-    readonly filter: Postings.Postings | undefined;
+    readonly filter: RowFilter | undefined;
     readonly limit: number;
   }): Effect.Effect<
     Array<{ readonly key: Uint8Array; readonly seq: number; readonly value: OrderedValue }>,
     StoreError
   > =>
     Effect.gen(function* () {
-      const prefix = orderedColumnPrefix(input.column);
+      const prefix = keys.orderedColumnPrefix(input.column);
       const { reverse } = input;
       const removed = yield* tombstonesIn(prefix, input.from, input.to);
 
@@ -764,10 +923,10 @@ export const storeOverKv = (
         while (!sealedDone) {
           const blobs = [
             ...(yield* Stream.runCollect(
-              engine.scan(segmentPrefix(prefix), scanOptions(blobFrom, blobTo, reverse, BLOB_CHUNK)),
+              engine.scan(keys.segmentPrefix(prefix), scanOptions(blobFrom, blobTo, reverse, BLOB_CHUNK)),
             )),
           ];
-          const keys: Array<Uint8Array> = [];
+          const found: Array<Uint8Array> = [];
           let used = 0;
           for (const blob of blobs) {
             used += 1;
@@ -775,12 +934,12 @@ export const storeOverKv = (
             else blobFrom = successorOf(blob.key);
             const expanded = expandBlob(blob, input.from, input.to);
             if (reverse) expanded.reverse();
-            for (const key of expanded) keys.push(key);
+            for (const key of expanded) found.push(key);
             // Enough for a step: the rest of this batch is fetched again next time.
-            if (keys.length >= LIVE_CHUNK) break;
+            if (found.length >= LIVE_CHUNK) break;
           }
           if (used === blobs.length && blobs.length < BLOB_CHUNK) sealedDone = true;
-          if (keys.length > 0) return keys;
+          if (found.length > 0) return found;
         }
         return [] as Array<Uint8Array>;
       });
@@ -821,29 +980,248 @@ export const storeOverKv = (
           si += 1;
         }
         if (removed.size > 0 && removed.has(hexOf(key))) continue;
-        const { seq, value } = decodeOrderedKey(key);
-        if (input.filter !== undefined && !Postings.has(input.filter, seq)) continue;
+        const { seq, value } = keys.decodeOrdered(key);
+        if (!(yield* passes(input.filter, seq))) continue;
         out.push({ key, seq, value });
       }
       return out;
     });
 
+  /**
+   * Whether a lens range holds no more than `cap` postings, reading at most a
+   * few more than that from each tier to find out.
+   *
+   * Tombstones are not subtracted: an over-count only sends a clause down the
+   * broad path, which is exact too, just paid for differently.
+   */
+  const withinCap = (
+    livePrefix: Uint8Array,
+    liveOptions: KvScanOptions | undefined,
+    sealedOptions: KvScanOptions | undefined,
+    cap: number,
+  ) =>
+    Effect.gen(function* () {
+      let counted = 0;
+      const blobs = yield* Stream.runCollect(
+        engine.scan(keys.segmentPrefix(livePrefix), { ...sealedOptions, limit: cap + 1 }),
+      );
+      for (const blob of blobs) {
+        const container = containerOf(blob.value);
+        counted += container === undefined ? 0 : container.kind === "list" ? container.offsets.length : container.count;
+        if (counted > cap) return false;
+      }
+      const live = yield* Stream.runCollect(engine.scan(livePrefix, { ...liveOptions, limit: cap - counted + 1 }));
+      return counted + [...live].length <= cap;
+    });
+
+  /** One clause's postings when they fit under the cap, or nothing when they do not. */
+  const leafWithin = (query: Exclude<Query, { readonly _tag: "And" | "Or" }>, cap: number) =>
+    Effect.gen(function* () {
+      if (query._tag === "Range") {
+        const { prefix, from, to } = rangeBounds(query.column, query.lower, query.upper);
+        const fits = yield* withinCap(
+          prefix,
+          scanOptions(from, to, false),
+          scanOptions(from && keys.segmentPrefix(from), to && keys.segmentPrefix(to), false),
+          cap,
+        );
+        return fits ? yield* rangePostings(query) : undefined;
+      }
+      const prefix = query._tag === "Term"
+        ? keys.termPrefix(query.field, query.term)
+        : query._tag === "TermPrefix"
+          ? keys.termPrefixKey(query.field, query.prefix)
+          : query._tag === "Equals"
+            ? keys.orderedValuePrefix(query.column, query.value)
+            : (query.direction ?? "outbound") === "inbound"
+              ? keys.reverseEdgePrefix(query.edgeType, query.from)
+              : keys.edgePrefix(query.edgeType, query.from);
+      return (yield* withinCap(prefix, undefined, undefined, cap)) ? yield* postingsUnder(prefix) : undefined;
+    });
+
+  /**
+   * Whether one record's manifest satisfies a query, exactly as the lenses
+   * would answer it.
+   *
+   * The lenses are built from the manifest, so this is the same question asked
+   * of one record instead of every record: values compare in the lens's one
+   * order (`compareOrderedValues`), and a one-sided range stays within its
+   * bound's kind as `orderedKindRange` keeps the lens scan within it. An
+   * outbound edge is the source's to answer, so the source's targets are read
+   * once and kept in `outbound`.
+   */
+  const holds = (
+    query: Query,
+    manifest: IndexManifest,
+    seq: number,
+    outbound: Map<string, ReadonlySet<number>>,
+  ): Effect.Effect<boolean, StoreError> => {
+    switch (query._tag) {
+      case "Term":
+        return Effect.succeed(manifest.terms.some(([field, term]) => field === query.field && term === query.term));
+      case "TermPrefix": {
+        const wanted = encoder.encode(query.prefix);
+        return Effect.succeed(manifest.terms.some(([field, term]) => {
+          if (field !== query.field) return false;
+          const bytes = encoder.encode(term);
+          return bytes.length >= wanted.length && wanted.every((byte, i) => bytes[i] === byte);
+        }));
+      }
+      case "Equals":
+        return Effect.succeed(manifest.columns.some(([column, value]) =>
+          column === query.column && compareOrderedValues(value, query.value) === 0));
+      case "Range":
+        return Effect.succeed(manifest.columns.some(([column, value]) =>
+          column === query.column && inRange(value, query.lower, query.upper)));
+      case "Edge": {
+        if ((query.direction ?? "outbound") === "inbound") {
+          return Effect.succeed(manifest.edges.some(([edgeType, to]) =>
+            edgeType === query.edgeType && Number(to) === query.from));
+        }
+        const key = `${query.edgeType}\u0000${query.from}`;
+        const known = outbound.get(key);
+        if (known !== undefined) return Effect.succeed(known.has(seq));
+        return Effect.map(readRecord(pendingView(new Map()), query.from), (source) => {
+          const targets = new Set<number>(source?.live === true
+            ? source.manifest.edges.filter(([edgeType]) => edgeType === query.edgeType).map(([, to]) => Number(to))
+            : []);
+          outbound.set(key, targets);
+          return targets.has(seq);
+        });
+      }
+      case "And":
+        return Effect.gen(function* () {
+          for (const part of query.of) if (!(yield* holds(part, manifest, seq, outbound))) return false;
+          return true;
+        });
+      case "Or":
+        return Effect.gen(function* () {
+          for (const part of query.of) if (yield* holds(part, manifest, seq, outbound)) return true;
+          return false;
+        });
+    }
+  };
+
+  /** What a query comes to under the cap: a set, or a promise that it is wider than one. */
+  type Bounded =
+    | { readonly kind: "exact"; readonly postings: Postings.Postings }
+    | { readonly kind: "broad" };
+
+  /**
+   * A query evaluated without reading any clause past the cap.
+   *
+   * A clause that fits is an exact set. An AND intersects its exact clauses,
+   * and checks each surviving candidate against the broad ones by reading the
+   * candidate's manifest — so `status = "rare" AND createdAt > T` costs the
+   * rare postings and one record read per rare document, not the whole date
+   * range. An AND with no exact clause, and an OR with a broad one, are broad:
+   * nothing narrow is there to drive them, and the caller reads them in full.
+   */
+  const evaluateBounded = (query: Query, cap: number): Effect.Effect<Bounded, StoreError> =>
+    Effect.gen(function* () {
+      if (query._tag === "And" || query._tag === "Or") {
+        const parts = yield* Effect.forEach(query.of, (part) => evaluateBounded(part, cap));
+        if (query._tag === "Or") {
+          return parts.every((part) => part.kind === "exact")
+            ? { kind: "exact", postings: Postings.orAll(parts.map((part) => (part as { postings: Postings.Postings }).postings)) }
+            : { kind: "broad" };
+        }
+        const exact = parts.flatMap((part) => (part.kind === "exact" ? [part.postings] : []));
+        if (exact.length === 0) return { kind: "broad" };
+        const candidates = Postings.andAll(exact);
+        const broad = query.of.filter((_, i) => parts[i]!.kind === "broad");
+        if (broad.length === 0) return { kind: "exact", postings: candidates };
+        const outbound = new Map<string, ReadonlySet<number>>();
+        const kept = new Postings.PostingsBuilder();
+        for (const seq of Postings.iterate(candidates)) {
+          const record = yield* readRecord(pendingView(new Map()), seq);
+          if (record?.live !== true) continue;
+          let all = true;
+          for (const part of broad) {
+            if (!(yield* holds(part, record.manifest, seq, outbound))) {
+              all = false;
+              break;
+            }
+          }
+          if (all) kept.add(seq);
+        }
+        return { kind: "exact", postings: kept.build() };
+      }
+      const postings = yield* leafWithin(query, cap);
+      return postings === undefined ? { kind: "broad" } : { kind: "exact", postings };
+    });
+
+  /** A query as a set: bounded where a narrow clause can drive it, read in full where none can. */
+  const resolveSet = (query: Query) =>
+    Effect.flatMap(evaluateBounded(query, probeCap), (bounded) =>
+      bounded.kind === "exact" ? Effect.succeed(bounded.postings) : evaluate(query));
+
+  /**
+   * How an ordered read keeps to its `where`: by a set when the filter fits
+   * under the cap, and otherwise by checking each row's manifest — a broad
+   * filter passes most rows, so a page reads about what it returns either way.
+   */
+  type RowFilter =
+    | { readonly kind: "exact"; readonly postings: Postings.Postings }
+    | { readonly kind: "check"; readonly query: Query; readonly outbound: Map<string, ReadonlySet<number>> };
+
+  const rowFilterFor = (where: Query | undefined): Effect.Effect<RowFilter | undefined, StoreError> =>
+    where === undefined
+      ? Effect.succeed(undefined)
+      : Effect.map(evaluateBounded(where, probeCap), (bounded): RowFilter =>
+        bounded.kind === "exact"
+          ? { kind: "exact", postings: bounded.postings }
+          : { kind: "check", query: where, outbound: new Map() });
+
+  const passes = (filter: RowFilter | undefined, seq: number): Effect.Effect<boolean, StoreError> => {
+    if (filter === undefined) return Effect.succeed(true);
+    if (filter.kind === "exact") return Effect.succeed(Postings.has(filter.postings, seq));
+    return Effect.flatMap(readRecord(pendingView(new Map()), seq), (record) =>
+      record?.live === true ? holds(filter.query, record.manifest, seq, filter.outbound) : Effect.succeed(false));
+  };
+
   const evaluate = (query: Query): Effect.Effect<Postings.Postings, StoreError> => {
     switch (query._tag) {
       case "Range": return rangePostings(query);
-      case "Term": return postingsUnder(termPrefix(query.field, query.term));
-      case "TermPrefix": return postingsUnder(termPrefixKey(query.field, query.prefix));
-      case "Equals": return postingsUnder(orderedValuePrefix(query.column, query.value));
+      case "Term": return postingsUnder(keys.termPrefix(query.field, query.term));
+      case "TermPrefix": return postingsUnder(keys.termPrefixKey(query.field, query.prefix));
+      case "Equals": return postingsUnder(keys.orderedValuePrefix(query.column, query.value));
       case "Edge": {
         const direction = query.direction ?? "outbound";
         return direction === "inbound"
-          ? postingsUnder(reverseEdgePrefix(query.edgeType, query.from))
-          : postingsUnder(edgePrefix(query.edgeType, query.from));
+          ? postingsUnder(keys.reverseEdgePrefix(query.edgeType, query.from))
+          : postingsUnder(keys.edgePrefix(query.edgeType, query.from));
       }
       case "And": return Effect.map(Effect.forEach(query.of, evaluate), Postings.andAll);
       case "Or": return Effect.map(Effect.forEach(query.of, evaluate), Postings.orAll);
     }
   };
+
+  const decodeOrderedCursor = (
+    column: string,
+    direction: "asc" | "desc",
+    cursor: OrderedCursor,
+  ): Effect.Effect<Uint8Array, ForeignCursor | CursorMismatch> =>
+    Effect.gen(function* () {
+      const malformed = new CursorMismatch({ reason: "the cursor is not one an ordered read produced" });
+      const parsed = yield* Effect.try({
+        try: (): unknown => JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")),
+        catch: () => malformed,
+      });
+      if (typeof parsed !== "object" || parsed === null) return yield* malformed;
+      const { p, c, d, k } = parsed as Record<string, unknown>;
+      if (typeof p !== "string" || typeof c !== "string" || typeof k !== "string") return yield* malformed;
+      if (d !== "asc" && d !== "desc") return yield* malformed;
+      if (p !== partition) return yield* new ForeignCursor({ expected: partition, received: p });
+      if (c !== column || d !== direction) {
+        return yield* new CursorMismatch({
+          reason: `the cursor continues a ${d} read of "${c}", not a ${direction} read of "${column}"`,
+        });
+      }
+      const key = new Uint8Array(Buffer.from(k, "hex"));
+      if (!inPrefixRange(key, keys.orderedColumnPrefix(column))) return yield* malformed;
+      return key;
+    });
 
   /**
    * One page of an ordered read.
@@ -868,11 +1246,11 @@ export const storeOverKv = (
       }
       const bounds = rangeBounds(input.column, input.lower, input.upper);
       let { from, to } = bounds;
-      let sealedFrom = from && segmentPrefix(from);
-      let sealedTo = to && segmentPrefix(to);
+      let sealedFrom = from && keys.segmentPrefix(from);
+      let sealedTo = to && keys.segmentPrefix(to);
       if (input.after !== undefined) {
-        const last = yield* decodeOrderedCursor(partition, input.column, direction, input.after);
-        const valueBlobs = segmentPrefix(last.subarray(0, last.length - 4));
+        const last = yield* decodeOrderedCursor(input.column, direction, input.after);
+        const valueBlobs = keys.segmentPrefix(last.subarray(0, last.length - SEQ_BYTES));
         if (direction === "asc") {
           const next = successorOf(last);
           if (from === undefined || compareKeys(next, from) > 0) {
@@ -884,7 +1262,7 @@ export const storeOverKv = (
           sealedTo = prefixEnd(valueBlobs);
         }
       }
-      const filter = input.where === undefined ? undefined : yield* evaluate(input.where);
+      const filter = yield* rowFilterFor(input.where);
       const rows = yield* mergeOrdered({
         column: input.column, from, to, sealedFrom, sealedTo,
         reverse: direction === "desc", filter, limit: limit + 1,
@@ -899,278 +1277,527 @@ export const storeOverKv = (
       return { rows: out, ...(more ? { next: out.at(-1)!.cursor } : {}) };
     });
 
-  const toEvent = (position: number, stored: StoredEvent): DbEvent => {
-    const common = {
-      cursor: encodeCursor(partition, position),
-      partition,
-      generation: stored.generation,
-      at: stored.at,
-      seq: asSeq(stored.seq),
-      version: stored.version,
-    };
-    return stored.kind === "put"
-      ? {
-          _tag: "ObjectPut", ...common,
-          bytes: bodyOf(stored),
-          manifest: stored.manifest ?? emptyManifest(),
-          ...(stored.identity === undefined ? {} : { identity: stored.identity }),
-        }
-      : {
-          _tag: "ObjectRetracted", ...common,
-          ...(stored.identity === undefined ? {} : { identity: stored.identity }),
-        };
-  };
-
   const readEvents = (
     options?: { readonly after?: EventCursor; readonly limit?: number },
   ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor | CursorCompacted> =>
-      Effect.gen(function* () {
-          const after = options?.after === undefined ? 0 : decodeCursor(partition, options.after);
-          const compactedTo = yield* readMeta(META_COMPACTED_TO);
-          // A cursor from before the compaction point cannot be continued: the
-          // events between it and here are gone. Saying so is the difference
-          // between a follower knowing it must re-seed and one silently missing
-          // writes it will never see again.
-          if (options?.after !== undefined && after < compactedTo) {
-            return yield* new CursorCompacted({ partition, requested: after, compactedTo });
-          }
-          const limit = options?.limit ?? 1024;
-          const out: DbEvent[] = [];
-          yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
+    Effect.gen(function* () {
+      const after = options?.after === undefined ? 0 : yield* cursorPosition(partition, options.after);
+      const compactedTo = yield* readMeta(META_COMPACTED_TO);
+      // A cursor from before the compaction point cannot be continued: the
+      // events between it and here are gone. Saying so is the difference
+      // between a follower knowing it must re-seed and one silently missing
+      // writes it will never see again.
+      if (options?.after !== undefined && after < compactedTo) {
+        return yield* new CursorCompacted({ partition, requested: after, compactedTo });
+      }
+      const limit = options?.limit ?? 1024;
+      const out: DbEvent[] = [];
+      // Positions are the keys, so the scan starts just past the cursor and
+      // stops at the limit: a read costs what it returns, not the log behind it.
+      yield* Stream.runForEach(
+        engine.scan(keys.tag(Tag.Event), { from: keys.event(after + 1), limit }),
+        (entry) =>
+          Effect.flatMap(decodeOrDie("event.read", () => decodeEvent(entry.value)), (stored) =>
             Effect.sync(() => {
-              if (out.length >= limit) return;
-              const position = positionOf(entry.key);
-              if (position > after) out.push(toEvent(position, unjson(entry.value, eventRecord)));
-            }));
-          return out;
-      }).pipe(
-        // decodeCursor throws on a foreign cursor, which is a caller error
-        // rather than a defect, so it is returned to the error channel.
-        Effect.catchDefect(
-          (cause: unknown): Effect.Effect<never, StoreError | ForeignCursor | CursorCompacted> =>
-            Effect.fail(
-              cause instanceof ForeignCursor
-                ? cause
-                : new StoreError({ op: "events.read", cause }),
-            ),
-        ),
+              out.push(toEvent(keys.positionOf(entry.key), stored));
+            })),
       );
+      return out;
+    });
+
+  /**
+   * Apply events at the positions they hold in the partition's log on its
+   * writer, in one transaction.
+   *
+   * A position already held is compared with what is there and skipped, and
+   * refused when it differs; a position past the next is refused, because it
+   * would leave a hole. The identifiers the events use are marked taken, so a
+   * write accepted here later — after a move, or by a promoted follower —
+   * cannot be handed one of them again.
+   */
+  const followMany = (batch: ReadonlyArray<DbEvent>) =>
+    Effect.gen(function* () {
+      const positioned = yield* Effect.forEach(batch, (event) =>
+        Effect.map(cursorPosition(partition, event.cursor), (position) => ({ position, stored: storedOf(event) })));
+      yield* commit((into) =>
+        Effect.gen(function* () {
+          let highest = 0;
+          for (const { position, stored } of positioned) {
+            const head = into.head();
+            if (position <= head) {
+              const held = yield* into.view.get(keys.event(position));
+              // Compacted away here: there is nothing left to compare it with.
+              if (held === undefined) continue;
+              if (!equalBytes(held, encodeEvent(stored))) {
+                return yield* new ReplicaDiverged({ partition, position });
+              }
+              continue;
+            }
+            if (position !== head + 1) {
+              return yield* new EventGap({ partition, expected: head + 1, received: position });
+            }
+            const current = yield* readRecord(into.view, stored.seq);
+            into.append(stored);
+            if (current === undefined || current.version < stored.version) {
+              yield* applyEffects(into, current, stored, position);
+            }
+            highest = Math.max(highest, stored.seq);
+          }
+          if (highest > (yield* readMeta(META_NEXT_SEQ))) {
+            into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(highest));
+          }
+        }));
+    });
 
   const events: EventsApi = {
     read: (options) => Stream.fromIterableEffect(readEvents(options)),
 
-    head: Effect.map(readMeta(META_NEXT_POSITION), (position) =>
+    head: Effect.map(readMeta(META_HEAD), (position) =>
       position === 0 ? undefined : encodeCursor(partition, position)),
 
     apply: (event: AppliedEvent) =>
-      commit((view, _txn, append) =>
+      commit((into) =>
         Effect.gen(function* () {
-          // Idempotent by version, so a follower may re-consume a range.
-          const seen = yield* versionOf(view, asSeq(event.seq));
-          if (seen >= event.version) return;
-          // The follower records the event in its own log as well as projecting
-          // it. Without that a replica holds the right rows and an empty
-          // history, so anything reading the log there — a projection, a
+          // Idempotent by version, retracted records included: their version
+          // outlives them, so a put older than the retraction changes nothing.
+          const current = yield* readRecord(into.view, event.seq);
+          if (current !== undefined && current.version >= event.version) return;
+          const stored = storedOf(event);
+          // The receiving store records the event in its own log as well as
+          // projecting it. Without that a replica holds the right rows and an
+          // empty history, so anything reading the log there — a projection, a
           // rebuild, a backup — sees nothing to replay.
-          append(
-            event._tag === "ObjectPut"
-              ? {
-                  generation: event.generation,
-                  seq: event.seq,
-                  kind: "put",
-                  version: event.version,
-                  at: event.at,
-                  body: Buffer.from(event.bytes).toString("base64"),
-                  manifest: event.manifest,
-                  ...(event.identity === undefined ? {} : { identity: event.identity }),
-                }
-              : {
-                  generation: event.generation,
-                  seq: event.seq,
-                  kind: "retract",
-                  version: event.version,
-                  at: event.at,
-                  ...(event.identity === undefined ? {} : { identity: event.identity }),
-                },
-          );
-          const sealed = (yield* readMeta(META_SEALED)) > 0;
-          if (event._tag === "ObjectPut") {
-            yield* project(view, event.seq, event.version, event.bytes, event.manifest,
-              sealed, event.identity);
-          } else {
-            yield* unproject(view, event.seq, sealed);
-            view.del(payloadKey(event.seq));
-          }
+          const position = into.append(stored);
+          yield* applyEffects(into, current, stored, position);
         })),
+
+    follow: (event: DbEvent) => followMany([event]),
+
+    followAll: (batch) => followMany(batch),
   };
 
+  const recordsWhere = <A>(keep: (seq: number, record: StoredRecord) => A | undefined) =>
+    Effect.gen(function* () {
+      const out: A[] = [];
+      yield* Stream.runForEach(engine.scan(keys.tag(Tag.Record)), (entry) =>
+        Effect.flatMap(decodeOrDie("record.read", () => decodeRecord(entry.value)), (record) =>
+          Effect.sync(() => {
+            const kept = keep(seqOf(entry.key), record);
+            if (kept !== undefined) out.push(kept);
+          })));
+      return out;
+    });
+
   /**
-   * Re-derive the postings from the manifests.
+   * Every record that exists and has a caller-facing name.
+   *
+   * A record without one is derived state rather than something a backup
+   * should carry.
+   */
+  const liveRecords = recordsWhere((seq, record) =>
+    record.live && record.identity !== undefined
+      ? {
+          seq: asSeq(seq),
+          version: record.version,
+          bytes: record.body,
+          manifest: record.manifest,
+          identity: record.identity,
+        }
+      : undefined);
+
+  const manifestOf = (seq: Seq) =>
+    Effect.map(readRecord(pendingView(new Map()), seq), (record) =>
+      record?.live === true ? record.manifest : emptyManifest());
+
+  /** Delete every key under the given tags, a bounded batch at a time. */
+  const clearTags = (tags: ReadonlyArray<Tag>) =>
+    Effect.forEach(tags, (tag) =>
+      Effect.gen(function* () {
+        for (;;) {
+          const chunk = [...(yield* Stream.runCollect(engine.scan(keys.tag(tag), { limit: SEAL_BATCH })))];
+          if (chunk.length === 0) return;
+          yield* write(chunk.map((entry): KvWrite => ({ op: "delete", key: new Uint8Array(entry.key) })));
+        }
+      }), { discard: true });
+
+  /**
+   * Visit every entry under a prefix a bounded chunk at a time, each chunk read
+   * before anything is written for it: writing into the keyspace a scan is
+   * still walking would leave what the scan sees to the engine.
+   */
+  const inChunks = <E, R>(
+    prefix: Uint8Array,
+    from: Uint8Array | undefined,
+    visit: (entry: { readonly key: Uint8Array; readonly value: Uint8Array }) => Effect.Effect<void, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      let next = from;
+      for (;;) {
+        const chunk = [...(yield* Stream.runCollect(
+          engine.scan(prefix, { ...(next === undefined ? {} : { from: next }), limit: SEAL_BATCH }),
+        ))].map((entry) => ({ key: new Uint8Array(entry.key), value: new Uint8Array(entry.value) }));
+        for (const entry of chunk) yield* visit(entry);
+        if (chunk.length < SEAL_BATCH) return;
+        next = successorOf(chunk.at(-1)!.key);
+      }
+    });
+
+  /** Batches of staged writes, committed whenever one grows past the batch size. */
+  const batches = () => {
+    let pending = new Map<string, KvWrite>();
+    let view = pendingView(pending);
+    return {
+      view: () => view,
+      size: () => pending.size,
+      flush: Effect.gen(function* () {
+        if (pending.size === 0) return;
+        yield* write([...pending.values()]);
+        pending = new Map<string, KvWrite>();
+        view = pendingView(pending);
+      }),
+    };
+  };
+
+  /** Mark the lenses as being rebuilt or reindexed: from here they are refused until the work finishes. */
+  const markLenses = (state: number) =>
+    Effect.gen(function* () {
+      yield* write([{ op: "put", key: keys.meta(META_LENSES), value: u64Bytes(state) }]);
+      lenses = state;
+    });
+
+  /**
+   * Re-derive the postings from the stored manifests.
    *
    * Works whether or not the log has been compacted, because a manifest records
    * exactly what its object contributed. It cannot detect a corrupt manifest,
-   * which is what a full replay is for.
+   * which is what a full replay is for. Runs in bounded batches under the
+   * writer, behind the lenses mark, so the partition is refused rather than
+   * answered from half an index until the last batch clears it.
    */
-  const liveRecords = Effect.gen(function* () {
-    // Driven by the identity index, because a record without a caller-facing
-    // name is derived state rather than something a backup should carry.
-    const identities: Array<{ seq: Seq; identity: ObjectIdentity }> = [];
-    yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.IdentityBySeq])), (entry) =>
-      Effect.sync(() => {
-        identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value, identityRecord) });
-      }));
-    const out = [];
-    for (const { seq, identity } of identities) {
-      const payload = yield* engine.get(payloadKey(seq));
-      const manifest = yield* engine.get(manifestKey(seq));
-      if (payload === undefined) continue;
-      out.push({
-        seq,
-        version: readU32(payload),
-        bytes: payload.subarray(4),
-        manifest: manifest === undefined ? emptyManifest() : unjson(manifest, manifestRecord),
-        identity,
-      });
-    }
-    return out;
-  });
-
-  const manifestOf = (seq: Seq) =>
-    Effect.map(engine.get(manifestKey(seq)), (stored) =>
-      stored === undefined ? emptyManifest() : unjson(stored, manifestRecord));
-
   const reindexLenses = exclusive(Effect.gen(function* () {
-    const pending = new Map<string, KvWrite>();
-    const view = pendingView(pending);
-    for (const tag of DERIVED_TAGS) {
-      yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
-        Effect.sync(() => view.del(entry.key)));
-    }
-    // The blobs went with the rest, so what is left is an unsealed live tier.
-    view.put(metaKey(META_SEALED), u32(0));
-    view.put(metaKey(META_SWEPT), u32(0));
+    yield* markLenses(LENSES_REINDEXING);
+    yield* clearTags(DERIVED_TAGS);
+    const out = batches();
     let count = 0;
-    const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
-    yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
-      Effect.sync(() => {
-        manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value, manifestRecord) });
+    yield* inChunks(keys.tag(Tag.Record), undefined, (entry) =>
+      Effect.gen(function* () {
+        const record = yield* decodeOrDie("record.read", () => decodeRecord(entry.value));
+        if (!record.live) return;
+        const seq = seqOf(entry.key);
+        for (const key of postingsOf(record.manifest, seq).values()) out.view().put(key, EMPTY);
+        for (const [column, value] of measuresOf(record.manifest)) out.view().put(keys.measure(column, seq), f64(value));
+        count += 1;
+        if (out.size() >= SEAL_BATCH) yield* out.flush;
       }));
-    for (const { seq, manifest } of manifests) {
-      for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
-      for (const [column, value] of manifest.columns) view.put(orderedKey(column, value, seq), EMPTY);
-      for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
-      for (const [edgeType, to] of manifest.edges) {
-        view.put(edgeKey(edgeType, seq, to), EMPTY);
-        view.put(reverseEdgeKey(edgeType, to, seq), EMPTY);
-      }
-      count += 1;
-    }
-    yield* write([...pending.values()]);
+    // The blobs went with the rest, so what is left is an unsealed live tier.
+    out.view().put(keys.meta(META_SEALED), u64Bytes(0));
+    out.view().put(keys.meta(META_SWEPT), u64Bytes(0));
+    out.view().put(keys.meta(META_LENSES), u64Bytes(LENSES_READY));
+    yield* out.flush;
+    lenses = LENSES_READY;
     return count;
   }));
 
-  return {
+  /**
+   * Replay the log into fresh lenses and records, in bounded batches.
+   *
+   * Replaying a truncated log would rebuild a partial index and report a count
+   * as though it were whole — unless a snapshot covers everything that was cut,
+   * in which case the snapshot plus the events after it are the whole history.
+   * Without one, `reindexLenses` is the operation that still works, because it
+   * reads state rather than history.
+   */
+  const rebuildLenses = exclusive(Effect.gen(function* () {
+    const compactedTo = yield* readMeta(META_COMPACTED_TO);
+    const snapshotAt = yield* readMeta(META_SNAPSHOT_AT);
+    if (compactedTo > 0 && snapshotAt < compactedTo) {
+      return yield* new LogCompacted({ partition, compactedTo });
+    }
+    yield* markLenses(LENSES_REBUILDING);
+    // Every lens is dropped and re-derived; the log is the only input.
+    yield* clearTags(LENS_TAGS);
+    const out = batches();
+    const counters: Counters = { records: 0, bytes: 0 };
+    // The sealed tier was just dropped with the rest, so the replay rebuilds
+    // into an unsealed partition: no blob can claim a posting, and no tombstone
+    // is needed for one.
+    const into = (): Projection => ({ view: out.view(), sealed: false, counters });
+
+    // The snapshot first, then the events it does not cover.
+    let restored = 0;
+    if (snapshotAt > 0) {
+      const snapshotId = yield* readMeta(META_SNAPSHOT_ID);
+      yield* inChunks(keys.snapshotPrefix(snapshotId), undefined, (entry) =>
+        Effect.gen(function* () {
+          const record = yield* decodeOrDie("snapshot.read", () => decodeRecord(entry.value));
+          if (!record.live) return;
+          yield* project(into(), seqOf(entry.key), undefined, record);
+          restored += 1;
+          if (out.size() >= SEAL_BATCH) yield* out.flush;
+        }));
+    }
+    let replayed = 0;
+    yield* inChunks(keys.tag(Tag.Event), keys.event(snapshotAt + 1), (entry) =>
+      Effect.gen(function* () {
+        const event = yield* decodeOrDie("event.read", () => decodeEvent(entry.value));
+        const current = yield* readRecord(out.view(), event.seq);
+        replayed += 1;
+        if (current !== undefined && current.version >= event.version) return;
+        yield* applyEffects(into(), current, event, keys.positionOf(entry.key));
+        if (out.size() >= SEAL_BATCH) yield* out.flush;
+      }));
+    // Counted from nothing, so the counters are what the replay produced.
+    out.view().put(keys.meta(META_RECORDS), u64Bytes(counters.records));
+    out.view().put(keys.meta(META_BYTES), u64Bytes(counters.bytes));
+    out.view().put(keys.meta(META_SEALED), u64Bytes(0));
+    out.view().put(keys.meta(META_SWEPT), u64Bytes(0));
+    out.view().put(keys.meta(META_LENSES), u64Bytes(LENSES_READY));
+    yield* out.flush;
+    lenses = LENSES_READY;
+    return restored + replayed;
+  }));
+
+  /**
+   * Write the live records down as of a position, replacing the earlier
+   * snapshot, without stopping the writer.
+   *
+   * The records are copied under a new snapshot id while writes carry on, then
+   * the events logged since the copy began are applied to the copy by version:
+   * the copy is then the partition as of the last of them, which is the
+   * position it records. Only flipping to the new id takes the writer, so an
+   * interrupted snapshot leaves the old one in force and its own half under an
+   * id nothing names, which the next snapshot clears first.
+   */
+  const snapshot = Effect.gen(function* () {
+    yield* lensesReady;
+    const current = yield* readMeta(META_SNAPSHOT_ID);
+    const id = current + 1;
+    const stale = keys.snapshotPrefix(current);
+    // Whatever an interrupted snapshot left under an id nothing names: every
+    // snapshot key before the current id's range, and every one after it.
+    const clearRange = (options: KvScanOptions) =>
+      Effect.gen(function* () {
+        for (;;) {
+          const chunk = [...(yield* Stream.runCollect(engine.scan(keys.tag(Tag.Snapshot), { ...options, limit: SEAL_BATCH })))];
+          if (chunk.length === 0) return;
+          yield* exclusive(write(chunk.map((entry): KvWrite => ({ op: "delete", key: new Uint8Array(entry.key) }))));
+        }
+      });
+    if (current === 0) {
+      yield* clearRange({});
+    } else {
+      yield* clearRange({ to: stale });
+      const after = prefixEnd(stale);
+      if (after !== undefined) yield* clearRange({ from: after });
+    }
+
+    const mark = yield* readMeta(META_HEAD);
+    let pending = new Map<string, KvWrite>();
+    let records = 0;
+    const flush = Effect.gen(function* () {
+      if (pending.size === 0) return;
+      const writes = [...pending.values()];
+      pending = new Map<string, KvWrite>();
+      yield* exclusive(write(writes));
+    });
+    yield* inChunks(keys.tag(Tag.Record), undefined, (entry) =>
+      Effect.gen(function* () {
+        if ((entry.value[0]! & 0x01) !== 0) return;
+        pendingView(pending).put(keys.snapshot(id, seqOf(entry.key)), entry.value);
+        records += 1;
+        if (pending.size >= SEAL_BATCH) yield* flush;
+      }));
+    yield* flush;
+
+    let position = mark;
+    yield* inChunks(keys.tag(Tag.Event), keys.event(mark + 1), (entry) =>
+      Effect.gen(function* () {
+        const event = yield* decodeOrDie("event.read", () => decodeEvent(entry.value));
+        const view = pendingView(pending);
+        const key = keys.snapshot(id, event.seq);
+        const held = yield* view.get(key);
+        const heldVersion = held === undefined ? 0 : (yield* decodeOrDie("snapshot.read", () => decodeRecord(held))).version;
+        position = keys.positionOf(entry.key);
+        if (event.version <= heldVersion) return;
+        if (event.kind === "put") {
+          view.put(key, encodeRecord({
+            live: true,
+            version: event.version,
+            ...(event.identity === undefined ? {} : { identity: event.identity }),
+            manifest: event.manifest,
+            body: event.body,
+          }));
+          if (held === undefined) records += 1;
+        } else if (held !== undefined) {
+          view.del(key);
+          records -= 1;
+        }
+        if (pending.size >= SEAL_BATCH) yield* flush;
+      }));
+    yield* flush;
+
+    yield* exclusive(Effect.gen(function* () {
+      // A compaction past where the copy began would have taken events the
+      // copy needed; the snapshot is refused rather than recorded short.
+      if ((yield* readMeta(META_COMPACTED_TO)) > mark) {
+        return yield* new StoreError({ op: "snapshot", cause: "the log was compacted while the snapshot was taken; take it again" });
+      }
+      yield* write([
+        { op: "put", key: keys.meta(META_SNAPSHOT_ID), value: u64Bytes(id) },
+        { op: "put", key: keys.meta(META_SNAPSHOT_AT), value: u64Bytes(position) },
+      ]);
+    }));
+
+    if (current > 0) {
+      for (;;) {
+        const chunk = [...(yield* Stream.runCollect(engine.scan(stale, { limit: SEAL_BATCH })))];
+        if (chunk.length === 0) break;
+        yield* exclusive(write(chunk.map((entry): KvWrite => ({ op: "delete", key: new Uint8Array(entry.key) }))));
+      }
+    }
+    return { records, position };
+  });
+
+  /** Finish a rebuild or reindex an interrupted process left marked, and say which it was. */
+  const resumeMaintenance = Effect.gen(function* () {
+    const state = yield* readMeta(META_LENSES);
+    lenses = state;
+    if (state === LENSES_REBUILDING) {
+      yield* rebuildLenses;
+      return "rebuild" as const;
+    }
+    if (state === LENSES_REINDEXING) {
+      yield* reindexLenses;
+      return "reindex" as const;
+    }
+    return undefined;
+  });
+
+  /**
+   * Remove the whole partition in bounded batches, but for one named record
+   * when `keep` names one.
+   *
+   * Kept, the record outlives everything else in the same pass, under the same
+   * permit, so nothing written for the partition can find it gone before the
+   * rest: what a move keeps on the shard a tenant left is its fence, which a
+   * write still on its way there must find. Removed entirely, the revision goes
+   * last: every batch before it is checked against it, so an owner fenced
+   * halfway stops there rather than deleting under a new one.
+   */
+  const drop = (keep?: ObjectIdentity) => exclusive(Effect.gen(function* () {
+    const records = yield* readMeta(META_RECORDS);
+    const kept = new Set<string>([keyId(revisionKey)]);
+    if (keep !== undefined) {
+      const identity = keys.identity(keep.namespace, keep.key);
+      const held = yield* engine.get(identity);
+      if (held !== undefined && held.length === SEQ_BYTES) {
+        kept.add(keyId(identity));
+        kept.add(keyId(keys.record(readSeqAt(held, 0))));
+      }
+    }
+    // More than the kept keys per scan, so a scan that returns only kept keys
+    // has nothing else left to find.
+    for (;;) {
+      const chunk = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: SEAL_BATCH + kept.size })))]
+        .map((entry) => new Uint8Array(entry.key))
+        .filter((key) => !kept.has(keyId(key)));
+      if (chunk.length === 0) break;
+      yield* write(chunk.map((key): KvWrite => ({ op: "delete", key })));
+    }
+    if (keep !== undefined) return records;
+    if (engine.conditionalWrite === undefined) {
+      return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
+    }
+    const accepted = yield* engine.conditionalWrite([{ op: "delete", key: revisionKey }], conditions());
+    if (!accepted) {
+      yield* assertCurrent;
+      return yield* new StoreError({ op: "store.conflict", cause: "Partition changed while it was being removed" });
+    }
+    revision = undefined;
+    return records;
+  }));
+
+  const stats: Effect.Effect<PartitionStats, StoreError> = Effect.all({
+    records: readMeta(META_RECORDS),
+    bytes: readMeta(META_BYTES),
+    head: readMeta(META_HEAD),
+    compactedTo: readMeta(META_COMPACTED_TO),
+    nextSeq: readMeta(META_NEXT_SEQ),
+  });
+
+  const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
+    // Copied first: an engine may hand back a view of a buffer it reuses, and
+    // the record outlives this step of the stream.
+    Effect.map(decodeOrDie("record.read", () => decodeRecord(new Uint8Array(entry.value))), (record) =>
+      ({ seq: asSeq(seqOf(entry.key)), record: record as RecordState })));
+
+  /**
+   * Fill this empty partition from a source partition, in bounded batches.
+   *
+   * The records are copied while the source keeps taking writes, so they are
+   * not one moment; what makes the copy exact is what follows it. The log is
+   * set at the source's compaction point as read before the copy began, and
+   * every source event from there is then applied by `followAll`, by version:
+   * an event older than the record copied changes nothing, and a newer one
+   * brings it forward. A record is one value, so no copy of one is torn, and an
+   * identifier is never reused, so nothing copied can be mistaken for something
+   * else.
+   */
+  const seed = (source: ObjectStoreApi): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+    exclusiveReady(Effect.gen(function* () {
+      const held = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: 2 })))]
+        .filter((entry) => compareKeys(entry.key, revisionKey) !== 0);
+      if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
+
+      const start = yield* source.stats;
+      const counters: Counters = { records: 0, bytes: 0 };
+      let pending = new Map<string, KvWrite>();
+      let into: Projection = { view: pendingView(pending), sealed: false, counters };
+      let copied = 0;
+      let highest = 0;
+      const flush = Effect.gen(function* () {
+        if (pending.size === 0) return;
+        into.view.put(keys.meta(META_RECORDS), u64Bytes(counters.records));
+        into.view.put(keys.meta(META_BYTES), u64Bytes(counters.bytes));
+        yield* write([...pending.values()]);
+        pending = new Map<string, KvWrite>();
+        into = { view: pendingView(pending), sealed: false, counters };
+      });
+
+      yield* Stream.runForEach(source.records, ({ seq, record }) =>
+        Effect.gen(function* () {
+          if (record.live) yield* project(into, seq, undefined, record);
+          else yield* retire(into, seq, undefined, record.version, record.retiredAt);
+          copied += 1;
+          highest = Math.max(highest, seq);
+          if (pending.size >= SEAL_BATCH) yield* flush;
+        }));
+
+      const end = yield* source.stats;
+      into.view.put(keys.meta(META_HEAD), u64Bytes(start.compactedTo));
+      into.view.put(keys.meta(META_COMPACTED_TO), u64Bytes(start.compactedTo));
+      into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(Math.max(end.nextSeq, highest)));
+      yield* flush;
+      return { records: copied, head: start.compactedTo };
+    }));
+
+  const api: ObjectStoreApi = {
     partition,
     generation,
+    stats,
+    records: Stream.unwrap(Effect.as(lensesReady, records)),
+    seed,
     events,
 
-    rebuildLenses: exclusive(Effect.gen(function* () {
-      const compactedTo = yield* readMeta(META_COMPACTED_TO);
-      const snapshotAt = yield* readMeta(META_SNAPSHOT_AT);
-      // Replaying a truncated log would rebuild a partial index and report a
-      // count as though it were whole — unless a snapshot covers everything
-      // that was cut, in which case the snapshot plus the events after it are
-      // the whole history. Without one, `reindexLenses` is the operation that
-      // still works, because it reads state rather than history.
-      if (compactedTo > 0 && snapshotAt < compactedTo) {
-        return yield* new LogCompacted({ partition, compactedTo });
-      }
-      const stored: Array<{ position: number; event: StoredEvent }> = [];
-      yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
-        Effect.sync(() => {
-          const position = positionOf(entry.key);
-          // Everything up to the snapshot is already in it.
-          if (position <= snapshotAt) return;
-          stored.push({ position, event: unjson(entry.value, eventRecord) });
-        }));
-      stored.sort((a, b) => a.position - b.position);
+    rebuildLenses,
 
-      const pending = new Map<string, KvWrite>();
-      const view = pendingView(pending);
-      // Every lens is dropped and re-derived; the log is the only input.
-      for (const tag of LENS_TAGS) {
-        yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
-          Effect.sync(() => view.del(entry.key)));
-      }
-      // The sealed tier was just dropped with the rest, so the replay rebuilds
-      // into an unsealed store: no blob can claim a posting, and no tombstone
-      // is needed for one.
-      view.put(metaKey(META_SEALED), u32(0));
-      view.put(metaKey(META_SWEPT), u32(0));
-      // The snapshot first, then the events it does not cover.
-      let restored = 0;
-      if (snapshotAt > 0) {
-        const records: Array<{ seq: number; record: StoredSnapshot }> = [];
-        yield* Stream.runForEach(engine.scan(snapshotPrefix()), (entry) =>
-          Effect.sync(() => {
-            records.push({ seq: readU32(entry.key, 1), record: unjson(entry.value, snapshotRecord) });
-          }));
-        for (const { seq, record } of records) {
-          yield* project(view, asSeq(seq), record.version,
-            new Uint8Array(Buffer.from(record.body, "base64")), record.manifest, false, record.identity);
-          restored += 1;
-        }
-      }
-      for (const { event } of stored) {
-        if (event.kind === "put") {
-          yield* project(view, asSeq(event.seq), event.version, bodyOf(event),
-            event.manifest ?? emptyManifest(), false, event.identity);
-        } else {
-          yield* unproject(view, asSeq(event.seq), false);
-          view.del(payloadKey(asSeq(event.seq)));
-        }
-      }
-      yield* write([...pending.values()]);
-      return restored + stored.length;
-    })),
-
-    /**
-     * Write the live records down as of this position, replacing any earlier
-     * snapshot.
-     *
-     * One batch, so an interrupted snapshot leaves the store exactly as it
-     * was: the old one is dropped and the new one written together, and the
-     * position goes with them. It is what keeps `rebuildLenses` — the
-     * operation that re-derives from history rather than trusting the stored
-     * manifests — available once compaction has cut the log.
-     */
-    snapshot: exclusive(Effect.gen(function* () {
-      const position = yield* readMeta(META_NEXT_POSITION);
-      const writes: KvWrite[] = [];
-      yield* Stream.runForEach(engine.scan(snapshotPrefix()), (entry) =>
-        Effect.sync(() => writes.push({ op: "delete", key: new Uint8Array(entry.key) })));
-      let records = 0;
-      for (const record of yield* liveRecords) {
-        writes.push({
-          op: "put",
-          key: snapshotKey(record.seq),
-          value: json({
-            version: record.version,
-            body: Buffer.from(record.bytes).toString("base64"),
-            manifest: record.manifest,
-            identity: record.identity,
-          } satisfies StoredSnapshot),
-        });
-        records += 1;
-      }
-      writes.push({ op: "put", key: metaKey(META_SNAPSHOT_AT), value: u32(position) });
-      yield* write(writes);
-      return { records, position };
-    })),
+    snapshot,
 
     snapshotAt: readMeta(META_SNAPSHOT_AT),
 
     reindexLenses,
+
+    resumeMaintenance,
 
     /**
      * Fold the live postings into immutable blobs, one per 65536 identifiers.
@@ -1195,13 +1822,14 @@ export const storeOverKv = (
      *
      * Three orderings carry the correctness. The sealed flag is written before
      * any blob, so a removal arriving mid-seal writes a tombstone it might not
-     * have needed rather than skipping one it did. Each blob lands in the same
-     * batch as the deletion of the live keys it absorbed, so an interrupted
-     * seal leaves some lens keys sealed and the rest live — which the read
-     * already handles, because it reads both. And the additions land before the
-     * removals are read: both passes can touch one segment, so a removal that
-     * read the blob as it was before the additions would write back a blob
-     * missing them.
+     * have needed rather than skipping one it did. Each blob is written before
+     * the live keys it absorbed and the tombstones it settled are deleted, in
+     * batches of bounded size, so an interrupted seal leaves postings in both
+     * tiers at worst — which the read already handles, because it reads both —
+     * and never a tombstone gone while its blob still claims the posting. And
+     * the additions land before the removals are read: both passes can touch
+     * one segment, so a removal that read the blob as it was before the
+     * additions would write back a blob missing them.
      *
      * After the first complete seal, a seal visits only the groups written
      * since, which writes mark as they go (`markDirty`). A value an earlier seal
@@ -1214,11 +1842,11 @@ export const storeOverKv = (
      * merged segment reports everything it now holds. `examined` is the live
      * postings the seal read.
      */
-    sealPostings: exclusive(Effect.gen(function* () {
+    sealPostings: exclusiveReady(Effect.gen(function* () {
       const swept = (yield* readMeta(META_SWEPT)) > 0;
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
-      yield* write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
+      yield* write([{ op: "put", key: keys.meta(META_SEALED), value: u64Bytes(1) }]);
       let examined = 0;
 
       const buffer = new SegmentBuffer();
@@ -1229,40 +1857,65 @@ export const storeOverKv = (
       let openSegment = -1;
       // The live keys gathered into the open segment, deleted only if it seals.
       const gathered: Array<Uint8Array> = [];
+      // Keys the open segment's blob settles once it is written: tombstones it
+      // stops claiming, and the dirty mark that sent the seal to it.
+      const settled: Array<Uint8Array> = [];
       let hadBlob = false;
 
+      /** One more write, committing the batch whenever it is full. */
+      const push = (entry: KvWrite) =>
+        Effect.gen(function* () {
+          batch.push(entry);
+          if (batch.length >= SEAL_BATCH) {
+            yield* write(batch);
+            batch = [];
+          }
+        });
+
       /**
-       * Write back the segment the buffer holds.
+       * Write back the segment the buffer holds, then delete what it settles.
+       *
+       * The blob always goes first, so a batch can be cut anywhere after it: a
+       * live key whose posting the blob now carries is in both tiers until its
+       * deletion lands, which a read already handles, and a tombstone outlives
+       * the blob bit it cancels, never the other way round. One segment's ids
+       * are written once, whole — a blob written in two halves under one key
+       * would keep only the second.
        *
        * A segment that ends up empty has its blob deleted rather than written
        * as an empty one, so a lens emptied by retractions costs nothing rather
        * than a key per segment it once spanned.
        */
-      const flush = () => {
+      const flush = Effect.gen(function* () {
         if (openPrefix === undefined) return;
+        const prefix = openPrefix;
+        const segment = openSegment;
+        openPrefix = undefined;
+        openSegment = -1;
         if (!hadBlob && buffer.size < MIN_SEALED_POSTINGS) {
           // Too few to be worth a blob: they stay live keys, which a scan
           // reads directly. A blob for one or two postings still costs a key
-          // of its own, and a decode on every read that passes it.
+          // of its own, and a decode on every read that passes it. A tombstone
+          // for a blob that does not exist clears nothing and goes all the same.
           gathered.length = 0;
-          openPrefix = undefined;
-          openSegment = -1;
+          for (const key of settled) yield* push({ op: "delete", key });
+          settled.length = 0;
           return;
         }
-        for (const live of gathered) batch.push({ op: "delete", key: live });
-        gathered.length = 0;
-        const key = segmentKey(openPrefix, openSegment);
+        const key = keys.segment(prefix, segment);
         if (buffer.size === 0) {
-          batch.push({ op: "delete", key });
+          yield* push({ op: "delete", key });
         } else {
-          const base = openSegment * SEGMENT_SPAN;
-          batch.push({ op: "put", key, value: encodeSegment(buffer.ids(base), base) });
+          const base = segment * SEGMENT_SPAN;
+          yield* push({ op: "put", key, value: encodeSegment(buffer.ids(base), base) });
           segments += 1;
           postings += buffer.size;
         }
-        openPrefix = undefined;
-        openSegment = -1;
-      };
+        for (const live of gathered) yield* push({ op: "delete", key: live });
+        for (const done of settled) yield* push({ op: "delete", key: done });
+        gathered.length = 0;
+        settled.length = 0;
+      });
 
       /**
        * Move to the segment a posting key belongs to, loading its blob.
@@ -1272,25 +1925,17 @@ export const storeOverKv = (
        */
       const openFor = (key: Uint8Array, id: number) =>
         Effect.gen(function* () {
-          const prefix = key.subarray(0, key.length - 4);
+          const prefix = key.subarray(0, key.length - SEQ_BYTES);
           const segment = segmentOf(id);
           if (openPrefix !== undefined
             && segment === openSegment
             && compareKeys(prefix, openPrefix) === 0) return;
 
-          flush();
-          // The batch is only ever cut where a segment ends. Cutting it
-          // mid-blob would write the identifiers so far under the segment's
-          // key and then the rest under the same key, the second put replacing
-          // the first — a seal that silently loses postings.
-          if (batch.length >= SEAL_BATCH) {
-            yield* write(batch);
-            batch = [];
-          }
+          yield* flush;
           openPrefix = Uint8Array.from(prefix);
           openSegment = segment;
           buffer.reset();
-          const existing = yield* engine.get(segmentKey(openPrefix, segment));
+          const existing = yield* engine.get(keys.segment(openPrefix, segment));
           hadBlob = existing !== undefined;
           if (existing !== undefined) {
             decodeSegment(existing, 0, (offset) => buffer.add(offset));
@@ -1310,33 +1955,36 @@ export const storeOverKv = (
         // A sweep: every live posting folds into the blob that covers it, and
         // blobs no live posting touches are never read.
         for (const tag of SEALABLE_TAGS) {
-          yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) => take(entry.key));
-          flush();
+          yield* Stream.runForEach(engine.scan(keys.tag(tag)), (entry) => take(entry.key));
+          yield* flush;
         }
       } else {
-        // Only the groups written since the last seal. Each mark is cleared in
-        // the batch that carries its group's writes — the batch is only cut
-        // where a group ends — so an interrupted seal redoes exactly the
+        // Only the groups written since the last seal. Each mark is cleared
+        // after its group's blob, so an interrupted seal redoes exactly the
         // groups it did not finish.
-        const marks = [...(yield* Stream.runCollect(engine.scan(Uint8Array.from([Tag.Dirty]))))]
+        const marks = [...(yield* Stream.runCollect(engine.scan(keys.tag(Tag.Dirty))))]
           .map((entry) => new Uint8Array(entry.key));
         for (const mark of marks) {
-          const livePrefix = mark.subarray(1, mark.length - 4);
-          const base = readU32(mark, mark.length - 4) * SEGMENT_SPAN;
+          const { livePrefix, segment } = keys.liveOfDirty(mark);
+          const base = segment * SEGMENT_SPAN;
           const at = (seq: number) => {
-            const key = new Uint8Array(livePrefix.length + 4);
+            const key = new Uint8Array(livePrefix.length + SEQ_BYTES);
             key.set(livePrefix);
-            key.set(u32(seq), livePrefix.length);
+            key.set(seqBytes(seq), livePrefix.length);
             return key;
           };
-          const to = base + SEGMENT_SPAN > 0xffffffff ? undefined : at(base + SEGMENT_SPAN);
+          const to = base + SEGMENT_SPAN > MAX_SEQ ? undefined : at(base + SEGMENT_SPAN);
           yield* Stream.runForEach(
             engine.scan(livePrefix, scanOptions(at(base), to, false)),
             (entry) => take(entry.key),
           );
-          batch.push({ op: "delete", key: mark });
+          if (openPrefix !== undefined && openSegment === segment && compareKeys(openPrefix, livePrefix) === 0) {
+            settled.push(mark);
+          } else {
+            yield* push({ op: "delete", key: mark });
+          }
         }
-        flush();
+        yield* flush;
       }
       // Both passes can reach the same segment, and pass two rewrites whatever
       // it reads — so pass one's blobs have to have landed, or the additions
@@ -1346,28 +1994,24 @@ export const storeOverKv = (
         batch = [];
       }
 
-      // Tombstones clear bits the blobs still claim. A tombstone written
-      // conservatively — for a posting no blob held — clears nothing and is
-      // dropped all the same.
-      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Tombstone])), (entry) =>
+      // Tombstones clear bits the blobs still claim, and go once the blob that
+      // no longer claims them is written.
+      yield* Stream.runForEach(engine.scan(keys.tag(Tag.Tombstone)), (entry) =>
         Effect.gen(function* () {
-          // A tombstone key is a posting key with one byte in front of it.
-          const posting = entry.key.subarray(1);
+          const posting = keys.liveOfTombstone(entry.key);
           const id = seqOf(posting);
           yield* openFor(posting, id);
           buffer.remove(id % SEGMENT_SPAN);
-          batch.push({ op: "delete", key: entry.key });
+          settled.push(new Uint8Array(entry.key));
         }));
-      flush();
+      yield* flush;
 
       if (!swept) {
-        // A sweep covers every mark written since the store was sealed, and it
-        // is only a sweep once it has finished: the flag goes last.
-        yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Dirty])), (entry) =>
-          Effect.sync(() => {
-            batch.push({ op: "delete", key: new Uint8Array(entry.key) });
-          }));
-        batch.push({ op: "put", key: metaKey(META_SWEPT), value: u32(1) });
+        // A sweep covers every mark written since the partition was sealed,
+        // and it is only a sweep once it has finished: the flag goes last.
+        const marks = [...(yield* Stream.runCollect(engine.scan(keys.tag(Tag.Dirty))))];
+        for (const entry of marks) yield* push({ op: "delete", key: new Uint8Array(entry.key) });
+        yield* push({ op: "put", key: keys.meta(META_SWEPT), value: u64Bytes(1) });
       }
       if (batch.length > 0) yield* write(batch);
       return { segments, postings, examined };
@@ -1379,45 +2023,79 @@ export const storeOverKv = (
      * Storage grows with writes rather than with live objects: a record updated
      * ten times keeps ten events forever, so a busy tenant outgrows memory on
      * history rather than on size. Compaction removes that, and the state left
-     * behind is a complete snapshot — payloads, manifests and identities — so
-     * nothing that a query or a reindex needs is in the part being removed.
+     * behind is complete — every record, its manifest and its name — so nothing
+     * a query or a reindex needs is in the part being removed.
      *
      * What is lost is the ability to replay from before the cut, which is why
-     * cursors older than it are rejected rather than quietly continued.
+     * cursors older than it are rejected rather than quietly continued. The
+     * mark moves first, so from that moment a cursor before the cut is refused
+     * rather than answered from a log with a hole in it; the events then go in
+     * bounded batches, and an interrupted pass leaves only events behind the
+     * mark, which the next pass finds and removes. Retired records whose
+     * retraction is now behind the cut go too: nothing can replay an older
+     * event for them any more.
      */
     compact: (options) =>
-      exclusive(Effect.gen(function* () {
+      exclusiveReady(Effect.gen(function* () {
         const keep = options?.keep ?? 0;
-        const positions: number[] = [];
-        yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
-          Effect.sync(() => positions.push(positionOf(entry.key))));
-        positions.sort((a, b) => a - b);
-        const cut = positions.length - keep;
-        if (cut <= 0) return { removed: 0, compactedTo: yield* readMeta(META_COMPACTED_TO) };
-        const compactedTo = positions[cut - 1]!;
-        const writes: KvWrite[] = positions
-          .slice(0, cut)
-          .map((position) => ({ op: "delete" as const, key: eventKey(position) }));
-        writes.push({ op: "put", key: metaKey(META_COMPACTED_TO), value: u32(compactedTo) });
-        yield* write(writes);
-        return { removed: cut, compactedTo };
+        if (!Number.isSafeInteger(keep) || keep < 0) {
+          return yield* new StoreError({ op: "compact", cause: `keep must be a non-negative integer, not ${keep}` });
+        }
+        const head = yield* readMeta(META_HEAD);
+        const compactedTo = yield* readMeta(META_COMPACTED_TO);
+        const cut = head - keep;
+        if (cut <= compactedTo) return { removed: 0, compactedTo };
+        yield* write([{ op: "put", key: keys.meta(META_COMPACTED_TO), value: u64Bytes(cut) }]);
+
+        let removed = 0;
+        for (;;) {
+          const chunk = [...(yield* Stream.runCollect(
+            engine.scan(keys.tag(Tag.Event), { to: keys.event(cut + 1), limit: SEAL_BATCH }),
+          ))];
+          if (chunk.length === 0) break;
+          yield* write(chunk.map((entry): KvWrite => ({ op: "delete", key: new Uint8Array(entry.key) })));
+          removed += chunk.length;
+        }
+
+        for (;;) {
+          const chunk = [...(yield* Stream.runCollect(
+            engine.scan(keys.tag(Tag.Retired), { to: keys.retiredAfter(cut), limit: SEAL_BATCH }),
+          ))];
+          if (chunk.length === 0) break;
+          const writes: KvWrite[] = [];
+          for (const entry of chunk) {
+            const seq = seqOf(entry.key);
+            const record = yield* readRecord(pendingView(new Map()), seq);
+            if (record !== undefined && !record.live && record.retiredAt <= cut) {
+              writes.push({ op: "delete", key: keys.record(seq) });
+            }
+            writes.push({ op: "delete", key: new Uint8Array(entry.key) });
+          }
+          yield* write(writes);
+        }
+        return { removed, compactedTo: cut };
       })),
 
     compactedTo: readMeta(META_COMPACTED_TO),
 
-    liveRecords,
-    manifestOf,
+    liveRecords: ready(liveRecords),
+    manifestOf: (seq) => ready(manifestOf(seq)),
 
     lookup: (namespace, key) =>
-      Effect.map(engine.get(identityKey(namespace, key)), (bytes) =>
-        bytes === undefined ? undefined : asSeq(readU32(bytes))),
+      Effect.flatMap(Effect.andThen(lensesReady, engine.get(keys.identity(namespace, key))), (bytes) =>
+        bytes === undefined
+          ? Effect.succeed(undefined)
+          : bytes.length === SEQ_BYTES
+            ? Effect.succeed(asSeq(readSeqAt(bytes, 0)))
+            : Effect.fail(new StoreError({ op: "identity.read", cause: "an identity names no identifier" }))),
 
     identityOf: (seq) =>
-      Effect.map(engine.get(identityBySeqKey(seq)), (bytes) =>
-        bytes === undefined ? undefined : unjson(bytes, identityRecord)),
+      Effect.map(ready(readRecord(pendingView(new Map()), seq)), (record) =>
+        record?.live === true ? record.identity : undefined),
 
     scanIdentities: (input) =>
       Effect.gen(function* () {
+        yield* lensesReady;
         const limit = input.limit ?? 100;
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
           return yield* new StoreError({
@@ -1426,11 +2104,11 @@ export const storeOverKv = (
           });
         }
         const prefix = input.prefix === undefined
-          ? identityPrefix(input.namespace)
-          : identityNamePrefix(input.namespace, input.prefix);
-        const lower = input.lower === undefined ? undefined : identityKey(input.namespace, input.lower);
-        const upper = input.upper === undefined ? undefined : identityKey(input.namespace, input.upper);
-        const after = input.after === undefined ? undefined : identityKey(input.namespace, input.after);
+          ? keys.identityPrefix(input.namespace)
+          : keys.identityNamePrefix(input.namespace, input.prefix);
+        const lower = input.lower === undefined ? undefined : keys.identity(input.namespace, input.lower);
+        const upper = input.upper === undefined ? undefined : keys.identity(input.namespace, input.upper);
+        const after = input.after === undefined ? undefined : keys.identity(input.namespace, input.after);
         // Ascending scans resume *at* the last identity and discard it below;
         // descending scans can use the engine's exclusive upper bound directly.
         // Binding the cursor into the physical range avoids rescanning the first
@@ -1450,42 +2128,42 @@ export const storeOverKv = (
         }));
         const out: Array<{ readonly key: string; readonly seq: Seq }> = [];
         for (const entry of entries) {
-          const decoded = decodeIdentity(entry.key);
+          const decoded = keys.decodeIdentity(entry.key);
           if (decoded.namespace !== input.namespace || decoded.key === input.after) continue;
-          out.push({ key: decoded.key, seq: asSeq(readU32(entry.value)) });
+          out.push({ key: decoded.key, seq: asSeq(readSeqAt(entry.value, 0)) });
           if (out.length === limit) break;
         }
         return out;
       }),
 
-    nextSeq: exclusive(Effect.gen(function* () {
+    nextSeq: exclusiveReady(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;
-      yield* write([{ op: "put", key: metaKey(META_NEXT_SEQ), value: u32(next) }]);
+      if (next > MAX_SEQ) return yield* new PartitionExhausted({ partition, limit: MAX_SEQ });
+      yield* write([{ op: "put", key: keys.meta(META_NEXT_SEQ), value: u64Bytes(next) }]);
       return asSeq(next);
     })),
 
-    transact: (f) => commit((_view, txn) => f(txn)),
+    transact: (f) => commit((into) => f(txnFor(into))),
 
     read: (seq) =>
-      Effect.map(engine.get(payloadKey(seq)), (bytes) =>
-        bytes === undefined
-          ? undefined
-          : { seq, version: readU32(bytes), bytes: bytes.subarray(4) }),
+      Effect.map(ready(readRecord(pendingView(new Map()), seq)), (record) =>
+        record?.live === true ? { seq, version: record.version, bytes: record.body } : undefined),
 
-    resolve: (query) => Stream.fromIterableEffect(Effect.map(evaluate(query), Postings.iterate)),
+    resolve: (query) => Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), Postings.iterate)),
 
-    ordered: (input) => readOrdered(input),
+    ordered: (input) => ready(readOrdered(input)),
 
     extent: (column, where) =>
       Effect.gen(function* () {
+        yield* lensesReady;
         // Everything before the null run: null sorts last and is not a value.
-        const beforeNull = orderedKindRange(column, null).start;
-        const filter = where === undefined ? undefined : yield* evaluate(where);
+        const beforeNull = keys.orderedKindRange(column, null).start;
+        const filter = yield* rowFilterFor(where);
         const end = (reverse: boolean) =>
           Effect.map(
             mergeOrdered({
               column, from: undefined, to: beforeNull,
-              sealedFrom: undefined, sealedTo: segmentPrefix(beforeNull),
+              sealedFrom: undefined, sealedTo: keys.segmentPrefix(beforeNull),
               reverse, filter, limit: 1,
             }),
             (rows) => rows[0]?.value,
@@ -1500,108 +2178,171 @@ export const storeOverKv = (
 
     measure: (column) =>
       Effect.gen(function* () {
-        const found: Array<{ seq: number; value: number }> = [];
-        let max = 0;
-        yield* Stream.runForEach(engine.scan(measurePrefix(column)), (entry) =>
+        yield* lensesReady;
+        const out = new Map<number, number>();
+        yield* Stream.runForEach(engine.scan(keys.measurePrefix(column)), (entry) =>
           Effect.sync(() => {
-            const seq = seqOf(entry.key);
-            if (seq > max) max = seq;
-            found.push({ seq, value: readF64(entry.value) });
+            out.set(seqOf(entry.key), readF64(entry.value));
           }));
-        const vector = new Float64Array(max + 1);
-        for (const { seq, value } of found) vector[seq] = value;
-        return vector;
+        return out;
       }),
 
     terms: (field, prefix = "") =>
       Effect.gen(function* () {
+        yield* lensesReady;
         const terms = new Set<string>();
-        const startKey = termPrefixKey(field, prefix);
-        yield* Stream.runForEach(engine.scan(startKey), (entry) =>
+        const startKey = keys.termPrefixKey(field, prefix);
+        const collect = (entry: { readonly key: Uint8Array }) =>
           Effect.sync(() => {
-            const parsed = readTermKey(entry.key);
+            const parsed = keys.readTermKey(entry.key);
             if (parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix)) {
               terms.add(parsed.term);
             }
-          }));
-        yield* Stream.runForEach(engine.scan(segmentPrefix(startKey)), (entry) =>
-          Effect.sync(() => {
-            const parsed = readTermKey(entry.key);
-            if (parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix)) {
-              terms.add(parsed.term);
-            }
-          }));
+          });
+        yield* Stream.runForEach(engine.scan(startKey), collect);
+        yield* Stream.runForEach(engine.scan(keys.segmentPrefix(startKey)), collect);
         return [...terms].sort();
       }),
-  } satisfies ObjectStoreApi;
+  };
+
+  return { api, drop };
 };
 
 /**
- * The layout this code writes. A store carries it so a layout change is caught
- * on open instead of misread.
+ * The shard over an ordered key-value engine: the writer claim it holds, and
+ * a handle for each partition that has been asked for.
+ *
+ * Takes a claim already made, which is what lets a caller hold a claim that
+ * is no longer current; `openShardOverKv` is the way to open one for use.
  */
-const CURRENT_FORMAT = 2;
-const META_FORMAT = "format";
+export const shardOverKv = (
+  shard: ShardId,
+  engine: KvEngine,
+  claim: WriterClaim,
+  options?: OpenShardOptions,
+): ShardStoreApi => {
+  const context: ShardContext = {
+    shard, engine, claim,
+    origin: options?.origin ?? "local",
+    probeCap: options?.probeCap ?? PROBE_CAP,
+  };
+  const handles = new Map<PartitionKey, ReturnType<typeof openPartition>>();
+  const handleOf = (partition: PartitionKey) => {
+    let handle = handles.get(partition);
+    if (handle === undefined) {
+      handle = openPartition(context, partition);
+      handles.set(partition, handle);
+    }
+    return handle;
+  };
+
+  return {
+    shard: context.shard,
+    generation: context.claim.generation,
+    partition: (partition) => handleOf(partition).api,
+
+    /**
+     * Every partition with a key here, found by seeking from one partition's
+     * range to the next. One read per partition, and nothing to keep in step:
+     * a partition is listed exactly while it holds something.
+     */
+    partitions: Effect.gen(function* () {
+      const out: PartitionKey[] = [];
+      let from: Uint8Array | undefined;
+      for (;;) {
+        const first = [...(yield* Stream.runCollect(
+          context.engine.scan(partitionSpace(), { ...(from === undefined ? {} : { from }), limit: 1 }),
+        ))][0];
+        if (first === undefined) break;
+        const partition = partitionOf(first.key);
+        out.push(partition);
+        const end = prefixEnd(partitionPrefix(partition));
+        if (end === undefined) break;
+        from = end;
+      }
+      return out;
+    }),
+
+    drop: (partition, options) => handleOf(partition).drop(options?.keep),
+  };
+};
+
+export interface OpenShardOptions {
+  /** The node recorded as the writer of every event this shard accepts. */
+  readonly origin?: string;
+  /**
+   * How many postings one clause of a query may read before it is treated as
+   * broad and checked per candidate instead (see `evaluateBounded`). 4096
+   * unless given.
+   */
+  readonly probeCap?: number;
+}
 
 /**
- * Open a store over an engine: claim the writer generation and mark a fresh
- * store with the layout it holds.
+ * Open a shard over an engine: claim the writer generation and mark a fresh
+ * engine with the layout it holds.
  *
- * A store written by an older layout is refused, not upgraded. Nothing carries
- * compatibility for old data; recreate the database.
+ * An engine written by another layout is refused, not upgraded. Nothing
+ * carries compatibility for old data; recreate the database.
  */
-export const openStoreOverKv = (
-  partition: PartitionKey,
+export const openShardOverKv = (
+  shard: ShardId,
   engine: KvEngine,
-): Effect.Effect<ObjectStoreApi, StoreError> =>
+  options?: OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError> =>
   Effect.gen(function* () {
     const claim = yield* claimGeneration(engine);
-    const store = storeOverKv(partition, engine, claim);
-    const format = yield* engine.get(metaKey(META_FORMAT));
-    const holdsData = (yield* engine.get(metaKey(META_NEXT_POSITION))) !== undefined;
-    if (format === undefined ? holdsData : readU32(format) < CURRENT_FORMAT) {
-      return yield* new StoreError({
-        op: "format.open",
-        cause: "This store was written by an older layout, which is not supported. Recreate the database.",
-      });
-    }
+    const formatKey = shardMetaKey(SHARD_FORMAT);
+    const format = yield* engine.get(formatKey);
     if (format === undefined) {
-      const revision = yield* engine.get(metaKey(META_REVISION));
+      // Anything beyond the claim just written means another layout's data.
+      const held = yield* Stream.runCollect(
+        engine.scan(new Uint8Array(0), { from: Uint8Array.of(0x01), limit: 1 }),
+      );
+      if ([...held].length > 0) {
+        return yield* new StoreError({
+          op: "format.open",
+          cause: "This store was written by another layout, which is not supported. Recreate the database.",
+        });
+      }
       const accepted = yield* engine.conditionalWrite!([
-        { op: "put", key: metaKey(META_REVISION), value: encoder.encode(crypto.randomUUID()) },
-        { op: "put", key: metaKey(META_FORMAT), value: u32(CURRENT_FORMAT) },
+        { op: "put", key: formatKey, value: u64Bytes(CURRENT_FORMAT) },
       ], [
-        { key: metaKey(META_GENERATION), value: generationBytes(claim.generation) },
-        { key: metaKey(META_OWNER), value: claim.session },
-        { key: metaKey(META_FORMAT), value: format },
-        { key: metaKey(META_REVISION), value: revision },
+        { key: shardMetaKey(SHARD_GENERATION), value: u64Bytes(claim.generation) },
+        { key: shardMetaKey(SHARD_OWNER), value: claim.session },
+        { key: formatKey, value: undefined },
       ]);
       if (!accepted) return yield* new StoreError({ op: "format.open", cause: "Writer or format changed while marking the store" });
+    } else if (format.length !== 8 || readU64At(format, 0) !== CURRENT_FORMAT) {
+      return yield* new StoreError({
+        op: "format.open",
+        cause: "This store was written by another layout, which is not supported. Recreate the database.",
+      });
     }
-    return store;
+    return shardOverKv(shard, engine, claim, options);
   });
 
-/** Trusted store activation; this is not root Fabric takeover authority. */
+/** Trusted shard activation; this is not root Fabric takeover authority. */
 export const claimGeneration = Effect.fn("store.claimGeneration")(function*(engine: KvEngine): Effect.fn.Return<WriterClaim, StoreError> {
   if (engine.conditionalWrite === undefined || engine.coordination === undefined) {
     return yield* new StoreError({ op: "generation.claim", cause: "Engine cannot enforce conditional commits" });
   }
   const session = encoder.encode(crypto.randomUUID());
+  const generationKey = shardMetaKey(SHARD_GENERATION);
   for (let attempt = 0; attempt < 32; attempt++) {
-    const current = yield* engine.get(metaKey(META_GENERATION));
+    const current = yield* engine.get(generationKey);
     const generation = yield* Effect.try({
       try: () => {
-        const previous = readGeneration(current);
+        const previous = counterOf(current);
         if (previous === Number.MAX_SAFE_INTEGER) throw new Error("Writer generation exhausted");
         return previous + 1;
       },
       catch: (cause) => new StoreError({ op: "generation.claim", cause }),
     });
     const accepted = yield* engine.conditionalWrite([
-      { op: "put", key: metaKey(META_GENERATION), value: generationBytes(generation) },
-      { op: "put", key: metaKey(META_OWNER), value: session },
-      { op: "put", key: metaKey(META_REVISION), value: encoder.encode(crypto.randomUUID()) },
-    ], [{ key: metaKey(META_GENERATION), value: current }]);
+      { op: "put", key: generationKey, value: u64Bytes(generation) },
+      { op: "put", key: shardMetaKey(SHARD_OWNER), value: session },
+    ], [{ key: generationKey, value: current }]);
     if (accepted) return { generation, session };
   }
   return yield* new StoreError({ op: "generation.claim", cause: "Writer acquisition conflict limit exceeded" });

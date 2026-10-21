@@ -7,7 +7,7 @@ import {
 } from "./errors.js";
 import { asSeq, emptyManifest, type IndexManifest, type ObjectIdentity, type Seq } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
-import { COLLECTION_NAMESPACE_PREFIX, isDerivedNamespace, tenantOf } from "./tenancy.js";
+import { COLLECTION_NAMESPACE, isDerivedNamespace } from "./tenancy.js";
 import type { TenantId } from "./topology.js";
 
 export const ZELAVIS_DB_BACKUP_V1 = "zelavis.db-backup.v1" as const;
@@ -118,86 +118,78 @@ const toBase64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => new Uint8Array(Buffer.from(value, "base64"));
 
 export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => {
-  /** One put per live record, for a log that no longer reaches back far enough. */
-  const exportFromState = () =>
-    Effect.gen(function* () {
-      const events: BackupEvent[] = [];
-      for (const record of yield* store.liveRecords) {
-        const owner = tenantOf(record.identity.namespace, record.identity.key);
-        if (owner !== tenant) continue;
-        if (isDerivedNamespace(record.identity.namespace)) continue;
-        events.push({
-          kind: "put",
-          seq: record.seq,
-          version: record.version,
-          at: Date.now(),
-          body: toBase64(record.bytes),
-          manifest: record.manifest,
-          identity: record.identity,
-        });
-      }
-      return {
-        format: ZELAVIS_DB_BACKUP_V1,
-        exportedAt: new Date().toISOString(),
-        tenantId: tenant,
-        events,
-      };
-    }).pipe(Effect.orDie);
-
   /**
-   * Retract every record belonging to this tenant.
+   * Retract every record a backup would carry.
    *
    * Selected by the rule an export uses, so what a purge removes is exactly
    * what a backup would have carried — a restore that cleared less than it
    * replaces would leave records behind that the backup never knew about.
    */
   const purge = Effect.gen(function* () {
-    const doomed = (yield* store.liveRecords).filter((record) =>
-      tenantOf(record.identity.namespace, record.identity.key) === tenant
-      && !isDerivedNamespace(record.identity.namespace));
+    const doomed = (yield* store.liveRecords).filter((record) => !isDerivedNamespace(record.identity.namespace));
     for (const record of doomed) {
       yield* store.transact((txn) => txn.retract(asSeq(record.seq)));
     }
     return doomed.length;
   }).pipe(Effect.orDie);
 
+  /** A record a backup carries: named, and not state that is rebuilt rather than restored. */
+  const carried = (identity: ObjectIdentity | undefined): identity is ObjectIdentity =>
+    identity !== undefined && !isDerivedNamespace(identity.namespace);
+
   return {
+    /**
+     * Every record the tenant holds, then every event logged since the records
+     * began to be read.
+     *
+     * The records are read while writes carry on, so on their own they are not
+     * one moment. The events after them are: a restore applies everything by
+     * version, so an event older than the record already exported changes
+     * nothing and a newer one brings it forward, and the restored tenant is
+     * the tenant as of the last of them. Reading the records rather than the
+     * whole log keeps an export the size of what the tenant holds, not of
+     * everything it was ever written.
+     */
     exportTenant: Effect.gen(function* () {
-      const compactedTo = yield* store.compactedTo;
-      if (compactedTo > 0) return yield* exportFromState();
-
-      // A retraction carries no identity, so ownership is remembered from the
-      // put that established each sequence and applied to the delete that
-      // follows it.
-      const owners = new Map<number, TenantId>();
+      const mark = yield* store.events.head;
       const events: BackupEvent[] = [];
-      const raw = yield* Stream.runCollect(store.events.read({ limit: 1_000_000 }));
-
-      for (const event of raw) {
-        if (event._tag === "ObjectPut") {
-          if (event.identity === undefined) continue;
-          if (isDerivedNamespace(event.identity.namespace)) continue;
-          const owner = tenantOf(event.identity.namespace, event.identity.key);
-          if (owner === undefined) continue;
-          owners.set(event.seq, owner);
-          if (owner !== tenant) continue;
+      yield* Stream.runForEach(store.records, ({ seq, record }) =>
+        Effect.sync(() => {
+          if (!record.live || !carried(record.identity)) return;
           events.push({
             kind: "put",
-            seq: event.seq,
-            version: event.version,
-            at: event.at,
-            body: toBase64(event.bytes),
-            manifest: event.manifest,
-            identity: event.identity,
+            seq,
+            version: record.version,
+            at: Date.now(),
+            body: toBase64(record.body),
+            manifest: record.manifest,
+            identity: record.identity,
           });
-        } else if (owners.get(event.seq) === tenant) {
-          events.push({
-            kind: "retract",
-            seq: event.seq,
-            version: event.version,
-            at: event.at,
-          });
+        }));
+
+      let after = mark;
+      for (;;) {
+        const tail = [...(yield* Stream.runCollect(
+          store.events.read({ ...(after === undefined ? {} : { after }), limit: 1024 }),
+        ))];
+        for (const event of tail) {
+          if (event._tag === "ObjectPut") {
+            if (!carried(event.identity)) continue;
+            events.push({
+              kind: "put",
+              seq: event.seq,
+              version: event.version,
+              at: event.at,
+              body: toBase64(event.bytes),
+              manifest: event.manifest,
+              identity: event.identity,
+            });
+          } else if (carried(event.identity)) {
+            events.push({ kind: "retract", seq: event.seq, version: event.version, at: event.at });
+          }
         }
+        if (tail.length < 1024) break;
+        after = tail.at(-1)!.cursor;
       }
 
       return {
@@ -217,26 +209,13 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
         return yield* new BackupTenantMismatch({ expected: tenant, received: backup.tenantId });
       }
 
-      // The label on a backup says which tenant it is for; the identities
-      // inside say which tenant it is *of*. They can disagree — a hand-edited
-      // or hand-assembled backup — and under `empty` that only ever stored
-      // records no query for this tenant reached. A merge looks names up to
-      // decide what to write over, so the same disagreement would write over
-      // another tenant's records on the same shard. Checked once, for every
-      // mode, rather than defended against in the one that made it dangerous.
-      for (const event of backup.events) {
-        const identity = event.identity;
-        if (identity === undefined) continue;
-        const owner = tenantOf(identity.namespace, identity.key);
-        if (owner !== undefined && owner !== tenant) {
-          return yield* new BackupTenantMismatch({ expected: tenant, received: owner });
-        }
-      }
-
+      // The label is the only tenant a backup names. The records inside are
+      // named within a partition, and a restore writes into this tenant's own,
+      // so nothing in a backup can reach another tenant's records.
       const mode = options?.into ?? "empty";
       if (mode === "empty") {
         const occupied = yield* Stream.runCollect(
-          Stream.take(store.resolve(equals(`${COLLECTION_NAMESPACE_PREFIX}${tenant}`, "\u0000collection")), 1),
+          Stream.take(store.resolve(equals(COLLECTION_NAMESPACE, "\u0000collection")), 1),
         );
         if (occupied.length > 0) return yield* new TenantNotEmpty({ tenant });
       }
@@ -247,10 +226,11 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       // tenant ends up as the backup describes it, not as a union.
       const removed = mode === "purge" ? yield* purge : 0;
 
-      // Sequences are allocated per shard, so a backup's are meaningless in the
-      // shard it is restored into — several tenants share one, and reusing the
-      // original numbers would overwrite whatever else holds them. Each is
-      // remapped once and the mapping carries retractions to the right record.
+      // A backup's identifiers are those of the partition it was taken from.
+      // Here they may already be taken — by records a merge keeps, or by
+      // retired records whose versions outrank the backup's — so each is
+      // remapped once, and the mapping carries retractions and edges to the
+      // right record.
       const remapped = new Map<number, Seq>();
       /**
        * How far to lift a restored record's versions.
@@ -264,24 +244,32 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       let applied = 0;
       let superseded = 0;
 
+      // Every record is given its identifier before any is written, because an
+      // edge names its target by identifier: a manifest restored as it was
+      // would point at the backup's numbers, which here name some other record
+      // or nothing. Assigning first lets an edge reach a target that the
+      // backup happens to list after the record naming it.
+      for (const event of backup.events) {
+        if (event.kind !== "put" || remapped.has(event.seq)) continue;
+        const identity = event.identity;
+        const local = mode === "merge" && identity !== undefined
+          ? yield* store.lookup(identity.namespace, identity.key)
+          : undefined;
+        if (local === undefined) {
+          remapped.set(event.seq, yield* store.nextSeq);
+        } else {
+          remapped.set(event.seq, local);
+          const current = yield* store.read(local);
+          lift.set(event.seq, current?.version ?? 0);
+          superseded += 1;
+        }
+      }
+
       for (const event of backup.events) {
         if (event.kind === "put") {
           const identity = event.identity;
-          let seq = remapped.get(event.seq);
-          if (seq === undefined) {
-            const local = mode === "merge" && identity !== undefined
-              ? yield* store.lookup(identity.namespace, identity.key)
-              : undefined;
-            if (local === undefined) {
-              seq = yield* store.nextSeq;
-            } else {
-              seq = local;
-              const current = yield* store.read(local);
-              lift.set(event.seq, current?.version ?? 0);
-              superseded += 1;
-            }
-            remapped.set(event.seq, seq);
-          }
+          const seq = remapped.get(event.seq)!;
+          const manifest = (event.manifest as IndexManifest | undefined) ?? emptyManifest;
           yield* store.events.apply({
             _tag: "ObjectPut",
             partition: store.partition,
@@ -290,7 +278,16 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
             seq,
             version: event.version + (lift.get(event.seq) ?? 0),
             bytes: event.body === undefined ? new Uint8Array() : fromBase64(event.body),
-            manifest: (event.manifest as IndexManifest | undefined) ?? emptyManifest,
+            // An edge to a record the backup does not hold names nothing that
+            // exists here, so it is dropped rather than left pointing at
+            // whatever this shard gave that number to.
+            manifest: {
+              ...manifest,
+              edges: manifest.edges.flatMap(([edgeType, to]) => {
+                const target = remapped.get(to);
+                return target === undefined ? [] : [[edgeType, target] as const];
+              }),
+            },
             ...(identity === undefined ? {} : { identity }),
           });
           applied++;
@@ -319,6 +316,8 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
         CursorCompacted: Effect.die,
         LogCompacted: Effect.die,
         PartitionUnavailable: Effect.die,
+        PartitionExhausted: Effect.die,
+        LensesRebuilding: Effect.die,
       }),
     ),
   };

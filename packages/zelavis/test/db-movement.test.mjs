@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Fiber } from "effect";
-import { makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
+import { documentsFor, makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const withDatabase = (t, body) => {
@@ -132,10 +132,14 @@ test("the shard a tenant left stops holding it, and stops claiming it", async (t
       // Not just unreachable: gone. A shard that kept the records would go on
       // growing, and one that kept the occupancy marker would tell the next
       // placement decision it is still occupied.
-      const left = yield* stores.get("s0").liveRecords;
-      const owners = left.map((record) => record.identity.namespace);
-      assert.ok(!owners.some((ns) => ns.includes(from)),
-        `s0 still holds records for ${from}: ${owners.join(", ")}`);
+      // Only the fence stays, so a write still on its way to s0 is refused
+      // there rather than landing where nothing reads it.
+      const left = yield* stores.get("s0").partition(from).liveRecords;
+      assert.deepEqual(left.map((record) => record.identity.namespace), ["zv.moving"],
+        `s0 still holds more than the fence for ${from}`);
+      const late = yield* Effect.flip(documentsFor(stores.get("s0").partition(from), from)
+        .insert({ collection: "posts", id: "late", data: { title: "late" } }));
+      assert.equal(late._tag, "TenantMoving", "a late write to the old shard is refused");
 
       const targets = yield* db.scatter.targets();
       assert.ok(targets.every((target) => target.shard === "s1"),
@@ -154,7 +158,7 @@ test("a fenced tenant refuses every kind of write and none of the reads", async 
       // Stand the tenant behind the fence by hand. A real move only fences for
       // the last catch-up, which is too short to catch in the act, so the state
       // is set up rather than raced for.
-      const source = stores.get("s0");
+      const source = stores.get("s0").partition(tenant);
       const enc = new TextEncoder();
       const seq = yield* source.nextSeq;
       yield* source.transact((txn) =>
@@ -204,13 +208,13 @@ test("an interrupted move is resumed rather than repaired", async (t) => {
       // Start a move and stop after the copy, which is the state a crash
       // between copying and routing leaves behind.
       const enc = new TextEncoder();
-      const topologyStore = stores.get("zv.topology");
+      const topologyStore = stores.get("zv.topology").partition("zv.topology");
       const record = {
         tenant, from: "s0", to: "s1", phase: "copying",
         startedAt: new Date().toISOString(), map: allOn("s1", 2),
       };
-      const fenceSeq = yield* stores.get("s0").nextSeq;
-      yield* stores.get("s0").transact((txn) =>
+      const fenceSeq = yield* stores.get("s0").partition(tenant).nextSeq;
+      yield* stores.get("s0").partition(tenant).transact((txn) =>
         txn.put(fenceSeq, enc.encode(JSON.stringify({ from: "s0", to: "s1" })),
           { terms: [], columns: [], measures: [], edges: [] },
           { namespace: "zv.moving", key: tenant }));
@@ -261,7 +265,7 @@ test("a copy interrupted halfway is not restored alongside its own wreckage", as
       // would. Resuming has to discard it: replaying the rest alongside would
       // leave a tenant that is partly the old copy and looks whole.
       const partial = yield* db.forTenant(tenant).backups.exportTenant;
-      const target = stores.get("s1");
+      const target = stores.get("s1").partition(tenant);
       const enc = new TextEncoder();
       for (const event of partial.events.slice(0, 2)) {
         const seq = yield* target.nextSeq;
@@ -304,7 +308,7 @@ test("a move whose routing already landed is finished, not copied again", async 
       // process that died during cleanup would have left it: routing moved,
       // source not yet emptied.
       const enc = new TextEncoder();
-      const topologyStore = stores.get("zv.topology");
+      const topologyStore = stores.get("zv.topology").partition("zv.topology");
       const writeMove = (record) =>
         Effect.gen(function* () {
           const existing = yield* topologyStore.lookup("zv.move", tenant);
@@ -356,12 +360,12 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
         if (!interruptCleanup || shard !== "s0") return store;
         return {
           ...store,
-          transact: (change) => Effect.suspend(() => {
+          drop: (partition) => Effect.suspend(() => {
             if (db?.partitionMap.version === 2) {
               cleanupInterrupted = true;
               return Effect.die(new Error("injected interruption before source cleanup"));
             }
-            return store.transact(change);
+            return store.drop(partition);
           }),
         };
       }),
@@ -373,15 +377,15 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
   await openAt(true, (db, stores) => Effect.gen(function* () {
     yield* seed(db, [tenant]);
     before = yield* snapshot(db, tenant);
-    const history = yield* db.forTenant(tenant).events.read();
+    const history = (yield* db.forTenant(tenant).events.read()).events;
     const interrupted = yield* Effect.exit(db.movement.rebalance(allOn("s1", 2)));
     assert.equal(interrupted._tag, "Failure");
     assert.equal(cleanupInterrupted, true, "the injected cleanup interruption was reached");
     assert.equal(db.partitionMap.version, 2);
     assert.equal(db.shardOf(tenant), "s1");
     assert.equal((yield* db.movement.pending)[0].phase, "routed");
-    assert.ok((yield* stores.get("s0").liveRecords).length > 0, "source cleanup has not happened");
-    routedEvents = yield* db.forTenant(tenant).events.read();
+    assert.ok((yield* stores.get("s0").partition(tenant).liveRecords).length > 0, "source cleanup has not happened");
+    routedEvents = (yield* db.forTenant(tenant).events.read()).events;
     // Physical event identities change when copied to another shard.
     const logicalHistory = (events) => events.map(({ cursor, eventId, ...event }) => event);
     assert.deepEqual(logicalHistory(routedEvents), logicalHistory(history));
@@ -391,16 +395,17 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
     assert.equal(db.partitionMap.version, 2, "persisted routing outranks the original map");
     assert.equal((yield* db.movement.pending)[0].phase, "routed");
     assert.deepEqual(yield* snapshot(db, tenant), before);
-    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+    assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);
     const results = yield* db.movement.resume;
     assert.equal(results.length, 1);
     assert.equal(results[0].resumed, true);
     assert.equal(results[0].copied, 0);
     assert.ok(results[0].removed > 0, "the real source records were cleaned up");
-    assert.deepEqual(yield* stores.get("s0").liveRecords, []);
+    assert.deepEqual((yield* stores.get("s0").partition(tenant).liveRecords).map((record) => record.identity.namespace),
+      ["zv.moving"], "only the fence is left on the source");
     assert.equal(db.partitionMap.version, 2);
     assert.deepEqual(yield* snapshot(db, tenant), before);
-    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+    assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);
     assert.deepEqual(yield* db.movement.pending, []);
   }));
   await openAt(false, (db, stores) => Effect.gen(function* () {
@@ -409,8 +414,95 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
     assert.deepEqual(yield* db.movement.pending, []);
     assert.deepEqual(yield* db.movement.resume, [], "completed cleanup stays completed after another restart");
     assert.deepEqual(yield* snapshot(db, tenant), before);
-    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+    assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);
   }));
+});
+
+test("a moved tenant keeps its graph links, including ones written during the move", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      // Every shard already holds records, so the target hands the moved ones
+      // identifiers of its own, and an edge carried as it was would name
+      // something else there.
+      const tenants = ["acme", "bravo", "cosmo", "delta"];
+      yield* seed(db, tenants);
+      const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+      const docs = () => db.forTenant(tenant).documents;
+      yield* docs().createCollection({ name: "people" });
+      yield* docs().createCollection({
+        name: "teams",
+        edges: [{ name: "members", path: "members", collection: "people" }],
+      });
+      for (let i = 0; i < 100; i++) {
+        yield* docs().insert({ collection: "people", id: `u${i}`, data: { n: i } });
+      }
+      yield* docs().insert({ collection: "teams", id: "before", data: { members: ["u1", "u2"] } });
+
+      // Teams written while the move runs reach the target by the catch-up
+      // rather than the copy.
+      const moving = yield* Effect.forkChild(db.movement.rebalance(allOn("s1", 2)));
+      const accepted = [];
+      for (let i = 0; i < 100; i++) {
+        const outcome = yield* Effect.result(
+          docs().insert({ collection: "teams", id: `during${i}`, data: { members: [`u${i}`] } }));
+        if (outcome._tag === "Success") accepted.push(i);
+      }
+      yield* Fiber.join(moving);
+      assert.equal(db.shardOf(tenant), "s1");
+      assert.ok(accepted.length > 0, "some writes landed during the move");
+
+      const members = (team) => Effect.map(
+        docs().findMany({ collection: "people", linked: { collection: "teams", id: team, edge: "members" } }),
+        (found) => found.map((doc) => doc.id).sort(),
+      );
+      assert.deepEqual(yield* members("before"), ["u1", "u2"]);
+      for (const i of accepted) {
+        assert.deepEqual(yield* members(`during${i}`), [`u${i}`], `team during${i}`);
+      }
+    }),
+  );
+});
+
+test("a move keeps identifiers and log positions: cursors, checkpoints and event ids carry on", async (t) => {
+  await withDatabase(t, (db, stores) =>
+    Effect.gen(function* () {
+      const tenants = ["acme", "bravo", "cosmo", "delta"];
+      yield* seed(db, tenants);
+      const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+      const titles = [];
+      const register = (api) => api.projections.register({
+        name: "titles",
+        source: { collections: ["posts"], eventTypes: ["document.upserted"] },
+        apply: (event) => Effect.sync(() => titles.push(event.payload.data.title)),
+      });
+
+      const before = db.forTenant(tenant);
+      yield* register(before);
+      yield* before.projections.run("titles");
+      const seen = titles.length;
+      const read = yield* before.events.read({ limit: 1000 });
+      const seq = yield* stores.get("s0").partition(tenant).lookup("doc/posts", "p1");
+
+      yield* db.movement.rebalance(allOn("s1", 2));
+      assert.equal(db.shardOf(tenant), "s1");
+
+      const after = db.forTenant(tenant);
+      assert.equal(yield* stores.get("s1").partition(tenant).lookup("doc/posts", "p1"), seq,
+        "the document has the identifier it had");
+      assert.deepEqual((yield* after.events.read({ limit: 1000 })).events.map((event) => event.eventId),
+        read.events.map((event) => event.eventId), "and its events the ids they had");
+
+      // A cursor taken on the old shard continues on the new one.
+      assert.deepEqual((yield* after.events.read({ after: read.cursor })).events, []);
+      yield* after.documents.insert({ collection: "posts", id: "p9", data: { title: "after the move" } });
+      assert.deepEqual((yield* after.events.read({ after: read.cursor })).events.map((event) => event.documentId), ["p9"]);
+
+      // So does the projection's checkpoint, which moved with the tenant.
+      yield* register(after);
+      assert.equal((yield* after.projections.run("titles")).applied, 1);
+      assert.deepEqual(titles.slice(seen), ["after the move"]);
+    }),
+  );
 });
 
 test("a tenant can be written while it is being moved", async (t) => {

@@ -7,9 +7,10 @@ import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { exclusiveKvEngine } from "./exclusive-kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * RocksDB through `@harperfast/rocksdb-js`, under evaluation.
@@ -281,10 +282,11 @@ export const makeRocksdbJsEngine = (
   );
 
 export const makeRocksdbJsStore = (
-  partition: PartitionKey,
+  shard: ShardId,
   directory: string,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  options?: OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeRocksdbJsEngine(partition, directory);
-    return yield* openStoreOverKv(partition, engine);
+    const engine = yield* makeRocksdbJsEngine(shard, directory);
+    return yield* openShardOverKv(shard, engine, options);
   });

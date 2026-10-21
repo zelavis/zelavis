@@ -45,17 +45,19 @@ export interface ProjectionsApi {
 }
 
 /**
- * Checkpoints live in the shard whose log they track.
+ * Checkpoints live in the partition whose log they track.
  *
- * That is what makes them shard-aware without any bookkeeping: a cursor is only
- * meaningful against the log that issued it, so storing it anywhere else would
- * invite comparing positions from different shards as if they were one order.
+ * A cursor is only meaningful against the log that issued it, and a partition
+ * keeps its log, positions included, when it moves to another shard. So a
+ * checkpoint stored beside that log moves with it and still means the same
+ * place, and nothing compares positions from different partitions as if they
+ * were one order.
  */
 /** Projections registered on a caller's behalf, listed by their own surface. */
 const INTERNAL_PREFIX = "zv.";
 
 const CHECKPOINT_NS = "zv.checkpoint";
-const checkpointKey = (tenant: TenantId, name: string) => `${tenant}/${name}`;
+const checkpointKey = (name: string) => name;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -89,7 +91,7 @@ export const projectionsFor = (
 
   const readCheckpoint = (name: string) =>
     Effect.gen(function* () {
-      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(tenant, name));
+      const seq = yield* store.lookup(CHECKPOINT_NS, checkpointKey(name));
       if (seq === undefined) return undefined;
       const object = yield* store.read(seq);
       return object === undefined
@@ -99,7 +101,7 @@ export const projectionsFor = (
 
   const writeCheckpoint = (name: string, cursor: EventCursor) =>
     Effect.gen(function* () {
-      const key = checkpointKey(tenant, name);
+      const key = checkpointKey(name);
       const existing = yield* store.lookup(CHECKPOINT_NS, key);
       const seq = existing ?? (yield* store.nextSeq);
       yield* store.transact((txn) =>
@@ -117,22 +119,29 @@ export const projectionsFor = (
       let cursor = from;
       let applied = 0;
       for (;;) {
-        const batch = yield* events.read({
+        const page = yield* events.read({
           ...(cursor === undefined ? {} : { after: cursor }),
           limit: 512,
         });
-        if (batch.length === 0) break;
-        for (const event of batch) {
+        for (const event of page.events) {
           if (matchesSource(definition, event)) {
             yield* definition.apply(event);
             applied++;
           }
-          cursor = event.cursor;
         }
-        // Advance once per batch rather than per event: a crash mid-batch
-        // replays it, which the deterministic `apply` contract allows.
-        yield* writeCheckpoint(definition.name, cursor!);
-        if (batch.length < 512) break;
+        // Advance once per page rather than per event: a crash mid-page
+        // replays it, which the deterministic `apply` contract allows. A page
+        // that held nothing but a stretch of other writes still advances, or
+        // the next run would read that stretch again; one that reached the end
+        // with nothing in it does not, because the only thing it passed may be
+        // the previous run's own checkpoint, and writing another for it would
+        // make every run write one.
+        if (page.cursor !== undefined && page.cursor !== cursor
+          && (page.events.length > 0 || page.more)) {
+          cursor = page.cursor;
+          yield* writeCheckpoint(definition.name, cursor);
+        }
+        if (!page.more) break;
       }
       return { name: definition.name, applied, ...(cursor === undefined ? {} : { checkpoint: cursor }) };
     });

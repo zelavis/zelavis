@@ -166,7 +166,7 @@ test("TTL deletion is multimodal and appears in the resumable change feed", () =
       expiresAt: "2000-01-01T00:00:00.000Z",
     });
     assert.equal(expiring.expiresAt, "2000-01-01T00:00:00.000Z");
-    const beforeDelete = (yield* sessions.changes()).at(-1).cursor;
+    const beforeDelete = (yield* sessions.changes()).changes.at(-1).cursor;
 
     assert.equal(yield* sessions.get("expired"), undefined);
     assert.equal(yield* tenant.documents.findById({ collection: "sessions", id: "expired" }), undefined);
@@ -175,7 +175,7 @@ test("TTL deletion is multimodal and appears in the resumable change feed", () =
       [],
     );
     assert.equal(yield* sessions.size, 2);
-    assert.deepEqual((yield* sessions.changes({ after: beforeDelete })).map((change) => ({
+    assert.deepEqual((yield* sessions.changes({ after: beforeDelete })).changes.map((change) => ({
       key: change.key, type: change.type,
     })), [{ key: "expired", type: "remove" }]);
   })));

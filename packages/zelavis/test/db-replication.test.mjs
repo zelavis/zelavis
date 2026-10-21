@@ -173,8 +173,9 @@ test("opening the database levels a replica that fell behind", async (t) => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* makeNodeSqliteStore(home, dir);
-        const seq = yield* store.lookup("doc/zv.global/plans", "pro");
+        // The copy lives in the App's own partition on that shard.
+        const store = (yield* makeNodeSqliteStore(home, dir)).partition("zv.global");
+        const seq = yield* store.lookup("doc/plans", "pro");
         assert.notEqual(seq, undefined, "the replica was there to remove");
         yield* store.transact((txn) => txn.retract(seq));
       }),
@@ -191,36 +192,45 @@ test("opening the database levels a replica that fell behind", async (t) => {
   );
 });
 
-test("a replicated collection cannot declare edges in the first place", async (t) => {
+test("a replicated collection's edges stay among replicated collections, and follow on every shard", async (t) => {
   const dir = tempDir(t);
   await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
     Effect.gen(function* () {
       yield* db.topology.placement.declare("linked", "replicated");
 
-      // Refused where the edge is declared, with the error the collection API
-      // already reports for a constraint it cannot accept — not as a defect
-      // raised later by whichever write first produced one.
+      // An edge to a collection no replica holds would name nothing on a
+      // shard. Refused where the edge is declared, with the error the
+      // collection API already reports for a constraint it cannot accept.
+      yield* db.global.documents.createCollection({ name: "elsewhere" });
       const refused = yield* db.global.documents
         .createCollection({
           name: "linked",
-          edges: [{ name: "parent", path: "parentId", collection: "linked" }],
+          edges: [{ name: "home", path: "homeId", collection: "elsewhere" }],
         })
         .pipe(
           Effect.as("created"),
           Effect.catchTag("InvalidConstraint", (e) => Effect.succeed(e)),
         );
-      assert.notEqual(refused, "created", "an edge cannot survive a reallocated identifier");
+      assert.notEqual(refused, "created");
       assert.equal(refused.collection, "linked");
-      assert.equal(refused.name, "parent");
-      assert.match(refused.reason, /identifier/, "it says why a copy cannot carry it");
+      assert.equal(refused.name, "home");
+      assert.match(refused.reason, /replicated collections/, "it says what an edge may name");
 
-      // Without edges the same collection is ordinary, and replicates.
-      yield* db.global.documents.createCollection({ name: "linked" });
-      yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
-      const found = yield* db.forTenant("acme").shared.findById({
-        collection: "linked", id: "a",
+      // Among replicated collections an edge is fine: every replica keeps the
+      // App's identifiers, so the edge names the same record on every shard.
+      yield* db.global.documents.createCollection({
+        name: "linked",
+        edges: [{ name: "parent", path: "parentId", collection: "linked" }],
       });
-      assert.equal(found.data.n, 1);
+      yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
+      yield* db.global.documents.insert({ collection: "linked", id: "b", data: { n: 2, parentId: "a" } });
+      for (const tenant of ["acme", "globex", "initech"]) {
+        const children = yield* db.forTenant(tenant).shared.findMany({
+          collection: "linked",
+          linked: { collection: "linked", id: "a", edge: "parent", direction: "inbound" },
+        });
+        assert.deepEqual(children.map((doc) => doc.id), ["b"], `${tenant} follows the edge on ${db.shardOf(tenant)}`);
+      }
     }),
   );
 });

@@ -24,8 +24,10 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-constraints-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
-      return yield* body(documentsFor(store, "t1", schemasFor(store, "t1")), store);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
+      return yield* body(documentsFor(store, "t1", schemasFor(store, "t1")), store, shard);
     })));
   };
   const tagOf = (effect) => Effect.map(Effect.flip(effect), (error) => error._tag);
@@ -217,7 +219,7 @@ for (const [engine, open] of engines) {
   });
 
   test(`${engine}: a reference refuses a document naming one that does not exist, within its own tenant`, (t) =>
-    setup(t, (docs, store) => Effect.gen(function* () {
+    setup(t, (docs, store, shard) => Effect.gen(function* () {
       const { authors, posts } = yield* library(docs);
       yield* authors.insert("a1", { name: "Ann" });
       yield* posts.insert("p1", { authorId: "a1" });
@@ -231,7 +233,7 @@ for (const [engine, open] of engines) {
       assert.equal(yield* tagOf(posts.update("p1", { authorId: "ghost" })), "ReferenceViolation");
 
       // Another tenant's author, on the same shard, is not this tenant's.
-      const other = documentsFor(store, "t2");
+      const other = documentsFor(shard.partition("t2"), "t2");
       yield* other.createCollection({ name: "authors" });
       yield* other.insert({ collection: "authors", id: "elsewhere", data: {} });
       assert.equal(yield* tagOf(posts.insert("p6", { authorId: "elsewhere" })), "ReferenceViolation");

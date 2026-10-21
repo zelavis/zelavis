@@ -11,6 +11,7 @@ import type { DomainEvent, DomainEventsApi } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
+import { documentNamespace } from "./tenancy.js";
 
 declare const KvCursorBrand: unique symbol;
 
@@ -70,6 +71,20 @@ export interface KeyValueChange<Value = JsonObject> {
   readonly value?: Value;
 }
 
+/**
+ * One read of a namespace's changes.
+ *
+ * `cursor` is where the read stopped, past changes to other namespaces as well
+ * as this one's; continue from it rather than from the last change, or a long
+ * run of writes elsewhere is read again on every call. `more` says the read
+ * stopped before the end of the log.
+ */
+export interface KvChangePage<Value = JsonObject> {
+  readonly changes: ReadonlyArray<KeyValueChange<Value>>;
+  readonly cursor?: EventCursor;
+  readonly more: boolean;
+}
+
 export class InvalidKeyValueExpiration extends Schema.TaggedError<InvalidKeyValueExpiration>()(
   "InvalidKeyValueExpiration",
   { reason: Schema.String },
@@ -102,7 +117,7 @@ export interface SchemaKeyValueNamespaceApi<S extends Schema.Constraint> {
     S["DecodingServices"]
   >;
   readonly changes: (options?: KvChangesOptions) => Effect.Effect<
-    ReadonlyArray<KeyValueChange<S["Type"]>>,
+    KvChangePage<S["Type"]>,
     KeyValueError | Schema.SchemaError,
     S["DecodingServices"]
   >;
@@ -147,8 +162,8 @@ export interface KvNamespaceApi<Value extends JsonObject = JsonObject> {
   ) => Effect.Effect<boolean, KeyValueError>;
   /** Stable opaque-cursor order. A prefix narrows the returned keys. */
   readonly scan: (options?: KeyValueScanOptions) => Effect.Effect<KvPage<Value>, KeyValueError>;
-  /** Document events for this namespace; continuation uses the returned event cursor. */
-  readonly changes: (options?: KvChangesOptions) => Effect.Effect<ReadonlyArray<KeyValueChange<Value>>, KeyValueError>;
+  /** Document events for this namespace; continue from the page's `cursor`. */
+  readonly changes: (options?: KvChangesOptions) => Effect.Effect<KvChangePage<Value>, KeyValueError>;
   readonly write: (
     operations: ReadonlyArray<KeyValueWrite<Value>>,
     options?: { readonly idempotencyKey?: string },
@@ -221,8 +236,6 @@ const decodeCursor = (cursor: KvCursor): Effect.Effect<CursorPayload, KeyValueCu
     catch: (cause) => new KeyValueCursorMismatch({ reason: `invalid key/value cursor: ${String(cause)}` }),
   });
 
-const documentNamespace = (tenant: TenantId, collection: string): string =>
-  `doc/${tenant}/${collection}`;
 
 const expirationOptions = (options: Pick<KvSetOptions, "expiresAt" | "ttlMs"> | undefined) =>
   Effect.gen(function* () {
@@ -262,7 +275,7 @@ export const keyValueFor = (
   events: DomainEventsApi,
 ): KeyValueApi => ({
   namespace: <Value extends JsonObject = JsonObject>(name: string): KvNamespaceApi<Value> => {
-    const identityNamespace = documentNamespace(tenant, name);
+    const identityNamespace = documentNamespace(name);
     const get: KvNamespaceApi<Value>["get"] = (key) => Effect.gen(function* () {
       for (let retries = 0; retries < 8; retries += 1) {
         const document = yield* documents.findById({ collection: name, id: key });
@@ -326,16 +339,20 @@ export const keyValueFor = (
 
     const changes: KvNamespaceApi<Value>["changes"] = (options) => Effect.map(
       events.read({ collection: name, ...options }),
-      (read) => read.flatMap((event): ReadonlyArray<KeyValueChange<Value>> =>
-        event.documentId === undefined || event.type === "collection.created" ? [] : [{
-          cursor: event.cursor,
-          eventId: event.eventId,
-          key: event.documentId,
-          type: event.type === "document.deleted" ? "remove" : "set",
-          revision: event.revision,
-          timestamp: event.timestamp,
-          ...(event.type === "document.upserted" ? { value: valueFromEvent<Value>(event)! } : {}),
-        }]),
+      (page): KvChangePage<Value> => ({
+        changes: page.events.flatMap((event): ReadonlyArray<KeyValueChange<Value>> =>
+          event.documentId === undefined || event.type === "collection.created" ? [] : [{
+            cursor: event.cursor,
+            eventId: event.eventId,
+            key: event.documentId,
+            type: event.type === "document.deleted" ? "remove" : "set",
+            revision: event.revision,
+            timestamp: event.timestamp,
+            ...(event.type === "document.upserted" ? { value: valueFromEvent<Value>(event)! } : {}),
+          }]),
+        ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+        more: page.more,
+      }),
     );
 
     const schema = <S extends Schema.Constraint>(codec: S): SchemaKeyValueNamespaceApi<S> => {
@@ -358,10 +375,14 @@ export const keyValueFor = (
           Effect.map(Effect.forEach(page.entries, decodeEntry), (entries) => ({
             entries, ...(page.next === undefined ? {} : { next: page.next }),
           }))),
-        changes: (options) => Effect.flatMap(changes(options), (items) => Effect.forEach(items, (item) =>
-          item.value === undefined
-            ? Effect.succeed(item as KeyValueChange<S["Type"]>)
-            : Effect.map(decode(item.value), (value) => ({ ...item, value })))),
+        changes: (options) => Effect.flatMap(changes(options), (page) =>
+          Effect.map(
+            Effect.forEach(page.changes, (item) =>
+              item.value === undefined
+                ? Effect.succeed(item as KeyValueChange<S["Type"]>)
+                : Effect.map(decode(item.value), (value) => ({ ...item, value }))),
+            (decoded): KvChangePage<S["Type"]> => ({ ...page, changes: decoded }),
+          )),
       };
     };
 

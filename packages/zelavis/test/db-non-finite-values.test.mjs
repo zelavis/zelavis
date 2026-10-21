@@ -20,14 +20,16 @@ for (const [engine, open] of [
     const directory = mkdtempSync(join(tmpdir(), "zv-finite-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(directory);
+      const shard = yield* open(directory);
+
+      const store = shard.partition("tenant");
       const docs = documentsFor(store, "tenant");
       const events = domainEventsFor(store, "tenant");
       yield* docs.createCollection({
         name: "records",
         indexes: [{ name: "score", fields: [{ path: "stats.score" }], unique: true }],
       });
-      return yield* body(docs, events);
+      return yield* body(docs, events, shard);
     })));
   };
 

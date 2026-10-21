@@ -23,7 +23,7 @@ const withStore = (t, body) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return Effect.runPromise(
     Effect.scoped(Effect.gen(function* () {
-      const store = yield* makeNodeSqliteStore("acme", dir);
+      const store = (yield* makeNodeSqliteStore("acme", dir)).partition("acme");
       return yield* body(store);
     })),
   );
@@ -65,7 +65,7 @@ test("compaction removes history and keeps everything a query needs", async (t) 
       assert.deepEqual(yield* seqs(store, equals("region", "us-east")), [1]);
       assert.equal(yield* store.lookup("doc/acme/posts", "p1"), 1, "identity intact");
       assert.equal((yield* store.read(asSeq(1))).version, 20, "version intact");
-      assert.equal([...(yield* store.measure("visits"))][1], 200, "measure intact");
+      assert.equal((yield* store.measure("visits")).get(1), 200, "measure intact");
     }),
   );
 });

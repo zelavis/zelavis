@@ -23,7 +23,7 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-batches-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const docs = documentsFor(yield* open(dir), "t1");
+      const docs = documentsFor((yield* open(dir)).partition("t1"), "t1");
       yield* docs.createCollection({ name: "authors" });
       yield* docs.createCollection({
         name: "posts",

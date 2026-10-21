@@ -1,9 +1,9 @@
-import { Effect } from "effect";
+import { Effect, Stream } from "effect";
 import type { DbError } from "./errors.js";
 import { ReplicationUnsupported } from "./errors.js";
-import { asSeq, type ObjectIdentity } from "./model.js";
-import type { ObjectStoreApi } from "./store.js";
-import { COLLECTION_NAMESPACE_PREFIX, DOCUMENT_NAMESPACE_PREFIX } from "./tenancy.js";
+import { asSeq, type IndexManifest, type ObjectIdentity } from "./model.js";
+import type { ObjectStoreApi, RecordState, ShardStoreApi } from "./store.js";
+import { COLLECTION_NAMESPACE, collectionOfIdentity, documentNamespace } from "./tenancy.js";
 import type { PlacementApi } from "./topology-store.js";
 import { GLOBAL_TENANT, type ShardId } from "./topology.js";
 
@@ -16,14 +16,12 @@ import { GLOBAL_TENANT, type ShardId } from "./topology.js";
  * on the shard it was already talking to. What that buys on the read side it
  * pays for on the write side, on every shard, every time.
  *
- * The copy is a snapshot rather than a log tail, and deliberately so. A tail
- * would be cheaper per write, but a retraction carries only a `Seq` — no
- * identity — so a follower has to remember which record every identifier stood
- * for in order to apply a delete. `movement` can hold that map in memory
- * because a move is one bounded operation; replication never ends and survives
- * restarts, so the same map would have to be persisted and would itself grow
- * with the data. A snapshot needs no such memory: what is live at the source is
+ * The copy is a snapshot rather than a log tail: what is live at the source is
  * what belongs on the shard, and whatever else is there is what gets removed.
+ * Each copy keeps the source's identifiers — it lives in the App's own
+ * partition on each shard, whose identifiers are the App's — so a record is
+ * the same number everywhere, and an edge between two replicated records means
+ * the same on every shard.
  *
  * The cost is therefore the size of the replicated data on every refresh, not
  * the size of the change. That is the right trade only while replicated
@@ -83,9 +81,6 @@ export interface ReplicationApi {
   readonly collectionIdentity: (collection: string) => ObjectIdentity;
 }
 
-const COLLECTION_NS = `${COLLECTION_NAMESPACE_PREFIX}${GLOBAL_TENANT}`;
-const DOCUMENT_NS = `${DOCUMENT_NAMESPACE_PREFIX}${GLOBAL_TENANT}/`;
-
 /**
  * Which App-scoped collection a record belongs to, if any.
  *
@@ -94,20 +89,12 @@ const DOCUMENT_NS = `${DOCUMENT_NAMESPACE_PREFIX}${GLOBAL_TENANT}/`;
  * `tenantsOn` name `zv.global` as an occupant — which would let a rebalance
  * believe a range is standing on data that is only ever a copy.
  */
-const collectionOf = (identity: ObjectIdentity): string | undefined => {
-  if (identity.namespace === COLLECTION_NS) return identity.key;
-  if (identity.namespace.startsWith(DOCUMENT_NS)) {
-    return identity.namespace.slice(DOCUMENT_NS.length);
-  }
-  return undefined;
-};
-
-const nameOf = (identity: ObjectIdentity): string =>
-  `${identity.namespace}\u0000${identity.key}`;
+const collectionOf = (identity: ObjectIdentity): string | undefined =>
+  collectionOfIdentity(identity.namespace, identity.key);
 
 export const replicationOver = (input: {
   readonly globalStore: ObjectStoreApi;
-  readonly shards: ReadonlyMap<ShardId, ObjectStoreApi>;
+  readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
   readonly placement: PlacementApi;
 }): ReplicationApi => {
   const replicatedNames = (): ReadonlySet<string> =>
@@ -117,43 +104,70 @@ export const replicationOver = (input: {
         .map(([collection]) => collection),
     );
 
+  /**
+   * An edge names a record by identifier, and a replica holds only the
+   * replicated collections: an edge to a record outside them would name
+   * nothing on a shard.
+   */
+  const outsideReplicas = (edges: IndexManifest["edges"], copied: ReadonlySet<number>) =>
+    edges.find(([, to]) => !copied.has(Number(to)));
+
   const refresh = Effect.gen(function* () {
     const names = replicatedNames();
     const source = (yield* input.globalStore.liveRecords).filter((record) => {
       const collection = collectionOf(record.identity);
       return collection !== undefined && names.has(collection);
     });
+    const copied = new Set(source.map((record) => Number(record.seq)));
 
     for (const record of source) {
-      if (record.manifest.edges.length > 0) {
+      if (outsideReplicas(record.manifest.edges, copied) !== undefined) {
         return yield* new ReplicationUnsupported({
           collection: collectionOf(record.identity) ?? record.identity.namespace,
-          reason: "an edge names a record by identifier, which a replica reallocates",
+          reason: "an edge names a record outside the replicated collections, which no replica holds",
         });
       }
     }
 
-    const wanted = new Set(source.map((record) => nameOf(record.identity)));
     const out: ReplicaStatus[] = [];
 
-    for (const [shard, store] of input.shards) {
+    for (const [shard, holder] of input.shards) {
+      // The copy lives in the App's own partition on each shard.
+      const store = holder.partition(GLOBAL_TENANT);
       let applied = 0;
       let retracted = 0;
 
+      // A copy holds the App's versions, never newer ones: a record ahead of
+      // the App's, or retracted here while the App still has it, means the copy
+      // was written behind replication's back. Applying by version could not
+      // repair it — what is held outranks what the App would send — so the
+      // copy is dropped and made again.
+      const held = new Map<number, RecordState>();
+      yield* Stream.runForEach(store.records, ({ seq, record }) =>
+        Effect.sync(() => {
+          held.set(Number(seq), record);
+        }));
+      const diverged = source.some((record) => {
+        const state = held.get(Number(record.seq));
+        return state !== undefined
+          && (state.version > record.version || (!state.live && state.version >= record.version));
+      });
+      if (diverged) {
+        yield* holder.drop(GLOBAL_TENANT);
+        held.clear();
+      }
+
       for (const record of source) {
-        const seq =
-          (yield* store.lookup(record.identity.namespace, record.identity.key))
-          ?? (yield* store.nextSeq);
-        const existing = yield* store.read(seq);
+        const existing = held.get(Number(record.seq));
         // A put that is not newer than what is stored is ignored downstream
         // anyway; skipping it here is what keeps a no-op pass free.
-        if (existing !== undefined && existing.version >= record.version) continue;
+        if (existing?.live === true && existing.version >= record.version) continue;
         yield* store.events.apply({
           _tag: "ObjectPut",
           partition: store.partition,
           generation: store.generation,
           at: Date.now(),
-          seq,
+          seq: record.seq,
           version: record.version,
           bytes: record.bytes,
           manifest: record.manifest,
@@ -167,7 +181,7 @@ export const replicationOver = (input: {
       // this pass is responsible for having left behind.
       for (const record of yield* store.liveRecords) {
         if (collectionOf(record.identity) === undefined) continue;
-        if (wanted.has(nameOf(record.identity))) continue;
+        if (copied.has(Number(record.seq))) continue;
         yield* store.transact((txn) => txn.retract(asSeq(record.seq)));
         retracted += 1;
       }
@@ -181,7 +195,8 @@ export const replicationOver = (input: {
   const propagate = (identity: ObjectIdentity) =>
     Effect.gen(function* () {
       const collection = collectionOf(identity);
-      if (collection === undefined || !replicatedNames().has(collection)) return 0;
+      const names = replicatedNames();
+      if (collection === undefined || !names.has(collection)) return 0;
 
       const sourceSeq = yield* input.globalStore.lookup(identity.namespace, identity.key);
       const record = sourceSeq === undefined
@@ -191,35 +206,37 @@ export const replicationOver = (input: {
         ? undefined
         : yield* input.globalStore.manifestOf(sourceSeq);
 
-      if (manifest !== undefined && manifest.edges.length > 0) {
-        return yield* new ReplicationUnsupported({
-          collection,
-          reason: "an edge names a record by identifier, which a replica reallocates",
-        });
+      for (const [, to] of manifest?.edges ?? []) {
+        const target = yield* input.globalStore.identityOf(to);
+        const targetCollection = target === undefined ? undefined : collectionOf(target);
+        if (targetCollection === undefined || !names.has(targetCollection)) {
+          return yield* new ReplicationUnsupported({
+            collection,
+            reason: "an edge names a record outside the replicated collections, which no replica holds",
+          });
+        }
       }
 
       let touched = 0;
-      for (const [, store] of input.shards) {
-        if (record === undefined || manifest === undefined) {
-          // Gone at the source, so the copies go too. Nothing has to remember
-          // what an identifier stood for: the caller named the record.
-          const stale = yield* store.lookup(identity.namespace, identity.key);
-          if (stale === undefined) continue;
+      for (const [, holder] of input.shards) {
+        const store = holder.partition(GLOBAL_TENANT);
+        // A name the source has since given to another record: the copy of the
+        // record it used to name goes.
+        const stale = yield* store.lookup(identity.namespace, identity.key);
+        if (stale !== undefined && (sourceSeq === undefined || record === undefined || Number(stale) !== Number(sourceSeq))) {
           yield* store.transact((txn) => txn.retract(stale));
           touched += 1;
-          continue;
         }
+        if (sourceSeq === undefined || record === undefined || manifest === undefined) continue;
 
-        const seq = (yield* store.lookup(identity.namespace, identity.key))
-          ?? (yield* store.nextSeq);
-        const existing = yield* store.read(seq);
+        const existing = yield* store.read(sourceSeq);
         if (existing !== undefined && existing.version >= record.version) continue;
         yield* store.events.apply({
           _tag: "ObjectPut",
           partition: store.partition,
           generation: store.generation,
           at: Date.now(),
-          seq,
+          seq: sourceSeq,
           version: record.version,
           bytes: record.bytes,
           manifest,
@@ -234,10 +251,7 @@ export const replicationOver = (input: {
   return {
     refresh,
     propagate,
-    documentIdentity: (collection, id) => ({
-      namespace: `${DOCUMENT_NS}${collection}`,
-      key: id,
-    }),
-    collectionIdentity: (collection) => ({ namespace: COLLECTION_NS, key: collection }),
+    documentIdentity: (collection, id) => ({ namespace: documentNamespace(collection), key: id }),
+    collectionIdentity: (collection) => ({ namespace: COLLECTION_NAMESPACE, key: collection }),
   } satisfies ReplicationApi;
 };

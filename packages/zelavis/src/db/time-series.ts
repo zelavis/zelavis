@@ -301,7 +301,7 @@ const toEpoch = (value: Timestamp): number => {
   return parsed;
 };
 
-const seriesKey = (tenant: TenantId, series: string) => `${tenant}/${series}`;
+const seriesKey = (series: string) => series;
 
 export const timeSeriesFor = (
   store: ObjectStoreApi,
@@ -320,15 +320,15 @@ export const timeSeriesFor = (
         txn.put(seq, enc.encode(JSON.stringify(point)), {
           terms: [],
           columns: [
-            [SERIES_COLUMN, seriesKey(tenant, series)],
+            [SERIES_COLUMN, seriesKey(series)],
             // The instant itself, which the ordered lens sorts by value: one
             // posting, and a window is a range over it.
-            [instantColumn(seriesKey(tenant, series)), point.timestamp] as const,
+            [instantColumn(seriesKey(series)), point.timestamp] as const,
             ...Object.entries(point.tags ?? {}).map(
-              ([tag, value]) => [tagColumn(seriesKey(tenant, series), tag), value] as const,
+              ([tag, value]) => [tagColumn(seriesKey(series), tag), value] as const,
             ),
           ],
-          measures: [[seriesKey(tenant, series), point.value]],
+          measures: [[seriesKey(series), point.value]],
           edges: [],
         }),
       );
@@ -354,8 +354,8 @@ export const timeSeriesFor = (
    * the instant column is per series already.
    */
   const planWindow = (series: string, start?: number, end?: number): Query => {
-    const all = equals(SERIES_COLUMN, seriesKey(tenant, series));
-    const column = instantColumn(seriesKey(tenant, series));
+    const all = equals(SERIES_COLUMN, seriesKey(series));
+    const column = instantColumn(seriesKey(series));
     if (start !== undefined && end !== undefined) {
       return end < start ? all : between(column, start, end);
     }
@@ -385,7 +385,7 @@ export const timeSeriesFor = (
 
     const clauses: Query[] = [window];
     for (const [tag, value] of entries) {
-      const column = tagColumn(seriesKey(tenant, series), tag);
+      const column = tagColumn(seriesKey(series), tag);
       const values = Array.isArray(value) ? value : [value as string];
       clauses.push(values.length === 1
         ? equals(column, values[0]!)
@@ -410,7 +410,7 @@ export const timeSeriesFor = (
   const purge = (series: string) =>
     Effect.gen(function* () {
       const seqs = yield* Stream.runCollect(
-        store.resolve(equals(SERIES_COLUMN, seriesKey(tenant, series))),
+        store.resolve(equals(SERIES_COLUMN, seriesKey(series))),
       );
       for (const seq of seqs) yield* store.transact((txn) => txn.retract(seq));
     }).pipe(Effect.orDie);

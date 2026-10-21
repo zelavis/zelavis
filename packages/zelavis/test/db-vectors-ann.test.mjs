@@ -24,13 +24,15 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-ann-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({
         name: "items",
         embedding,
       });
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
 

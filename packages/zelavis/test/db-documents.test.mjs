@@ -13,9 +13,11 @@ const withDocs = (t, body) => {
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* makeNodeSqliteStore("acme", dir);
+        const shard = yield* makeNodeSqliteStore("acme", dir);
+
+        const store = shard.partition("t1");
         const docs = documentsFor(store, "t1");
-        return yield* body(docs, store);
+        return yield* body(docs, store, shard);
       }),
     ),
   );

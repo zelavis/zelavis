@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
-  dstOf, edgeKey, edgePrefix, reverseEdgeKey, reverseEdgePrefix, srcOf,
-  identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
-  decodeOrderedTuple, orderedTuple, orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
+  compareKeys, compareOrderedValues, dstOf, inPrefixRange, decodeOrderedTuple, orderedTuple,
+  MAX_SEQ, partitionKeys, partitionPrefix, prefixEnd, seqOf, srcOf,
 } from "../dist/db/keys.js";
+
+// Every key a partition writes starts with its name; these tests work inside one.
+const keys = partitionKeys("acme");
+const {
+  term: termKey, termPrefix, ordered: orderedKey, orderedValuePrefix, orderedColumnPrefix,
+  decodeOrdered: decodeOrderedKey, edge: edgeKey, edgePrefix, reverseEdge: reverseEdgeKey,
+  reverseEdgePrefix, identity: identityKey, decodeIdentity,
+} = keys;
 
 const sorted = (keys) => [...keys].sort(compareKeys);
 
@@ -54,7 +60,7 @@ test("lenses occupy disjoint ranges", () => {
   // column families on an engine that has none.
   const term = termKey("region", "eu", 1);
   const column = orderedKey("region", "eu", 1);
-  assert.notEqual(term[0], column[0], "different tags");
+  assert.notEqual(term[keys.prefix.length], column[keys.prefix.length], "different tags");
   assert.equal(inPrefixRange(term, orderedValuePrefix("region", "eu")), false);
   assert.equal(inPrefixRange(column, termPrefix("region", "eu")), false);
 });
@@ -261,4 +267,36 @@ test("a composite key decodes back to its values, with no value as undefined", (
       }
     }
   }
+});
+
+test("each partition owns one range, and no other partition's keys fall in it", () => {
+  const NUL = String.fromCharCode(0);
+  for (const [name, other] of [["a", "ab"], ["ab", "a"], ["a", `a${NUL}b`], ["acme", "acme#part"]]) {
+    const mine = partitionKeys(name);
+    const theirs = partitionKeys(other);
+    const range = partitionPrefix(name);
+    for (const key of [mine.term("t", "x", 1), mine.record(1), mine.event(1), mine.meta("head")]) {
+      assert.equal(inPrefixRange(key, range), true, `${name}'s own key`);
+    }
+    for (const key of [theirs.term("t", "x", 1), theirs.record(1), theirs.event(1), theirs.meta("head")]) {
+      assert.equal(inPrefixRange(key, range), false, `${other}'s key is outside ${name}'s range`);
+    }
+  }
+});
+
+test("identifiers take six bytes, sort past 32 bits, and are refused beyond 48", () => {
+  const ids = [0, 1, 2 ** 32 - 1, 2 ** 32, 2 ** 40, MAX_SEQ];
+  assert.deepEqual(sorted(ids.map((n) => termKey("t", "x", n))).map(seqOf), ids);
+  assert.deepEqual(sorted(ids.map((n) => reverseEdgeKey("e", 7, n))).map(srcOf), ids);
+  assert.deepEqual(sorted(ids.map((n) => edgeKey("e", 7, n))).map(dstOf), ids);
+  for (const bad of [MAX_SEQ + 1, -1, 1.5]) {
+    assert.throws(() => termKey("t", "x", bad), RangeError);
+  }
+});
+
+test("log positions take eight bytes, sort past 32 bits, and round-trip", () => {
+  const positions = [1, 2 ** 32 - 1, 2 ** 32, 2 ** 52, Number.MAX_SAFE_INTEGER];
+  const ordered = sorted(positions.map((p) => keys.event(p))).map((k) => keys.positionOf(k));
+  assert.deepEqual(ordered, positions);
+  assert.throws(() => keys.event(Number.MAX_SAFE_INTEGER + 1), RangeError);
 });

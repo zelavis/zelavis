@@ -400,13 +400,15 @@ before editing.
   `CLAUDE.md`, so do not add one.
 - If durable Platform guidance changes, update this skill or a focused
   `.agents/references/*` resource so skill-loaded agents stay current.
-- For `zelavis/db`, preserve the event-sourced per-collection-table model.
-  Do not reintroduce a shared `documents` table, write directly to registered
-  collection tables (including indirectly through raw SQL triggers), or bury
-  `surface` in metadata.
-- Serialize unrelated top-level transactions in synchronous SQLite adapters;
-  a shared `inTransaction` boolean must never make concurrent callers join one
-  transaction. Keep physical uniqueness constraints behind event revisions.
+- For `zelavis/db`, follow "Database Architecture Rules" in `AGENTS.md`. In
+  short: one engine is one shard; each partition (a tenant, a part, or a
+  reserved partition) owns the key range under its name, with its own
+  identifiers, log, revision and writer; a transaction never writes another
+  partition's keys; records are single values whose retraction leaves a
+  versioned tombstone; events apply by version (and `follow` by position);
+  copies use a record scan plus the log tail; queries read clauses up to the
+  probe cap and check broad ones against manifests that must match the lenses.
+  There is no raw SQL surface, and `surface` is never buried in metadata.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,
   and asset paths before composition; filesystem root containment is not enough.
@@ -415,15 +417,15 @@ before editing.
   ranges across several SQLite files even when all placements share one Node.
   Keep the low-level one-shard topology available only as the collapsed form of
   the same router-backed architecture for embedding and focused tests.
-- Every ordered-KV store batch atomically checks generation, fresh writer
-  session and the revision observed before dependent reads, then advances the
-  revision. Include replication, allocator, maintenance and format writes;
-  acquire generations conditionally and refuse exhaustion. Reject unsupported
-  coordination rather than using read-then-write fencing. RocksDB exclusive-file
-  mode does not support concurrent process takeover. Use LMDB's abortable child
-  transactions for batches; queued transaction callbacks can retain partial
-  writes on failure. Widen existing generation metadata without rewriting events
-  or cursors, and retain current ownership metadata during recovery.
+- Every ordered-KV batch atomically checks the shard's generation and fresh
+  writer session and the partition's revision observed before dependent reads,
+  then advances that revision. Include replication, allocator, maintenance and
+  format writes; acquire generations conditionally and refuse exhaustion.
+  Reject unsupported coordination rather than using read-then-write fencing.
+  RocksDB exclusive-file mode does not support concurrent process takeover. Use
+  LMDB's abortable child transactions for batches; queued transaction callbacks
+  can retain partial writes on failure. A store written by another layout is
+  refused, never upgraded; retain current ownership metadata during recovery.
 - Never expose a physical database driver, filename, or one-file global event
   sequence as the normal App data API. Bind ordinary data access to an explicit
   logical Tenant, keep cross-shard semantics explicit, and require current

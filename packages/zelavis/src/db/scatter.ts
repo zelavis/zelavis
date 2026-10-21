@@ -14,8 +14,7 @@ import {
   type DocumentsApi,
 } from "./documents.js";
 import type { Query } from "./query.js";
-import type { ObjectStoreApi } from "./store.js";
-import { tenantOf } from "./tenancy.js";
+import type { ShardStoreApi } from "./store.js";
 import type { ShardId, TenantId } from "./topology.js";
 
 /**
@@ -59,16 +58,16 @@ export interface ScatterResult<A> {
 export interface ScatterMatch {
   readonly shard: ShardId;
   /**
-   * The identifier within its shard.
+   * The identifier within its partition.
    *
-   * Only meaningful together with the shard: the same number names a different
-   * object in every other partition.
+   * Only meaningful together with the partition: the same number names a
+   * different object in every other one.
    */
   readonly seq: number;
   readonly namespace: string;
   readonly key: string;
-  /** Present when the record carries tenancy; derived state does not. */
-  readonly tenant?: TenantId;
+  /** The partition the record lives in: a tenant, a part, or a reserved one. */
+  readonly tenant: TenantId;
 }
 
 export interface ScatteredDocument {
@@ -318,8 +317,8 @@ const take = <A>(rows: ReadonlyArray<A>, limit: number | undefined) =>
     : { rows: rows.slice(0, limit), truncated: true };
 
 export const scatterOver = (options: {
-  readonly shards: ReadonlyMap<ShardId, ObjectStoreApi>;
-  readonly tenantsOn: (store: ObjectStoreApi) => Effect.Effect<ReadonlyArray<TenantId>>;
+  readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
+  readonly tenantsOn: (shard: ShardStoreApi) => Effect.Effect<ReadonlyArray<TenantId>>;
   readonly shardOf: (tenant: TenantId) => ShardId;
   readonly documentsFor: (tenant: TenantId) => DocumentsApi;
 }): ScatterApi => {
@@ -382,40 +381,48 @@ export const scatterOver = (options: {
           shards,
           (shard) =>
             Effect.gen(function* () {
-              const store = storeFor(shard)!;
-              const seqs = yield* Stream.runCollect(store.resolve(input.query));
-              const capped = take([...seqs], input.perShardLimit);
+              // A query runs inside one partition, so a shard is asked partition
+              // by partition. The per-shard limit counts identifiers looked at,
+              // as it always has, so derived records count against it too.
+              const holder = storeFor(shard)!;
               const matches: ScatterMatch[] = [];
-              for (const seq of capped.rows) {
-                const identity = yield* store.identityOf(seq);
-                // A match with no identity is derived state — a time series
-                // point, a checkpoint — which has no name to hand back and
-                // nothing a caller across partitions could do with it.
-                if (identity === undefined) continue;
-                const tenant = tenantOf(identity.namespace, identity.key);
-                matches.push({
-                  shard,
-                  seq: Number(seq),
-                  namespace: identity.namespace,
-                  key: identity.key,
-                  ...(tenant === undefined ? {} : { tenant }),
-                });
+              let looked = 0;
+              let truncated = false;
+              for (const tenant of yield* holder.partitions) {
+                const store = holder.partition(tenant);
+                for (const seq of yield* Stream.runCollect(store.resolve(input.query))) {
+                  if (input.perShardLimit !== undefined && looked >= input.perShardLimit) {
+                    truncated = true;
+                    break;
+                  }
+                  looked += 1;
+                  const identity = yield* store.identityOf(seq);
+                  // A match with no identity is derived state — a time series
+                  // point, a checkpoint — which has no name to hand back and
+                  // nothing a caller across partitions could do with it.
+                  if (identity === undefined) continue;
+                  matches.push({ shard, seq: Number(seq), namespace: identity.namespace, key: identity.key, tenant });
+                }
+                if (truncated) break;
               }
               return {
-                leg: { shard, rows: matches.length, truncated: capped.truncated },
+                leg: { shard, rows: matches.length, truncated },
                 matches,
               };
             }),
           { concurrency: input.concurrency ?? DEFAULT_CONCURRENCY },
         );
 
-        // Ordered by shard and then by identifier, which is a stable order
+        // Ordered by shard, partition and identifier, which is a stable order
         // rather than a meaningful one: there is no key comparable across
         // partitions, so nothing here says one row is more relevant than
         // another.
         const merged = legs
           .flatMap((leg) => leg.matches)
-          .sort((a, b) => (a.shard === b.shard ? a.seq - b.seq : a.shard < b.shard ? -1 : 1));
+          .sort((a, b) =>
+            a.shard !== b.shard ? (a.shard < b.shard ? -1 : 1)
+              : a.tenant !== b.tenant ? (a.tenant < b.tenant ? -1 : 1)
+                : a.seq - b.seq);
         const capped = take(merged, input.limit);
 
         return {

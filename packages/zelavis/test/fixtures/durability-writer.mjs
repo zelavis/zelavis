@@ -35,7 +35,7 @@ const receipts = openSync(receiptPath, "a");
 
 await Effect.runPromise(
   Effect.scoped(Effect.gen(function* () {
-    const store = yield* yield* Effect.promise(open);
+    const store = (yield* yield* Effect.promise(open)).partition("acme");
     for (let seq = 1; seq <= total; seq++) {
       yield* store.transact((txn) =>
         txn.put(

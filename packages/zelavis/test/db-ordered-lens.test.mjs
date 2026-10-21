@@ -12,19 +12,19 @@ import test from "node:test";
 import { Effect, Schema, Stream } from "effect";
 import { and, asSeq, between, equals, gt, gte, lt, lte, or, Query } from "../dist/db/index.js";
 import { makeMemoryStore, memoryKvEngine } from "../dist/db/engines/memory-kv.js";
-import { metaKey, Tag } from "../dist/db/keys.js";
-import { openStoreOverKv } from "../dist/db/kv-store.js";
+import { shardMetaKey } from "../dist/db/keys.js";
+import { openShardOverKv } from "../dist/db/kv-store.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
 const enc = new TextEncoder();
 const engines = [
-  ["memory", true, async () => makeMemoryStore("acme")],
-  ["sqlite", true, async (dir) => (await import("../dist/db/engines/node-sqlite.js")).makeNodeSqliteStore("acme", dir)],
+  ["memory", true, async () => makeMemoryStore("acme").pipe(Effect.map((shard) => shard.partition("acme")))],
+  ["sqlite", true, async (dir) => (await import("../dist/db/engines/node-sqlite.js")).makeNodeSqliteStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],
   ["libsql", engineAvailable("libsql"),
-    async (dir) => (await import("../dist/db/engines/libsql.js")).makeLibsqlStore("acme", { directory: dir })],
-  ["lmdb", engineAvailable("lmdb"), async (dir) => (await import("../dist/db/engines/lmdb.js")).makeLmdbStore("acme", dir)],
+    async (dir) => (await import("../dist/db/engines/libsql.js")).makeLibsqlStore("acme", { directory: dir }).pipe(Effect.map((shard) => shard.partition("acme")))],
+  ["lmdb", engineAvailable("lmdb"), async (dir) => (await import("../dist/db/engines/lmdb.js")).makeLmdbStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],
   ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js"),
-    async (dir) => (await import("../dist/db/engines/rocksdb-js.js")).makeRocksdbJsStore("acme", dir)],
+    async (dir) => (await import("../dist/db/engines/rocksdb-js.js")).makeRocksdbJsStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],
 ];
 
 // Thirty objects, prices 0..10 with repeats, split across two regions.
@@ -165,7 +165,7 @@ for (const [engine, available, open] of engines) {
 
 test("values of different kinds order as one sequence: booleans, numbers, strings, then null", () =>
   Effect.runPromise(Effect.gen(function* () {
-    const store = yield* makeMemoryStore("acme");
+    const store = (yield* makeMemoryStore("acme")).partition("acme");
     const values = ["b", 2.5, null, true, -1, "a", false, 0];
     yield* Effect.forEach(values, (value, i) =>
       store.transact((txn) => txn.put(asSeq(i + 1), enc.encode("{}"), manifest([["v", value]]))), { discard: true });
@@ -183,8 +183,8 @@ test("values of different kinds order as one sequence: booleans, numbers, string
 
 test("a cursor continues only the read it came from", () =>
   Effect.runPromise(Effect.gen(function* () {
-    const store = yield* makeMemoryStore("acme");
-    const other = yield* makeMemoryStore("globex");
+    const store = (yield* makeMemoryStore("acme")).partition("acme");
+    const other = (yield* makeMemoryStore("globex")).partition("globex");
     yield* seed(store);
     yield* seed(other);
     const { next } = yield* store.ordered({ column: "price", limit: 3 });
@@ -202,20 +202,20 @@ test("a range query is data: it round-trips through its schema", () => {
   assert.deepEqual(decoded, query);
 });
 
-test("a store written in an older layout is refused, not upgraded", () =>
+test("a store written in another layout is refused, not upgraded", () =>
   Effect.runPromise(Effect.gen(function* () {
     const engine = memoryKvEngine();
-    yield* seed(yield* openStoreOverKv("acme", engine));
+    yield* seed((yield* openShardOverKv("acme", engine)).partition("acme"));
 
     // No format marker on a store that holds data: written before markers existed.
-    yield* engine.write([{ op: "delete", key: metaKey("format") }]);
-    const unmarked = yield* Effect.exit(openStoreOverKv("acme", engine));
+    yield* engine.write([{ op: "delete", key: shardMetaKey("format") }]);
+    const unmarked = yield* Effect.exit(openShardOverKv("acme", engine));
     assert.equal(unmarked._tag, "Failure");
-    assert.match(String(unmarked), /older layout/);
+    assert.match(String(unmarked), /another layout/);
 
-    // A marker below the current layout.
-    yield* engine.write([{ op: "put", key: metaKey("format"), value: Uint8Array.of(0, 0, 0, 1) }]);
-    const older = yield* Effect.exit(openStoreOverKv("acme", engine));
+    // A marker naming a different layout.
+    yield* engine.write([{ op: "put", key: shardMetaKey("format"), value: new Uint8Array(8) }]);
+    const older = yield* Effect.exit(openShardOverKv("acme", engine));
     assert.equal(older._tag, "Failure");
-    assert.match(String(older), /older layout/);
+    assert.match(String(older), /another layout/);
   })));

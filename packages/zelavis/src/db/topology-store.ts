@@ -1,5 +1,5 @@
 import { isString, isNonNegativeInteger, isPositiveInteger, objectFields, arrayOf, recordOf, literal, parseJson } from "../core/json-validation.js";
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import {
   PartitionMapInvalid,
   PlacementCatalogInvalid,
@@ -8,9 +8,8 @@ import {
   SubdivisionInvalid,
 } from "./errors.js";
 import { isReservedCollectionName, isValidCollectionName } from "./naming.js";
-import { equals } from "./query.js";
-import type { ObjectStoreApi } from "./store.js";
-import { TENANT_COLUMN, TENANT_MARKER } from "./tenancy.js";
+import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
+import { TENANT_NAMESPACE } from "./tenancy.js";
 import {
   GLOBAL_SHARD,
   PART_SEPARATOR,
@@ -102,15 +101,20 @@ export const validatePartitionMap = (map: PartitionMap): PartitionMapInvalid | u
   return undefined;
 };
 
-/** Tenants known to hold data on this shard. */
-export const tenantsOn = (store: ObjectStoreApi): Effect.Effect<ReadonlyArray<TenantId>> =>
+/**
+ * Tenants known to hold data on this shard.
+ *
+ * A partition with keys is not yet an occupant: dropping a tenant's last
+ * collection leaves its log and its retired records behind. An occupant is a
+ * partition holding the marker the documents layer writes with its first
+ * collection and removes with its last, read from the partition itself.
+ */
+export const tenantsOn = (shard: ShardStoreApi): Effect.Effect<ReadonlyArray<TenantId>> =>
   Effect.gen(function* () {
-    const seqs = yield* Stream.runCollect(store.resolve(equals(TENANT_COLUMN, TENANT_MARKER)));
     const out: TenantId[] = [];
-    for (const seq of seqs) {
-      const object = yield* store.read(seq);
-      if (object !== undefined) {
-        out.push((parseJson(dec.decode(object.bytes), objectFields<{ tenant: string }>({tenant: isString}))).tenant);
+    for (const partition of yield* shard.partitions) {
+      if ((yield* shard.partition(partition).lookup(TENANT_NAMESPACE, partition)) !== undefined) {
+        out.push(partition);
       }
     }
     return out.sort();
@@ -416,7 +420,7 @@ export interface RangeMove {
 export const subdivisionFor = (input: {
   readonly topologyStore: ObjectStoreApi;
   readonly initial: SubdivisionCatalog;
-  readonly shards: ReadonlyMap<ShardId, ObjectStoreApi>;
+  readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
   readonly mapNow: () => PartitionMap;
 }): SubdivisionApi => {
   let catalog = input.initial;
@@ -541,7 +545,7 @@ export interface TopologyApi {
 export const topologyFor = (
   topologyStore: ObjectStoreApi,
   initial: PartitionMap,
-  shards: ReadonlyMap<ShardId, ObjectStoreApi>,
+  shards: ReadonlyMap<ShardId, ShardStoreApi>,
   catalog: PlacementCatalog,
   subdivisions: SubdivisionCatalog,
 ): TopologyApi => {

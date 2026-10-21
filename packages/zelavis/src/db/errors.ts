@@ -377,6 +377,55 @@ export class LogCompacted extends Schema.TaggedError<LogCompacted>()("LogCompact
   compactedTo: Schema.Finite,
 }) {}
 
+/**
+ * A partition has handed out every identifier it can.
+ *
+ * Identifiers are never reused, so a partition that creates and deletes
+ * constantly runs through them faster than it grows. Refused rather than
+ * wrapped: a wrapped identifier would name a record that already exists.
+ */
+export class PartitionExhausted extends Schema.TaggedError<PartitionExhausted>()("PartitionExhausted", {
+  partition: Schema.String,
+  limit: Schema.Finite,
+}) {}
+
+/**
+ * A follower was handed an event past the next position in its log.
+ *
+ * Applying it would leave a hole that nothing ever fills, and the follower
+ * would report a history it does not have.
+ */
+export class EventGap extends Schema.TaggedError<EventGap>()("EventGap", {
+  partition: Schema.String,
+  expected: Schema.Finite,
+  received: Schema.Finite,
+}) {}
+
+/**
+ * A follower already holds a different event at the position it was handed.
+ *
+ * Two logs that disagree about one position are two histories, and skipping
+ * the event as a duplicate would hide that.
+ */
+export class ReplicaDiverged extends Schema.TaggedError<ReplicaDiverged>()("ReplicaDiverged", {
+  partition: Schema.String,
+  position: Schema.Finite,
+}) {}
+
+/**
+ * A partition's lenses are being rebuilt or reindexed, or a run that was doing
+ * so was interrupted and has not been resumed.
+ *
+ * Rebuilding runs in many batches under the partition's writer, so between the
+ * first and the last its lenses — and, for a rebuild, its records — are partly
+ * cleared. Reads and writes are refused for that time rather than answered from
+ * half an index; reopening the database resumes an interrupted run.
+ */
+export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("LensesRebuilding", {
+  partition: Schema.String,
+  operation: Schema.Literals(["rebuild", "reindex"]),
+}) {}
+
 /** Every failure the store contract can raise. */
 export type DbError =
   | StoreError
@@ -384,4 +433,6 @@ export type DbError =
   | ForeignCursor
   | CursorCompacted
   | LogCompacted
-  | PartitionUnavailable;
+  | PartitionUnavailable
+  | PartitionExhausted
+  | LensesRebuilding;

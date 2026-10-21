@@ -32,6 +32,7 @@ import { engineAvailable } from "./_engine-available.mjs";
 
 const WRITER = fileURLToPath(new URL("./fixtures/durability-writer.mjs", import.meta.url));
 const SEALER = fileURLToPath(new URL("./fixtures/durability-sealer.mjs", import.meta.url));
+const MAINTAINER = fileURLToPath(new URL("./fixtures/durability-maintainer.mjs", import.meta.url));
 const decoder = new TextDecoder();
 
 const receiptsIn = (path) => {
@@ -90,10 +91,11 @@ const killWriterAfter = async (engine, directory, atLeast) => {
 const openStore = (directory, body, engine = "sqlite") =>
   Effect.runPromise(
     Effect.scoped(Effect.gen(function* () {
-      const store = yield* (engine === "rocksdb-js"
+      const shard = yield* (engine === "rocksdb-js"
         ? (yield* Effect.promise(() => import("../dist/db/engines/rocksdb-js.js")))
             .makeRocksdbJsStore("acme", directory)
         : makeNodeSqliteStore("acme", directory));
+      const store = shard.partition("acme");
       return yield* body(store);
     })),
   );
@@ -156,7 +158,7 @@ for (const [engine, available] of engines) {
 
       const present = await Effect.runPromise(
         Effect.scoped(Effect.gen(function* () {
-          return yield* assertCoherent(yield* reopen);
+          return yield* assertCoherent((yield* reopen).partition("acme"));
         })),
       );
 
@@ -397,3 +399,65 @@ const killSealMidway = async (dir) => {
   assert.ok(!marker().includes("done"),
     "the seal finished before it could be interrupted; there is nothing to test here");
 };
+
+/**
+ * Run one piece of upkeep on the store at `dir` in a child process and kill it
+ * partway through, trying shorter waits until a kill lands before it finishes.
+ */
+const killMaintenanceMidway = async (dir, operation) => {
+  for (const wait of [60, 25, 8, 2, 0]) {
+    const markerPath = join(dir, `maintenance-${operation}-${wait}.log`);
+    const child = spawn(process.execPath, [MAINTAINER, dir, markerPath, operation], { stdio: "inherit" });
+    const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve(signal)));
+    const marker = () => {
+      try {
+        return readFileSync(markerPath, "utf8");
+      } catch {
+        return "";
+      }
+    };
+    const deadline = Date.now() + 30_000;
+    while (!marker().startsWith("started")) {
+      if (Date.now() > deadline) throw new Error(`${operation} never started`);
+      await sleep(2);
+    }
+    await sleep(wait);
+    child.kill("SIGKILL");
+    await exited;
+    if (!marker().includes("done")) return true;
+  }
+  return false;
+};
+
+for (const operation of ["rebuild", "reindex", "snapshot", "compact"]) {
+  test(`a ${operation} killed partway through loses nothing and is finished or redone on reopening`, { timeout: 120_000 }, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), `zv-durable-${operation}-`));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+    const before = await openStore(dir, (store) =>
+      Effect.gen(function* () {
+        yield* writePosts(store, 1, 6000);
+        // A snapshot to rebuild from once the log is cut, and a sealed tier.
+        yield* store.snapshot;
+        yield* store.sealPostings;
+        return { answers: yield* sealAnswers(store), records: (yield* store.stats).records };
+      }));
+
+    const interrupted = await killMaintenanceMidway(dir, operation);
+    if (!interrupted) t.diagnostic(`every ${operation} finished before the kill; only the reopening is tested`);
+
+    await openStore(dir, (store) =>
+      Effect.gen(function* () {
+        // What a database does for every partition when it opens.
+        yield* store.resumeMaintenance;
+        assert.deepEqual(yield* sealAnswers(store), before.answers, "every answer is what it was");
+        assert.equal((yield* store.stats).records, before.records);
+        // And the same upkeep runs to the end from wherever it was left.
+        if (operation === "snapshot") yield* store.snapshot;
+        if (operation === "compact") yield* store.compact({ keep: 10 });
+        assert.deepEqual(yield* sealAnswers(store), before.answers);
+        yield* store.rebuildLenses;
+        assert.deepEqual(yield* sealAnswers(store), before.answers, "and a full replay agrees");
+      }));
+  });
+}

@@ -916,18 +916,16 @@ export function defineDatabaseKeyValueService(
             tags: ["key-value"],
             pathParams: { namespace: { type: "string", required: true } },
             requestBody: { required: true, schema: { type: "object" } },
-            responses: { 200: { description: "Ordered key changes" } },
+            responses: { 200: { description: "Ordered key changes, the cursor to continue from, and whether more follow" } },
           },
           handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
             const input = readBodyObject(body);
  return yield* Effect.gen(function* () {
               return {
-                body: {
-                  changes: yield* integration(() => tenantOf(service, input, principal).kv.changes(params.namespace, {
-                    ...(typeof input.after === "string" ? { after: input.after as never } : {}),
-                    ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
-                  })),
-                },
+                body: yield* integration(() => tenantOf(service, input, principal).kv.changes(params.namespace, {
+                  ...(typeof input.after === "string" ? { after: input.after as never } : {}),
+                  ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+                })),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
 })),

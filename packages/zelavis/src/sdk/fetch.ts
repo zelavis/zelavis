@@ -389,7 +389,7 @@ export interface ZelavisDataClient {
     changes(namespace: string, options?: {
       readonly after?: string;
       readonly limit?: number;
-    }): Promise<ReadonlyArray<ZelavisDataKeyValueChange>>;
+    }): Promise<ZelavisDataKeyValueChanges>;
     write(namespace: string, input: {
       readonly operations: ReadonlyArray<ZelavisDataKeyValueWrite>;
       readonly idempotencyKey?: string;
@@ -440,6 +440,17 @@ export interface ZelavisDataKeyValueChange {
   readonly revision: number;
   readonly timestamp: string;
   readonly value?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * One read of a namespace's changes. Continue from `cursor`, which moves past
+ * writes elsewhere too, rather than from the last change; `more` says the read
+ * stopped before the end of the log.
+ */
+export interface ZelavisDataKeyValueChanges {
+  readonly changes: ReadonlyArray<ZelavisDataKeyValueChange>;
+  readonly cursor?: string;
+  readonly more: boolean;
 }
 
 export interface ZelavisDataCollection {
@@ -1626,12 +1637,7 @@ function createDataClient(
       scan: (namespace, options = {}) =>
         post<ZelavisDataKeyValuePage>(`kv/${dataName(namespace, "KV namespace")}/scan`, options),
       changes: (namespace, options = {}) =>
-        present(Effect.gen(function* () {
-    return ((yield* integrationValue(post<{ changes: ReadonlyArray<ZelavisDataKeyValueChange> }>(
-          `kv/${dataName(namespace, "KV namespace")}/changes`,
-          options,
-        )))).changes;
-  })),
+        post<ZelavisDataKeyValueChanges>(`kv/${dataName(namespace, "KV namespace")}/changes`, options),
       write: (namespace, input) =>
         present(Effect.gen(function* () {
     return ((yield* integrationValue(post<{

@@ -15,7 +15,7 @@ const withStore = (t, body) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return Effect.runPromise(
     Effect.scoped(Effect.gen(function* () {
-      const store = yield* makeNodeSqliteStore("acme", dir);
+      const store = (yield* makeNodeSqliteStore("acme", dir)).partition("acme");
       return yield* body(store);
     })),
   );

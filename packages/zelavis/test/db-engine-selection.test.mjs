@@ -30,7 +30,7 @@ const exercise = async (opened) => {
     collection: "posts", where: [{ path: "region", value: "eu-west" }],
   });
   assert.deepEqual(found.map((d) => d.id), ["p1"]);
-  const events = await tenant.events.read();
+  const { events } = await tenant.events.read();
   assert.deepEqual(events.map((e) => e.type), ["collection.created", "document.upserted"]);
   assert.equal(opened.partitionMap.placements.length, DEFAULT_LOCAL_SHARDS.length);
 };

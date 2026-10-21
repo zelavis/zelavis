@@ -1065,6 +1065,13 @@ shared, partition-local identifier space, so a predicate spanning several data
 models is one set intersection rather than an exchange between engines. Its
 event log is the source of truth for writes and the replication stream.
 
+One engine holds one shard, and a shard holds many partitions — a tenant, a
+part of a divided tenant, or a reserved partition (`zv.global`, `zv.topology`).
+Every key a partition writes begins with `[0x01][partition name]`, so a
+partition owns one contiguous key range with its own identifiers, its own log
+and its own writer, and it can be copied, listed or removed as a range. Only
+the shard's writer claim and layout marker live outside the partitions.
+
 Key rules:
 
 - Writes go through the documents API. There is no raw SQL surface and one must
@@ -1081,10 +1088,10 @@ Key rules:
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
-- Ordered KV store commits must atomically check writer generation, session,
-  and the revision observed before dependent reads. Advance the revision with
-  every protected batch, including replication, allocation, maintenance and
-  format upgrades. Generation acquisition is conditional and never wraps.
+- Ordered KV store commits must atomically check the shard's writer generation
+  and session, and the partition's revision observed before dependent reads.
+  Advance the revision with every protected batch, including replication,
+  allocation, maintenance and format upgrades. Generation acquisition is conditional and never wraps.
   Reject unsupported coordination; do not emulate shared-writer fencing with
   a read followed by an unconditional write. RocksDB's exclusive-file mode
   is local single-process ownership, not concurrent takeover. LMDB batches use
@@ -1092,17 +1099,33 @@ Key rules:
   earlier mutations when the callback throws. Keep current ownership metadata
   through recovery; restoring an old authority snapshot requires a separate
   disaster-recovery protocol.
-- A store admits one writer at a time. Every store write reads state and
-  writes it back changed, so two in flight on an asynchronous engine read the
-  same value and one is lost. Reads take no permit. Nothing holding the permit
-  may call another store write, or it waits on itself.
+- A partition admits one writer at a time. Every partition write reads state
+  and writes it back changed, so two in flight on an asynchronous engine read
+  the same value and one is lost. Writers to different partitions on one shard
+  do not wait for each other; the engine applies each batch atomically. Reads
+  take no permit. Nothing holding the permit may call another write to the same
+  partition, or it waits on itself.
+- A record is one value — version, identity, manifest and body — so one read
+  is the whole record and no copy of one is torn. Retracting a record leaves
+  its version and the log position that retracted it, and every application of
+  an event is by version, retracted records included: an event older than what
+  is held changes nothing, so a late or repeated event never brings back what
+  was removed. `events.follow`/`followAll` additionally keep the leader's log
+  positions: a repeated position is compared and skipped, a different event at
+  a held position is `ReplicaDiverged`, and a position past the next is
+  `EventGap`.
+- Identifiers are 48-bit and log positions and counters 64-bit, per partition.
+  Each is refused at its limit (`PartitionExhausted` for identifiers), never
+  wrapped: a wrapped identifier names a record that already exists.
 - Document values, and anything a query compares or orders, use one order: the
   ordered lens's (`compareOrderedValues` in `db/keys.ts`) — booleans, then
   numbers, then strings by code point, then null. Never `localeCompare` or any
   other host order for them, including when sorting in memory: a result sorted
   in memory must match the same result read from an index, on every host.
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
-  the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
+  the live keys united with each value's blobs less that value's tombstones — a
+  tombstone cancels only its own value's posting, which matters for a prefix
+  that spans several values. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
   removed afterwards leaves a tombstone rather than editing one. So a removal
   path must go through the store's own helpers — deleting a posting key
@@ -1112,7 +1135,9 @@ Key rules:
   from the manifests when that accumulation needs checking. After its first
   full sweep a seal reads only the groups marked dirty since, and the same
   helpers write those marks — a posting written around them is never sealed
-  until the next reindex.
+  until the next reindex. A seal writes each blob before deleting the live keys
+  and tombstones it settles, so its batches can be bounded without ever
+  leaving a tombstone gone while a blob still claims the posting.
 - A composite index is a column of the ordered lens whose value is the
   document's tuple, encoded by `orderedTuple` so that string order is tuple
   order; the store knows nothing of it. A document write reads its collection's
@@ -1141,8 +1166,11 @@ Key rules:
   reads every document, id and unique value through it. A transaction sees
   committed state, so a second write built on a fresh read undoes the first,
   and two writes each pass a check the other already answered. Atomicity stops
-  at one partition, which is one shard: there is no cross-shard write, and a
-  scatter reads. For nearly every Tenant the partition is the Tenant. A Tenant
+  at one partition: a transaction writes only its own partition's keys, so two
+  tenants that share a shard never commit together, and nothing relies on a
+  colocation a move would end. There is no cross-partition write, a scatter
+  reads, and a write spanning tenants or parts is a workflow (an orchestrated
+  saga with idempotent steps and compensations) — never two-phase commit. For nearly every Tenant the partition is the Tenant. A Tenant
   too large for one Shard may be divided into parts, and then the partition is
   the part: `db.forTenant` refuses a divided Tenant rather than answering for a
   fraction of it, `db.forPart` reaches one, and a question about the whole is a
@@ -1154,24 +1182,54 @@ Key rules:
   is what lets an engine stop at the source. Every engine honours it, and
   `test/db-kv-engines.test.mjs` holds each to the same answers.
 - One transaction is one batch, and that is the whole durability story: a
-  killed process loses no commit that returned, a write-ahead log truncated by
-  a power cut costs a suffix rather than leaving holes, and an interrupted
-  maintenance pass is a state the reader already handles rather than damage to
-  repair. `test/db-durability.test.mjs` holds the store to all three by killing
-  real processes; anything that makes a write span two batches breaks it.
+  killed process loses no commit that returned, and a write-ahead log
+  truncated by a power cut costs a suffix rather than leaving holes. Upkeep
+  runs in batches of bounded size, and an interrupted pass is either a state
+  the reader already handles (a seal, a compaction, a snapshot under an id
+  nothing names yet) or one the partition refuses: `rebuildLenses` and
+  `reindexLenses` run behind a persisted mark, reads and writes fail with
+  `LensesRebuilding` until the last batch clears it, and a database finishes an
+  interrupted run when it opens (`resumeMaintenance`).
+  `test/db-durability.test.mjs` holds the store to all of it by killing real
+  processes; anything that makes a write span two batches breaks it.
+- A scan of a partition's records begun at log position `p`, followed by the
+  events after `p` applied by version, is the partition as of the last of them.
+  This holds because records are single values, versions only grow and
+  identifiers are never reused, and it is how a copy is taken without stopping
+  the writer: `seed` (and with it `db.movement`), a backup export and
+  `snapshot` all rely on it. Keep all three on it rather than locking the
+  writer for the length of a copy.
+- A query reads each clause only up to a cap (`probeCap`, 4096): a clause that
+  fits is an exact set; an AND checks its broad clauses per candidate against
+  the candidate's manifest, and an ordered read checks a broad `where` per row.
+  That check (`holds` and `inRange` in `kv-store.ts`) must give exactly the
+  lens's answer — the lens's one order, a one-sided range kept to its bound's
+  kind — and `test/db-bounded-evaluation.test.mjs` compares the two.
 - The log is the source of truth up to the compaction point, not forever.
-  Payloads, manifests and identities are the snapshot, so `db.maintenance`
-  compacts by truncating the log — after which storage tracks live objects
-  rather than every write ever taken. Anything reading history must therefore
+  Records are the snapshot, so `db.maintenance` compacts by truncating the log
+  — after which storage tracks live objects rather than every write ever
+  taken — and drops retracted records whose retraction is behind the cut,
+  since nothing can replay an older event for them any more. Anything reading history must therefore
   handle being cut off rather than assume it can reach the beginning: an old
   cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
   `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
   postings, a state-derived export for backups) are what still work.
+- The log is the transactional outbox: every write's event is in the batch
+  that makes the change. A tenant's event read (and the KV change feed built on
+  it) looks at a bounded stretch of the log and returns `{ events, cursor,
+  more }`, where `cursor` moves past everything it looked at, matching or not.
+  Consumers continue from that cursor, never from the last matching event, or a
+  long run of other writes is read again forever.
 - A partition map carries routing and no data, so changing where an occupied
-  range points is a relocation, not a map edit. `db.movement` copies the records
-  unfenced, catches the copy up from the source log, fences writes only for the
-  last catch-up, and moves routing last; every step is recorded so an
-  interrupted one resumes. Routing is one record for every tenant in a
+  range points is a relocation, not a map edit. `db.movement` copies the
+  tenant's partition as it is (`seed`, then the source's log by `followAll` at
+  the positions it holds there), unfenced, fences writes only for the last
+  catch-up, and moves routing last; every step is recorded so an interrupted
+  one resumes. Identifiers and positions are the source's own, so edges, event
+  cursors and projection checkpoints carry on after a move. The shard a tenant
+  left keeps only its fence, removed with nothing else in the same pass, so a
+  write still on its way there is refused rather than lost. A write checks the
+  fence inside its own transaction, never only before it. Routing is one record for every tenant in a
   rebalance, so it moves once, after all of them are copied — applying it while
   one was still uncopied would route a tenant to a shard that does not hold it.
   `topology.update` still refuses an occupied range. Routing is read
@@ -1184,21 +1242,23 @@ Key rules:
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
 - A restore says what to do about data already there — refuse, purge, or merge
-  — and never guesses. Whatever the mode, the identities inside a backup must
-  name the tenant being restored into: they are lens keys, and a merge looks
-  them up, so a mislabelled backup would write over the tenant they really
-  belong to on the same shard.
+  — and never guesses. Its label must name the tenant it is restored into, and
+  it writes only into that tenant's own partition, so nothing in a backup can
+  reach another tenant's records. A backup's identifiers are remapped on the
+  way in, and edges with them.
 - A schema version governs what is accepted next, never what is already
   stored: activating one rewrites nothing. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions
   are data rather than functions — inspectable, and reviewable before they run.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
   on one node, which is what keeps the intersection cheap. Tenant scoping is
-  structural — the tenant is part of every namespace and lens key — never a
-  predicate a caller can omit.
-- Identifiers are dense and partition-local. Global identity is
-  `(PartitionKey, Seq)`; a globally unique id would make posting sets sparse and
-  destroy scan locality.
+  structural — the tenant is the partition, the first part of every key it
+  writes — never a predicate a caller can omit, and never something each lens
+  has to remember to name.
+- Identifiers are dense and partition-local: each partition hands out its own.
+  Global identity is `(PartitionKey, Seq)`; a globally unique id, or one shared
+  by every tenant on a shard, would make posting sets sparse and destroy scan
+  locality.
 - Queries are data, not closures. A closure cannot cross a node boundary, so a
   router that accepts one can only ever answer locally.
 - `DatabaseCollection.surface` is a first-class field. Use

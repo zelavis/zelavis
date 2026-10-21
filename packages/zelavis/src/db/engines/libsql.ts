@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { Effect, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import type { KvEngine } from "../kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * The subset of `libsql`'s Database this driver uses.
@@ -114,10 +115,10 @@ export const makeLibsqlEngine = (
  * asynchronous client, which the key-value interface can now express.
  */
 export const makeLibsqlStore = (
-  partition: PartitionKey,
-  options: LibsqlStoreOptions,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
+  shard: ShardId,
+  options: LibsqlStoreOptions & OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeLibsqlEngine(partition, options);
-    return yield* openStoreOverKv(partition, engine);
+    const engine = yield* makeLibsqlEngine(shard, options);
+    return yield* openShardOverKv(shard, engine, options);
   });

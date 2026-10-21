@@ -45,7 +45,7 @@ test("event log is the source of truth: lenses rebuild from it alone", async (t)
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* makeNodeSqliteStore("acme", dir);
+        const store = (yield* makeNodeSqliteStore("acme", dir)).partition("acme");
         yield* ingest(store);
 
         const query = and(term("title", "atlas"), equals("region", "eu-west"));
@@ -60,7 +60,7 @@ test("event log is the source of truth: lenses rebuild from it alone", async (t)
         assert.deepEqual(after, before, "rebuilt lenses match");
 
         const visits = yield* store.measure("visits");
-        assert.equal(after.reduce((s, x) => s + visits[x], 0), 30, "measures rebuilt");
+        assert.equal(after.reduce((s, x) => s + visits.get(x), 0), 30, "measures rebuilt");
       }),
     ),
   );
@@ -71,8 +71,8 @@ test("log replicates to a follower, and applying twice changes nothing", async (
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const leader = yield* makeNodeSqliteStore("leader", dir);
-        const follower = yield* makeNodeSqliteStore("follower", dir);
+        const leader = (yield* makeNodeSqliteStore("leader", dir)).partition("leader");
+        const follower = (yield* makeNodeSqliteStore("follower", dir)).partition("follower");
         yield* ingest(leader);
         yield* leader.transact((txn) => txn.retract(asSeq(3)));
 
@@ -102,8 +102,8 @@ test("cursors continue exactly and are rejected across partitions", async (t) =>
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const a = yield* makeNodeSqliteStore("alpha", dir);
-        const b = yield* makeNodeSqliteStore("beta", dir);
+        const a = (yield* makeNodeSqliteStore("alpha", dir)).partition("alpha");
+        const b = (yield* makeNodeSqliteStore("beta", dir)).partition("beta");
         yield* ingest(a);
 
         const head = yield* a.events.head;
@@ -140,11 +140,11 @@ test("a superseded writer is fenced", async (t) => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const stale = yield* makeNodeSqliteStore("acme", dir);
+        const stale = (yield* makeNodeSqliteStore("acme", dir)).partition("acme");
         assert.equal(stale.generation, 1);
 
         // Opening the partition again claims the next generation.
-        const current = yield* makeNodeSqliteStore("acme", dir);
+        const current = (yield* makeNodeSqliteStore("acme", dir)).partition("acme");
         assert.equal(current.generation, 2);
 
         const rejected = yield* stale

@@ -629,9 +629,10 @@ array is an embedding.
 Database administration stays logical too. `zv.db.systemViews` exposes
 collections, events, schemas, projections, and time-series definitions without
 revealing physical shard drivers or internal `zv_*` tables. `zv.db.backups`
-exports and restores a Tenant's schema and exact event history; the matching
-maintenance endpoints require `database.inspect`, `database.backup`, or
-`database.restore` permissions.
+exports a Tenant's records plus the events logged while the export ran, which
+a restore applies by version, so an export taken during writes restores to one
+moment; the matching maintenance endpoints require `database.inspect`,
+`database.backup`, or `database.restore` permissions.
 
 Indexed numeric document fields must be finite. Inserts, updates, and atomic
 batches reject `NaN`, `Infinity`, and `-Infinity` with `InvalidDocumentValue`,
@@ -642,7 +643,12 @@ numbers before serialization can silently turn them into `null`.
 Reopening a database also opens shards needed by unfinished Tenant moves,
 including source shards no longer present in the current partition map.
 `db.movement.resume` finishes pending work; a move whose routing already changed
-cleans up its source without copying the target again.
+cleans up its source without copying the target again. A move copies the
+Tenant's partition as it is — identifiers and log positions included — so
+edges, event cursors and projection checkpoints carry on after it, and the
+shard the Tenant left keeps only its move fence, so a late write there is
+refused. Reopening also finishes any lens rebuild or reindex a crash cut off;
+until then that partition answers `LensesRebuilding`.
 
 Node hosts can persist content-addressed runtime objects with
 `createNodeFileArtifactStore({ directory })` from `zelavis/adapters/node`.
@@ -773,13 +779,15 @@ explicit absence. The engine checks every condition and commits the batch in one
 destination operation; rejection returns `false` and changes nothing. Engines
 without conditional commits and a declared coordination scope refuse writable
 store activation. `claimGeneration(engine)` returns `{ generation, session }`;
-`storeOverKv(partition, engine, claim)` requires that complete claim, while
-`openStoreOverKv(partition, engine)` performs activation and format preparation.
+`shardOverKv(shard, engine, claim)` requires that complete claim, while
+`openShardOverKv(shard, engine)` performs activation and format preparation.
+A shard hands out one store per partition (`shard.partition(name)`): each owns
+the key range under its name, with its own identifiers, log and revision.
 
-Store activation claims a fresh writer session and increments the persisted
-generation atomically. Every store batch checks generation, session, and the
-revision read before building the operation, then advances that revision in the
-same commit. This covers events, lenses, document receipts, identifier allocation,
+Shard activation claims a fresh writer session and increments the persisted
+generation atomically. Every partition batch checks the shard's generation and
+session and the partition's revision read before building the operation, then
+advances that revision in the same commit. This covers events, lenses, document receipts, identifier allocation,
 replication application, format upgrades, and maintenance. A superseded session
 fails with `WriterFenced`; competing changes under the same claim fail with
 `StoreError` (`op: "store.conflict"`). Retry the complete operation after a clean
@@ -794,12 +802,11 @@ overlay remain within that operation; transactions remain shard-local.
 | RocksDB bindings | Native exclusive process/file ownership plus a scoped permit around checks and batches. The evaluated binding shares permits across local handles for the same resolved directory. Concurrent process owners, shared filesystems, and remote takeover are unsupported. |
 | libSQL client | Dedicated write transaction with batched condition reads and mutations. Independent connections are tested using its local file transport; production network servers are not qualified by those tests. |
 
-Existing four-byte generations are read and atomically widened to eight bytes at
-activation, preserving document/event bytes and cursor interpretation. Generations
-remain safe integer numbers and activation refuses exhaustion at
-`Number.MAX_SAFE_INTEGER` or malformed state. Older binaries must not reopen a
-widened store. Recovery must retain the current generation/session metadata;
-restoring an old authority snapshot is not a supported takeover procedure.
+Generations are eight bytes and remain safe integers; activation refuses
+exhaustion at `Number.MAX_SAFE_INTEGER` or malformed state. A store written by
+another layout is refused, never upgraded: recreate it. Recovery must retain the
+current generation/session metadata; restoring an old authority snapshot is not
+a supported takeover procedure.
 
 Opening an engine does not acquire a store writer claim. Writable store activation
 is a trusted low-level operation that supersedes prior store sessions; it does not

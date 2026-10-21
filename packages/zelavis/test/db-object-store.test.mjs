@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { and, asSeq, edge, equals, term } from "../dist/db/index.js";
-import { DbRoot, Partitions } from "../dist/db/engines/node-sqlite.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { ObjectStore } from "../dist/db/index.js";
 
 const enc = new TextEncoder();
@@ -21,13 +21,12 @@ const site = (seq, region, plugins, words) => ({
   },
 });
 
+/** Run with the store for partition "acme" of one SQLite shard provided as `ObjectStore`. */
 const run = (directory, program) =>
-  Effect.runPromise(
-    program.pipe(
-      Effect.provide(Partitions.layer),
-      Effect.provide(DbRoot.layer(directory)),
-    ),
-  );
+  Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const shard = yield* makeNodeSqliteStore("acme", directory);
+    return yield* program.pipe(Effect.provideService(ObjectStore, shard.partition("acme")));
+  })));
 
 test("db: one payload, many lenses, resolved through a shared seq space", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-db-"));
@@ -44,7 +43,7 @@ test("db: one payload, many lenses, resolved through a shared seq space", async 
     Effect.gen(function* () {
       const store = yield* ObjectStore;
       return yield* Stream.runCollect(store.resolve(query));
-    }).pipe(Effect.provide(Partitions.get("acme")));
+    });
 
   await run(dir, Effect.gen(function* () {
     // ingest: the payload is written once, lenses receive pointers only
@@ -53,7 +52,7 @@ test("db: one payload, many lenses, resolved through a shared seq space", async 
       yield* store.transact((txn) =>
         Effect.forEach(rows, (row, i) => txn.put(asSeq(i + 1), row.bytes, row.manifest)),
       );
-    }).pipe(Effect.provide(Partitions.get("acme")));
+    });
 
     const doc = yield* collect(term("title", "atlas"));
     assert.deepEqual([...doc], [1, 2, 3], "document lens");
@@ -71,13 +70,13 @@ test("db: one payload, many lenses, resolved through a shared seq space", async 
     assert.deepEqual([...cross], [1, 2], "cross-model intersection");
 
     // payload is untouched until the answer set is small
-    const store = yield* Effect.provide(ObjectStore, Partitions.get("acme"));
+    const store = yield* ObjectStore;
     const first = yield* store.read(asSeq(1));
     assert.equal(JSON.parse(dec.decode(first.bytes)).region, "eu-west");
 
     // aggregation reads the measure vector, never the payloads
     const visits = yield* store.measure("visits");
-    assert.equal([...cross].reduce((sum, s) => sum + visits[s], 0), 30);
+    assert.equal([...cross].reduce((sum, s) => sum + visits.get(s), 0), 30);
   }));
 });
 
@@ -92,7 +91,7 @@ test("db: retraction leaves no posting behind", async (t) => {
     Effect.gen(function* () {
       const store = yield* ObjectStore;
       return [...(yield* Stream.runCollect(store.resolve(query)))];
-    }).pipe(Effect.provide(Partitions.get("acme")));
+    });
 
   await run(dir, Effect.gen(function* () {
     yield* Effect.gen(function* () {
@@ -100,7 +99,7 @@ test("db: retraction leaves no posting behind", async (t) => {
       yield* store.transact((txn) => txn.put(asSeq(1), before.bytes, before.manifest));
       // updating must retract every posting the previous version produced
       yield* store.transact((txn) => txn.put(asSeq(1), after.bytes, after.manifest));
-    }).pipe(Effect.provide(Partitions.get("acme")));
+    });
 
     assert.deepEqual(yield* seqs(term("title", "atlas")), [], "stale term retracted");
     assert.deepEqual(yield* seqs(equals("region", "eu-west")), [], "stale column retracted");
@@ -109,7 +108,7 @@ test("db: retraction leaves no posting behind", async (t) => {
     yield* Effect.gen(function* () {
       const store = yield* ObjectStore;
       yield* store.transact((txn) => txn.retract(asSeq(1)));
-    }).pipe(Effect.provide(Partitions.get("acme")));
+    });
 
     assert.deepEqual(yield* seqs(term("title", "marble")), [], "delete retracts");
     assert.deepEqual(yield* seqs(equals("region", "ap-south")), [], "delete retracts columns");

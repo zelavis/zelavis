@@ -38,7 +38,9 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-vec-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({
         name: "notes",
@@ -47,7 +49,7 @@ for (const [engine, open] of engines) {
       for (const [id, vec, kind] of notes) {
         yield* docs.insert({ collection: "notes", id, data: { vec, kind } });
       }
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
   // Order is the answer here, so these are never sorted.

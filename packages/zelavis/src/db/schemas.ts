@@ -23,10 +23,9 @@ import {
  * would not also be knowable by replaying the log.
  */
 const SCHEMA_NS = "zv.schema";
-const schemaKey = (tenant: TenantId, collection: string, version: number) =>
-  `${tenant}/${collection}/${version}`;
+const schemaKey = (collection: string, version: number) => `${collection}/${version}`;
 const ACTIVE_NS = "zv.schema.active";
-const activeKey = (tenant: TenantId, collection: string) => `${tenant}/${collection}`;
+const activeKey = (collection: string) => collection;
 
 /**
  * Indexes every stored schema for a tenant.
@@ -92,12 +91,12 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
     }).pipe(Effect.orDie);
 
   const getVersion = (collection: string, version: number) =>
-    Effect.map(readAt(SCHEMA_NS, schemaKey(tenant, collection, version)), (raw) =>
+    Effect.map(readAt(SCHEMA_NS, schemaKey(collection, version)), (raw) =>
       raw === undefined ? undefined : (parseJson(raw, schemaRecord)),
     );
 
   const activeVersionOf = (collection: string) =>
-    Effect.map(readAt(ACTIVE_NS, activeKey(tenant, collection)), (raw) =>
+    Effect.map(readAt(ACTIVE_NS, activeKey(collection)), (raw) =>
       raw === undefined ? undefined : (parseJson(raw, objectFields<{ version: number }>({version: isPositiveInteger}))).version,
     );
 
@@ -146,11 +145,11 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
           active: schema.activate !== false,
           fields: schema.fields,
         };
-        yield* put(SCHEMA_NS, schemaKey(tenant, schema.collection, schema.version), stored, [
+        yield* put(SCHEMA_NS, schemaKey(schema.collection, schema.version), stored, [
           [SCHEMA_COLUMN, tenant],
         ]);
         if (stored.active) {
-          yield* put(ACTIVE_NS, activeKey(tenant, schema.collection), { version: schema.version }, []);
+          yield* put(ACTIVE_NS, activeKey(schema.collection), { version: schema.version }, []);
         }
         return stored;
       }),
@@ -185,7 +184,7 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
         if (stored === undefined) {
           return yield* new SchemaNotFound({ collection, version });
         }
-        yield* put(ACTIVE_NS, activeKey(tenant, collection), { version }, []);
+        yield* put(ACTIVE_NS, activeKey(collection), { version }, []);
         return { ...stored, active: true };
       }),
 

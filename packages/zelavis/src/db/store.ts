@@ -1,6 +1,7 @@
 import { Context, Effect, Stream } from "effect";
-import type { CursorMismatch, DbError } from "./errors.js";
+import type { CursorMismatch, DbError, EventGap, ReplicaDiverged, TenantNotEmpty } from "./errors.js";
 import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
+import type { ShardId } from "./topology.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import type { OrderedValue } from "./keys.js";
 import type { Query, RangeBound } from "./query.js";
@@ -89,10 +90,95 @@ export interface EventsApi {
    * the follower writable.
    */
   readonly apply: (event: AppliedEvent) => Effect.Effect<void, DbError>;
+
+  /**
+   * Apply an event read from the same partition's log on its writer, at the
+   * position it holds there.
+   *
+   * What a follower uses to keep the leader's history rather than only its
+   * state: the event lands at the leader's position, so the follower's cursors
+   * and the leader's mean the same thing. An event at a position the follower
+   * already holds is checked against what is there and skipped, and refused as
+   * `ReplicaDiverged` when it differs; one past the next position is refused as
+   * `EventGap`, because applying it would leave a hole nothing fills.
+   */
+  readonly follow: (event: DbEvent) => Effect.Effect<void, DbError | EventGap | ReplicaDiverged>;
+
+  /** `follow` for a run of events, in one transaction. */
+  readonly followAll: (
+    events: ReadonlyArray<DbEvent>,
+  ) => Effect.Effect<void, DbError | EventGap | ReplicaDiverged>;
+}
+
+/**
+ * A record as a partition holds it: what exists, or what is left of something
+ * that was retracted — its last version and the position that retracted it,
+ * kept so a late event older than the retraction changes nothing.
+ */
+export type RecordState =
+  | {
+    readonly live: true;
+    readonly version: number;
+    readonly identity?: ObjectIdentity;
+    readonly manifest: IndexManifest;
+    readonly body: Uint8Array;
+  }
+  | { readonly live: false; readonly version: number; readonly retiredAt: number };
+
+/** What `seed` copied. */
+export interface SeedResult {
+  /** Records copied, retired ones included. */
+  readonly records: number;
+  /** The position the copied log continues from: the source's compaction point. */
+  readonly head: number;
+}
+
+/** What a partition holds, kept as it changes rather than counted when asked. */
+export interface PartitionStats {
+  /** Records that exist. */
+  readonly records: number;
+  /** Their bodies' bytes. */
+  readonly bytes: number;
+  /** The newest position in the log, or 0 when nothing was ever written. */
+  readonly head: number;
+  /** The position everything at or below has been compacted away. */
+  readonly compactedTo: number;
+  /** The last identifier handed out, or 0. */
+  readonly nextSeq: number;
 }
 
 export interface ObjectStoreApi {
+  /**
+   * The partition this handle reads and writes: a tenant, a part of a divided
+   * tenant, or one of the reserved partitions. Everything it stores lives in
+   * that partition's own key range.
+   */
   readonly partition: PartitionKey;
+
+  /** What this partition holds, without reading it. */
+  readonly stats: Effect.Effect<PartitionStats, DbError>;
+
+  /**
+   * Every record, retired ones included, as stored, in identifier order.
+   *
+   * Each record is one read, so each is whole; the stream as a whole is not
+   * one moment, because writes carry on while it is read. A scan begun at log
+   * position `p` and finished at `q`, followed by the events after `p` applied
+   * by version, is the partition as of `q` — which is what `seed` relies on.
+   */
+  readonly records: Stream.Stream<{ readonly seq: Seq; readonly record: RecordState }, DbError>;
+
+  /**
+   * Fill this partition, which must hold nothing, from another partition of
+   * the same name, keeping its identifiers.
+   *
+   * Copies every record while the source carries on taking writes, then sets
+   * this partition's log at the source's compaction point, so the source's
+   * events from there can be applied with `followAll` at the positions they
+   * hold on the source: the copy then has the source's state, history and
+   * cursors. Refused with `TenantNotEmpty` when this partition holds anything.
+   */
+  readonly seed: (source: ObjectStoreApi) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
 
   /**
    * The writer generation this handle claimed when it opened.
@@ -111,6 +197,14 @@ export interface ObjectStoreApi {
    * checkable rather than aspirational.
    */
   readonly rebuildLenses: Effect.Effect<number, DbError>;
+
+  /**
+   * Finish a rebuild or reindex that an interrupted process left under way, and
+   * say which it was; nothing when none was. Until it is finished the
+   * partition refuses reads and writes with `LensesRebuilding`, so a database
+   * runs this for every partition when it opens.
+   */
+  readonly resumeMaintenance: Effect.Effect<"rebuild" | "reindex" | undefined, DbError>;
 
   /**
    * Re-derive the postings from the stored manifests.
@@ -274,16 +368,54 @@ export interface ObjectStoreApi {
   readonly extent: (column: string, where?: Query) => Effect.Effect<OrderedExtent, DbError>;
 
   /**
-   * Materialize a numeric column as a dense vector indexed by Seq.
+   * A numeric column's values, by identifier.
    *
    * Aggregation reads the measure after the identifier set is known, never
    * during resolution, so the payload store is not touched until the answer is
-   * already small.
+   * already small. Only records that hold a value are present: a record
+   * without one is not a zero.
    */
-  readonly measure: (column: string) => Effect.Effect<Float64Array, DbError>;
+  readonly measure: (column: string) => Effect.Effect<ReadonlyMap<number, number>, DbError>;
 
   /** Distinct terms indexed under a field, optionally matching a prefix. */
   readonly terms: (field: string, prefix?: string) => Effect.Effect<ReadonlyArray<string>, DbError>;
+}
+
+/**
+ * One physical shard: one engine, one writer, many partitions.
+ *
+ * The shard is what a node opens and fences; a partition is what a query and a
+ * transaction address. Each partition owns a contiguous key range on the shard,
+ * so it can be listed, copied or removed as a range, and nothing written for
+ * one partition can be read through another's handle.
+ */
+export interface ShardStoreApi {
+  readonly shard: ShardId;
+
+  /** The writer generation this shard handle claimed when it opened. */
+  readonly generation: number;
+
+  /**
+   * The handle for one partition on this shard: opened once and kept, because
+   * the handle is what admits one writer at a time to that partition.
+   */
+  readonly partition: (partition: PartitionKey) => ObjectStoreApi;
+
+  /** Every partition holding any key on this shard, in key order. */
+  readonly partitions: Effect.Effect<ReadonlyArray<PartitionKey>, DbError>;
+
+  /**
+   * Remove a partition — records, log, lenses and meta — in bounded batches.
+   * Answers how many records it held.
+   *
+   * With `keep`, the record of that name stays and the rest goes: a tenant
+   * moved off a shard leaves its fence there, so a write still on its way to
+   * the old shard is refused rather than landing where nothing reads it.
+   */
+  readonly drop: (
+    partition: PartitionKey,
+    options?: { readonly keep?: ObjectIdentity },
+  ) => Effect.Effect<number, DbError>;
 }
 
 /**

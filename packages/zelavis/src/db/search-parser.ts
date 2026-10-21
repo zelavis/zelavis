@@ -528,31 +528,39 @@ export const parseSearchQuery = (
   };
 };
 
+/**
+ * A parsed search as lens clauses.
+ *
+ * `fieldFor` turns a document path into the field its terms are stored under,
+ * which names the tenant and collection: a clause on the bare path would read
+ * every collection's postings for it.
+ */
 export const toPlanQuery = (
   clause: SearchClause,
   analyzer: Analyzer,
+  fieldFor: (path: string) => string,
   termsOf: (field: string) => Effect.Effect<ReadonlyArray<string>, StoreError>,
 ): Effect.Effect<Query | undefined, StoreError> =>
   Effect.gen(function* () {
     switch (clause.kind) {
       case "term": {
         const fields = clause.field ? [clause.field] : analyzer.fields;
-        const sub = fields.map((f) => term(f, clause.token));
+        const sub = fields.map((f) => term(fieldFor(f), clause.token));
         return sub.length === 1 ? sub[0] : or(...sub);
       }
       case "prefix": {
         const fields = clause.field ? [clause.field] : analyzer.fields;
-        const sub = fields.map((f) => termPrefixQuery(f, clause.prefix));
+        const sub = fields.map((f) => termPrefixQuery(fieldFor(f), clause.prefix));
         return sub.length === 1 ? sub[0] : or(...sub);
       }
       case "fuzzy": {
         const fields = clause.field ? [clause.field] : analyzer.fields;
         const subClauses: Query[] = [];
         for (const f of fields) {
-          const stored = yield* termsOf(f);
+          const stored = yield* termsOf(fieldFor(f));
           const matched = stored.filter((st) => damerauLevenshtein(st, clause.token, clause.distance) <= clause.distance);
           if (matched.length > 0) {
-            const fieldSubs = matched.map((w) => term(f, w));
+            const fieldSubs = matched.map((w) => term(fieldFor(f), w));
             subClauses.push(fieldSubs.length === 1 ? fieldSubs[0]! : or(...fieldSubs));
           }
         }
@@ -563,7 +571,7 @@ export const toPlanQuery = (
         const fields = clause.field ? [clause.field] : analyzer.fields;
         const subClauses: Query[] = [];
         for (const f of fields) {
-          const fieldTerms = clause.tokens.map((t) => term(f, t));
+          const fieldTerms = clause.tokens.map((t) => term(fieldFor(f), t));
           subClauses.push(fieldTerms.length === 1 ? fieldTerms[0]! : and(...fieldTerms));
         }
         if (subClauses.length === 0) return undefined;
@@ -573,7 +581,7 @@ export const toPlanQuery = (
         const queries: Query[] = [];
         for (const c of clause.clauses) {
           if (c.kind === "not") continue;
-          const q = yield* toPlanQuery(c, analyzer, termsOf);
+          const q = yield* toPlanQuery(c, analyzer, fieldFor, termsOf);
           if (q !== undefined) queries.push(q);
         }
         if (queries.length === 0) return undefined;
@@ -583,7 +591,7 @@ export const toPlanQuery = (
         const queries: Query[] = [];
         for (const c of clause.clauses) {
           if (c.kind === "not") return undefined;
-          const q = yield* toPlanQuery(c, analyzer, termsOf);
+          const q = yield* toPlanQuery(c, analyzer, fieldFor, termsOf);
           if (q === undefined) return undefined;
           queries.push(q);
         }

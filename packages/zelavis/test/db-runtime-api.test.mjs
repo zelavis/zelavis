@@ -106,7 +106,7 @@ test("runtime api: schemas, events, views and backups are all tenant scoped", as
     const validation = await acme.schemas.validate("posts", { title: 42 });
     assert.equal(validation.valid, false);
 
-    const events = await acme.events.read();
+    const { events } = await acme.events.read();
     assert.ok(events.every((e) => e.tenantId === "acme"));
 
     const views = acme.systemViews.list();

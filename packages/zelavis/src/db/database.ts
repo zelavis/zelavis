@@ -2,7 +2,7 @@ import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
 import { InvalidConstraint } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
-import type { ObjectIdentity } from "./model.js";
+import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
@@ -21,7 +21,7 @@ import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
-import type { ObjectStoreApi } from "./store.js";
+import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isValidCollectionName } from "./naming.js";
 import {
@@ -119,8 +119,13 @@ export interface MaintenanceApi {
   readonly seal: Effect.Effect<ReadonlyArray<ShardSeal>, DbError>;
 }
 
+/**
+ * Upkeep reports, one row per partition: a partition is what owns a log, a
+ * compaction point and a seal, and a shard holds as many as it holds tenants.
+ */
 export interface ShardMaintenance {
   readonly shard: ShardId;
+  readonly partition: PartitionKey;
   readonly records: number;
   readonly bytes: number;
   readonly compactedTo: number;
@@ -128,23 +133,27 @@ export interface ShardMaintenance {
 
 export interface ShardCompaction {
   readonly shard: ShardId;
+  readonly partition: PartitionKey;
   readonly removed: number;
   readonly compactedTo: number;
 }
 
 export interface ShardReindex {
   readonly shard: ShardId;
+  readonly partition: PartitionKey;
   readonly records: number;
 }
 
 export interface ShardSnapshot {
   readonly shard: ShardId;
+  readonly partition: PartitionKey;
   readonly records: number;
   readonly position: number;
 }
 
 export interface ShardSeal {
   readonly shard: ShardId;
+  readonly partition: PartitionKey;
   readonly segments: number;
   readonly postings: number;
   readonly examined: number;
@@ -270,10 +279,13 @@ export interface MakeDatabaseOptions {
    * Requires a `Scope`, because a shard is an acquired resource that has to be
    * released: the database's lifetime is the shards' lifetime, and saying so in
    * the type is what stops a caller opening one that nothing will close.
+   * `origin` is the node every event the shard accepts is recorded as written
+   * by; an opener that ignores it records `"local"`.
    */
   readonly openShard: (
     shard: ShardId,
-  ) => Effect.Effect<ObjectStoreApi, DbError, Scope.Scope>;
+    context: { readonly origin: string },
+  ) => Effect.Effect<ShardStoreApi, DbError, Scope.Scope>;
 }
 
 /**
@@ -288,22 +300,26 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   options: MakeDatabaseOptions,
 ) {
   const nodeId = options.nodeId ?? "local";
+  const opening = { origin: nodeId };
 
   // The topology lives in a store of its own rather than inside a shard: which
   // shard would hold it is exactly the question it answers. Keeping it in a
   // store means a map change is a logged, versioned, fenced write like any
-  // other, rather than a file rewritten in place.
-  const topologyStore = yield* options.openShard(TOPOLOGY_SHARD);
+  // other, rather than a file rewritten in place. It is the one partition of
+  // its shard, named after it.
+  const topologyShard = yield* options.openShard(TOPOLOGY_SHARD, opening);
+  const topologyStore = topologyShard.partition(TOPOLOGY_SHARD);
   const partitionMap = yield* initPartitionMap(topologyStore, options.partitionMap);
   // Placed beside the map, in the same store, because both answer where
   // something lives and a reader that had one without the other could route.
   const placementCatalog = yield* initPlacementCatalog(topologyStore);
   const subdivisionCatalog = yield* initSubdivisionCatalog(topologyStore);
-  const globalStore = yield* options.openShard(GLOBAL_SHARD);
+  const globalShard = yield* options.openShard(GLOBAL_SHARD, opening);
+  const globalStore = globalShard.partition(GLOBAL_TENANT);
 
-  const shards = new Map<ShardId, ObjectStoreApi>();
+  const shards = new Map<ShardId, ShardStoreApi>();
   for (const shard of shardsOf(partitionMap)) {
-    shards.set(shard, yield* options.openShard(shard));
+    shards.set(shard, yield* options.openShard(shard, opening));
   }
 
   const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog, subdivisionCatalog);
@@ -312,7 +328,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // Earlier phases also need target shards not yet named by the current map.
   for (const move of yield* movement.pending) {
     for (const shard of new Set([move.from, move.to, ...shardsOf(move.map)])) {
-      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard));
+      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard, opening));
     }
   }
 
@@ -326,8 +342,9 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
    */
   const shardOf = (tenant: TenantId): ShardId => shardFor(topology.current(), tenant);
 
-  const storeFor = (tenant: TenantId): ObjectStoreApi => {
-    const shard = shardOf(tenant);
+  /** The shard a partition lives on, refusing one the map names but nothing opened. */
+  const shardHolding = (partition: PartitionKey): ShardStoreApi => {
+    const shard = shardOf(partition);
     const store = shards.get(shard);
     if (store === undefined) {
       // shardsOf covers every placement, so this is a corrupt map rather than
@@ -337,51 +354,52 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return store;
   };
 
+  const storeFor = (tenant: TenantId): ObjectStoreApi => shardHolding(tenant).partition(tenant);
+
   // The topology store is a store like any other: it takes writes, so it grows
   // like any other, and upkeep that skipped it would leave the one store an
   // operator never thinks about as the one that never gets compacted.
-  const everyStore = (): ReadonlyArray<readonly [ShardId, ObjectStoreApi]> => [
-    [TOPOLOGY_SHARD, topologyStore],
-    [GLOBAL_SHARD, globalStore],
+  const everyShard = (): ReadonlyArray<readonly [ShardId, ShardStoreApi]> => [
+    [TOPOLOGY_SHARD, topologyShard],
+    [GLOBAL_SHARD, globalShard],
     ...shards,
   ];
 
-  const acrossShards = <A>(
+  /** Run one piece of upkeep on every partition of every shard, one at a time. */
+  const acrossPartitions = <A>(
     run: (store: ObjectStoreApi) => Effect.Effect<A, DbError>,
-  ): Effect.Effect<ReadonlyArray<readonly [ShardId, A]>, DbError> =>
-    Effect.forEach(everyStore(), ([shard, store]) =>
-      Effect.map(run(store), (result) => [shard, result] as const),
+  ): Effect.Effect<ReadonlyArray<{ readonly shard: ShardId; readonly partition: PartitionKey; readonly result: A }>, DbError> =>
+    Effect.map(
+      Effect.forEach(everyShard(), ([shard, store]) =>
+        Effect.flatMap(store.partitions, (partitions) =>
+          Effect.forEach(partitions, (partition) =>
+            Effect.map(run(store.partition(partition)), (result) => ({ shard, partition, result }))))),
+      (rows) => rows.flat(),
     );
 
   const maintenance: MaintenanceApi = {
     status: Effect.map(
-      acrossShards((store) =>
-        Effect.all({ records: store.liveRecords, compactedTo: store.compactedTo }),
-      ),
-      (results) =>
-        results.map(([shard, { records, compactedTo }]) => ({
-          shard,
-          records: records.length,
-          bytes: records.reduce((total, record) => total + record.bytes.byteLength, 0),
-          compactedTo,
-        })),
+      acrossPartitions((store) => store.stats),
+      (rows) => rows.map(({ shard, partition, result }) => ({
+        shard, partition, records: result.records, bytes: result.bytes, compactedTo: result.compactedTo,
+      })),
     ),
     compact: (options) =>
       Effect.map(
-        acrossShards((store) => store.compact(options)),
-        (results) => results.map(([shard, result]) => ({ shard, ...result })),
+        acrossPartitions((store) => store.compact(options)),
+        (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
       ),
     reindex: Effect.map(
-      acrossShards((store) => store.reindexLenses),
-      (results) => results.map(([shard, records]) => ({ shard, records })),
+      acrossPartitions((store) => store.reindexLenses),
+      (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, records: result })),
     ),
     snapshot: Effect.map(
-      acrossShards((store) => store.snapshot),
-      (results) => results.map(([shard, result]) => ({ shard, ...result })),
+      acrossPartitions((store) => store.snapshot),
+      (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
     ),
     seal: Effect.map(
-      acrossShards((store) => store.sealPostings),
-      (results) => results.map(([shard, result]) => ({ shard, ...result })),
+      acrossPartitions((store) => store.sealPostings),
+      (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
     ),
   };
 
@@ -390,16 +408,16 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return documentsFor(store, tenant, schemasFor(store, tenant));
   };
 
-  const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId): TenantApi => {
-    const events = domainEventsFor(store, tenant, nodeId);
+  const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId, sharedStore: ObjectStoreApi): TenantApi => {
+    const events = domainEventsFor(store, tenant);
     const schemas = schemasFor(store, tenant);
     const projections = projectionsFor(store, events, tenant);
     const documents = documentsFor(store, tenant, schemas);
     const timeSeries = timeSeriesFor(store, projections, tenant);
-    // The App's replicated collections as they sit on *this* store, read under
-    // the tenant that owns them. Same shard, so no second store is opened and
-    // no partition is crossed.
-    const shared = documentsFor(store, GLOBAL_TENANT, schemasFor(store, GLOBAL_TENANT));
+    // The App's replicated collections as they sit on *this* shard, in the
+    // partition of the tenant that owns them. Same shard, so no second store is
+    // opened.
+    const shared = documentsFor(sharedStore, GLOBAL_TENANT, schemasFor(sharedStore, GLOBAL_TENANT));
     return {
       documents,
       kv: keyValueFor(store, tenant, documents, events),
@@ -459,7 +477,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         ? replication.documentIdentity(entry.collection, entry.id)
         : replication.documentIdentity(entry.document.collection, entry.document.id));
 
-  const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT);
+  const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT, globalStore);
   const globalDocuments: DocumentsApi = {
     ...globalBase.documents,
 
@@ -504,21 +522,24 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     // a create that insisted on `global` would refuse it.
     createCollection: (input) =>
       propagating(
-        // An edge names a record by identifier and every replica reallocates
-        // those, so a replicated collection cannot carry one. Refused where the
-        // edge is declared rather than where it is first written: this is the
-        // only way a collection ever gains edges, and the other order — created
-        // with edges, declared replicated after — is already refused, because
-        // creating an undeclared collection here claims it as `global` and a
-        // class does not change. Closing this one makes the state unreachable,
-        // which is what leaves the checks in `replication` as assertions.
-        (input.edges ?? []).length > 0
+        // A replica holds the App's records under the App's own identifiers,
+        // so an edge between two replicated collections names the same record
+        // on every shard. An edge to anything else would name nothing on a
+        // shard, so a replicated collection may only declare edges to
+        // replicated collections — its own included. Refused where the edge is
+        // declared rather than where it is first written: this is the only way
+        // a collection ever gains edges, and a class does not change once it is
+        // claimed, which is what leaves the checks in `replication` as
+        // assertions.
+        (input.edges ?? []).some((edge) =>
+          edge.collection !== input.name && topology.placement.classOf(edge.collection) !== "replicated")
           && topology.placement.classOf(input.name) === "replicated"
           ? new InvalidConstraint({
               collection: input.name,
-              name: input.edges![0]!.name,
+              name: (input.edges ?? []).find((edge) =>
+                edge.collection !== input.name && topology.placement.classOf(edge.collection) !== "replicated")!.name,
               reason:
-                "a replicated collection cannot declare edges: an edge names a record by identifier, and every replica reallocates them",
+                "a replicated collection's edges must name replicated collections: a replica holds no other records",
             })
           : isValidCollectionName(input.name)
               && topology.placement.classOf(input.name) === "partitioned"
@@ -532,6 +553,15 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   };
 
   const globalApi: TenantApi = { ...globalBase, documents: globalDocuments };
+
+  // A rebuild or reindex cut off by a crash leaves its partition refusing reads
+  // and writes until it is finished. Opening is the one moment every shard is
+  // open and nothing else writes, so it finishes them before anything reads.
+  for (const [, shard] of everyShard()) {
+    for (const partition of yield* shard.partitions) {
+      yield* shard.partition(partition).resumeMaintenance;
+    }
+  }
 
   // A shard that joined while the database was closed, or one left behind by an
   // interrupted pass, holds a stale copy until something levels it. Opening is
@@ -567,7 +597,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
           `Tenant "${tenant}" is divided into ${parts.join(", ")}; use forPart, or scatter over topology.subdivision.keysOf("${tenant}").`,
         );
       }
-      return tenantApiOver(storeFor(tenant), tenant);
+      return tenantApiOver(storeFor(tenant), tenant, shardHolding(tenant).partition(GLOBAL_TENANT));
     },
     forPart: (tenant, part) => {
       const parts = topology.subdivision.partsOf(tenant);
@@ -580,7 +610,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         );
       }
       const key = partitionKeyFor(tenant, part);
-      return tenantApiOver(storeFor(key), key);
+      return tenantApiOver(storeFor(key), key, shardHolding(key).partition(GLOBAL_TENANT));
     },
   } satisfies DatabaseApi;
 });

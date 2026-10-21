@@ -10,24 +10,31 @@
  * byte-wise as well as numerically. Strings are terminated rather than
  * separated by position, so `("ab", "c")` cannot encode to the same bytes as
  * `("a", "bc")` — the collision that a naive `field + ":" + term` invites.
+ *
+ * One engine holds one shard, and a shard holds many partitions. Every key a
+ * partition writes begins with that partition's name, so a partition owns one
+ * contiguous range of the keyspace: its identifiers, its log and its lenses
+ * cannot meet another partition's, whatever a lens forgets to name, and the
+ * whole partition can be copied or removed as a range.
  */
 
-/**
- * Lens tags.
- *
- * Each lens occupies a disjoint range of one keyspace. That is how a store with
- * no column families still gets namespaces: a scan for terms cannot wander into
- * payloads, because it never leaves its tag.
- */
+/** The two halves of a shard's keyspace. */
+export const Space = {
+  /** The shard's own records: who may write it, and which layout it holds. */
+  Shard: 0x00,
+  /** Partitions, each under its own name. */
+  Partition: 0x01,
+} as const;
+
+/** Tags inside a partition's range. */
 export const Tag = {
-  Payload: 0x01,
-  Manifest: 0x02,
+  /** One record: its version, identity, manifest and body, or that it was retired. */
+  Record: 0x01,
   Term: 0x03,
   // 0x04 is unused: equality is answered by `Ordered`.
   Measure: 0x05,
   Edge: 0x06,
   Identity: 0x07,
-  IdentityBySeq: 0x08,
   Meta: 0x09,
   Event: 0x0a,
   Segment: 0x0b,
@@ -36,9 +43,17 @@ export const Tag = {
   Dirty: 0x0e,
   Snapshot: 0x0f,
   EdgeReverse: 0x10,
+  /** Retired records by the position that retired them, so compaction finds the ones it may drop. */
+  Retired: 0x11,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
+
+/** The highest identifier a partition hands out: six bytes in every key. */
+export const MAX_SEQ = 2 ** 48 - 1;
+
+/** Bytes an identifier takes at the end of a key. */
+export const SEQ_BYTES = 6;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -231,81 +246,71 @@ const readOrderedValue = (bytes: Uint8Array, at: number): { value: OrderedValue;
   }
 };
 
+
+/** Four bytes, refused rather than masked when the value does not fit. */
 const writeU32 = (out: number[], value: number): void => {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new RangeError(`${value} does not fit in four bytes.`);
+  }
   out.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
 };
 
 const readU32 = (bytes: Uint8Array, at: number): number =>
   ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
 
-const build = (tag: Tag, write: (out: number[]) => void): Uint8Array => {
-  const out: number[] = [tag];
-  write(out);
+/** An identifier as six big-endian bytes. Above `MAX_SEQ` is refused, never wrapped. */
+const writeSeq = (out: number[], seq: number): void => {
+  if (!Number.isInteger(seq) || seq < 0 || seq > MAX_SEQ) {
+    throw new RangeError(`${seq} is not an identifier: identifiers run from 0 to ${MAX_SEQ}.`);
+  }
+  const high = Math.floor(seq / 2 ** 32);
+  out.push((high >>> 8) & 0xff, high & 0xff);
+  writeU32(out, seq >>> 0);
+};
+
+const readSeq = (bytes: Uint8Array, at: number): number =>
+  ((bytes[at]! << 8) | bytes[at + 1]!) * 2 ** 32 + readU32(bytes, at + 2);
+
+/** A position or counter as eight big-endian bytes, up to the largest safe integer. */
+const writeU64 = (out: number[], value: number): void => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${value} is not a position: positions are safe non-negative integers.`);
+  }
+  writeU32(out, Math.floor(value / 2 ** 32));
+  writeU32(out, value >>> 0);
+};
+
+const readU64 = (bytes: Uint8Array, at: number): number =>
+  readU32(bytes, at) * 2 ** 32 + readU32(bytes, at + 4);
+
+/** An identifier as the bytes a key ends with. */
+export const seqBytes = (seq: number): Uint8Array => {
+  const out: number[] = [];
+  writeSeq(out, seq);
   return Uint8Array.from(out);
 };
 
-/**
- * `[tag][column][value][seq]` — one posting per value, in value order.
- *
- * Unlike the column lens, which answers equality, this one answers order: a
- * range is a contiguous run of keys, and so is a page of it in either
- * direction. Equal values tie-break by identifier, which makes the order total
- * and a page boundary exact.
- */
-export const orderedKey = (column: string, value: OrderedValue, seq: number): Uint8Array =>
-  build(Tag.Ordered, (out) => {
-    writeString(out, column);
-    writeOrderedValue(out, value);
-    writeU32(out, seq);
-  });
+/** The identifier six bytes hold, wherever they sit. */
+export const readSeqAt = (bytes: Uint8Array, at: number): number => readSeq(bytes, at);
 
-/** Every value of one column, in order. */
-export const orderedColumnPrefix = (column: string): Uint8Array =>
-  build(Tag.Ordered, (out) => writeString(out, column));
-
-/**
- * Every object holding exactly this value in the column.
- *
- * No value's encoding is a prefix of another's — numbers are fixed-width and
- * strings and bytes are terminated — so this range never reaches a longer one.
- */
-export const orderedValuePrefix = (column: string, value: OrderedValue): Uint8Array =>
-  build(Tag.Ordered, (out) => {
-    writeString(out, column);
-    writeOrderedValue(out, value);
-  });
-
-/** The column, value and identifier an ordered key records. */
-export const decodeOrderedKey = (
-  key: Uint8Array,
-): { readonly column: string; readonly value: OrderedValue; readonly seq: number } => {
-  const column = readString(key, 1);
-  const { value } = readOrderedValue(key, column.next);
-  return { column: column.value, value, seq: readU32(key, key.length - 4) };
+/** A counter as the eight bytes a meta value holds. */
+export const u64Bytes = (value: number): Uint8Array => {
+  const out: number[] = [];
+  writeU64(out, value);
+  return Uint8Array.from(out);
 };
 
-/**
- * The run of one column holding values of the same kind as `value`.
- *
- * What a one-sided range is held within: `lt(5)` asks about numbers below
- * five, not about the booleans that happen to sort below every number.
- */
-export const orderedKindRange = (
-  column: string,
-  value: OrderedValue,
-): { readonly start: Uint8Array; readonly end: Uint8Array } => {
-  const [first, last] = kindOf(value);
-  return {
-    start: build(Tag.Ordered, (out) => {
-      writeString(out, column);
-      out.push(first);
-    }),
-    end: build(Tag.Ordered, (out) => {
-      writeString(out, column);
-      out.push(last + 1);
-    }),
-  };
-};
+/** The counter eight bytes hold. */
+export const readU64At = (bytes: Uint8Array, at: number): number => readU64(bytes, at);
+
+/** The trailing identifier of a posting key, whatever precedes it. */
+export const seqOf = (key: Uint8Array): number => readSeq(key, key.length - SEQ_BYTES);
+
+/** The identifier a `[etype][src][dst]` edge key points at. */
+export const dstOf = (key: Uint8Array): number => readSeq(key, key.length - SEQ_BYTES);
+
+/** The identifier a `[etype][dst][src]` reverse edge key points at. */
+export const srcOf = (key: Uint8Array): number => readSeq(key, key.length - SEQ_BYTES);
 
 /** Whether two values are of one kind, and so comparable the way a one-sided range compares them. */
 export const sameOrderedKind = (a: OrderedValue, b: OrderedValue): boolean =>
@@ -395,203 +400,286 @@ export const decodeOrderedTuple = (
   return out;
 };
 
-/**
- * `[Snapshot][seq]` — one live record as of the position the snapshot covers.
- *
- * Outside both the state and the derived tags on purpose: a rebuild clears
- * those and re-derives them, and it would be clearing what it is rebuilding
- * from. A snapshot is neither state nor a lens; it is a copy of state, kept so
- * that history cut away by compaction is not the only way back.
- */
-export const snapshotKey = (seq: number): Uint8Array =>
-  build(Tag.Snapshot, (out) => writeU32(out, seq));
 
-export const snapshotPrefix = (): Uint8Array => Uint8Array.from([Tag.Snapshot]);
-
-/** `[tag][seq]` — the payload and its manifest, addressed by identifier. */
-export const payloadKey = (seq: number): Uint8Array =>
-  build(Tag.Payload, (out) => writeU32(out, seq));
-
-export const manifestKey = (seq: number): Uint8Array =>
-  build(Tag.Manifest, (out) => writeU32(out, seq));
-
-/** `[tag][field][term][seq]` — a prefix scan of field+term is the posting list. */
-export const termKey = (field: string, term: string, seq: number): Uint8Array =>
-  build(Tag.Term, (out) => {
-    writeString(out, field);
-    writeString(out, term);
-    writeU32(out, seq);
-  });
-
-export const termPrefix = (field: string, term: string): Uint8Array =>
-  build(Tag.Term, (out) => {
-    writeString(out, field);
-    writeString(out, term);
-  });
-
-/** `[tag][field][escaped prefix without 0x00]` — a prefix scan covers any term starting with prefix. */
-export const termPrefixKey = (field: string, prefix: string): Uint8Array =>
-  build(Tag.Term, (out) => {
-    writeString(out, field);
-    writeEscapedPrefix(out, encoder.encode(prefix));
-  });
-
-/** Extract field and term from a term posting key or segment key. */
-export const readTermKey = (key: Uint8Array): { field: string; term: string } | undefined => {
-  if (key.length < 2) return undefined;
-  if (key[0] !== Tag.Term && key[0] !== Tag.Segment) return undefined;
-  try {
-    const f = readString(key, 1);
-    const t = readString(key, f.next);
-    return { field: f.value, term: t.value };
-  } catch {
-    return undefined;
-  }
+/** `[Shard][name]` — one of the shard's own records. */
+export const shardMetaKey = (name: string): Uint8Array => {
+  const out: number[] = [Space.Shard];
+  writeString(out, name);
+  return Uint8Array.from(out);
 };
 
-export const measureKey = (column: string, seq: number): Uint8Array =>
-  build(Tag.Measure, (out) => {
-    writeString(out, column);
-    writeU32(out, seq);
-  });
+/** Where every partition's range begins. */
+export const partitionSpace = (): Uint8Array => Uint8Array.of(Space.Partition);
 
-export const measurePrefix = (column: string): Uint8Array =>
-  build(Tag.Measure, (out) => writeString(out, column));
-
-export const edgeKey = (edgeType: string, src: number, dst: number): Uint8Array =>
-  build(Tag.Edge, (out) => {
-    writeString(out, edgeType);
-    writeU32(out, src);
-    writeU32(out, dst);
-  });
-
-export const edgePrefix = (edgeType: string, src: number): Uint8Array =>
-  build(Tag.Edge, (out) => {
-    writeString(out, edgeType);
-    writeU32(out, src);
-  });
-
-export const reverseEdgeKey = (edgeType: string, dst: number, src: number): Uint8Array =>
-  build(Tag.EdgeReverse, (out) => {
-    writeString(out, edgeType);
-    writeU32(out, dst);
-    writeU32(out, src);
-  });
-
-export const reverseEdgePrefix = (edgeType: string, dst: number): Uint8Array =>
-  build(Tag.EdgeReverse, (out) => {
-    writeString(out, edgeType);
-    writeU32(out, dst);
-  });
-
-/** `[tag][namespace][key]` → seq. The caller's own name for a record. */
-export const identityKey = (namespace: string, key: string): Uint8Array =>
-  build(Tag.Identity, (out) => {
-    writeString(out, namespace);
-    writeString(out, key);
-  });
-
-/** Every identity in one namespace, in caller-key byte order. */
-export const identityPrefix = (namespace: string): Uint8Array =>
-  build(Tag.Identity, (out) => writeString(out, namespace));
-
-/** Every identity whose caller key starts with `prefix`. */
-export const identityNamePrefix = (namespace: string, prefix: string): Uint8Array =>
-  build(Tag.Identity, (out) => {
-    writeString(out, namespace);
-    writeEscapedPrefix(out, encoder.encode(prefix));
-  });
-
-/** The reverse binding, so retraction can clear an identity it was not given. */
-export const identityBySeqKey = (seq: number): Uint8Array =>
-  build(Tag.IdentityBySeq, (out) => writeU32(out, seq));
-
-export const metaKey = (name: string): Uint8Array =>
-  build(Tag.Meta, (out) => writeString(out, name));
-
-/** Events are read in position order, so the position is the key. */
-export const eventKey = (position: number): Uint8Array =>
-  build(Tag.Event, (out) => writeU32(out, position));
-
-export const eventPrefix = (): Uint8Array => Uint8Array.from([Tag.Event]);
-
-/**
- * A sealed or retracted posting, addressed by the live key it shadows.
- *
- * Both tiers are built by *prefixing* a live posting key rather than by
- * re-encoding its fields, which keeps the lens tag inside the key. Terms,
- * columns and edges therefore stay as disjoint under `Segment` as they are
- * under their own tags, and every lens gets both tiers without a key function
- * of its own — including any lens added later.
- */
-const under = (tag: Tag, key: Uint8Array): Uint8Array => {
-  const out = new Uint8Array(key.length + 1);
-  out[0] = tag;
-  out.set(key, 1);
-  return out;
+/** The range one partition owns: `[Partition][name]`. */
+export const partitionPrefix = (partition: string): Uint8Array => {
+  const out: number[] = [Space.Partition];
+  writeString(out, partition);
+  return Uint8Array.from(out);
 };
 
+/** The partition a key in the partition space belongs to. */
+export const partitionOf = (key: Uint8Array): string => readString(key, 1).value;
+
+/** Every key one partition writes, built under its prefix. */
+export interface PartitionKeys {
+  readonly partition: string;
+  /** `[Partition][name]`: the whole range, for copying or removing it. */
+  readonly prefix: Uint8Array;
+  /** Every key under one tag. */
+  readonly tag: (tag: Tag) => Uint8Array;
+
+  /** `[Record][seq]` — the record: one read is the whole of it. */
+  readonly record: (seq: number) => Uint8Array;
+  /** `[Retired][position][seq]` — a retired record, by the position that retired it. */
+  readonly retired: (position: number, seq: number) => Uint8Array;
+  /** The first retired key past `position`: a scan up to it covers everything retired at or before. */
+  readonly retiredAfter: (position: number) => Uint8Array;
+
+  /** `[Identity][namespace][key]` → seq. The caller's own name for a record. */
+  readonly identity: (namespace: string, key: string) => Uint8Array;
+  /** Every identity in one namespace, in caller-key byte order. */
+  readonly identityPrefix: (namespace: string) => Uint8Array;
+  /** Every identity whose caller key starts with `prefix`. */
+  readonly identityNamePrefix: (namespace: string, prefix: string) => Uint8Array;
+  readonly decodeIdentity: (key: Uint8Array) => { namespace: string; key: string };
+
+  readonly meta: (name: string) => Uint8Array;
+
+  /** `[Event][position]` — events are read in position order, so the position is the key. */
+  readonly event: (position: number) => Uint8Array;
+  readonly positionOf: (key: Uint8Array) => number;
+
+  /** `[Snapshot][id][seq]` — one live record as of the position snapshot `id` covers. */
+  readonly snapshot: (id: number, seq: number) => Uint8Array;
+  readonly snapshotPrefix: (id: number) => Uint8Array;
+
+  /** `[Term][field][term][seq]` — a prefix scan of field and term is the posting list. */
+  readonly term: (field: string, term: string, seq: number) => Uint8Array;
+  readonly termPrefix: (field: string, term: string) => Uint8Array;
+  /** `[Term][field][escaped prefix]` — covers every term starting with `prefix`. */
+  readonly termPrefixKey: (field: string, prefix: string) => Uint8Array;
+  /** Field and term of a term posting key or of the segment key standing for one. */
+  readonly readTermKey: (key: Uint8Array) => { field: string; term: string } | undefined;
+
+  /** `[Ordered][column][value][seq]` — one posting per value, in value order. */
+  readonly ordered: (column: string, value: OrderedValue, seq: number) => Uint8Array;
+  readonly orderedColumnPrefix: (column: string) => Uint8Array;
+  readonly orderedValuePrefix: (column: string, value: OrderedValue) => Uint8Array;
+  readonly orderedKindRange: (column: string, value: OrderedValue) => {
+    readonly start: Uint8Array;
+    readonly end: Uint8Array;
+  };
+  readonly decodeOrdered: (key: Uint8Array) => {
+    readonly column: string;
+    readonly value: OrderedValue;
+    readonly seq: number;
+  };
+
+  readonly measure: (column: string, seq: number) => Uint8Array;
+  readonly measurePrefix: (column: string) => Uint8Array;
+
+  readonly edge: (edgeType: string, src: number, dst: number) => Uint8Array;
+  readonly edgePrefix: (edgeType: string, src: number) => Uint8Array;
+  readonly reverseEdge: (edgeType: string, dst: number, src: number) => Uint8Array;
+  readonly reverseEdgePrefix: (edgeType: string, dst: number) => Uint8Array;
+
+  /** `[Segment][live prefix][index]` — one blob per 65536 identifiers. */
+  readonly segment: (livePrefix: Uint8Array, index: number) => Uint8Array;
+  readonly segmentPrefix: (livePrefix: Uint8Array) => Uint8Array;
+  readonly segmentIndexOf: (key: Uint8Array) => number;
+  /** The live prefix a segment key stands for. */
+  readonly liveOfSegment: (key: Uint8Array) => Uint8Array;
+
+  /** A posting removed from a lens that a sealed blob still claims. */
+  readonly tombstone: (postingKey: Uint8Array) => Uint8Array;
+  readonly tombstonePrefix: (livePrefix: Uint8Array) => Uint8Array;
+  /** The posting key a tombstone shadows. */
+  readonly liveOfTombstone: (key: Uint8Array) => Uint8Array;
+
+  /** `[Dirty][live prefix][segment]` — a seal group written since the last seal. */
+  readonly dirty: (livePrefix: Uint8Array, segment: number) => Uint8Array;
+  /** The live prefix and segment a dirty mark names. */
+  readonly liveOfDirty: (key: Uint8Array) => { readonly livePrefix: Uint8Array; readonly segment: number };
+}
+
 /**
- * `[Dirty][live prefix][segment]` — a seal group written since the last seal.
+ * The keys of one partition.
  *
- * Once a store has been sealed, a posting write marks the group it lands in —
- * one lens prefix within one segment span — so the next seal visits the groups
- * that changed instead of every posting still live. A posting an earlier seal
- * declined as too sparse would otherwise be read again by every seal after it.
+ * Built once per partition handle: the prefix is computed here and every key
+ * starts with it. Sealed and retracted postings are built by inserting their
+ * tier's tag between the prefix and the live key's own tag, rather than by
+ * re-encoding its fields, so terms, columns and edges stay as disjoint under
+ * `Segment` as they are under their own tags, and a lens added later gets both
+ * tiers without a key function of its own.
  */
-export const dirtyKey = (livePrefix: Uint8Array, segment: number): Uint8Array => {
-  const out = new Uint8Array(livePrefix.length + 5);
-  out[0] = Tag.Dirty;
-  out.set(livePrefix, 1);
-  new DataView(out.buffer).setUint32(livePrefix.length + 1, segment);
-  return out;
-};
+export const partitionKeys = (partition: string): PartitionKeys => {
+  const prefix = partitionPrefix(partition);
+  const head = Array.from(prefix);
+  const at = prefix.length;
 
-/** `[Segment][live prefix][index]` — one blob per 65536 identifiers. */
-export const segmentKey = (livePrefix: Uint8Array, index: number): Uint8Array => {
-  const head = under(Tag.Segment, livePrefix);
-  const out = new Uint8Array(head.length + 4);
-  out.set(head);
-  const at: number[] = [];
-  writeU32(at, index);
-  out.set(Uint8Array.from(at), head.length);
-  return out;
-};
+  const build = (tag: Tag, write: (out: number[]) => void): Uint8Array => {
+    const out: number[] = [...head, tag];
+    write(out);
+    return Uint8Array.from(out);
+  };
 
-export const segmentPrefix = (livePrefix: Uint8Array): Uint8Array =>
-  under(Tag.Segment, livePrefix);
+  /** A live key moved into another tier: the tier's tag goes in after the prefix. */
+  const shadow = (tag: Tag, live: Uint8Array): Uint8Array => {
+    const out = new Uint8Array(live.length + 1);
+    out.set(prefix);
+    out[at] = tag;
+    out.set(live.subarray(at), at + 1);
+    return out;
+  };
 
-export const segmentIndexOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+  /** The live key a shadow stands for, `trailing` bytes of tier bookkeeping removed. */
+  const unshadow = (key: Uint8Array, trailing: number): Uint8Array => {
+    const out = new Uint8Array(key.length - 1 - trailing);
+    out.set(prefix);
+    out.set(key.subarray(at + 1, key.length - trailing), at);
+    return out;
+  };
 
-/**
- * A posting removed from a lens that a sealed blob still claims.
- *
- * Sealed blobs are immutable, so a retraction cannot reach into one. It leaves
- * a tombstone instead, and the read subtracts it. Only postings below the seal
- * high-water mark need one: anything newer exists only in the live tier, where
- * deleting the key is enough.
- */
-export const tombstoneKey = (postingKey: Uint8Array): Uint8Array =>
-  under(Tag.Tombstone, postingKey);
+  const withU32 = (key: Uint8Array, value: number): Uint8Array => {
+    const tail: number[] = [];
+    writeU32(tail, value);
+    const out = new Uint8Array(key.length + 4);
+    out.set(key);
+    out.set(tail, key.length);
+    return out;
+  };
 
-export const tombstonePrefix = (livePrefix: Uint8Array): Uint8Array =>
-  under(Tag.Tombstone, livePrefix);
+  const ordered = (column: string, value: OrderedValue, seq: number) =>
+    build(Tag.Ordered, (out) => {
+      writeString(out, column);
+      writeOrderedValue(out, value);
+      writeSeq(out, seq);
+    });
 
-/** The trailing identifier of a posting key, whatever precedes it. */
-export const seqOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+  return {
+    partition,
+    prefix,
+    tag: (tag) => Uint8Array.from([...head, tag]),
 
-/** The identifier a `[tag][etype][src][dst]` edge key points at. */
-export const dstOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+    record: (seq) => build(Tag.Record, (out) => writeSeq(out, seq)),
+    retired: (position, seq) => build(Tag.Retired, (out) => {
+      writeU64(out, position);
+      writeSeq(out, seq);
+    }),
+    retiredAfter: (position) => build(Tag.Retired, (out) => writeU64(out, position + 1)),
 
-/** The identifier a `[tag][etype][dst][src]` reverse edge key points at. */
-export const srcOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+    identity: (namespace, key) => build(Tag.Identity, (out) => {
+      writeString(out, namespace);
+      writeString(out, key);
+    }),
+    identityPrefix: (namespace) => build(Tag.Identity, (out) => writeString(out, namespace)),
+    identityNamePrefix: (namespace, name) => build(Tag.Identity, (out) => {
+      writeString(out, namespace);
+      writeEscapedPrefix(out, encoder.encode(name));
+    }),
+    decodeIdentity: (key) => {
+      const namespace = readString(key, at + 1);
+      const name = readString(key, namespace.next);
+      return { namespace: namespace.value, key: name.value };
+    },
 
-export const positionOf = (key: Uint8Array): number => readU32(key, 1);
+    meta: (name) => build(Tag.Meta, (out) => writeString(out, name)),
 
-export const decodeIdentity = (key: Uint8Array): { namespace: string; key: string } => {
-  const namespace = readString(key, 1);
-  const name = readString(key, namespace.next);
-  return { namespace: namespace.value, key: name.value };
+    event: (position) => build(Tag.Event, (out) => writeU64(out, position)),
+    positionOf: (key) => readU64(key, at + 1),
+
+    snapshot: (id, seq) => build(Tag.Snapshot, (out) => {
+      writeU64(out, id);
+      writeSeq(out, seq);
+    }),
+    snapshotPrefix: (id) => build(Tag.Snapshot, (out) => writeU64(out, id)),
+
+    term: (field, term, seq) => build(Tag.Term, (out) => {
+      writeString(out, field);
+      writeString(out, term);
+      writeSeq(out, seq);
+    }),
+    termPrefix: (field, term) => build(Tag.Term, (out) => {
+      writeString(out, field);
+      writeString(out, term);
+    }),
+    termPrefixKey: (field, termPrefix) => build(Tag.Term, (out) => {
+      writeString(out, field);
+      writeEscapedPrefix(out, encoder.encode(termPrefix));
+    }),
+    readTermKey: (key) => {
+      if (key.length < at + 2) return undefined;
+      const tag = key[at];
+      const from = tag === Tag.Term ? at + 1 : tag === Tag.Segment && key[at + 1] === Tag.Term ? at + 2 : -1;
+      if (from < 0) return undefined;
+      const field = readString(key, from);
+      const term = readString(key, field.next);
+      return { field: field.value, term: term.value };
+    },
+
+    ordered,
+    orderedColumnPrefix: (column) => build(Tag.Ordered, (out) => writeString(out, column)),
+    orderedValuePrefix: (column, value) => build(Tag.Ordered, (out) => {
+      writeString(out, column);
+      writeOrderedValue(out, value);
+    }),
+    orderedKindRange: (column, value) => {
+      const [first, last] = kindOf(value);
+      return {
+        start: build(Tag.Ordered, (out) => {
+          writeString(out, column);
+          out.push(first);
+        }),
+        end: build(Tag.Ordered, (out) => {
+          writeString(out, column);
+          out.push(last + 1);
+        }),
+      };
+    },
+    decodeOrdered: (key) => {
+      const column = readString(key, at + 1);
+      const { value } = readOrderedValue(key, column.next);
+      return { column: column.value, value, seq: seqOf(key) };
+    },
+
+    measure: (column, seq) => build(Tag.Measure, (out) => {
+      writeString(out, column);
+      writeSeq(out, seq);
+    }),
+    measurePrefix: (column) => build(Tag.Measure, (out) => writeString(out, column)),
+
+    edge: (edgeType, src, dst) => build(Tag.Edge, (out) => {
+      writeString(out, edgeType);
+      writeSeq(out, src);
+      writeSeq(out, dst);
+    }),
+    edgePrefix: (edgeType, src) => build(Tag.Edge, (out) => {
+      writeString(out, edgeType);
+      writeSeq(out, src);
+    }),
+    reverseEdge: (edgeType, dst, src) => build(Tag.EdgeReverse, (out) => {
+      writeString(out, edgeType);
+      writeSeq(out, dst);
+      writeSeq(out, src);
+    }),
+    reverseEdgePrefix: (edgeType, dst) => build(Tag.EdgeReverse, (out) => {
+      writeString(out, edgeType);
+      writeSeq(out, dst);
+    }),
+
+    segment: (livePrefix, index) => withU32(shadow(Tag.Segment, livePrefix), index),
+    segmentPrefix: (livePrefix) => shadow(Tag.Segment, livePrefix),
+    segmentIndexOf: (key) => readU32(key, key.length - 4),
+    liveOfSegment: (key) => unshadow(key, 4),
+
+    tombstone: (postingKey) => shadow(Tag.Tombstone, postingKey),
+    tombstonePrefix: (livePrefix) => shadow(Tag.Tombstone, livePrefix),
+    liveOfTombstone: (key) => unshadow(key, 0),
+
+    dirty: (livePrefix, segment) => withU32(shadow(Tag.Dirty, livePrefix), segment),
+    liveOfDirty: (key) => ({ livePrefix: unshadow(key, 4), segment: readU32(key, key.length - 4) }),
+  };
 };
 
 /** Bytewise comparison, matching how an engine orders its keys. */

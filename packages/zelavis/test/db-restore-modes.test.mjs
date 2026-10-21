@@ -174,28 +174,27 @@ test("a merge lands over a record whose local history has moved on", async (t) =
   );
 });
 
-test("a backup belonging to another tenant is refused however it is labelled", async (t) => {
+test("a backup is restored into the tenant it runs for, and never reaches the one it came from", async (t) => {
   await withTenant(t, (tenant, db) =>
     Effect.gen(function* () {
       const backup = yield* original(tenant);
       const fresh = db.forTenant("bravo");
 
+      // The label is checked, so a backup is not restored somewhere by mistake.
       const labelled = yield* Effect.flip(fresh.backups.restoreTenant(backup));
       assert.equal(labelled._tag, "BackupTenantMismatch");
       assert.equal(labelled.received, "acme");
 
-      // Relabelling the envelope does not change whose records are inside. It
-      // used to be enough to get past the check, and under a merge that meant
-      // looking those names up and writing over the tenant they really belong
-      // to — which shares this shard.
+      // Relabelling it is a deliberate copy. The records inside are named
+      // within a partition, and a restore writes into the partition of the
+      // tenant it runs for, so the copy lands in bravo — even merged — and acme,
+      // which shares this shard, is not touched.
       const relabelled = { ...backup, tenantId: "bravo" };
-      const inside = yield* Effect.flip(
-        fresh.backups.restoreTenant(relabelled, { into: "merge" }));
-      assert.equal(inside._tag, "BackupTenantMismatch");
-      assert.equal(inside.received, "acme");
-
-      // And acme still reads as it did.
+      yield* fresh.backups.restoreTenant(relabelled, { into: "merge" });
+      assert.deepEqual(yield* titles(fresh), ["p1:Atlas revised:v2", "p2:Beacon:v1"]);
       assert.deepEqual(yield* titles(tenant), ["p1:Atlas revised:v2", "p2:Beacon:v1"]);
+      yield* fresh.documents.update({ collection: "posts", id: "p2", data: { title: "Beacon copied" } });
+      assert.deepEqual(yield* titles(tenant), ["p1:Atlas revised:v2", "p2:Beacon:v1"], "the copy is bravo's own");
     }),
   );
 });

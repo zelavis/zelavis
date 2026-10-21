@@ -40,6 +40,17 @@ Tenant identity is not accepted inside document or event inputs. Binding it
 once prevents a caller from accidentally mixing data from different Tenants in
 one operation sequence.
 
+Each Tenant is a partition of its shard: everything it stores lives in its own
+range of keys, with its own identifiers and its own event log. Nothing written
+for one Tenant is reachable through another Tenant's handle, and a Tenant moved
+to another shard keeps its identifiers and log positions, so its cursors and
+projection checkpoints carry on.
+
+A transaction is atomic within one Tenant. A batch (`documents.write`) commits
+together or not at all; there is no write that spans Tenants. Work that must
+change several Tenants writes each Tenant's part separately, with an
+`idempotencyKey` so a retry is safe.
+
 ## API surface
 
 The logical database API deliberately does not expose a physical driver,
@@ -54,9 +65,10 @@ SQLite filename, or raw SQL connection.
 | `capabilities` | Logical database capabilities such as Tenant routing. |
 | `context` | Runtime configuration and Node identity. |
 
-Low-level engine adapters still expose physical SQL on `DatabaseDriver.sql`
-for explicitly targeted administration and adapter tests. It is not part of
-`DatabaseApi`, because one logical App database can span several SQLite files.
+Below this API, storage is an ordered key-value engine — SQLite by default,
+with libSQL, RocksDB and LMDB as optional engines — one engine per shard. There
+is no SQL surface: one logical App database spans several shard files, and every
+write goes through the documents API.
 
 ## Documents
 
@@ -71,8 +83,9 @@ tenantDb.documents.update(input)
 tenantDb.documents.delete(input)
 ```
 
-Documents are JSON objects stored in named per-collection tables. Writes append
-an event before updating the materialized collection table.
+Documents are JSON objects. Each write appends its event and updates the
+document's record and indexes in one atomic batch, so a crash leaves either the
+whole write or none of it.
 
 ## Events and cursors
 
@@ -81,17 +94,28 @@ const page = await tenantDb.events.read({
   collection: 'posts',
   limit: 100,
 });
+// page.events, page.cursor, page.more
 
 const nextPage = await tenantDb.events.read({
   collection: 'posts',
-  after: page.at(-1)?.cursor,
+  after: page.cursor,
   limit: 100,
 });
 ```
 
+A read looks at a bounded stretch of the log and returns `cursor`, the point
+where it stopped. That point is past events that did not match as well as those
+that did, so continue from `page.cursor` rather than from the last event's
+cursor: a long run of writes elsewhere would otherwise be read again on every
+call. `more` is true when the read stopped before the end of the log, and a
+page can be empty while `more` is true. The KV change feed
+(`kv.namespace(name).changes()`, `POST …/kv/:namespace/changes`,
+`zelavis data kv-changes`) returns the same `{ changes, cursor, more }` shape.
+
 `DatabaseEvent.cursor` is an opaque, versioned continuation token. Persist it
 and pass it back unchanged. Do not parse, compare, increment, or assume it is a
-global integer: the topology router binds cursors to the Tenant's virtual shard.
+global integer: it names a position in the Tenant's own log, which moves with
+the Tenant and means nothing in another Tenant's.
 
 ## Schemas and projections
 

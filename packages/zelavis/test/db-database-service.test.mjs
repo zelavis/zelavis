@@ -231,6 +231,26 @@ test("KV routes read and write the same collection records", async (t) => {
     body: { tenantId: "acme", prefix: "the" },
   });
   assert.deepEqual(page.body.entries.map((entry) => entry.key), ["theme"]);
+
+  const changesRoute = routeOf(service, "database.kv.changes");
+  const changes = await call(changesRoute, {
+    service: api,
+    params: { namespace: "settings" },
+    body: { tenantId: "acme" },
+  });
+  assert.deepEqual(changes.body.changes.map((change) => [change.type, change.key]), [["set", "theme"]]);
+  assert.equal(changes.body.more, false);
+  assert.deepEqual(
+    changes.body,
+    await api.forTenant("acme").kv.changes("settings"),
+    "HTTP answers exactly what the JS API answers",
+  );
+  const caughtUp = await call(changesRoute, {
+    service: api,
+    params: { namespace: "settings" },
+    body: { tenantId: "acme", after: changes.body.cursor },
+  });
+  assert.deepEqual(caughtUp.body, { changes: [], cursor: changes.body.cursor, more: false });
 });
 
 test("schemas are saved, activated and listed per Tenant", async (t) => {

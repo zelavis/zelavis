@@ -2,9 +2,10 @@ import { integrationValue, unwrapIntegrationResult, presentProtocol, present } f
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
-import { openStoreOverKv } from "../kv-store.js";
+import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
-import type { ObjectStoreApi } from "../store.js";
+import type { ShardStoreApi } from "../store.js";
+import type { ShardId } from "../topology.js";
 
 /**
  * The subset of `@libsql/client` this driver uses.
@@ -214,8 +215,8 @@ export const makeLibsqlRemoteEngine = (
  * keys is a hop per page.
  */
 export const makeLibsqlRemoteStore = (
-  partition: PartitionKey,
-  options: LibsqlRemoteStoreOptions,
-): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
-  Effect.flatMap(makeLibsqlRemoteEngine(partition, options), (engine) =>
-    openStoreOverKv(partition, engine));
+  shard: ShardId,
+  options: LibsqlRemoteStoreOptions & OpenShardOptions,
+): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
+  Effect.flatMap(makeLibsqlRemoteEngine(shard, options), (engine) =>
+    openShardOverKv(shard, engine, options));

@@ -8,8 +8,8 @@ import {
   RESERVED_COLLECTION_PREFIX,
 } from "./naming.js";
 import {
-  IDEMPOTENCY_NAMESPACE_PREFIX, MOVE_FENCE_NAMESPACE, TENANT_COLUMN, TENANT_MARKER,
-  TENANT_NAMESPACE,
+  COLLECTION_NAMESPACE, documentNamespace, IDEMPOTENCY_NAMESPACE, MOVE_FENCE_NAMESPACE,
+  TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE,
 } from "./tenancy.js";
 import {
   CollectionExists,
@@ -707,10 +707,10 @@ interface Receipt {
   readonly at: string;
 }
 
-const idempotencyNs = (tenant: TenantId) => `${IDEMPOTENCY_NAMESPACE_PREFIX}${tenant}`;
+const idempotencyNs = () => IDEMPOTENCY_NAMESPACE;
 
-/** Marks a receipt, so this tenant's can be found without reading the shard. */
-const idempotencyColumn = (tenant: TenantId) => `${IDEMPOTENCY_NAMESPACE_PREFIX}${tenant}`;
+/** Marks a receipt, so a partition's can be found without reading every record. */
+const idempotencyColumn = () => IDEMPOTENCY_NAMESPACE;
 const RECEIPT_MARKER = "\u0000receipt";
 
 /**
@@ -736,17 +736,33 @@ const fingerprintOf = (request: unknown): string =>
 /**
  * Tenant scoping is structural, not a filter.
  *
- * Several tenants share a physical shard, so their records share one `Seq`
- * space. Rather than appending a tenant predicate to every query — which is a
- * thing a caller can forget, and which silently returns another tenant's rows
- * when they do — the tenant is part of every namespace and every lens key. A
- * query built for one tenant addresses a key space the others are not in.
+ * Several tenants share a physical shard, but each owns a partition: a range
+ * of the shard's keyspace that begins with its name, with its own identifiers
+ * and its own log. Rather than appending a tenant predicate to every query —
+ * which is a thing a caller can forget, and which silently returns another
+ * tenant's rows when they do — this handle reads and writes only its own
+ * partition, so the names below need only say which collection they mean.
  */
-const collectionNs = (tenant: TenantId) => `zv.collection/${tenant}`;
-const documentNs = (tenant: TenantId, collection: string) => `doc/${tenant}/${collection}`;
-const collectionColumn = (tenant: TenantId) => `zv.collection/${tenant}`;
-const columnFor = (tenant: TenantId, collection: string, path: string) =>
-  `${tenant}/${collection}.${path}`;
+const collectionNs = () => COLLECTION_NAMESPACE;
+const documentNs = (collection: string) => documentNamespace(collection);
+const collectionColumn = () => COLLECTION_NAMESPACE;
+const columnFor = (collection: string, path: string) => `${collection}.${path}`;
+
+/**
+ * The term-lens field one analyzed path posts its words under.
+ *
+ * A term posting is found by its field alone, so the field has to name the
+ * collection the way a column does. Under a bare path every collection's
+ * `title` would share one posting list, and a search with no other clause
+ * would answer from all of them.
+ */
+const textFieldFor = (collection: string, path: string) => `${collection}.${path}`;
+
+/**
+ * The term-lens field one spatial path posts its cells under. A collection name
+ * holds no `@`, so this never meets a text field, whatever the paths are.
+ */
+const cellFieldFor = (collection: string, path: string) => `${collection}@${path}`;
 
 /**
  * The ordered-lens column one index keeps its postings in.
@@ -756,8 +772,8 @@ const columnFor = (tenant: TenantId, collection: string, path: string) =>
  * recreated under the same name must never read them as its own. A collection
  * name holds no `:` or `.`, so this never meets a field's column.
  */
-const indexColumnFor = (tenant: TenantId, collection: string, name: string) =>
-  `${tenant}/${collection}:${name}#${crypto.randomUUID().slice(0, 8)}`;
+const indexColumnFor = (collection: string, name: string) =>
+  `${collection}:${name}#${crypto.randomUUID().slice(0, 8)}`;
 
 /** An index as the collection record stores it: with the column its postings are in. */
 interface StoredIndex extends CollectionIndex {
@@ -857,14 +873,13 @@ const isScalar = (value: Json | undefined): value is string | number | boolean =
  * it identically, which is a match nobody intends.
  */
 const columnsFor = (
-  tenant: TenantId,
   collection: string,
   data: JsonObject,
 ): Array<readonly [string, OrderedScalar]> => {
-  const out: Array<readonly [string, OrderedScalar]> = [[collectionColumn(tenant), collection]];
+  const out: Array<readonly [string, OrderedScalar]> = [[collectionColumn(), collection]];
   const walk = (value: Json, path: string): void => {
     if (value === null || isScalar(value)) {
-      if (path !== "") out.push([columnFor(tenant, collection, path), value]);
+      if (path !== "") out.push([columnFor(collection, path), value]);
       return;
     }
     if (Array.isArray(value)) return;
@@ -1046,13 +1061,18 @@ const tokenize = (text: string, analyzer: Analyzer): Array<string> => {
 };
 
 /** Every analyzed field's terms, deduplicated: a posting says the term is there, not how often. */
-const termsFor = (analyzer: Analyzer | undefined, data: JsonObject): Array<readonly [string, string]> => {
+const termsFor = (
+  collection: string,
+  analyzer: Analyzer | undefined,
+  data: JsonObject,
+): Array<readonly [string, string]> => {
   if (analyzer === undefined) return [];
   const out = new Map<string, readonly [string, string]>();
   for (const path of analyzer.fields) {
     const value = readPath(data, path);
     if (typeof value !== "string") continue;
-    for (const token of tokenize(value, analyzer)) out.set(`${path}\u0000${token}`, [path, token]);
+    const field = textFieldFor(collection, path);
+    for (const token of tokenize(value, analyzer)) out.set(`${path}\u0000${token}`, [field, token]);
   }
   return [...out.values()];
 };
@@ -1080,6 +1100,7 @@ const geometryAt = (data: JsonObject, path: string): Geometry | undefined => {
  * value is a cell id.
  */
 const cellTermsFor = (
+  collection: string,
   spatial: SpatialIndex | undefined,
   h3: Parameters<typeof cellsFor>[0] | undefined,
   data: JsonObject,
@@ -1089,6 +1110,7 @@ const cellTermsFor = (
   for (const path of spatial.fields) {
     const geometry = geometryAt(data, path);
     if (geometry === undefined) continue;
+    const field = cellFieldFor(collection, path);
     const covering = coveringFor(h3, geometry, spatial.resolution);
     const cells = new Set<string>(covering.cells);
     for (const cell of covering.cells) {
@@ -1096,11 +1118,11 @@ const cellTermsFor = (
         cells.add(h3.cellToParent(cell, level));
       }
     }
-    for (const cell of cells) out.push([`${path}@cell`, cell]);
+    for (const cell of cells) out.push([field, cell]);
     // A shape too large to cover at the declared resolution is indexed coarsely,
     // which a finer query would never meet. The sentinel keeps it a candidate:
     // there are few such documents, and the exact check still decides.
-    if (covering.resolution < spatial.resolution) out.push([`${path}@cell`, COARSE_SENTINEL]);
+    if (covering.resolution < spatial.resolution) out.push([field, COARSE_SENTINEL]);
   }
   return out;
 };
@@ -1261,8 +1283,7 @@ const normalizeEdge = (
  * `~` separates it: a field's column uses `.` and an index's uses `:`, and a
  * collection name holds none of the three, so these three namespaces never meet.
  */
-const measureColumnFor = (tenant: TenantId, collection: string, name: string) =>
-  `${tenant}/${collection}~${name}`;
+const measureColumnFor = (collection: string, name: string) => `${collection}~${name}`;
 
 /** A measure definition in the shape it is stored, or why it cannot be used. */
 const normalizeMeasure = (
@@ -1291,7 +1312,6 @@ const normalizeMeasure = (
  * set an aggregate intersects against.
  */
 const measuresFor = (
-  tenant: TenantId,
   collection: string,
   defined: ReadonlyArray<MeasureDefinition>,
   data: JsonObject,
@@ -1300,7 +1320,7 @@ const measuresFor = (
   for (const measure of defined) {
     const value = readPath(data, measure.path);
     if (typeof value === "number" && Number.isFinite(value)) {
-      out.push([measureColumnFor(tenant, collection, measure.name), value]);
+      out.push([measureColumnFor(collection, measure.name), value]);
     }
   }
   return out;
@@ -1642,7 +1662,8 @@ const withSearch = (plan: Plan, words: Query | undefined): Plan =>
  * The cells go in as ordinary term clauses — united, because a document in any
  * of them is a candidate — and the exact check rides in the residual, so what
  * comes back is what the geometry admits rather than what the covering
- * approximated.
+ * approximated. `field` is the stored cell field (`cellFieldFor`), which
+ * already confines the cells to one tenant's collection.
  */
 const withCells = (
   plan: Plan,
@@ -1651,7 +1672,7 @@ const withCells = (
   exact: DocumentFilter,
 ): Plan => {
   if (cells.length === 0) return { ...plan, residual: [...plan.residual, exact] };
-  const clauses = cells.map((cell) => term(`${field}@cell`, cell));
+  const clauses = cells.map((cell) => term(field, cell));
   const covering = clauses.length === 1 ? clauses[0]! : or(...clauses);
   return {
     query: plan.fields === undefined ? covering : and(plan.query, covering),
@@ -1661,7 +1682,6 @@ const withCells = (
 };
 
 const planQuery = (
-  tenant: TenantId,
   collection: string,
   where: ReadonlyArray<DocumentFilter>,
 ): Plan => {
@@ -1669,7 +1689,7 @@ const planQuery = (
   const residual: DocumentFilter[] = [];
   for (const filter of where) {
     const op = filter.op ?? "eq";
-    const column = columnFor(tenant, collection, filter.path);
+    const column = columnFor(collection, filter.path);
     const value = filter.value as Json;
     const scalar = orderable(value);
     if (op === "eq" && scalar !== undefined) {
@@ -1698,7 +1718,7 @@ const planQuery = (
   return {
     // Field clauses are already confined to the collection (see `fields`), so
     // the collection's own posting is needed only when there are none.
-    query: fields ?? equals(collectionColumn(tenant), collection),
+    query: fields ?? equals(collectionColumn(), collection),
     fields,
     residual,
   };
@@ -2172,8 +2192,21 @@ export const documentsFor = (
   const nextSeq = Effect.orDie(store.nextSeq);
   const resolveQuery = (query: Query): Stream.Stream<Seq> => Stream.orDie(store.resolve(query));
   const termsOf = (field: string, prefix?: string) => Effect.orDie(store.terms(field, prefix));
+  /**
+   * A change that is refused, inside its own transaction, when the tenant is
+   * being moved off this shard.
+   *
+   * The partition admits one writer at a time and the fence is written through
+   * it, so the fence lands either before this check, and the change is refused,
+   * or after this commit, which the move's last catch-up then carries. Checked
+   * before the transaction only, a change could read no fence, wait while the
+   * fence went on and the last catch-up read the log, and land behind both.
+   */
+  const fenced = <A, E>(change: (txn: Txn) => Effect.Effect<A, E>) =>
+    (txn: Txn): Effect.Effect<A, E | TenantMoving> => Effect.flatMap(assertNotMoving, () => change(txn));
+
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
-    Effect.orDie(store.transact(f));
+    Effect.orDie(store.transact(fenced(f)));
 
   const projectionIndexes = new Map<string, VectorProjectionIndex>();
 
@@ -2186,7 +2219,7 @@ export const documentsFor = (
    */
   const receiptFor = (key: string, fingerprint: string, request: string) =>
     Effect.gen(function* () {
-      const seq = yield* lookup(idempotencyNs(tenant), key);
+      const seq = yield* lookup(idempotencyNs(), key);
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
       if (object === undefined) return undefined;
@@ -2217,12 +2250,12 @@ export const documentsFor = (
    */
   const transactChecked = <A, E>(
     change: (txn: Txn) => Effect.Effect<A, E | DbError>,
-  ): Effect.Effect<A, Exclude<E, DbError>> =>
-    store.transact(change).pipe(
+  ): Effect.Effect<A, Exclude<E, DbError> | TenantMoving> =>
+    store.transact(fenced(change)).pipe(
       Effect.catch((error) =>
         STORE_FAILURES.has((error as { readonly _tag: string })._tag)
           ? Effect.die(error)
-          : Effect.fail(error as Exclude<E, DbError>)),
+          : Effect.fail(error as Exclude<E, DbError> | TenantMoving)),
     );
 
   /**
@@ -2242,7 +2275,7 @@ export const documentsFor = (
     request: string,
     change: (txn: Txn) => Effect.Effect<A, E | DbError>,
     remember: (result: A) => boolean = () => true,
-  ): Effect.Effect<A, Exclude<E, DbError> | IdempotencyKeyReused> =>
+  ): Effect.Effect<A, Exclude<E, DbError> | IdempotencyKeyReused | TenantMoving> =>
     Effect.gen(function* () {
       if (key === undefined) return yield* transactChecked(change);
       const seen = yield* receiptFor(key, fingerprint, request);
@@ -2264,7 +2297,7 @@ export const documentsFor = (
 
   const loadCollection = (name: string) =>
     Effect.gen(function* () {
-      const seq = yield* lookup(collectionNs(tenant), name);
+      const seq = yield* lookup(collectionNs(), name);
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
       return object === undefined ? undefined : decode(object.bytes, collectionRecord);
@@ -2315,15 +2348,15 @@ export const documentsFor = (
     });
 
   const transactOrDie = <A>(f: (txn: Txn) => Effect.Effect<A, DbError>): Effect.Effect<A> =>
-    Effect.orDie(store.transact(f));
+    Effect.orDie(store.transact(fenced(f)));
 
   const collectionPut = (txn: Txn, seq: Seq, collection: StoredCollection) =>
     txn.put(seq, encode(collection), {
       terms: [],
-      columns: [[collectionColumn(tenant), COLLECTION_MARKER]],
+      columns: [[collectionColumn(), COLLECTION_MARKER]],
       measures: [],
       edges: [],
-    }, { namespace: collectionNs(tenant), key: collection.name });
+    }, { namespace: collectionNs(), key: collection.name });
 
   /**
    * Record on each target collection the references naming it, in the caller's
@@ -2337,7 +2370,7 @@ export const documentsFor = (
     Effect.gen(function* () {
       for (const name of new Set(references.map((reference) => reference.collection))) {
         const naming = references.filter((reference) => reference.collection === name);
-        const targetSeq = yield* lookup(collectionNs(tenant), name);
+        const targetSeq = yield* lookup(collectionNs(), name);
         const target = targetSeq === undefined ? undefined : yield* loadCollection(name);
         if (targetSeq === undefined || target === undefined) {
           return yield* new InvalidConstraint({
@@ -2357,7 +2390,7 @@ export const documentsFor = (
   /** Remove a reference and its back-reference together, in the caller's transaction. */
   const unlinkReference = (txn: Txn, from: string, name: string) =>
     Effect.gen(function* () {
-      const fromSeq = yield* lookup(collectionNs(tenant), from);
+      const fromSeq = yield* lookup(collectionNs(), from);
       const source = fromSeq === undefined ? undefined : yield* loadCollection(from);
       const reference = source?.references?.find((candidate) => candidate.name === name);
       if (fromSeq === undefined || source === undefined || reference === undefined) return false;
@@ -2371,7 +2404,7 @@ export const documentsFor = (
         return true;
       }
       yield* collectionPut(txn, fromSeq, remaining);
-      const targetSeq = yield* lookup(collectionNs(tenant), reference.collection);
+      const targetSeq = yield* lookup(collectionNs(), reference.collection);
       const target = targetSeq === undefined ? undefined : yield* loadCollection(reference.collection);
       if (targetSeq !== undefined && target !== undefined) yield* collectionPut(txn, targetSeq, unlinked(target));
       return true;
@@ -2387,12 +2420,15 @@ export const documentsFor = (
     edges: ReadonlyArray<readonly [string, Seq]> = [],
     measures: ReadonlyArray<MeasureDefinition> = [],
   ): IndexManifest => ({
-    terms: [...termsFor(analyzer, doc.data), ...cellTermsFor(spatial, h3, doc.data)],
+    terms: [
+      ...termsFor(doc.collection, analyzer, doc.data),
+      ...cellTermsFor(doc.collection, spatial, h3, doc.data),
+    ],
     columns: [
-      ...columnsFor(tenant, doc.collection, doc.data),
+      ...columnsFor(doc.collection, doc.data),
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
     ],
-    measures: measuresFor(tenant, doc.collection, measures, doc.data),
+    measures: measuresFor(doc.collection, measures, doc.data),
     edges: [...edges],
   });
 
@@ -2411,7 +2447,7 @@ export const documentsFor = (
     Effect.gen(function* () {
       const written = pending.byName.get(nameOf(collection, id));
       if (written !== undefined) return written;
-      const seq = yield* lookup(documentNs(tenant, collection), id);
+      const seq = yield* lookup(documentNs(collection), id);
       if (seq === undefined) return undefined;
       return { seq, document: (yield* readDocument(seq)) ?? null };
     });
@@ -2570,7 +2606,7 @@ export const documentsFor = (
         doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells, edges,
         collection?.measures ?? [],
       ), {
-        namespace: documentNs(tenant, doc.collection), key: doc.id,
+        namespace: documentNs(doc.collection), key: doc.id,
       });
       remember(pending, collection, doc, seq);
       const proj = projectionIndexes.get(doc.collection);
@@ -2631,7 +2667,7 @@ export const documentsFor = (
             const reference = from?.references?.find((candidate) => candidate.name === back.reference);
             if (from === undefined || reference === undefined) continue;
             const found = yield* Stream.runCollect(
-              resolveQuery(equals(columnFor(tenant, back.collection, reference.path), doc.id)),
+              resolveQuery(equals(columnFor(back.collection, reference.path), doc.id)),
             );
             for (const held of found) {
               const holder = yield* currentAt(pending, held);
@@ -2842,7 +2878,7 @@ export const documentsFor = (
     from: Position | undefined,
   ): Effect.Effect<Array<Placed>, CursorMismatch> =>
     Effect.gen(function* () {
-      const column = columnFor(tenant, collection, sort.path);
+      const column = columnFor(collection, sort.path);
       // From the lowest value there is, `false`, up to where null begins.
       const values = {
         lower: { value: false, inclusive: true },
@@ -2990,7 +3026,7 @@ export const documentsFor = (
    */
   const rewriteDocuments = (collection: string) =>
     Effect.gen(function* () {
-      const seqs = [...(yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), collection))))];
+      const seqs = [...(yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), collection))))];
       let rewritten = 0;
       for (let at = 0; at < seqs.length; at += REWRITE_CHUNK) {
         rewritten += yield* transactOrDie((txn) =>
@@ -3021,14 +3057,14 @@ export const documentsFor = (
                     links.push([type, seq]);
                     continue;
                   }
-                  const at = yield* lookup(documentNs(tenant, definition.collection), id);
+                  const at = yield* lookup(documentNs(definition.collection), id);
                   if (at !== undefined) links.push([type, at]);
                 }
               }
               yield* txn.put(seq, object.bytes, manifestFor(
                 doc, indexes, analyzer, spatial, cells, links, record?.measures ?? [],
               ), {
-                namespace: documentNs(tenant, collection), key: doc.id,
+                namespace: documentNs(collection), key: doc.id,
               });
               written += 1;
             }
@@ -3171,10 +3207,10 @@ export const documentsFor = (
       // Marked so a tenant's receipts can be swept without walking the shard;
       // they are the one thing here that accumulates with requests rather than
       // with data, so there has to be a way to let them go.
-      columns: [[idempotencyColumn(tenant), RECEIPT_MARKER]],
+      columns: [[idempotencyColumn(), RECEIPT_MARKER]],
       measures: [],
       edges: [],
-    }, { namespace: idempotencyNs(tenant), key: receipt.key });
+    }, { namespace: idempotencyNs(), key: receipt.key });
 
   /**
    * What a `related` clause becomes: filters on the referencing field, or
@@ -3200,7 +3236,7 @@ export const documentsFor = (
         let ids: Array<string>;
         if (clause.id !== undefined) {
           // One named document: read it, and hold it to the clause's filters.
-          const seq = yield* lookup(documentNs(tenant, reference.collection), clause.id);
+          const seq = yield* lookup(documentNs(reference.collection), clause.id);
           const target = seq === undefined ? undefined : yield* readDocument(seq);
           const matching = target !== undefined &&
             (clause.where ?? []).every((filter) => matches(target.data, filter));
@@ -3392,7 +3428,12 @@ const generateHighlights = (
       const parsed = parseSearchQuery(text, analyzer, tokenize, options);
       if (parsed === undefined) return undefined;
 
-      const query = yield* Effect.orDie(toPlanQuery(parsed.root, analyzer, termsOf));
+      const query = yield* Effect.orDie(toPlanQuery(
+        parsed.root,
+        analyzer,
+        (path) => textFieldFor(collection, path),
+        termsOf,
+      ));
       return { query, parsed };
     });
 
@@ -3497,7 +3538,7 @@ const generateHighlights = (
       }
 
       const targetNsCollection = direction === "inbound" ? declared.collection : declaringCollection;
-      const seq = yield* lookup(documentNs(tenant, targetNsCollection), filter.id);
+      const seq = yield* lookup(documentNs(targetNsCollection), filter.id);
       if (seq === undefined) return undefined;
       const clause = edgeQuery(edgeTypeFor(declaringCollection, filter.edge), Number(seq), direction);
       return {
@@ -3524,7 +3565,7 @@ const generateHighlights = (
         op: "geometry",
         value: filter as unknown as Json,
       };
-      return withCells(plan, filter.field, spatialCells(h3, spatial, filter), exact);
+      return withCells(plan, cellFieldFor(name, filter.field), spatialCells(h3, spatial, filter), exact);
     });
 
   const rebuildIndex = (collectionName: string, embedding: EmbeddingIndex) =>
@@ -3537,7 +3578,7 @@ const generateHighlights = (
       });
       const unit = embedding.normalize === true;
       let indexed = 0;
-      for (const seq of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), collectionName)))) {
+      for (const seq of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), collectionName)))) {
         const doc = yield* readDocument(seq);
         if (doc === undefined) continue;
         const held = readPath(doc.data, embedding.field);
@@ -3722,7 +3763,7 @@ const generateHighlights = (
             prefix: input.prefix,
           });
       if (input.search !== undefined && words === undefined) return undefined;
-      let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
+      let plan = withSearch(planQuery(input.collection, where), words?.query);
       if (words !== undefined && collection?.analyzer !== undefined) {
         plan = {
           ...plan,
@@ -4047,7 +4088,7 @@ const generateHighlights = (
           if (indexes.some((other) => other.name === index.name)) {
             return yield* new InvalidIndex({ collection: input.name, name: index.name, reason: "the name is given twice" });
           }
-          indexes.push({ ...index, state: "ready", column: indexColumnFor(tenant, input.name, index.name) });
+          indexes.push({ ...index, state: "ready", column: indexColumnFor(input.name, index.name) });
         }
         const checks: Array<CheckConstraint> = [];
         for (const definition of input.checks ?? []) {
@@ -4138,7 +4179,7 @@ const generateHighlights = (
 
     listCollections: Effect.gen(function* () {
       const seqs = yield* Stream.runCollect(
-        resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+        resolveQuery(equals(collectionColumn(), COLLECTION_MARKER)),
       );
       const out: Collection[] = [];
       for (const seq of seqs) {
@@ -4178,7 +4219,7 @@ const generateHighlights = (
 
     findById: (input) =>
       Effect.gen(function* () {
-        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
+        const seq = yield* lookup(documentNs(input.collection), input.id);
         return seq === undefined ? undefined : yield* readDocument(seq);
       }),
 
@@ -4224,7 +4265,7 @@ const generateHighlights = (
         if (related === undefined || (input.search !== undefined && words === undefined)) {
           return { documents: [] };
         }
-        let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
+        let plan = withSearch(planQuery(input.collection, where), words?.query);
         if (words !== undefined && collection?.analyzer !== undefined) {
           plan = {
             ...plan,
@@ -4307,7 +4348,7 @@ const generateHighlights = (
             if (typeof value !== "string") continue;
             const at = `${reference.collection}/${value}`;
             if (!seen.has(at)) {
-              const seq = yield* lookup(documentNs(tenant, reference.collection), value);
+              const seq = yield* lookup(documentNs(reference.collection), value);
               seen.set(at, seq === undefined ? undefined : yield* readDocument(seq));
             }
             related[reference.name] = seen.get(at);
@@ -4341,7 +4382,7 @@ const generateHighlights = (
         const maxVisits = Math.max(1, Math.min(input.maxVisits ?? 100, 1000));
         const direction = input.direction ?? "outbound";
 
-        const startSeq = yield* lookup(documentNs(tenant, input.collection), input.id);
+        const startSeq = yield* lookup(documentNs(input.collection), input.id);
         if (startSeq === undefined) {
           return { documents: [], steps: [], visited: 0, maxDepthReached: 0 };
         }
@@ -4489,7 +4530,7 @@ const generateHighlights = (
               if (reference.collection === input.name) continue;
               yield* unlinkReference(txn, input.name, reference.name);
             }
-            const seq = yield* lookup(collectionNs(tenant), input.name);
+            const seq = yield* lookup(collectionNs(), input.name);
             if (seq !== undefined) yield* txn.retract(seq);
           }));
 
@@ -4500,7 +4541,7 @@ const generateHighlights = (
         // retract commits, because a read inside that transaction still sees
         // the collection it is removing.
         const remaining = yield* Stream.runCollect(
-          resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+          resolveQuery(equals(collectionColumn(), COLLECTION_MARKER)),
         );
         if (remaining.length === 0) {
           const markerSeq = yield* lookup(TENANT_NAMESPACE, tenant);
@@ -4513,7 +4554,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const definition = yield* normalizeIndex(input.collection, input);
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         // Recorded first, as building: every write from here on carries it,
         // and the rewrite below adds every document written before.
@@ -4526,7 +4567,7 @@ const generateHighlights = (
             const index: StoredIndex = {
               ...definition,
               state: "building",
-              column: indexColumnFor(tenant, input.collection, definition.name),
+              column: indexColumnFor(input.collection, definition.name),
             };
             yield* collectionPut(txn, seq, { ...current, indexes: [...(current.indexes ?? []), index] });
             return index;
@@ -4583,7 +4624,7 @@ const generateHighlights = (
     dropIndex: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         const dropped = yield* transactOrDie((txn) =>
           Effect.gen(function* () {
@@ -4607,7 +4648,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const check = yield* normalizeCheck(input.collection, input);
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         // Recorded first, so every write from here on is held to it; then the
         // documents already there are read against it. A write refused in
@@ -4622,7 +4663,7 @@ const generateHighlights = (
           }));
         if (recorded === "missing") return yield* new CollectionNotFound({ name: input.collection });
         if (recorded === "exists") return yield* new ConstraintExists({ collection: input.collection, name: check.name });
-        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.collection)))) {
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.collection)))) {
           const doc = yield* readDocument(held);
           const failed = doc === undefined ? undefined : check.where.find((filter) => !satisfiesCheck(doc.data, filter));
           if (doc === undefined || failed === undefined) continue;
@@ -4646,7 +4687,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const analyzer = yield* normalizeAnalyzer(input.collection, input.analyzer);
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         // Recorded first, so every write from here on analyzes this way; the
         // documents already there are then written back under it.
@@ -4665,7 +4706,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const spatial = yield* normalizeSpatial(input.collection, input.spatial);
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         const recorded = yield* transactOrDie((txn) =>
           Effect.gen(function* () {
@@ -4684,15 +4725,19 @@ const generateHighlights = (
         const measure = yield* declaredMeasure(collection, input.collection, input.measure);
         const planned = yield* planFor(collection, input);
         if (planned === undefined) return { value: foldMeasure(input.op, []), documents: 0 };
-        const plan = overMeasure(planned.plan, columnFor(tenant, input.collection, measure.path));
+        const plan = overMeasure(planned.plan, columnFor(input.collection, measure.path));
         // Resolved first, and only then is the measure read: the point of the
         // lens is that the payloads are never touched, so reading it before the
         // answer is narrow would spend exactly what it exists to save.
         const identifiers = yield* identifiersFor(plan);
         if (identifiers.length === 0) return { value: foldMeasure(input.op, []), documents: 0 };
-        const vector = yield* measureOf(measureColumnFor(tenant, input.collection, measure.name));
+        const measured = yield* measureOf(measureColumnFor(input.collection, measure.name));
+        // A document with no value is left out, never read as zero.
         const values: Array<number> = [];
-        for (const seq of identifiers) if (seq < vector.length) values.push(vector[seq]!);
+        for (const seq of identifiers) {
+          const value = measured.get(Number(seq));
+          if (value !== undefined) values.push(value);
+        }
         return { value: foldMeasure(input.op, values), documents: values.length };
       }),
 
@@ -4706,7 +4751,7 @@ const generateHighlights = (
         if (!Number.isInteger(groups) || groups < 1 || groups > 1000) {
           return yield* Effect.die(new RangeError(`summarizeBy takes 1 to 1000 groups, not ${groups}.`));
         }
-        const plan = overMeasure(planned.plan, columnFor(tenant, input.collection, measure.path));
+        const plan = overMeasure(planned.plan, columnFor(input.collection, measure.path));
         const keep = keeps(plan);
         // The group key comes from the ordered lens beside the identifier, so
         // grouping reads no documents either -- the rows carry both.
@@ -4714,7 +4759,7 @@ const generateHighlights = (
         let after: OrderedCursor | undefined;
         do {
           const page = yield* orderedPage({
-            column: columnFor(tenant, input.collection, input.groupBy),
+            column: columnFor(input.collection, input.groupBy),
             where: plan.query,
             limit: 1000,
             ...(after === undefined ? {} : { after }),
@@ -4733,11 +4778,14 @@ const generateHighlights = (
           }
           after = page.next;
         } while (after !== undefined);
-        const vector = yield* measureOf(measureColumnFor(tenant, input.collection, measure.name));
+        const measured = yield* measureOf(measureColumnFor(input.collection, measure.name));
         const out: Array<GroupedSummary> = [];
         for (const { key, seqs } of held.values()) {
           const values: Array<number> = [];
-          for (const seq of seqs) if (seq < vector.length) values.push(vector[seq]!);
+          for (const seq of seqs) {
+            const value = measured.get(Number(seq));
+            if (value !== undefined) values.push(value);
+          }
           if (values.length === 0) continue;
           out.push({ key, value: foldMeasure(input.op, values), documents: values.length });
           if (out.length >= groups) break;
@@ -4749,7 +4797,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const embedding = yield* normalizeEmbedding(input.collection, input.embedding);
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         // Recorded first, so every write from here on is held to the shape;
         // then the documents already there are read against it.
@@ -4762,7 +4810,7 @@ const generateHighlights = (
           }));
         if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
         let documents = 0;
-        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.collection)))) {
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.collection)))) {
           const doc = yield* readDocument(held);
           if (doc === undefined) continue;
           const wrong = describeVector(embedding, readPath(doc.data, embedding.field));
@@ -4813,7 +4861,7 @@ const generateHighlights = (
       Effect.gen(function* () {
         yield* assertNotMoving;
         const reference = yield* normalizeReference(input.from, input);
-        const seq = yield* lookup(collectionNs(tenant), input.from);
+        const seq = yield* lookup(collectionNs(), input.from);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.from });
         const recorded = yield* transactChecked((txn) =>
           Effect.gen(function* () {
@@ -4834,13 +4882,13 @@ const generateHighlights = (
           }));
         if (recorded === "missing") return yield* new CollectionNotFound({ name: input.from });
         if (recorded === "exists") return yield* new ConstraintExists({ collection: input.from, name: reference.name });
-        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.from)))) {
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.from)))) {
           const doc = yield* readDocument(held);
           const value = doc === undefined ? undefined : readPath(doc.data, reference.path);
           if (doc === undefined || value === undefined || value === null) continue;
           const names = typeof value === "string" && (
             (reference.collection === input.from && value === doc.id) ||
-            (yield* lookup(documentNs(tenant, reference.collection), value)) !== undefined);
+            (yield* lookup(documentNs(reference.collection), value)) !== undefined);
           if (names) continue;
           yield* transactOrDie((txn) => unlinkReference(txn, input.from, reference.name));
           return yield* new ReferenceViolation({
@@ -4854,7 +4902,7 @@ const generateHighlights = (
     dropReference: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
-        if ((yield* lookup(collectionNs(tenant), input.collection)) === undefined) {
+        if ((yield* lookup(collectionNs(), input.collection)) === undefined) {
           return yield* new CollectionNotFound({ name: input.collection });
         }
         return yield* transactOrDie((txn) => unlinkReference(txn, input.collection, input.name));
@@ -4863,7 +4911,7 @@ const generateHighlights = (
     dropCheck: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
-        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        const seq = yield* lookup(collectionNs(), input.collection);
         if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
         return yield* transactOrDie((txn) =>
           Effect.gen(function* () {
@@ -4964,7 +5012,7 @@ const generateHighlights = (
         const names: Array<string> = [];
         if (input?.collection === undefined) {
           for (const seq of yield* Stream.runCollect(
-            resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+            resolveQuery(equals(collectionColumn(), COLLECTION_MARKER)),
           )) {
             const object = yield* readObject(seq);
             if (object !== undefined) names.push(decode(object.bytes, collectionRecord).name);
@@ -4981,7 +5029,7 @@ const generateHighlights = (
     forgetIdempotencyKeys: (input) =>
       Effect.gen(function* () {
         const seqs = yield* Stream.runCollect(
-          resolveQuery(equals(idempotencyColumn(tenant), RECEIPT_MARKER)),
+          resolveQuery(equals(idempotencyColumn(), RECEIPT_MARKER)),
         );
         let forgotten = 0;
         for (const seq of seqs) {

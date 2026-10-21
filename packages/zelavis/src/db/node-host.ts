@@ -8,9 +8,8 @@ import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
 import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 import { makeRocksdbJsStore } from "./engines/rocksdb-js.js";
-import type { PartitionKey } from "./model.js";
 import { runtimeApiFor, type DatabaseRuntimeApi } from "./runtime-api.js";
-import type { ObjectStoreApi } from "./store.js";
+import type { ShardStoreApi } from "./store.js";
 import {
   DEFAULT_LOCAL_SHARDS,
   partitionMapFor,
@@ -77,28 +76,30 @@ export interface OpenNodeDatabase {
 const openShardWith = (
   engine: EngineOptions | undefined,
   directory: string,
-): ((shard: PartitionKey) => Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope>) => {
+): ((shard: ShardId, context: { readonly origin: string }) => Effect.Effect<ShardStoreApi, StoreError, Scope.Scope>) => {
   switch (engine?.name ?? "sqlite") {
     case "libsql":
-      return (shard) =>
+      return (shard, { origin }) =>
         makeLibsqlStore(shard, {
           directory,
+          origin,
           ...(engine?.syncUrl === undefined ? {} : { syncUrl: engine.syncUrl }),
           ...(engine?.authToken === undefined ? {} : { authToken: engine.authToken }),
           ...(engine?.syncInterval === undefined ? {} : { syncInterval: engine.syncInterval }),
         });
     case "libsql-remote":
-      return (shard) =>
+      return (shard, { origin }) =>
         makeLibsqlRemoteStore(shard, {
           url: engine?.url ?? "",
+          origin,
           ...(engine?.authToken === undefined ? {} : { authToken: engine.authToken }),
         });
     case "rocksdb":
-      return (shard) => makeRocksdbJsStore(shard, directory);
+      return (shard, { origin }) => makeRocksdbJsStore(shard, directory, { origin });
     case "lmdb":
-      return (shard) => makeLmdbStore(shard, directory);
+      return (shard, { origin }) => makeLmdbStore(shard, directory, { origin });
     case "sqlite":
-      return (shard) => makeNodeSqliteStore(shard, directory);
+      return (shard, { origin }) => makeNodeSqliteStore(shard, directory, { origin });
   }
 };
 

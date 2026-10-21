@@ -38,16 +38,57 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-search-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({ name: "posts", ...(analyzer === undefined ? {} : { analyzer }) });
       for (const [id, data] of ROWS) yield* docs.insert({ collection: "posts", id, data });
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
   const found = (docs, input) =>
     Effect.map(docs.findMany({ collection: "posts", ...input }), (all) => all.map((d) => d.id).sort());
   const tagOf = (effect) => Effect.map(Effect.flip(effect), (error) => error._tag);
+
+  test(`${engine}: a search answers from its own tenant's collection only`, (t) =>
+    setup(t, (docs, _store, shard) => Effect.gen(function* () {
+      // Another collection of this tenant, and this collection of another
+      // tenant, on the same store and analyzed the same way. A term posting is
+      // found by its field alone, so the field is what keeps them apart.
+      yield* docs.createCollection({ name: "drafts", analyzer: ANALYZER });
+      yield* docs.insert({ collection: "drafts", id: "draft", data: { title: "Brown draft", body: "zebra" } });
+      const other = documentsFor(shard.partition("t2"), "t2");
+      yield* other.createCollection({ name: "posts", analyzer: ANALYZER });
+      yield* other.insert({ collection: "posts", id: "foreign", data: { title: "Brown foreign", body: "quokka" } });
+
+      assert.deepEqual(yield* found(docs, { search: "brown" }), ["a", "b"]);
+      assert.deepEqual(yield* found(docs, { search: "zebra" }), [], "another collection's words");
+      assert.deepEqual(yield* found(docs, { search: "quokka" }), [], "another tenant's words");
+      assert.deepEqual(yield* found(docs, { search: "quokk~1" }), [], "fuzzy reads only this collection's words");
+      assert.deepEqual(yield* found(docs, { search: "quok*" }), [], "and so does a prefix");
+      assert.deepEqual(
+        (yield* docs.findPage({ collection: "posts", search: "quokka" })).documents,
+        [],
+        "a page is confined the same way",
+      );
+      assert.deepEqual(yield* found(other, { search: "brown" }), ["foreign"]);
+    })));
+
+  test(`${engine}: a prefix keeps a document that lost one matching word but kept another, sealed`, (t) =>
+    setup(t, (docs, store) => Effect.gen(function* () {
+      // Enough documents for both words to be sealed into blobs, so dropping
+      // one word leaves a tombstone. The tombstone is "atlas"'s alone: the
+      // document still carries "atlantic", and `at*` must still find it.
+      for (let i = 0; i < 70; i++) {
+        yield* docs.insert({ collection: "posts", id: `x${i}`, data: { title: "atlas atlantic", body: "" } });
+      }
+      yield* store.sealPostings;
+      yield* docs.update({ collection: "posts", id: "x0", data: { title: "atlantic", body: "" } });
+      const prefixed = yield* found(docs, { search: "at*" });
+      assert.ok(prefixed.includes("x0"), "x0 still starts a word with at");
+      assert.ok(!(yield* found(docs, { search: "atlas" })).includes("x0"), "but no longer has atlas");
+    })));
 
   test(`${engine}: a search reads the terms the analyzer produced`, (t) =>
     setup(t, (docs) => Effect.gen(function* () {

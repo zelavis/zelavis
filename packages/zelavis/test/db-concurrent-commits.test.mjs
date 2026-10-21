@@ -41,7 +41,7 @@ for (const [engine, available, open] of engines) {
       const make = await open(dir);
 
       await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-        const store = yield* make;
+        const store = (yield* make).partition("acme");
 
         const seqs = (yield* Effect.all(
           Array.from({ length: COUNT }, () => store.nextSeq),
@@ -63,6 +63,44 @@ for (const [engine, available, open] of engines) {
         assert.deepEqual(logged.slice().sort((a, b) => a - b), seqs.slice().sort((a, b) => a - b));
         assert.equal([...(yield* Stream.runCollect(store.resolve(term("kind", "post"))))].length, COUNT,
           "a lens lost an object whose commit returned");
+      })));
+    });
+}
+
+for (const [engine, available, open] of engines) {
+  test(`${engine}: writers to different partitions of one shard neither wait for nor undo each other`,
+    { skip: available ? false : `${engine} is not installed` },
+    async (t) => {
+      const dir = mkdtempSync(join(tmpdir(), `zv-partitions-${engine}-`));
+      t.after(() => rmSync(dir, { recursive: true, force: true }));
+      const make = await open(dir);
+
+      await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+        // Each partition admits its own writer and checks its own revision, so
+        // commits to several at once all land: none is refused as a conflict
+        // with another partition's batch, and none is lost to one.
+        const shard = yield* make;
+        const tenants = Array.from({ length: 8 }, (_, i) => `tenant-${i}`);
+        const perTenant = 16;
+        yield* Effect.all(
+          tenants.flatMap((tenant) => Array.from({ length: perTenant }, (_, i) => {
+            const store = shard.partition(tenant);
+            return Effect.flatMap(store.nextSeq, (seq) => store.transact((txn) =>
+              txn.put(seq, enc.encode(`{"n":${i}}`),
+                { terms: [["kind", "post"]], columns: [], measures: [], edges: [] })));
+          })),
+          { concurrency: "unbounded", discard: true },
+        );
+
+        assert.deepEqual([...(yield* shard.partitions)].sort(), tenants.slice().sort());
+        for (const tenant of tenants) {
+          const store = shard.partition(tenant);
+          assert.equal((yield* store.stats).records, perTenant, `${tenant} counted its records`);
+          assert.equal([...(yield* Stream.runCollect(store.events.read({ limit: 1000 })))].length, perTenant,
+            `${tenant} logged every commit`);
+          assert.equal([...(yield* Stream.runCollect(store.resolve(term("kind", "post"))))].length, perTenant,
+            `${tenant} indexed every commit, and only its own`);
+        }
       })));
     });
 }
