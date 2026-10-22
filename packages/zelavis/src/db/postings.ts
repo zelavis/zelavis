@@ -379,6 +379,58 @@ export function* iterate(p: Postings): Generator<Seq> {
   }
 }
 
+/**
+ * Ascending identifiers in `[lo, hi)`, skipping the segments and words outside
+ * the range rather than walking them, so a window of a large set costs the
+ * window.
+ */
+export function* between(p: Postings, lo: number, hi: number): Generator<Seq> {
+  for (let s = 0; s < p.segments.length; s++) {
+    const base = p.segments[s]! * SPAN;
+    if (base + SPAN <= lo) continue;
+    if (base >= hi) return;
+    const from = Math.max(lo - base, 0);
+    const to = Math.min(hi - base, SPAN);
+    const c = p.containers[s]!;
+    if (c.kind === "list") {
+      let at = 0;
+      let top = c.offsets.length;
+      while (at < top) {
+        const mid = (at + top) >>> 1;
+        if (c.offsets[mid]! < from) at = mid + 1;
+        else top = mid;
+      }
+      for (; at < c.offsets.length && c.offsets[at]! < to; at++) yield asSeq(base + c.offsets[at]!);
+      continue;
+    }
+    for (let w = from >>> 5; w < WORDS && w << 5 < to; w++) {
+      let bits = c.words[w]!;
+      if (w === from >>> 5) bits &= ~0 << (from & 31);
+      while (bits !== 0) {
+        const lsb = bits & -bits;
+        const offset = (w << 5) + (31 - Math.clz32(lsb));
+        if (offset >= to) break;
+        yield asSeq(base + offset);
+        bits ^= lsb;
+      }
+    }
+  }
+}
+
+/** The highest identifier held, or undefined for an empty set. */
+export const highest = (p: Postings): number | undefined => {
+  const s = p.segments.length - 1;
+  if (s < 0) return undefined;
+  const base = p.segments[s]! * SPAN;
+  const c = p.containers[s]!;
+  if (c.kind === "list") return base + c.offsets[c.offsets.length - 1]!;
+  for (let w = WORDS - 1; w >= 0; w--) {
+    const word = c.words[w]!;
+    if (word !== 0) return base + (w << 5) + (31 - Math.clz32(word));
+  }
+  return undefined;
+};
+
 /** Every identifier, ascending, as an array: for callers that need them all at once. */
 export const ids = (p: Postings): Array<number> => [...iterate(p)];
 

@@ -87,6 +87,14 @@ Documents are JSON objects. Each write appends its event and updates the
 document's record and indexes in one atomic batch, so a crash leaves either the
 whole write or none of it.
 
+A page in the default identifier order (`findPage` with no `orderBy`), and
+`findMany` with a `limit` and no order or search, read only the documents they
+return: the store resolves the matching identifiers a window at a time from
+the cursor and stops when the page is full, so a page deep into a large
+collection costs about the same as the first. The exception is a filter made
+only of ranges or text prefixes that match more than a few thousand documents,
+which is still evaluated in full on each call.
+
 Every scalar field is indexed unless the collection declares `columns`, the
 fields it queries: `createCollection({ name, columns })` indexes only those
 (each covering the fields below it), and `documents.setColumns({ collection,

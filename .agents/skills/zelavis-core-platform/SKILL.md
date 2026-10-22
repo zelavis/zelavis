@@ -407,7 +407,8 @@ before editing.
   partition's keys; records are single values whose retraction leaves a
   versioned tombstone; events apply by version (and `follow` by position);
   copies use a record scan plus the log tail; queries read clauses up to the
-  probe cap and check broad ones against manifests that must match the lenses.
+  probe cap and check broad ones against manifests that must match the lenses;
+  a read that stops early resolves by window (`resolve(query, { after, limit })`).
   There is no raw SQL surface, and `surface` is never buried in metadata.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,

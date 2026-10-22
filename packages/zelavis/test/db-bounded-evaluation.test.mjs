@@ -71,7 +71,8 @@ test("every cap gives the answer the lenses give", () => run(Effect.gen(function
     yield* apply((txn) => txn.put(seq, enc.encode(`{"n":${seq}}`), manifests[seq - 1]));
   }
   // Sealed blobs, then live writes, updates and retractions over them: tombstones in play.
-  yield* Effect.forEach(stores, (store) => store.sealPostings, { discard: true });
+  const seals = yield* Effect.forEach(stores, (store) => store.sealPostings);
+  assert.ok(seals.every((seal) => seal.segments > 0), `sealed ${JSON.stringify(seals)}`);
   for (let seq = 201; seq <= count; seq++) {
     yield* apply((txn) => txn.put(seq, enc.encode(`{"n":${seq}}`), manifests[seq - 1]));
   }

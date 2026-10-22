@@ -56,6 +56,14 @@ export interface OrderedExtent {
  * lens writes leaves a partial index — exactly the state an "all-or-nothing"
  * guarantee is supposed to prevent.
  */
+/** Where a resolve starts and how much of it to read. */
+export interface ResolveOptions {
+  /** Only identifiers above this one. */
+  readonly after?: Seq;
+  /** At most this many. */
+  readonly limit?: number;
+}
+
 export interface Txn {
   readonly put: (
     seq: Seq,
@@ -364,10 +372,12 @@ export interface ObjectStoreApi {
    * Resolve a query to identifiers in ascending order.
    *
    * A Stream rather than an array: a prefix match can cover a large fraction of
-   * a partition, and a signature that can only return a fully materialized
-   * array has no way to express a cursor or a limit.
+   * a partition. Given options — even empty ones — the answer is read a window
+   * of identifiers at a time and only as far as it is consumed, so a page after
+   * a cursor, or the first few matches, costs about what it returns rather than
+   * the whole match; without options, the whole match is resolved at once.
    */
-  readonly resolve: (query: Query) => Stream.Stream<Seq, DbError>;
+  readonly resolve: (query: Query, options?: ResolveOptions) => Stream.Stream<Seq, DbError>;
 
   /**
    * A page of objects in the order of their value in one column.

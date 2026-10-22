@@ -1218,6 +1218,17 @@ Key rules:
   That check (`holds` and `inRange` in `kv-store.ts`) must give exactly the
   lens's answer — the lens's one order, a one-sided range kept to its bound's
   kind — and `test/db-bounded-evaluation.test.mjs` compares the two.
+- A read that stops early — a page after a cursor, or the first matches of an
+  unsorted read — resolves with options (`resolve(query, { after, limit })`):
+  a window of identifiers at a time, each window the cap rounded down to a
+  power of two so it never straddles a sealed segment, jumping to the next
+  identifier any posting list holds and stopping once the caller has enough.
+  Terms, equalities and edges are one seek per window; ranges and term
+  prefixes are checked per candidate. `findPage` in identifier order and
+  `findMany` with a limit and no order or search read only what they return.
+  A range or term prefix alone, wider than the cap, has no windowed form and
+  is evaluated in full per call. `test/db-windowed-resolve.test.mjs` holds the
+  windowed answer to the whole one across window and page sizes.
 - The log is the source of truth up to the compaction point, not forever.
   Records are the snapshot, so `db.maintenance` compacts by truncating the log
   — after which storage tracks live objects rather than every write ever

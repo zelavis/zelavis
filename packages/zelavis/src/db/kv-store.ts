@@ -1,4 +1,4 @@
-import { Effect, Semaphore, Stream } from "effect";
+import { Effect, Option, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
   PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, WriterFenced,
@@ -1237,6 +1237,229 @@ const openPartition = (
       bounded.kind === "exact" ? Effect.succeed(bounded.postings) : evaluate(query));
 
   /**
+   * Identifiers per window of a windowed read: the cap, rounded down to a power
+   * of two so a window never straddles a sealed segment.
+   */
+  const windowSize = 2 ** Math.floor(Math.log2(Math.min(Math.max(probeCap, 1), SEGMENT_SPAN)));
+
+  /**
+   * A query whose answer can be read one window of identifiers at a time.
+   *
+   * A term, an equality or an edge reads one value's posting list, kept in
+   * identifier order under its own prefix, so a window of it is one seek. A
+   * range or a term prefix spans many values, each in its own order, so in an
+   * AND it is checked per candidate against the record, as `evaluateBounded`
+   * checks a broad clause; a query with nothing windowable to drive it has no
+   * windowed form.
+   */
+  type Windowed =
+    | { readonly kind: "list"; readonly prefix: Uint8Array }
+    | { readonly kind: "and"; readonly drivers: ReadonlyArray<Windowed>; readonly checked: ReadonlyArray<Query> }
+    | { readonly kind: "or"; readonly of: ReadonlyArray<Windowed> };
+
+  const windowedOf = (query: Query): Windowed | undefined => {
+    switch (query._tag) {
+      case "Term":
+        return { kind: "list", prefix: keys.termPrefix(query.field, query.term) };
+      case "Equals":
+        return { kind: "list", prefix: keys.orderedValuePrefix(query.column, query.value) };
+      case "Edge":
+        return {
+          kind: "list",
+          prefix: (query.direction ?? "outbound") === "inbound"
+            ? keys.reverseEdgePrefix(query.edgeType, query.from)
+            : keys.edgePrefix(query.edgeType, query.from),
+        };
+      case "Range":
+      case "TermPrefix":
+        return undefined;
+      case "And": {
+        const drivers: Array<Windowed> = [];
+        const checked: Array<Query> = [];
+        for (const part of query.of) {
+          const windowed = windowedOf(part);
+          if (windowed === undefined) checked.push(part);
+          else drivers.push(windowed);
+        }
+        return drivers.length === 0 ? undefined : { kind: "and", drivers, checked };
+      }
+      case "Or": {
+        const of: Array<Windowed> = [];
+        for (const part of query.of) {
+          const windowed = windowedOf(part);
+          if (windowed === undefined) return undefined;
+          of.push(windowed);
+        }
+        return { kind: "or", of };
+      }
+    }
+  };
+
+  /** The live key of an identifier under a prefix, or the end of the prefix past the last one. */
+  const postingBound = (prefix: Uint8Array, id: number): Uint8Array | undefined => {
+    if (id > MAX_SEQ) return prefixEnd(prefix);
+    const key = new Uint8Array(prefix.length + SEQ_BYTES);
+    key.set(prefix);
+    key.set(seqBytes(id), prefix.length);
+    return key;
+  };
+
+  /** One value's sealed postings in one segment, less its tombstones, read once per windowed read. */
+  type SealedCache = Map<string, Postings.Postings | null>;
+
+  const sealedSegment = (prefix: Uint8Array, segment: number, cache: SealedCache) =>
+    Effect.gen(function* () {
+      const id = `${keyId(prefix)}/${segment}`;
+      const held = cache.get(id);
+      if (held !== undefined) return held ?? undefined;
+      const bytes = yield* engine.get(keys.segment(prefix, segment));
+      const container = bytes === undefined ? undefined : containerOf(bytes);
+      if (container === undefined) {
+        cache.set(id, null);
+        return undefined;
+      }
+      // A tombstone cancels a sealed posting removed since the seal; only this
+      // value's, within this segment, can touch this blob.
+      const base = segment * SEGMENT_SPAN;
+      const from = postingBound(prefix, base);
+      const to = postingBound(prefix, base + SEGMENT_SPAN);
+      const removed = new Postings.PostingsBuilder();
+      yield* Stream.runForEach(
+        engine.scan(
+          keys.tombstonePrefix(prefix),
+          scanOptions(from && keys.tombstone(from), to && keys.tombstone(to), false),
+        ),
+        (entry) => Effect.sync(() => removed.add(seqOf(keys.liveOfTombstone(entry.key)))),
+      );
+      const blob = Postings.andNot({ segments: [segment], containers: [container] }, removed.build());
+      cache.set(id, blob);
+      return blob;
+    });
+
+  /** The first identifier at or after `from` a windowed query could hold: a lower bound for an AND. */
+  const nextFrom = (
+    shape: Windowed,
+    from: number,
+    cache: SealedCache,
+  ): Effect.Effect<number | undefined, StoreError> =>
+    Effect.gen(function* () {
+      if (shape.kind === "or") {
+        let lowest: number | undefined;
+        for (const part of shape.of) {
+          const next = yield* nextFrom(part, from, cache);
+          if (next !== undefined && (lowest === undefined || next < lowest)) lowest = next;
+        }
+        return lowest;
+      }
+      if (shape.kind === "and") {
+        let highest = from;
+        for (const driver of shape.drivers) {
+          const next = yield* nextFrom(driver, from, cache);
+          if (next === undefined) return undefined;
+          if (next > highest) highest = next;
+        }
+        return highest;
+      }
+      if (from > MAX_SEQ) return undefined;
+      const live = [...(yield* Stream.runCollect(
+        engine.scan(shape.prefix, scanOptions(postingBound(shape.prefix, from), undefined, false, 1)),
+      ))][0];
+      let next = live === undefined ? undefined : seqOf(live.key);
+      // Sealed blobs from the segment holding `from`, until one holds an
+      // identifier at or after it — or one starts past the live answer.
+      let segment = Math.floor(from / SEGMENT_SPAN);
+      for (;;) {
+        const blob = [...(yield* Stream.runCollect(
+          engine.scan(keys.segmentPrefix(shape.prefix), scanOptions(keys.segment(shape.prefix, segment), undefined, false, 1)),
+        ))][0];
+        if (blob === undefined) break;
+        const index = keys.segmentIndexOf(blob.key);
+        if (next !== undefined && index * SEGMENT_SPAN > next) break;
+        const sealed = yield* sealedSegment(shape.prefix, index, cache);
+        const first = sealed === undefined ? undefined : Postings.between(sealed, from, Number.MAX_SAFE_INTEGER).next();
+        if (first !== undefined && first.done !== true) {
+          if (next === undefined || first.value < next) next = first.value;
+          break;
+        }
+        segment = index + 1;
+      }
+      return next;
+    });
+
+  /** A windowed query's answer within `[lo, hi)`, a window inside one segment. */
+  const windowOf = (
+    shape: Windowed,
+    lo: number,
+    hi: number,
+    cache: SealedCache,
+  ): Effect.Effect<Postings.Postings, StoreError> =>
+    Effect.gen(function* () {
+      if (shape.kind === "or") {
+        return Postings.orAll(yield* Effect.forEach(shape.of, (part) => windowOf(part, lo, hi, cache)));
+      }
+      if (shape.kind === "and") {
+        const candidates = Postings.andAll(yield* Effect.forEach(shape.drivers, (driver) => windowOf(driver, lo, hi, cache)));
+        if (shape.checked.length === 0) return candidates;
+        const outbound = new Map<string, ReadonlySet<number>>();
+        const kept = new Postings.PostingsBuilder();
+        for (const seq of Postings.iterate(candidates)) {
+          const record = yield* readRecord(pendingView(new Map()), seq);
+          if (record?.live !== true) continue;
+          let all = true;
+          for (const part of shape.checked) {
+            if (!(yield* holds(part, record.manifest, seq, outbound))) {
+              all = false;
+              break;
+            }
+          }
+          if (all) kept.add(seq);
+        }
+        return kept.build();
+      }
+      const found = new Postings.PostingsBuilder();
+      yield* Stream.runForEach(
+        engine.scan(shape.prefix, scanOptions(postingBound(shape.prefix, lo), postingBound(shape.prefix, hi), false)),
+        (entry) => Effect.sync(() => found.add(seqOf(entry.key))),
+      );
+      const sealed = yield* sealedSegment(shape.prefix, Math.floor(lo / SEGMENT_SPAN), cache);
+      if (sealed !== undefined) for (const seq of Postings.between(sealed, lo, hi)) found.add(seq);
+      return found.build();
+    });
+
+  /**
+   * A query's identifiers after `after`, ascending, read a window at a time and
+   * only as far as whoever consumes them goes.
+   *
+   * A query the bounded evaluation answers exactly is a small set already, and
+   * is paged from. Otherwise a windowed query jumps to the next identifier any
+   * of its lists holds and reads one window there, so a page deep into a large
+   * collection costs about the cap and the page rather than the collection. A
+   * query with no windowed form — a range or prefix alone, wider than the cap —
+   * is evaluated in full and paged from, as it was before.
+   */
+  const resolveAfter = (query: Query, after: number | undefined): Stream.Stream<Seq, StoreError | LensesRebuilding> =>
+    Stream.unwrap(Effect.gen(function* () {
+      yield* lensesReady;
+      const start = after === undefined ? 0 : after + 1;
+      const bounded = yield* evaluateBounded(query, probeCap);
+      if (bounded.kind === "exact") return Stream.fromIterable(Postings.between(bounded.postings, start, Number.MAX_SAFE_INTEGER));
+      const shape = windowedOf(query);
+      if (shape === undefined) {
+        return Stream.fromIterableEffect(Effect.map(evaluate(query), (all) => Postings.between(all, start, Number.MAX_SAFE_INTEGER)));
+      }
+      const cache: SealedCache = new Map();
+      return Stream.paginate(start, (from: number) =>
+        Effect.gen(function* () {
+          const next = yield* nextFrom(shape, from, cache);
+          if (next === undefined) return [[], Option.none<number>()] as const;
+          const lo = next - (next % windowSize);
+          const hi = lo + windowSize;
+          const found = yield* windowOf(shape, lo, hi, cache);
+          return [[...Postings.between(found, Math.max(lo, from), hi)], hi > MAX_SEQ ? Option.none<number>() : Option.some(hi)] as const;
+        }));
+    }));
+
+  /**
    * How an ordered read keeps to its `where`: by a set when the filter fits
    * under the cap, and otherwise by checking each row's manifest — a broad
    * filter passes most rows, so a page reads about what it returns either way.
@@ -2234,7 +2457,13 @@ const openPartition = (
       Effect.map(ready(readRecord(pendingView(new Map()), seq)), (record) =>
         record?.live === true ? { seq, version: record.version, bytes: record.body } : undefined),
 
-    resolve: (query) => Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), Postings.iterate)),
+    resolve: (query, options) => {
+      if (options === undefined) {
+        return Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), Postings.iterate));
+      }
+      const page = resolveAfter(query, options.after === undefined ? undefined : Number(options.after));
+      return options.limit === undefined ? page : Stream.take(page, options.limit);
+    },
 
     ordered: (input) => ready(readOrdered(input)),
 

@@ -52,12 +52,12 @@ import {
   isUsableVector, normalized, similarity, loadUsearch, createProjectionIndex,
   type DistanceMetric, type VectorQuantization, type VectorProjectionIndex,
 } from "./vectors.js";
-import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
+import { asSeq, type IndexManifest, type OrderedScalar, type Seq } from "./model.js";
 import {
   and, between, edge as edgeQuery, equals, or, term, type Query, type RangeBound,
 } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
-import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
+import type { ObjectStoreApi, OrderedCursor, ResolveOptions, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
 import { stem } from "./stemmer.js";
 import {
@@ -2286,7 +2286,8 @@ export const documentsFor = (
   const lookup = (namespace: string, key: string) => Effect.orDie(store.lookup(namespace, key));
   const readObject = (seq: Seq) => Effect.orDie(store.read(seq));
   const nextSeq = dieUnlessMoving(store.nextSeq);
-  const resolveQuery = (query: Query): Stream.Stream<Seq> => Stream.orDie(store.resolve(query));
+  const resolveQuery = (query: Query, options?: ResolveOptions): Stream.Stream<Seq> =>
+    Stream.orDie(store.resolve(query, options));
   const termsOf = (field: string, prefix?: string) => Effect.orDie(store.terms(field, prefix));
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
     Effect.orDie(store.transact(f));
@@ -3148,18 +3149,28 @@ export const documentsFor = (
       return rewritten;
     });
 
-  /** Matching documents in identifier order, the order `resolve` already has. */
+  /**
+   * Matching documents in identifier order, the order `resolve` already has.
+   *
+   * Read from the cursor and only until the page is full: the store resolves
+   * a window of identifiers at a time, so a page deep into a large collection
+   * costs about the page rather than everything before and after it.
+   */
   const inIdentifierOrder = (plan: Plan, take: number, from: Position | undefined) =>
     Effect.gen(function* () {
       const keep = keeps(plan);
       const after = from?.phase === "seq" ? from.seq : undefined;
       const out: Array<Placed> = [];
-      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
-        if (out.length >= take) break;
-        if (after !== undefined && Number(seq) <= after) continue;
-        const doc = yield* readDocument(seq);
-        if (keep(doc)) out.push({ document: doc, position: { phase: "seq", seq: Number(seq) } });
-      }
+      if (take <= 0) return out;
+      yield* Stream.runForEachWhile(
+        resolveQuery(plan.query, after === undefined ? {} : { after: asSeq(after) }),
+        (seq) =>
+          Effect.gen(function* () {
+            const doc = yield* readDocument(seq);
+            if (keep(doc)) out.push({ document: doc, position: { phase: "seq", seq: Number(seq) } });
+            return out.length < take;
+          }),
+      );
       return out;
     });
 
@@ -4011,9 +4022,21 @@ const generateHighlights = (
       }
       const keep = keeps(plan);
       const candidates: Array<{ document: Document; seq: number }> = [];
-      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
-        const doc = yield* readDocument(seq);
-        if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
+      // Nothing to rank and nothing to sort: identifier order is the answer,
+      // so reading stops once the requested slice is in hand.
+      const enough = planned.words === undefined && sorts.length === 0 ? take : undefined;
+      if (enough === undefined) {
+        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+          const doc = yield* readDocument(seq);
+          if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
+        }
+      } else if (enough > 0) {
+        yield* Stream.runForEachWhile(resolveQuery(plan.query, {}), (seq) =>
+          Effect.gen(function* () {
+            const doc = yield* readDocument(seq);
+            if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
+            return candidates.length < enough;
+          }));
       }
 
       if (planned.words !== undefined && collection?.analyzer !== undefined && planned.words.parsed.terms.length > 0) {
