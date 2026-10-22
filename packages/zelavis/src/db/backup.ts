@@ -3,6 +3,7 @@ import { equals } from "./query.js";
 import {
   BackupFormatUnsupported,
   BackupTenantMismatch,
+  InvalidRestoreMode,
   type TenantMoving,
   TenantNotEmpty,
 } from "./errors.js";
@@ -66,6 +67,9 @@ export type RestoreMode =
    */
   | "merge";
 
+/** Every mode a restore has, in the order the docs describe them. */
+export const RESTORE_MODES: ReadonlyArray<RestoreMode> = ["empty", "purge", "merge"];
+
 export interface RestoreOptions {
   /** Defaults to `empty`. */
   readonly into?: RestoreMode;
@@ -114,7 +118,7 @@ export interface BackupsApi {
     options?: RestoreOptions,
   ) => Effect.Effect<
     RestoreResult,
-    BackupFormatUnsupported | BackupTenantMismatch | TenantNotEmpty | TenantMoving
+    BackupFormatUnsupported | BackupTenantMismatch | InvalidRestoreMode | TenantNotEmpty | TenantMoving
   >;
 }
 
@@ -222,6 +226,9 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       // named within a partition, and a restore writes into this tenant's own,
       // so nothing in a backup can reach another tenant's records.
       const mode = options?.into ?? "empty";
+      // Checked here, where the modes are decided, because the options come
+      // from HTTP bodies and CLI flags as much as from typed callers.
+      if (!RESTORE_MODES.includes(mode)) return yield* new InvalidRestoreMode({ mode: String(mode) });
       if (mode === "empty") {
         const occupied = yield* Stream.runCollect(
           Stream.take(store.resolve(equals(COLLECTION_NAMESPACE, "\u0000collection")), 1),

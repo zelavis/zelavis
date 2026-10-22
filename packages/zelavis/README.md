@@ -631,8 +631,12 @@ collections, events, schemas, projections, and time-series definitions without
 revealing physical shard drivers or internal `zv_*` tables. `zv.db.backups`
 exports a Tenant's records plus the events logged while the export ran, which
 a restore applies by version, so an export taken during writes restores to one
-moment; the matching maintenance endpoints require `database.inspect`,
-`database.backup`, or `database.restore` permissions.
+moment. A restore's `into` is `empty` (the default, refusing a Tenant that holds
+data), `purge` or `merge`, and any other value is refused with
+`InvalidRestoreMode`. The matching maintenance endpoints require
+`database.inspect`, `database.backup`, or `database.restore` permissions; from
+outside a Project they are `client.projects.exportTenant|restoreTenant` and
+`zelavis projects export-tenant|restore-tenant`, through the Project proxy.
 
 Indexed numeric document fields must be finite. Inserts, updates, and atomic
 batches reject `NaN`, `Infinity`, and `-Infinity` with `InvalidDocumentValue`,

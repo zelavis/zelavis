@@ -1,0 +1,5 @@
+---
+"zelavis": minor
+---
+
+Back up and restore a Tenant from the SDK and the CLI, and choose the restore mode over HTTP. `client.projects.exportTenant(projectId, { tenantId? })` and `client.projects.restoreTenant(projectId, backup, { into?, tenantId? })`, and `zelavis projects export-tenant <id> [--tenant T] [--output FILE]` and `zelavis projects restore-tenant <id> --file FILE [--into empty|purge|merge]`, reach the database's backup routes through the Project proxy and need `project.runtime.manage`. The restore route now takes `into` (`empty`, `purge`, `merge`); it used to ignore it and always restore as `empty`, so a purge or merge restore could only be run in-process. A restore mode that is not one of the three is refused with `InvalidRestoreMode` (400) before anything is written, where the JS API used to replay the backup over live data without checking that the Tenant was empty. The runtime API's `restoreTenant` takes the same options and returns the whole result (`tenantId`, `events`, `removed`, `superseded`).

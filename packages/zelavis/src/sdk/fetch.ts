@@ -910,6 +910,50 @@ export interface ZelavisProjectsClient {
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(projectId: string): Promise<{ readonly deleted: boolean }>;
   recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;
+  /**
+   * One Tenant of an App Project's database as a backup: the caller's own
+   * Tenant unless `tenantId` names another, which needs `database.inspect`
+   * (carried by `project.view`). Needs `project.runtime.manage`, which carries
+   * `database.backup`. Same contract as `zelavis projects export-tenant`.
+   */
+  exportTenant(projectId: string, options?: { readonly tenantId?: string }): Promise<ZelavisTenantBackup>;
+  /**
+   * Restore a backup into the Tenant it was taken from. `into` says what to do
+   * about data already there: `empty` (the default) refuses unless there is
+   * none, `purge` discards it first, and `merge` restores over it record by
+   * record. Needs `project.runtime.manage`, which carries `database.restore`.
+   * Same contract as `zelavis projects restore-tenant`.
+   */
+  restoreTenant(
+    projectId: string,
+    backup: ZelavisTenantBackup,
+    options?: { readonly into?: ZelavisTenantRestoreMode; readonly tenantId?: string },
+  ): Promise<ZelavisTenantRestoreResult>;
+}
+
+/**
+ * A Tenant's backup as its database exports it.
+ *
+ * Carried whole rather than read: the events are the database's own records,
+ * and a restore checks the format, the Tenant and every identifier itself.
+ */
+export interface ZelavisTenantBackup {
+  readonly format: "zelavis.db-backup.v1";
+  readonly exportedAt: string;
+  readonly tenantId: string;
+  readonly events: ReadonlyArray<Readonly<Record<string, unknown>>>;
+}
+
+/** What a restore does about data the Tenant already holds. */
+export type ZelavisTenantRestoreMode = "empty" | "purge" | "merge";
+
+export interface ZelavisTenantRestoreResult {
+  readonly tenantId: string;
+  readonly events: number;
+  /** Records discarded before restoring; only `purge` removes anything. */
+  readonly removed: number;
+  /** Records the backup wrote over rather than created; only `merge` does. */
+  readonly superseded: number;
 }
 
 export interface ZelavisHostOperationsClient {
@@ -1693,6 +1737,15 @@ function projectPath(projectId: string, action?: string): string {
   return `/runtime/projects/${encoded}${action ? `/${action}` : ""}`;
 }
 
+/**
+ * A Project runtime's database service, behind the Platform's Project proxy.
+ *
+ * The same path the Gateway's App data route forwards to, reached here with
+ * the caller's Project runtime authority instead, which is what carries
+ * `database.backup` and `database.restore`.
+ */
+const PROJECT_DATABASE_PROXY_PATH = "proxy/zelavis/api/v1/database";
+
 function createProjectsClient(
   json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
 ): ZelavisProjectsClient {
@@ -1742,6 +1795,20 @@ function createProjectsClient(
         "/runtime/project-recipes",
       )))).projectRecipes;
   })),
+    exportTenant: (projectId, options) =>
+      json<ZelavisTenantBackup>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/export`), {
+        method: "POST",
+        body: options?.tenantId === undefined ? {} : { tenantId: options.tenantId },
+      }),
+    restoreTenant: (projectId, backup, options) =>
+      json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {
+        method: "POST",
+        body: {
+          backup,
+          ...(options?.tenantId === undefined ? {} : { tenantId: options.tenantId }),
+          ...(options?.into === undefined ? {} : { into: options.into }),
+        },
+      }),
   };
 }
 

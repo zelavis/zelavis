@@ -7,6 +7,7 @@ import {
   type ZelavisEndpointGroup,
   type ZelavisRuntimeService,
 } from "../core/index.js";
+import { RESTORE_MODES } from "./backup.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
 import type {
   CollectionSurface,
@@ -446,6 +447,7 @@ const BAD_REQUEST_TAGS = new Set([
   "RangeNotEmpty",
   "SchemaViolation",
   "TenantNotEmpty",
+  "InvalidRestoreMode",
   "InvalidKeyValueExpiration",
   "KeyValueCursorMismatch",
   "InvalidKeyValueEncoding",
@@ -505,6 +507,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Unsupported backup format "${failure.format}".`;
     case "TenantNotEmpty":
       return `Tenant "${failure.tenant}" already holds data; restoring would orphan it.`;
+    case "InvalidRestoreMode":
+      return `Restore mode "${failure.mode}" is not one of ${RESTORE_MODES.join(", ")}.`;
     case "PartitionMapInvalid":
       return `Partition map version ${failure.version} is invalid: ${failure.reason}.`;
     case "RangeNotEmpty":
@@ -1129,6 +1133,15 @@ export function defineDatabaseMaintenanceService(
             operationId: "exportDatabaseBackup",
             summary: "Export a database backup",
             tags: ["database"],
+            requestBody: {
+              required: false,
+              schema: {
+                type: "object",
+                properties: {
+                  tenantId: { type: "string", description: "The Tenant to export; the caller's own when omitted" },
+                },
+              },
+            },
             responses: {
               200: { description: "Backup exported" },
               400: { description: "Export failed" },
@@ -1150,9 +1163,25 @@ export function defineDatabaseMaintenanceService(
             operationId: "restoreDatabaseBackup",
             summary: "Restore a database backup",
             tags: ["database"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["backup"],
+                properties: {
+                  backup: { type: "object", description: "A backup as the export route returns it" },
+                  tenantId: { type: "string", description: "The Tenant to restore into; the backup's own when omitted, and it must match" },
+                  into: {
+                    type: "string",
+                    enum: [...RESTORE_MODES],
+                    description: "What to do about data the Tenant already holds: refuse unless empty (the default), purge it first, or merge over it record by record",
+                  },
+                },
+              },
+            },
             responses: {
-              200: { description: "Backup restored" },
-              400: { description: "Restore failed" },
+              200: { description: "Backup restored: { tenantId, events, removed, superseded }" },
+              400: { description: "Restore refused or failed" },
             },
           },
           method: "POST",
@@ -1168,10 +1197,12 @@ export function defineDatabaseMaintenanceService(
               // to name one. A caller that states it keeps the mismatch guard
               // meaningful; one that does not gets the Tenant the backup was
               // taken from, which is what the replaced route did.
+              // The mode is passed as sent: the restore refuses one it does not
+              // have, so a transport cannot read it differently.
               return {
                 body: yield* integration(() => service
                   .forTenant(readTenantId(input.tenantId ?? backup.tenantId, principal))
-                  .backups.restoreTenant(backup as never)),
+                  .backups.restoreTenant(backup as never, input.into === undefined ? undefined : { into: input.into as never })),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },

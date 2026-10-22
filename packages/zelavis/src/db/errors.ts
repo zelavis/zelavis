@@ -373,6 +373,17 @@ export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("Tenant
   tenant: Schema.String,
 }) {}
 
+/**
+ * A restore named a mode it does not have.
+ *
+ * Refused rather than read as one of them: each mode does something different
+ * to the data already there, and a guess is how a restore purges what it was
+ * meant to keep or replays over what it was meant to refuse.
+ */
+export class InvalidRestoreMode extends Schema.TaggedError<InvalidRestoreMode>()("InvalidRestoreMode", {
+  mode: Schema.String,
+}) {}
+
 export class BackupFormatUnsupported extends Schema.TaggedError<BackupFormatUnsupported>()(
   "BackupFormatUnsupported",
   { format: Schema.String },

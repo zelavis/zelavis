@@ -207,3 +207,48 @@ commit as its last points; until then reads see the old series, and a rebuild
 cut off part way leaves the old series serving. While a Tenant is being moved
 to another shard, `ingest`, `rebuild` and projection runs fail with
 `TenantMoving` (409 over HTTP); retry once the move has finished.
+
+## Backups and restore
+
+A backup is one Tenant: its records and the events logged while the export ran,
+which a restore applies by version, so an export taken during writes restores
+to one moment. A restore writes only into the Tenant the backup was taken from
+(`BackupTenantMismatch` otherwise), and `into` says what to do about data that
+Tenant already holds:
+
+| `into` | Effect |
+|---|---|
+| `empty` (default) | Refuses with `TenantNotEmpty` unless the Tenant holds nothing, so nothing can be lost. |
+| `purge` | Discards what the Tenant holds, then restores: the Tenant ends up exactly as the backup describes it. |
+| `merge` | Restores over what is there, record by record. A record the backup carries supersedes the local one; a record only held locally stays. |
+
+Any other value is refused with `InvalidRestoreMode` before anything is
+written. An empty or purged Tenant gets the backup's own identifiers back;
+a merge remaps them, and graph edges with them. The result reports how many
+events were applied, how many records a purge removed and how many a merge
+wrote over:
+
+```ts
+const backup = await tenantDb.backups.exportTenant();
+const result = await tenantDb.backups.restoreTenant(backup, { into: 'purge' });
+// { tenantId: 'tenant_acme', events: 42, removed: 7, superseded: 0 }
+```
+
+From outside the Project, the same operation goes through the Project proxy and
+needs `project.runtime.manage`, which carries `database.backup` and
+`database.restore`. Naming a Tenant other than the caller's own also needs
+`database.inspect`, which `project.view` carries:
+
+| Form | Export | Restore |
+|---|---|---|
+| HTTP | `POST /zelavis/api/v1/runtime/projects/:projectId/proxy/zelavis/api/v1/database/maintenance/backups/export` with `{ tenantId? }` | `…/maintenance/backups/restore` with `{ backup, into?, tenantId? }` |
+| SDK | `client.projects.exportTenant(projectId, { tenantId? })` | `client.projects.restoreTenant(projectId, backup, { into?, tenantId? })` |
+| CLI | `zelavis projects export-tenant <id> [--tenant T] [--output FILE]` | `zelavis projects restore-tenant <id> --file FILE [--into empty\|purge\|merge] [--tenant T]` |
+
+The three answer alike, refusals included: `TenantNotEmpty`,
+`BackupTenantMismatch` and `InvalidRestoreMode` are 400 with the same message,
+and `TenantMoving` is 409 while the Tenant is being moved. App Data clients
+(`project.data.*`) cannot back up or restore; that authority stays with the
+Project's runtime management. A backup carries no time-series state or
+projection checkpoints, which are positions in the old log; they are rebuilt
+from the restored log.

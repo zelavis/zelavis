@@ -139,6 +139,14 @@ command tree.
   `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
   `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
   which needs `project.setup.reveal` and is recorded in the audit trail.
+  `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of
+  an App Project's database (the caller's own unless `--tenant` names another) and
+  prints the backup, or writes it owner-only to `FILE`.
+  `projects restore-tenant <id> --file FILE [--into empty|purge|merge] [--tenant T]`
+  restores one; `empty`, the default, refuses a Tenant that holds data. Both call
+  `client.projects.exportTenant|restoreTenant` and the database's
+  `maintenance/backups/export|restore` route through the Project proxy, and need
+  `project.runtime.manage`. See [Database](../api/database/#backups-and-restore).
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;

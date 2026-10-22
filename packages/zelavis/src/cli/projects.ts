@@ -1,10 +1,32 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { Effect } from "effect";
-import { integration, present } from "../core/runtime/effect-boundary.js";
+import { integration, integrationValue, present } from "../core/runtime/effect-boundary.js";
 import type { ZelavisProjectRecord } from "../project.js";
-import { createZelavisClient } from "../sdk/fetch.js";
+import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--url URL] [--token TOKEN] [--json]";
+
+/**
+ * A backup file read back, checked only for being one.
+ *
+ * The restore checks the format, the Tenant and every identifier itself; this
+ * is so that a wrong file fails here with its name rather than as a request.
+ */
+const readBackup = (text: string, file: string): ZelavisTenantBackup => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const candidate = parsed as { readonly tenantId?: unknown; readonly events?: unknown } | null;
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)
+    || typeof candidate.tenantId !== "string" || !Array.isArray(candidate.events)) {
+    throw new Error(`${file} is not a Tenant backup.`);
+  }
+  return candidate as ZelavisTenantBackup;
+};
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -26,6 +48,10 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let installHostPackages = false;
   let restart = false;
   let reveal = false;
+  let tenant: string | undefined;
+  let output: string | undefined;
+  let file: string | undefined;
+  let into: string | undefined;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -42,7 +68,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--output", "--file", "--into"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -54,6 +80,10 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--engine-version") engineVersion = value;
     if (flag === "--method") method = value;
     if (flag === "--software-version") softwareVersion = value;
+    if (flag === "--tenant") tenant = value;
+    if (flag === "--output") output = value;
+    if (flag === "--file") file = value;
+    if (flag === "--into") into = value;
   }
 
   const [action, target, ...rest] = positional;
@@ -67,6 +97,9 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
+  if (tenant && !["export-tenant", "restore-tenant"].includes(action)) throw new Error("--tenant is only supported by projects export-tenant and restore-tenant.");
+  if (output && action !== "export-tenant") throw new Error("--output is only supported by projects export-tenant.");
+  if ((file || into) && action !== "restore-tenant") throw new Error("--file and --into are only supported by projects restore-tenant.");
   const base = new URL(url);
   const client = createZelavisClient({
     baseUrl: base.origin,
@@ -173,6 +206,38 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "remove": {
       const result = yield* integration(() => client.projects.remove(requireTarget("id")));
       print(result, () => `Removed ${target}.`);
+      return;
+    }
+    case "export-tenant": {
+      const backup = yield* integration(() => client.projects.exportTenant(requireTarget("id"), tenant ? { tenantId: tenant } : undefined));
+      if (!output) {
+        // The backup is the output, whatever the format flag says: redirect it
+        // to a file, or hand it to restore-tenant.
+        console.log(JSON.stringify(backup, null, 2));
+        return;
+      }
+      // Created owner-only: a backup holds every record of the Tenant.
+      const destination = output;
+      yield* integration(() => writeFile(destination, `${JSON.stringify(backup)}\n`, { mode: 0o600 }));
+      print(
+        { tenantId: backup.tenantId, events: backup.events.length, file: destination },
+        () => `Exported ${backup.events.length} events of Tenant ${backup.tenantId} to ${destination}.`,
+      );
+      return;
+    }
+    case "restore-tenant": {
+      if (!file) throw new Error("projects restore-tenant requires --file <backup.json>.");
+      const backup = readBackup(yield* integrationValue(readFile(file, "utf8")), file);
+      // The mode is passed as given: the restore refuses one it does not have,
+      // with the same answer the SDK and HTTP get.
+      const result = yield* integration(() => client.projects.restoreTenant(requireTarget("id"), backup, {
+        ...(into ? { into: into as ZelavisTenantRestoreMode } : {}),
+        ...(tenant ? { tenantId: tenant } : {}),
+      }));
+      print(result, () =>
+        `Restored ${result.events} events into Tenant ${result.tenantId}` +
+        (result.removed > 0 ? `, removing ${result.removed} records first` : "") +
+        (result.superseded > 0 ? `, writing over ${result.superseded}` : "") + ".");
       return;
     }
     default:

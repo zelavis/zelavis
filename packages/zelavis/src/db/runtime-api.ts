@@ -29,7 +29,7 @@ import type {
   TraverseResult,
 } from "./documents.js";
 import type { DomainEvent, DomainEventPage, ReadDomainEventsInput } from "./domain-events.js";
-import type { TenantBackupV1 } from "./backup.js";
+import type { RestoreOptions, RestoreResult, TenantBackupV1 } from "./backup.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
 import type { ProjectionSummary } from "./projections.js";
 import type { QuerySystemViewInput, SystemView, SystemViewResult } from "./system-views.js";
@@ -254,7 +254,7 @@ export interface TenantRuntimeApi {
   };
   readonly backups: {
     readonly exportTenant: () => Promise<TenantBackupV1>;
-    readonly restoreTenant: (backup: TenantBackupV1) => Promise<{ events: number }>;
+    readonly restoreTenant: (backup: TenantBackupV1, options?: RestoreOptions) => Promise<RestoreResult>;
   };
   readonly systemViews: {
     readonly list: () => ReadonlyArray<SystemView>;
@@ -355,7 +355,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   },
   backups: {
     exportTenant: () => run(tenant.backups.exportTenant),
-    restoreTenant: (backup) => run(tenant.backups.restoreTenant(backup)),
+    restoreTenant: (backup, options) => run(tenant.backups.restoreTenant(backup, options)),
   },
   systemViews: {
     list: () => tenant.systemViews.list(),
