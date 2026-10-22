@@ -34,7 +34,9 @@ const manifestFor = (rand, seqs) => {
   const words = [...new Set(Array.from({ length: 1 + Math.floor(rand() * 3) }, () => pick(WORDS)))];
   return {
     terms: words.map((word) => ["title", word]),
-    columns: [["score", pick(SCORES)], ["region", pick(REGIONS)]],
+    // Every record is a "post": the list a query is known to be confined to,
+    // which drives a range or prefix that has no windowed form of its own.
+    columns: [["score", pick(SCORES)], ["region", pick(REGIONS)], ["kind", "post"]],
     measures: [],
     edges: Array.from({ length: Math.floor(rand() * 3) }, () => ["uses", pick(seqs)]),
   };
@@ -98,21 +100,26 @@ test("every window and page size gives the whole answer's slices, in order", () 
     for (const store of stores) {
       const label = `query ${q}: ${JSON.stringify(query)}`;
       assert.deepEqual(yield* ids(store.resolve(query, {})), whole, `${label}, from the start`);
-      // Paged through at a random size, each page from the last identifier.
+      // Paged through at a random size, each page from the last identifier,
+      // driven by the posts list or not: with it, a range or prefix alone is
+      // read by window, and falls back to the whole answer past its checks.
       const size = 1 + Math.floor(rand() * 60);
+      const within = rand() < 0.5 ? { within: equals("kind", "post") } : {};
       const paged = [];
       let after;
       for (;;) {
-        const page = yield* ids(store.resolve(query, { ...(after === undefined ? {} : { after }), limit: size }));
+        const page = yield* ids(store.resolve(query, { ...within, ...(after === undefined ? {} : { after }), limit: size }));
         assert.ok(page.length <= size, label);
         if (page.length === 0) break;
         paged.push(...page);
         after = page.at(-1);
       }
-      assert.deepEqual(paged, whole, `${label}, paged by ${size}`);
-      // From an arbitrary point, held or not.
+      assert.deepEqual(paged, whole, `${label}, paged by ${size}${within.within ? " within posts" : ""}`);
+      // From an arbitrary point, held or not, read to the end.
       const from = Math.floor(rand() * 260_000);
       assert.deepEqual(yield* ids(store.resolve(query, { after: from })), whole.filter((seq) => seq > from), `${label}, after ${from}`);
+      assert.deepEqual(yield* ids(store.resolve(query, { after: from, within: equals("kind", "post") })),
+        whole.filter((seq) => seq > from), `${label}, after ${from} within posts`);
     }
   }
 })));
@@ -197,3 +204,53 @@ test("findMany with a limit and a deep findPage read the documents they return, 
   assert.ok(counter.records < 25, `the deep page read ${counter.records} records`);
   assert.ok(counter.reads < 600, `the deep page read ${counter.reads} keys in all`);
 })));
+
+/** A collection of documents, written in batches, over an engine that counts its reads. */
+const collectionOf = (count, data) => Effect.gen(function* () {
+  const { engine, counter } = counting();
+  const store = yield* partitionWith(64, engine);
+  const docs = documentsFor(store, "acme");
+  yield* docs.createCollection({ name: "posts" });
+  for (let first = 0; first < count; first += 500) {
+    yield* docs.write({
+      operations: Array.from({ length: Math.min(500, count - first) }, (_, i) => ({
+        _tag: "Insert", collection: "posts", id: `p${String(first + i).padStart(5, "0")}`, data: data(first + i),
+      })),
+    });
+  }
+  counter.reads = 0;
+  counter.records = 0;
+  return { docs, counter };
+});
+
+test("a range alone, matched by most of the collection, reads about a page: the collection's postings drive it", () => run(Effect.gen(function* () {
+  const { docs, counter } = yield* collectionOf(3_000, (n) => ({ n }));
+  // 2,900 matches, far more than the cap of 64, so the range is read by window.
+  const where = [{ path: "n", op: "lt", value: 2_900 }];
+  const few = yield* docs.findMany({ collection: "posts", where, limit: 5 });
+  assert.deepEqual(few.map((doc) => doc.data.n), [0, 1, 2, 3, 4]);
+  assert.ok(counter.reads < 400, `findMany read ${counter.reads} keys; the range alone holds 2,900 postings`);
+
+  let cursor;
+  for (let read = 0; read < 2_000; read += 500) {
+    cursor = (yield* docs.findPage({ collection: "posts", where, limit: 500, ...(cursor === undefined ? {} : { after: cursor }) })).next;
+  }
+  counter.reads = 0;
+  counter.records = 0;
+  const deep = yield* docs.findPage({ collection: "posts", where, limit: 10, after: cursor });
+  assert.deepEqual(deep.documents.map((doc) => doc.data.n), Array.from({ length: 10 }, (_, i) => 2_000 + i));
+  assert.ok(counter.reads < 400, `the deep page read ${counter.reads} keys`);
+})));
+
+test("a range scattered thinly through a large collection stops checking at the cap and reads the range whole", () => run(Effect.gen(function* () {
+  // 200 matches, one in every hundred documents: wider than the cap, too thin
+  // to find by checking documents one at a time.
+  const { docs, counter } = yield* collectionOf(20_000, (n) => ({ n, flag: n % 100 === 99 ? 1 : 0 }));
+  const few = yield* docs.findMany({ collection: "posts", where: [{ path: "flag", op: "gte", value: 1 }], limit: 5 });
+  assert.deepEqual(few.map((doc) => doc.data.n), [99, 199, 299, 399, 499]);
+  // Checking alone would read about 500 records to find five; the budget stops
+  // it at about two windows of 64, and the range's 200 postings answer the rest.
+  assert.ok(counter.records < 2 * 64 + 20, `findMany read ${counter.records} records`);
+  assert.ok(counter.reads < 1_000, `findMany read ${counter.reads} keys`);
+})));
+

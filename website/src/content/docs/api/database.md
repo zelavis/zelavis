@@ -91,9 +91,11 @@ A page in the default identifier order (`findPage` with no `orderBy`), and
 `findMany` with a `limit` and no order or search, read only the documents they
 return: the store resolves the matching identifiers a window at a time from
 the cursor and stops when the page is full, so a page deep into a large
-collection costs about the same as the first. The exception is a filter made
-only of ranges or text prefixes that match more than a few thousand documents,
-which is still evaluated in full on each call.
+collection costs about the same as the first. A filter made only of ranges or
+text prefixes is read the same way through the collection's own index,
+checking each document; when its matches are scattered too thinly for that to
+pay, a call stops after a few thousand checks and evaluates the filter whole
+instead, so it never costs more than it used to.
 
 Every scalar field is indexed unless the collection declares `columns`, the
 fields it queries: `createCollection({ name, columns })` indexes only those

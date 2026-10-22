@@ -1386,23 +1386,30 @@ const openPartition = (
       return next;
     });
 
+  /** What a windowed read has spent checking candidates against their records. */
+  interface Tally {
+    checks: number;
+  }
+
   /** A windowed query's answer within `[lo, hi)`, a window inside one segment. */
   const windowOf = (
     shape: Windowed,
     lo: number,
     hi: number,
     cache: SealedCache,
+    tally: Tally,
   ): Effect.Effect<Postings.Postings, StoreError> =>
     Effect.gen(function* () {
       if (shape.kind === "or") {
-        return Postings.orAll(yield* Effect.forEach(shape.of, (part) => windowOf(part, lo, hi, cache)));
+        return Postings.orAll(yield* Effect.forEach(shape.of, (part) => windowOf(part, lo, hi, cache, tally)));
       }
       if (shape.kind === "and") {
-        const candidates = Postings.andAll(yield* Effect.forEach(shape.drivers, (driver) => windowOf(driver, lo, hi, cache)));
+        const candidates = Postings.andAll(yield* Effect.forEach(shape.drivers, (driver) => windowOf(driver, lo, hi, cache, tally)));
         if (shape.checked.length === 0) return candidates;
         const outbound = new Map<string, ReadonlySet<number>>();
         const kept = new Postings.PostingsBuilder();
         for (const seq of Postings.iterate(candidates)) {
+          tally.checks += 1;
           const record = yield* readRecord(pendingView(new Map()), seq);
           if (record?.live !== true) continue;
           let all = true;
@@ -1426,6 +1433,9 @@ const openPartition = (
       return found.build();
     });
 
+  /** Identifiers handed on per step once a windowed read has fallen back to the whole answer. */
+  const FALLBACK_STEP = 4096;
+
   /**
    * A query's identifiers after `after`, ascending, read a window at a time and
    * only as far as whoever consumes them goes.
@@ -1433,28 +1443,54 @@ const openPartition = (
    * A query the bounded evaluation answers exactly is a small set already, and
    * is paged from. Otherwise a windowed query jumps to the next identifier any
    * of its lists holds and reads one window there, so a page deep into a large
-   * collection costs about the cap and the page rather than the collection. A
-   * query with no windowed form — a range or prefix alone, wider than the cap —
-   * is evaluated in full and paged from, as it was before.
+   * collection costs about the cap and the page rather than the collection.
+   *
+   * A range or a prefix alone has no windowed form: it spans many values, each
+   * in its own order. Given `within` — a list the query is known to be confined
+   * to, such as a collection's own postings — the read is driven by that list
+   * a window at a time instead, each candidate checked against the query.
+   * Checks cost a record read each, which pays while the matches are a fair
+   * share of the list and not when they are scattered thinly through it, so a
+   * read spends at most the cap in checks: past that, the rest of it is the
+   * query evaluated whole, once. A query with neither form is evaluated whole
+   * from the start, as before.
    */
-  const resolveAfter = (query: Query, after: number | undefined): Stream.Stream<Seq, StoreError | LensesRebuilding> =>
+  const resolveAfter = (
+    query: Query,
+    after: number | undefined,
+    within: Query | undefined,
+  ): Stream.Stream<Seq, StoreError | LensesRebuilding> =>
     Stream.unwrap(Effect.gen(function* () {
       yield* lensesReady;
       const start = after === undefined ? 0 : after + 1;
       const bounded = yield* evaluateBounded(query, probeCap);
       if (bounded.kind === "exact") return Stream.fromIterable(Postings.between(bounded.postings, start, Number.MAX_SAFE_INTEGER));
-      const shape = windowedOf(query);
+      const driver = within === undefined ? undefined : windowedOf(within);
+      const shape: Windowed | undefined = windowedOf(query)
+        ?? (driver === undefined ? undefined : { kind: "and", drivers: [driver], checked: [query] });
       if (shape === undefined) {
         return Stream.fromIterableEffect(Effect.map(evaluate(query), (all) => Postings.between(all, start, Number.MAX_SAFE_INTEGER)));
       }
       const cache: SealedCache = new Map();
+      const tally: Tally = { checks: 0 };
+      let whole: Postings.Postings | undefined;
       return Stream.paginate(start, (from: number) =>
         Effect.gen(function* () {
+          if (whole !== undefined || tally.checks > probeCap) {
+            // Thinly scattered matches: the checks so far found too few.
+            whole ??= yield* evaluate(query);
+            const step: Array<Seq> = [];
+            for (const seq of Postings.between(whole, from, Number.MAX_SAFE_INTEGER)) {
+              step.push(seq);
+              if (step.length === FALLBACK_STEP) break;
+            }
+            return [step, step.length < FALLBACK_STEP ? Option.none<number>() : Option.some(step.at(-1)! + 1)] as const;
+          }
           const next = yield* nextFrom(shape, from, cache);
           if (next === undefined) return [[], Option.none<number>()] as const;
           const lo = next - (next % windowSize);
           const hi = lo + windowSize;
-          const found = yield* windowOf(shape, lo, hi, cache);
+          const found = yield* windowOf(shape, lo, hi, cache, tally);
           return [[...Postings.between(found, Math.max(lo, from), hi)], hi > MAX_SEQ ? Option.none<number>() : Option.some(hi)] as const;
         }));
     }));
@@ -2461,7 +2497,7 @@ const openPartition = (
       if (options === undefined) {
         return Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), Postings.iterate));
       }
-      const page = resolveAfter(query, options.after === undefined ? undefined : Number(options.after));
+      const page = resolveAfter(query, options.after === undefined ? undefined : Number(options.after), options.within);
       return options.limit === undefined ? page : Stream.take(page, options.limit);
     },
 

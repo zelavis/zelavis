@@ -3156,14 +3156,17 @@ export const documentsFor = (
    * a window of identifiers at a time, so a page deep into a large collection
    * costs about the page rather than everything before and after it.
    */
-  const inIdentifierOrder = (plan: Plan, take: number, from: Position | undefined) =>
+  const inIdentifierOrder = (plan: Plan, collection: string, take: number, from: Position | undefined) =>
     Effect.gen(function* () {
       const keep = keeps(plan);
       const after = from?.phase === "seq" ? from.seq : undefined;
       const out: Array<Placed> = [];
       if (take <= 0) return out;
       yield* Stream.runForEachWhile(
-        resolveQuery(plan.query, after === undefined ? {} : { after: asSeq(after) }),
+        resolveQuery(plan.query, {
+          within: equals(collectionColumn(), collection),
+          ...(after === undefined ? {} : { after: asSeq(after) }),
+        }),
         (seq) =>
           Effect.gen(function* () {
             const doc = yield* readDocument(seq);
@@ -4031,7 +4034,9 @@ const generateHighlights = (
           if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
         }
       } else if (enough > 0) {
-        yield* Stream.runForEachWhile(resolveQuery(plan.query, {}), (seq) =>
+        // Every match is one of the collection's documents, whose own postings
+        // can drive a filter that has no windowed form of its own.
+        yield* Stream.runForEachWhile(resolveQuery(plan.query, { within: equals(collectionColumn(), input.collection) }), (seq) =>
           Effect.gen(function* () {
             const doc = yield* readDocument(seq);
             if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
@@ -4407,7 +4412,7 @@ const generateHighlights = (
           : sorts.length === 0
             ? (geometry !== undefined && "near" in geometry
                 ? yield* inDistanceOrder(plan, input.collection, geometry, limit + 1, from)
-                : yield* inIdentifierOrder(plan, limit + 1, from))
+                : yield* inIdentifierOrder(plan, input.collection, limit + 1, from))
             : indexed !== undefined
               ? yield* inIndexOrder(plan, indexed, limit + 1, from)
               : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);

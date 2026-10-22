@@ -408,7 +408,8 @@ before editing.
   versioned tombstone; events apply by version (and `follow` by position);
   copies use a record scan plus the log tail; queries read clauses up to the
   probe cap and check broad ones against manifests that must match the lenses;
-  a read that stops early resolves by window (`resolve(query, { after, limit })`).
+  a read that stops early resolves by window (`resolve(query, { after, limit,
+  within })`), a range alone driven by `within` under a check budget.
   There is no raw SQL surface, and `surface` is never buried in metadata.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,

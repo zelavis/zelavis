@@ -1226,9 +1226,12 @@ Key rules:
   Terms, equalities and edges are one seek per window; ranges and term
   prefixes are checked per candidate. `findPage` in identifier order and
   `findMany` with a limit and no order or search read only what they return.
-  A range or term prefix alone, wider than the cap, has no windowed form and
-  is evaluated in full per call. `test/db-windowed-resolve.test.mjs` holds the
-  windowed answer to the whole one across window and page sizes.
+  A range or term prefix alone has no windowed form; given `within` (a list
+  every match is known to be in — documents pass their collection's postings)
+  it is driven by that list, each candidate checked, and a read spends at most
+  the cap in checks before evaluating the query whole, once: thinly scattered
+  matches cost no more than they did. `test/db-windowed-resolve.test.mjs`
+  holds the windowed answer to the whole one across window and page sizes.
 - The log is the source of truth up to the compaction point, not forever.
   Records are the snapshot, so `db.maintenance` compacts by truncating the log
   — after which storage tracks live objects rather than every write ever

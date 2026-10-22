@@ -62,6 +62,14 @@ export interface ResolveOptions {
   readonly after?: Seq;
   /** At most this many. */
   readonly limit?: number;
+  /**
+   * A query every match is known to satisfy — a collection's own postings —
+   * which drives a query with no windowed form of its own (a range or prefix
+   * alone) a window at a time, checking each candidate. The caller vouches
+   * for it: an identifier outside `within` is never returned by the windowed
+   * read, but may be once a read falls back to evaluating the query whole.
+   */
+  readonly within?: Query;
 }
 
 export interface Txn {
