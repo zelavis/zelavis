@@ -3,7 +3,7 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|modalities|create-collection|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear> --project ID [collection-or-namespace] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|modalities|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear> --project ID [collection-or-namespace] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -34,6 +34,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   let direction: "asc" | "desc" | undefined;
   let expiresAt: string | undefined;
   let ttlMs: number | undefined;
+  /** `null` is "all": every field indexed. */
+  let columns: ReadonlyArray<string> | null | undefined;
   let json = false;
 
   const parseJson = (flag: string, value: string): unknown => {
@@ -55,7 +57,7 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
       "--url", "--token", "--project", "--data", "--where", "--order",
       "--operations", "--limit", "--after", "--mode", "--expected-version",
       "--idempotency-key", "--prefix", "--lower", "--upper", "--direction",
-      "--expires-at", "--ttl-ms",
+      "--expires-at", "--ttl-ms", "--columns",
     ];
     if (!known.includes(flag)) throw new Error(`Unknown data option "${arg}".`);
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -88,6 +90,9 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     if (flag === "--expected-version") {
       expectedVersion = Number(value);
       if (!Number.isSafeInteger(expectedVersion)) throw new Error("--expected-version requires an integer.");
+    }
+    if (flag === "--columns") {
+      columns = value === "all" ? null : value.split(",").map((field) => field.trim()).filter((field) => field !== "");
     }
     if (flag === "--ttl-ms") {
       ttlMs = Number(value);
@@ -148,8 +153,20 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "create-collection") {
-    const created = (yield* integrationValue(api.collections.create({ name: requireCollection() })));
+    const created = (yield* integrationValue(api.collections.create({
+      name: requireCollection(),
+      ...(columns === undefined || columns === null ? {} : { columns }),
+    })));
     print({ collection: created }, () => `Created collection ${created.name}.`);
+    return;
+  }
+  if (action === "set-columns") {
+    if (columns === undefined) throw new Error("set-columns requires --columns FIELD,FIELD or --columns all.");
+    const name = requireCollection();
+    const result = (yield* integrationValue(api.collections.setColumns(name, columns)));
+    print(result, () =>
+      `${name} indexes ${result.columns === null ? "every field" : result.columns.join(", ")}; ` +
+      `rewrote ${result.documents} document${result.documents === 1 ? "" : "s"}.`);
     return;
   }
   if (action === "get") {

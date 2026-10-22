@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect";
 import {
-  CrossPartitionQuery, CursorMismatch, UnanalyzedCollection, UnindexedGeometry, UnknownReference,
+  CrossPartitionQuery, CursorMismatch, UnanalyzedCollection, UnindexedField, UnindexedGeometry, UnknownReference,
   UnknownShard, UnsupportedOrdering,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
@@ -171,7 +171,7 @@ export interface ScatterApi {
     input: ScatterFindInput,
   ) => Effect.Effect<
     ScatterResult<ScatteredDocument>,
-    DbError | UnknownReference | UnanalyzedCollection | UnindexedGeometry
+    DbError | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnindexedField
   >;
 
   /**
@@ -191,7 +191,7 @@ export interface ScatterApi {
   ) => Effect.Effect<
     ScatterPage,
     | DbError | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry
+    | UnindexedGeometry | UnindexedField
   >;
 }
 

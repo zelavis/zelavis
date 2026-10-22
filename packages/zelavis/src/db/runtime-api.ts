@@ -106,11 +106,16 @@ export interface TenantRuntimeApi {
       embedding?: EmbeddingIndex;
       edges?: ReadonlyArray<EdgeDefinition>;
       measures?: ReadonlyArray<MeasureDefinition>;
+      columns?: ReadonlyArray<string>;
     }) => Promise<Collection>;
     readonly analyze: (input: {
       collection: string;
       analyzer: Analyzer;
     }) => Promise<{ analyzer: Analyzer; documents: number }>;
+    readonly setColumns: (input: {
+      collection: string;
+      columns: ReadonlyArray<string> | null;
+    }) => Promise<{ columns: ReadonlyArray<string> | null; documents: number }>;
     readonly locate: (input: {
       collection: string;
       spatial: SpatialIndex;
@@ -298,6 +303,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     createIndex: (input) => run(tenant.documents.createIndex(input)),
     dropIndex: (input) => run(tenant.documents.dropIndex(input)),
     analyze: (input) => run(tenant.documents.analyze(input)),
+    setColumns: (input) => run(tenant.documents.setColumns(input)),
     locate: (input) => run(tenant.documents.locate(input)),
     embed: (input) => run(tenant.documents.embed(input)),
     summarize: (input) => run(tenant.documents.summarize(input)),

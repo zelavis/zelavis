@@ -449,6 +449,9 @@ const BAD_REQUEST_TAGS = new Set([
   "InvalidKeyValueExpiration",
   "KeyValueCursorMismatch",
   "InvalidKeyValueEncoding",
+  "TenantDivided",
+  "UnknownPart",
+  "UnindexedField",
 ]);
 
 /**
@@ -524,6 +527,14 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Constraint "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
     case "ConstraintExists":
       return `Collection "${failure.collection}" already has a constraint named "${failure.name}".`;
+    case "TenantDivided":
+    case "UnknownPart":
+      // These carry their own sentence: they are thrown synchronously too.
+      return String(failure.message);
+    case "UnindexedField":
+      return `Collection "${failure.collection}" does not index "${failure.path}"; add it to the collection's columns to query or order by it.`;
+    case "TimeSeriesMapFailed":
+      return `Time series "${failure.series}" could not map event ${failure.eventId}: ${failure.reason}.`;
     case "TenantMoving":
       return `Tenant "${failure.tenant}" is being moved to another shard; retry shortly.`;
     default:
@@ -551,6 +562,12 @@ const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) => BAD_REQUEST_TAGS.has(taggedFailureOf(error)?._tag ?? ""),
     status: 400,
+  },
+  {
+    // The request was fine; the App's own mapper could not make points of
+    // the data. Said, rather than hidden behind a 500, so it can be fixed.
+    matches: (error) => taggedFailureOf(error)?._tag === "TimeSeriesMapFailed",
+    status: 422,
   },
 ];
 
@@ -1247,6 +1264,11 @@ export function defineDatabaseDocumentsService(
                   embedding: { type: "object", description: "Which field holds a vector: { field, dimension, metric, version }" },
                   edges: { type: "array", description: "Typed links, each { name, path, collection }" },
                   measures: { type: "array", description: "Numeric fields to aggregate, each { name, path }" },
+                  columns: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "The fields indexed for equality, ranges and order; omit to index every field",
+                  },
                 },
               },
             },
@@ -1305,6 +1327,9 @@ export function defineDatabaseDocumentsService(
                   measures: Array.isArray(input.measures)
                     ? (input.measures as ReadonlyArray<MeasureDefinition>)
                     : undefined,
+                  // Passed as given: the database refuses anything that is not
+                  // a list of field paths, with the reason.
+                  columns: input.columns === undefined ? undefined : (input.columns as ReadonlyArray<string>),
                 })),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 409))));
@@ -1887,6 +1912,53 @@ export function defineDatabaseDocumentsService(
                 body: yield* integration(() => service.forTenant(tenantId).documents.analyze({
                   collection: params.collection,
                   analyzer: input.analyzer as Analyzer,
+                })),
+              };
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+})),
+        },
+        {
+          id: "database.documents.columns",
+          method: "POST",
+          access: { permissions: ["database.write"] },
+          path: "/:collection/columns",
+          spec: {
+            operationId: "setCollectionColumns",
+            summary: "Choose which fields a collection indexes, and rewrite under the choice",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "columns"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  columns: {
+                    type: ["array", "null"],
+                    items: { type: "string" },
+                    description: "The fields indexed for equality, ranges and order; null indexes every field",
+                  },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The columns, and how many documents were rewritten" },
+              400: { description: "Columns that cannot be used" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: ({ service, params, body, principal })  => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+ return yield* Effect.gen(function* () {
+              const tenantId = readTenantId(input.tenantId, principal);
+              if (!("columns" in input)) throw new TypeError("columns is required: a list of field paths, or null.");
+              return {
+                body: yield* integration(() => service.forTenant(tenantId).documents.setColumns({
+                  collection: params.collection,
+                  columns: input.columns as ReadonlyArray<string> | null,
                 })),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));

@@ -342,6 +342,11 @@ export interface ZelavisDataClient {
     list(): Promise<readonly ZelavisDataCollection[]>;
     modalities(collection: string): Promise<ZelavisDataCollectionModalities>;
     create(input: ZelavisDataCollectionCreateInput): Promise<ZelavisDataCollection>;
+    /**
+     * Choose which fields a collection indexes and rewrite its documents under
+     * the choice; `null` indexes every field again.
+     */
+    setColumns(collection: string, columns: readonly string[] | null): Promise<ZelavisDataColumnsResult>;
     exists(collection: string): Promise<boolean>;
     /**
      * Removes a collection and everything in it.
@@ -457,6 +462,8 @@ export interface ZelavisDataCollection {
   readonly name: string;
   readonly surface?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /** The fields it indexes for equality, ranges and order; absent, every field. */
+  readonly columns?: readonly string[];
 }
 
 export interface ZelavisDataCollectionModalities {
@@ -464,7 +471,8 @@ export interface ZelavisDataCollectionModalities {
   readonly document: { readonly status: "ready" };
   readonly keyValue: { readonly status: "ready"; readonly key: "document.id" };
   readonly events: { readonly status: "ready" };
-  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" };
+  /** Every scalar unless the collection declares its columns. */
+  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" | readonly string[] };
   readonly search: { readonly status: "ready" | "requires-declaration"; readonly fields: readonly string[] };
   readonly measures: { readonly status: "ready" | "requires-declaration"; readonly fields: readonly string[] };
   readonly graph: { readonly status: "ready" | "requires-declaration"; readonly edges: readonly string[] };
@@ -476,6 +484,18 @@ export interface ZelavisDataCollectionCreateInput {
   readonly name: string;
   readonly surface?: "database" | "content";
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
+   * The fields to index for equality, ranges and order, each covering itself
+   * and everything below it. Omitted, every field is indexed. Fewer is cheaper
+   * to write and store; a query on another field is refused.
+   */
+  readonly columns?: readonly string[];
+}
+
+export interface ZelavisDataColumnsResult {
+  readonly columns: readonly string[] | null;
+  /** Documents written back under the new choice. */
+  readonly documents: number;
 }
 
 export interface ZelavisDataDocument {
@@ -1545,6 +1565,8 @@ function createDataClient(
         `documents/collections/${dataName(collection, "collection name")}/modalities`,
       )),
       create: (input) => post<ZelavisDataCollection>("documents/collections", input),
+      setColumns: (collection, columns) =>
+        post<ZelavisDataColumnsResult>(`documents/${dataName(collection, "collection name")}/columns`, { columns }),
       exists: (collection) =>
         present(Effect.gen(function* () {
     return ((yield* integrationValue(json<{ exists: boolean }>(

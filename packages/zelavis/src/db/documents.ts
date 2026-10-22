@@ -22,6 +22,7 @@ import {
   InvalidDocumentValue,
   TenantMoving,
   dieUnlessMoving,
+  UnindexedField,
   CursorMismatch,
   IndexExists,
   InvalidIndex,
@@ -88,6 +89,14 @@ export interface Collection {
   readonly embedding?: EmbeddingIndex;
   /** Typed links to many other documents; see `EdgeDefinition`. */
   readonly edges?: ReadonlyArray<EdgeDefinition>;
+  /**
+   * The fields equality, ranges and single-field order can use, each covering
+   * itself and everything below it. Absent, every scalar is indexed. Declaring
+   * them is what keeps a wide document from writing an index entry per field:
+   * a document writes postings only for these, and a query on another field is
+   * refused (`UnindexedField`) rather than run as a scan.
+   */
+  readonly columns?: ReadonlyArray<string>;
   /** Numeric fields kept in the measure lens; see `MeasureDefinition`. */
   readonly measures?: ReadonlyArray<MeasureDefinition>;
   /** The references other collections — or this one — make to this collection's documents. */
@@ -99,7 +108,8 @@ export interface CollectionModalities {
   readonly document: { readonly status: "ready" };
   readonly keyValue: { readonly status: "ready"; readonly key: "document.id" };
   readonly events: { readonly status: "ready" };
-  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" };
+  /** Every scalar unless the collection declares its columns; see `Collection.columns`. */
+  readonly columns: { readonly status: "ready"; readonly fields: "all-json-scalars" | ReadonlyArray<string> };
   readonly search: { readonly status: "ready" | "requires-declaration"; readonly fields: ReadonlyArray<string> };
   readonly measures: { readonly status: "ready" | "requires-declaration"; readonly fields: ReadonlyArray<string> };
   readonly graph: { readonly status: "ready" | "requires-declaration"; readonly edges: ReadonlyArray<string> };
@@ -113,7 +123,7 @@ export const collectionModalities = (collection: Collection): CollectionModaliti
   document: { status: "ready" },
   keyValue: { status: "ready", key: "document.id" },
   events: { status: "ready" },
-  columns: { status: "ready", fields: "all-json-scalars" },
+  columns: { status: "ready", fields: collection.columns ?? "all-json-scalars" },
   search: {
     status: collection.analyzer === undefined ? "requires-declaration" : "ready",
     fields: collection.analyzer?.fields ?? [],
@@ -809,6 +819,7 @@ export const collectionRecord = objectFields<StoredCollection>({ name: isString,
     normalize: optional(isBoolean), model: optional(isString), modelVersion: optional((value): value is string | number => isString(value) || isFiniteNumber(value)), version: isNonNegativeInteger })),
   edges: optional(arrayOf(objectFields<EdgeDefinition>({ name: isString, path: isString, collection: isString }))),
   measures: optional(arrayOf(objectFields<MeasureDefinition>({ name: isString, path: isString }))),
+  columns: optional(arrayOf(isString)),
   referencedBy: optional(arrayOf(objectFields<{ collection: string; reference: string }>({ collection: isString, reference: isString }))),
 });
 const receiptRecord = objectFields<Receipt>({ key: isString, fingerprint: isString, request: isString, result: isUnknown, at: isTimestamp });
@@ -858,6 +869,70 @@ const readPath = (data: JsonObject, path: string): Json | undefined => {
   return cursor;
 };
 
+/**
+ * Whether a collection's declared columns cover a path: the path itself, or a
+ * field it lies below. Undeclared columns cover everything.
+ */
+const covers = (columns: ReadonlyArray<string> | undefined, path: string): boolean =>
+  columns === undefined || columns.some((column) => path === column || path.startsWith(`${column}.`));
+
+/**
+ * A collection's declared columns, checked and in one order. Every reference
+ * must read a covered field: a join is an equality over the referencing
+ * field's own postings, and an uncovered field has none.
+ */
+const normalizeColumns = (
+  collection: string,
+  columns: unknown,
+  references: ReadonlyArray<Required<ReferenceConstraint>>,
+): Effect.Effect<ReadonlyArray<string>, InvalidConstraint> => {
+  const invalid = (reason: string) => Effect.fail(new InvalidConstraint({ collection, name: "columns", reason }));
+  if (!Array.isArray(columns)) return invalid("columns must be a list of field paths");
+  for (const column of columns as ReadonlyArray<unknown>) {
+    if (typeof column !== "string" || column === "" || column.split(".").some((segment) => segment === "")) {
+      return invalid(`${JSON.stringify(column) ?? "undefined"} is not a field path`);
+    }
+  }
+  const declared = [...new Set(columns as ReadonlyArray<string>)].sort();
+  for (const reference of references) {
+    if (!covers(declared, reference.path)) {
+      return invalid(`reference "${reference.name}" reads ${reference.path}, which the columns leave out`);
+    }
+  }
+  return Effect.succeed(declared);
+};
+
+/** The read operations that go through a field's own postings, and so need it indexed. */
+const POSTED_OPS: ReadonlySet<string> = new Set(["eq", "in", "gt", "gte", "lt", "lte"]);
+const DYNAMIC_SORTS: ReadonlySet<string> = new Set(["$distance", "distance", "$score", "score"]);
+
+/**
+ * Refuse an equality, a range or an order on a field the collection does not
+ * index. Filters evaluated per document (`ne`, phrases and the like) need no
+ * postings and pass. A single-field order is read through that field's
+ * postings unless a composite index serves it; several fields are sorted in
+ * memory or need an index, which `UnsupportedOrdering` already says.
+ */
+const requireColumns = (
+  collection: StoredCollection | undefined,
+  name: string,
+  where: ReadonlyArray<DocumentFilter>,
+  order?: { readonly sorts: ReadonlyArray<{ readonly path: string }>; readonly indexed: boolean },
+): Effect.Effect<void, UnindexedField> => {
+  const columns = collection?.columns;
+  if (columns === undefined) return Effect.void;
+  for (const filter of where) {
+    if (POSTED_OPS.has(filter.op ?? "eq") && !covers(columns, filter.path)) {
+      return Effect.fail(new UnindexedField({ collection: name, path: filter.path }));
+    }
+  }
+  const only = order?.sorts.length === 1 ? order.sorts[0]! : undefined;
+  if (only !== undefined && order?.indexed === false && !DYNAMIC_SORTS.has(only.path) && !covers(columns, only.path)) {
+    return Effect.fail(new UnindexedField({ collection: name, path: only.path }));
+  }
+  return Effect.void;
+};
+
 /** Only scalars are indexable; a term for an object or array would not be equatable. */
 const isScalar = (value: Json | undefined): value is string | number | boolean =>
   typeof value === "string" || typeof value === "number" || typeof value === "boolean";
@@ -875,11 +950,12 @@ const isScalar = (value: Json | undefined): value is string | number | boolean =
 const columnsFor = (
   collection: string,
   data: JsonObject,
+  columns: ReadonlyArray<string> | undefined,
 ): Array<readonly [string, OrderedScalar]> => {
   const out: Array<readonly [string, OrderedScalar]> = [[collectionColumn(), collection]];
   const walk = (value: Json, path: string): void => {
     if (value === null || isScalar(value)) {
-      if (path !== "") out.push([columnFor(collection, path), value]);
+      if (path !== "" && covers(columns, path)) out.push([columnFor(collection, path), value]);
       return;
     }
     if (Array.isArray(value)) return;
@@ -1803,6 +1879,8 @@ export interface DocumentsApi {
     readonly edges?: ReadonlyArray<EdgeDefinition>;
     /** This collection's numeric fields to aggregate; see `MeasureDefinition`. */
     readonly measures?: ReadonlyArray<MeasureDefinition>;
+    /** The fields it indexes for equality, ranges and order; see `Collection.columns`. */
+    readonly columns?: ReadonlyArray<string>;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -1842,7 +1920,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     ReadonlyArray<Document>,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
-    | InvalidVectorQuery | UnknownEdge
+    | InvalidVectorQuery | UnknownEdge | UnindexedField
   >;
   /**
    * One page of matching documents, and a cursor for the next.
@@ -1859,7 +1937,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     DocumentPage,
     | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry | UnknownEdge | UnembeddedCollection | InvalidVectorQuery
+    | UnindexedGeometry | UnknownEdge | UnembeddedCollection | InvalidVectorQuery | UnindexedField
   >;
 
   /**
@@ -1884,7 +1962,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     TraverseResult,
     | UnknownEdge | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry | UnembeddedCollection | InvalidVectorQuery
+    | UnindexedGeometry | UnembeddedCollection | InvalidVectorQuery | UnindexedField
   >;
   readonly update: (input: {
     readonly collection: string;
@@ -1975,6 +2053,23 @@ export interface DocumentsApi {
   >;
 
   /**
+   * Choose which fields a collection indexes for equality, ranges and order
+   * (see `Collection.columns`), and rewrite its documents under the choice;
+   * `null` indexes every scalar again. A field taken out is refused by queries
+   * at once. Like `analyze`, the documents already there are written back under
+   * the new choice, a write and a log entry each, so a field added answers for
+   * every document once this has finished; running it again finishes an
+   * interrupted one. Refused when a reference reads a field it leaves out.
+   */
+  readonly setColumns: (input: {
+    readonly collection: string;
+    readonly columns: ReadonlyArray<string> | null;
+  }) => Effect.Effect<
+    { readonly columns: ReadonlyArray<string> | null; readonly documents: number },
+    CollectionNotFound | InvalidConstraint | TenantMoving
+  >;
+
+  /**
    * Declare how a collection's geometry becomes cells, and rewrite its
    * documents under it.
    *
@@ -2044,6 +2139,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     Summary,
     UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
+    | UnindexedField
   >;
 
   /**
@@ -2063,7 +2159,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     ReadonlyArray<GroupedSummary>,
     | UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
-    | CursorMismatch
+    | CursorMismatch | UnindexedField
   >;
 
   /**
@@ -2396,13 +2492,14 @@ export const documentsFor = (
     h3?: Parameters<typeof cellsFor>[0],
     edges: ReadonlyArray<readonly [string, Seq]> = [],
     measures: ReadonlyArray<MeasureDefinition> = [],
+    columns?: ReadonlyArray<string>,
   ): IndexManifest => ({
     terms: [
       ...termsFor(doc.collection, analyzer, doc.data),
       ...cellTermsFor(doc.collection, spatial, h3, doc.data),
     ],
     columns: [
-      ...columnsFor(doc.collection, doc.data),
+      ...columnsFor(doc.collection, doc.data, columns),
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
     ],
     measures: measuresFor(doc.collection, measures, doc.data),
@@ -2581,7 +2678,7 @@ export const documentsFor = (
       const cells = yield* spatialHandle(collection?.spatial);
       yield* txn.put(seq, encode(doc), manifestFor(
         doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells, edges,
-        collection?.measures ?? [],
+        collection?.measures ?? [], collection?.columns,
       ), {
         namespace: documentNs(doc.collection), key: doc.id,
       });
@@ -3039,7 +3136,7 @@ export const documentsFor = (
                 }
               }
               yield* txn.put(seq, object.bytes, manifestFor(
-                doc, indexes, analyzer, spatial, cells, links, record?.measures ?? [],
+                doc, indexes, analyzer, spatial, cells, links, record?.measures ?? [], record?.columns,
               ), {
                 namespace: documentNs(collection), key: doc.id,
               });
@@ -3200,7 +3297,7 @@ export const documentsFor = (
     related: ReadonlyArray<RelatedFilter> | undefined,
   ): Effect.Effect<
     ReadonlyArray<DocumentFilter> | undefined,
-    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnindexedField
   > =>
     Effect.gen(function* () {
       if (related === undefined || related.length === 0) return [];
@@ -3727,12 +3824,13 @@ const generateHighlights = (
       readonly where: ReadonlyArray<DocumentFilter>;
       readonly words?: { readonly query: Query | undefined; readonly parsed: ParsedSearchQuery };
     } | undefined,
-    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge | UnindexedField
   > =>
     Effect.gen(function* () {
       const related = yield* relatedFilters(collection, input.collection, input.related);
       if (related === undefined) return undefined;
       const where = [...(input.where ?? []), ...related];
+      yield* requireColumns(collection, input.collection, where);
       const words = input.search === undefined
         ? undefined
         : yield* searchQuery(collection?.analyzer, input.collection, input.search, {
@@ -3798,7 +3896,7 @@ const generateHighlights = (
   ): Effect.Effect<
     ReadonlyArray<Document>,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
-    | InvalidVectorQuery | UnknownEdge
+    | InvalidVectorQuery | UnknownEdge | UnindexedField
   > =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
@@ -3904,6 +4002,7 @@ const generateHighlights = (
             return slice(found.map((entry) => attachDistance(entry.document)));
           }
           if (sorts.length === 1) {
+            yield* requireColumns(collection, input.collection, [], { sorts, indexed: false });
             // One field is served by its ordered lens, in order, without a sort.
             const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
             return slice(found.map((entry) => attachDistance(entry.document)));
@@ -4112,6 +4211,9 @@ const generateHighlights = (
           }
           edges.push(declared);
         }
+        const columns = input.columns === undefined
+          ? undefined
+          : yield* normalizeColumns(input.name, input.columns, references);
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
@@ -4125,6 +4227,7 @@ const generateHighlights = (
           ...(embedding === undefined ? {} : { embedding }),
           ...(edges.length === 0 ? {} : { edges }),
           ...(measures.length === 0 ? {} : { measures }),
+          ...(columns === undefined ? {} : { columns }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -4217,6 +4320,7 @@ const generateHighlights = (
         const indexed = sorts.length === 0
           ? undefined
           : chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
+        yield* requireColumns(collection, input.collection, where, { sorts, indexed: indexed !== undefined });
         if (input.similar !== undefined && sorts.length > 0) {
           return yield* Effect.die(new RangeError(
             "a similarity read comes back closest first, so it cannot also be ordered by a field.",
@@ -4487,7 +4591,9 @@ const generateHighlights = (
         // Emptied a page at a time: one transaction holding every document of
         // a large collection is a transaction that may not fit.
         for (;;) {
-          const page = yield* findDocuments({ collection: input.name, limit: 500 });
+          // Unfiltered and unordered, so no field needs an index.
+          const page = yield* findDocuments({ collection: input.name, limit: 500 })
+            .pipe(Effect.catchTag("UnindexedField", Effect.die));
           if (page.length === 0) break;
           yield* transactChecked((txn) =>
             Effect.gen(function* () {
@@ -4676,6 +4782,30 @@ const generateHighlights = (
         return { analyzer, documents: yield* rewriteDocuments(input.collection) };
       }),
 
+    setColumns: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const seq = yield* lookup(collectionNs(), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Checked against the references inside the transaction that records
+        // it, so a reference added meanwhile cannot be left reading nothing.
+        const recorded = yield* transactChecked<
+          { readonly columns: ReadonlyArray<string> | undefined } | undefined, InvalidConstraint
+        >((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return undefined;
+            const columns = input.columns === null
+              ? undefined
+              : yield* normalizeColumns(input.collection, input.columns, current.references ?? []);
+            const { columns: _previous, ...rest } = current;
+            yield* collectionPut(txn, seq, columns === undefined ? rest : { ...rest, columns });
+            return { columns };
+          }));
+        if (recorded === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        return { columns: recorded.columns ?? null, documents: yield* rewriteDocuments(input.collection) };
+      }),
+
     locate: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
@@ -4842,6 +4972,8 @@ const generateHighlights = (
             const current = yield* loadCollection(input.from);
             if (current === undefined) return "missing" as const;
             if ((current.references ?? []).some((other) => other.name === reference.name)) return "exists" as const;
+            // A join reads the referencing field's own postings.
+            if (!covers(current.columns, reference.path)) return "uncovered" as const;
             const withReference = { ...current, references: [...(current.references ?? []), reference] };
             if (reference.collection === input.from) {
               yield* collectionPut(txn, seq, {
@@ -4856,6 +4988,12 @@ const generateHighlights = (
           }));
         if (recorded === "missing") return yield* new CollectionNotFound({ name: input.from });
         if (recorded === "exists") return yield* new ConstraintExists({ collection: input.from, name: reference.name });
+        if (recorded === "uncovered") {
+          return yield* new InvalidConstraint({
+            collection: input.from, name: reference.name,
+            reason: `it reads ${reference.path}, which the collection's columns leave out; add it with setColumns first`,
+          });
+        }
         for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.from)))) {
           const doc = yield* readDocument(held);
           const value = doc === undefined ? undefined : readPath(doc.data, reference.path);

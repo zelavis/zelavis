@@ -145,7 +145,7 @@ Usage:
   zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
-  zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
+  zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]

@@ -4,7 +4,9 @@ import {
 import { Effect, Stream } from "effect";
 import type { DomainEvent, DomainEventsApi } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
-import { dieUnlessMoving, TimeSeriesNotFound, type TenantMoving } from "./errors.js";
+import {
+  dieUnlessMoving, type TenantMoving, TimeSeriesMapFailed, TimeSeriesNotFound,
+} from "./errors.js";
 import type { JsonObject } from "./json.js";
 import type { Seq } from "./model.js";
 import type { ProjectionSource } from "./projections.js";
@@ -195,13 +197,13 @@ export interface TimeSeriesApi {
    * and run again adds every point exactly once. Refused with `TenantMoving`
    * while the tenant is being moved.
    */
-  readonly ingest: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TenantMoving>;
+  readonly ingest: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TimeSeriesMapFailed | TenantMoving>;
   /**
    * Rebuild the series from the whole log, beside the points reads use, and
    * replace them with it once it has caught up. Reads see the old series until
    * then; a rebuild cut off leaves it serving and is cleared by the next one.
    */
-  readonly rebuild: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TenantMoving>;
+  readonly rebuild: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound | TimeSeriesMapFailed | TenantMoving>;
 }
 
 /**
@@ -369,17 +371,29 @@ const matchesSource = (source: ProjectionSource | undefined, event: DomainEvent)
   return true;
 };
 
-/** What a definition makes of one event, as stored points. */
+const isTags = recordOf(isString);
+
+/**
+ * What a definition makes of one event, as stored points — checked here,
+ * because a point the reads cannot parse back would fail every read of the
+ * series rather than the ingest that wrote it. Throws on what the mapper gets
+ * wrong; the caller turns that into `TimeSeriesMapFailed`.
+ */
 const pointsOf = (definition: TimeSeriesDefinition, event: DomainEvent): ReadonlyArray<TimeSeriesPoint> => {
   const produced = definition.map(event, { series: definition.name });
   if (produced === null || produced === undefined) return [];
   const points = Array.isArray(produced) ? produced : [produced as TimeSeriesInputPoint];
-  return points.map((point) => ({
-    timestamp: toEpoch(point.timestamp),
-    value: point.value,
-    ...(point.tags === undefined ? {} : { tags: point.tags }),
-    ...(point.fields === undefined ? {} : { fields: point.fields }),
-  }));
+  return points.map((point) => {
+    if (!isFiniteNumber(point.value)) throw new TypeError(`a point's value must be a finite number, not ${String(point.value)}`);
+    if (point.tags !== undefined && !isTags(point.tags)) throw new TypeError("a point's tags must all be strings");
+    if (point.fields !== undefined && !isJsonObject(point.fields)) throw new TypeError("a point's fields must be a JSON object");
+    return {
+      timestamp: toEpoch(point.timestamp),
+      value: point.value,
+      ...(point.tags === undefined ? {} : { tags: point.tags }),
+      ...(point.fields === undefined ? {} : { fields: point.fields }),
+    };
+  });
 };
 
 /** Which run a batch belongs to: the generation reads use, or the one a rebuild is building. */
@@ -495,8 +509,14 @@ export const timeSeriesFor = (
         let lost = false;
         for (const event of page.events) {
           if (!matchesSource(definition.source, event)) continue;
-          // The mapper is the caller's code; one that throws is a bug, reported as a defect.
-          batch.push(...(yield* Effect.sync(() => pointsOf(definition, event))));
+          // The mapper is the caller's code: what it gets wrong is reported as
+          // a failure naming the event, before anything of this batch is written.
+          batch.push(...(yield* Effect.try({
+            try: () => pointsOf(definition, event),
+            catch: (cause) => new TimeSeriesMapFailed({
+              series, eventId: event.eventId, reason: cause instanceof Error ? cause.message : String(cause),
+            }),
+          })));
           batched += 1;
           if (batch.length < POINT_BATCH) continue;
           if (!(yield* commitBatch(series, target, from, batch, event.cursor, false))) {

@@ -81,6 +81,7 @@ test("every documents operation is reachable through a route", async (t) => {
           documents: [],
           operations: [],
           analyzer: { fields: ["title"], version: 1 },
+          columns: ["a"],
           spatial: { fields: ["where"], resolution: 9, version: 1 },
           embedding: { field: "vec", dimension: 3, metric: "cosine", version: 1 },
           where: [],

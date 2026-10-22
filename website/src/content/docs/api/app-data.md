@@ -85,6 +85,33 @@ const updated = await data.documents.update('boards', board.id, {
 
 A stale `expectedVersion` is a conflict rather than a silent overwrite.
 
+### Indexing only the fields you query
+
+By default every field of every document is indexed, so any field can be
+filtered or sorted on. A collection that names the fields it queries indexes
+only those, and its documents cost far less to write and store: in one
+measurement, a document with 28 fields and four of them declared wrote 47%
+fewer bytes per insert and took 56% less space once the log was compacted than
+the same collection indexing every field.
+
+```ts
+await data.collections.create({ name: 'posts', columns: ['status', 'author', 'publishedAt'] });
+
+// Later: index another field, or every field again.
+await data.collections.setColumns('posts', ['status', 'author', 'publishedAt', 'slug']);
+await data.collections.setColumns('posts', null);
+```
+
+A declared field covers everything below it, so `author` covers `author.id`.
+Filtering or sorting by equality, `in`, a range or a single field on any
+other field fails with `UnindexedField` (400) instead of scanning the
+collection; filters checked per document, such as `ne`, still work on any
+field. A reference must read a declared field. `setColumns` rewrites the
+collection's documents under the new choice, so a newly added field answers
+for every document once it returns. The CLI takes the same choice:
+`zelavis data create-collection posts --columns status,author` and
+`zelavis data set-columns posts --columns all`.
+
 ### Several changes as one
 
 `write` applies a batch atomically, in the order given:

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServiceRuntime } from "../dist/core/index.js";
 import { defineDatabaseService } from "../dist/db/index.js";
-import { TenantMoving } from "../dist/db/errors.js";
+import { TenantDivided, TenantMoving, TimeSeriesMapFailed } from "../dist/db/errors.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
 /**
@@ -66,6 +66,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/collections/:collection/exists",
       "/api/database/documents/:collection/related",
       "/api/database/documents/:collection/analyzer",
+      "/api/database/documents/:collection/columns",
       "/api/database/documents/:collection/geometry",
       "/api/database/documents/:collection/embedding",
       "/api/database/documents/:collection/indexes",
@@ -859,4 +860,57 @@ test("a write refused because its tenant is mid-move is a conflict that says to 
   });
   assert.equal(response.status, 409);
   assert.equal(response.body.error, 'Tenant "acme" is being moved to another shard; retry shortly.');
+});
+
+test("a divided tenant addressed as a whole is a bad request naming its parts, and a failing mapper is said rather than hidden", async () => {
+  const divided = { forTenant: () => { throw new TenantDivided({ tenant: "whale", parts: ["a", "b"] }); } };
+  const refused = await call(routeOf(defineDatabaseService(divided), "database.documents.insert"), {
+    service: divided,
+    params: { collection: "posts" },
+    body: { tenantId: "whale", data: {} },
+  });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /divided into a, b/);
+
+  const mapFailed = new TimeSeriesMapFailed({ series: "views", eventId: "acme:4:1", reason: "Invalid time series timestamp: x" });
+  const broken = { forTenant: () => ({ timeSeries: { ingest: () => Promise.reject(mapFailed) } }) };
+  const response = await call(routeOf(defineDatabaseService(broken), "database.timeseries.ingest"), {
+    service: broken, params: { series: "views" }, body: { tenantId: "acme" }, query: "tenantId=acme",
+  });
+  assert.equal(response.status, 422);
+  assert.match(response.body.error, /could not map event acme:4:1/);
+});
+
+test("declared columns over HTTP: created with the collection, refused for other fields, changed by their own route", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const params = { collection: "posts" };
+  const created = await call(routeOf(service, "database.collections.create"), {
+    service: api, body: { tenantId: "acme", name: "posts", columns: ["status"] },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.columns, ["status"]);
+  for (const [id, data] of [["p1", { status: "live", title: "One" }], ["p2", { status: "draft", title: "Two" }]]) {
+    await call(routeOf(service, "database.documents.insert"), { service: api, params, body: { tenantId: "acme", id, data } });
+  }
+  const query = routeOf(service, "database.documents.query");
+
+  const live = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "status", value: "live" }] } });
+  assert.deepEqual(live.body.documents.map((document) => document.id), ["p1"]);
+  const refused = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "title", value: "Two" }] } });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, 'Collection "posts" does not index "title"; add it to the collection\'s columns to query or order by it.');
+
+  const changed = await call(routeOf(service, "database.documents.columns"), {
+    service: api, params, body: { tenantId: "acme", columns: ["status", "title"] },
+  });
+  assert.deepEqual(changed.body, { columns: ["status", "title"], documents: 2 });
+  const found = await call(query, { service: api, params, body: { tenantId: "acme", where: [{ path: "title", value: "Two" }] } });
+  assert.deepEqual(found.body.documents.map((document) => document.id), ["p2"]);
+
+  const invalid = await call(routeOf(service, "database.documents.columns"), {
+    service: api, params, body: { tenantId: "acme", columns: "status" },
+  });
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.error, /list of field paths/);
 });

@@ -58,6 +58,13 @@ const seedSeries = (tenant) => Effect.gen(function* () {
   });
 });
 
+/** The definition `seedSeries` gives, restored after a test swaps in a broken one. */
+seedSeries.redefine = (tenant) => tenant.timeSeries.define({
+  name: "views",
+  source: { collections: ["posts"], eventTypes: ["document.upserted"] },
+  map: (event) => Array.from({ length: PER_EVENT }, (_, i) => ({ timestamp: Date.parse(event.timestamp) + i, value: 1 })),
+});
+
 const stored = (tenant) => Effect.map(tenant.timeSeries.get("views").range({}), (points) => points.length);
 
 test("an ingest cut off at any commit, then run again, stores every point exactly once", async () => {
@@ -140,4 +147,50 @@ test("ingest, rebuild and a projection run are refused with TenantMoving while t
       assert.equal(failure.to, "s1", name);
     }
     assert.equal(yield* stored(tenant), 0, "and nothing was written");
+  })));
+
+test("a mapper that fails names the event, writes nothing of its batch, and ingesting again after the fix stores every point once", () =>
+  withDatabase(({ tenant }) => Effect.gen(function* () {
+    yield* seedSeries(tenant);
+    // The fourth event is the bad one: the first batch (three events, 900
+    // points) is not yet full, so nothing is committed before it fails.
+    let calls = 0;
+    yield* tenant.timeSeries.define({
+      name: "views",
+      source: { collections: ["posts"], eventTypes: ["document.upserted"] },
+      map: (event) => {
+        calls += 1;
+        if (calls === 4) return { timestamp: "not a time", value: 1 };
+        return Array.from({ length: PER_EVENT }, (_, i) => ({ timestamp: Date.parse(event.timestamp) + i, value: 1 }));
+      },
+    });
+    const failure = yield* Effect.flip(tenant.timeSeries.ingest("views"));
+    assert.equal(failure._tag, "TimeSeriesMapFailed");
+    assert.equal(failure.series, "views");
+    assert.match(failure.eventId, /^acme:/);
+    assert.match(failure.reason, /Invalid time series timestamp/);
+    assert.equal(yield* stored(tenant), 0, "nothing of the failed batch was written");
+
+    yield* seedSeries.redefine(tenant);
+    yield* tenant.timeSeries.ingest("views");
+    assert.equal(yield* stored(tenant), EVENTS * PER_EVENT);
+  })));
+
+test("a point the reads could not parse back is refused when it is mapped, not when it is read", () =>
+  withDatabase(({ tenant }) => Effect.gen(function* () {
+    yield* seedSeries(tenant);
+    for (const [bad, reason] of [
+      [{ value: Number.NaN }, /finite number/],
+      [{ value: 1, tags: { region: 7 } }, /tags must all be strings/],
+    ]) {
+      yield* tenant.timeSeries.define({
+        name: "views",
+        source: { collections: ["posts"], eventTypes: ["document.upserted"] },
+        map: (event) => ({ timestamp: Date.parse(event.timestamp), ...bad }),
+      });
+      const failure = yield* Effect.flip(tenant.timeSeries.ingest("views"));
+      assert.equal(failure._tag, "TimeSeriesMapFailed");
+      assert.match(failure.reason, reason);
+    }
+    assert.equal(yield* stored(tenant), 0);
   })));

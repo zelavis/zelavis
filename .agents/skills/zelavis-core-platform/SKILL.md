@@ -424,6 +424,9 @@ before editing.
   commit is the check: a partition handle keeps revision, lens state and move
   fence instead of reading them per write, and drops them on a refused or failed
   commit. The move fence is partition meta the store checks for every change.
+- A collection may declare `columns`; only those fields get column postings,
+  queries on other fields are refused with `UnindexedField`, and references
+  must read a declared field. JS, HTTP and CLI carry it together.
 - A consumer writing into its own partition (a time series) commits each batch
   with its cursor in one transaction and rebuilds by generation; a projection's
   `apply` is at least once and idempotent by `eventId`.

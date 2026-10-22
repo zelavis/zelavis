@@ -79,7 +79,7 @@ test("an undivided tenant is untouched by any of this", async (t) => {
 
       assert.throws(
         () => db.forPart("acme", "a"),
-        /not divided/,
+        (error) => error._tag === "UnknownPart" && /not divided/.test(error.message),
         "an undivided tenant has no parts to reach",
       );
     }),
@@ -97,7 +97,7 @@ test("reaching a divided tenant as a whole is refused, not silently partial", as
         /divided into a, b/,
         "a fraction is never handed back as though it were the whole",
       );
-      assert.throws(() => db.forPart("whale", "z"), /no part "z"/);
+      assert.throws(() => db.forPart("whale", "z"), (error) => error._tag === "UnknownPart" && /no part "z"/.test(error.message));
     }),
   );
 });

@@ -87,6 +87,17 @@ Documents are JSON objects. Each write appends its event and updates the
 document's record and indexes in one atomic batch, so a crash leaves either the
 whole write or none of it.
 
+Every scalar field is indexed unless the collection declares `columns`, the
+fields it queries: `createCollection({ name, columns })` indexes only those
+(each covering the fields below it), and `documents.setColumns({ collection,
+columns })` changes the choice and rewrites the documents under it, with
+`null` indexing every field again. Equality, `in`, ranges and single-field
+order on any other field fail with `UnindexedField` rather than scanning, and
+a reference must read a declared field. Over HTTP the choice is `columns` on
+`POST …/documents/collections` and `POST …/documents/:collection/columns`; on
+the CLI it is `--columns` on `zelavis data create-collection` and
+`zelavis data set-columns`.
+
 ## Events and cursors
 
 ```ts

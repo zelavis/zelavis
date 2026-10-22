@@ -78,6 +78,37 @@ export class TenantMoving extends Schema.TaggedError<TenantMoving>()("TenantMovi
 }) {}
 
 /**
+ * A divided tenant was addressed as a whole.
+ *
+ * There is no one shard to answer for it, and answering from one part would
+ * describe a fraction of the tenant as though it were all of it. Address a
+ * part with `forPart`, or scatter over its parts.
+ */
+export class TenantDivided extends Schema.TaggedError<TenantDivided>()("TenantDivided", {
+  tenant: Schema.String,
+  parts: Schema.Array(Schema.String),
+}) {
+  // Thrown synchronously by `forTenant`, so it has to read on its own.
+  override get message() {
+    return `Tenant "${this.tenant}" is divided into ${this.parts.join(", ")}; use forPart, or scatter over its parts.`;
+  }
+}
+
+/** A part was named that the tenant is not divided into, or a tenant that is not divided at all. */
+export class UnknownPart extends Schema.TaggedError<UnknownPart>()("UnknownPart", {
+  tenant: Schema.String,
+  part: Schema.String,
+  parts: Schema.Array(Schema.String),
+}) {
+  // Thrown synchronously by `forPart`, so it has to read on its own.
+  override get message() {
+    return this.parts.length === 0
+      ? `Tenant "${this.tenant}" is not divided, so it has no part "${this.part}".`
+      : `Tenant "${this.tenant}" has no part "${this.part}"; it is divided into ${this.parts.join(", ")}.`;
+  }
+}
+
+/**
  * A move stopped because its copy did not match the source.
  *
  * Checked with writes fenced, just before routing would move, and the last
@@ -195,6 +226,19 @@ export class UnanalyzedCollection extends Schema.TaggedError<UnanalyzedCollectio
   { collection: Schema.String },
 ) {}
 
+/**
+ * A query or an order named a field its collection does not index.
+ *
+ * A collection that declares `columns` indexes only those fields, which is what
+ * keeps a wide document from writing an index entry per field. An equality, a
+ * range or an order on any other field would have nothing to read but every
+ * document in the collection, so it is refused rather than run as a scan.
+ */
+export class UnindexedField extends Schema.TaggedError<UnindexedField>()("UnindexedField", {
+  collection: Schema.String,
+  path: Schema.String,
+}) {}
+
 /** A spatial filter named a field the collection's index does not cover. */
 export class UnindexedGeometry extends Schema.TaggedError<UnindexedGeometry>()("UnindexedGeometry", {
   collection: Schema.String,
@@ -305,6 +349,19 @@ export class TimeSeriesNotFound extends Schema.TaggedError<TimeSeriesNotFound>()
   "TimeSeriesNotFound",
   { name: Schema.String },
 ) {}
+
+/**
+ * A time series' mapper threw, or returned a point that cannot be stored — a
+ * timestamp that is not one, a value that is not a finite number, a tag that
+ * is not a string. Nothing of the batch holding that event is written, and the
+ * series stays where its last committed batch left it, so fixing the mapper
+ * and ingesting again picks up at that event.
+ */
+export class TimeSeriesMapFailed extends Schema.TaggedError<TimeSeriesMapFailed>()("TimeSeriesMapFailed", {
+  series: Schema.String,
+  eventId: Schema.String,
+  reason: Schema.String,
+}) {}
 
 export class BackupTenantMismatch extends Schema.TaggedError<BackupTenantMismatch>()(
   "BackupTenantMismatch",
@@ -447,15 +504,6 @@ export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("Le
 }) {}
 
 /** Every failure the store contract can raise. */
-/**
- * A store's failures as defects, but for `TenantMoving`: a write refused while
- * its tenant is being moved is the caller's to see, and succeeds once routing
- * points at the new shard. Anything else a store fails with is a broken engine
- * or a broken invariant.
- */
-export const dieUnlessMoving = <A, R>(effect: Effect.Effect<A, DbError, R>): Effect.Effect<A, TenantMoving, R> =>
-  Effect.catch(effect, (error) => error._tag === "TenantMoving" ? Effect.fail(error) : Effect.die(error));
-
 export type DbError =
   | StoreError
   | WriterFenced
@@ -466,3 +514,33 @@ export type DbError =
   | PartitionExhausted
   | LensesRebuilding
   | TenantMoving;
+
+/**
+ * Every store failure but a move's fence, which is the one a caller above the
+ * store can act on. Keyed by tag so that a store failure added to `DbError`
+ * without a place here does not compile.
+ */
+const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]: true } = {
+  StoreError: true,
+  WriterFenced: true,
+  ForeignCursor: true,
+  CursorCompacted: true,
+  LogCompacted: true,
+  PartitionUnavailable: true,
+  PartitionExhausted: true,
+  LensesRebuilding: true,
+};
+
+/**
+ * A store's failures as defects, but for `TenantMoving`: a write refused while
+ * its tenant is being moved is the caller's to see, and succeeds once routing
+ * points at the new shard. Anything else a store fails with is a broken engine
+ * or a broken invariant. Failures that are not the store's pass through.
+ */
+export const dieUnlessMoving = <A, E extends { readonly _tag: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, Exclude<E, Exclude<DbError, TenantMoving>>, R> =>
+  Effect.catch(effect, (error) =>
+    Object.hasOwn(STORE_DEFECTS, error._tag)
+      ? Effect.die(error)
+      : Effect.fail(error as Exclude<E, Exclude<DbError, TenantMoving>>));

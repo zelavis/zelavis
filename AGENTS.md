@@ -1143,6 +1143,14 @@ Key rules:
   until the next reindex. A seal writes each blob before deleting the live keys
   and tombstones it settles, so its batches can be bounded without ever
   leaving a tombstone gone while a blob still claims the posting.
+- Every scalar of a document is a column posting unless its collection
+  declares `columns`, the fields it queries; then only those (each covering
+  the fields below it) are, which is what keeps a wide document from writing
+  an index entry per field. Equality, `in`, ranges and single-field order on
+  any other field are refused (`UnindexedField`), never run as a scan;
+  filters checked per document still work. A reference must read a declared
+  field. Changing the columns (`setColumns`) rewrites the collection's
+  documents, the way `analyze` does.
 - A composite index is a column of the ordered lens whose value is the
   document's tuple, encoded by `orderedTuple` so that string order is tuple
   order; the store knows nothing of it. A document write reads its collection's

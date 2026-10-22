@@ -1,6 +1,6 @@
 import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { InvalidConstraint } from "./errors.js";
+import { InvalidConstraint, PartitionUnavailable, TenantDivided, UnknownPart } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -348,8 +348,12 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     const store = shards.get(shard);
     if (store === undefined) {
       // shardsOf covers every placement, so this is a corrupt map rather than
-      // a tenant we simply have not seen.
-      throw new Error(`Partition map version ${topology.current().version} places tenant on unopened shard "${shard}".`);
+      // a tenant we simply have not seen: a broken invariant, not a request
+      // anybody can correct.
+      throw new PartitionUnavailable({
+        partition,
+        reason: `partition map version ${topology.current().version} places it on shard "${shard}", which is not open`,
+      });
     }
     return store;
   };
@@ -592,23 +596,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       // this whole design exists to avoid. Naming a part is the only honest way
       // in, so it is required rather than defaulted.
       const parts = topology.subdivision.partsOf(tenant);
-      if (parts !== undefined) {
-        throw new Error(
-          `Tenant "${tenant}" is divided into ${parts.join(", ")}; use forPart, or scatter over topology.subdivision.keysOf("${tenant}").`,
-        );
-      }
+      // Synchronous, so refused by throwing — a typed error, which the HTTP
+      // routes answer as a bad request naming the parts.
+      if (parts !== undefined) throw new TenantDivided({ tenant, parts });
       return tenantApiOver(storeFor(tenant), tenant, shardHolding(tenant).partition(GLOBAL_TENANT));
     },
     forPart: (tenant, part) => {
       const parts = topology.subdivision.partsOf(tenant);
-      if (parts === undefined) {
-        throw new Error(`Tenant "${tenant}" is not divided, so it has no part "${part}".`);
-      }
-      if (!parts.includes(part)) {
-        throw new Error(
-          `Tenant "${tenant}" has no part "${part}"; it is divided into ${parts.join(", ")}.`,
-        );
-      }
+      if (parts === undefined || !parts.includes(part)) throw new UnknownPart({ tenant, part, parts: parts ?? [] });
       const key = partitionKeyFor(tenant, part);
       return tenantApiOver(storeFor(key), key, shardHolding(key).partition(GLOBAL_TENANT));
     },
