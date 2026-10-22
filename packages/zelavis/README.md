@@ -642,8 +642,9 @@ numbers before serialization can silently turn them into `null`.
 
 Reopening a database also opens shards needed by unfinished Tenant moves,
 including source shards no longer present in the current partition map.
-`db.movement.resume` finishes pending work; a move whose routing already changed
-cleans up its source without copying the target again. A move copies the
+`db.movement.resume` finishes pending work: an interrupted copy carries on from
+the target's head unless its seed was cut off, and a move whose routing already
+changed cleans up its source without copying the target again. A move copies the
 Tenant's partition as it is — identifiers and log positions included — so
 edges, event cursors and projection checkpoints carry on after it, and the
 shard the Tenant left keeps only its move fence, so a late write there is

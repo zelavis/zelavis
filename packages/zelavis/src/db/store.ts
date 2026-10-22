@@ -168,6 +168,8 @@ export interface PartitionStats {
   readonly compactedTo: number;
   /** The last identifier handed out, or 0. */
   readonly nextSeq: number;
+  /** A seed began here and did not finish: the records are part of a copy. */
+  readonly seeding: boolean;
 }
 
 export interface ObjectStoreApi {
@@ -309,6 +311,13 @@ export interface ObjectStoreApi {
 
   /** Allocate the next dense identifier in this partition. */
   readonly nextSeq: Effect.Effect<Seq, DbError>;
+
+  /**
+   * Mark every identifier up to `upTo` taken, so the allocator hands out only
+   * identifiers above it: what a restore that keeps a backup's identifiers
+   * does before writing them.
+   */
+  readonly reserve: (upTo: Seq) => Effect.Effect<void, DbError>;
 
   readonly transact: <A, E, R>(
     f: (txn: Txn) => Effect.Effect<A, E, R>,

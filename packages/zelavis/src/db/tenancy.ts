@@ -13,6 +13,13 @@ export const SCHEMA_NAMESPACE = "zv.schema";
 export const ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
 export const CHECKPOINT_NAMESPACE = "zv.checkpoint";
 
+/**
+ * Where each time series keeps its generation and how far into the log it has
+ * read: a cursor too, so derived like a checkpoint, and rebuilt by the next
+ * ingest after a restore rather than carried into a log it does not describe.
+ */
+export const TIME_SERIES_STATE_NAMESPACE = "zv.timeseries.state";
+
 /** Where one collection's documents are named. */
 export const documentNamespace = (collection: string): string => `${DOCUMENT_NAMESPACE_PREFIX}${collection}`;
 
@@ -44,4 +51,4 @@ export const collectionOfIdentity = (namespace: string, key: string): string | u
  * entry.
  */
 export const isDerivedNamespace = (namespace: string): boolean =>
-  namespace === CHECKPOINT_NAMESPACE;
+  namespace === CHECKPOINT_NAMESPACE || namespace === TIME_SERIES_STATE_NAMESPACE;

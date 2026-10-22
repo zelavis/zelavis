@@ -501,7 +501,7 @@ export const inBox = (box: BoundingBox, point: Position): boolean => {
  * Declared rather than imported as a type, so the package stays an optional
  * peer: a collection that indexes no geometry should not have to have it.
  */
-interface H3 {
+export interface H3 {
   latLngToCell: (lat: number, lng: number, resolution: number) => string;
   cellToChildrenSize?: (cell: string, resolution: number) => number;
   cellToParent: (cell: string, resolution: number) => string;

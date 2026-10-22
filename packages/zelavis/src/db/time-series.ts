@@ -12,6 +12,7 @@ import type { Seq } from "./model.js";
 import type { ProjectionSource } from "./projections.js";
 import { and, between, equals, or, type Query } from "./query.js";
 import type { ObjectStoreApi, Txn } from "./store.js";
+import { TIME_SERIES_STATE_NAMESPACE } from "./tenancy.js";
 import type { TenantId } from "./topology.js";
 
 export type AggregateOperation =
@@ -330,7 +331,7 @@ const seriesState = objectFields<SeriesState>({
   retired: arrayOf(isFiniteNumber),
 });
 
-const STATE_NAMESPACE = "zv.timeseries.state";
+const STATE_NAMESPACE = TIME_SERIES_STATE_NAMESPACE;
 const FRESH: SeriesState = { generation: 0, retired: [] };
 
 /** A generation's points are told apart by this key; the last `/` separates the generation. */

@@ -120,6 +120,12 @@ const LENSES_REINDEXING = 2;
  */
 const META_FENCE = "fence";
 
+/**
+ * Set by a seed's first batch and cleared by its last: a partition holding it
+ * has part of a copy and must be copied again, never carried on from.
+ */
+const META_SEEDING = "seeding";
+
 /** The highest version a record can reach: four bytes in every record and event. */
 const MAX_VERSION = 0xffffffff;
 
@@ -1708,6 +1714,12 @@ const openPartition = (
           // rebuild, a backup — sees nothing to replay.
           const position = yield* into.append(stored);
           yield* applyEffects(into, current, stored, position);
+          // The identifier is taken here now, so nothing this partition hands
+          // out later — after a restore, or once a replica is promoted — can
+          // be it again.
+          if (event.seq > (yield* readMeta(META_NEXT_SEQ))) {
+            into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(event.seq));
+          }
         })),
 
     follow: (event: DbEvent) => followMany([event]),
@@ -2059,6 +2071,7 @@ const openPartition = (
     head: readMeta(META_HEAD),
     compactedTo: readMeta(META_COMPACTED_TO),
     nextSeq: readMeta(META_NEXT_SEQ),
+    seeding: Effect.map(readMeta(META_SEEDING), (state) => state > 0),
   });
 
   const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
@@ -2078,6 +2091,11 @@ const openPartition = (
    * brings it forward. A record is one value, so no copy of one is torn, and an
    * identifier is never reused, so nothing copied can be mistaken for something
    * else.
+   *
+   * The first batch marks the partition as being seeded and the last clears
+   * the mark with the head, so a seed cut off between them is told apart from
+   * a finished one (`stats.seeding`): the first must be copied again, the
+   * second carried on from its head.
    */
   const seed = (source: ObjectStoreApi): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
     exclusiveWrite(Effect.gen(function* () {
@@ -2089,6 +2107,7 @@ const openPartition = (
       const counters: Counters = { records: 0, bytes: 0 };
       let pending = new Map<string, KvWrite>();
       let into: Projection = { view: pendingView(pending), sealed: false, counters };
+      into.view.put(keys.meta(META_SEEDING), u64Bytes(1));
       let copied = 0;
       let highest = 0;
       const flush = Effect.gen(function* () {
@@ -2113,6 +2132,7 @@ const openPartition = (
       into.view.put(keys.meta(META_HEAD), u64Bytes(start.compactedTo));
       into.view.put(keys.meta(META_COMPACTED_TO), u64Bytes(start.compactedTo));
       into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(Math.max(end.nextSeq, highest)));
+      into.view.del(keys.meta(META_SEEDING));
       yield* flush;
       return { records: copied, head: start.compactedTo };
     }));
@@ -2471,6 +2491,13 @@ const openPartition = (
         }
         return out;
       }),
+
+    reserve: (upTo) =>
+      exclusiveWrite(Effect.gen(function* () {
+        if (upTo > MAX_SEQ) return yield* new PartitionExhausted({ partition, resource: "identifiers", limit: MAX_SEQ });
+        if (upTo <= (yield* readMeta(META_NEXT_SEQ))) return;
+        yield* write([{ op: "put", key: keys.meta(META_NEXT_SEQ), value: u64Bytes(upTo) }]);
+      })),
 
     nextSeq: exclusiveWrite(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;

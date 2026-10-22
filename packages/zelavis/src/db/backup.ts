@@ -6,6 +6,7 @@ import {
   type TenantMoving,
   TenantNotEmpty,
 } from "./errors.js";
+import { MAX_SEQ } from "./keys.js";
 import { asSeq, emptyManifest, type IndexManifest, type ObjectIdentity, type Seq } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
 import { COLLECTION_NAMESPACE, isDerivedNamespace } from "./tenancy.js";
@@ -211,6 +212,11 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       if (backup.tenantId !== tenant) {
         return yield* new BackupTenantMismatch({ expected: tenant, received: backup.tenantId });
       }
+      // Identifiers are kept where they can be, so each must be one.
+      const malformed = backup.events.find((event) => !Number.isSafeInteger(event.seq) || event.seq < 1 || event.seq > MAX_SEQ);
+      if (malformed !== undefined) {
+        return yield* new BackupFormatUnsupported({ format: `${backup.format} naming identifier ${String(malformed.seq)}` });
+      }
 
       // The label is the only tenant a backup names. The records inside are
       // named within a partition, and a restore writes into this tenant's own,
@@ -229,11 +235,27 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       // tenant ends up as the backup describes it, not as a union.
       const removed = mode === "purge" ? yield* purge : 0;
 
-      // A backup's identifiers are those of the partition it was taken from.
-      // Here they may already be taken — by records a merge keeps, or by
-      // retired records whose versions outrank the backup's — so each is
-      // remapped once, and the mapping carries retractions and edges to the
-      // right record.
+      // A backup's identifiers are those of the partition it was taken from,
+      // and an empty or purged tenant keeps them: its records come back as the
+      // ones they were, edges and all. A retired record at one of them only
+      // means its versions start higher. A live one there — a receipt or a
+      // checkpoint a purge keeps, from another history than the backup's —
+      // would be written over, so then, as in a merge, each identifier is
+      // remapped once and the mapping carries retractions and edges along.
+      const retiredVersions = new Map<number, number>();
+      const liveHeld = new Set<number>();
+      if (mode !== "merge") {
+        // Reserved before looking, so no write arriving meanwhile can be handed
+        // one of them and then be written over, or ignore the backup's record.
+        const highest = backup.events.reduce((top, event) => Math.max(top, event.seq), 0);
+        if (highest > 0) yield* store.reserve(asSeq(highest));
+        yield* Stream.runForEach(store.records, ({ seq, record }) =>
+          Effect.sync(() => {
+            if (record.live) liveHeld.add(seq);
+            else retiredVersions.set(seq, record.version);
+          }));
+      }
+      const verbatim = mode !== "merge" && backup.events.every((event) => event.kind !== "put" || !liveHeld.has(event.seq));
       const remapped = new Map<number, Seq>();
       /**
        * How far to lift a restored record's versions.
@@ -254,6 +276,12 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       // backup happens to list after the record naming it.
       for (const event of backup.events) {
         if (event.kind !== "put" || remapped.has(event.seq)) continue;
+        if (verbatim) {
+          remapped.set(event.seq, asSeq(event.seq));
+          const retired = retiredVersions.get(event.seq);
+          if (retired !== undefined) lift.set(event.seq, retired);
+          continue;
+        }
         const identity = event.identity;
         const local = mode === "merge" && identity !== undefined
           ? yield* store.lookup(identity.namespace, identity.key)

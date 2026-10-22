@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect, Fiber } from "effect";
 import { documentsFor, makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { makeNodeSqliteEngine, makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { openShardOverKv } from "../dist/db/kv-store.js";
+import { StoreError } from "../dist/db/errors.js";
 
 const withDatabase = (t, body) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-move-"));
@@ -294,6 +296,88 @@ test("an interrupted move is resumed rather than repaired", async (t) => {
       });
     }),
   );
+});
+
+/** A move record as an interrupted rebalance leaves it: copying, routing unmoved. */
+const recordCopyingMove = (stores, tenant) => Effect.gen(function* () {
+  const topologyStore = stores.get("zv.topology").partition("zv.topology");
+  const record = { tenant, from: "s0", to: "s1", phase: "copying", startedAt: new Date().toISOString(), map: allOn("s1", 2) };
+  const seq = yield* topologyStore.nextSeq;
+  yield* topologyStore.transact((txn) =>
+    txn.put(seq, new TextEncoder().encode(JSON.stringify(record)),
+      { terms: [], columns: [["zv.move", " move"]], measures: [], edges: [] },
+      { namespace: "zv.move", key: tenant }));
+});
+
+test("a move cut off after its copy carries on from the target's head instead of copying again", async (t) => {
+  await withDatabase(t, (db, stores) =>
+    Effect.gen(function* () {
+      const tenants = ["acme", "bravo", "cosmo", "delta"];
+      yield* seed(db, tenants);
+      const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+      // The state a crash after the seed leaves: a finished copy on the target,
+      // a move on record, the source still taking writes.
+      yield* stores.get("s1").partition(tenant).seed(stores.get("s0").partition(tenant));
+      yield* recordCopyingMove(stores, tenant);
+      yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "p9", data: { title: "written meanwhile" } });
+      const before = yield* snapshot(db, tenant);
+
+      const [result] = yield* db.movement.resume;
+      assert.equal(result.resumed, true);
+      assert.equal(result.copied, 0, "the copy was carried on, not made again");
+      assert.ok(result.caughtUp > 0, "from the target's head, through what the source took since");
+      assert.equal(db.shardOf(tenant), "s1");
+      assert.deepEqual(yield* snapshot(db, tenant), before);
+      yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "p10", data: { title: "after" } });
+    }),
+  );
+});
+
+test("a seed cut off part way is thrown away and copied again", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-move-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let failAt = 0;
+  let commits = 0;
+  const stores = new Map();
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const db = yield* makeDatabase({
+      partitionMap: partitionMapFor(["s0", "s1"]),
+      openShard: (shard) => Effect.tap(
+        Effect.flatMap(makeNodeSqliteEngine(shard, dir), (engine) => openShardOverKv(shard, shard !== "s1" ? engine : {
+          ...engine,
+          conditionalWrite: (writes, conditions) =>
+            failAt > 0 && ++commits === failAt
+              ? Effect.fail(new StoreError({ op: "test.commit", cause: "cut off" }))
+              : engine.conditionalWrite(writes, conditions),
+        })),
+        (store) => Effect.sync(() => stores.set(shard, store)),
+      ),
+    });
+    const tenant = ["acme", "bravo", "cosmo", "delta"].find((name) => db.shardOf(name) === "s0");
+    const docs = db.forTenant(tenant).documents;
+    yield* docs.createCollection({ name: "posts" });
+    // Enough for the seed to take more than one batch.
+    for (let first = 0; first < 800; first += 200) {
+      yield* docs.write({ operations: Array.from({ length: 200 }, (_, i) => ({
+        _tag: "Insert", collection: "posts", id: `p${first + i}`,
+        data: { title: `post ${first + i}`, a: i, b: `b${i % 9}`, c: i % 2 === 0, d: first },
+      })) });
+    }
+    const before = yield* snapshot(db, tenant);
+    const source = stores.get("s0").partition(tenant);
+    const target = stores.get("s1").partition(tenant);
+    commits = 0;
+    failAt = 2;
+    assert.equal((yield* Effect.exit(target.seed(source)))._tag, "Failure");
+    failAt = 0;
+    assert.equal((yield* target.stats).seeding, true);
+    yield* recordCopyingMove(stores, tenant);
+
+    const [result] = yield* db.movement.resume;
+    assert.ok(result.copied >= 800, `the copy was made again from the start (${result.copied} records)`);
+    assert.equal(db.shardOf(tenant), "s1");
+    assert.deepEqual(yield* snapshot(db, tenant), before);
+  })));
 });
 
 test("a copy interrupted halfway is not restored alongside its own wreckage", async (t) => {

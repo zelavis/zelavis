@@ -1161,7 +1161,7 @@ Key rules:
   read out of the transaction.
 - A document write checks what it depends on — the id, the version, a
   precondition, a unique value, a check, a reference — inside the transaction
-  that writes it (`transactChecked` in `documents.ts`), never before it: only
+  that writes it (`transactChecked` in `document-core.ts`), never before it: only
   there does the store's one writer keep the answer true until the write
   lands, and a failure there discards the whole batch. Reads inside a
   transaction see committed state, not the transaction's own writes, so a
@@ -1169,7 +1169,7 @@ Key rules:
   (as `releaseReferences` and `linkTargets` do), never from a second read.
 - A read that joins two collections answers the named collection's query first
   and turns the ids it returns into an equality union over the referencing
-  field's own postings (`relatedFilters` in `documents.ts`), so a join stays a
+  field's own postings (`relatedFilters` in `document-reads.ts`), so a join stays a
   set operation over the one dense identifier space. Never read the
   referencing collection and filter it in memory, and never let a reference
   the collection does not declare pass as a clause matching everything or
@@ -1262,7 +1262,10 @@ Key rules:
   tenant's partition as it is (`seed`, then the source's log by `followAll` at
   the positions it holds there), unfenced, fences writes only for the last
   catch-up, and moves routing last; every step is recorded so an interrupted
-  one resumes. Identifiers and positions are the source's own, so edges, event
+  one resumes, carrying the copy on from the target's head — the target's
+  positions are the source's — unless its seed never finished (`stats.seeding`,
+  set by a seed's first batch and cleared by its last) or the source has
+  compacted past that head, when it copies again. Identifiers and positions are the source's own, so edges, event
   cursors and projection checkpoints carry on after a move. The shard a tenant
   left keeps only its fence, removed with nothing else in the same pass, so a
   write still on its way there is refused rather than lost. The fence is the
@@ -1284,8 +1287,12 @@ Key rules:
 - A restore says what to do about data already there — refuse, purge, or merge
   — and never guesses. Its label must name the tenant it is restored into, and
   it writes only into that tenant's own partition, so nothing in a backup can
-  reach another tenant's records. A backup's identifiers are remapped on the
-  way in, and edges with them.
+  reach another tenant's records. An empty or purged tenant gets the backup's
+  own identifiers back, reserved before anything is written (`reserve`) so
+  nothing written meanwhile can take one; a retired record at one only lifts
+  the restored versions. A merge, or a tenant where live records hold some of
+  them, remaps them, and edges with them. Checkpoints and time-series state
+  are positions in the old log, so a backup carries neither.
 - A schema version governs what is accepted next, never what is already
   stored: activating one rewrites nothing. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions

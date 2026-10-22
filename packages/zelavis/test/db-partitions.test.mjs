@@ -10,6 +10,7 @@ import { Effect, Stream } from "effect";
 import { documentsFor, inPrefixRange, MAX_SEQ, partitionKeys, Tag, term, u64Bytes } from "../dist/db/index.js";
 import { makeMemoryStore, memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { openShardOverKv } from "../dist/db/kv-store.js";
+import { StoreError } from "../dist/db/errors.js";
 
 const enc = new TextEncoder();
 const run = (body) => Effect.runPromise(Effect.scoped(body));
@@ -166,7 +167,7 @@ test("dropping a partition removes all of it and nothing of its neighbours", () 
   assert.equal(yield* shard.drop("acme"), 2, "it answers how many records it held");
   assert.deepEqual(yield* shard.partitions, ["globex"]);
   assert.deepEqual(yield* events(acme), []);
-  assert.deepEqual(yield* acme.stats, { records: 0, bytes: 0, head: 0, compactedTo: 0, nextSeq: 0 });
+  assert.deepEqual(yield* acme.stats, { records: 0, bytes: 0, head: 0, compactedTo: 0, nextSeq: 0, seeding: false });
   assert.deepEqual(yield* seqs(acme, term("title", "atlas")), []);
   assert.deepEqual(yield* seqs(globex, term("title", "cobalt")), [1]);
 
@@ -307,3 +308,36 @@ test("a write that saw no fence before its transaction is still refused when the
   assert.equal(refused._tag, "TenantMoving");
   assert.equal(yield* docs.findById({ collection: "posts", id: "p1" }), undefined, "and nothing landed");
 })));
+
+test("a seed cut off part way says so, so it is copied again rather than carried on from", () => run(Effect.gen(function* () {
+  const source = (yield* makeMemoryStore("one")).partition("acme");
+  // Enough postings for the seed to take more than one batch.
+  for (let seq = 1; seq <= 1500; seq++) yield* put(source, seq, ["atlas", `w${seq % 40}`, `x${seq % 7}`]);
+
+  const base = memoryKvEngine();
+  let failAt = 0;
+  let commits = 0;
+  const engine = {
+    ...base,
+    conditionalWrite: (writes, conditions) =>
+      failAt > 0 && ++commits === failAt
+        ? Effect.fail(new StoreError({ op: "test.commit", cause: "cut off" }))
+        : base.conditionalWrite(writes, conditions),
+  };
+  const shard = yield* openShardOverKv("two", engine);
+  const target = shard.partition("acme");
+  failAt = 2;
+  assert.equal((yield* Effect.exit(target.seed(source)))._tag, "Failure");
+  failAt = 0;
+  const partial = yield* target.stats;
+  assert.equal(partial.seeding, true, "the first batch landed and marks the copy unfinished");
+  assert.ok(partial.records > 0 && partial.records < 1500);
+
+  yield* shard.drop("acme");
+  yield* target.seed(source);
+  const finished = yield* target.stats;
+  assert.equal(finished.seeding, false);
+  assert.equal(finished.records, 1500);
+  assert.deepEqual(yield* seqs(target, term("title", "atlas")), yield* seqs(source, term("title", "atlas")));
+})));
+
