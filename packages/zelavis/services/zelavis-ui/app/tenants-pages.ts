@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { array, label, object, request, type Config } from "./api.ts";
 import { slugifyTableName } from "./create-table-dialog.ts";
+import { mountDeleteTenant } from "./delete-tenant-dialog.ts";
 import { button, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
 import { formatBytes } from "./storage-pages.ts";
@@ -28,6 +29,10 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     })),
   ));
 
+  // One confirmation dialog for every row; it lives with the page and is removed when the page is.
+  const dialogHost = node("div", { class: "dialog-host" });
+  const confirmDelete = mountDeleteTenant(dialogHost, { api, removed: tenantId => { setFlash(`Deleted Tenant ${tenantId}.`); context.refresh(); } });
+
   const rows = tenants.map(entry => {
     const id = label(entry.tenantId, "");
     const tables = Number(entry.tables) || 0;
@@ -35,7 +40,9 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     const detail = `${tables} ${tables === 1 ? "table" : "tables"} · ${Number(entry.records) || 0} stored records · ${formatBytes(Number(entry.bytes) || 0)} · shard ${label(entry.shard, "?")}`;
     const actions = node("div", { class: "actions" }, badge(kind === "App" ? "active" : kind === "Plugin" ? "planned" : "ready"), node("span", { class: "muted" }, kind),
       tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
-      button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }));
+      button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }),
+      // The App's own Tenant and a plugin's are not for the operator to delete from here: the app and the plugin stand on them.
+      ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, records: Number(entry.records) || 0, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
     return dataRow(id, detail, actions);
   });
 
@@ -60,6 +67,7 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
 
   const own = tenants.filter(entry => tenantKind(label(entry.tenantId, "")) !== "Plugin");
   return page(
+    dialogHost,
     flashNotice("Tenants"),
     resourceNotice("What a Tenant is", "A Tenant is a separate data space inside this Project, with its own tables, record history and writer. Apps usually keep one per customer or workspace. zelavis-app holds the app's own data; service:… Tenants belong to plugins."),
     columns(3,
@@ -67,6 +75,6 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
       statCard("Tables", String(tenants.reduce((sum, entry) => sum + (Number(entry.tables) || 0), 0)), "Across every Tenant"),
       statCard("Stored", formatBytes(tenants.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0)), "Record bodies in every Tenant")),
     rows.length ? rowsCard("Tenants", ...rows) : card("Tenants", node("p", { class: "muted" }, "No Tenant holds data yet.")),
-    card("Create a tenant", node("p", { class: "muted" }, "A Tenant exists once it holds something, so creating one adds its first table. A Tenant cannot be deleted: dropping its tables leaves its history, so an emptied one stays listed."), form),
+    card("Create a tenant", node("p", { class: "muted" }, "A Tenant exists once it holds something, so creating one adds its first table. Deleting a Tenant removes its tables and its whole history for good; the App's own Tenant and plugins' Tenants cannot be deleted here."), form),
   );
 });
