@@ -9,6 +9,33 @@ import type { DashboardHandle } from "./routes.ts";
 import { panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 import { mounted, unmounted } from "./mount.ts";
 
+/**
+ * A label wider than its row ends in an ellipsis. Where a pointer hovers (or the keyboard focuses) the row, and motion is
+ * allowed, the text slides to show its end and back; the full name is also the link's title, and touch screens, which cannot
+ * hover, wrap it over two lines instead (styles.css).
+ */
+function revealOverflow(nav: HTMLElement) {
+  const hover = matchMedia("(hover: hover)"), reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const running = new WeakMap<HTMLElement, Animation>();
+  const slide = (anchor: HTMLElement, forward: boolean) => {
+    const label = anchor.querySelector<HTMLElement>(".nav-label"), text = anchor.querySelector<HTMLElement>(".nav-text");
+    if (!label || !text) return;
+    const current = running.get(text);
+    if (!forward) { current?.cancel(); running.delete(text); label.classList.remove("sliding"); return; }
+    if (!hover.matches || reduced.matches) return;
+    // Inline text only ends in an ellipsis while it is inline; it becomes a block to slide, so measure before that.
+    const overflow = Math.ceil(label.scrollWidth - label.clientWidth);
+    if (overflow <= 0 || current) return;
+    label.classList.add("sliding");
+    running.set(text, text.animate([{ transform: "translateX(0)" }, { transform: "translateX(0)", offset: 0.15 }, { transform: `translateX(-${overflow}px)`, offset: 0.85 }, { transform: `translateX(-${overflow}px)` }], { duration: Math.min(6000, 1400 + overflow * 25), iterations: Infinity, direction: "alternate", easing: "ease-in-out" }));
+  };
+  const anchorOf = (event: Event) => (event.target as HTMLElement | null)?.closest<HTMLElement>("a");
+  nav.addEventListener("mouseover", event => { const anchor = anchorOf(event); if (anchor && !anchor.contains(event.relatedTarget as Node | null)) slide(anchor, true); });
+  nav.addEventListener("mouseout", event => { const anchor = anchorOf(event); if (anchor && !anchor.contains(event.relatedTarget as Node | null)) slide(anchor, false); });
+  nav.addEventListener("focusin", event => { const anchor = anchorOf(event); if (anchor) slide(anchor, true); });
+  nav.addEventListener("focusout", event => { const anchor = anchorOf(event); if (anchor) slide(anchor, false); });
+}
+
 export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: HTMLElement, main: HTMLElement, router: FuzorRouter, options: { onSignOut: () => void; config: () => Config | undefined }) {
   register();
   const media = matchMedia("(max-width: 1023px)");
@@ -63,6 +90,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
       let slide = slides[index];
       if (!slide) { slide = document.createElement("swiper-slide"); slide.className = "navigation-panel"; slides.push(slide); swiper.insertBefore(slide, mobileSlide.parentNode === swiper ? mobileSlide : null); }
       const nav = node("nav", { "aria-label": `${panel.label} navigation` });
+      revealOverflow(nav);
       panel.items.forEach(item => {
         const destination = new URL(mounted(item.path), location.href);
         const ids = trail.slice(1, index + 1).map(panel => panel.id);
@@ -73,7 +101,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
         const selected = ["databaseTenant", "databaseTable", "databaseSystemView"];
         const matchesSearch = selected.every(key => destination.searchParams.get(key) === url.searchParams.get(key));
         const active = (path === itemPath && matchesSearch) || Boolean(item.branch && path.startsWith(`${itemPath}/`) && itemPath !== "/");
-        const anchor = node("a", { href: `${destination.pathname}${destination.search}`, ...(active ? { class: "active", "aria-current": "page" } : {}) }, item.label, item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
+        const anchor = node("a", { href: `${destination.pathname}${destination.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });
       slide.replaceChildren(node("div", { class: "panel-heading" }, index ? button(`← ${panel.label}`, () => navigate(trail[index - 1].path, trail.slice(1, index).map(panel => panel.id), "menu"), { "aria-label": `Back to ${trail[index - 1].label}` }) : node("strong", {}, "Platform")), nav);
