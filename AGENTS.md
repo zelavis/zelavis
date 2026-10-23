@@ -2025,7 +2025,8 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   invisible — the command still succeeds, having quietly checked less. Prefer
   `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
   deliberate exceptions, so a new package is covered by default.
-- Dashboard behavior is proven in a real browser: `pnpm run ci:ui` (also `ci:ui:local`) runs the Fuzor
+- Dashboard behavior is proven in a real browser: `pnpm run ci:ui` (also `ci:ui:local`) builds the dashboard bundle
+  first (the embedded and parity suites test that built bundle, never the dev server) and then runs the Fuzor
   dashboard's browser suites against throwaway Platforms, including the embedded production bundle at its
   mount on desktop and mobile sizes. The suites pick free ports and stop only the processes they started;
   never make an e2e script claim a fixed port or kill by port or command line, because that can take down
