@@ -962,6 +962,16 @@ export interface ZelavisProjectsClient {
    */
   exportTenant(projectId: string, options?: { readonly tenantId?: string }): Promise<ZelavisTenantBackup>;
   /**
+   * Every Tenant of an App Project's database with what it holds. Needs `database.inspect`
+   * (carried by `project.view`). Same contract as `zelavis projects tenants`.
+   */
+  tenants(projectId: string): Promise<readonly ZelavisTenantSummary[]>;
+  /**
+   * A Tenant exists once it holds something, so creating one writes its first table. Refused when the
+   * Tenant already has that table. Needs `database.write`. Same contract as `zelavis projects create-tenant`.
+   */
+  createTenant(projectId: string, input: { readonly tenantId: string; readonly table: string }): Promise<ZelavisDataCollection>;
+  /**
    * Restore a backup into the Tenant it was taken from. `into` says what to do
    * about data already there: `empty` (the default) refuses unless there is
    * none, `purge` discards it first, and `merge` restores over it record by
@@ -973,6 +983,18 @@ export interface ZelavisProjectsClient {
     backup: ZelavisTenantBackup,
     options?: { readonly into?: ZelavisTenantRestoreMode; readonly tenantId?: string },
   ): Promise<ZelavisTenantRestoreResult>;
+}
+
+/** One Tenant as the database reports it. */
+export interface ZelavisTenantSummary {
+  readonly tenantId: string;
+  /** The shard that holds it. */
+  readonly shard: string;
+  readonly tables: number;
+  /** Records the partition stores: a table's own definition counts beside its documents. */
+  readonly records: number;
+  /** Bytes of the records' bodies. */
+  readonly bytes: number;
 }
 
 /**
@@ -1855,6 +1877,17 @@ function createProjectsClient(
       json<ZelavisTenantBackup>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/export`), {
         method: "POST",
         body: options?.tenantId === undefined ? {} : { tenantId: options.tenantId },
+      }),
+    tenants: (projectId) =>
+      present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ tenants: readonly ZelavisTenantSummary[] }>(
+        projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/overview`),
+      )))).tenants;
+  })),
+    createTenant: (projectId, input) =>
+      json<ZelavisDataCollection>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/documents/collections`), {
+        method: "POST",
+        body: { tenantId: input.tenantId, name: input.table, surface: "database", metadata: { kind: "table" } },
       }),
     restoreTenant: (projectId, backup, options) =>
       json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {

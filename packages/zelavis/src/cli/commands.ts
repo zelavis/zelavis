@@ -143,7 +143,7 @@ Usage:
   zelavis terminal <status|list|install|open|attach|close> [session-id] [--url <url>] [--token <token>] [--json]
   zelavis debug <processes|updates|project <id>> [--url <url>] [--token <token>] [--json]
   zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
-  zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
+  zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
@@ -187,8 +187,9 @@ Commands:
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes;
-                            export-tenant and restore-tenant back up and restore
-                            one Tenant of an App Project's database.
+                            tenants and create-tenant list and add the Tenants of an
+                            App Project's database; export-tenant and restore-tenant
+                            back up and restore one of them.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.
   services list             List runtime service registry entries.

@@ -256,6 +256,22 @@ cut off part way leaves the old series serving. While a Tenant is being moved
 to another shard, `ingest`, `rebuild` and projection runs fail with
 `TenantMoving` (409 over HTTP); retry once the move has finished.
 
+
+## Tenants
+
+A Tenant exists once it holds something, so there is no create-Tenant operation: adding one writes its first table, and a
+Tenant cannot be deleted (dropping its tables leaves its history, so an emptied one stays listed). The overview lists each
+Tenant with its shard, tables, stored records (a table's own definition counts beside its documents) and the bytes of their
+bodies, which the database keeps as it writes. It needs `database.inspect`, carried by `project.view`.
+
+| Form | List | Add |
+|---|---|---|
+| HTTP | `GET /zelavis/api/v1/runtime/projects/:projectId/proxy/zelavis/api/v1/database/tenants/overview` | `POST …/database/documents/collections` with `{ tenantId, name, surface: "database" }` |
+| SDK | `client.projects.tenants(projectId)` | `client.projects.createTenant(projectId, { tenantId, table })` |
+| CLI | `zelavis projects tenants <id>` | `zelavis projects create-tenant <id> --tenant T --table N` |
+
+The dashboard's Database → Tenants page is a client of these routes.
+
 ## Backups and restore
 
 A backup is one Tenant: its records and the events logged while the export ran,

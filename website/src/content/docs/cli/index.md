@@ -139,6 +139,12 @@ command tree.
   `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
   `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
   which needs `project.setup.reveal` and is recorded in the audit trail.
+  `projects tenants <id>` lists every Tenant of an App Project's database with its
+  shard, tables, stored records and bytes; `projects create-tenant <id> --tenant T --table N`
+  adds one by writing its first table. A Tenant cannot be deleted. Both call
+  `client.projects.tenants|createTenant` and the database's `tenants/overview` and
+  `documents/collections` routes through the Project proxy (`project.view` and
+  `database.write`); the dashboard's Database → Tenants page uses the same routes.
   `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of
   an App Project's database (the caller's own unless `--tenant` names another) and
   prints the backup, or writes it owner-only to `FILE`.

@@ -277,6 +277,8 @@ export interface DatabaseRuntimeApi {
   readonly shardOf: (tenant: TenantId) => string;
   /** Every tenant holding data. What an operator surface needs to offer a choice. */
   readonly tenants: () => Promise<ReadonlyArray<TenantId>>;
+  /** What each Tenant's partition holds, as the database keeps it rather than counts it: records, their bytes and the shard. */
+  readonly tenantUsage: () => Promise<ReadonlyArray<{ readonly tenant: TenantId; readonly shard: string; readonly records: number; readonly bytes: number }>>;
   readonly context: { readonly nodeId: string };
   /**
    * What a health or operator surface may report about placement.
@@ -385,6 +387,7 @@ export const runtimeApiFor = (
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
   tenants: () => run(database.tenants),
+  tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
   context: { nodeId: options?.nodeId ?? "local" },
   topology: {
     shards: shardsOf(database.partitionMap),

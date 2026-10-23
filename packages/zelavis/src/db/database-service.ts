@@ -623,6 +623,31 @@ function defineDatabaseRootService(
   })),
         },
         {
+          id: "database.tenants.overview",
+          spec: {
+            operationId: "overviewDatabaseTenants",
+            summary: "List every Tenant with what it holds",
+            description:
+              "Each Tenant's shard, number of tables, stored records and the bytes of their bodies. Stored records are what the partition keeps, so a table's own definition counts beside its documents; both numbers are kept by the database as it writes, not counted when asked. A Tenant whose tables were all dropped is still listed: it keeps its history.",
+            tags: ["database"],
+            responses: { 200: { description: "Tenants with shard, tables, records and bytes" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/tenants/overview",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            const names = yield* integrationValue(service.tenants());
+            const usage = new Map((yield* integrationValue(service.tenantUsage())).map((row) => [row.tenant, row]));
+            const tenants = [];
+            for (const tenantId of names) {
+              const collections = yield* integration(() => service.forTenant(tenantId).documents.listCollections());
+              const held = usage.get(tenantId);
+              tenants.push({ tenantId, shard: held?.shard ?? service.shardOf(tenantId), tables: collections.length, records: held?.records ?? 0, bytes: held?.bytes ?? 0 });
+            }
+            return { body: { tenants } };
+          })),
+        },
+        {
           id: "database.menu.tables",
           spec: {
             operationId: "listDatabaseTablesMenu",
