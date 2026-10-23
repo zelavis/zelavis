@@ -109,7 +109,7 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const workloadList = (kind: string) => (input.workloads[kind] ?? []).map(entry => ({ title: entry.name, path: at(`/workloads/${kind}/${encodeURIComponent(entry.id)}`) }));
   const native: MenuItem[] = [
     ...(available("identity") ? [{ title: "Auth", path: at("/auth") }] : []),
-    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
+    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, { title: "Tenants", path: at("/database/tenants") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
     ...(available("storage") ? [{ title: "Storage", path: at("/storage") }] : []),
     ...(available("workloads") ? [{ title: "Workloads", path: at("/workloads"), items: [
       { title: "Functions", path: at("/workloads/functions"), items: [{ title: "Add Function", path: at("/workloads/new") }, ...workloadList("functions")] },
