@@ -360,6 +360,17 @@ export interface ZelavisDataClient {
      * the documents are gone, not archived.
      */
     drop(collection: string): Promise<boolean>;
+    /**
+     * How text in a collection becomes searchable terms (`{ fields, language?, stemming?, … }`), and the
+     * backfill that follows. The database's own analyzer definition, passed through.
+     */
+    setAnalyzer(collection: string, analyzer: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Which field holds geometry and how it is indexed (`{ field, … }`). The database's own definition, passed through. */
+    setSpatial(collection: string, spatial: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Which field holds an embedding and how it is compared (`{ field, dimension, metric, … }`). Passed through. */
+    setEmbedding(collection: string, embedding: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Write documents back so their postings match today's lenses: one collection, or every one. */
+    rewrite(collection?: string): Promise<ZelavisDataResult>;
   };
   readonly documents: {
     insert(collection: string, input: ZelavisDataInsertInput): Promise<ZelavisDataDocument>;
@@ -372,7 +383,61 @@ export interface ZelavisDataClient {
     delete(collection: string, id: string, input?: ZelavisDataDeleteInput): Promise<boolean>;
     /** Several changes applied atomically, in the order given. */
     write(input: ZelavisDataWriteInput): Promise<readonly ZelavisDataWritten[]>;
+    /** Breadth-first traversal along a declared edge: `{ id, edge, edgeCollection?, direction?, maxDepth?, maxVisits?, where? }`. */
+    traverse(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** One aggregate over matching documents: `{ measure, op, where?, related?, search?, geometry?, linked? }`. */
+    summarize(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** An aggregate per group: `summarize`'s input plus `{ groupBy, groups? }`. */
+    summarizeBy(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** The documents other collections' references name, resolved in one pass: `{ documents, references? }`. */
+    related(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
   };
+  /** Composite indexes over a collection's documents (`{ name, fields: [{ path, direction?, nulls? }], unique? }`). */
+  readonly indexes: {
+    create(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+  };
+  /** What every document's values must satisfy: `{ name, where }`. */
+  readonly checks: {
+    add(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+  };
+  /** Fields naming documents of other collections: `{ name, path, collection, onDelete? }`. */
+  readonly references: {
+    add(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+  };
+  /** Versioned schemas. A version governs what is accepted next, not what is already stored. */
+  readonly schemas: {
+    /** Every collection with a schema, and its active version. */
+    list(): Promise<ZelavisDataResult>;
+    versions(collection: string): Promise<ZelavisDataResult>;
+    /** Save a version (`{ version, fields, activate? }`). */
+    save(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    activate(collection: string, version: number): Promise<ZelavisDataResult>;
+    /** Check a document's data against the active schema without writing it. */
+    validate(collection: string, data: Readonly<Record<string, unknown>>): Promise<ZelavisDataResult>;
+  };
+  /** Series the database derives from the event log. Bodies are the database's own vocabulary, passed through. */
+  readonly timeseries: {
+    list(): Promise<ZelavisDataResult>;
+    /** Points in a range: `{ start?, end?, limit?, order?, tags? }`. */
+    range(series: string, input?: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** One aggregate over a range: `{ op, start?, end?, p?, tags? }`. */
+    aggregate(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** An aggregate per interval: `{ interval, step?, op?, start?, end?, fill?, p?, tags? }`. */
+    windows(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** A moving aggregate: `{ window, op?, start?, end?, p?, tags? }`. */
+    moving(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Counts per bin: `{ bins?, boundaries?, step?, min?, max?, start?, end?, tags? }`. */
+    histogram(series: string, input?: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Values on a regular step: `{ step, method?, start?, end?, tags? }`. */
+    interpolate(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Bring the series up to the event log's head. */
+    ingest(series: string): Promise<ZelavisDataResult>;
+  };
+  /** Whether the Project's database answers, and what it reports about itself. */
+  health(): Promise<ZelavisDataResult>;
   /** A collection addressed by document id, over the same payloads and projections. */
   readonly kv: {
     get(namespace: string, key: string): Promise<ZelavisDataKeyValueEntry | undefined>;
@@ -534,6 +599,16 @@ export interface ZelavisDataInsertInput extends ZelavisDataIdempotent {
   readonly id?: string;
   readonly data: Readonly<Record<string, unknown>>;
 }
+
+/**
+ * A body the database defines. The data client passes it through rather than reshaping it: the query,
+ * definition and series vocabulary is the database's own, and a translation here would be a second dialect to keep
+ * in step with it. The fields each operation reads are listed beside it.
+ */
+export type ZelavisDataBody = Readonly<Record<string, unknown>>;
+
+/** The database's own answer to such an operation, as it sent it. */
+export type ZelavisDataResult = Readonly<Record<string, unknown>>;
 
 export interface ZelavisDataQueryInput {
   readonly where?: readonly unknown[];
@@ -971,6 +1046,14 @@ export interface ZelavisProjectsClient {
    * (carried by `project.view`). Same contract as `zelavis projects tenants`.
    */
   tenants(projectId: string): Promise<readonly ZelavisTenantSummary[]>;
+  /**
+   * The read-only maintenance views the database offers for one Tenant (collections, events, schemas, projections,
+   * time series): their names, or with `view`, its rows, a page at a time (`after` continues one). The caller's
+   * own Tenant unless `tenantId` names another. Needs `database.inspect`, carried by `project.view`. Same
+   * contract as `zelavis projects system-views`.
+   */
+  systemViews(projectId: string, options?: { readonly tenantId?: string }): Promise<ZelavisDataResult>;
+  systemView(projectId: string, view: string, options?: { readonly tenantId?: string; readonly limit?: number; readonly after?: string }): Promise<ZelavisDataResult>;
   /**
    * A Tenant exists once it holds something, so creating one writes its first table. Refused when the
    * Tenant already has that table. Needs `database.write`. Same contract as `zelavis projects create-tenant`.
@@ -1684,6 +1767,8 @@ function createDataClient(
 ): ZelavisDataClient {
   const post = <T>(path: string, body: object) =>
     json<T>(dataPath(projectId, path), { method: "POST", body });
+  const read = <T>(path: string) => json<T>(dataPath(projectId, path));
+  const remove = <T>(path: string) => json<T>(dataPath(projectId, path), { method: "DELETE" });
   return {
     collections: {
       list: () =>
@@ -1718,7 +1803,41 @@ function createDataClient(
           { method: "DELETE", body: {} },
         )))).dropped;
   })),
+      setAnalyzer: (collection, analyzer) => post(`documents/${dataName(collection, "collection name")}/analyzer`, { analyzer }),
+      setSpatial: (collection, spatial) => post(`documents/${dataName(collection, "collection name")}/geometry`, { spatial }),
+      setEmbedding: (collection, embedding) => post(`documents/${dataName(collection, "collection name")}/embedding`, { embedding }),
+      rewrite: (collection) => post("maintenance/documents/rewrite", collection === undefined ? {} : { collection }),
     },
+    indexes: {
+      create: (collection, input) => post(`documents/${dataName(collection, "collection name")}/indexes`, input),
+      drop: (collection, name) => remove(`documents/${dataName(collection, "collection name")}/indexes/${dataName(name, "index name")}`),
+    },
+    checks: {
+      add: (collection, input) => post(`documents/${dataName(collection, "collection name")}/checks`, input),
+      drop: (collection, name) => remove(`documents/${dataName(collection, "collection name")}/checks/${dataName(name, "check name")}`),
+    },
+    references: {
+      add: (collection, input) => post(`documents/${dataName(collection, "collection name")}/references`, input),
+      drop: (collection, name) => remove(`documents/${dataName(collection, "collection name")}/references/${dataName(name, "reference name")}`),
+    },
+    schemas: {
+      list: () => read("schemas/collections"),
+      versions: (collection) => read(`schemas/${dataName(collection, "collection name")}`),
+      save: (collection, input) => post(`schemas/${dataName(collection, "collection name")}`, input),
+      activate: (collection, version) => post(`schemas/${dataName(collection, "collection name")}/activate`, { version }),
+      validate: (collection, data) => post(`schemas/${dataName(collection, "collection name")}/validate`, { data }),
+    },
+    timeseries: {
+      list: () => read("timeseries/series"),
+      range: (series, input) => post(`timeseries/${dataName(series, "series name")}/range`, input ?? {}),
+      aggregate: (series, input) => post(`timeseries/${dataName(series, "series name")}/aggregate`, input),
+      windows: (series, input) => post(`timeseries/${dataName(series, "series name")}/windows`, input),
+      moving: (series, input) => post(`timeseries/${dataName(series, "series name")}/moving`, input),
+      histogram: (series, input) => post(`timeseries/${dataName(series, "series name")}/histogram`, input ?? {}),
+      interpolate: (series, input) => post(`timeseries/${dataName(series, "series name")}/interpolate`, input),
+      ingest: (series) => post(`timeseries/${dataName(series, "series name")}/ingest`, {}),
+    },
+    health: () => read("health"),
     documents: {
       insert: (collection, input) =>
         post<ZelavisDataDocument>(`documents/${dataName(collection, "collection name")}`, input),
@@ -1764,6 +1883,10 @@ function createDataClient(
         present(Effect.gen(function* () {
     return ((yield* integrationValue(post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)))).written;
   })),
+      traverse: (collection, input) => post(`documents/${dataName(collection, "collection name")}/traverse`, input),
+      summarize: (collection, input) => post(`documents/${dataName(collection, "collection name")}/summarize`, input),
+      summarizeBy: (collection, input) => post(`documents/${dataName(collection, "collection name")}/summarize-by`, input),
+      related: (collection, input) => post(`documents/${dataName(collection, "collection name")}/related`, input),
     },
     kv: {
       get: (namespace, key) => present(Effect.gen(function* () {
@@ -1852,6 +1975,16 @@ function projectPath(projectId: string, action?: string): string {
  */
 const PROJECT_DATABASE_PROXY_PATH = "proxy/zelavis/api/v1/database";
 
+/** The query a system view read carries: which Tenant, and which page. */
+function systemViewQuery(options?: { readonly tenantId?: string; readonly limit?: number; readonly after?: string }): string {
+  const query = new URLSearchParams();
+  if (options?.tenantId !== undefined) query.set("tenantId", options.tenantId);
+  if (options?.limit !== undefined) query.set("limit", String(options.limit));
+  if (options?.after !== undefined) query.set("after", options.after);
+  const text = query.toString();
+  return text === "" ? "" : `?${text}`;
+}
+
 function createProjectsClient(
   json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
 ): ZelavisProjectsClient {
@@ -1917,6 +2050,10 @@ function createProjectsClient(
         method: "POST",
         body: { tenantId: input.tenantId, name: input.table, surface: "database", metadata: { kind: "table" } },
       }),
+    systemViews: (projectId, options) =>
+      json<ZelavisDataResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views${systemViewQuery(options)}`)),
+    systemView: (projectId, view, options) =>
+      json<ZelavisDataResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views/${encodeURIComponent(view)}${systemViewQuery(options)}`)),
     deleteTenant: (projectId, input) =>
       json<ZelavisTenantRemoval>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}`), {
         method: "DELETE",

@@ -139,6 +139,9 @@ command tree.
   `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
   `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
   which needs `project.setup.reveal` and is recorded in the audit trail.
+  `projects system-views <id> [--view NAME] [--tenant T] [--limit N] [--after CURSOR]` reads the
+  database's maintenance views (needs `database.inspect`); the rest of the database's
+  operations are `data` actions, listed in [App data](../api/app-data/).
   `projects tenants <id>` lists every Tenant of an App Project's database with its
   shard, tables, stored records and bytes; `projects create-tenant <id> --tenant T --table N`
   adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`

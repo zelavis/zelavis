@@ -3,7 +3,7 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|modalities|count|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|exists|modalities|count|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json] | set-analyzer|set-spatial|set-embedding|rewrite|traverse|summarize|summarize-by|related|create-index|drop-index|add-check|drop-check|add-reference|drop-reference|schemas|schema-versions|save-schema|activate-schema|validate-schema|series|series-range|series-aggregate|series-windows|series-moving|series-histogram|series-interpolate|series-ingest|health (bodies are the database's own JSON, given with --data)";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -146,6 +146,54 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     print({ collections }, () =>
       collections.map((entry) => `${entry.name}\t${entry.surface ?? "database"}`).join("\n")
       || "No collections.");
+    return;
+  }
+  if (action === "exists") {
+    const exists = yield* integrationValue(api.collections.exists(requireCollection()));
+    print({ exists }, () => `${exists}`);
+    return;
+  }
+  // The operations whose bodies are the database's own vocabulary: the CLI hands `--data` through, as the SDK does, and prints the database's answer.
+  const answer = (result: unknown) => print(result, () => JSON.stringify(result, null, 2));
+  const body = () => requireData();
+  const named = () => requireDocumentId();
+  const bodied: Record<string, () => Promise<unknown>> = {
+    "set-analyzer": () => api.collections.setAnalyzer(requireCollection(), body()),
+    "set-spatial": () => api.collections.setSpatial(requireCollection(), body()),
+    "set-embedding": () => api.collections.setEmbedding(requireCollection(), body()),
+    rewrite: () => api.collections.rewrite(collection),
+    traverse: () => api.documents.traverse(requireCollection(), body()),
+    summarize: () => api.documents.summarize(requireCollection(), body()),
+    "summarize-by": () => api.documents.summarizeBy(requireCollection(), body()),
+    related: () => api.documents.related(requireCollection(), body()),
+    "create-index": () => api.indexes.create(requireCollection(), body()),
+    "drop-index": () => api.indexes.drop(requireCollection(), named()),
+    "add-check": () => api.checks.add(requireCollection(), body()),
+    "drop-check": () => api.checks.drop(requireCollection(), named()),
+    "add-reference": () => api.references.add(requireCollection(), body()),
+    "drop-reference": () => api.references.drop(requireCollection(), named()),
+    schemas: () => api.schemas.list(),
+    "schema-versions": () => api.schemas.versions(requireCollection()),
+    "save-schema": () => api.schemas.save(requireCollection(), body()),
+    "activate-schema": () => {
+      const version = Number(named());
+      if (!Number.isSafeInteger(version)) throw new Error("activate-schema requires the schema version as an integer.");
+      return api.schemas.activate(requireCollection(), version);
+    },
+    "validate-schema": () => api.schemas.validate(requireCollection(), body()),
+    series: () => api.timeseries.list(),
+    "series-range": () => api.timeseries.range(requireCollection(), data === undefined ? {} : body()),
+    "series-aggregate": () => api.timeseries.aggregate(requireCollection(), body()),
+    "series-windows": () => api.timeseries.windows(requireCollection(), body()),
+    "series-moving": () => api.timeseries.moving(requireCollection(), body()),
+    "series-histogram": () => api.timeseries.histogram(requireCollection(), data === undefined ? {} : body()),
+    "series-interpolate": () => api.timeseries.interpolate(requireCollection(), body()),
+    "series-ingest": () => api.timeseries.ingest(requireCollection()),
+    health: () => api.health(),
+  };
+  const operation = bodied[action];
+  if (operation !== undefined) {
+    answer(yield* integrationValue(operation()));
     return;
   }
   if (action === "count") {

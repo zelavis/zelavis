@@ -124,6 +124,31 @@ one of them, and an unknown collection is a 404.
 | SDK | `data.collections.count('posts')` |
 | CLI | `zelavis data count posts --project ID` |
 
+### Definitions, summaries, schemas and series
+
+The rest of the database's operations are in all three forms too. Their bodies are the database's own vocabulary
+(`/api/database/...` in the OpenAPI spec); the SDK and CLI pass them through and print the database's own answer, so
+the three answer alike, refusals included. In the CLI the body is `--data JSON`, and a name (an index, check, reference
+or schema version) is the third argument. HTTP paths are under `/zelavis/api/v1/runtime/projects/:projectId/data/`.
+
+| What | HTTP (`data/…`) | SDK (`data.…`) | CLI (`zelavis data … --project ID`) |
+|---|---|---|---|
+| Collection exists | `GET documents/collections/:c/exists` | `collections.exists(c)` | `exists c` |
+| Analyzer, spatial index, embedding | `POST documents/:c/analyzer\|geometry\|embedding` | `collections.setAnalyzer\|setSpatial\|setEmbedding(c, body)` | `set-analyzer\|set-spatial\|set-embedding c --data` |
+| Rewrite to today's lenses | `POST maintenance/documents/rewrite` | `collections.rewrite(c?)` | `rewrite [c]` |
+| Composite indexes | `POST documents/:c/indexes`, `DELETE …/indexes/:name` | `indexes.create(c, body)`, `indexes.drop(c, name)` | `create-index c --data`, `drop-index c name` |
+| Checks | `POST documents/:c/checks`, `DELETE …/checks/:name` | `checks.add`, `checks.drop` | `add-check`, `drop-check` |
+| References | `POST documents/:c/references`, `DELETE …/references/:name` | `references.add`, `references.drop` | `add-reference`, `drop-reference` |
+| Traversal, summaries, related | `POST documents/:c/traverse\|summarize\|summarize-by\|related` | `documents.traverse\|summarize\|summarizeBy\|related(c, body)` | `traverse\|summarize\|summarize-by\|related c --data` |
+| Schemas | `GET schemas/collections`, `GET\|POST schemas/:c`, `POST …/activate\|validate` | `schemas.list\|versions\|save\|activate\|validate` | `schemas`, `schema-versions`, `save-schema`, `activate-schema c VERSION`, `validate-schema` |
+| Time series | `GET timeseries/series`, `POST timeseries/:s/range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest` | `timeseries.list\|range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest` | `series`, `series-range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest s` |
+| Health | `GET health` | `health()` | `health` |
+
+The operator's read-only maintenance views (needs `database.inspect`, carried by `project.view`) are on the Project
+rather than the App data client: `client.projects.systemViews(projectId, { tenantId? })` and
+`client.projects.systemView(projectId, view, { tenantId?, limit?, after? })`, or
+`zelavis projects system-views <id> [--view NAME] [--tenant T] [--limit N] [--after CURSOR]`.
+
 ### Several changes as one
 
 `write` applies a batch atomically, in the order given:
