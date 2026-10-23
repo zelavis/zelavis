@@ -6,7 +6,7 @@ import { type Config, type Project } from "./api.ts";
 import { button, link, node } from "./dom.ts";
 import type { DashboardHandle } from "./routes.ts";
 
-import { panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
+import { itemIsActive, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 import { mounted, unmounted } from "./mount.ts";
 
 /**
@@ -105,7 +105,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
         // Opening a dialog from the page it belongs to keeps what is on that page (the open table, filter, sort).
         const href = new URL(destination);
         if (dialog !== null && path === itemPath) { const kept = new URL(url); for (const key of ["sidebar", "sidebarView"]) { const value = destination.searchParams.get(key); if (value === null) kept.searchParams.delete(key); else kept.searchParams.set(key, value); } kept.searchParams.set("databaseDialog", dialog); href.search = kept.search; }
-        const active = (path === itemPath && matchesSearch) || Boolean(item.branch && path.startsWith(`${itemPath}/`) && itemPath !== "/");
+        const active = itemIsActive({ current: path, itemPath, matchesSearch, ...(item.branch ? { branch: item.branch } : {}), trail: trail.map(panel => panel.id) });
         const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });

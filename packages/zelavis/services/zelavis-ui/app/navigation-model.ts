@@ -81,6 +81,17 @@ export function workspacePanels(base: readonly Panel[], values: unknown, project
   return result;
 }
 
+/**
+ * Whether a sidebar item is the active one: it is the page being shown, or it opens a slide the current page is inside.
+ *
+ * The second is decided by the trail of slides that is open, never by the item's path being a prefix of the page's. Several
+ * items can share one path (a Database slide with Tenants, Plugin Tables and System Tables beside its tables), and a path
+ * prefix would light every one of them for a page that belongs to only one.
+ */
+export function itemIsActive(input: { readonly current: string; readonly itemPath: string; readonly matchesSearch: boolean; readonly branch?: string; readonly trail: readonly string[] }): boolean {
+  return (input.current === input.itemPath && input.matchesSearch) || (input.branch !== undefined && input.trail.includes(input.branch));
+}
+
 export function trailForLocation(panels: readonly Panel[], url: URL): string[] {
   let best: { score: number; ids: string[] } = { score: -1, ids: [] };
   const pathname = unmounted(url.pathname);
