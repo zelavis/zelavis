@@ -34,7 +34,7 @@ export function panelsFor(projectId?: string, project?: Project, runtime?: Confi
       const entry = object(value);
       if (typeof entry.title !== "string") continue;
       const search = new URLSearchParams();
-      for (const key of ["databaseTenant", "databaseTable", "databaseSystemView"]) { const value = object(entry.search)[key]; if (typeof value === "string") search.set(key, value); }
+      for (const key of ["databaseTenant", "databaseTable", "databaseSystemView"]) { const value = object(entry.search)[key]; if (typeof value === "string" && !(key === "databaseTenant" && typeof object(entry.search).databaseSystemView === "string")) search.set(key, value); }
       const item = { label: entry.title, path: `${database.path}?${search}` };
       if (search.has("databaseSystemView")) system.items.push(item); else database.items.push(item);
     }

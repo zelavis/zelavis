@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { panelsFor, resolveTrail } from "../app/navigation-model.ts";
+import { panelsFor, resolveTrail, workspacePanels, trailForLocation } from "../app/navigation-model.ts";
+import { projectMenu } from "../app/navigation-menu.ts";
 const project = { id: "customer café", name: "Customer", recipe: {} };
 test("reconstructs Project domain ancestry and validates explicit URL trails", () => {
   const panels = panelsFor(project.id, project);
@@ -58,4 +59,26 @@ test("workspace menu descendants survive URL serialization and restore their dee
   assert.equal(resolveTrail(panels, [], trail.join("/")).at(-1).label, "Workloads");
   assert.ok(panels.every(panel => !panel.id.includes("/")));
   assert.ok(panels.find(panel => panel.id === "server"), "Platform branch remains available in Project workspaces");
+});
+
+test("a table URL opens the Database slide and a system view URL the System Tables slide", () => {
+  const tables = [
+    { title: "zelavis-app · orders", search: { databaseTenant: "zelavis-app", databaseTable: "orders" } },
+    { title: "service:auth · settings", search: { databaseTenant: "service:auth", databaseTable: "settings" } },
+    { title: "System · Events", search: { databaseTenant: "zelavis-app", databaseSystemView: "events" } },
+    { title: "System · Schemas", search: { databaseTenant: "zelavis-app", databaseSystemView: "schemas" } },
+  ];
+  const runtime = { capabilities: { database: { available: true } }, services: [] };
+  const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
+  const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
+  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "orders", "service:auth · settings", "System Tables"]);
+  const system = database.items.find(item => item.title === "System Tables");
+  assert.deepEqual(system.items.map(item => item.search), [{ databaseSystemView: "events" }, { databaseSystemView: "schemas" }]);
+  assert.deepEqual(system.search, { databaseSystemView: "events" });
+  const panels = workspacePanels(panelsFor(project.id, project, runtime, { items: tables }), menu, project.id);
+  const trail = search => trailForLocation(panels, new URL(`http://test/projects/${encodeURIComponent(project.id)}/database?${search}`));
+  const last = ids => ids.at(-1);
+  assert.match(last(trail("databaseTenant=zelavis-app&databaseTable=orders")), /database$/);
+  assert.match(last(trail("databaseTenant=zelavis-app&databaseSystemView=events")), /system-tables$/);
+  assert.match(last(trail("databaseTenant=service%3Aauth&databaseSystemView=schemas")), /system-tables$/);
 });

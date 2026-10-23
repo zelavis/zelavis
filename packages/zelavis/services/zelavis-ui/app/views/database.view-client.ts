@@ -26,19 +26,23 @@ export default {
     }
     const collection = field("collection", "Collection / table", "text", String(props.collection));
     const selector = node("form", { class: "filters" }, tenant, collection, node("button", { type: "submit" }, "Open records"));
-    const choices = node("div", { class: "workspace-links" });
     const gridHost = node("div", { class: "persistent-grid" });
     const trail: string[] = []; let trailKey = "";
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    host.replaceChildren(node("div", { class: "actions" }, link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, choices, paging, errors, gridHost, actions);
+    host.replaceChildren(node("div", { class: "actions" }, link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());
       for (const [key, value] of Object.entries(values)) { if (value === undefined) url.searchParams.delete(key); else url.searchParams.set(key, value); }
       void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(error => errors.replaceChildren(message(String(error), true)));
     };
+    // Choosing a Tenant applies at once: a system view stays open for the new Tenant; a table does not carry over, since the other Tenant has its own.
+    tenant.querySelector("select")!.addEventListener("change", event => {
+      const name = (event.currentTarget as HTMLSelectElement).value;
+      search({ databaseTenant: name, ...(props.systemView ? {} : { databaseTable: undefined }), databaseRow: undefined, databaseAfter: undefined, databaseWhere: undefined, databaseSort: undefined, databaseHide: undefined });
+    });
     selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); search({ databaseTenant: String(data.get("tenantId") ?? ""), databaseTable: String(data.get("collection") ?? ""), databaseSystemView: undefined, databaseAfter: undefined, databaseRow: undefined }); });
     let disposed = false;
     const lifetime = new AbortController();
@@ -70,12 +74,6 @@ export default {
     function controls() {
       host.dataset.projectContext = String(props.navigationJson);
       const navigation = JSON.parse(String(props.navigationJson));
-      choices.replaceChildren();
-      for (const raw of JSON.parse(String(props.choicesJson))) {
-        const item = object(raw); const params = new URLSearchParams();
-        for (const [key, value] of Object.entries(object(item.search))) if (typeof value === "string") params.set(key, value);
-        choices.append(link(String(item.title ?? "Table"), `/projects/${encodeURIComponent(String(props.projectId))}/${content ? "content" : "database"}?${params}`));
-      }
       tenants();
       const here = new URL(router!.url()).searchParams;
       const key = JSON.stringify([props.tenant, props.collection, props.limit, here.get("databaseWhere"), here.get("databaseSort")]);
