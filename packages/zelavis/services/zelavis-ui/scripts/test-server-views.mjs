@@ -154,8 +154,8 @@ try {
     await page.getByRole("button", { name: "Refresh records", exact: true }).click();
     await page.waitForFunction(before => document.querySelector(".server-view-status span")?.textContent !== before, before);
   };
-  for (const library of ["tabulator", "vtable", "glide"]) {
-    await page.goto(route + `&grid=${library}`, { waitUntil: "networkidle" });
+  for (const library of ["glide"]) {
+    await page.goto(route, { waitUntil: "networkidle" });
     await page.getByLabel("Selected record JSON").waitFor({ timeout: 10000 }).catch(async error => { console.error("Database boot:", errors, observed, (await page.locator("body").innerText()).slice(-2500)); throw error; });
     const json = page.getByLabel("Selected record JSON");
     await json.fill(JSON.stringify({ title: `Utility draft ${library}` }));
@@ -166,7 +166,7 @@ try {
     await page.evaluate(() => { window.utilityInput = document.querySelector('[aria-label="Selected record JSON"]'); });
     await switches.getByRole("button", { name: "Account", exact: true }).click();
     await page.getByText("Owner dashboard", { exact: true }).waitFor();
-    if (process.argv.includes("--screenshots") && library === "tabulator") await page.screenshot({ path: "/tmp/new-ui-sidebar-account.png" });
+    if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-sidebar-account.png" });
     await page.getByRole("button", { name: "Settings ›", exact: true }).click();
     await page.getByRole("link", { name: "Global settings", exact: true }).waitFor();
     await page.goBack();
@@ -208,7 +208,7 @@ try {
     assert.equal(documents[0].data.title, `Unsaved ${library}`);
     console.log(`${library}: retained grid/inspector/sidebar and draft; failed save retained draft; retry persisted it`);
   }
-  assert.equal(saved, 3);
+  assert.equal(saved, 1);
   await page.evaluate(() => { window.viewIdentity = { swiper: document.querySelector("swiper-container"), client: document.querySelector("fuzor-client[data-fuzor-component]") }; });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("Selected record JSON").fill('{"title":"Mobile draft"}');
@@ -301,7 +301,7 @@ try {
   assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith("zelavis:new-ui:drafts:1:")).length), 0, "Logout clears tab draft journals");
   console.log("Sidebar utilities: five footer switches, project search/chat links, Account/Settings/Language, desktop input identity, mobile reload/Back and logout passed.");
   assert.equal(errors.length, 0, errors.join("\n"));
-  console.log("Generated SSR registry, project proxy authorization, and all three MIT grid adapters passed against the isolated API fixture.");
+  console.log("Generated SSR registry, project proxy authorization, and the Glide grid adapter passed against the isolated API fixture.");
 } finally {
   await browser?.close(); if (app) await closeNodeServer(app);
   await new Promise(resolve => upstream.close(resolve));

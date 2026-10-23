@@ -6,7 +6,7 @@ import type { ServerRequestContext } from "fuzor/server";
 import template from "./database.fragment.html";
 import workspace from "./database.view-client.ts";
 import { refresh } from "./database.handlers.ts";
-import { pageNumber } from "../grids/model.ts";
+import { pageNumber, parseFilter, parseSort } from "../grids/model.ts";
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
@@ -30,7 +30,12 @@ const database = defineServerComponent((context: ServerRequestContext) => Effect
         ...(context.request.headers.get("authorization") ? { authorization: context.request.headers.get("authorization")! } : {}),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), catch: error => error });
-      if (!response.ok) { requiresLogin ||= response.status === 401; throw new Error(response.status === 401 ? "Sign in to open this project's database." : `Database request failed (${response.status}).`); }
+      if (!response.ok) {
+        requiresLogin ||= response.status === 401;
+        // The database explains a refused query (an unindexed field, an unknown operator); say so instead of a bare status.
+        const refusal = response.status === 400 || response.status === 409 || response.status === 422 ? object(yield* Effect.tryPromise({ try: () => response.json() as Promise<unknown>, catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined))).error : undefined;
+        throw new Error(response.status === 401 ? "Sign in to open this project's database." : typeof refusal === "string" ? `The database refused this query: ${refusal}` : `Database request failed (${response.status}).`);
+      }
       if (!response.body) return yield* Effect.fail(new Error("Database response has no body"));
       return yield* Effect.acquireUseRelease(
         Effect.sync(() => response.body!.getReader()),
@@ -68,17 +73,28 @@ const database = defineServerComponent((context: ServerRequestContext) => Effect
       const tenant = context.url.searchParams.get("databaseTenant") ?? "zelavis-app";
       const collection = context.url.searchParams.get("databaseTable") ?? "";
       const systemView = context.url.searchParams.get("databaseSystemView") ?? "";
-      const offset = pageNumber(context.url.searchParams.get("databaseOffset"), 0, 1000000);
+      const after = context.url.searchParams.get("databaseAfter") ?? undefined;
       const limit = Math.max(1, pageNumber(context.url.searchParams.get("databaseLimit"), 25, 250));
+      // A Tenant keeps its history after every collection is dropped, so the list can name Tenants with no tables.
+      const tenants = array(object(yield* read(`${apiBase}/database/tenants`).pipe(Effect.catchCause(() => Effect.succeed({})))).tenants).filter((value): value is string => typeof value === "string");
       let choices = array(object(menu).items);
       if (context.url.pathname.includes("/content") && tenant) choices = array(object(yield* read(`${apiBase}/database/documents/collections?tenantId=${encodeURIComponent(tenant)}`)).collections).filter(value => object(value).surface === "content-studio").map(value => ({ title: object(value).name, search: { databaseTenant: tenant, databaseTable: object(value).name } }));
       const schemaPanel = Boolean(tenant && collection && !systemView && context.url.searchParams.get("databasePanel") === "schema");
       const schemas = tenant && collection && !systemView ? array(object(yield* read(`${apiBase}/database/schemas/${encodeURIComponent(collection)}?tenantId=${encodeURIComponent(tenant)}`)).schemas) : [];
       let records: unknown[] = [];
+      let queryError: string | undefined, next: string | undefined;
+      const where = parseFilter(context.url.searchParams.get("databaseWhere")), order = parseSort(context.url.searchParams.get("databaseSort"));
       if (tenant && systemView) records = array(object(yield* read(`${apiBase}/database/maintenance/system/views/${encodeURIComponent(systemView)}?tenantId=${encodeURIComponent(tenant)}&limit=50`)).rows);
-      else if (tenant && collection && !schemaPanel) records = array(object(yield* read(`${apiBase}/database/documents/${encodeURIComponent(collection)}/query`, { tenantId: tenant, limit, offset })).documents);
+      else if (tenant && collection && !schemaPanel) {
+        const query = { tenantId: tenant, limit, ...(after ? { after } : {}), ...(where ? { where: [where] } : {}), ...(order ? { orderBy: [order] } : {}) };
+        // A refused query (for example an unindexed field) keeps the workspace open and says why; auth and transport failures still end the view.
+        records = yield* read(`${apiBase}/database/documents/${encodeURIComponent(collection)}/page`, query).pipe(
+          Effect.map(result => { const page = object(result); next = typeof page.next === "string" ? page.next : undefined; return array(page.documents); }),
+          Effect.catchCause(cause => { const error = Cause.squash(cause); if (error instanceof Error && error.message.startsWith("The database refused")) { queryError = error.message; return Effect.succeed([] as unknown[]); } return Effect.failCause(cause); }),
+        );
+      }
       const draftScope = createHash("sha256").update(context.request.headers.get("cookie") ?? "").update(context.request.headers.get("authorization") ?? "").digest("hex");
-      const props = { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, offset, limit, readonly: Boolean(systemView), recordsJson: JSON.stringify(records), choicesJson: JSON.stringify(choices), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu }) };
+      const props = { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, after: after ?? "", next: next ?? "", limit, readonly: Boolean(systemView), ...(queryError ? { queryError } : {}), recordsJson: JSON.stringify(records), choicesJson: JSON.stringify(choices), tenantsJson: JSON.stringify(tenants), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu }) };
       const key = createHash("sha256").update(JSON.stringify([projectId, tenant, collection, systemView, schemaPanel])).digest("hex").slice(0, 24);
       return view.fragment(template.id, "database-frame", { summary: `Server view · ${records.length} records · ${new Date().toISOString()}` }, { handlers: { refresh: view.handler(event => {
         event.element.ownerDocument.dispatchEvent(new CustomEvent("newui:refresh", { detail: { projectId } }));

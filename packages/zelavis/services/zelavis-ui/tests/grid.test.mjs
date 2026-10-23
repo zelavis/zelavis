@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { gridData, cellValue, cellText, editText, parseEdit, changedRecord, pageNumber, gridLibrary } from "../app/grids/model.ts";
+import { gridData, cellValue, cellText, editText, parseEdit, changedRecord, pageNumber, parseFilter, parseSort, filterParam, columnKind, columnWidth, parseHidden, hiddenParam } from "../app/grids/model.ts";
 import { gridNotices } from "../scripts/grid-licenses.mjs";
 test("JSON cell editing preserves every JSON type and distinguishes missing from null", () => {
   for (const value of ["42", 42, true, false, null, [], [1, "a"], { score: 1 }]) assert.deepEqual(parseEdit(editText(value)), value);
@@ -20,12 +20,11 @@ test("literal dotted and prototype property names remain independent database fi
 test("malformed rows and duplicate IDs are refused", () => {
   for(const rows of [[null],[{id:'a',data:[]}],[{id:'a',data:{}},{id:'a',data:{}}]]) assert.throws(()=>gridData(rows));
 });
-test("URL pagination is bounded and unknown libraries select Glide", () => {
+test("URL pagination is bounded", () => {
   assert.equal(pageNumber("-3",25,250),25); assert.equal(pageNumber("99999",25,250),250); assert.equal(pageNumber("25garbage",25,250),25);
-  assert.equal(gridLibrary("tabulator"),"tabulator"); assert.equal(gridLibrary("vtable"),"vtable"); assert.equal(gridLibrary("external"),"glide");
 });
-test("the exact three grid releases and VTable editor require MIT and retain notices", () => {
-  const notices=gridNotices(); for(const name of ["@glideapps/glide-data-grid@6.0.3","tabulator-tables@6.6.1","@visactor/vtable@1.26.8","@visactor/vtable-editors@1.26.8"]) assert.ok(notices.includes(name));
+test("the exact grid release requires MIT and retains its notice", () => {
+  const notices=gridNotices(); for(const name of ["@glideapps/glide-data-grid@6.0.3"]) assert.ok(notices.includes(name));
 });
 
 test("column identities survive sparse pages and adding fields to a record", () => {
@@ -33,4 +32,32 @@ test("column identities survive sparse pages and adding fields to a record", () 
   const after=gridData([{id:"b",data:{added:42,title:"B"}}]);
   assert.equal(before.columns.find(c=>c.key==="title").field,after.columns.find(c=>c.key==="title").field);
   assert.ok(before.columns.every(c=>!c.field.includes(".")));
+});
+
+test("filter and sort URL state is validated before it reaches the query", () => {
+  assert.deepEqual(parseFilter(filterParam("count", "gte", "5")), { path: "count", op: "gte", value: 5 });
+  assert.deepEqual(parseFilter("title|eq|draft"), { path: "title", op: "eq", value: "draft" });
+  assert.deepEqual(parseFilter("title|eq|a|b"), { path: "title", op: "eq", value: "a|b" });
+  for (const bad of [null, "", "title", "title|like|x", "|eq|1", "title|eq"]) assert.equal(parseFilter(bad), undefined);
+  assert.deepEqual(parseSort("count:desc"), { path: "count", direction: "desc" });
+  assert.deepEqual(parseSort("a:b:asc"), { path: "a:b", direction: "asc" });
+  for (const bad of [null, "", "count", "count:up", ":asc"]) assert.equal(parseSort(bad), undefined);
+});
+
+test("column kinds come from the loaded values and ignore null and missing", () => {
+  const { records, columns } = gridData([{ id: "a", data: { n: 1, s: "x", b: true, o: { k: 1 }, m: 1, e: null } }, { id: "b", data: { n: 2, s: "y", b: false, m: "text" } }]);
+  const kind = key => columnKind(records, columns.find(c => c.key === key));
+  assert.equal(kind("n"), "number"); assert.equal(kind("s"), "string"); assert.equal(kind("b"), "boolean");
+  assert.equal(kind("o"), "structure"); assert.equal(kind("m"), "mixed"); assert.equal(kind("e"), "empty");
+  assert.equal(columnKind(records, columns[0]), "id");
+});
+test("column widths fit the content within bounds", () => {
+  const { records, columns } = gridData([{ id: "a", data: { short: 1, long: "x".repeat(500) } }]);
+  const width = key => columnWidth(records, columns.find(c => c.key === key));
+  assert.equal(width("short"), 96); assert.equal(width("long"), 360);
+});
+test("hidden columns round-trip through the URL and refuse malformed state", () => {
+  assert.deepEqual(parseHidden(hiddenParam(["a,b", "c|d", "é"])), ["a,b", "c|d", "é"]);
+  assert.equal(hiddenParam([]), undefined);
+  for (const bad of [null, "", "nope", "{}", "[1,2]"]) assert.deepEqual(parseHidden(bad), []);
 });

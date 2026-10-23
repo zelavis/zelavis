@@ -180,7 +180,7 @@ export function mount(host: HTMLElement) {
   }
   // Path data reloads after the route and params commit; query changes retain the shell.
   let renderedPath = new URL(router.url()).pathname;
-  const dataIdentity = (raw: string) => { const url = new URL(raw); for (const key of ["sidebar", "sidebarView", "sidebarUtility", "sidebarUtilityPanel", "grid", "databaseRow", "gridFilter", "gridSort"]) url.searchParams.delete(key); url.hash = ""; return url.href; };
+  const dataIdentity = (raw: string) => { const url = new URL(raw); for (const key of ["sidebar", "sidebarView", "sidebarUtility", "sidebarUtilityPanel", "databaseRow"]) url.searchParams.delete(key); url.hash = ""; return url.href; };
   let renderedData = dataIdentity(router.url());
   const syncNavigation = () => { const path = unmounted(new URL(router!.url()).pathname); navigation(path, router!.params().projectId); };
   const viewCommitted = () => { if (config && isServerView()) reload(); };

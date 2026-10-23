@@ -60,7 +60,7 @@ try {
   }
   await request(proxy + "/database/documents/collections", "POST", { tenantId: "tenant-a", name: "articles", surface: "database" });
   await request(proxy + "/database/documents/articles", "POST", { tenantId: "tenant-a", id: "row-a", data: { title: "Actual database", count: 1 } });
-  const route = `${uiOrigin}/zelavis/projects/view-lab/database?databaseTenant=tenant-a&databaseTable=articles&databaseRow=row-a&grid=tabulator&sidebar=projects/project/database`;
+  const route = `${uiOrigin}/zelavis/projects/view-lab/database?databaseTenant=tenant-a&databaseTable=articles&databaseRow=row-a&sidebar=projects/project/database`;
   const anonymous = await browser.newPage(); await anonymous.goto(route); await anonymous.waitForURL(/\/zelavis\/login/); await anonymous.close();
   await page.context().addCookies([{ name: "zelavis_session", value: session, url: uiOrigin + "/zelavis" }]);
   sessionInstalled = true;
@@ -68,12 +68,12 @@ try {
   await page.getByLabel("Selected record JSON").waitFor();
   await page.getByLabel("Selected record JSON").fill('{"title":"Actual retained edit","count":2}');
   await page.getByRole("button", { name: "Stage record JSON", exact: true }).click();
-  await page.evaluate(() => { window.retainedGrid = document.querySelector(".tabulator"); window.retainedSwiper = document.querySelector("swiper-container"); });
+  await page.evaluate(() => { window.retainedGrid = document.querySelector(".database-grid"); window.retainedSwiper = document.querySelector("swiper-container"); });
   const before = await page.locator(".server-view-status span").innerText();
   await page.getByRole("button", { name: "Refresh records", exact: true }).click();
   await page.waitForFunction(before => document.querySelector(".server-view-status span").textContent !== before, before);
   assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Actual retained edit");
-  assert.ok(await page.evaluate(() => window.retainedGrid === document.querySelector(".tabulator") && window.retainedSwiper === document.querySelector("swiper-container")));
+  assert.ok(await page.evaluate(() => window.retainedGrid === document.querySelector(".database-grid") && window.retainedSwiper === document.querySelector("swiper-container")));
   await page.reload({ waitUntil: "networkidle" });
   await page.getByLabel("Selected record JSON").waitFor();
   assert.equal(JSON.parse(await page.getByLabel("Selected record JSON").inputValue()).title, "Actual retained edit");

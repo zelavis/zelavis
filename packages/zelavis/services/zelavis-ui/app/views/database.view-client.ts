@@ -16,11 +16,19 @@ export default {
     if (!router) throw new Error("Database workspace needs the dashboard router");
     if (initial.error) { if (initial.signin) host.dataset.requiresLogin = "true"; host.replaceChildren(link("Sign in", "/login"), link("Projects", "/")); return { update() {}, dispose() {} }; }
     let props = initial;
-    const tenant = field("tenantId", "Tenant ID", "text", String(props.tenant));
+    const tenantList = () => { const tenants: unknown = JSON.parse(String(props.tenantsJson ?? "[]")); return Array.isArray(tenants) ? tenants.filter((value): value is string => typeof value === "string") : []; };
+    const tenantsWithTables = () => new Set(JSON.parse(String(props.choicesJson ?? "[]")).map((item: unknown) => object(object(item).search)).filter((search: Record<string, unknown>) => typeof search.databaseTable === "string").map((search: Record<string, unknown>) => search.databaseTenant));
+    const tenant = node("label", {}, node("span", {}, "Tenant"), node("select", { name: "tenantId", "aria-label": "Tenant" }));
+    function tenants() {
+      const select = tenant.querySelector("select")!; const withTables = tenantsWithTables();
+      const names = [...new Set([...tenantList(), String(props.tenant)].filter(Boolean))];
+      select.replaceChildren(...names.map(name => { const option = node("option", { value: name }, withTables.has(name) ? name : `${name} (no tables)`); option.selected = name === String(props.tenant); return option; }));
+    }
     const collection = field("collection", "Collection / table", "text", String(props.collection));
     const selector = node("form", { class: "filters" }, tenant, collection, node("button", { type: "submit" }, "Open records"));
     const choices = node("div", { class: "workspace-links" });
     const gridHost = node("div", { class: "persistent-grid" });
+    const trail: string[] = []; let trailKey = "";
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
@@ -31,7 +39,7 @@ export default {
       for (const [key, value] of Object.entries(values)) { if (value === undefined) url.searchParams.delete(key); else url.searchParams.set(key, value); }
       void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(error => errors.replaceChildren(message(String(error), true)));
     };
-    selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); search({ databaseTenant: String(data.get("tenantId") ?? ""), databaseTable: String(data.get("collection") ?? ""), databaseSystemView: undefined, databaseOffset: undefined, databaseRow: undefined }); });
+    selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); search({ databaseTenant: String(data.get("tenantId") ?? ""), databaseTable: String(data.get("collection") ?? ""), databaseSystemView: undefined, databaseAfter: undefined, databaseRow: undefined }); });
     let disposed = false;
     const lifetime = new AbortController();
     function form(fields: HTMLElement[], title: string, submit: (data: FormData) => Effect.Effect<unknown, unknown>) {
@@ -68,14 +76,21 @@ export default {
         for (const [key, value] of Object.entries(object(item.search))) if (typeof value === "string") params.set(key, value);
         choices.append(link(String(item.title ?? "Table"), `/projects/${encodeURIComponent(String(props.projectId))}/${content ? "content" : "database"}?${params}`));
       }
+      tenants();
+      const here = new URL(router!.url()).searchParams;
+      const key = JSON.stringify([props.tenant, props.collection, props.limit, here.get("databaseWhere"), here.get("databaseSort")]);
+      if (key !== trailKey) { trailKey = key; trail.length = 0; }
       paging.replaceChildren();
       if (props.tenant && props.collection && !props.readonly) {
-        const previous = button("Previous page", () => search({ databaseOffset: String(Math.max(0, Number(props.offset) - Number(props.limit))), databaseRow: undefined })); previous.disabled = Number(props.offset) === 0;
-        const next = button("Next page", () => search({ databaseOffset: String(Number(props.offset) + Number(props.limit)), databaseRow: undefined })); next.disabled = JSON.parse(String(props.recordsJson)).length < Number(props.limit);
-        paging.append(previous, next);
+        const after = String(props.after ?? ""), following = String(props.next ?? "");
+        // The database continues from an opaque cursor, so a page can only go on; the way back is the cursors already visited in this tab.
+        const first = button("First page", () => { trail.length = 0; search({ databaseAfter: undefined, databaseRow: undefined }); }); first.disabled = after === "";
+        const previous = button("Previous page", () => { const back = trail.pop() ?? ""; search({ databaseAfter: back || undefined, databaseRow: undefined }); }); previous.disabled = trail.length === 0;
+        const next = button("Next page", () => { trail.push(after); search({ databaseAfter: following, databaseRow: undefined }); }); next.disabled = following === "";
+        paging.append(first, previous, next);
         const size = node("select", { "aria-label": "Records per page" });
         for (const count of [...new Set([25, 100, 250, Number(props.limit)])]) { const option = node("option", { value: String(count) }, String(count)); option.selected = count === Number(props.limit); size.append(option); }
-        size.addEventListener("change", () => search({ databaseLimit: size.value, databaseOffset: undefined, databaseRow: undefined }));
+        size.addEventListener("change", () => search({ databaseLimit: size.value, databaseAfter: undefined, databaseRow: undefined }));
         paging.append(node("label", {}, "Page size ", size));
       }
     }
@@ -99,7 +114,7 @@ export default {
     const hasRecords = () => Boolean(props.tenant && (props.collection || props.systemView));
     controls();
     if (!props.schemaPanel && hasRecords()) grid = mountGrid(gridHost, props);
-    else if (!props.schemaPanel) gridHost.append(message("Choose a tenant and table to open records."));
+    else if (!props.schemaPanel) gridHost.append(message(props.tenant && !tenantsWithTables().has(props.tenant) ? `Tenant ${String(props.tenant)} has no tables. It stays listed because it still holds its history; create a table to use it again.` : "Choose a tenant and table to open records."));
     return {
       update(next: Values, operation) { props = next; controls(); schemaEditor?.update({ schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? "") }); return grid?.update(props, operation); },
       dispose() { disposed = true; lifetime.abort(); schemaEditor?.dispose(); return grid?.dispose(); },
