@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { panelsFor, resolveTrail, workspacePanels, trailForLocation, itemIsActive } from "../app/navigation-model.ts";
+import { panelsFor, resolveTrail, workspacePanels, trailForLocation, itemIsActive, createMenuStore } from "../app/navigation-model.ts";
 import { projectMenu } from "../app/navigation-menu.ts";
 const project = { id: "customer café", name: "Customer", recipe: {} };
 test("reconstructs Project domain ancestry and validates explicit URL trails", () => {
@@ -111,4 +111,16 @@ test("only the slide a page belongs to is active, not every item sharing its pat
   assert.deepEqual(active("", "?databaseTenant=service%3Aauth&databaseTable=settings"), [["Plugin Tables", true], ["System Tables", false]]);
   // The slide that holds a page stays active: the Database item itself is on the trail of the Tenants page.
   assert.equal(itemIsActive({ current: `${base}/tenants`, itemPath: base, matchesSearch: false, branch: "database", trail: ["database"] }), true);
+});
+
+test("a Project's menu survives the Platform's menu being reported after it", () => {
+  const store = createMenuStore();
+  const projectMenuItems = [{ title: "Backend" }];
+  const platformMenuItems = [{ title: "Server" }];
+  store.set("trellix", projectMenuItems);
+  store.set(undefined, platformMenuItems);
+  // The dashboard leaves an unchanged menu alone, so nothing sets the Project's again when it is visited next.
+  assert.equal(store.get("trellix"), projectMenuItems);
+  assert.equal(store.get(undefined), platformMenuItems);
+  assert.equal(store.get("other"), undefined, "a scope with no reported menu has none, and falls back to the basic one");
 });

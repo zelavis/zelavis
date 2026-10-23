@@ -6,7 +6,7 @@ import { type Config, type Project } from "./api.ts";
 import { backRow, button, link, node } from "./dom.ts";
 import type { DashboardHandle } from "./routes.ts";
 
-import { itemIsActive, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
+import { createMenuStore, itemIsActive, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 import { mounted, unmounted } from "./mount.ts";
 
 /**
@@ -48,7 +48,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   mobileSlide.append(mobileHeading);
   const utilities = createSidebarUtilities(router, options.onSignOut);
   sidebar.append(link("◈ Zelavis", "/", { class: "brand" }), node("div", { class: "sidebar-label" }, "THE APP PLATFORM"), swiper, utilities.view, utilities.footer);
-  let workspaceNavigation: { projectId?: string; items: unknown } | undefined;
+  const menus = createMenuStore();
   let auth = false;
   let projectList: readonly Project[] = [];
   let trail: Panel[] = [];
@@ -74,7 +74,8 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     swiper.hidden = utilityVisible;
     host.classList.toggle("utility-open", utilityVisible);
     const basePanels = panelsFor(projectId, project, runtime, menu, projectList);
-    const panels = workspaceNavigation && workspaceNavigation.projectId === projectId ? workspacePanels(basePanels, workspaceNavigation.items, projectId) : basePanels;
+    const reported = menus.get(projectId);
+    const panels = reported !== undefined ? workspacePanels(basePanels, reported, projectId) : basePanels;
     const matches = router.matches();
     const handle = matches.at(-1)?.handle as DashboardHandle | undefined;
     const url = new URL(router.url());
@@ -143,5 +144,5 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   swiper.addEventListener("swiperslidechange", changed);
   const resized = () => { if (auth && content.parentNode !== main) main.append(content); else sync(snapshot.path, snapshot.projectId, snapshot.project, snapshot.runtime, snapshot.menu); };
   media.addEventListener("change", resized); reduced.addEventListener("change", resized);
-  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { workspaceNavigation = { items, projectId }; resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth && content.parentNode !== main) main.append(content); }, dispose() { utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
+  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { menus.set(projectId, items); resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth && content.parentNode !== main) main.append(content); }, dispose() { utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
 }

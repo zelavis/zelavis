@@ -82,6 +82,22 @@ export function workspacePanels(base: readonly Panel[], values: unknown, project
 }
 
 /**
+ * The menus the Platform reported, one per scope: the Platform's own (`undefined`) and each Project's.
+ *
+ * A single slot is not enough. The dashboard loads a menu beside each page and leaves an unchanged one alone, so after
+ * the Platform's menu replaced a Project's in one slot, coming back found the Project's menu "unchanged", did not set it
+ * again, and the sidebar fell back to the basic menu with no Backend, Tenants or Plugin Tables.
+ */
+export function createMenuStore() {
+  const menus = new Map<string, unknown>();
+  const key = (projectId?: string) => projectId ?? "";
+  return {
+    set(projectId: string | undefined, items: unknown) { menus.set(key(projectId), items); },
+    get(projectId?: string): unknown { return menus.get(key(projectId)); },
+  };
+}
+
+/**
  * Whether a sidebar item is the active one: it is the page being shown, or it opens a slide the current page is inside.
  *
  * The second is decided by the trail of slides that is open, never by the item's path being a prefix of the page's. Several
