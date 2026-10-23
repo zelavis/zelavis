@@ -399,6 +399,16 @@ export class BackupTenantMismatch extends Schema.TaggedError<BackupTenantMismatc
   { expected: Schema.String, received: Schema.String },
 ) {}
 
+/**
+ * A Tenant cannot be removed: it is reserved, divided into parts, mid-relocation, or holds nothing.
+ *
+ * Refused rather than half done: removal is the one operation that cannot be undone, so it never guesses.
+ */
+export class TenantNotDroppable extends Schema.TaggedError<TenantNotDroppable>()("TenantNotDroppable", {
+  tenant: Schema.String,
+  reason: Schema.String,
+}) {}
+
 /** Restoring over live data would orphan whatever the tenant already holds. */
 export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("TenantNotEmpty", {
   tenant: Schema.String,

@@ -5,7 +5,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|create-tenant|delete-tenant|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -50,6 +50,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let reveal = false;
   let tenant: string | undefined;
   let table: string | undefined;
+  let confirm: string | undefined;
   let output: string | undefined;
   let file: string | undefined;
   let into: string | undefined;
@@ -69,7 +70,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--output", "--file", "--into"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--output", "--file", "--into"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -83,6 +84,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--software-version") softwareVersion = value;
     if (flag === "--tenant") tenant = value;
     if (flag === "--table") table = value;
+    if (flag === "--confirm") confirm = value;
     if (flag === "--output") output = value;
     if (flag === "--file") file = value;
     if (flag === "--into") into = value;
@@ -99,7 +101,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
-  if (tenant && !["create-tenant", "export-tenant", "restore-tenant"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, export-tenant and restore-tenant.");
+  if (tenant && !["create-tenant", "delete-tenant", "export-tenant", "restore-tenant"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, export-tenant and restore-tenant.");
+  if (confirm !== undefined && action !== "delete-tenant") throw new Error("--confirm is only supported by projects delete-tenant.");
   if (table && action !== "create-tenant") throw new Error("--table is only supported by projects create-tenant.");
   if (output && action !== "export-tenant") throw new Error("--output is only supported by projects export-tenant.");
   if ((file || into) && action !== "restore-tenant") throw new Error("--file and --into are only supported by projects restore-tenant.");
@@ -220,6 +223,14 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
       if (!tenant || !table) throw new Error("projects create-tenant requires --tenant <id> and --table <name>.");
       const created = yield* integration(() => client.projects.createTenant(requireTarget("id"), { tenantId: tenant, table }));
       print({ tenantId: tenant, table: created.name }, () => `Created Tenant ${tenant} with table ${created.name}.`);
+      return;
+    }
+    case "delete-tenant": {
+      if (!tenant) throw new Error("projects delete-tenant requires --tenant <id>.");
+      // Irreversible, so the ID is typed a second time, as the dashboard and the HTTP route also ask.
+      if (confirm !== tenant) throw new Error(`projects delete-tenant removes Tenant ${tenant} and its history for good; repeat it with --confirm ${tenant}.`);
+      const removed = yield* integration(() => client.projects.deleteTenant(requireTarget("id"), { tenantId: tenant, confirm }));
+      print(removed, () => `Removed Tenant ${removed.tenant} (${removed.records} records) from ${removed.shard}.`);
       return;
     }
     case "export-tenant": {

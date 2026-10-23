@@ -416,6 +416,8 @@ const CONFLICT_TAGS = new Set([
   // Refused only while a move is fenced; the same request succeeds once
   // routing points at the new shard.
   "TenantMoving",
+  // Fenced and not yet removed: the same request succeeds once the calls using the Tenant finish.
+  "PlacementInUse",
 ]);
 
 const NOT_FOUND_TAGS = new Set([
@@ -449,6 +451,7 @@ const BAD_REQUEST_TAGS = new Set([
   "RangeNotEmpty",
   "SchemaViolation",
   "TenantNotEmpty",
+  "TenantNotDroppable",
   "InvalidRestoreMode",
   "InvalidMessage",
   "InvalidKeyValueExpiration",
@@ -547,7 +550,13 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     case "TimeSeriesMapFailed":
       return `Time series "${failure.series}" could not map event ${failure.eventId}: ${failure.reason}.`;
     case "TenantMoving":
-      return `Tenant "${failure.tenant}" is being moved to another shard; retry shortly.`;
+      return failure.to === "removed"
+        ? `Tenant "${failure.tenant}" is being removed; it refuses changes.`
+        : `Tenant "${failure.tenant}" is being moved to another shard; retry shortly.`;
+    case "TenantNotDroppable":
+      return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
+    case "PlacementInUse":
+      return `Tenant "${failure.partition}" is still in use by ${failure.calls} calls; it refuses changes and removal can be repeated.`;
     default:
       return failure._tag;
   }
@@ -646,6 +655,44 @@ function defineDatabaseRootService(
             }
             return { body: { tenants } };
           })),
+        },
+        {
+          id: "database.tenants.drop",
+          spec: {
+            operationId: "dropDatabaseTenant",
+            summary: "Remove a Tenant and everything it holds",
+            description:
+              "Irreversible: the Tenant's records, event log and history are removed, not archived. Refused for a reserved Tenant, one divided into parts, one holding nothing, the caller's own Tenant, and while a relocation is pending. The body must repeat the Tenant ID as `confirm`. From the start every change to the Tenant is refused; if calls still use it the answer is 409 and the same request can be repeated.",
+            tags: ["database"],
+            pathParams: { tenantId: { type: "string", required: true, description: "Tenant ID" } },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["confirm"],
+                properties: { confirm: { type: "string", description: "The Tenant ID again, to confirm" } },
+              },
+            },
+            responses: {
+              200: { description: "The Tenant, its shard and how many records it held" },
+              400: { description: "Not confirmed, or the Tenant cannot be removed" },
+              409: { description: "Calls still use the Tenant; repeat the request" },
+            },
+          },
+          method: "DELETE",
+          access: { permissions: ["database.drop"] },
+          path: "/tenants/:tenantId",
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const tenantId = params.tenantId;
+            if (input.confirm !== tenantId) {
+              return { status: 400, body: { error: `Removing a Tenant needs { "confirm": "${tenantId}" }: the Tenant ID repeated.` } };
+            }
+            if (readString(principal?.metadata?.tenantId) === tenantId) {
+              return { status: 400, body: { error: "A caller cannot remove its own Tenant." } };
+            }
+            return { body: yield* integration(() => service.dropTenant(tenantId)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.menu.tables",

@@ -278,6 +278,8 @@ export interface DatabaseRuntimeApi {
   /** Every tenant holding data. What an operator surface needs to offer a choice. */
   readonly tenants: () => Promise<ReadonlyArray<TenantId>>;
   /** What each Tenant's partition holds, as the database keeps it rather than counts it: records, their bytes and the shard. */
+  /** Remove a Tenant and everything it holds, history included; see `Database.dropTenant`. */
+  readonly dropTenant: (tenant: TenantId) => Promise<{ readonly tenant: TenantId; readonly shard: string; readonly records: number }>;
   readonly tenantUsage: () => Promise<ReadonlyArray<{ readonly tenant: TenantId; readonly shard: string; readonly records: number; readonly bytes: number }>>;
   readonly context: { readonly nodeId: string };
   /**
@@ -387,6 +389,7 @@ export const runtimeApiFor = (
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
   tenants: () => run(database.tenants),
+  dropTenant: (tenant) => run(database.dropTenant(tenant)),
   tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
   context: { nodeId: options?.nodeId ?? "local" },
   topology: {

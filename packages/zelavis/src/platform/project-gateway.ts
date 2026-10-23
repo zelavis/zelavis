@@ -137,6 +137,7 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
     "database.write",
     "database.backup",
     "database.restore",
+    "database.drop",
   ]),
 });
 

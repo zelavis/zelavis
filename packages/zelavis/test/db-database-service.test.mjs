@@ -50,6 +50,7 @@ test("the database service mounts the same routes on the db runtime API", async 
     [
       "/api/database/tenants",
       "/api/database/tenants/overview",
+      "/api/database/tenants/:tenantId",
       "/api/database/menu/tables",
       "/api/database/health",
       "/api/database/documents/collections",

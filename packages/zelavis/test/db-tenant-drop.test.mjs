@@ -1,0 +1,114 @@
+// Removing a Tenant: what the database does, and the same removal through the HTTP route, the SDK and the CLI.
+import assert from "node:assert/strict";
+import test from "node:test";
+import { defineDatabaseService } from "../dist/db/index.js";
+import { createZelavisClient } from "../dist/sdk/fetch.js";
+import { runProjectsCommand } from "../dist/cli/projects.js";
+import { openTemporaryDatabase } from "./_database.mjs";
+
+const operator = { id: "operator", type: "user", permissions: ["database.inspect", "database.read", "database.write", "database.drop"] };
+const BASE = "http://zv.test/zelavis";
+const PROXY = "/zelavis/api/v1/runtime/projects/p1/proxy/zelavis/api/v1/database";
+
+const route = (api) => defineDatabaseService(api).api.v1.find((entry) => entry.id === "database.tenants.drop");
+const call = async (api, tenantId, body, principal = operator) => {
+  const response = await route(api).handler({ service: api, params: { tenantId }, query: new URLSearchParams(), body, principal, headers: {}, request: undefined });
+  return { status: response.status ?? 200, body: response.body };
+};
+const platform = (api) => async (input, init) => {
+  const url = new URL(String(input));
+  const match = /\/tenants\/([^/]+)$/.exec(url.pathname);
+  assert.ok(url.pathname.startsWith(PROXY) && match && init?.method === "DELETE", `unexpected request ${init?.method} ${url.pathname}`);
+  const answer = await call(api, decodeURIComponent(match[1]), JSON.parse(init.body));
+  return new Response(JSON.stringify(answer.body), { status: answer.status, headers: { "content-type": "application/json" } });
+};
+
+const seed = async (api) => {
+  for (const tenant of ["acme", "globex"]) {
+    const db = api.forTenant(tenant);
+    await db.documents.createCollection({ name: "posts" });
+    for (const id of ["a", "b", "c"]) await db.documents.insert({ collection: "posts", id, data: { title: `${tenant}-${id}` } });
+  }
+};
+
+test("dropping a Tenant removes it and its history and touches no other", async (t) => {
+  const api = (await openTemporaryDatabase(t)).api;
+  await seed(api);
+  const before = (await api.forTenant("globex").documents.findMany({ collection: "posts" })).map((d) => `${d.id}:${d.version}`).sort();
+
+  const removed = await api.dropTenant("acme");
+  assert.equal(removed.tenant, "acme");
+  assert.ok(removed.records >= 3, "it reports how many records it held");
+  assert.ok(!(await api.tenants()).includes("acme"), "it no longer holds anything, so it is no longer listed");
+  assert.deepEqual(await api.forTenant("acme").documents.listCollections(), []);
+  assert.deepEqual((await api.forTenant("globex").documents.findMany({ collection: "posts" })).map((d) => `${d.id}:${d.version}`).sort(), before, "another Tenant is untouched");
+
+  // A Tenant written to afterwards starts from nothing, and is not fenced by the removal that emptied it.
+  await api.forTenant("acme").documents.createCollection({ name: "posts" });
+  const again = await api.forTenant("acme").documents.insert({ collection: "posts", id: "a", data: { title: "fresh" } });
+  assert.equal(again.version, 1);
+  assert.deepEqual((await api.forTenant("acme").documents.findMany({ collection: "posts" })).map((d) => d.data.title), ["fresh"]);
+});
+
+test("a Tenant that cannot be removed is refused, and nothing is removed", async (t) => {
+  const api = (await openTemporaryDatabase(t)).api;
+  await seed(api);
+  for (const [tenant, reason] of [["zv.global", /reserved/], ["zv.topology", /reserved/], ["nobody", /holds nothing/]]) {
+    await assert.rejects(() => api.dropTenant(tenant), (error) => error._tag === "TenantNotDroppable" && reason.test(error.reason), tenant);
+  }
+  assert.equal((await api.forTenant("acme").documents.findMany({ collection: "posts" })).length, 3);
+});
+
+test("removing a Tenant comes out the same through HTTP, the SDK and the CLI, refusals included", async (t) => {
+  const results = {};
+  const surfaces = {
+    http: (api) => async (tenantId, confirm) => {
+      const answer = await call(api, tenantId, confirm === undefined ? {} : { confirm });
+      if (answer.status !== 200) throw new Error(answer.body.error);
+      return { tenant: answer.body.tenant };
+    },
+    sdk: (api) => {
+      const client = createZelavisClient({ baseUrl: "http://zv.test", rootPath: "/zelavis", fetch: platform(api) });
+      return async (tenantId, confirm) => ({ tenant: (await client.projects.deleteTenant("p1", { tenantId, confirm })).tenant });
+    },
+    cli: (api) => async (tenantId, confirm) => {
+      const originalFetch = globalThis.fetch, originalLog = console.log, lines = [];
+      globalThis.fetch = platform(api);
+      console.log = (line) => lines.push(String(line));
+      try { await runProjectsCommand(["delete-tenant", "p1", "--tenant", tenantId, ...(confirm === undefined ? [] : ["--confirm", confirm]), "--url", BASE, "--json"]); }
+      finally { globalThis.fetch = originalFetch; console.log = originalLog; }
+      return { tenant: JSON.parse(lines.join("\n")).tenant };
+    },
+  };
+  for (const [name, bind] of Object.entries(surfaces)) {
+    const api = (await openTemporaryDatabase(t)).api;
+    await seed(api);
+    const remove = bind(api);
+    const outcome = async (tenantId, confirm) => remove(tenantId, confirm).then((value) => value, (error) => ({ refused: /confirm/.test(String(error.message)) ? "unconfirmed" : /holds nothing/.test(String(error.message)) ? "holds nothing" : /reserved/.test(String(error.message)) ? "reserved" : String(error.message) }));
+    results[name] = {
+      unconfirmed: await outcome("acme", undefined),
+      wrongConfirm: await outcome("acme", "globex"),
+      reserved: await outcome("zv.global", "zv.global"),
+      removed: await outcome("acme", "acme"),
+      again: await outcome("acme", "acme"),
+      left: (await api.tenants()).filter((tenant) => !tenant.startsWith("zv.")),
+    };
+  }
+  assert.deepEqual(results.http, {
+    unconfirmed: { refused: "unconfirmed" }, wrongConfirm: { refused: "unconfirmed" }, reserved: { refused: "reserved" },
+    removed: { tenant: "acme" }, again: { refused: "holds nothing" }, left: ["globex"],
+  });
+  assert.deepEqual(results.sdk, results.http);
+  assert.deepEqual(results.cli, { ...results.http, unconfirmed: results.cli.unconfirmed, wrongConfirm: results.cli.wrongConfirm });
+  // The CLI refuses a missing or wrong confirmation itself, before any request, and says how to repeat it.
+  assert.match(JSON.stringify(results.cli.unconfirmed), /unconfirmed|--confirm/);
+});
+
+test("a caller cannot remove its own Tenant", async (t) => {
+  const api = (await openTemporaryDatabase(t)).api;
+  await seed(api);
+  const answer = await call(api, "acme", { confirm: "acme" }, { ...operator, metadata: { tenantId: "acme" } });
+  assert.equal(answer.status, 400);
+  assert.match(answer.body.error, /own Tenant/);
+  assert.equal((await api.forTenant("acme").documents.findMany({ collection: "posts" })).length, 3);
+});

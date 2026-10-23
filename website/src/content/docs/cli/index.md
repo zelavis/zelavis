@@ -141,8 +141,9 @@ command tree.
   which needs `project.setup.reveal` and is recorded in the audit trail.
   `projects tenants <id>` lists every Tenant of an App Project's database with its
   shard, tables, stored records and bytes; `projects create-tenant <id> --tenant T --table N`
-  adds one by writing its first table. A Tenant cannot be deleted. Both call
-  `client.projects.tenants|createTenant` and the database's `tenants/overview` and
+  adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`
+  removes one with its history for good (needs `database.drop`). They call
+  `client.projects.tenants|createTenant|deleteTenant` and the database's `tenants/overview` and
   `documents/collections` routes through the Project proxy (`project.view` and
   `database.write`); the dashboard's Database → Tenants page uses the same routes.
   `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of

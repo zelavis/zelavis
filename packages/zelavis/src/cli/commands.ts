@@ -187,8 +187,8 @@ Commands:
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes;
-                            tenants and create-tenant list and add the Tenants of an
-                            App Project's database; export-tenant and restore-tenant
+                            tenants, create-tenant and delete-tenant list, add and remove
+                            the Tenants of an App Project's database; export-tenant and restore-tenant
                             back up and restore one of them.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.

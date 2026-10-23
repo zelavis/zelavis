@@ -259,18 +259,27 @@ to another shard, `ingest`, `rebuild` and projection runs fail with
 
 ## Tenants
 
-A Tenant exists once it holds something, so there is no create-Tenant operation: adding one writes its first table, and a
-Tenant cannot be deleted (dropping its tables leaves its history, so an emptied one stays listed). The overview lists each
+A Tenant exists once it holds something, so there is no create-Tenant operation: adding one writes its first table. Dropping
+a Tenant's tables leaves its history, so an emptied Tenant stays listed until it is deleted. The overview lists each
 Tenant with its shard, tables, stored records (a table's own definition counts beside its documents) and the bytes of their
 bodies, which the database keeps as it writes. It needs `database.inspect`, carried by `project.view`.
 
-| Form | List | Add |
-|---|---|---|
-| HTTP | `GET /zelavis/api/v1/runtime/projects/:projectId/proxy/zelavis/api/v1/database/tenants/overview` | `POST …/database/documents/collections` with `{ tenantId, name, surface: "database" }` |
-| SDK | `client.projects.tenants(projectId)` | `client.projects.createTenant(projectId, { tenantId, table })` |
-| CLI | `zelavis projects tenants <id>` | `zelavis projects create-tenant <id> --tenant T --table N` |
+| Form | List | Add | Delete |
+|---|---|---|---|
+| HTTP | `GET /zelavis/api/v1/runtime/projects/:projectId/proxy/zelavis/api/v1/database/tenants/overview` | `POST …/database/documents/collections` with `{ tenantId, name, surface: "database" }` | `DELETE …/database/tenants/:tenantId` with `{ confirm }` |
+| SDK | `client.projects.tenants(projectId)` | `client.projects.createTenant(projectId, { tenantId, table })` | `client.projects.deleteTenant(projectId, { tenantId, confirm })` |
+| CLI | `zelavis projects tenants <id>` | `zelavis projects create-tenant <id> --tenant T --table N` | `zelavis projects delete-tenant <id> --tenant T --confirm T` |
 
-The dashboard's Database → Tenants page is a client of these routes.
+Deleting removes the Tenant's records, event log and history for good: nothing is archived, so back it up first
+(`export-tenant`). `confirm` must repeat the Tenant ID, which the dashboard asks for by having it typed again. It needs
+`database.drop`, carried by `project.runtime.manage`. From the start every change to the Tenant is refused with the same
+fence a relocation uses; if calls still use it the answer is 409 and the same request can be repeated. It is refused (400)
+for a reserved Tenant, one divided into parts, one that holds nothing, the caller's own Tenant, and while a relocation is
+pending. A Tenant written to afterwards starts again from nothing, with identifiers and log positions beginning over.
+Global data is not the Tenant's and stays.
+
+The dashboard's Database → Tenants page is a client of these routes. It offers Delete only for Tenants the operator made:
+the App's own Tenant and a plugin's `service:` Tenant are not deleted from there.
 
 ## Backups and restore
 

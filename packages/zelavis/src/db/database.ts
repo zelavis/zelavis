@@ -1,6 +1,6 @@
 import { type Duration, Effect, Option, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { InvalidConstraint, TenantDivided, UnknownPart } from "./errors.js";
+import { InvalidConstraint, TenantDivided, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -25,7 +25,7 @@ import { replicationOver, type ReplicationApi } from "./replication.js";
 import { partitionRouter } from "./routing.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
-import { isValidCollectionName } from "./naming.js";
+import { isReservedTenantId, isValidCollectionName } from "./naming.js";
 import {
   GLOBAL_SHARD,
   GLOBAL_TENANT,
@@ -221,6 +221,22 @@ export interface DatabaseApi {
    * that reading, deduplicated, for an operator looking at the whole database.
    */
   readonly tenants: Effect.Effect<ReadonlyArray<TenantId>, DbError>;
+
+  /**
+   * Remove a Tenant: its records, event log, lenses and meta, in bounded batches, and with them its
+   * history. There is no undo and no archive; back it up first.
+   *
+   * From the moment it starts every change to the Tenant is refused (`TenantMoving`, the same fence a
+   * relocation uses), it waits up to the drain timeout for calls still using it (`PlacementInUse` when
+   * they do not finish, with the Tenant fenced and nothing yet removed, so the call can simply be repeated),
+   * and only then removes it. A Tenant written to afterwards starts again from nothing, with identifiers
+   * and log positions beginning over, so a cursor handed out before the removal means nothing to it.
+   * Refused for a reserved Tenant, one divided into parts, one holding nothing, and while any relocation
+   * is pending. Global data is not the Tenant's and stays.
+   */
+  readonly dropTenant: (
+    tenant: TenantId,
+  ) => Effect.Effect<{ readonly tenant: TenantId; readonly shard: ShardId; readonly records: number }, DbError | TenantNotDroppable | PlacementInUse>;
 
   /**
    * The map in force now, not the one this database opened with.
@@ -612,6 +628,19 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       }
       return [...found].sort();
     }),
+    dropTenant: (tenant) =>
+      Effect.gen(function* () {
+        if (isReservedTenantId(tenant) || tenant === GLOBAL_TENANT) return yield* new TenantNotDroppable({ tenant, reason: "it is reserved" });
+        if (topology.subdivision.partsOf(tenant) !== undefined) return yield* new TenantNotDroppable({ tenant, reason: "it is divided into parts" });
+        if ((yield* movement.pending).length > 0) return yield* new TenantNotDroppable({ tenant, reason: "a relocation is pending" });
+        const shard = shardOf(tenant);
+        const held = shards.get(shard);
+        if (held === undefined || !(yield* tenantsOn(held)).includes(tenant)) return yield* new TenantNotDroppable({ tenant, reason: "it holds nothing" });
+        // Refuse every change first, then wait out what is running, then remove: nothing can land after the removal began.
+        yield* storeFor(tenant).fence({ from: shard, to: "removed" });
+        yield* router.drained(shard, tenant, drainTimeout);
+        return { tenant, shard, records: yield* held.drop(tenant) };
+      }),
     global: globalApi,
     forTenant: (tenant) => {
       // Returning one part's handle would answer questions about a fraction of

@@ -972,6 +972,13 @@ export interface ZelavisProjectsClient {
    */
   createTenant(projectId: string, input: { readonly tenantId: string; readonly table: string }): Promise<ZelavisDataCollection>;
   /**
+   * Remove a Tenant and everything it holds, its history included. There is no undo: back it up first
+   * (`exportTenant`). `confirm` must repeat `tenantId`. Refused for a reserved or divided Tenant and while a
+   * relocation is pending; a 409 means calls still use it and the same call can be repeated. Needs
+   * `project.runtime.manage`, which carries `database.drop`. Same contract as `zelavis projects delete-tenant`.
+   */
+  deleteTenant(projectId: string, input: { readonly tenantId: string; readonly confirm: string }): Promise<ZelavisTenantRemoval>;
+  /**
    * Restore a backup into the Tenant it was taken from. `into` says what to do
    * about data already there: `empty` (the default) refuses unless there is
    * none, `purge` discards it first, and `merge` restores over it record by
@@ -983,6 +990,14 @@ export interface ZelavisProjectsClient {
     backup: ZelavisTenantBackup,
     options?: { readonly into?: ZelavisTenantRestoreMode; readonly tenantId?: string },
   ): Promise<ZelavisTenantRestoreResult>;
+}
+
+/** What removing a Tenant did. */
+export interface ZelavisTenantRemoval {
+  readonly tenant: string;
+  readonly shard: string;
+  /** Records the Tenant held. */
+  readonly records: number;
 }
 
 /** One Tenant as the database reports it. */
@@ -1888,6 +1903,11 @@ function createProjectsClient(
       json<ZelavisDataCollection>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/documents/collections`), {
         method: "POST",
         body: { tenantId: input.tenantId, name: input.table, surface: "database", metadata: { kind: "table" } },
+      }),
+    deleteTenant: (projectId, input) =>
+      json<ZelavisTenantRemoval>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}`), {
+        method: "DELETE",
+        body: { confirm: input.confirm },
       }),
     restoreTenant: (projectId, backup, options) =>
       json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {
