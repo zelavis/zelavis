@@ -37,12 +37,13 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     const id = label(entry.tenantId, "");
     const tables = Number(entry.tables) || 0;
     const kind = tenantKind(id);
-    const detail = `${tables} ${tables === 1 ? "table" : "tables"} · ${Number(entry.records) || 0} stored records · ${formatBytes(Number(entry.bytes) || 0)} · shard ${label(entry.shard, "?")}`;
+    const documents = Number(entry.documents) || 0;
+    const detail = `${tables} ${tables === 1 ? "table" : "tables"} · ${documents} ${documents === 1 ? "document" : "documents"} · ${formatBytes(Number(entry.bytes) || 0)} · shard ${label(entry.shard, "?")}`;
     const actions = node("div", { class: "actions" }, badge(kind === "App" ? "active" : kind === "Plugin" ? "planned" : "ready"), node("span", { class: "muted" }, kind),
       tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
       button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }),
       // The App's own Tenant and a plugin's are not for the operator to delete from here: the app and the plugin stand on them.
-      ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, records: Number(entry.records) || 0, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
+      ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
     return dataRow(id, detail, actions);
   });
 
@@ -58,7 +59,7 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
   form.addEventListener("submit", event => {
     event.preventDefault();
     const tenantId = tenantInput.value.trim(), table = slugifyTableName(tableInput.value) || tableInput.value.trim();
-    if (!validTenantId(tenantId)) { problem.replaceChildren(node("div", { class: "notice error", role: "alert" }, "A Tenant ID uses letters, digits, _ . : and -, starts with a letter or digit, and is not a zv. name.")); return; }
+    if (!validTenantId(tenantId)) { problem.replaceChildren(node("div", { class: "notice error", role: "alert" }, "A Tenant ID uses letters, digits, _ . and -, starts with a letter or digit, and is not a zv name.")); return; }
     if (tenants.some(entry => entry.tenantId === tenantId)) { problem.replaceChildren(node("div", { class: "notice error", role: "alert" }, `Tenant ${tenantId} already exists.`)); return; }
     if (!table) { problem.replaceChildren(node("div", { class: "notice error", role: "alert" }, "Enter the name of its first table.")); return; }
     problem.replaceChildren(); create.setAttribute("disabled", "");
@@ -73,7 +74,7 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     columns(3,
       statCard("Tenants", String(own.length), `${tenants.length - own.length} more belong to plugins`),
       statCard("Tables", String(tenants.reduce((sum, entry) => sum + (Number(entry.tables) || 0), 0)), "Across every Tenant"),
-      statCard("Stored", formatBytes(tenants.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0)), "Record bodies in every Tenant")),
+      statCard("Documents", String(tenants.reduce((sum, entry) => sum + (Number(entry.documents) || 0), 0)), `${formatBytes(tenants.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0))} stored in every Tenant`)),
     rows.length ? rowsCard("Tenants", ...rows) : card("Tenants", node("p", { class: "muted" }, "No Tenant holds data yet.")),
     card("Create a tenant", node("p", { class: "muted" }, "A Tenant exists once it holds something, so creating one adds its first table. Deleting a Tenant removes its tables and its whole history for good; the App's own Tenant and plugins' Tenants cannot be deleted here."), form),
   );

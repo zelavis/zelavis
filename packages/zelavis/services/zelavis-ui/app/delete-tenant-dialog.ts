@@ -6,7 +6,7 @@ import { message, node } from "./dom.ts";
 export interface DeleteTenant {
   tenantId: string;
   tables: number;
-  records: number;
+  documents: number;
   size: string;
 }
 
@@ -55,7 +55,7 @@ export function mountDeleteTenant(host: HTMLElement, options: { api: string; rem
     open(next: DeleteTenant) {
       target = next; confirm.value = ""; errors.replaceChildren(); remove.setAttribute("disabled", "");
       title.textContent = `Delete tenant ${next.tenantId}`;
-      description.textContent = `This removes ${next.tables} ${next.tables === 1 ? "table" : "tables"}, ${next.records} stored records (${next.size}) and the Tenant's whole history. It cannot be undone. Download a backup first if you may need it.`;
+      description.textContent = `This removes ${next.tables} ${next.tables === 1 ? "table" : "tables"}, ${next.documents} ${next.documents === 1 ? "document" : "documents"} (${next.size}) and the Tenant's whole history. It cannot be undone. Download a backup first if you may need it.`;
       prompt.textContent = `Type ${next.tenantId} to confirm`;
       dialog.setOpen(true);
       setTimeout(() => confirm.focus(), 0);
