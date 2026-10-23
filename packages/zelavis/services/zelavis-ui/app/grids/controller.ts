@@ -75,7 +75,7 @@ export function mountPersistent(host: HTMLElement, initialProps: Record<string, 
   const save = button("Save changes", () => saveChanges());
   const discard = button("Discard changes", () => { drafts.clear(); inspectorDraft = undefined; inspected = undefined; retainDrafts(); draw(true); status.replaceChildren(message("Drafts discarded.")); });
   const count = node("span");
-  host.replaceChildren(...(readonly ? [] : [filterForm, sortForm]), node("div", { class: "grid-controls" }, count, columnsMenu, ...(!readonly ? [save, discard] : [])), node("p", { class: "muted" }, readonly ? "Read-only system records." : 'Double-click a cell to edit JSON: "text", 42, true, null, [] or {}. Edits are staged. Filter and sort run in the database over the whole table.'), queryError, status, draftStatus, gridHost, inspector);
+  host.replaceChildren(...(readonly ? [] : [filterForm, sortForm]), node("div", { class: "grid-controls" }, count, columnsMenu, ...(!readonly ? [save, discard] : [])), node("p", { class: "muted" }, readonly ? "Read-only system records." : 'Double-click a cell to edit JSON: "text", 42, true, null, [] or {}. Edits are staged. Filter and sort run in the database over the whole table.'), queryError, gridHost, status, draftStatus, inspector);
   function stage(row: GridRecord) {
     if (!Number.isSafeInteger(row.version) || Number(row.version) < 0) throw new Error("A record has no safe version. Refresh before editing.");
     if (!drafts.has(row.id) && drafts.size >= 250) throw new Error("Save or discard the current 250 drafts before staging more records.");
