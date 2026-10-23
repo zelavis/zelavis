@@ -25,15 +25,17 @@ export default {
       const names = [...new Set([...tenantList(), String(props.tenant)].filter(Boolean))];
       select.replaceChildren(...names.map(name => { const option = node("option", { value: name }, withTables.has(name) ? name : `${name} (no tables)`); option.selected = name === String(props.tenant); return option; }));
     }
-    const collection = field("collection", "Collection / table", "text", String(props.collection));
-    const selector = node("form", { class: "filters" }, tenant, collection, node("button", { type: "submit" }, "Open records"));
-    const tenantHelp = node("p", { class: "muted tenant-help" }, "A Tenant is a separate data space inside this Project, with its own tables. zelavis-app holds the app's own data; service:… Tenants belong to plugins."); 
+    // What is open comes from the sidebar (a table carries its Tenant), so this is a heading, not a picker. Only a system view has no
+    // Tenant of its own, so it alone offers the Tenant choice.
+    const title = node("div", { class: "database-title" });
+    const tabs = node("div", { class: "grid-controls" });
+    const head = node("div", { class: "database-head" }, title, tabs, link("Manage tenants", `/projects/${encodeURIComponent(String(props.projectId))}/database/tenants`));
     const gridHost = node("div", { class: "persistent-grid" });
     const trail: string[] = []; let trailKey = "";
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    host.replaceChildren(selector, tenantHelp, paging, errors, gridHost, actions);
+    host.replaceChildren(head, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());
@@ -45,7 +47,6 @@ export default {
       const name = (event.currentTarget as HTMLSelectElement).value;
       search({ databaseTenant: name, ...(props.systemView ? {} : { databaseTable: undefined }), databaseRow: undefined, databaseAfter: undefined, databaseWhere: undefined, databaseSort: undefined, databaseHide: undefined });
     });
-    selector.addEventListener("submit", event => { event.preventDefault(); const data = new FormData(selector); search({ databaseTenant: String(data.get("tenantId") ?? ""), databaseTable: String(data.get("collection") ?? ""), databaseSystemView: undefined, databaseAfter: undefined, databaseRow: undefined }); });
     let disposed = false;
     const lifetime = new AbortController();
     function form(fields: HTMLElement[], title: string, submit: (data: FormData) => Effect.Effect<unknown, unknown>) {
@@ -82,6 +83,8 @@ export default {
       host.dataset.projectContext = String(props.navigationJson);
       const navigation = JSON.parse(String(props.navigationJson));
       tenants();
+      title.replaceChildren(...(props.systemView ? [node("strong", {}, `System · ${String(props.systemView)}`), tenant] : props.collection ? [node("strong", {}, String(props.collection)), node("span", { class: "muted" }, `in ${String(props.tenant)}`)] : []));
+      panelTabs?.records.setAttribute("aria-pressed", String(!props.schemaPanel)); panelTabs?.schema.setAttribute("aria-pressed", String(Boolean(props.schemaPanel)));
       createDialog?.sync(new URL(router!.url()).searchParams.get("databaseDialog") === "create-table", tenantList(), String(props.tenant));
       const here = new URL(router!.url()).searchParams;
       const key = JSON.stringify([props.tenant, props.collection, props.limit, here.get("databaseWhere"), here.get("databaseSort")]);
@@ -101,11 +104,10 @@ export default {
       }
     }
     let schemaEditor: ReturnType<typeof mountSchemaEditor> | undefined;
-    if (props.tenant && props.collection && !props.readonly) {
-      const records = button("Records", () => search({ databasePanel: undefined, schemaVersion: undefined }));
-      const schema = button("Collection schema", () => search({ databasePanel: "schema" }));
-      selector.append(records, schema);
-    }
+    const panelTabs = props.tenant && props.collection && !props.readonly
+      ? { records: button("Records", () => search({ databasePanel: undefined, schemaVersion: undefined })), schema: button("Collection schema", () => search({ databasePanel: "schema" })) }
+      : undefined;
+    if (panelTabs) tabs.append(panelTabs.records, panelTabs.schema);
     if (props.schemaPanel) {
       actions.hidden = true; paging.hidden = true;
       schemaEditor = mountSchemaEditor(gridHost, { api: String(props.apiBase), tenant: String(props.tenant), collection: String(props.collection), schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? ""), draftScope: props.draftScope, projectId: props.projectId, select: version => search({ schemaVersion: version }), run: work => {
@@ -120,7 +122,7 @@ export default {
     const hasRecords = () => Boolean(props.tenant && (props.collection || props.systemView));
     controls();
     if (!props.schemaPanel && hasRecords()) grid = mountGrid(gridHost, props);
-    else if (!props.schemaPanel) gridHost.append(message(props.tenant && !tenantsWithTables().has(props.tenant) ? `Tenant ${String(props.tenant)} has no tables. It stays listed because it still holds its history; create a table to use it again.` : "Choose a tenant and table to open records."));
+    else if (!props.schemaPanel) gridHost.append(message(props.tenant && !tenantsWithTables().has(props.tenant) ? `Tenant ${String(props.tenant)} has no tables. It stays listed because it still holds its history; create a table to use it again.` : "Choose a table from the sidebar, or create one with Create Table."));
     return {
       update(next: Values, operation) { props = next; controls(); schemaEditor?.update({ schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? "") }); return grid?.update(props, operation); },
       dispose() { disposed = true; lifetime.abort(); createDialog?.dispose(); schemaEditor?.dispose(); return grid?.dispose(); },
