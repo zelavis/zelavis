@@ -1,7 +1,7 @@
 import type { SwiperContainer } from "swiper/element";
 import type { FuzorRouter } from "fuzor/runtime";
 import { object, type Config, type Project } from "./api.ts";
-import { button, link, node } from "./dom.ts";
+import { backRow, button, link, node } from "./dom.ts";
 import { ROOT } from "./mount.ts";
 
 const names = ["Home", "Notifications", "Assistant", "Search", "Account"] as const;
@@ -79,14 +79,14 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
     if (next !== signature) {
       signature = next;
       const title = names[active];
-      slides[0].replaceChildren(node("div", { class: "panel-heading" }, button("‹", () => change(), { "aria-label": "Back to navigation" }), node("strong", {}, title)), renderRoot(utility, config));
-      slides[1].replaceChildren(node("div", { class: "panel-heading" }, button("‹", () => change("account"), { "aria-label": "Back to Account" }), node("strong", {}, "Settings")), node("nav", { class: "utility-menu", "aria-label": "Account settings" }, entry("Global settings", "/settings"), entry("Appearance", "/settings/appearance"), entry("Runtime services", "/services"), branch("Language", "language")));
+      slides[0].replaceChildren(backRow(title, "navigation", () => change()), renderRoot(utility, config));
+      slides[1].replaceChildren(backRow("Settings", "Account", () => change("account")), node("nav", { class: "utility-menu", "aria-label": "Account settings" }, entry("Global settings", "/settings"), entry("Appearance", "/settings/appearance"), entry("Runtime services", "/services"), branch("Language", "language")));
       const languages = node("div", { class: "utility-menu", role: "group", "aria-label": "Language preference" });
       for (const [code, label] of [["en", "English (United States)"], ["de", "Deutsch (Deutschland)"], ["sr", "Serbian (Srbija)"], ["es", "Spanish (Espana)"]]) {
         const choice = button(label, () => { language = code; for (const control of languages.querySelectorAll("button")) control.setAttribute("aria-pressed", String(control.dataset.language === code)); }, { class: "utility-link", "data-language": code, "aria-pressed": String(language === code) });
         languages.append(choice);
       }
-      slides[2].replaceChildren(node("div", { class: "panel-heading" }, button("‹", () => change("account", "settings"), { "aria-label": "Back to Settings" }), node("strong", {}, "Language")), languages, node("p", {}, "Preview preference only. Dashboard translations are not available yet."));
+      slides[2].replaceChildren(backRow("Language", "Settings", () => change("account", "settings")), languages, node("p", {}, "Preview preference only. Dashboard translations are not available yet."));
     }
     if (!initialized) { Object.assign(view, { slidesPerView: 1, speed: 300, simulateTouch: false, allowTouchMove: false, injectStyles: [":host,.swiper,.swiper-wrapper{height:100%;min-height:0}"] }); view.initialize(); initialized = true; }
     view.swiper.params.speed = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 300;

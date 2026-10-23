@@ -3,7 +3,7 @@ import { register } from "swiper/element/bundle";
 import type { SwiperContainer } from "swiper/element";
 import type { FuzorRouter } from "fuzor/runtime";
 import { type Config, type Project } from "./api.ts";
-import { button, link, node } from "./dom.ts";
+import { backRow, button, link, node } from "./dom.ts";
 import type { DashboardHandle } from "./routes.ts";
 
 import { itemIsActive, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
@@ -43,8 +43,9 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   const swiper = document.createElement("swiper-container") as SwiperContainer;
   swiper.setAttribute("init", "false"); swiper.setAttribute("aria-label", "Platform navigation");
   const mobileSlide = document.createElement("swiper-slide"); mobileSlide.className = "mobile-workspace";
-  const mobileTitle = node("span");
-  mobileSlide.append(node("div", { class: "panel-heading" }, button("← Menu", () => showMenu(), { "aria-label": "Back to navigation" }), mobileTitle));
+  const mobileHeading = backRow("Workspace", "navigation", () => showMenu());
+  const mobileTitle = mobileHeading.querySelector<HTMLElement>(".back-title")!;
+  mobileSlide.append(mobileHeading);
   const utilities = createSidebarUtilities(router, options.onSignOut);
   sidebar.append(link("◈ Zelavis", "/", { class: "brand" }), node("div", { class: "sidebar-label" }, "THE APP PLATFORM"), swiper, utilities.view, utilities.footer);
   let workspaceNavigation: { projectId?: string; items: unknown } | undefined;
@@ -109,7 +110,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
         const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });
-      slide.replaceChildren(node("div", { class: "panel-heading" }, index ? button(`← ${panel.label}`, () => navigate(trail[index - 1].path, trail.slice(1, index).map(panel => panel.id), "menu"), { "aria-label": `Back to ${trail[index - 1].label}` }) : node("strong", {}, "Platform")), nav);
+      slide.replaceChildren(index ? backRow(panel.label, trail[index - 1].label, () => navigate(trail[index - 1].path, trail.slice(1, index).map(panel => panel.id), "menu")) : node("div", { class: "panel-heading" }, node("strong", {}, "Platform")), nav);
     });
     const trim = () => { while (slides.length > trail.length) slides.pop()!.remove(); swiper.swiper?.update(); };
     // Outgoing panels stay present until Back has animated to its parent.
