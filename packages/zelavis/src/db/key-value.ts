@@ -10,6 +10,7 @@ import type {
 import type { DomainEvent, DomainEventsApi } from "./domain-events.js";
 import type { EventCursor } from "./events.js";
 import type { ObjectStoreApi } from "./store.js";
+import { consistently } from "./documents.js";
 import type { TenantId } from "./topology.js";
 import { documentNamespace } from "./tenancy.js";
 
@@ -471,6 +472,13 @@ export const keyValueFor = (
       }),
       schema,
     };
-    return api;
+    // Each read is one snapshot: a scan's names and the documents they hold,
+    // a page of changes and the records they describe.
+    return {
+      ...api,
+      ...consistently<Pick<KvNamespaceApi<Value>, "get" | "has" | "scan" | "changes" | "size">>(store, {
+        get: api.get, has: api.has, scan: api.scan, changes: api.changes, size: api.size,
+      }),
+    };
   },
 });

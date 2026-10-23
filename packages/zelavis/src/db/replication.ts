@@ -82,12 +82,10 @@ export interface ReplicationApi {
 }
 
 /**
- * Which App-scoped collection a record belongs to, if any.
- *
- * The tenant marker is deliberately not one of these. It records that a tenant
- * holds data on a shard, and copying the App's onto a placed shard would make
- * `tenantsOn` name `zv.global` as an occupant — which would let a rebalance
- * believe a range is standing on data that is only ever a copy.
+ * Which App-scoped collection a record belongs to, if any. A copy lives in the
+ * App's own partition on each shard, which `tenantsOn` never names as an
+ * occupant: a rebalance must not believe a range is standing on data that is
+ * only ever a copy.
  */
 const collectionOf = (identity: ObjectIdentity): string | undefined =>
   collectionOfIdentity(identity.namespace, identity.key);

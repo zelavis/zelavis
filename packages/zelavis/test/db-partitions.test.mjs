@@ -285,6 +285,31 @@ test("a seed taken while the source is written ends, once the log is followed, a
     assert.deepEqual(yield* seqs(target, term("title", word)), yield* seqs(source, term("title", word)), word);
   }
   assert.equal((yield* Effect.flip(target.seed(source)))._tag, "TenantNotEmpty", "a seed only starts from nothing");
+
+  // The source had compacted, so the copy's log starts past the beginning too;
+  // the copy is also its first snapshot, so the lenses can still be rebuilt
+  // from the log rather than only reindexed from the manifests.
+  assert.equal(yield* target.snapshotAt, (yield* source.stats).compactedTo, "a snapshot at the compaction point");
+  yield* put(source, 8, ["echo"], "v1-8");
+  yield* target.events.followAll(yield* events(source, { after: yield* target.events.head, limit: 1000 }));
+  const live = (store) => Effect.map(state(store), (all) => all.filter(([, isLive]) => isLive));
+  yield* target.rebuildLenses;
+  assert.deepEqual(yield* live(target), yield* live(source), "rebuilt from the snapshot and the log, every live record");
+  for (const word of ["atlas", "beacon", "cobalt", "delta", "echo", "w3"]) {
+    assert.deepEqual(yield* seqs(target, term("title", word)), yield* seqs(source, term("title", word)), `${word}, after the rebuild`);
+  }
+})));
+
+test("a seed of a source whose log is whole needs no snapshot, and rebuilds from the log alone", () => run(Effect.gen(function* () {
+  const source = (yield* makeMemoryStore("one")).partition("acme");
+  for (let seq = 1; seq <= 4; seq++) yield* put(source, seq, ["atlas", `w${seq}`], `v1-${seq}`);
+  yield* retract(source, 2);
+  const target = (yield* makeMemoryStore("two")).partition("acme");
+  yield* target.seed(source);
+  yield* target.events.followAll(yield* events(source, { after: yield* target.events.head, limit: 1000 }));
+  assert.equal(yield* target.snapshotAt, 0, "nothing was compacted, so nothing needs covering");
+  yield* target.rebuildLenses;
+  assert.deepEqual(yield* seqs(target, term("title", "atlas")), [1, 3, 4]);
 })));
 
 test("a write that saw no fence before its transaction is still refused when the fence lands first", () => run(Effect.gen(function* () {

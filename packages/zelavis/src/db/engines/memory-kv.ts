@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvScanOptions, type KvWrite } from "../kv.js";
 import { compareKeys } from "../keys.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { ShardStoreApi } from "../store.js";
@@ -15,15 +15,18 @@ import type { StoreError } from "../errors.js";
  */
 export const memoryKvEngine = (): KvEngine => {
   // A sorted array rather than a Map: the ordering is the contract, so the
-  // structure that holds it should be the one that enforces it.
-  let entries: Array<{ key: Uint8Array; value: Uint8Array }> = [];
+  // structure that holds it should be the one that enforces it. A write builds
+  // the next array and swaps it in, never changing one in place, so a batch is
+  // all or nothing and a snapshot is simply the array it was taken from.
+  type Entries = ReadonlyArray<{ readonly key: Uint8Array; readonly value: Uint8Array }>;
+  let entries: Entries = [];
 
-  const indexOf = (key: Uint8Array): number => {
+  const indexOf = (list: Entries, key: Uint8Array): number => {
     let lo = 0;
-    let hi = entries.length - 1;
+    let hi = list.length - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      const cmp = compareKeys(entries[mid]!.key, key);
+      const cmp = compareKeys(list[mid]!.key, key);
       if (cmp === 0) return mid;
       if (cmp < 0) lo = mid + 1;
       else hi = mid - 1;
@@ -31,71 +34,70 @@ export const memoryKvEngine = (): KvEngine => {
     return ~lo;
   };
 
-  const apply = (write: KvWrite): void => {
-    const at = indexOf(write.key);
-    if (write.op === "delete") {
-      if (at >= 0) entries.splice(at, 1);
-      return;
+  const applied = (writes: ReadonlyArray<KvWrite>): Entries => {
+    const next = [...entries];
+    for (const write of writes) {
+      const at = indexOf(next, write.key);
+      if (write.op === "delete") {
+        if (at >= 0) next.splice(at, 1);
+      } else if (at >= 0) next[at] = { key: write.key, value: write.value };
+      else next.splice(~at, 0, { key: write.key, value: write.value });
     }
-    if (at >= 0) entries[at] = { key: write.key, value: write.value };
-    else entries.splice(~at, 0, { key: write.key, value: write.value });
+    return next;
   };
 
-  return {
-    get: (key) =>
+  const readerOver = (list: () => Entries) => ({
+    get: (key: Uint8Array) =>
       Effect.sync(() => {
-        const at = indexOf(key);
-        return at >= 0 ? entries[at]!.value : undefined;
+        const at = indexOf(list(), key);
+        return at >= 0 ? list()[at]!.value : undefined;
       }),
 
-    scan: (prefix, options) =>
+    scan: (prefix: Uint8Array, options?: KvScanOptions) =>
       Stream.fromIterableEffect(
         Effect.sync(() => {
+          const held = list();
           const { lo, hi, empty } = scanRange(prefix, options);
           if (empty) return [] as KvEntry[];
           // Both ends by binary search, so a bounded scan copies what it
           // returns rather than the whole range.
-          let start = indexOf(lo);
+          let start = indexOf(held, lo);
           if (start < 0) start = ~start;
-          let end = entries.length;
+          let end = held.length;
           if (hi !== undefined) {
-            const at = indexOf(hi);
+            const at = indexOf(held, hi);
             end = at < 0 ? ~at : at;
           }
           const count = Math.max(0, Math.min(end - start, options?.limit ?? Infinity));
           return options?.reverse
-            ? entries.slice(end - count, end).reverse()
-            : entries.slice(start, start + count);
+            ? held.slice(end - count, end).reverse()
+            : held.slice(start, start + count);
         }),
       ),
+  });
+
+  return {
+    ...readerOver(() => entries),
 
     write: (writes) =>
       Effect.sync(() => {
-        // Applied to a copy, so a failure part-way cannot leave half a batch.
-        const snapshot = [...entries];
-        try {
-          for (const write of writes) apply(write);
-        } catch (cause) {
-          entries = snapshot;
-          throw cause;
-        }
+        entries = applied(writes);
       }),
 
     conditionalWrite: (writes, conditions) => Effect.sync(() => {
       for (const condition of conditions) {
-        const at = indexOf(condition.key);
+        const at = indexOf(entries, condition.key);
         if (!equalBytes(at < 0 ? undefined : entries[at]!.value, condition.value)) return false;
       }
-      const snapshot = [...entries];
-      try {
-        for (const write of writes) apply(write);
-        return true;
-      } catch (cause) {
-        entries = snapshot;
-        throw cause;
-      }
+      entries = applied(writes);
+      return true;
     }),
     coordination: "engine",
+
+    snapshot: Effect.sync(() => {
+      const frozen = entries;
+      return readerOver(() => frozen);
+    }),
 
     close: Effect.sync(() => {
       entries = [];

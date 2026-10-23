@@ -26,13 +26,9 @@ export const documentNamespace = (collection: string): string => `${DOCUMENT_NAM
 /** Records what a completed write with an idempotency key did. */
 export const IDEMPOTENCY_NAMESPACE = "zv.idempotency";
 
-/**
- * Records that a tenant occupies its shard: written with its first collection,
- * removed with its last, so a shard can name the tenants it holds.
- */
-export const TENANT_NAMESPACE = "zv.tenant";
-export const TENANT_COLUMN = "zv.tenant";
-export const TENANT_MARKER = "\u0000tenant";
+/** The tenant's outbox: one record per message, keyed by the message's id. */
+export const OUTBOX_NAMESPACE = "zv.outbox";
+
 
 /** The collection a record's name belongs to, for collections and their documents alike. */
 export const collectionOfIdentity = (namespace: string, key: string): string | undefined =>

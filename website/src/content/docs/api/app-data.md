@@ -131,6 +131,28 @@ a response cannot tell a lost reply from a lost request; a retry carrying the
 same key is answered with what the first attempt returned instead of being
 applied twice.
 
+### Messages with a write
+
+`emit` records messages in the Tenant's outbox in the same transaction as the
+batch, so a message exists exactly when the change it describes does. A
+consumer reads them in commit order and removes what it has handled:
+
+```ts
+await data.documents.write({
+  operations: [{ _tag: 'Insert', collection: 'orders', id: 'o1', data: { total: 10 } }],
+  emit: [{ topic: 'order.placed', payload: { order: 'o1' } }],
+});
+
+const page = await data.outbox.read({ after: lastCursor, limit: 100 });
+for (const message of page.messages) await deliver(message); // deduplicate by message.id
+await data.outbox.remove(page.messages.map((message) => message.id));
+lastCursor = page.cursor;
+```
+
+Delivery is at least once, so deliver idempotently by `message.id`. Reading needs
+only `project.data.read`. See [Database](/api/database/#outbox) for the full
+contract.
+
 ## HTTP
 
 Every call is a path under the Project's data route. The database service's own
@@ -148,6 +170,10 @@ Content-Type: application/json
 GET /zelavis/api/v1/runtime/projects/app_myproduct/data/documents/collections
 ```
 
+```http
+GET /zelavis/api/v1/runtime/projects/app_myproduct/data/outbox/messages?limit=100
+```
+
 A request that names a `tenantId` other than its own is answered `403`, not
 honoured.
 
@@ -158,6 +184,8 @@ zelavis data collections --project app_myproduct
 zelavis data insert boards --project app_myproduct --data '{"title":"Engineering"}'
 zelavis data query boards --project app_myproduct --where '[{"path":"archived","value":false}]'
 zelavis data get boards brd_01h... --project app_myproduct --json
+zelavis data outbox --project app_myproduct --limit 100 --json
+zelavis data outbox-remove --project app_myproduct --ids msg_1,msg_2
 ```
 
 There is no `--tenant` flag. The Tenant follows from whoever the token
@@ -175,5 +203,6 @@ authority and is confined to its own records.
 The data route reaches the whole database service, but only collections and
 documents have a typed SDK and CLI today. Schemas, projections, time series,
 search, geometry, and traversal are reachable over HTTP at the same boundary and
-still need their typed surfaces. There is also no change feed: a client learns
-about writes by asking.
+still need their typed surfaces. There is no general document change feed yet:
+the outbox carries the messages App code emits with its writes, and the KV
+change feed follows one KV namespace.

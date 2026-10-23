@@ -22,7 +22,10 @@ interface LibsqlDatabase extends SqliteHandle {
 }
 
 export interface LibsqlStoreOptions {
-  /** Local file, or `:memory:`. Embedded replicas keep a local file too. */
+  /**
+   * The directory holding the local file. Always a file, embedded replicas
+   * included: a snapshot reads through a second connection to it.
+   */
   readonly directory: string;
   /**
    * A remote primary to replicate from.
@@ -73,21 +76,14 @@ export const makeLibsqlEngine = (
     Effect.flatMap(loadLibsql, (Database) =>
       Effect.try({
         try: () => {
-          if (options.directory !== ":memory:") {
-            mkdirSync(options.directory, { recursive: true });
+          if (options.directory === ":memory:") {
+            throw new Error("a libSQL engine needs a directory for its file; the memory engine keeps nothing on disk");
           }
-          const path =
-            options.directory === ":memory:"
-              ? ":memory:"
-              : join(options.directory, `${partition}.sqlite`);
-          const db = new Database(path, {
-            ...(options.syncUrl === undefined ? {} : { syncUrl: options.syncUrl }),
-            ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
-            ...(options.syncInterval === undefined ? {} : { syncPeriod: options.syncInterval }),
-          });
+          mkdirSync(options.directory, { recursive: true });
+          const path = join(options.directory, `${partition}.sqlite`);
           // libSQL binds Buffers but not bare Uint8Arrays, where node:sqlite
           // takes either. The difference stays in the driver.
-          return sqliteKvEngineOver({
+          const handle = (db: LibsqlDatabase): SqliteHandle => ({
             prepare: (sql: string) => {
               const statement = db.prepare(sql);
               return {
@@ -98,8 +94,19 @@ export const makeLibsqlEngine = (
             },
             exec: (sql: string) => db.exec(sql),
             close: () => db.close(),
-          // Hex keys: binding a Buffer to a SELECT panics inside this binding.
-          }, "hex");
+          });
+          const db = new Database(path, {
+            ...(options.syncUrl === undefined ? {} : { syncUrl: options.syncUrl }),
+            ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
+            ...(options.syncInterval === undefined ? {} : { syncPeriod: options.syncInterval }),
+          });
+          return sqliteKvEngineOver(handle(db), {
+            // Hex keys: binding a Buffer to a SELECT panics inside this binding.
+            encoding: "hex",
+            // A plain read-only connection to the same file, replica or not:
+            // it reads what has been written or synced into it.
+            openReader: () => handle(new Database(path, { readonly: true })),
+          });
         },
         catch: (cause) => new StoreError({ op: "libsql.open", cause }),
       }),

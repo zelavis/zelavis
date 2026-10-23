@@ -432,6 +432,20 @@ before editing.
 - A consumer writing into its own partition (a time series) commits each batch
   with its cursor in one transaction and rebuilds by generation; a projection's
   `apply` is at least once and idempotent by `eventId`.
+- A multi-step read runs in one engine snapshot (`store.reading`); writes,
+  upkeep and the handle's beliefs (revision, lens state, fence) always read the
+  engine live. Every engine implements `snapshot`, taken at its first read.
+- Tenant handles route per operation (`PartitionRouter.operations`): every store
+  call of one operation goes to one placement under an in-process lease, and a
+  move drains those leases before dropping the source whole, fence included
+  (`PlacementInUse` past `drainTimeout`, finished by `resume`). Occupancy is
+  partition existence (`tenantsOn`), not a marker. Followers are kept level by
+  `levelFollower`/`followLeader`, which copy again only when carrying on cannot
+  be exact.
+- The transactional outbox is `documents.write({ emit })` plus
+  `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
+  the batch, read in log order, at least once, deduplicated by id. JS, HTTP,
+  SDK (`client.data(id).outbox`) and CLI (`zelavis data outbox*`) carry it.
   Reject unsupported coordination rather than using read-then-write fencing.
   RocksDB exclusive-file mode does not support concurrent process takeover. Use
   LMDB's abortable child transactions for batches; queued transaction callbacks

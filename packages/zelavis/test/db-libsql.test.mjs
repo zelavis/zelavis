@@ -160,3 +160,29 @@ test("the host opens libsql through engine selection", async (t) => {
   });
   assert.equal(found.data.title, "Atlas");
 });
+
+test("libsql: a snapshot reads the file as it was when taken, through a connection of its own", async (t) => {
+  const { makeLibsqlEngine } = await import("../dist/db/engines/libsql.js");
+  const dir = tempDir(t);
+  const key = (...parts) => Uint8Array.from(parts);
+  const text = (b) => new TextDecoder().decode(b);
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const engine = yield* makeLibsqlEngine("kv", { directory: dir });
+    yield* engine.write([{ op: "put", key: key(1, 1), value: enc.encode("one") }]);
+    yield* Effect.scoped(Effect.gen(function* () {
+      const snapshot = yield* engine.snapshot;
+      yield* engine.write([{ op: "put", key: key(1, 1), value: enc.encode("ONE") }, { op: "put", key: key(1, 2), value: enc.encode("two") }]);
+      assert.equal(text(yield* snapshot.get(key(1, 1))), "one");
+      assert.equal(yield* snapshot.get(key(1, 2)), undefined);
+      assert.deepEqual([...(yield* Stream.runCollect(snapshot.scan(key(1))))].map((entry) => text(entry.value)), ["one"]);
+    }));
+    assert.equal(text(yield* engine.get(key(1, 1))), "ONE");
+  })));
+});
+
+test("libsql: an in-memory database is refused, since a snapshot needs a second connection to its file", async () => {
+  const { makeLibsqlEngine } = await import("../dist/db/engines/libsql.js");
+  const failure = await Effect.runPromise(Effect.scoped(Effect.flip(makeLibsqlEngine("kv", { directory: ":memory:" }))));
+  assert.equal(failure._tag, "StoreError");
+  assert.match(String(failure.cause), /needs a directory/);
+});

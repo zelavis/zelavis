@@ -112,6 +112,13 @@ export type AppliedEvent =
   | (Omit<ObjectRetracted, "cursor" | "origin"> & { readonly origin?: string });
 
 export interface ReadEventsOptions {
+  /** Read what follows the event this cursor names. */
   readonly after?: EventCursor;
+  /**
+   * Read from the event this cursor names, that event included; not with
+   * `after`. For a copy comparing the last event it holds with the log it
+   * copies, which is how a copy that diverged at its very tip is noticed.
+   */
+  readonly from?: EventCursor;
   readonly limit?: number;
 }

@@ -1,7 +1,6 @@
 /** The documents API's writes for one tenant: documents, collections and their declarations changed, checked inside the transaction that writes them. */
 import { Effect, Stream } from "effect";
 import type { JsonObject } from "./json.js";
-import { TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE } from "./tenancy.js";
 import {
   CollectionExists,
   SchemaViolation,
@@ -33,10 +32,11 @@ import { COLLECTION_MARKER, type Pending, RECEIPT_MARKER, type StoredCollection,
 import type { DocumentCore } from "./document-core.js";
 import type { DocumentReads } from "./document-reads.js";
 import type { DocumentsApi } from "./document-model.js";
+import { recordMessages, settleMessages } from "./outbox.js";
 
 export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
   const {
-    tenant, enforceSchema, lookup, readObject, nextSeq, resolveQuery, write, projectionIndexes,
+    store, enforceSchema, lookup, readObject, nextSeq, resolveQuery, write, projectionIndexes,
     receiptFor, transactChecked, commitOnce, loadCollection, requireCollection, readDocument,
     assertNotMoving, spatialHandle, transactOrDie, collectionPut, linkTargets, unlinkReference,
     manifestFor, currentAt, currentNamed, remember, forget,
@@ -586,20 +586,6 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             yield* collectionPut(txn, seq, own.length === 0 ? collection : { ...collection, referencedBy: own });
             yield* linkTargets(txn, input.name, references.filter((reference) => reference.collection !== input.name));
           }));
-        // Record that this tenant occupies the shard. Placement decisions need
-        // to know which tenants a shard actually holds, and deriving that by
-        // scanning every namespace would mean reading the whole store.
-        if ((yield* lookup(TENANT_NAMESPACE, tenant)) === undefined) {
-          const markerSeq = yield* nextSeq;
-          yield* write((txn) =>
-            txn.put(markerSeq, encode({ tenant }), {
-              terms: [],
-              columns: [[TENANT_COLUMN, TENANT_MARKER]],
-              measures: [],
-              edges: [],
-            }, { namespace: TENANT_NAMESPACE, key: tenant }),
-          );
-        }
         return publicCollection(collection);
       }),
 
@@ -707,20 +693,6 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             const seq = yield* lookup(collectionNs(), input.name);
             if (seq !== undefined) yield* txn.retract(seq);
           }));
-
-        // The marker says this tenant occupies the shard, and only
-        // `createCollection` ever writes it. Leaving it behind would keep a
-        // tenant listed forever after its last collection went -- the same
-        // one-way accumulation that not having a drop caused. Read after the
-        // retract commits, because a read inside that transaction still sees
-        // the collection it is removing.
-        const remaining = yield* Stream.runCollect(
-          resolveQuery(equals(collectionColumn(), COLLECTION_MARKER)),
-        );
-        if (remaining.length === 0) {
-          const markerSeq = yield* lookup(TENANT_NAMESPACE, tenant);
-          if (markerSeq !== undefined) yield* write((txn) => txn.retract(markerSeq));
-        }
         return true;
       }),
 
@@ -1051,16 +1023,21 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
     write: (input) =>
       Effect.gen(function* () {
         const operations = input.operations;
-        if (!Array.isArray(operations) || operations.length === 0 || operations.length > MAX_BATCH) {
+        const emit = input.emit ?? [];
+        if (!Array.isArray(operations) || !Array.isArray(emit)
+          || operations.length + emit.length === 0 || operations.length > MAX_BATCH) {
           return yield* Effect.die(
-            new RangeError(`A batch takes 1 to ${MAX_BATCH} changes, not ${operations?.length}.`),
+            new RangeError(`A batch takes 1 to ${MAX_BATCH} changes or messages, not ${operations?.length}.`),
           );
         }
         for (const operation of operations) {
           if (operation._tag !== "Delete") yield* validateDocumentData(operation.collection, operation.data);
         }
-        const request = `write ${operations.length} documents`;
-        const fingerprint = fingerprintOf({ op: "write", operations });
+        // Settled before the transaction, like an insert's id: a message's id
+        // and time are what it was emitted with, whenever the batch commits.
+        const messages = yield* settleMessages(emit);
+        const request = `write ${operations.length} documents${emit.length === 0 ? "" : ` and ${emit.length} messages`}`;
+        const fingerprint = fingerprintOf(emit.length === 0 ? { op: "write", operations } : { op: "write", operations, emit });
         if (input.idempotencyKey !== undefined) {
           const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
           if (seen !== undefined) return seen.result as ReadonlyArray<DocumentWritten>;
@@ -1126,6 +1103,9 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
                 deleted: yield* applyDelete(txn, pending, operation),
               });
             }
+            // In the same transaction as the changes: the outbox holds these
+            // messages exactly when the store holds what they describe.
+            yield* recordMessages(store, txn, messages);
             return written as ReadonlyArray<DocumentWritten>;
           }));
       }),

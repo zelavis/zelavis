@@ -139,8 +139,9 @@ test("replication does not make the App look like a tenant on a shard", async (t
       yield* db.global.documents.insert({ collection: "plans", id: "pro", data: { seats: 25 } });
       yield* db.replication.refresh;
 
-      // The tenant marker must not travel: tenantsOn drives rebalance planning,
-      // and a copy standing in a range would look like data that must be moved.
+      // The App's replica is never an occupant: tenantsOn drives rebalance
+      // planning, and a copy standing in a range would look like data that
+      // must be moved.
       const targets = yield* db.scatter.targets();
       assert.ok(
         !targets.some((entry) => entry.tenant === "zv.global"),

@@ -1,16 +1,16 @@
-import { Effect, Option, Semaphore, Stream } from "effect";
+import { Context, Effect, Option, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
   PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, WriterFenced,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
-import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
+import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import {
   compareKeys, compareOrderedValues, inPrefixRange, MAX_SEQ, partitionKeys, partitionOf, partitionPrefix,
   partitionSpace, prefixEnd, readSeqAt, readU64At, sameOrderedKind, SEQ_BYTES, seqBytes, seqOf, shardMetaKey,
   Tag, u64Bytes, type OrderedValue,
 } from "./keys.js";
-import { equalBytes, type KvEngine, type KvScanOptions, type KvWrite } from "./kv.js";
+import { equalBytes, type KvEngine, type KvReader, type KvScanOptions, type KvWrite } from "./kv.js";
 import { asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq } from "./model.js";
 import * as Postings from "./postings.js";
 import {
@@ -78,6 +78,8 @@ const META_COMPACTED_TO = "compacted_to";
  */
 const META_SNAPSHOT_AT = "snapshot_at";
 const META_SNAPSHOT_ID = "snapshot_id";
+/** The snapshot a seed writes into its empty partition: the first it has. */
+const SEED_SNAPSHOT_ID = 1;
 
 /**
  * Whether any blob exists, which is the write path's only question about them.
@@ -312,23 +314,63 @@ interface Counters {
  * posting list is the entries under one prefix, already sorted, and
  * intersection walks them in order.
  */
+/**
+ * The engine snapshots the running read is answered from, per engine.
+ *
+ * Fiber-local, so a snapshot belongs to the read that took it (`reading`) and
+ * to nothing running beside it.
+ */
+const ReadSnapshots = Context.Reference<ReadonlyMap<KvEngine, KvReader>>("zelavis/db/ReadSnapshots", {
+  defaultValue: () => new Map(),
+});
+
+/** An engine whose reads come from the running read's snapshot of it, when there is one. */
+const snapshotAware = (raw: KvEngine): KvEngine => ({
+  ...raw,
+  get: (key) => Effect.flatMap(Effect.service(ReadSnapshots), (taken) => (taken.get(raw) ?? raw).get(key)),
+  scan: (prefix, options) =>
+    Stream.unwrap(Effect.map(Effect.service(ReadSnapshots), (taken) => (taken.get(raw) ?? raw).scan(prefix, options))),
+});
+
+/** `effect` reading the engine as it is, whatever snapshot the read around it holds. */
+const liveOn = <A, E, R>(raw: KvEngine, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.flatMap(Effect.service(ReadSnapshots), (taken) => {
+    if (!taken.has(raw)) return effect;
+    const rest = new Map(taken);
+    rest.delete(raw);
+    return Effect.provideService(effect, ReadSnapshots, rest);
+  });
+
 const openPartition = (
   context: ShardContext,
   partition: PartitionKey,
 ): {
   readonly api: ObjectStoreApi;
-  readonly drop: (keepFence: boolean) => Effect.Effect<number, StoreError | WriterFenced>;
+  readonly drop: Effect.Effect<number, StoreError | WriterFenced>;
 } => {
-  const { engine, origin, probeCap } = context;
+  const { engine: raw, origin, probeCap } = context;
+  /**
+   * Reads go through `engine`, which answers from the running read's snapshot
+   * when there is one (`reading`). Nothing that writes, or that keeps what it
+   * read as a belief about the partition, may see a snapshot: a stale fence or
+   * revision kept as current would let a write through that the partition
+   * refuses. So everything under the permit, and all upkeep, reads `raw`
+   * (`live`), and so do the reads that fill the handle's beliefs.
+   */
+  const engine = snapshotAware(raw);
+  const live = <A, E, R>(effect: Effect.Effect<A, E, R>) => liveOn(raw, effect);
   const { generation, session } = context.claim;
   const keys = partitionKeys(partition);
   const revisionKey = keys.meta(META_REVISION);
 
-  const readMeta = (name: string) =>
-    Effect.flatMap(engine.get(keys.meta(name)), (bytes) => Effect.try({
+  const readMetaFrom = (source: KvEngine) => (name: string) =>
+    Effect.flatMap(source.get(keys.meta(name)), (bytes) => Effect.try({
       try: () => counterOf(bytes),
       catch: (cause) => new StoreError({ op: "meta.read", cause }),
     }));
+  const readMeta = readMetaFrom(engine);
+  /** For what the handle keeps as a belief: never from a snapshot. */
+  const readMetaLive = readMetaFrom(raw);
 
   /**
    * One writer at a time, per partition.
@@ -391,13 +433,13 @@ const openPartition = (
   });
 
   const exclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) => withPermit(
-    Effect.gen(function* () {
+    live(Effect.gen(function* () {
       if (!revisionKnown) {
-        revision = yield* engine.get(revisionKey);
+        revision = yield* raw.get(revisionKey);
         revisionKnown = true;
       }
       return yield* effect;
-    }),
+    })),
   );
 
   /**
@@ -408,7 +450,7 @@ const openPartition = (
     let state = lenses;
     if (state === undefined) {
       const seen = epoch;
-      const stored = yield* readMeta(META_LENSES);
+      const stored = yield* readMetaLive(META_LENSES);
       if (lenses === undefined && epoch === seen) lenses = stored;
       state = lenses ?? stored;
     }
@@ -426,7 +468,7 @@ const openPartition = (
   const fenceHeld = Effect.gen(function* () {
     if (fence !== undefined) return fence;
     const seen = epoch;
-    const bytes = yield* engine.get(keys.meta(META_FENCE));
+    const bytes = yield* raw.get(keys.meta(META_FENCE));
     const stored = bytes === undefined ? null : yield* decodeOrDie("fence.read", () => decodeFence(bytes));
     if (fence === undefined && epoch === seen) fence = stored;
     return fence === undefined ? stored : fence;
@@ -1623,16 +1665,22 @@ const openPartition = (
     });
 
   const readEvents = (
-    options?: { readonly after?: EventCursor; readonly limit?: number },
+    options?: ReadEventsOptions,
   ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor | CursorCompacted> =>
     Effect.gen(function* () {
-      const after = options?.after === undefined ? 0 : yield* cursorPosition(partition, options.after);
+      if (options?.after !== undefined && options.from !== undefined) {
+        return yield* Effect.die(new TypeError("an event read takes `after` or `from`, not both"));
+      }
+      const cursor = options?.from ?? options?.after;
+      const named = cursor === undefined ? 0 : yield* cursorPosition(partition, cursor);
+      // Read from a position by reading after the one before it.
+      const after = options?.from !== undefined ? Math.max(named - 1, 0) : named;
       const compactedTo = yield* readMeta(META_COMPACTED_TO);
       // A cursor from before the compaction point cannot be continued: the
       // events between it and here are gone. Saying so is the difference
       // between a follower knowing it must re-seed and one silently missing
       // writes it will never see again.
-      if (options?.after !== undefined && after < compactedTo) {
+      if (cursor !== undefined && after < compactedTo) {
         return yield* new CursorCompacted({ partition, requested: after, compactedTo });
       }
       const limit = options?.limit ?? 1024;
@@ -2025,31 +2073,24 @@ const openPartition = (
   });
 
   /**
-   * Remove the whole partition in bounded batches, but for its fence when
-   * `keepFence` is set.
+   * Remove the whole partition in bounded batches.
    *
-   * Kept, the fence outlives everything else in the same pass, under the same
-   * permit, so nothing written for the partition can find it gone before the
-   * rest: a write still on its way to the shard a tenant left must find it.
-   * Removed entirely, the revision goes last: every batch before it is checked
-   * against it, so an owner fenced halfway stops there rather than deleting
-   * under a new one.
+   * The revision goes last: every batch before it is checked against it, so
+   * an owner fenced halfway stops there rather than deleting under a new one.
    */
-  const drop = (keepFence: boolean) => exclusive(Effect.gen(function* () {
+  const drop = exclusive(Effect.gen(function* () {
     const records = yield* readMeta(META_RECORDS);
-    const kept = new Set<string>([keyId(revisionKey)]);
-    if (keepFence) kept.add(keyId(keys.meta(META_FENCE)));
-    // More than the kept keys per scan, so a scan that returns only kept keys
+    const kept = keyId(revisionKey);
+    // One more than a batch per scan, so a scan that returns only the revision
     // has nothing else left to find.
     for (;;) {
-      const chunk = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: SEAL_BATCH + kept.size })))]
+      const chunk = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: SEAL_BATCH + 1 })))]
         .map((entry) => new Uint8Array(entry.key))
-        .filter((key) => !kept.has(keyId(key)));
+        .filter((key) => keyId(key) !== kept);
       if (chunk.length === 0) break;
       yield* write(chunk.map((key): KvWrite => ({ op: "delete", key })));
     }
     lenses = LENSES_READY;
-    if (keepFence) return records;
     if (engine.conditionalWrite === undefined) {
       return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
     }
@@ -2096,6 +2137,15 @@ const openPartition = (
    * the mark with the head, so a seed cut off between them is told apart from
    * a finished one (`stats.seeding`): the first must be copied again, the
    * second carried on from its head.
+   *
+   * Where the source has compacted, this partition's log will begin past its
+   * start too, and `rebuildLenses` needs a snapshot covering what is missing.
+   * The copy is that snapshot: records read from the compaction point on, which
+   * the log after it, applied by version, brings to any later moment — the
+   * same rule the copy itself relies on. So each live record copied is also
+   * written as the first snapshot, recorded at the compaction point in the
+   * batch that clears the mark; a seed cut off before then is copied again
+   * whole, snapshot included.
    */
   const seed = (source: ObjectStoreApi): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
     exclusiveWrite(Effect.gen(function* () {
@@ -2104,6 +2154,7 @@ const openPartition = (
       if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
 
       const start = yield* source.stats;
+      const snapshotted = start.compactedTo > 0;
       const counters: Counters = { records: 0, bytes: 0 };
       let pending = new Map<string, KvWrite>();
       let into: Projection = { view: pendingView(pending), sealed: false, counters };
@@ -2123,6 +2174,7 @@ const openPartition = (
         Effect.gen(function* () {
           if (record.live) yield* project(into, seq, undefined, record);
           else yield* retire(into, seq, undefined, record.version, record.retiredAt);
+          if (record.live && snapshotted) into.view.put(keys.snapshot(SEED_SNAPSHOT_ID, seq), encodeRecord(record));
           copied += 1;
           highest = Math.max(highest, seq);
           if (pending.size >= SEAL_BATCH) yield* flush;
@@ -2132,6 +2184,10 @@ const openPartition = (
       into.view.put(keys.meta(META_HEAD), u64Bytes(start.compactedTo));
       into.view.put(keys.meta(META_COMPACTED_TO), u64Bytes(start.compactedTo));
       into.view.put(keys.meta(META_NEXT_SEQ), u64Bytes(Math.max(end.nextSeq, highest)));
+      if (snapshotted) {
+        into.view.put(keys.meta(META_SNAPSHOT_ID), u64Bytes(SEED_SNAPSHOT_ID));
+        into.view.put(keys.meta(META_SNAPSHOT_AT), u64Bytes(start.compactedTo));
+      }
       into.view.del(keys.meta(META_SEEDING));
       yield* flush;
       return { records: copied, head: start.compactedTo };
@@ -2142,18 +2198,39 @@ const openPartition = (
     generation,
     stats,
     records: Stream.unwrap(Effect.as(lensesReady, records)),
-    seed,
+    scanRecords: ({ after, limit }) =>
+      ready(Effect.gen(function* () {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > SEAL_BATCH) {
+          return yield* Effect.die(new RangeError(`scanRecords limit ${limit} is outside 1..${SEAL_BATCH}`));
+        }
+        if (after !== undefined && after >= MAX_SEQ) return [];
+        const page = engine.scan(keys.tag(Tag.Record), {
+          ...(after === undefined ? {} : { from: keys.record(after + 1) }),
+          limit,
+        });
+        return [...(yield* Stream.runCollect(Stream.mapEffect(page, (entry) =>
+          Effect.map(decodeOrDie("record.read", () => decodeRecord(new Uint8Array(entry.value))), (record) =>
+            ({ seq: asSeq(seqOf(entry.key)), record: record as RecordState })))))];
+      })),
+    seed: (source) => live(seed(source)),
     events,
 
-    rebuildLenses,
+    reading: (effect) =>
+      Effect.flatMap(Effect.service(ReadSnapshots), (taken) =>
+        taken.has(raw)
+          ? effect
+          : Effect.scoped(Effect.flatMap(raw.snapshot, (reader) =>
+              Effect.provideService(effect, ReadSnapshots, new Map(taken).set(raw, reader))))),
 
-    snapshot,
+    rebuildLenses: live(rebuildLenses),
+
+    snapshot: live(snapshot),
 
     snapshotAt: readMeta(META_SNAPSHOT_AT),
 
-    reindexLenses,
+    reindexLenses: live(reindexLenses),
 
-    resumeMaintenance,
+    resumeMaintenance: live(resumeMaintenance),
 
     /**
      * Fold the live postings into immutable blobs, one per 65536 identifiers.
@@ -2198,7 +2275,7 @@ const openPartition = (
      * merged segment reports everything it now holds. `examined` is the live
      * postings the seal read.
      */
-    sealPostings: exclusiveReady(Effect.gen(function* () {
+    sealPostings: live(exclusiveReady(Effect.gen(function* () {
       const swept = (yield* readMeta(META_SWEPT)) > 0;
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
@@ -2371,7 +2448,7 @@ const openPartition = (
       }
       if (batch.length > 0) yield* write(batch);
       return { segments, postings, examined };
-    })),
+    }))),
 
     /**
      * Drop history that no longer describes anything reachable.
@@ -2564,20 +2641,74 @@ const openPartition = (
         return out;
       }),
 
+    /**
+     * The words a field holds a posting for.
+     *
+     * A live key is a live posting, so every word with one is listed. A word
+     * known only to sealed blobs is listed when some blob posting survives that
+     * word's own tombstones: a blob cannot be edited, so a word whose every
+     * document has since lost it would otherwise be listed for as long as the
+     * blob lasts — and offered to fuzzy search as a candidate matching nothing.
+     */
     terms: (field, prefix = "") =>
       Effect.gen(function* () {
         yield* lensesReady;
-        const terms = new Set<string>();
         const startKey = keys.termPrefixKey(field, prefix);
-        const collect = (entry: { readonly key: Uint8Array }) =>
+        type TermKey = { readonly field: string; readonly term: string };
+        const wanted = (parsed: TermKey | undefined): parsed is TermKey =>
+          parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix);
+
+        const terms = new Set<string>();
+        yield* Stream.runForEach(engine.scan(startKey), (entry) =>
           Effect.sync(() => {
             const parsed = keys.readTermKey(entry.key);
-            if (parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix)) {
-              terms.add(parsed.term);
+            if (wanted(parsed)) terms.add(parsed.term);
+          }));
+
+        // Tombstones exist only beside sealed postings, keyed by the posting
+        // they cancel, so each word's own are gathered before its blobs.
+        const removed = new Map<string, Postings.PostingsBuilder>();
+        yield* Stream.runForEach(engine.scan(keys.tombstonePrefix(startKey)), (entry) =>
+          Effect.sync(() => {
+            const posting = keys.liveOfTombstone(entry.key);
+            const parsed = keys.readTermKey(posting);
+            if (!wanted(parsed) || terms.has(parsed.term)) return;
+            let builder = removed.get(parsed.term);
+            if (builder === undefined) {
+              builder = new Postings.PostingsBuilder();
+              removed.set(parsed.term, builder);
             }
-          });
-        yield* Stream.runForEach(engine.scan(startKey), collect);
-        yield* Stream.runForEach(engine.scan(keys.segmentPrefix(startKey)), collect);
+            builder.add(seqOf(posting));
+          }));
+
+        // Blobs come in key order, word then segment, so each word's run
+        // arrives together and is judged once it is complete.
+        let word: string | undefined;
+        let segments: number[] = [];
+        let containers: Postings.Container[] = [];
+        const close = () => {
+          if (word !== undefined && !terms.has(word)) {
+            const blobs: Postings.Postings = { segments, containers };
+            const gone = removed.get(word);
+            if (Postings.size(gone === undefined ? blobs : Postings.andNot(blobs, gone.build())) > 0) terms.add(word);
+          }
+          segments = [];
+          containers = [];
+        };
+        yield* Stream.runForEach(engine.scan(keys.segmentPrefix(startKey)), (entry) =>
+          Effect.sync(() => {
+            const parsed = keys.readTermKey(entry.key);
+            if (!wanted(parsed)) return;
+            if (parsed.term !== word) {
+              close();
+              word = parsed.term;
+            }
+            const container = containerOf(entry.value);
+            if (container === undefined) return;
+            segments.push(keys.segmentIndexOf(entry.key));
+            containers.push(container);
+          }));
+        close();
         return [...terms].sort();
       }),
   };
@@ -2640,7 +2771,7 @@ export const shardOverKv = (
       return out;
     }),
 
-    drop: (partition, options) => handleOf(partition).drop(options?.keepFence === true),
+    drop: (partition) => handleOf(partition).drop,
   };
 };
 

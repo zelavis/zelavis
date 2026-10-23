@@ -3,6 +3,7 @@ import {
 } from "../core/json-validation.js";
 import { Effect, Stream } from "effect";
 import type { DomainEvent, DomainEventsApi } from "./domain-events.js";
+import { consistently } from "./documents.js";
 import type { EventCursor } from "./events.js";
 import {
   dieUnlessMoving, type TenantMoving, TimeSeriesMapFailed, TimeSeriesNotFound,
@@ -688,7 +689,8 @@ export const timeSeriesFor = (
         .sort((a, b) => a.name.localeCompare(b.name)),
     ),
 
-    get: (name) => ({
+    // Each read of a series is one snapshot: its points and their state.
+    get: (name) => consistently<TimeSeriesHandle>(store, {
       range: (input) =>
         Effect.gen(function* () {
           const points = yield* collect(name, input?.start, input?.end, input?.tags);

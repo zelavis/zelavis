@@ -1,5 +1,5 @@
 import { parseJson } from "../core/json-validation.js";
-import { documentRecord, collectionRecord } from "./documents.js";
+import { consistently, documentRecord, collectionRecord } from "./documents.js";
 import { Effect, Stream } from "effect";
 import type { DbEvent, EventCursor } from "./events.js";
 import type { Collection, Document, JsonObject } from "./documents.js";
@@ -139,7 +139,7 @@ export const toDomainEvent = (
 export const domainEventsFor = (
   store: ObjectStoreApi,
   tenant: TenantId,
-): DomainEventsApi => ({
+): DomainEventsApi => consistently<DomainEventsApi>(store, {
   read: (input) =>
     Effect.gen(function* () {
       // Retractions carry no namespace, so the seq of every put is remembered

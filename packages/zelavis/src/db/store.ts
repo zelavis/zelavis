@@ -1,5 +1,5 @@
 import { Context, Effect, Stream } from "effect";
-import type { CursorMismatch, DbError, EventGap, ReplicaDiverged, TenantNotEmpty } from "./errors.js";
+import type { CursorMismatch, DbError, EventGap, ReplicaDiverged, StoreError, TenantNotEmpty } from "./errors.js";
 import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
 import type { ShardId } from "./topology.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
@@ -194,6 +194,18 @@ export interface ObjectStoreApi {
   readonly records: Stream.Stream<{ readonly seq: Seq; readonly record: RecordState }, DbError>;
 
   /**
+   * One page of `records`: at most `limit` of them (1 to 4096), the first
+   * after `after`, in identifier order.
+   *
+   * For work that writes as it goes — retracting what it reads — and so must
+   * not hold a scan open across its own commits, nor read everything first.
+   */
+  readonly scanRecords: (input: {
+    readonly after?: Seq;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<{ readonly seq: Seq; readonly record: RecordState }>, DbError>;
+
+  /**
    * Fill this partition, which must hold nothing, from another partition of
    * the same name, keeping its identifiers.
    *
@@ -204,6 +216,17 @@ export interface ObjectStoreApi {
    * cursors. Refused with `TenantNotEmpty` when this partition holds anything.
    */
   readonly seed: (source: ObjectStoreApi) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
+
+  /**
+   * Run `effect` with every read of this shard answered from one snapshot,
+   * taken now and released when it ends — so a read of several steps, such as
+   * resolving a query and then reading the records it named, sees one state
+   * however many writes land meanwhile. Writes inside it, and the checks a
+   * write makes, still see the shard as it is. Nested, it joins the snapshot
+   * already held. Fails with `StoreError` only when the snapshot cannot be
+   * taken.
+   */
+  readonly reading: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | StoreError, R>;
 
   /**
    * The writer generation this handle claimed when it opened.
@@ -455,17 +478,14 @@ export interface ShardStoreApi {
   readonly partitions: Effect.Effect<ReadonlyArray<PartitionKey>, DbError>;
 
   /**
-   * Remove a partition — records, log, lenses and meta — in bounded batches.
-   * Answers how many records it held.
+   * Remove a partition — records, log, lenses and meta, its fence included —
+   * in bounded batches. Answers how many records it held.
    *
-   * With `keepFence`, the partition's fence stays and the rest goes: a tenant
-   * moved off a shard leaves its fence there, so a write still on its way to
-   * the old shard is refused rather than landing where nothing reads it.
+   * A tenant moved off a shard is dropped only once no call still uses it
+   * there (see `PartitionRouter.drained`), so nothing can arrive afterwards
+   * that a fence would have had to refuse.
    */
-  readonly drop: (
-    partition: PartitionKey,
-    options?: { readonly keepFence?: boolean },
-  ) => Effect.Effect<number, DbError>;
+  readonly drop: (partition: PartitionKey) => Effect.Effect<number, DbError>;
 }
 
 /**

@@ -138,6 +138,54 @@ and pass it back unchanged. Do not parse, compare, increment, or assume it is a
 global integer: it names a position in the Tenant's own log, which moves with
 the Tenant and means nothing in another Tenant's.
 
+A read of several steps — a query resolving its matches and then reading the
+documents — answers from one snapshot of its shard, so it sees one moment
+however many writes land while it runs. Writes always see the shard as it is:
+their checks run inside the transaction that commits them.
+
+## Outbox
+
+App code that must tell another system about a write emits a message with it.
+The message is recorded in the same transaction as the changes, so it exists
+exactly when they do:
+
+```ts
+await tenantDb.documents.write({
+  operations: [{ _tag: 'Insert', collection: 'orders', id: 'o1', data: { total: 10 } }],
+  emit: [{ topic: 'order.placed', payload: { order: 'o1' } }],
+});
+
+await tenantDb.outbox.emit({ topic: 'note', payload: { n: 1 }, idempotencyKey: 'k1' });
+
+const page = await tenantDb.outbox.read({ limit: 100 });
+// page.messages: [{ id, topic, payload, emittedAt, cursor }], page.cursor, page.more
+const next = await tenantDb.outbox.read({ after: page.cursor, topic: 'order.placed' });
+
+await tenantDb.outbox.remove({ ids: page.messages.map((message) => message.id) });
+```
+
+A read pages the log like an event read: `cursor` is past everything it looked
+at, and `more` says there is more to read now. Delivery is at least once — a
+consumer cut off reads a page again, and a restored backup writes its messages
+again — so a consumer deduplicates by message `id` and removes what it has
+handled; removed messages are not read again. An id is generated when absent
+(`idempotent:<key>` for an emit with an idempotency key), and an id the outbox
+already holds is refused with `MessageExists` (409). A topic is 1 to 256
+characters and a payload a JSON object, or the message is refused with
+`InvalidMessage` (400) before anything is written.
+
+| Form | Read | Emit | Remove |
+|---|---|---|---|
+| HTTP | `GET …/database/outbox/messages?after&limit&topic` | `POST …/database/outbox/messages` `{ topic, payload, id?, idempotencyKey? }` | `POST …/database/outbox/messages/remove` `{ ids }` |
+| SDK | `client.data(projectId).outbox.read({ after?, limit?, topic? })` | `.outbox.emit({ topic, payload, id?, idempotencyKey? })` | `.outbox.remove(ids)` |
+| CLI | `zelavis data outbox [topic] --project ID [--after C] [--limit N]` | `zelavis data outbox-emit <topic> [id] --data JSON` | `zelavis data outbox-remove --ids a,b` |
+
+`documents.write` takes `emit` in every form: `POST …/documents/write` with
+`emit`, `client.data(id).documents.write({ operations, emit })`, and
+`zelavis data write --operations JSON --emit JSON`. Reading needs only data-read
+authority (`project.data.read` for an App client); emitting and removing are
+writes.
+
 ## Schemas and projections
 
 Schema and projection definitions live on the logical database because they

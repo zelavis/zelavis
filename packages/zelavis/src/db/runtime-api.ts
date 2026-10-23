@@ -17,6 +17,7 @@ import type {
   RelatedDocuments,
   DocumentWrite,
   DocumentWritten,
+  OutboxEmit,
   Analyzer,
   SpatialIndex,
   EmbeddingIndex,
@@ -30,6 +31,8 @@ import type {
 } from "./documents.js";
 import type { DomainEvent, DomainEventPage, ReadDomainEventsInput } from "./domain-events.js";
 import type { RestoreOptions, RestoreResult, TenantBackupV1 } from "./backup.js";
+import type { OutboxPage } from "./outbox.js";
+import type { EventCursor } from "./events.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
 import type { ProjectionSummary } from "./projections.js";
 import type { QuerySystemViewInput, SystemView, SystemViewResult } from "./system-views.js";
@@ -141,6 +144,8 @@ export interface TenantRuntimeApi {
     }) => Promise<ReadonlyArray<RelatedDocuments>>;
     readonly write: (input: {
       operations: ReadonlyArray<DocumentWrite>;
+      /** Messages for the tenant's outbox, committed with the changes or not at all. */
+      emit?: ReadonlyArray<OutboxEmit>;
       /**
        * Do this at most once.
        *
@@ -252,6 +257,11 @@ export interface TenantRuntimeApi {
     ) => Promise<ReadonlyArray<TimeSeriesPoint>>;
     readonly ingest: (series: string) => Promise<{ name: string; points: number }>;
   };
+  readonly outbox: {
+    readonly emit: (message: OutboxEmit & { readonly idempotencyKey?: string }) => Promise<{ readonly id: string }>;
+    readonly read: (input?: { readonly after?: EventCursor; readonly limit?: number; readonly topic?: string }) => Promise<OutboxPage>;
+    readonly remove: (input: { readonly ids: ReadonlyArray<string> }) => Promise<{ readonly removed: number }>;
+  };
   readonly backups: {
     readonly exportTenant: () => Promise<TenantBackupV1>;
     readonly restoreTenant: (backup: TenantBackupV1, options?: RestoreOptions) => Promise<RestoreResult>;
@@ -352,6 +362,11 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     histogram: (series, input) => run(tenant.timeSeries.get(series).histogram(input)),
     interpolate: (series, input) => run(tenant.timeSeries.get(series).interpolate(input)),
     ingest: (series) => run(tenant.timeSeries.ingest(series)),
+  },
+  outbox: {
+    emit: (message) => run(tenant.outbox.emit(message)),
+    read: (input) => run(tenant.outbox.read(input)),
+    remove: (input) => run(tenant.outbox.remove(input)),
   },
   backups: {
     exportTenant: () => run(tenant.backups.exportTenant),

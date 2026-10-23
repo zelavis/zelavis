@@ -147,6 +147,14 @@ command tree.
   `client.projects.exportTenant|restoreTenant` and the database's
   `maintenance/backups/export|restore` route through the Project proxy, and need
   `project.runtime.manage`. See [Database](../api/database/#backups-and-restore).
+- `data <action> --project ID` reads and writes an App Project's data as the
+  token's own Tenant (`client.data(projectId)`, the Project's `data/*` route):
+  collections and documents, the KV commands, and the outbox — `data outbox
+  [topic] [--after C] [--limit N]` reads messages in commit order,
+  `outbox-emit <topic> [id] --data JSON` emits one, `outbox-remove --ids a,b`
+  removes handled ones, and `data write --operations JSON --emit JSON` commits
+  messages with a batch. See [App Data](../api/app-data/) and
+  [Database](../api/database/#outbox).
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;

@@ -10,6 +10,8 @@ import {
   IdempotencyKeyReused,
   InvalidCollectionName,
   InvalidDocumentValue,
+  InvalidMessage,
+  MessageExists,
   TenantMoving,
   UnindexedField,
   CursorMismatch,
@@ -599,6 +601,21 @@ export type DocumentWrite =
     readonly precondition?: ReadonlyArray<DocumentFilter>;
   };
 
+/**
+ * A message for the tenant's outbox, recorded with the batch it rides in: the
+ * message exists exactly when the batch's changes do.
+ */
+export interface OutboxEmit {
+  /** What the message is about, for consumers to choose by. At most 256 characters. */
+  readonly topic: string;
+  readonly payload: JsonObject;
+  /**
+   * The message's id, which consumers deduplicate by. Generated when absent;
+   * one the outbox already holds is refused (`MessageExists`).
+   */
+  readonly id?: string;
+}
+
 /** What one change in a batch did, in the order the batch asked. */
 export type DocumentWritten =
   | { readonly _tag: "Inserted"; readonly document: Document }
@@ -1049,13 +1066,19 @@ export interface DocumentsApi {
    */
   readonly write: (input: {
     readonly operations: ReadonlyArray<DocumentWrite>;
+    /**
+     * Messages for the tenant's outbox, committed in the same transaction as
+     * the changes: either all of it lands or none of it does. A batch may be
+     * messages alone.
+     */
+    readonly emit?: ReadonlyArray<OutboxEmit>;
     /** Do this at most once; see `insert`. */
     readonly idempotencyKey?: string;
   }) => Effect.Effect<
     ReadonlyArray<DocumentWritten>,
     | CollectionNotFound | DocumentConflict | DocumentNotFound | SchemaViolation | TenantMoving
     | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
-    | VectorShapeMismatch | InvalidDocumentValue
+    | VectorShapeMismatch | InvalidDocumentValue | MessageExists | InvalidMessage
   >;
 
   /**

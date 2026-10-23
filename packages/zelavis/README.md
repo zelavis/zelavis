@@ -650,12 +650,24 @@ including source shards no longer present in the current partition map.
 the target's head unless its seed was cut off, and a move whose routing already
 changed cleans up its source without copying the target again. A move copies the
 Tenant's partition as it is — identifiers and log positions included — so
-edges, event cursors and projection checkpoints carry on after it, and the
-shard the Tenant left keeps only its move fence, so a late write there is
-refused (`TenantMoving`, a 409 over HTTP) whichever layer makes it. The fence is
-never copied, so the Tenant takes writes on its new shard as soon as routing
-moves. Reopening also finishes any lens rebuild or reindex a crash cut off;
-until then that partition answers `LensesRebuilding`.
+edges, event cursors and projection checkpoints carry on after it. A Tenant
+handle is never bound to a shard: each operation runs against the placement
+routing names as it starts, under an in-process lease, so a handle taken before
+a move works after it. Once routing moves, the move waits for operations that
+reached the old shard to finish (up to `drainTimeout`, else `PlacementInUse`
+and a resume later) and then removes the Tenant from it entirely, fence
+included; until then a write that reached the old shard is refused there
+(`TenantMoving`, a 409 over HTTP). A shard's Tenants are the partitions holding
+anything, so a Tenant holding only messages, time series or history moves too.
+Reopening also finishes any lens rebuild or reindex a crash cut off; until then
+that partition answers `LensesRebuilding`.
+
+A read of several steps answers from one snapshot of its shard, so a query sees
+one moment however many writes land while it runs; writes still see the shard
+as it is. `documents.write({ emit })` records messages in the Tenant's outbox in
+the same transaction as its changes, and `outbox.read` returns them in commit
+order from a cursor, at least once: consumers deduplicate by message id and
+`outbox.remove` what they have handled.
 
 Node hosts can persist content-addressed runtime objects with
 `createNodeFileArtifactStore({ directory })` from `zelavis/adapters/node`.

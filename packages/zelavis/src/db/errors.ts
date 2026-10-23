@@ -52,6 +52,22 @@ export class SchemaMigrationBlocked extends Schema.TaggedError<SchemaMigrationBl
  * request with that outcome would be worse than doing the work twice: the
  * caller would be told something happened that did not.
  */
+/**
+ * A message was emitted with an id the tenant's outbox already holds.
+ *
+ * Refused rather than replaced: a consumer that has the message may have acted
+ * on it, and a second message under its id would be lost to every consumer
+ * that deduplicates by id — which is what the id is for.
+ */
+export class MessageExists extends Schema.TaggedError<MessageExists>()("MessageExists", {
+  id: Schema.String,
+}) {}
+
+/** A message that cannot be one: an empty or overlong topic or id, or a payload that is not JSON. */
+export class InvalidMessage extends Schema.TaggedError<InvalidMessage>()("InvalidMessage", {
+  reason: Schema.String,
+}) {}
+
 export class IdempotencyKeyReused extends Schema.TaggedError<IdempotencyKeyReused>()(
   "IdempotencyKeyReused",
   {
@@ -122,6 +138,21 @@ export class TenantMoveFailed extends Schema.TaggedError<TenantMoveFailed>()("Te
   from: Schema.String,
   to: Schema.String,
   reason: Schema.String,
+}) {}
+
+/**
+ * A move routed a tenant to its new shard, but calls that reached the old shard
+ * before routing moved were still running when the move stopped waiting.
+ *
+ * Routing has moved and the tenant takes writes on its new shard. The old
+ * shard still holds the tenant, fenced, so those calls read whole data and any
+ * write among them is refused; it is cleared once they finish, by resuming the
+ * move.
+ */
+export class PlacementInUse extends Schema.TaggedError<PlacementInUse>()("PlacementInUse", {
+  partition: Schema.String,
+  shard: Schema.String,
+  calls: Schema.Finite,
 }) {}
 
 /**

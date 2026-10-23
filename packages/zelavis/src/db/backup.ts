@@ -122,28 +122,43 @@ export interface BackupsApi {
   >;
 }
 
+/** Records a purge retracts per transaction. */
+const PURGE_BATCH = 256;
+
 const toBase64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => new Uint8Array(Buffer.from(value, "base64"));
 
 export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => {
+  /** A record a backup carries: named, and not state that is rebuilt rather than restored. */
+  const carried = (identity: ObjectIdentity | undefined): identity is ObjectIdentity =>
+    identity !== undefined && !isDerivedNamespace(identity.namespace);
+
   /**
    * Retract every record a backup would carry.
    *
    * Selected by the rule an export uses, so what a purge removes is exactly
    * what a backup would have carried — a restore that cleared less than it
    * replaces would leave records behind that the backup never knew about.
+   *
+   * A page of records at a time, each page's retractions one transaction, so
+   * a large tenant is neither read into memory nor written in one batch. The
+   * retractions go into the tenant's log like any other, so projections and
+   * time series reading it carry on: they see the records go, then the
+   * restored ones arrive, exactly as a rebuild over the whole log would.
    */
   const purge = Effect.gen(function* () {
-    const doomed = (yield* store.liveRecords).filter((record) => !isDerivedNamespace(record.identity.namespace));
-    for (const record of doomed) {
-      yield* store.transact((txn) => txn.retract(asSeq(record.seq)));
+    let removed = 0;
+    let after: Seq | undefined;
+    for (;;) {
+      const page = yield* store.scanRecords({ ...(after === undefined ? {} : { after }), limit: PURGE_BATCH });
+      if (page.length === 0) return removed;
+      after = page[page.length - 1]!.seq;
+      const doomed = page.filter(({ record }) => record.live && carried(record.identity)).map(({ seq }) => seq);
+      if (doomed.length === 0) continue;
+      yield* store.transact((txn) => Effect.forEach(doomed, (seq) => txn.retract(seq), { discard: true }));
+      removed += doomed.length;
     }
-    return doomed.length;
   }).pipe(Effect.orDie);
-
-  /** A record a backup carries: named, and not state that is rebuilt rather than restored. */
-  const carried = (identity: ObjectIdentity | undefined): identity is ObjectIdentity =>
-    identity !== undefined && !isDerivedNamespace(identity.namespace);
 
   return {
     /**
@@ -158,7 +173,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
      * whole log keeps an export the size of what the tenant holds, not of
      * everything it was ever written.
      */
-    exportTenant: Effect.gen(function* () {
+    exportTenant: store.reading(Effect.gen(function* () {
       const mark = yield* store.events.head;
       const events: BackupEvent[] = [];
       yield* Stream.runForEach(store.records, ({ seq, record }) =>
@@ -206,7 +221,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
         tenantId: tenant,
         events,
       };
-    }).pipe(Effect.orDie),
+    })).pipe(Effect.orDie),
 
   restoreTenant: (backup, options) =>
     Effect.gen(function* () {

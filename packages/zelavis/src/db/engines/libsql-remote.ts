@@ -1,7 +1,7 @@
 import { integrationValue, unwrapIntegrationResult, presentProtocol, present } from "../../core/runtime/effect-boundary.js";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ShardStoreApi } from "../store.js";
@@ -22,10 +22,13 @@ interface RemoteClient {
     statements: ReadonlyArray<{ sql: string; args: ReadonlyArray<unknown> }>,
     mode?: "write" | "read" | "deferred",
   ) => Promise<unknown>;
-  transaction: (mode: "write") => Promise<RemoteTransaction>;
+  transaction: (mode: "write" | "read") => Promise<RemoteTransaction>;
   close: () => void;
 }
 interface RemoteTransaction {
+  execute: (statement: { sql: string; args: ReadonlyArray<unknown> }) => Promise<{
+    rows: ReadonlyArray<Record<string, unknown>>;
+  }>;
   batch: (statements: ReadonlyArray<{ sql: string; args: ReadonlyArray<unknown> }>) =>
     Promise<ReadonlyArray<{ rows: ReadonlyArray<Record<string, unknown>> }>>;
   commit: () => Promise<void>;
@@ -107,12 +110,15 @@ export const makeLibsqlRemoteEngine = (
           catch: fail("libsql-remote.open"),
         });
 
-        const engine: KvEngine = {
+        type Execute = (statement: { sql: string; args: ReadonlyArray<unknown> }) =>
+          Promise<{ rows: ReadonlyArray<Record<string, unknown>> }>;
+
+        /** Reads through the client as the database is, or through a read transaction. */
+        const readerOn = (execute: Execute): KvReader => ({
           get: (key) =>
             Effect.map(
               Effect.tryPromise({
-                try: () =>
-                  client.execute({ sql: `SELECT value FROM ${table} WHERE key = ?`, args: [key] }),
+                try: () => execute({ sql: `SELECT value FROM ${table} WHERE key = ?`, args: [key] }),
                 catch: fail("libsql-remote.get"),
               }),
               (result) => (result.rows[0] === undefined ? undefined : toBytes(result.rows[0].value)),
@@ -132,7 +138,7 @@ export const makeLibsqlRemoteEngine = (
                     ? `SELECT key, value FROM ${table} WHERE key >= ? ORDER BY key ${order} LIMIT ?`
                     : `SELECT key, value FROM ${table} WHERE key >= ? AND key < ? ORDER BY key ${order} LIMIT ?`;
                   const args = hi === undefined ? [lo, limit ?? -1] : [lo, hi, limit ?? -1];
-                  const result = (yield* integrationValue(client.execute({ sql, args })));
+                  const result = (yield* integrationValue(execute({ sql, args })));
                   return (yield* integrationValue(result.rows.map((row): KvEntry => ({
                     key: toBytes(row.key),
                     value: toBytes(row.value),
@@ -141,6 +147,10 @@ export const makeLibsqlRemoteEngine = (
                 catch: fail("libsql-remote.scan"),
               }),
             ),
+        });
+
+        const engine: KvEngine = {
+          ...readerOn((statement) => client.execute(statement)),
 
           write: (writes: ReadonlyArray<KvWrite>) =>
             Effect.tryPromise({
@@ -198,6 +208,21 @@ export const makeLibsqlRemoteEngine = (
             catch: fail("libsql-remote.conditionalWrite"),
           }),
           coordination: "remote",
+
+          // A read transaction is a snapshot on the server: every statement in
+          // it reads the database as of its first read, which is taken here,
+          // as the snapshot is, rather than whenever its first caller reads.
+          snapshot: Effect.gen(function* () {
+            const transaction = yield* Effect.acquireRelease(
+              Effect.tryPromise({ try: () => client.transaction("read"), catch: fail("libsql-remote.snapshot") }),
+              (taken) => Effect.sync(() => taken.close()),
+            );
+            yield* Effect.tryPromise({
+              try: () => transaction.execute({ sql: `SELECT 1 FROM ${table} LIMIT 1`, args: [] }),
+              catch: fail("libsql-remote.snapshot"),
+            });
+            return readerOn((statement) => transaction.execute(statement));
+          }),
 
           close: Effect.sync(() => client.close()),
         };

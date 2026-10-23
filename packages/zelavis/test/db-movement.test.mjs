@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Effect, Fiber } from "effect";
-import { documentsFor, makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
+import { Deferred, Effect, Fiber } from "effect";
+import { makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
 import { makeNodeSqliteEngine, makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { openShardOverKv } from "../dist/db/kv-store.js";
+import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { StoreError } from "../dist/db/errors.js";
 
 const withDatabase = (t, body) => {
@@ -121,6 +122,157 @@ test("a rebalance moves the records, then the routing", async (t) => {
   );
 });
 
+test("a tenant moved after its log was compacted can still rebuild its lenses from the log on its new shard", async (t) => {
+  await withDatabase(t, (db, stores) =>
+    Effect.gen(function* () {
+      const tenants = ["acme", "bravo", "cosmo", "delta"];
+      yield* seed(db, tenants);
+      const moved = tenants.filter((tenant) => db.shardOf(tenant) !== "s1");
+      assert.ok(moved.length > 0);
+      for (const tenant of moved) {
+        const cut = yield* stores.get(db.shardOf(tenant)).partition(tenant).compact();
+        assert.ok(cut.removed > 0, `${tenant} had history to drop`);
+      }
+      const before = {};
+      for (const tenant of tenants) before[tenant] = yield* snapshot(db, tenant);
+
+      yield* db.movement.rebalance(allOn("s1", 2));
+
+      for (const tenant of moved) {
+        const partition = stores.get("s1").partition(tenant);
+        assert.ok((yield* partition.snapshotAt) >= (yield* partition.compactedTo), `${tenant}: a snapshot covers what the log lacks`);
+        yield* partition.rebuildLenses;
+        assert.deepEqual(yield* snapshot(db, tenant), before[tenant], `${tenant} reads the same after the rebuild`);
+      }
+    }),
+  );
+});
+
+/**
+ * A database over in-memory shards whose engines can hold one read open: the
+ * next `get` of a key naming "blocker" waits, once armed, until released — a
+ * call caught in flight on whichever shard it reached.
+ */
+const withGatedDatabase = (body, options = {}) => {
+  const marker = new TextEncoder().encode("blocker");
+  const names = (key) => {
+    outer: for (let at = 0; at + marker.length <= key.length; at++) {
+      for (let i = 0; i < marker.length; i++) if (key[at + i] !== marker[i]) continue outer;
+      return true;
+    }
+    return false;
+  };
+  const gate = { armed: false, reached: Deferred.makeUnsafe(), release: Deferred.makeUnsafe() };
+  const held = (read) => (key) => gate.armed && names(key)
+    ? Effect.suspend(() => {
+        gate.armed = false;
+        Deferred.doneUnsafe(gate.reached, Effect.void);
+        return Effect.andThen(Deferred.await(gate.release), read(key));
+      })
+    : read(key);
+  // Reads go through a snapshot of the engine, so its readers are held too.
+  const gated = (base) => ({
+    ...base,
+    get: held(base.get),
+    snapshot: Effect.map(base.snapshot, (reader) => ({ ...reader, get: held(reader.get) })),
+  });
+  const stores = new Map();
+  return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const db = yield* makeDatabase({
+      partitionMap: partitionMapFor(["s0", "s1"]),
+      ...options,
+      openShard: (shard) =>
+        Effect.tap(openShardOverKv(shard, gated(memoryKvEngine())), (store) => Effect.sync(() => stores.set(shard, store))),
+    });
+    return yield* body(db, stores, gate);
+  })));
+};
+
+/** Wait, briefly, until a move is on record in this phase. */
+const untilPhase = (db, phase) => Effect.gen(function* () {
+  for (let tries = 0; tries < 1000; tries++) {
+    if ((yield* db.movement.pending).some((move) => move.phase === phase)) return;
+    yield* Effect.sleep("2 millis");
+  }
+  assert.fail(`no move reached ${phase}`);
+});
+
+test("a tenant's handle taken before a move reads and writes on the new shard after it", () =>
+  withGatedDatabase((db, stores) => Effect.gen(function* () {
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+    const handle = db.forTenant(tenant);
+    const before = yield* snapshot(db, tenant);
+
+    yield* db.movement.rebalance(allOn("s1", 2));
+
+    const found = yield* handle.documents.findMany({ collection: "posts" });
+    assert.deepEqual(found.map((d) => `${d.id}:${d.data.title}:v${d.version}`).sort(), before.docs,
+      "the old handle reads the moved records, not an emptied shard");
+    yield* handle.documents.insert({ collection: "posts", id: "p9", data: { title: "after" } });
+    assert.notEqual(yield* stores.get("s1").partition(tenant).lookup("doc/posts", "p9"), undefined, "and writes where the tenant now lives");
+    assert.ok(!(yield* stores.get("s0").partitions).includes(tenant));
+  })));
+
+test("a read in flight across a move finishes on whole data, and the old shard is cleared only after it", () =>
+  withGatedDatabase((db, stores, gate) => Effect.gen(function* () {
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+    yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "blocker", data: { title: "held" } });
+
+    gate.armed = true;
+    const reader = yield* Effect.forkChild(db.forTenant(tenant).documents.findById({ collection: "posts", id: "blocker" }));
+    yield* Deferred.await(gate.reached);
+    const moving = yield* Effect.forkChild(db.movement.rebalance(allOn("s1", 2)));
+
+    // Routed, and waiting for the read that reached s0 first.
+    yield* untilPhase(db, "routed");
+    yield* Effect.sleep("20 millis");
+    assert.equal(db.shardOf(tenant), "s1");
+    assert.equal(moving.pollUnsafe(), undefined, "the move is still waiting");
+    assert.ok((yield* stores.get("s0").partition(tenant).liveRecords).length > 0, "s0 still holds the tenant");
+
+    yield* Deferred.succeed(gate.release, undefined);
+    const found = yield* Fiber.join(reader);
+    assert.equal(found?.data.title, "held", "the read found its document");
+    const [move] = (yield* Fiber.join(moving)).moves;
+    assert.ok(move.removed > 0);
+    assert.ok(!(yield* stores.get("s0").partitions).includes(tenant), "then s0 was cleared, fence and all");
+  })));
+
+test("a move whose old shard is still in use past its deadline stops routed, and a resume clears it", () =>
+  withGatedDatabase((db, stores, gate) => Effect.gen(function* () {
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants.find((name) => db.shardOf(name) === "s0");
+    yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "blocker", data: { title: "held" } });
+
+    gate.armed = true;
+    const reader = yield* Effect.forkChild(db.forTenant(tenant).documents.findById({ collection: "posts", id: "blocker" }));
+    yield* Deferred.await(gate.reached);
+    const stopped = yield* Effect.flip(db.movement.rebalance(allOn("s1", 2)));
+    assert.equal(stopped._tag, "PlacementInUse");
+    assert.deepEqual([stopped.shard, stopped.partition, stopped.calls], ["s0", tenant, 1]);
+
+    // Routed and writable on its new shard; the old one intact and fenced.
+    assert.equal((yield* db.movement.pending)[0].phase, "routed");
+    assert.equal(db.shardOf(tenant), "s1");
+    yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "p9", data: { title: "after" } });
+    assert.ok((yield* stores.get("s0").partition(tenant).liveRecords).length > 0);
+    assert.equal((yield* Effect.flip(stores.get("s0").partition(tenant).writable))._tag, "TenantMoving");
+
+    yield* Deferred.succeed(gate.release, undefined);
+    assert.equal((yield* Fiber.join(reader))?.data.title, "held");
+    const [resumed] = yield* db.movement.resume;
+    assert.equal(resumed.resumed, true);
+    assert.ok(resumed.removed > 0);
+    assert.ok(!(yield* stores.get("s0").partitions).includes(tenant));
+    assert.deepEqual(yield* db.movement.pending, []);
+    assert.equal((yield* db.forTenant(tenant).documents.findById({ collection: "posts", id: "p9" }))?.data.title, "after");
+  }), { drainTimeout: "30 millis" }));
+
 test("the shard a tenant left stops holding it, and stops claiming it", async (t) => {
   await withDatabase(t, (db, stores) =>
     Effect.gen(function* () {
@@ -131,17 +283,14 @@ test("the shard a tenant left stops holding it, and stops claiming it", async (t
 
       yield* db.movement.rebalance(allOn("s1", 2));
 
-      // Not just unreachable: gone. A shard that kept the records would go on
-      // growing, and one that kept the occupancy marker would tell the next
-      // placement decision it is still occupied.
-      // Only the fence stays, so a write still on its way to s0 is refused
-      // there rather than landing where nothing reads it.
-      const left = yield* stores.get("s0").partition(from).liveRecords;
-      assert.deepEqual(left, [], `s0 still holds records for ${from}`);
-      const late = yield* Effect.flip(documentsFor(stores.get("s0").partition(from), from)
-        .insert({ collection: "posts", id: "late", data: { title: "late" } }));
-      assert.equal(late._tag, "TenantMoving", "a late write to the old shard is refused");
-      assert.deepEqual(yield* stores.get("s0").partition(from).liveRecords, [], "and left nothing behind");
+      // Not just unreachable: gone, fence included. A shard that kept the
+      // records would go on growing, one that kept the occupancy marker would
+      // tell the next placement decision it is still occupied, and one that
+      // kept a fence would keep a partition for every tenant that ever left.
+      // Nothing can still arrive: the move waited for every call that reached
+      // s0 before routing moved.
+      assert.deepEqual(yield* stores.get("s0").partition(from).liveRecords, [], `s0 still holds records for ${from}`);
+      assert.ok(!(yield* stores.get("s0").partitions).includes(from), `s0 holds no key of ${from}`);
 
       // The fence is the source's alone: the copy takes writes the moment
       // routing points at it.
@@ -487,12 +636,12 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
         if (!interruptCleanup || shard !== "s0") return store;
         return {
           ...store,
-          drop: (partition, options) => Effect.suspend(() => {
+          drop: (partition) => Effect.suspend(() => {
             if (db?.partitionMap.version === 2) {
               cleanupInterrupted = true;
               return Effect.die(new Error("injected interruption before source cleanup"));
             }
-            return store.drop(partition, options);
+            return store.drop(partition);
           }),
         };
       }),
@@ -523,7 +672,7 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
     assert.equal((yield* db.movement.pending)[0].phase, "routed");
     assert.deepEqual(yield* snapshot(db, tenant), before);
     assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);
-    // The fence outlived the process that set it.
+    // The fence outlived the process that set it, until the move is finished.
     assert.equal((yield* Effect.flip(stores.get("s0").partition(tenant).writable))._tag, "TenantMoving");
     const results = yield* db.movement.resume;
     assert.equal(results.length, 1);
@@ -531,8 +680,7 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
     assert.equal(results[0].copied, 0);
     assert.ok(results[0].removed > 0, "the real source records were cleaned up");
     assert.deepEqual(yield* stores.get("s0").partition(tenant).liveRecords, [], "no records are left on the source");
-    assert.equal((yield* Effect.flip(stores.get("s0").partition(tenant).writable))._tag, "TenantMoving",
-      "only the fence is");
+    assert.ok(!(yield* stores.get("s0").partitions).includes(tenant), "nor anything else, fence included: a restart holds no call that could still arrive");
     assert.equal(db.partitionMap.version, 2);
     assert.deepEqual(yield* snapshot(db, tenant), before);
     assert.deepEqual((yield* db.forTenant(tenant).events.read()).events, routedEvents);

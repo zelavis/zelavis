@@ -402,6 +402,21 @@ export interface ZelavisDataClient {
     size(namespace: string): Promise<number>;
     clear(namespace: string): Promise<number>;
   };
+  /**
+   * The Tenant's transactional outbox: messages emitted with writes
+   * (`documents.write({ emit })`) or on their own, read back in commit order.
+   * Reading needs only `project.data.read`. Same contract as `zelavis data outbox`.
+   */
+  readonly outbox: {
+    /**
+     * Emit one message and answer with its id. Without an id of its own, a
+     * message emitted with an idempotency key takes `idempotent:<key>`.
+     */
+    emit(input: ZelavisDataOutboxEmit & ZelavisDataIdempotent): Promise<{ readonly id: string }>;
+    read(options?: { readonly after?: string; readonly limit?: number; readonly topic?: string }): Promise<ZelavisDataOutboxPage>;
+    /** Remove handled messages, up to 1000 ids; ids not held are skipped. */
+    remove(ids: readonly string[]): Promise<{ readonly removed: number }>;
+  };
 }
 
 export interface ZelavisDataKeyValueEntry {
@@ -550,6 +565,35 @@ export interface ZelavisDataDeleteInput extends ZelavisDataIdempotent {
 
 export interface ZelavisDataWriteInput extends ZelavisDataIdempotent {
   readonly operations: readonly ZelavisDataWriteOperation[];
+  /** Outbox messages committed in the same transaction as the operations, or not at all. */
+  readonly emit?: readonly ZelavisDataOutboxEmit[];
+}
+
+/** A message for the Tenant's outbox. */
+export interface ZelavisDataOutboxEmit {
+  /** What the message is about, 1 to 256 characters. */
+  readonly topic: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+  /** Generated when absent; an id the outbox already holds is refused (409). */
+  readonly id?: string;
+}
+
+export interface ZelavisDataOutboxMessage {
+  readonly id: string;
+  readonly topic: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly emittedAt: string;
+}
+
+/**
+ * One read of the outbox: messages in the order they were committed. Continue
+ * from `cursor`, which is past everything the read looked at; `more` says
+ * there is more to read now. Delivery is at least once: deduplicate by `id`.
+ */
+export interface ZelavisDataOutboxPage {
+  readonly messages: ReadonlyArray<ZelavisDataOutboxMessage & { readonly cursor: string }>;
+  readonly cursor?: string;
+  readonly more: boolean;
 }
 
 export type ZelavisDataWriteOperation =
@@ -1724,6 +1768,18 @@ function createDataClient(
           `kv/${dataName(namespace, "KV namespace")}`,
         ), { method: "DELETE", body: {} })))).removed;
   })),
+    },
+    outbox: {
+      emit: (input) => post<{ id: string }>("outbox/messages", input),
+      read: (options = {}) => {
+        const query = new URLSearchParams();
+        if (options.after !== undefined) query.set("after", options.after);
+        if (options.limit !== undefined) query.set("limit", String(options.limit));
+        if (options.topic !== undefined) query.set("topic", options.topic);
+        const search = query.toString();
+        return json<ZelavisDataOutboxPage>(dataPath(projectId, `outbox/messages${search === "" ? "" : `?${search}`}`));
+      },
+      remove: (ids) => post<{ removed: number }>("outbox/messages/remove", { ids }),
     },
   };
 }

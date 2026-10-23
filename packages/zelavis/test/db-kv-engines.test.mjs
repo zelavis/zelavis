@@ -182,3 +182,70 @@ for (const [name, make, installed] of engines) {
     );
   });
 }
+
+// Snapshots: a read of several steps sees one moment.
+for (const [name, make, installed] of engines) {
+  const skip = installed ? false : `${name} is not installed`;
+  const texts = (entries) => entries.map((entry) => text(entry.value));
+  const scanned = (reader, prefix, options) => Effect.map(Stream.runCollect(reader.scan(prefix, options)), (c) => texts([...c]));
+
+  test(`${name}: a snapshot reads the engine as it was when taken, whatever is written meanwhile`, { skip }, async (t) => {
+    await run(t, make, (engine) => Effect.gen(function* () {
+      yield* engine.write([
+        { op: "put", key: key(1, 1), value: bytes("one") },
+        { op: "put", key: key(1, 2), value: bytes("two") },
+        { op: "put", key: key(1, 3), value: bytes("three") },
+      ]);
+      yield* Effect.scoped(Effect.gen(function* () {
+        const snapshot = yield* engine.snapshot;
+        yield* engine.write([
+          { op: "put", key: key(1, 2), value: bytes("TWO") },
+          { op: "delete", key: key(1, 3) },
+          { op: "put", key: key(1, 4), value: bytes("four") },
+        ]);
+        assert.deepEqual(yield* scanned(engine, key(1)), ["one", "TWO", "four"], "the engine itself moved on");
+
+        assert.equal(text(yield* snapshot.get(key(1, 2))), "two");
+        assert.equal(text(yield* snapshot.get(key(1, 3))), "three");
+        assert.equal(yield* snapshot.get(key(1, 4)), undefined);
+        assert.deepEqual(yield* scanned(snapshot, key(1)), ["one", "two", "three"]);
+        assert.deepEqual(yield* scanned(snapshot, key(1), { reverse: true }), ["three", "two", "one"]);
+        assert.deepEqual(yield* scanned(snapshot, key(1), { limit: 2 }), ["one", "two"]);
+        assert.deepEqual(yield* scanned(snapshot, key(1), { from: key(1, 2), to: key(1, 3) }), ["two"]);
+      }));
+      yield* Effect.scoped(Effect.gen(function* () {
+        const later = yield* engine.snapshot;
+        assert.deepEqual(yield* scanned(later, key(1)), ["one", "TWO", "four"], "a snapshot taken later sees the writes");
+      }));
+    }));
+  });
+
+  test(`${name}: snapshots taken at different moments each keep their own`, { skip }, async (t) => {
+    await run(t, make, (engine) => Effect.gen(function* () {
+      yield* engine.write([{ op: "put", key: key(2, 1), value: bytes("v1") }]);
+      yield* Effect.scoped(Effect.gen(function* () {
+        const first = yield* engine.snapshot;
+        yield* engine.write([{ op: "put", key: key(2, 1), value: bytes("v2") }]);
+        const second = yield* engine.snapshot;
+        yield* engine.write([{ op: "put", key: key(2, 1), value: bytes("v3") }]);
+        assert.deepEqual(
+          [text(yield* first.get(key(2, 1))), text(yield* second.get(key(2, 1))), text(yield* engine.get(key(2, 1)))],
+          ["v1", "v2", "v3"],
+        );
+      }));
+    }));
+  });
+
+  test(`${name}: snapshots taken and released in turn hold nothing back`, { skip }, async (t) => {
+    await run(t, make, (engine) => Effect.gen(function* () {
+      for (let round = 0; round < 50; round++) {
+        yield* Effect.scoped(Effect.gen(function* () {
+          const snapshot = yield* engine.snapshot;
+          yield* engine.write([{ op: "put", key: key(3, round % 256), value: bytes(`r${round}`) }]);
+          assert.equal(yield* snapshot.get(key(3, round % 256)), undefined);
+        }));
+      }
+      assert.equal((yield* collect(engine, key(3))).length, 50, "every write landed while snapshots came and went");
+    }));
+  });
+}

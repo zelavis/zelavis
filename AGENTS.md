@@ -1130,7 +1130,8 @@ Key rules:
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
   the live keys united with each value's blobs less that value's tombstones — a
   tombstone cancels only its own value's posting, which matters for a prefix
-  that spans several values. Blobs are immutable: `db.maintenance`
+  that spans several values — and why `terms()` lists a word known only to
+  blobs only while some posting survives that word's own tombstones. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
   removed afterwards leaves a tombstone rather than editing one. So a removal
   path must go through the store's own helpers — deleting a posting key
@@ -1209,9 +1210,22 @@ Key rules:
   events after `p` applied by version, is the partition as of the last of them.
   This holds because records are single values, versions only grow and
   identifiers are never reused, and it is how a copy is taken without stopping
-  the writer: `seed` (and with it `db.movement`), a backup export and
-  `snapshot` all rely on it. Keep all three on it rather than locking the
-  writer for the length of a copy.
+  the writer: `seed` (and with it `db.movement` and `levelFollower`) and
+  `snapshot` rely on it. Keep them on it rather than locking the writer for the
+  length of a copy. A seed of a source that has compacted writes what it
+  copies as the copy's first snapshot too, recorded at the compaction point in
+  its last batch, so the copy can still `rebuildLenses`.
+- A read of several steps — resolving a query, then reading what it named —
+  answers from one snapshot of its shard (`store.reading`; every engine's
+  `snapshot`: a read transaction on a second connection for the SQLite
+  family, LMDB's read transaction, a RocksDB transaction, an array the memory
+  engine never mutates). Document, KV, event, time-series reads and a backup
+  export each run in one. Writes, upkeep and the beliefs a partition handle
+  keeps (its revision, lens state and fence) never read a snapshot: a stale
+  fence kept as current would let a write through that the partition refuses.
+  So everything under the writer's permit reads the engine as it is, and so do
+  the reads that fill a belief; a snapshot is taken at its first read, never
+  later.
 - A query reads each clause only up to a cap (`probeCap`, 4096): a clause that
   fits is an exact set; an AND checks its broad clauses per candidate against
   the candidate's manifest, and an ordered read checks a broad `where` per row.
@@ -1246,7 +1260,14 @@ Key rules:
   it) looks at a bounded stretch of the log and returns `{ events, cursor,
   more }`, where `cursor` moves past everything it looked at, matching or not.
   Consumers continue from that cursor, never from the last matching event, or a
-  long run of other writes is read again forever.
+  long run of other writes is read again forever. App code that must emit a
+  message with a write does it through the same batch: `documents.write({
+  emit })` records each message in the tenant's `zv.outbox` records inside the
+  transaction that commits the changes, so the message exists exactly when
+  they do. `outbox.read` pages the log the same way, skipping messages since
+  removed; delivery is at least once, so consumers deduplicate by message id
+  and `outbox.remove` what they have handled. A message id the outbox holds is
+  refused, never replaced.
 - A consumer that writes into the partition whose log it reads commits each
   batch of what it derives together with the cursor that batch reached, in one
   transaction, re-reading its cursor inside it (`txn.allocate` hands out
@@ -1265,19 +1286,37 @@ Key rules:
   one resumes, carrying the copy on from the target's head — the target's
   positions are the source's — unless its seed never finished (`stats.seeding`,
   set by a seed's first batch and cleared by its last) or the source has
-  compacted past that head, when it copies again. Identifiers and positions are the source's own, so edges, event
-  cursors and projection checkpoints carry on after a move. The shard a tenant
-  left keeps only its fence, removed with nothing else in the same pass, so a
-  write still on its way there is refused rather than lost. The fence is the
+  compacted past that head, when it copies again (`levelFollower`, which also
+  copies again a target ahead of or diverging from its source; a pass applies
+  a bounded number of batches, so a tenant written faster than it is copied
+  ends each round and the fence ends the rounds). Identifiers and positions are the source's own, so edges, event
+  cursors and projection checkpoints carry on after a move. The fence is the
   partition's own (`ObjectStoreApi.fence`), never copied, and the store checks
   it under the partition's writer for every change — documents, time series,
   checkpoints, a restore, an allocated identifier — so a change either committed
   before it or is refused, and one last catch-up after fencing is complete. Routing is one record for every tenant in a
   rebalance, so it moves once, after all of them are copied — applying it while
   one was still uncopied would route a tenant to a shard that does not hold it.
-  `topology.update` still refuses an occupied range. Routing is read
-  from the topology on every call — never cached from the map a handle opened
-  with, which would go on reading the shard the records left.
+  `topology.update` still refuses an occupied range.
+- A tenant handle is never bound to a shard. Each operation it runs — every
+  store call inside it, nested operations included — goes to the one placement
+  routing names as the operation starts (`PartitionRouter.operations`), so a
+  handle taken before a move works after it and no operation spans two
+  placements: an identifier taken from the source's counter and written on the
+  target was never copied, and the next write there could be handed it again.
+  An operation holds an in-process lease on its placement until it ends (a
+  stream until it is consumed); upkeep visits a partition only where routing
+  places it, under one too. After routing moves, a move waits — up to
+  `drainTimeout`, then `PlacementInUse` with routing moved and the source
+  intact and fenced, for a resume — until no lease on the source is held, then
+  drops the source partition whole, fence included: nothing can arrive there
+  any more. Leases are in-process because the writer is; a restart holds none.
+- A shard's tenants are the partitions holding any key, the reserved
+  `zv.`-prefixed ones aside (`tenantsOn`), never a marker some layer has to
+  remember to write. A tenant whose collections are gone still holds its log,
+  identifier counter and receipts — and maybe time series or messages — and a
+  move that left them behind would let it start identifiers and positions over
+  under every cursor handed out before.
 - Crossing partitions is a separate API, never a fallback. `forTenant` is
   single-partition by construction; `db.scatter` is the only thing that fans
   out, and it reports what each leg cost. A `Seq` names an object only together
@@ -1292,7 +1331,11 @@ Key rules:
   nothing written meanwhile can take one; a retired record at one only lifts
   the restored versions. A merge, or a tenant where live records hold some of
   them, remaps them, and edges with them. Checkpoints and time-series state
-  are positions in the old log, so a backup carries neither.
+  are positions in the old log, so a backup carries neither. A restore into the
+  tenant a backup came from writes into that tenant's own log — a purge's
+  retractions, then the backup's records — so its projections and series carry
+  on from where they were and end where a rebuild over the whole log ends. A
+  purge works a page of records per transaction, never the whole tenant at once.
 - A schema version governs what is accepted next, never what is already
   stored: activating one rewrites nothing. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions

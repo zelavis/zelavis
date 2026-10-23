@@ -21,6 +21,7 @@ import type {
   ReferenceConstraint,
   RelatedFilter,
   DocumentWrite,
+  OutboxEmit,
   Analyzer,
   Document,
   HighlightOptions,
@@ -411,6 +412,7 @@ const CONFLICT_TAGS = new Set([
   "UniqueViolation",
   "DocumentConflict",
   "SchemaVersionExists",
+  "MessageExists",
   // Refused only while a move is fenced; the same request succeeds once
   // routing points at the new shard.
   "TenantMoving",
@@ -448,6 +450,7 @@ const BAD_REQUEST_TAGS = new Set([
   "SchemaViolation",
   "TenantNotEmpty",
   "InvalidRestoreMode",
+  "InvalidMessage",
   "InvalidKeyValueExpiration",
   "KeyValueCursorMismatch",
   "InvalidKeyValueEncoding",
@@ -507,6 +510,10 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Unsupported backup format "${failure.format}".`;
     case "TenantNotEmpty":
       return `Tenant "${failure.tenant}" already holds data; restoring would orphan it.`;
+    case "MessageExists":
+      return `The outbox already holds a message with id "${failure.id}".`;
+    case "InvalidMessage":
+      return `Not a message: ${failure.reason}.`;
     case "InvalidRestoreMode":
       return `Restore mode "${failure.mode}" is not one of ${RESTORE_MODES.join(", ")}.`;
     case "PartitionMapInvalid":
@@ -712,6 +719,7 @@ export function defineDatabaseService(
   const children = [
     defineDatabaseDocumentsService(database),
     defineDatabaseKeyValueService(database),
+    defineDatabaseOutboxService(database),
     defineDatabaseSchemasService(database),
     defineDatabaseTimeSeriesService(database),
     defineDatabaseMaintenanceService(database),
@@ -743,6 +751,7 @@ export function defineDatabaseEndpointGroups(
     defineDatabaseRootService(database),
     defineDatabaseDocumentsService(database),
     defineDatabaseKeyValueService(database),
+    defineDatabaseOutboxService(database),
     defineDatabaseSchemasService(database),
     defineDatabaseTimeSeriesService(database),
     defineDatabaseMaintenanceService(database),
@@ -769,6 +778,128 @@ export function defineDatabaseEndpointGroups(
       origin,
     })),
   ];
+}
+
+/**
+ * The HTTP form of the tenant's outbox. Reading is a GET, so a caller that may
+ * only read data can consume messages; emitting and removing are writes.
+ */
+export function defineDatabaseOutboxService(
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
+  return {
+    name: "outbox",
+    basePath: "outbox",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.outbox.read",
+          method: "GET",
+          path: "/messages",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "readOutbox",
+            summary: "Read the tenant's outbox messages in the order they were committed",
+            tags: ["outbox"],
+            queryParams: {
+              tenantId: { type: "string", description: "Tenant ID; the caller's own when omitted" },
+              after: { type: "string", description: "The cursor a previous read returned" },
+              limit: { type: "number", description: "Messages per page, 1 to 1000 (default 100)" },
+              topic: { type: "string", description: "Only messages with this topic" },
+            },
+            responses: { 200: { description: "{ messages, cursor, more }: continue from `cursor`" } },
+          },
+          handler: ({ service, query, principal }) => present(Effect.gen(function* () {
+            const limit = readQueryNumber(query.get("limit"));
+            const after = readString(query.get("after"));
+            const topic = readString(query.get("topic"));
+            return {
+              body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).outbox.read({
+                ...(after === undefined ? {} : { after: after as never }),
+                ...(limit === undefined ? {} : { limit }),
+                ...(topic === undefined ? {} : { topic }),
+              })),
+            };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.outbox.emit",
+          method: "POST",
+          path: "/messages",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "emitOutboxMessage",
+            summary: "Emit one message to the tenant's outbox",
+            tags: ["outbox"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["topic", "payload"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID; the caller's own when omitted" },
+                  topic: { type: "string", description: "What the message is about, 1 to 256 characters" },
+                  payload: { type: "object", description: "The message's JSON body" },
+                  id: { type: "string", description: "The message's id, generated when absent; one already held is refused" },
+                  idempotencyKey: { type: "string", description: "Emit at most once per key" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "{ id }: the message's id, settled when not given" },
+              400: { description: "Not a message" },
+              409: { description: "The outbox already holds a message with this id" },
+            },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const id = readString(input.id);
+            return {
+              status: 201,
+              body: yield* integration(() => tenantOf(service, input, principal).outbox.emit({
+                topic: input.topic as string,
+                payload: input.payload as JsonObject,
+                ...(id === undefined ? {} : { id }),
+                ...readIdempotencyKey(input),
+              })),
+            };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.outbox.remove",
+          method: "POST",
+          path: "/messages/remove",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "removeOutboxMessages",
+            summary: "Remove handled messages from the tenant's outbox by id",
+            tags: ["outbox"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["ids"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID; the caller's own when omitted" },
+                  ids: { type: "array", description: "Up to 1000 message ids; ids not held are skipped" },
+                },
+              },
+            },
+            responses: { 200: { description: "{ removed }" }, 400: { description: "Not a list of ids" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return {
+              body: yield* integration(() => tenantOf(service, input, principal).outbox.remove({
+                ids: input.ids as ReadonlyArray<string>,
+              })),
+            };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+      ],
+    },
+  };
 }
 
 /** The HTTP form of the tenant KV lens. */
@@ -1420,6 +1551,10 @@ export function defineDatabaseDocumentsService(
                     type: "array",
                     description: "Changes, each { _tag: Insert | Upsert | Update | Delete, collection, ... }",
                   },
+                  emit: {
+                    type: "array",
+                    description: "Outbox messages committed with the changes, each { topic, payload, id? }",
+                  },
                 },
               },
             },
@@ -1437,11 +1572,15 @@ export function defineDatabaseDocumentsService(
               if (!Array.isArray(input.operations)) {
                 throw new TypeError("operations must be a list of changes.");
               }
+              if (input.emit !== undefined && !Array.isArray(input.emit)) {
+                throw new TypeError("emit must be a list of messages.");
+              }
               return {
                 body: {
                   written: yield* integration(() => service.forTenant(tenantId).documents.write({
                     ...readIdempotencyKey(input),
                     operations: input.operations as ReadonlyArray<DocumentWrite>,
+                    ...(input.emit === undefined ? {} : { emit: input.emit as ReadonlyArray<OutboxEmit> }),
                   })),
                 },
               };

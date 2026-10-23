@@ -103,3 +103,33 @@ test("libsql-remote: a batch that fails lands nothing", { skip }, async () => {
       assert.equal(text(yield* engine.get(key(1))), "one", "and what was already there is untouched");
     }));
 });
+
+// The client also speaks to a local file, so the snapshot contract runs here
+// without a server: a read transaction is the snapshot either way.
+test("libsql remote: a snapshot is a read transaction, reading the database as it was when taken", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createClient } = await import("@libsql/client");
+  const dir = mkdtempSync(join(tmpdir(), "zv-libsql-remote-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const url = `file:${join(dir, "remote.db")}`;
+  // A server keeps its database in WAL mode, where a reader never blocks the
+  // writer; a plain file has to be told.
+  const setup = createClient({ url });
+  await setup.execute("PRAGMA journal_mode = WAL");
+  setup.close();
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const engine = yield* makeLibsqlRemoteEngine("snap", { url });
+    yield* engine.write([{ op: "put", key: key(1, 1), value: bytes("one") }]);
+    yield* Effect.scoped(Effect.gen(function* () {
+      const snapshot = yield* engine.snapshot;
+      // Written before the snapshot is first read: it is still the moment it was taken.
+      yield* engine.write([{ op: "put", key: key(1, 1), value: bytes("ONE") }, { op: "put", key: key(1, 2), value: bytes("two") }]);
+      assert.equal(text(yield* snapshot.get(key(1, 1))), "one");
+      assert.equal(yield* snapshot.get(key(1, 2)), undefined);
+      assert.deepEqual([...(yield* Stream.runCollect(snapshot.scan(key(1))))].map((entry) => text(entry.value)), ["one"]);
+    }));
+    assert.equal(text(yield* engine.get(key(1, 1))), "ONE");
+  })));
+});

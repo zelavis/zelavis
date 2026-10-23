@@ -3,7 +3,7 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|modalities|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear> --project ID [collection-or-namespace] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|modalities|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -23,6 +23,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   let where: unknown;
   let orderBy: unknown;
   let operations: unknown;
+  let emit: unknown;
+  let ids: ReadonlyArray<string> | undefined;
   let after: string | undefined;
   let mode: string | undefined;
   let idempotencyKey: string | undefined;
@@ -57,7 +59,7 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
       "--url", "--token", "--project", "--data", "--where", "--order",
       "--operations", "--limit", "--after", "--mode", "--expected-version",
       "--idempotency-key", "--prefix", "--lower", "--upper", "--direction",
-      "--expires-at", "--ttl-ms", "--columns",
+      "--expires-at", "--ttl-ms", "--columns", "--emit", "--ids",
     ];
     if (!known.includes(flag)) throw new Error(`Unknown data option "${arg}".`);
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -83,6 +85,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     if (flag === "--where") where = parseJson(flag, value);
     if (flag === "--order") orderBy = parseJson(flag, value);
     if (flag === "--operations") operations = parseJson(flag, value);
+    if (flag === "--emit") emit = parseJson(flag, value);
+    if (flag === "--ids") ids = value.split(",").map((id) => id.trim()).filter((id) => id !== "");
     if (flag === "--limit") {
       limit = Number(value);
       if (!Number.isSafeInteger(limit)) throw new Error("--limit requires an integer.");
@@ -226,13 +230,53 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
       ].join("\n") || "No matching documents.");
     return;
   }
+  if (action === "outbox") {
+    // The positional is the topic here: only that topic's messages.
+    const page = (yield* integrationValue(api.outbox.read({
+      ...(collection === undefined ? {} : { topic: collection }),
+      ...(after === undefined ? {} : { after }),
+      ...(limit === undefined ? {} : { limit }),
+    })));
+    print(page, () => [
+      ...(page.messages.length === 0
+        ? ["No messages."]
+        : page.messages.map((message) => `${message.id}\t${message.topic}\t${message.emittedAt}\t${JSON.stringify(message.payload)}`)),
+      ...(page.cursor === undefined ? [] : [`cursor\t${page.cursor}`]),
+      ...(page.more ? ["more\ttrue"] : []),
+    ].join("\n"));
+    return;
+  }
+
+  if (action === "outbox-emit") {
+    // Missing is refused here; anything given goes to the outbox, which says
+    // what is wrong with it the same way for every client.
+    if (collection === undefined) throw new Error("data outbox-emit requires a topic.");
+    const message = (yield* integrationValue(api.outbox.emit({
+      topic: collection,
+      payload: requireData(),
+      ...(documentId === undefined ? {} : { id: documentId }),
+      ...keyed,
+    })));
+    print(message, () => `Emitted ${message.id}`);
+    return;
+  }
+
+  if (action === "outbox-remove") {
+    if (ids === undefined || ids.length === 0) throw new Error("data outbox-remove requires --ids with the messages handled.");
+    const result = (yield* integrationValue(api.outbox.remove(ids)));
+    print(result, () => `Removed ${result.removed} message${result.removed === 1 ? "" : "s"}.`);
+    return;
+  }
+
   if (action === "write") {
     if (!Array.isArray(operations)) {
       throw new Error("data write requires --operations with a JSON list of changes.");
     }
+    if (emit !== undefined && !Array.isArray(emit)) throw new Error("--emit requires a JSON list of messages.");
     const written = (yield* integrationValue(api.documents.write({
       ...keyed,
       operations: operations as Parameters<typeof api.documents.write>[0]["operations"],
+      ...(emit === undefined ? {} : { emit: emit as NonNullable<Parameters<typeof api.documents.write>[0]["emit"]> }),
     })));
     print({ written }, () =>
       written.map((entry) =>

@@ -7,9 +7,8 @@ import {
   RangeNotEmpty,
   SubdivisionInvalid,
 } from "./errors.js";
-import { isReservedCollectionName, isValidCollectionName } from "./naming.js";
+import { isReservedCollectionName, isReservedTenantId, isValidCollectionName } from "./naming.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
-import { TENANT_NAMESPACE } from "./tenancy.js";
 import {
   GLOBAL_SHARD,
   PART_SEPARATOR,
@@ -102,23 +101,21 @@ export const validatePartitionMap = (map: PartitionMap): PartitionMapInvalid | u
 };
 
 /**
- * Tenants known to hold data on this shard.
+ * Tenants holding data on this shard: every partition with anything in it,
+ * but the reserved ones — the App's replicated records and the topology,
+ * which are never a tenant a move takes.
  *
- * A partition with keys is not yet an occupant: dropping a tenant's last
- * collection leaves its log and its retired records behind. An occupant is a
- * partition holding the marker the documents layer writes with its first
- * collection and removes with its last, read from the partition itself.
+ * Read from the keys themselves, one seek per partition, rather than from a
+ * marker some layer has to remember to write. Anything a partition holds is
+ * the tenant's: its records, but also its log, its identifier counter, its
+ * receipts, its time series and its outbox. A tenant whose last collection is
+ * gone still has those, and a move that left them behind would let the tenant
+ * start its identifiers and log positions over on its new shard, where every
+ * cursor handed out before would name a different event.
  */
 export const tenantsOn = (shard: ShardStoreApi): Effect.Effect<ReadonlyArray<TenantId>> =>
-  Effect.gen(function* () {
-    const out: TenantId[] = [];
-    for (const partition of yield* shard.partitions) {
-      if ((yield* shard.partition(partition).lookup(TENANT_NAMESPACE, partition)) !== undefined) {
-        out.push(partition);
-      }
-    }
-    return out.sort();
-  }).pipe(Effect.orDie);
+  Effect.map(shard.partitions, (partitions) => partitions.filter((partition) => !isReservedTenantId(partition)).sort())
+    .pipe(Effect.orDie);
 
 export const loadPartitionMap = (
   store: ObjectStoreApi,

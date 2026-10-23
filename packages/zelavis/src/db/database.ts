@@ -1,6 +1,6 @@
-import { Effect, type Scope } from "effect";
+import { type Duration, Effect, Option, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { InvalidConstraint, PartitionUnavailable, TenantDivided, UnknownPart } from "./errors.js";
+import { InvalidConstraint, TenantDivided, UnknownPart } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -8,6 +8,7 @@ import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
+import { outboxFor, type OutboxApi } from "./outbox.js";
 import {
   initPartitionMap,
   initPlacementCatalog,
@@ -21,6 +22,7 @@ import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
+import { partitionRouter } from "./routing.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isValidCollectionName } from "./naming.js";
@@ -46,6 +48,8 @@ export interface TenantApi {
   readonly schemas: SchemasApi;
   readonly timeSeries: TimeSeriesApi;
   readonly backups: BackupsApi;
+  /** Messages emitted with this tenant's writes, read back in the order they were committed. */
+  readonly outbox: OutboxApi;
 
   /**
    * Bring documents forward from one schema version to another.
@@ -274,6 +278,13 @@ export interface MakeDatabaseOptions {
   /** Recorded on every emitted event so a reader can tell writers apart. */
   readonly nodeId?: string;
   /**
+   * How long a move waits, once routing points at a tenant's new shard, for
+   * calls that reached the old one before it moved to finish. Defaults to 30
+   * seconds. Past it the move answers `PlacementInUse`, with routing moved and
+   * the old shard still holding the tenant, fenced, until a resume clears it.
+   */
+  readonly drainTimeout?: Duration.Input;
+  /**
    * Opens one physical shard.
    *
    * Requires a `Scope`, because a shard is an acquired resource that has to be
@@ -287,6 +298,9 @@ export interface MakeDatabaseOptions {
     context: { readonly origin: string },
   ) => Effect.Effect<ShardStoreApi, DbError, Scope.Scope>;
 }
+
+/** How long a move waits for calls still using a tenant's old shard, unless told otherwise. */
+const DRAIN_TIMEOUT: Duration.Input = "30 seconds";
 
 /**
  * Open a logical database over a partition map.
@@ -323,14 +337,6 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   }
 
   const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog, subdivisionCatalog);
-  const movement = movementOver({ topologyStore, topology, shards });
-  // Routing may already have left a source shard whose cleanup is unfinished.
-  // Earlier phases also need target shards not yet named by the current map.
-  for (const move of yield* movement.pending) {
-    for (const shard of new Set([move.from, move.to, ...shardsOf(move.map)])) {
-      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard, opening));
-    }
-  }
 
   /**
    * Where a tenant lives *now*.
@@ -341,24 +347,28 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
    * records were moved off.
    */
   const shardOf = (tenant: TenantId): ShardId => shardFor(topology.current(), tenant);
-
-  /** The shard a partition lives on, refusing one the map names but nothing opened. */
-  const shardHolding = (partition: PartitionKey): ShardStoreApi => {
-    const shard = shardOf(partition);
-    const store = shards.get(shard);
-    if (store === undefined) {
-      // shardsOf covers every placement, so this is a corrupt map rather than
-      // a tenant we simply have not seen: a broken invariant, not a request
-      // anybody can correct.
-      throw new PartitionUnavailable({
-        partition,
-        reason: `partition map version ${topology.current().version} places it on shard "${shard}", which is not open`,
-      });
+  const router = partitionRouter({ shardOf, shards });
+  const drainTimeout = options.drainTimeout ?? DRAIN_TIMEOUT;
+  const movement = movementOver({
+    topologyStore,
+    topology,
+    shards,
+    drained: (shard, tenant) => router.drained(shard, tenant, drainTimeout),
+  });
+  // Routing may already have left a source shard whose cleanup is unfinished.
+  // Earlier phases also need target shards not yet named by the current map.
+  for (const move of yield* movement.pending) {
+    for (const shard of new Set([move.from, move.to, ...shardsOf(move.map)])) {
+      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard, opening));
     }
-    return store;
-  };
+  }
 
-  const storeFor = (tenant: TenantId): ObjectStoreApi => shardHolding(tenant).partition(tenant);
+  /**
+   * A tenant's store, never bound to a shard: each operation of the API built
+   * over it runs against where the tenant is routed when it starts (see
+   * `partitionRouter`), so no handle keeps using a shard a move took it off.
+   */
+  const storeFor = (tenant: TenantId): ObjectStoreApi => router.routed(tenant);
 
   // The topology store is a store like any other: it takes writes, so it grows
   // like any other, and upkeep that skipped it would leave the one store an
@@ -369,7 +379,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     ...shards,
   ];
 
-  /** Run one piece of upkeep on every partition of every shard, one at a time. */
+  /**
+   * Run one piece of upkeep on every partition of every shard, one at a time.
+   *
+   * A tenant's partition is visited only on the shard routing places it on,
+   * and under a lease there, so a move never clears a partition upkeep is
+   * still working on, and upkeep never writes into one a move has routed away.
+   * The topology, the App's own records and their replicas never move.
+   */
   const acrossPartitions = <A>(
     run: (store: ObjectStoreApi) => Effect.Effect<A, DbError>,
   ): Effect.Effect<ReadonlyArray<{ readonly shard: ShardId; readonly partition: PartitionKey; readonly result: A }>, DbError> =>
@@ -377,8 +394,13 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       Effect.forEach(everyShard(), ([shard, store]) =>
         Effect.flatMap(store.partitions, (partitions) =>
           Effect.forEach(partitions, (partition) =>
-            Effect.map(run(store.partition(partition)), (result) => ({ shard, partition, result }))))),
-      (rows) => rows.flat(),
+            Effect.map(
+              shards.has(shard) && partition !== GLOBAL_TENANT
+                ? router.placed(shard, partition, run)
+                : Effect.map(run(store.partition(partition)), Option.some),
+              (result) => Option.map(result, (value) => ({ shard, partition, result: value })),
+            )))),
+      (rows) => rows.flat().flatMap((row) => (Option.isSome(row) ? [row.value] : [])),
     );
 
   const maintenance: MaintenanceApi = {
@@ -409,7 +431,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
 
   const documentsFor_ = (tenant: TenantId): DocumentsApi => {
     const store = storeFor(tenant);
-    return documentsFor(store, tenant, schemasFor(store, tenant));
+    return router.operations(documentsFor(store, tenant, schemasFor(store, tenant)), tenant);
   };
 
   const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId, sharedStore: ObjectStoreApi): TenantApi => {
@@ -430,6 +452,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       schemas,
       timeSeries,
       backups: backupsFor(store, tenant),
+      outbox: outboxFor(store, documents),
       migrations: migrationsFor(documents, schemas, tenant),
       systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
       shared,
@@ -599,13 +622,13 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       // Synchronous, so refused by throwing — a typed error, which the HTTP
       // routes answer as a bad request naming the parts.
       if (parts !== undefined) throw new TenantDivided({ tenant, parts });
-      return tenantApiOver(storeFor(tenant), tenant, shardHolding(tenant).partition(GLOBAL_TENANT));
+      return router.operations(tenantApiOver(storeFor(tenant), tenant, router.routed(GLOBAL_TENANT, tenant)), tenant);
     },
     forPart: (tenant, part) => {
       const parts = topology.subdivision.partsOf(tenant);
       if (parts === undefined || !parts.includes(part)) throw new UnknownPart({ tenant, part, parts: parts ?? [] });
       const key = partitionKeyFor(tenant, part);
-      return tenantApiOver(storeFor(key), key, shardHolding(key).partition(GLOBAL_TENANT));
+      return router.operations(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key);
     },
   } satisfies DatabaseApi;
 });

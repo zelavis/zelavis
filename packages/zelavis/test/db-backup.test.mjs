@@ -173,9 +173,9 @@ test("backup: an export taken while writes continue restores to one moment", () 
     const seqOfA = yield* store.lookup("doc/pairs", "a");
 
     // The records are read while writes carry on. Stand in for one batch that
-    // commits partway through the read: everything up to "a" as it was before
-    // the batch, everything after it as the batch left it — what a scan racing
-    // a writer can see, and on its own no single moment.
+    // commits partway through the read: everything up to "a" read before the
+    // batch, everything after it read once the batch has landed — what a scan
+    // racing a writer could see, and on its own no single moment.
     const racing = {
       ...store,
       records: Stream.unwrap(Effect.gen(function* () {
@@ -194,9 +194,10 @@ test("backup: an export taken while writes continue restores to one moment", () 
     for (const id of ["a", "b", "c"]) {
       values.push((yield* documentsFor(copy, "acme").findById({ collection: "pairs", id })).data.n);
     }
-    // The events logged after the read began bring every record to the last
-    // of them, so the batch is either wholly in the copy or not at all.
-    assert.deepEqual(values, [2, 2, 2]);
+    // The export reads one snapshot of the store, taken as it began, so the
+    // batch that landed while it ran is wholly absent from the copy rather
+    // than half in it.
+    assert.deepEqual(values, [1, 1, 1]);
   }))));
 
 test("backup: refuses a foreign format, a mismatched tenant, and a populated one", async (t) => {

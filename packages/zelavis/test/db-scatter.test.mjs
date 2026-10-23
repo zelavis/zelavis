@@ -5,8 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
 import {
-  and, edge, equals, makeDatabase, partitionMapFor, term,
-  TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE,
+  and, COLLECTION_NAMESPACE, edge, equals, makeDatabase, partitionMapFor, term,
 } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { asSeq } from "../dist/db/index.js";
@@ -164,8 +163,9 @@ test("a raw scatter names matches by shard and identity, not by bare identifier"
     Effect.gen(function* () {
       yield* seed(db);
 
+      // Every tenant's "posts" collection record carries this posting.
       const result = yield* db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
       });
 
       // Every partition allocates from its own dense space, so the same number
@@ -174,8 +174,9 @@ test("a raw scatter names matches by shard and identity, not by bare identifier"
       const shards = new Set();
       for (const match of result.rows) {
         shards.add(match.shard);
-        assert.equal(match.namespace, TENANT_NAMESPACE);
-        assert.ok(TENANTS.includes(match.key));
+        assert.equal(match.namespace, COLLECTION_NAMESPACE);
+        assert.equal(match.key, "posts");
+        assert.ok(TENANTS.includes(match.tenant));
       }
       assert.equal(result.rows.length, TENANTS.length);
       assert.ok(shards.size > 1);
@@ -232,7 +233,7 @@ test("a shard the map does not have is refused, not quietly skipped", async (t) 
       // fourth would answer a narrower question than the caller asked, and
       // return it looking exactly like the answer to the one they did.
       const refused = yield* Effect.flip(db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
         shards: ["s0", "typo"],
       }));
       assert.equal(refused._tag, "UnknownShard");
@@ -240,7 +241,7 @@ test("a shard the map does not have is refused, not quietly skipped", async (t) 
       assert.deepEqual([...refused.known], ["s0", "s1", "s2", "s3"]);
 
       const named = yield* db.scatter.resolve({
-        query: equals(TENANT_COLUMN, TENANT_MARKER),
+        query: equals(COLLECTION_NAMESPACE, "\u0000collection"),
         shards: ["s0", "s2"],
       });
       assert.equal(named.shards, 2);
