@@ -98,13 +98,18 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
 
   // The default Tenant is implied, so its tables read as their own name; other Tenants (a plugin's `service:...`) keep theirs.
   const tableTitle = (entry: Record<string, unknown>) => { const search = object(entry.search); return search.databaseTenant === "zelavis-app" && typeof search.databaseTable === "string" ? search.databaseTable : label(entry.title); };
-  const tableItems = input.tables.filter(entry => !object(entry.search).databaseSystemView).map(entry => ({ title: tableTitle(entry), path: at("/database"), search: Object.fromEntries(Object.entries(object(entry.search)).filter(([, value]) => typeof value === "string")) as Record<string, string> }));
+  // A plugin keeps its own data in a `service:<name>` Tenant; those tables get a slide of their own, beside System Tables, so the App's tables stay at the top.
+  const pluginTable = (entry: Record<string, unknown>) => String(object(entry.search).databaseTenant ?? "").startsWith("service:");
+  const asItem = (entry: Record<string, unknown>, title: string) => ({ title, path: at("/database"), search: Object.fromEntries(Object.entries(object(entry.search)).filter(([, value]) => typeof value === "string")) as Record<string, string> });
+  const userTables = input.tables.filter(entry => !object(entry.search).databaseSystemView);
+  const tableItems = userTables.filter(entry => !pluginTable(entry)).map(entry => asItem(entry, tableTitle(entry)));
+  const pluginItems = userTables.filter(pluginTable).map(entry => asItem(entry, label(entry.title).replace(/^service:/u, "")));
   // A system view describes one Tenant, but the database lists them under an arbitrary one; the link names only the view and the page's Tenant picker chooses whose it shows.
   const systemItems = input.tables.filter(entry => object(entry.search).databaseSystemView).map(entry => ({ title: label(entry.title).replace(/^System · /u, ""), path: at("/database"), search: Object.fromEntries(Object.entries(object(entry.search)).filter(([key, value]) => key !== "databaseTenant" && typeof value === "string")) as Record<string, string> }));
   const workloadList = (kind: string) => (input.workloads[kind] ?? []).map(entry => ({ title: entry.name, path: at(`/workloads/${kind}/${encodeURIComponent(entry.id)}`) }));
   const native: MenuItem[] = [
     ...(available("identity") ? [{ title: "Auth", path: at("/auth") }] : []),
-    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, ...tableItems, ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
+    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
     ...(available("storage") ? [{ title: "Storage", path: at("/storage") }] : []),
     ...(available("workloads") ? [{ title: "Workloads", path: at("/workloads"), items: [
       { title: "Functions", path: at("/workloads/functions"), items: [{ title: "Add Function", path: at("/workloads/new") }, ...workloadList("functions")] },

@@ -27,12 +27,13 @@ export default {
     }
     const collection = field("collection", "Collection / table", "text", String(props.collection));
     const selector = node("form", { class: "filters" }, tenant, collection, node("button", { type: "submit" }, "Open records"));
+    const tenantHelp = node("p", { class: "muted tenant-help" }, "A Tenant is a separate data space inside this Project, with its own tables. zelavis-app holds the app's own data; service:… Tenants belong to plugins."); 
     const gridHost = node("div", { class: "persistent-grid" });
     const trail: string[] = []; let trailKey = "";
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    host.replaceChildren(selector, paging, errors, gridHost, actions);
+    host.replaceChildren(selector, tenantHelp, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());

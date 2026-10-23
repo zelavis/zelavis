@@ -71,8 +71,11 @@ test("a table URL opens the Database slide and a system view URL the System Tabl
   const runtime = { capabilities: { database: { available: true } }, services: [] };
   const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
   const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
-  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "orders", "service:auth · settings", "System Tables"]);
+  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "orders", "Plugin Tables", "System Tables"]);
   assert.deepEqual(database.items[0], { title: "Create Table", path: `/projects/${encodeURIComponent(project.id)}/database`, search: { databaseDialog: "create-table" } });
+  const plugin = database.items.find(item => item.title === "Plugin Tables");
+  assert.deepEqual(plugin.items.map(item => item.title), ["auth · settings"]);
+  assert.deepEqual(plugin.items[0].search, { databaseTenant: "service:auth", databaseTable: "settings" });
   const system = database.items.find(item => item.title === "System Tables");
   assert.deepEqual(system.items.map(item => item.search), [{ databaseSystemView: "events" }, { databaseSystemView: "schemas" }]);
   assert.deepEqual(system.search, { databaseSystemView: "events" });
@@ -81,5 +84,6 @@ test("a table URL opens the Database slide and a system view URL the System Tabl
   const last = ids => ids.at(-1);
   assert.match(last(trail("databaseTenant=zelavis-app&databaseTable=orders")), /database$/);
   assert.match(last(trail("databaseTenant=zelavis-app&databaseSystemView=events")), /system-tables$/);
+  assert.match(last(trail("databaseTenant=service%3Aauth&databaseTable=settings")), /plugin-tables$/);
   assert.match(last(trail("databaseTenant=service%3Aauth&databaseSystemView=schemas")), /system-tables$/);
 });
