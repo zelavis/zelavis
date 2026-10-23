@@ -112,6 +112,18 @@ for every document once it returns. The CLI takes the same choice:
 `zelavis data create-collection posts --columns status,author` and
 `zelavis data set-columns posts --columns all`.
 
+### How many documents
+
+`count` answers how many documents a collection holds, counted from the collection's identifiers in the index without
+reading any document, so it is linear in the collection and cheap beside reading it. A collection's own definition is not
+one of them, and an unknown collection is a 404.
+
+| Form | Call |
+|---|---|
+| HTTP | `GET /zelavis/api/v1/runtime/projects/:projectId/data/documents/collections/:collection/count` (the database's `GET …/database/documents/collections/:collection/count`) |
+| SDK | `data.collections.count('posts')` |
+| CLI | `zelavis data count posts --project ID` |
+
 ### Several changes as one
 
 `write` applies a batch atomically, in the order given:

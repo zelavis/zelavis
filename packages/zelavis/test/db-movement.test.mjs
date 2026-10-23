@@ -841,3 +841,57 @@ test("a tenant can be written while it is being moved", async (t) => {
     }),
   );
 });
+
+test("a Tenant removed while a read is in flight refuses writes at once, waits for the read, then removes", () =>
+  withGatedDatabase((db, stores, gate) => Effect.gen(function* () {
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants[0];
+    const shard = db.shardOf(tenant);
+    yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "blocker", data: { title: "held" } });
+
+    gate.armed = true;
+    const reader = yield* Effect.forkChild(db.forTenant(tenant).documents.findById({ collection: "posts", id: "blocker" }));
+    yield* Deferred.await(gate.reached);
+    const removing = yield* Effect.forkChild(db.dropTenant(tenant));
+    yield* Effect.sleep("20 millis");
+
+    assert.equal(removing.pollUnsafe(), undefined, "the removal is waiting for the read");
+    assert.equal((yield* Effect.flip(db.forTenant(tenant).documents.insert({ collection: "posts", id: "late", data: { title: "late" } })))._tag, "TenantMoving", "a write is refused from the moment removal began");
+    assert.ok((yield* stores.get(shard).partition(tenant).liveRecords).length > 0, "nothing is removed yet");
+    assert.ok((yield* snapshot(db, "bravo")).docs.length === 3, "another Tenant is untouched");
+
+    yield* Deferred.succeed(gate.release, undefined);
+    assert.equal((yield* Fiber.join(reader))?.data.title, "held", "the read finished on whole data");
+    const removed = yield* Fiber.join(removing);
+    assert.ok(removed.records > 0 && removed.tenant === tenant);
+    assert.ok(!(yield* stores.get(shard).partitions).includes(tenant), "then the partition is gone, fence and all");
+    assert.ok(!(yield* db.tenants).includes(tenant));
+    // Written to again, it starts from nothing and is not fenced.
+    yield* db.forTenant(tenant).documents.createCollection({ name: "posts" });
+    assert.equal((yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "p1", data: { title: "fresh" } })).version, 1);
+  })));
+
+test("a removal whose Tenant is still in use past the deadline leaves it fenced and whole, and repeating it removes it", () =>
+  withGatedDatabase((db, stores, gate) => Effect.gen(function* () {
+    const tenants = ["acme", "bravo", "cosmo", "delta"];
+    yield* seed(db, tenants);
+    const tenant = tenants[0];
+    const shard = db.shardOf(tenant);
+    yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "blocker", data: { title: "held" } });
+
+    gate.armed = true;
+    const reader = yield* Effect.forkChild(db.forTenant(tenant).documents.findById({ collection: "posts", id: "blocker" }));
+    yield* Deferred.await(gate.reached);
+    const stopped = yield* Effect.flip(db.dropTenant(tenant));
+    assert.equal(stopped._tag, "PlacementInUse");
+    assert.equal(stopped.calls, 1);
+    assert.ok((yield* stores.get(shard).partition(tenant).liveRecords).length > 0, "nothing was removed");
+    assert.equal((yield* Effect.flip(db.forTenant(tenant).documents.insert({ collection: "posts", id: "late", data: { title: "late" } })))._tag, "TenantMoving", "it stays fenced");
+
+    yield* Deferred.succeed(gate.release, undefined);
+    assert.equal((yield* Fiber.join(reader))?.data.title, "held");
+    const removed = yield* db.dropTenant(tenant);
+    assert.ok(removed.records > 0);
+    assert.ok(!(yield* db.tenants).includes(tenant));
+  }), { drainTimeout: "30 millis" }));

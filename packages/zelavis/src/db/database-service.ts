@@ -8,6 +8,7 @@ import {
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import { RESTORE_MODES } from "./backup.js";
+import { APP_TENANT_ID, SERVICE_TENANT_PREFIX } from "./naming.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
 import type {
   CollectionSurface,
@@ -637,7 +638,7 @@ function defineDatabaseRootService(
             operationId: "overviewDatabaseTenants",
             summary: "List every Tenant with what it holds",
             description:
-              "Each Tenant's shard, number of tables, stored records and the bytes of their bodies. Stored records are what the partition keeps, so a table's own definition counts beside its documents; both numbers are kept by the database as it writes, not counted when asked. A Tenant whose tables were all dropped is still listed: it keeps its history.",
+              "Each Tenant's shard, number of tables, documents, stored records and the bytes of their bodies. Documents are counted from each collection's identifiers in the index (linear in the collection, no document is read). Stored records are what the partition keeps, so a table's own definition counts beside its documents; they and the bytes are kept by the database as it writes. A Tenant whose tables were all dropped is still listed: it keeps its history.",
             tags: ["database"],
             responses: { 200: { description: "Tenants with shard, tables, records and bytes" } },
           },
@@ -649,9 +650,12 @@ function defineDatabaseRootService(
             const usage = new Map((yield* integrationValue(service.tenantUsage())).map((row) => [row.tenant, row]));
             const tenants = [];
             for (const tenantId of names) {
-              const collections = yield* integration(() => service.forTenant(tenantId).documents.listCollections());
+              const documents = service.forTenant(tenantId).documents;
+              const collections = yield* integration(() => documents.listCollections());
+              let documentCount = 0;
+              for (const collection of collections) documentCount += yield* integration(() => documents.count(collection.name));
               const held = usage.get(tenantId);
-              tenants.push({ tenantId, shard: held?.shard ?? service.shardOf(tenantId), tables: collections.length, records: held?.records ?? 0, bytes: held?.bytes ?? 0 });
+              tenants.push({ tenantId, shard: held?.shard ?? service.shardOf(tenantId), tables: collections.length, documents: documentCount, records: held?.records ?? 0, bytes: held?.bytes ?? 0 });
             }
             return { body: { tenants } };
           })),
@@ -662,7 +666,7 @@ function defineDatabaseRootService(
             operationId: "dropDatabaseTenant",
             summary: "Remove a Tenant and everything it holds",
             description:
-              "Irreversible: the Tenant's records, event log and history are removed, not archived. Refused for a reserved Tenant, one divided into parts, one holding nothing, the caller's own Tenant, and while a relocation is pending. The body must repeat the Tenant ID as `confirm`. From the start every change to the Tenant is refused; if calls still use it the answer is 409 and the same request can be repeated.",
+              "Irreversible: the Tenant's records, event log and history are removed, not archived. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant, one divided into parts, one holding nothing, the caller's own Tenant, and while a relocation is pending. The body must repeat the Tenant ID as `confirm`. From the start every change to the Tenant is refused; if calls still use it the answer is 409 and the same request can be repeated.",
             tags: ["database"],
             pathParams: { tenantId: { type: "string", required: true, description: "Tenant ID" } },
             requestBody: {
@@ -690,6 +694,13 @@ function defineDatabaseRootService(
             }
             if (readString(principal?.metadata?.tenantId) === tenantId) {
               return { status: 400, body: { error: "A caller cannot remove its own Tenant." } };
+            }
+            // The two Tenants other things stand on are not removed through the API at all, whoever asks.
+            if (tenantId === APP_TENANT_ID) {
+              return { status: 400, body: { error: `Tenant "${tenantId}" is the App's own Tenant, which the App and the dashboard stand on; it cannot be removed. Drop its tables instead.` } };
+            }
+            if (tenantId.startsWith(SERVICE_TENANT_PREFIX)) {
+              return { status: 400, body: { error: `Tenant "${tenantId}" belongs to a plugin and cannot be removed; uninstall the plugin or drop its tables instead.` } };
             }
             return { body: yield* integration(() => service.dropTenant(tenantId)) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
@@ -2035,6 +2046,33 @@ export function defineDatabaseDocumentsService(
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
 })),
+        },
+        {
+          id: "database.collections.count",
+          method: "GET",
+          access: { permissions: ["database.read"] },
+          path: "/collections/:collection/count",
+          spec: {
+            operationId: "countCollection",
+            summary: "How many documents a collection holds",
+            description: "Counted from the collection's identifiers in the index, without reading documents; linear in the collection.",
+            tags: ["database"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "The document count" },
+              400: { description: "Bad request" },
+              404: { description: "No such collection" },
+            },
+          },
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+              const tenantId = readTenantId(query.get("tenantId"), principal);
+              return { body: { count: yield* integration(() => service.forTenant(tenantId).documents.count(params.collection)) } };
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
         },
         {
           id: "database.collections.exists",

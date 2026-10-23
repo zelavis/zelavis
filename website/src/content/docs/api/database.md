@@ -261,8 +261,9 @@ to another shard, `ingest`, `rebuild` and projection runs fail with
 
 A Tenant exists once it holds something, so there is no create-Tenant operation: adding one writes its first table. Dropping
 a Tenant's tables leaves its history, so an emptied Tenant stays listed until it is deleted. The overview lists each
-Tenant with its shard, tables, stored records (a table's own definition counts beside its documents) and the bytes of their
-bodies, which the database keeps as it writes. It needs `database.inspect`, carried by `project.view`.
+Tenant with its shard, tables, documents (counted from each collection's identifiers in the index, so linear in the
+collection and no document is read), stored records (what the partition keeps, so a table's own definition counts beside
+its documents) and the bytes of their bodies, which the database keeps as it writes. It needs `database.inspect`, carried by `project.view`.
 
 | Form | List | Add | Delete |
 |---|---|---|---|

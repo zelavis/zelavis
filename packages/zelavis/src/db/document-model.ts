@@ -686,6 +686,14 @@ export interface DocumentPage {
 }
 
 export interface DocumentsApi {
+  /**
+   * How many documents a collection holds.
+   *
+   * Counted from the collection's identifiers in the index, never by reading documents, so it costs
+   * what listing those identifiers costs: linear in the collection, and cheap beside any read of its documents.
+   * A collection's own definition is not one of them.
+   */
+  readonly count: (input: { readonly collection: string }) => Effect.Effect<number, CollectionNotFound>;
   /** Which logical lenses can interpret this collection right now. */
   readonly modalities: (input: { readonly collection: string }) => Effect.Effect<
     CollectionModalities,

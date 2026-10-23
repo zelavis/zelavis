@@ -24,7 +24,7 @@ const platform = (api) => async (input, init) => {
 };
 
 const seed = async (api) => {
-  for (const tenant of ["acme", "globex"]) {
+  for (const tenant of ["acme", "globex", "zelavis-app", "service:thing"]) {
     const db = api.forTenant(tenant);
     await db.documents.createCollection({ name: "posts" });
     for (const id of ["a", "b", "c"]) await db.documents.insert({ collection: "posts", id, data: { title: `${tenant}-${id}` } });
@@ -84,19 +84,22 @@ test("removing a Tenant comes out the same through HTTP, the SDK and the CLI, re
     const api = (await openTemporaryDatabase(t)).api;
     await seed(api);
     const remove = bind(api);
-    const outcome = async (tenantId, confirm) => remove(tenantId, confirm).then((value) => value, (error) => ({ refused: /confirm/.test(String(error.message)) ? "unconfirmed" : /holds nothing/.test(String(error.message)) ? "holds nothing" : /reserved/.test(String(error.message)) ? "reserved" : String(error.message) }));
+    const outcome = async (tenantId, confirm) => remove(tenantId, confirm).then((value) => value, (error) => ({ refused: /confirm/.test(String(error.message)) ? "unconfirmed" : /holds nothing/.test(String(error.message)) ? "holds nothing" : /reserved/.test(String(error.message)) ? "reserved" : /App's own/.test(String(error.message)) ? "the App's own" : /plugin/.test(String(error.message)) ? "a plugin's" : String(error.message) }));
     results[name] = {
       unconfirmed: await outcome("acme", undefined),
       wrongConfirm: await outcome("acme", "globex"),
       reserved: await outcome("zv.global", "zv.global"),
+      appOwn: await outcome("zelavis-app", "zelavis-app"),
+      plugin: await outcome("service:thing", "service:thing"),
       removed: await outcome("acme", "acme"),
       again: await outcome("acme", "acme"),
-      left: (await api.tenants()).filter((tenant) => !tenant.startsWith("zv.")),
+      left: (await api.tenants()).filter((tenant) => !tenant.startsWith("zv.")).sort(),
     };
   }
   assert.deepEqual(results.http, {
     unconfirmed: { refused: "unconfirmed" }, wrongConfirm: { refused: "unconfirmed" }, reserved: { refused: "reserved" },
-    removed: { tenant: "acme" }, again: { refused: "holds nothing" }, left: ["globex"],
+    appOwn: { refused: "the App's own" }, plugin: { refused: "a plugin's" },
+    removed: { tenant: "acme" }, again: { refused: "holds nothing" }, left: ["globex", "service:thing", "zelavis-app"],
   });
   assert.deepEqual(results.sdk, results.http);
   assert.deepEqual(results.cli, { ...results.http, unconfirmed: results.cli.unconfirmed, wrongConfirm: results.cli.wrongConfirm });

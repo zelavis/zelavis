@@ -3,7 +3,7 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|modalities|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|modalities|count|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -146,6 +146,11 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     print({ collections }, () =>
       collections.map((entry) => `${entry.name}\t${entry.surface ?? "database"}`).join("\n")
       || "No collections.");
+    return;
+  }
+  if (action === "count") {
+    const count = yield* integrationValue(api.collections.count(requireCollection()));
+    print({ count }, () => `${count}`);
     return;
   }
   if (action === "modalities") {

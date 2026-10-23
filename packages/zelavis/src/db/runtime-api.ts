@@ -96,6 +96,8 @@ export interface TenantRuntimeApi {
     readonly clear: (namespace: string) => Promise<number>;
   };
   readonly documents: {
+    /** How many documents the collection holds; see `DocumentsApi.count`. */
+    readonly count: (collection: string) => Promise<number>;
     readonly modalities: (collection: string) => Promise<CollectionModalities>;
     readonly createCollection: (input: {
       name: string;
@@ -312,6 +314,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     clear: (namespace) => run(tenant.kv.namespace(namespace).clear),
   },
   documents: {
+    count: (collection) => run(tenant.documents.count({ collection })),
     modalities: (collection) => run(tenant.documents.modalities({ collection })),
     createCollection: (input) => run(tenant.documents.createCollection(input)),
     createIndex: (input) => run(tenant.documents.createIndex(input)),

@@ -216,7 +216,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     }
     case "tenants": {
       const tenants = yield* integration(() => client.projects.tenants(requireTarget("id")));
-      print({ tenants }, () => tenants.length === 0 ? "No Tenants hold data." : tenants.map((entry) => `${entry.tenantId}\t${entry.shard}\t${entry.tables} tables\t${entry.records} records\t${entry.bytes} bytes`).join("\n"));
+      print({ tenants }, () => tenants.length === 0 ? "No Tenants hold data." : tenants.map((entry) => `${entry.tenantId}\t${entry.shard}\t${entry.tables} tables\t${entry.documents} documents\t${entry.records} stored records\t${entry.bytes} bytes`).join("\n"));
       return;
     }
     case "create-tenant": {

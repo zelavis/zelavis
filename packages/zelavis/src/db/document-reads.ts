@@ -1071,6 +1071,11 @@ export const documentReads = (core: DocumentCore) => {
     });
 
   const operations = {
+    count: (input) =>
+      Effect.gen(function* () {
+        yield* requireCollection(input.collection);
+        return yield* Stream.runCount(resolveQuery(equals(collectionColumn(), input.collection)));
+      }),
     modalities: (input) => Effect.map(requireCollection(input.collection), collectionModalities),
     listCollections: Effect.gen(function* () {
       const seqs = yield* Stream.runCollect(
@@ -1405,7 +1410,7 @@ export const documentReads = (core: DocumentCore) => {
         return projectionIndexes.get(input.collection);
       }),
 
-  } satisfies Pick<DocumentsApi, "modalities" | "listCollections" | "collectionExists" | "findById" | "findMany" | "findPage" | "withRelated" | "traverse" | "summarize" | "summarizeBy" | "getVectorIndex">;
+  } satisfies Pick<DocumentsApi, "count" | "modalities" | "listCollections" | "collectionExists" | "findById" | "findMany" | "findPage" | "withRelated" | "traverse" | "summarize" | "summarizeBy" | "getVectorIndex">;
   return {
     operations, orderedPage, rebuildIndex, findDocuments,
   };

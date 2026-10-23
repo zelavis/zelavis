@@ -341,6 +341,11 @@ export interface ZelavisDataClient {
   readonly collections: {
     list(): Promise<readonly ZelavisDataCollection[]>;
     modalities(collection: string): Promise<ZelavisDataCollectionModalities>;
+    /**
+     * How many documents a collection holds, counted from its identifiers in the index without reading
+     * the documents: linear in the collection. Same contract as `zelavis data count`.
+     */
+    count(collection: string): Promise<number>;
     create(input: ZelavisDataCollectionCreateInput): Promise<ZelavisDataCollection>;
     /**
      * Choose which fields a collection indexes and rewrite its documents under
@@ -1006,6 +1011,8 @@ export interface ZelavisTenantSummary {
   /** The shard that holds it. */
   readonly shard: string;
   readonly tables: number;
+  /** Documents across its tables, counted from the index without reading them. */
+  readonly documents: number;
   /** Records the partition stores: a table's own definition counts beside its documents. */
   readonly records: number;
   /** Bytes of the records' bodies. */
@@ -1684,6 +1691,12 @@ function createDataClient(
     return ((yield* integrationValue(json<{ collections: readonly ZelavisDataCollection[] }>(
           dataPath(projectId, "documents/collections"),
         )))).collections;
+  })),
+      count: (collection) =>
+        present(Effect.gen(function* () {
+    return ((yield* integrationValue(json<{ count: number }>(
+        dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}/count`),
+      )))).count;
   })),
       modalities: (collection) => json<ZelavisDataCollectionModalities>(dataPath(
         projectId,

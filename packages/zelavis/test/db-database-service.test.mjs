@@ -65,6 +65,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/traverse",
       "/api/database/documents/:collection/summarize",
       "/api/database/documents/:collection/summarize-by",
+      "/api/database/documents/collections/:collection/count",
       "/api/database/documents/collections/:collection/exists",
       "/api/database/documents/:collection/related",
       "/api/database/documents/:collection/analyzer",

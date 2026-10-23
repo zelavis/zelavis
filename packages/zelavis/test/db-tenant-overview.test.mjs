@@ -62,7 +62,7 @@ const surfaces = {
   },
 };
 
-const shape = (tenants) => tenants.map(({ tenantId, tables, records }) => ({ tenantId, tables, records })).sort((a, b) => a.tenantId.localeCompare(b.tenantId));
+const shape = (tenants) => tenants.map(({ tenantId, tables, documents, records }) => ({ tenantId, tables, documents, records })).sort((a, b) => a.tenantId.localeCompare(b.tenantId));
 
 test("tenants: listing and creating come out the same through HTTP, the SDK and the CLI", async (t) => {
   const results = {};
@@ -83,11 +83,12 @@ test("tenants: listing and creating come out the same through HTTP, the SDK and 
     results[name] = { before, after, refused, shard: typeof detail.shard, bytesPositive: detail.bytes > 0 };
   }
   // Records are what the partition stores, so a table's own definition counts beside its three documents.
-  assert.deepEqual(results.http.before.map(({ tenantId, tables }) => ({ tenantId, tables })), [{ tenantId: "acme", tables: 1 }, { tenantId: "emptied", tables: 0 }]);
+  assert.deepEqual(results.http.before.map(({ tenantId, tables, documents }) => ({ tenantId, tables, documents })), [{ tenantId: "acme", tables: 1, documents: 3 }, { tenantId: "emptied", tables: 0, documents: 0 }]);
   assert.ok(results.http.before[0].records >= 3, "acme holds at least its three documents");
   assert.equal(results.http.before[1].records, 0, "a Tenant with every table dropped holds no records");
   assert.deepEqual(results.http.after.map((entry) => entry.tenantId), ["acme", "emptied", "globex"]);
   assert.equal(results.http.after.find((entry) => entry.tenantId === "globex").tables, 1);
+  assert.equal(results.http.after.find((entry) => entry.tenantId === "globex").documents, 0, "a new table holds no documents, though its definition is a stored record");
   assert.match(results.http.refused, /already exists/);
   assert.equal(results.http.shard, "string"); assert.equal(results.http.bytesPositive, true);
   assert.deepEqual(results.sdk, results.http);
