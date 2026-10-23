@@ -40,7 +40,6 @@ export const dashboardRoutes = [
   "/projects/:projectId/content/:contentType/fields",
   "/projects/:projectId/content/:contentType/:entryId",
   "/projects/:projectId/database",
-  "/projects/:projectId/database/new",
   "/projects/:projectId/media",
   "/projects/:projectId/settings",
   "/projects/:projectId/storage",

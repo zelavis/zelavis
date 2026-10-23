@@ -67,7 +67,8 @@ const upstream = createServer(async (req, res) => {
   }
   if (path === `${proxy}/database/schemas/articles/activate`) { assert.equal(body.tenantId, "tenant-a"); schemas = schemas.map(schema => ({ ...schema, active: schema.version === body.version })); return send(schemas.find(schema => schema.active)); }
   if (body.tenantId && body.tenantId !== "tenant-a") return send({ error: "Forbidden tenant" }, 403);
-  if (path === `${proxy}/database/documents/articles/query`) return send({ documents: documents.map(row => ({ ...row, data: { ...row.data, revision } })) });
+  if (path === `${proxy}/database/documents/articles/page` || path === `${proxy}/database/documents/articles/query`) return send({ documents: documents.map(row => ({ ...row, data: { ...row.data, revision } })) });
+  if (path === `${proxy}/database/tenants`) return send({ tenants: ["tenant-a"] });
   if (path === `${proxy}/database/documents/articles/row-a` && req.method === "PATCH") {
     if (denySave || body.expectedVersion !== documents[0].version) return send({ error: "Version conflict" }, 409);
     documents[0] = { ...documents[0], data: body.data, version: documents[0].version + 1 }; saved++; return send({ document: documents[0] });

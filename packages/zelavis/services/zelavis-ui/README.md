@@ -36,7 +36,7 @@ A page with live state is a `fuzor-island` whose module owns its state and clean
 
 Fuzor owns the canonical browser URL, mounted route matching, history, the outer shell, footer utilities and the persistent Swiper navigation. The sidebar's menus are built in [app/navigation-menu.ts](app/navigation-menu.ts) from the menus services register, the capabilities a Project has, its content types, tables and workloads, and what the signed-in principal may use. The shell also carries the update banner, so **Update now** is one click from any page.
 
-The canonical Project Database route is native Fuzor server rendering with three MIT grids; **Create table** is a page of its own.
+The canonical Project Database route is native Fuzor server rendering with three MIT grids; **Create table** is a `fuzor/ui` dialog opened by the sidebar's Create Table item through `databaseDialog=create-table`.
 
 ## Fuzor changes this experiment required
 

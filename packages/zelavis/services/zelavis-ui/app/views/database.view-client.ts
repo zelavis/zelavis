@@ -9,6 +9,7 @@ import { parseEdit } from "../grids/model.ts";
 import { button, field, link, message, node } from "../dom.ts";
 import { object } from "../api.ts";
 import { stripMount } from "../mount.ts";
+import { mountCreateTable } from "../create-table-dialog.ts";
 
 export default {
   mountPersistent(host, initial): PersistentClient {
@@ -31,7 +32,7 @@ export default {
     const paging = node("div", { class: "grid-controls" });
     const errors = node("div", { "aria-live": "polite" });
     const actions = node("div");
-    host.replaceChildren(node("div", { class: "actions" }, link("Create table", `/projects/${encodeURIComponent(String(props.projectId))}/database/new`)), selector, paging, errors, gridHost, actions);
+    host.replaceChildren(selector, paging, errors, gridHost, actions);
     let grid: PersistentClient | undefined;
     const search = (values: Record<string, string | undefined>) => {
       const url = new URL(router.url());
@@ -70,11 +71,17 @@ export default {
       return request(`${props.apiBase}/database/documents/${encodeURIComponent(String(props.collection))}`, "POST", { tenantId: props.tenant, data: record, ...(id ? { id } : {}) });
     }));
     const content = new URL(router.url()).pathname.includes("/content");
-    actions.append(form([field("tenantId", "Tenant ID", "text", String(props.tenant)), field("name", content ? "Collection name" : "Table name")], content ? "Create content collection" : "Create table", data => request(`${props.apiBase}/database/documents/collections`, "POST", { tenantId: String(data.get("tenantId")), name: String(data.get("name")), surface: content ? "content-studio" : "database" })));
+    // Creating a table is a dialog the sidebar's Create Table opens through URL state; Content has its own Add Content Type page.
+    const createDialog = content ? undefined : mountCreateTable(host, {
+      api: String(props.apiBase), tenants: tenantList(), tenant: String(props.tenant),
+      created: (chosen, table) => search({ databaseTenant: chosen, databaseTable: table, databaseSystemView: undefined, databaseDialog: undefined, databaseRow: undefined, databaseAfter: undefined, databaseWhere: undefined, databaseSort: undefined, databaseHide: undefined }),
+      dismissed: () => search({ databaseDialog: undefined }),
+    });
     function controls() {
       host.dataset.projectContext = String(props.navigationJson);
       const navigation = JSON.parse(String(props.navigationJson));
       tenants();
+      createDialog?.sync(new URL(router!.url()).searchParams.get("databaseDialog") === "create-table", tenantList(), String(props.tenant));
       const here = new URL(router!.url()).searchParams;
       const key = JSON.stringify([props.tenant, props.collection, props.limit, here.get("databaseWhere"), here.get("databaseSort")]);
       if (key !== trailKey) { trailKey = key; trail.length = 0; }
@@ -115,7 +122,7 @@ export default {
     else if (!props.schemaPanel) gridHost.append(message(props.tenant && !tenantsWithTables().has(props.tenant) ? `Tenant ${String(props.tenant)} has no tables. It stays listed because it still holds its history; create a table to use it again.` : "Choose a tenant and table to open records."));
     return {
       update(next: Values, operation) { props = next; controls(); schemaEditor?.update({ schemasJson: String(props.schemasJson ?? "[]"), selectedVersion: String(props.selectedSchemaVersion ?? "") }); return grid?.update(props, operation); },
-      dispose() { disposed = true; lifetime.abort(); schemaEditor?.dispose(); return grid?.dispose(); },
+      dispose() { disposed = true; lifetime.abort(); createDialog?.dispose(); schemaEditor?.dispose(); return grid?.dispose(); },
     };
   },
 } satisfies PersistentClientModule;

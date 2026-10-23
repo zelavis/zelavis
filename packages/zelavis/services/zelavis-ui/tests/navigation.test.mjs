@@ -72,6 +72,7 @@ test("a table URL opens the Database slide and a system view URL the System Tabl
   const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
   const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
   assert.deepEqual(database.items.map(item => item.title), ["Create Table", "orders", "service:auth · settings", "System Tables"]);
+  assert.deepEqual(database.items[0], { title: "Create Table", path: `/projects/${encodeURIComponent(project.id)}/database`, search: { databaseDialog: "create-table" } });
   const system = database.items.find(item => item.title === "System Tables");
   assert.deepEqual(system.items.map(item => item.search), [{ databaseSystemView: "events" }, { databaseSystemView: "schemas" }]);
   assert.deepEqual(system.search, { databaseSystemView: "events" });

@@ -95,7 +95,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
       yield* io(() => page.goto(url, { waitUntil: "networkidle" }));
       if (entry.path === "/*") { yield* io(() => page.getByRole("heading", { name: "Page not found", exact: true }).waitFor()); }
       else if (entry.example === "/projects/parity-lab/database") {
-        yield* io(() => page.locator("form.filters").getByLabel("Tenant ID", { exact: true }).waitFor());
+        yield* io(() => page.locator('form.filters select[name="tenantId"]').waitFor());
       } else {
         yield* io(() => page.locator(".content .k-page, .content .panel, .content .empty, .content .auth-card").first().waitFor());
         const text = yield* io(() => page.locator(".content").innerText());
@@ -108,14 +108,16 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   }
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   const visit = path => io(() => page.goto(origin + "/zelavis" + path, { waitUntil: "networkidle" }));
-  yield* visit("/projects/parity-lab/database/new");
-  const databaseLinks = yield* io(() => page.locator('.content a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
+  yield* visit("/projects/parity-lab/database?databaseDialog=create-table");
+  yield* io(() => page.getByRole("dialog").getByLabel("Table name").waitFor());
+  const databaseLinks = yield* io(() => page.locator('nav a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
   assert.ok(databaseLinks.length > 0 && databaseLinks.every(path => path.startsWith("/zelavis/")), "Feature links preserve the dashboard mount when opened in another tab");
-  yield* io(() => page.getByLabel("Table name").fill("ui_created_table"));
+  yield* io(() => page.getByRole("dialog").getByLabel("Table name").fill("ui_created_table"));
   yield* io(() => page.getByRole("button", { name: "Create and Open Table", exact: true }).click());
   yield* io(() => page.waitForURL(url => url.pathname.endsWith("/database") && url.searchParams.get("databaseTable") === "ui_created_table"));
-  yield* io(() => page.locator("form.filters").getByLabel("Tenant ID").waitFor());
-  assert.equal(yield* io(() => page.locator("form.filters").getByLabel("Tenant ID").inputValue()), "zelavis-app");
+  yield* io(() => page.locator('form.filters select[name="tenantId"]').waitFor());
+  assert.equal(yield* io(() => page.locator('form.filters select[name="tenantId"]').inputValue()), "zelavis-app");
+  assert.equal(yield* io(() => page.getByRole("dialog").count()), 0, "The dialog closes once the table exists");
   const tables = yield* request(proxy + "/database/documents/collections?tenantId=zelavis-app");
   assert.ok(tables.collections.some(table => table.name === "ui_created_table"));
   console.log("Action: table creation redirects into the native database under the correct Project and tenant.");

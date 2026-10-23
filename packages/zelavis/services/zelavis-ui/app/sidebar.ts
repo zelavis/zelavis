@@ -99,9 +99,14 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
         if (media.matches) destination.searchParams.set("sidebarView", item.branch ? "menu" : "content");
         const itemPath = unmounted(destination.pathname);
         const selected = ["databaseTenant", "databaseTable", "databaseSystemView"];
-        const matchesSearch = selected.every(key => destination.searchParams.get(key) === url.searchParams.get(key));
+        const dialog = destination.searchParams.get("databaseDialog");
+        // An item that opens a dialog is active only while that dialog is; every other item ignores the dialog.
+        const matchesSearch = selected.every(key => destination.searchParams.get(key) === url.searchParams.get(key)) && (dialog === null || dialog === url.searchParams.get("databaseDialog"));
+        // Opening a dialog from the page it belongs to keeps what is on that page (the open table, filter, sort).
+        const href = new URL(destination);
+        if (dialog !== null && path === itemPath) { const kept = new URL(url); for (const key of ["sidebar", "sidebarView"]) { const value = destination.searchParams.get(key); if (value === null) kept.searchParams.delete(key); else kept.searchParams.set(key, value); } kept.searchParams.set("databaseDialog", dialog); href.search = kept.search; }
         const active = (path === itemPath && matchesSearch) || Boolean(item.branch && path.startsWith(`${itemPath}/`) && itemPath !== "/");
-        const anchor = node("a", { href: `${destination.pathname}${destination.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
+        const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });
       slide.replaceChildren(node("div", { class: "panel-heading" }, index ? button(`← ${panel.label}`, () => navigate(trail[index - 1].path, trail.slice(1, index).map(panel => panel.id), "menu"), { "aria-label": `Back to ${trail[index - 1].label}` }) : node("strong", {}, "Platform")), nav);
