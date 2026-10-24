@@ -187,6 +187,9 @@ try {
     await choice.waitFor({ state: "visible", timeout: 5000 }).catch(async error => { await page.screenshot({ path: "/tmp/new-ui-dropdown-dialog-fail.png" }); console.error(await page.evaluate(() => { const item = document.querySelector("zv-dialog-content zv-select-item"), content = document.querySelector("zv-dialog-content zv-select-content"); return JSON.stringify({ items: document.querySelectorAll("zv-dialog-content zv-select-item").length, content: content?.outerHTML.slice(0, 300), style: item && getComputedStyle(item).display, rect: item?.getBoundingClientRect() }); })); throw error; });
     const [itemBox, dialogBox] = await Promise.all([choice.boundingBox(), page.locator("zv-dialog-content").boundingBox()]);
     assert.ok(itemBox && dialogBox && itemBox.y >= dialogBox.y && itemBox.y + itemBox.height <= dialogBox.y + dialogBox.height + 1, `Tenant choices stay visible: ${JSON.stringify({ itemBox, dialogBox })}`);
+    // The dropdown is form-associated: a real browser's FormData sees its value, with no hidden native control behind it.
+    const submitted = await page.evaluate(() => ({ tenant: new FormData(document.querySelector("zv-dialog-content form")).get("tenantId"), hidden: document.querySelectorAll('zv-select[data-dropdown="Tenant"] select').length }));
+    assert.deepEqual(submitted, { tenant: "tenant-a", hidden: 0 });
     if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-dropdown-dialog.png" });
     await page.goto(route, { waitUntil: "networkidle" });
     await json.fill(JSON.stringify({ title: `Utility draft ${library}` }));
