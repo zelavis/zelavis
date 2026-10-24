@@ -1,12 +1,13 @@
 import type { CollectionFieldEntry } from "zelavis/db/schema";
 import { node, message } from "./dom.ts";
 import { object } from "./api.ts";
+import { dropdown, type DropdownElement } from "./dropdown.ts";
 
 /** All values enter the same JSON inspector/journal; the server validates writes. */
 export function schemaRecordFields(fields: readonly CollectionFieldEntry[], text: HTMLTextAreaElement, readonly: boolean) {
   const form = node("div", { class: "schema-record form" });
   const errors = node("div", { "aria-live": "polite" });
-  const controls: { name: string; control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement; update(value: unknown): void }[] = [];
+  const controls: { name: string; control: HTMLInputElement | HTMLTextAreaElement | DropdownElement; update(value: unknown): void }[] = [];
   const read = () => {
     const data: unknown = JSON.parse(text.value);
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Record data must be a JSON object.");
@@ -14,16 +15,17 @@ export function schemaRecordFields(fields: readonly CollectionFieldEntry[], text
   };
   for (const entry of fields) {
     const field = entry.field, tag = field._tag;
-    let control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    let control: HTMLInputElement | HTMLTextAreaElement | DropdownElement;
     let decode: () => unknown;
     let update: (value: unknown) => void;
     if (tag === "BooleanField") {
       const input = node("input", { type: "checkbox" }); control = input;
       decode = () => input.checked; update = value => { input.checked = value === true; };
     } else if (tag === "SelectField" || tag === "MultiSelectField") {
-      const select = node("select", tag === "MultiSelectField" ? { multiple: "" } : {}, ...(tag === "SelectField" ? [node("option", { value: "" }, "Choose…")] : []), ...field.options.map(value => node("option", { value }, value))); control = select;
-      decode = () => tag === "MultiSelectField" ? [...select.selectedOptions].map(option => option.value) : select.value || undefined;
-      update = value => { for (const option of select.options) option.selected = Array.isArray(value) ? value.includes(option.value) : value === option.value; };
+      const multiple = tag === "MultiSelectField";
+      const select = dropdown({ label: field.label || entry.name, multiple, ...(multiple ? {} : { value: "" }) }, [...(multiple ? [] : [{ value: "", label: "Choose…" }]), ...field.options.map(value => ({ value, label: value }))]); control = select;
+      decode = () => multiple ? [...select.values] : select.value || undefined;
+      update = value => { const next = Array.isArray(value) ? value.map(String) : value === undefined ? [] : [String(value)]; if (next.join(",") !== select.values.join(",")) select.setValue(multiple ? next : next[0] ?? ""); };
     } else if (["NumberField", "IntegerField"].includes(tag)) {
       const input = node("input", { type: "number", step: tag === "IntegerField" ? "1" : "any" }); control = input;
       decode = () => { if (input.value === "") return undefined; const value = Number(input.value); if (!Number.isFinite(value) || tag === "IntegerField" && !Number.isSafeInteger(value)) throw new Error("Use a finite number or safe integer."); return value; };
@@ -37,7 +39,7 @@ export function schemaRecordFields(fields: readonly CollectionFieldEntry[], text
       decode = () => input.value === "" && !field.required ? undefined : input.value;
       update = value => { input.value = value === undefined ? "" : String(value); };
     }
-    control.setAttribute("aria-label", field.label || entry.name);
+    if (control.localName !== "fuzor-select") control.setAttribute("aria-label", field.label || entry.name);
     if (readonly) control.disabled = true;
     controls.push({ name: entry.name, control, update });
     control.addEventListener("input", () => {

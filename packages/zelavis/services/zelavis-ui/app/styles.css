@@ -86,7 +86,7 @@ fuzor-dialog-header{display:block;margin-bottom:12px}fuzor-dialog-title{display:
 fuzor-select{display:inline-block;position:relative;min-width:0;max-width:240px;width:auto}
 fuzor-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;border:1px solid var(--border);border-radius:6px;padding:9px 11px;background:var(--surface);color:inherit;cursor:pointer;user-select:none}
 fuzor-select-trigger:hover{background:var(--hover)}fuzor-select-trigger:focus-visible{outline:2px solid #71717a;outline-offset:3px}
-fuzor-select[disabled] fuzor-select-trigger{opacity:.5;cursor:not-allowed}
+fuzor-select[disabled] fuzor-select-trigger{opacity:.5;cursor:not-allowed}fuzor-select[disabled]{pointer-events:none}
 fuzor-select-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}fuzor-select-value:empty:before{content:"\00a0"}
 fuzor-select-indicator{display:inline-flex;color:var(--muted);transition:transform .15s}fuzor-select[open] fuzor-select-indicator{transform:rotate(180deg)}
 fuzor-select-positioner{z-index:9500}

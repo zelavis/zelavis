@@ -168,6 +168,14 @@ try {
     await direction.locator("fuzor-select-trigger").click();
     await page.locator("fuzor-select-item", { hasText: "descending" }).waitFor({ state: "visible", timeout: 5000 });
     if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-dropdown-open.png" });
+    if (process.argv.includes("--screenshots") && library === "glide") {
+      await page.evaluate(() => { document.documentElement.dataset.dashboardTheme = "dark"; });
+      await page.screenshot({ path: "/tmp/new-ui-dropdown-dark.png" });
+      await page.evaluate(() => { delete document.documentElement.dataset.dashboardTheme; });
+      await page.setViewportSize({ width: 390, height: 800 });
+      await page.screenshot({ path: "/tmp/new-ui-dropdown-mobile.png" });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
     await page.locator("fuzor-select-item", { hasText: "descending" }).click();
     await page.waitForFunction(() => document.querySelector('fuzor-select[data-dropdown="Sort direction"] fuzor-select-value').textContent === "descending", null, { timeout: 5000 });
     assert.equal(await page.evaluate(() => window.directionChanges), 1, "Choosing an item raises one change event");

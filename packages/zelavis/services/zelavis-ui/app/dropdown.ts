@@ -9,9 +9,12 @@ export interface DropdownAttributes {
   readonly placeholder?: string;
   readonly disabled?: boolean;
   readonly required?: boolean;
+  /** Several choices at once; `value` is then the first and `values` all of them. */
+  readonly multiple?: boolean;
+  readonly values?: readonly string[];
 }
 /** A `fuzor-select`: its `value` and `change` event behave as a native select's do, so a form and a listener need no change. */
-export type DropdownElement = HTMLElement & { value: string; setValue(value: string | string[]): void };
+export type DropdownElement = HTMLElement & { value: string; readonly values: string[]; disabled: boolean; setValue(value: string | string[]): void };
 
 const chevron = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
 
@@ -40,8 +43,12 @@ export function dropdown(attributes: DropdownAttributes, options: readonly Dropd
   if (attributes.name) root.setAttribute("name", attributes.name);
   if (attributes.disabled) root.setAttribute("disabled", "");
   if (attributes.required) root.setAttribute("required", "");
-  const initial = attributes.value ?? (attributes.placeholder === undefined ? options.find(option => !option.disabled)?.value : undefined);
-  if (initial !== undefined) root.setAttribute("value", initial);
+  if (attributes.multiple) root.setAttribute("multiple", "");
+  const initial = attributes.multiple
+    ? (attributes.values ?? []).join(",")
+    : attributes.value ?? (attributes.placeholder === undefined ? options.find(option => !option.disabled)?.value : undefined);
+  if (initial) root.setAttribute("value", initial);
+  Object.defineProperty(root, "disabled", { get: () => root.hasAttribute("disabled"), set: (disabled: boolean) => { root.toggleAttribute("disabled", disabled); }, configurable: true });
   const trigger = doc.createElement("fuzor-select-trigger");
   trigger.setAttribute("aria-label", attributes.label);
   const text = doc.createElement("fuzor-select-value");
@@ -54,10 +61,12 @@ export function dropdown(attributes: DropdownAttributes, options: readonly Dropd
   root.append(trigger, content);
   let value = initial ?? "";
   root.addEventListener("ui:value-change", event => {
-    const next = (event as CustomEvent<{ value: string }>).detail?.value ?? "";
+    const next = ((event as CustomEvent<{ values?: string[]; value: string }>).detail?.values ?? []).join(",");
     if (next === value) return;
     value = next;
     if (programmatic.get(root) === next) { programmatic.delete(root); return; }
+    // A native select raises both: `input` for code that follows typing, `change` for code that follows choosing.
+    root.dispatchEvent(new Event("input", { bubbles: true }));
     root.dispatchEvent(new Event("change", { bubbles: true }));
   });
   // The list is at least as wide as the control that opened it.

@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { CollectionFieldEntrySchema, StoredCollectionSchemaCodec, type CollectionFieldEntry, type StoredCollectionSchema } from "zelavis/db/schema";
 import { ApiError, request } from "./api.ts";
 import { button, field, message, node } from "./dom.ts";
-import { dropdown, setDropdownOptions } from "./dropdown.ts";
+import { dropdown, setDropdownOptions, type DropdownElement } from "./dropdown.ts";
 import { nextSchemaVersion, parseSchemaFields, schemaVersions } from "./schema-model.ts";
 
 export { nextSchemaVersion, parseSchemaFields, schemaVersions };
@@ -58,7 +58,7 @@ export function mountSchemaEditor(host: HTMLElement, options: { api: string; ten
   const submit = (work: Effect.Effect<unknown, unknown>) => {
     if (busy) return;
     busy = true;
-    const buttons = [...host.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)")];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement | HTMLInputElement | DropdownElement | HTMLTextAreaElement>("button:not(:disabled), input:not(:disabled), fuzor-select:not([disabled]), textarea:not(:disabled)")];
     buttons.forEach(button => { button.disabled = true; });
     options.run(work.pipe(Effect.ensuring(Effect.sync(() => { busy = false; buttons.forEach(button => { button.disabled = false; }); }))));
   };
