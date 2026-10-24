@@ -1,7 +1,7 @@
 // Clients for the Platform's own operations that were HTTP-only: the Fabric, the Assistant, deployment backends and the
 // Agent's status. Each is a thin, typed map of method to route, over the SDK's `json` helper; bodies and answers are the
 // Platform's own JSON, passed through, so the three forms (route, SDK, CLI) cannot say different things.
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import type { FabricMigration, FabricNode, FabricPlacementPlan, FabricProjectPlacement, FabricProjectPlacementRequest, FabricSnapshot } from "../core/fabric/index.js";
 import type { ZelavisDeploymentBackendPolicy, ZelavisDeploymentBackendSnapshot } from "../backends/registry.js";
@@ -16,6 +16,7 @@ import type { ZelavisClientRequestOptions } from "./fetch.js";
 
 type Json = <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>;
 type Raw = (path: string, options?: ZelavisClientRequestOptions) => Promise<Response>;
+class AssistantStreamError extends Data.TaggedError("AssistantStreamError")<{ readonly status: number; readonly message: string }> {}
 
 const segment = (value: string, what: string): string => {
   if (typeof value !== "string" || !value.trim()) throw new TypeError(`A ${what} is required.`);
@@ -134,8 +135,10 @@ function streamEvents(open: () => Promise<Response>): AsyncIterable<ZelavisAssis
       const connect = Effect.gen(function* () {
         const response = yield* integration(open);
         if (!response.ok || !response.body) {
-          const body = yield* integration(() => response.clone().json() as Promise<{ error?: string }>).pipe(Effect.orElseSucceed(() => undefined));
-          return yield* Effect.fail(new Error(body?.error ?? `The Assistant stream answered ${response.status}.`));
+          const body = yield* integration(() => response.clone().json() as Promise<unknown>).pipe(Effect.orElseSucceed(() => undefined));
+          const message = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
+            ? body.error : `The Assistant stream answered ${response.status}.`;
+          return yield* Effect.fail(new AssistantStreamError({ status: response.status, message }));
         }
         reader = response.body.getReader();
       });

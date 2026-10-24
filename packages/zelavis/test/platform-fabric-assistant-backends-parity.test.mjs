@@ -92,6 +92,20 @@ test("the Assistant's streamed reply is the same events through the SDK and the 
   assert.deepEqual(viaCli.map((entry) => entry.event), events, "the CLI reads the same events");
 });
 
+test("a refused Assistant stream retains its HTTP status and a validated error message", async () => {
+  for (const [body, message] of [[{ error: "Access refused" }, "Access refused"], [{ error: { private: true } }, "The Assistant stream answered 403."]]) {
+    const client = createZelavisClient({ baseUrl: "http://zv.test", fetch: async () => Response.json(body, { status: 403 }) });
+    await assert.rejects(async () => {
+      for await (const _event of client.assistant.streamMessage("thread", "hello")) assert.fail("a refused stream emitted an event");
+    }, error => {
+      assert.equal(error._tag, "AssistantStreamError");
+      assert.equal(error.status, 403);
+      assert.equal(error.message, message);
+      return true;
+    });
+  }
+});
+
 /** What a client call or a CLI command asked of the network: method, path under the API root, and body. */
 const asked = async (call) => {
   const requests = [];
