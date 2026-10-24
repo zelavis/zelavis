@@ -59,3 +59,33 @@ Accounts, sessions and security events need the auth manage permission; the sign
 | Security events | `GET security/events` | `admin.securityEvents()` | `security-events` |
 | OAuth connections | `GET oauth/connections`, `PUT\|DELETE oauth/connections/:provider` | `admin.oauthConnections()`, `admin.configureOAuth(p, body)`, `admin.removeOAuth(p)` | `oauth-connections`, `configure-oauth P --data`, `remove-oauth P` |
 | First owner | `GET bootstrap`, `POST bootstrap` (needs the bootstrap token) | `bootstrapStatus()`, `bootstrap(body)` | `bootstrap-status`, `bootstrap --data`; the interactive `zelavis bootstrap` and `zelavis setup` remain |
+
+## Runtime, services and extensions
+
+| What | HTTP (`runtime/…`) | SDK | CLI |
+|---|---|---|---|
+| Configuration, the caller's access | `GET config`, `GET access` | `client.runtime.config()`, `client.runtime.access()` | `zelavis runtime config`, `zelavis runtime access` |
+| Dashboard settings | `GET settings`, `PATCH settings` | `client.runtime.settings()`, `client.runtime.updateSettings(body)` | `zelavis runtime settings`, `zelavis runtime update-settings --data JSON` |
+| Register, install or disable a service | `POST services`, `PATCH services/:name` | `client.services.register(body)`, `client.services.update(name, body)` | `zelavis services register --specifier S [--install]`, `services install\|disable NAME` |
+| Services that extend another | `GET extensions?owner=` | `client.services.extensions(owner?)` | `zelavis extensions [--for SERVICE]` |
+
+## Environment sessions
+
+Remote environment sessions and their processes. `update-session` needs the session's `expectedVersion`.
+
+| What | HTTP (`runtime/environment/…`) | SDK (`client.environment.…`) | CLI (`zelavis environment …`) |
+|---|---|---|---|
+| Identity, health | `GET`, `GET health` | `identity()`, `health()` | `identity`, `health` |
+| Sessions | `POST sessions`, `GET\|PATCH\|DELETE sessions/:id` | `createSession(body?)`, `getSession(id)`, `updateSession(id, body)`, `closeSession(id)` | `create-session [--data]`, `session ID`, `update-session ID --data`, `close-session ID` |
+| Usage, events | `POST sessions/:id/usage`, `GET sessions/:id/events?after=&limit=` | `recordUsage(id, body)`, `readEvents(id, { after?, limit? })` | `usage ID --data`, `events ID [--after CURSOR --limit N]` |
+| Processes | `POST sessions/:id/processes`, `GET processes/:id`, `POST processes/:id/operations` | `startProcess(id, body)`, `getProcess(id)`, `operateProcess(id, body)` | `start-process ID --data`, `process ID`, `operate-process ID --data` |
+
+## Edge hostnames and certificates
+
+The Edge's status, switching, routes and publishing were already in all three forms (`zelavis edge …`). The rest:
+
+| What | HTTP (`runtime/edge/…`) | SDK (`client.edge.…`) | CLI (`zelavis edge …`) |
+|---|---|---|---|
+| Check a hostname before onboarding it | `GET onboard/preflight?hostname=` | `preflightHostname(host)` | `preflight HOST` |
+| Onboard a hostname | `POST onboard` with `{ mode, hostname?, localTargetUrl? }` | `onboardHostname(body)` | `onboard --mode M [--hostname H] [--local-target-url U]` |
+| Certificates | `GET certificates`, `POST certificates/renew` with `{ hostname?, renewIfWithinDays? }` | `certificates()`, `renewCertificates(body?)` | `certificates`, `renew [--hostname H] [--renew-if-within-days N]` |

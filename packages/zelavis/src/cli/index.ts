@@ -18,6 +18,8 @@ export * from "./commands.js";
 export * from "./projects.js";
 export * from "./host-operations.js";
 export * from "./storage.js";
+export * from "./runtime.js";
+export * from "./environment.js";
 export * from "./auth-operations.js";
 export * from "./fabric.js";
 export * from "./assistant.js";

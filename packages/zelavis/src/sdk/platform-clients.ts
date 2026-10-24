@@ -136,6 +136,24 @@ async function* streamEvents(pending: Promise<Response>): AsyncGenerator<Zelavis
   }
 }
 
+/** The service registry beyond the list `client.marketplace.services()` returns, over `/runtime/services`. Same contract as `zelavis services`. */
+export interface ZelavisServicesClient {
+  /** Register an ESM service: `{ specifier, name?, status?: "available" | "installed", source?, order? }`. */
+  register(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  /** Install or disable a registered service, or change its order: `{ status?, order? }`. */
+  update(name: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  /** Services that extend another, grouped by what they extend; `owner` limits it to one service. */
+  extensions(owner?: string): Promise<ZelavisDataResult>;
+}
+
+export function createServicesClient(json: Json): ZelavisServicesClient {
+  return {
+    register: (input) => json("/runtime/services", { method: "POST", body: input }),
+    update: (name, input) => json(`/runtime/services/${segment(name, "service name")}`, { method: "PATCH", body: input }),
+    extensions: (owner) => json(withQuery("/runtime/extensions", { owner })),
+  };
+}
+
 /** Where the Platform may run Projects: Docker, native and what else was detected, over `/runtime/deployment-backends`. Same contract as `zelavis backends`. */
 export interface ZelavisDeploymentBackendsClient {
   list(): Promise<ZelavisDataResult>;

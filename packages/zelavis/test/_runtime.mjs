@@ -40,3 +40,25 @@ export const outcome = async (run) => {
     return { refused: String(error?.body?.error ?? error?.message ?? error) };
   }
 };
+
+/** What a client call or a CLI command asked of the network: method, path under the API root and body, answered with `{}`. */
+const asked = async (call) => {
+  const requests = [];
+  const fetchImplementation = async (input, init) => {
+    const url = new URL(String(input));
+    requests.push({ method: init?.method ?? "GET", path: url.pathname.replace("/zelavis/api/v1", "") + url.search, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
+    const path = url.pathname.replace("/zelavis/api/v1", "");
+    // The service commands read the registry before they change it; give them the shape they expect.
+    if ((init?.method ?? "GET") === "GET" && path === "/runtime/services") return Response.json({ services: [{ name: "x", status: "available" }] });
+    if (path.startsWith("/runtime/extensions")) return Response.json({ extensionPoints: [] });
+    return Response.json({ services: [{ name: "x", status: "installed" }], service: { name: "x", status: "installed" } });
+  };
+  await call(fetchImplementation);
+  return requests;
+};
+export const viaSdk = (use) => asked((fetchImplementation) => use(createZelavisClient({ baseUrl: "http://zv.test", rootPath: "/zelavis", fetch: fetchImplementation })));
+export const viaCli = (command, args) => asked(async (fetchImplementation) => {
+  const realFetch = globalThis.fetch, realLog = console.log;
+  globalThis.fetch = fetchImplementation; console.log = () => {};
+  try { await command([...args, "--url", "http://zv.test/zelavis", "--json"]); } finally { globalThis.fetch = realFetch; console.log = realLog; }
+});

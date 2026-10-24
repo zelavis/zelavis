@@ -11,14 +11,18 @@ import type {
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis edge <status|plan|switch|publish|routes> [args] [--url URL] [--token TOKEN] [--json]\n" +
+  "zelavis edge <status|plan|switch|publish|routes|preflight|onboard|certificates|renew> [args] [--url URL] [--token TOKEN] [--json]\n" +
   "  zelavis edge status\n" +
   "  zelavis edge plan <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
   "  zelavis edge switch <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
   "  zelavis edge publish\n" +
   "  zelavis edge routes [list] [--scope platform|project] [--project-id ID] [--hostname HOST]\n" +
   "  zelavis edge routes put <id> --hostname HOST --target URL [--weight N] [--protocol P] [--tls managed|external|none] [--certificate-ref REF] [--priority N] [--path-prefix /...] [--exact] [--project-id ID] [--scope platform|project]\n" +
-  "  zelavis edge routes delete <id>";
+  "  zelavis edge routes delete <id>\n" +
+  "  zelavis edge preflight <hostname>\n" +
+  "  zelavis edge onboard --mode MODE [--hostname HOST] [--local-target-url URL]\n" +
+  "  zelavis edge certificates\n" +
+  "  zelavis edge renew [--hostname HOST] [--renew-if-within-days N]";
 
 const capabilities = new Set<ZelavisEdgeCapability>([
   "http",
@@ -50,6 +54,9 @@ const knownFlags = new Set([
   "--path-prefix",
   "--project-id",
   "--scope",
+  "--mode",
+  "--local-target-url",
+  "--renew-if-within-days",
 ]);
 
 function parsePublication(value: string): Pick<ZelavisEdgePublication, "id" | "revision"> {
@@ -82,6 +89,9 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
   let exactFlag = false;
   let projectIdFlag: string | undefined;
   let scopeFlag: "platform" | "project" | undefined;
+  let modeFlag: string | undefined;
+  let localTargetFlag: string | undefined;
+  let renewWithinFlag: number | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -142,6 +152,12 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
       }
     }
     if (flag === "--path-prefix") pathPrefixFlag = value;
+    if (flag === "--mode") modeFlag = value;
+    if (flag === "--local-target-url") localTargetFlag = value;
+    if (flag === "--renew-if-within-days") {
+      renewWithinFlag = Number(value);
+      if (!Number.isSafeInteger(renewWithinFlag) || renewWithinFlag < 0) throw new Error("--renew-if-within-days requires a non-negative integer.");
+    }
     if (flag === "--project-id") projectIdFlag = value;
     if (flag === "--scope") {
       if (value !== "platform" && value !== "project") {
@@ -177,6 +193,43 @@ export function runEdgeCommand(args: readonly string[]): Promise<void> {
         ? [`Switch ${status.activeSwitch.id}: ${status.activeSwitch.phase}`]
         : []),
     ].join("\n"));
+    return;
+  }
+
+  if (action === "preflight") {
+    const [host, ...extra] = subArgs;
+    if (!host || extra.length > 0) throw new Error(`edge preflight requires exactly one hostname. ${usage}`);
+    const result = (yield* integrationValue(client.edge.preflightHostname(host)));
+    print(result, () => `${result.hostname}: ${result.valid ? "valid" : "not valid"}${"detail" in result && result.detail ? ` — ${String(result.detail)}` : ""}`);
+    return;
+  }
+
+  if (action === "onboard") {
+    if (subArgs.length > 0) throw new Error(`edge onboard does not accept arguments. ${usage}`);
+    if (!modeFlag) throw new Error("edge onboard requires --mode.");
+    const result = (yield* integrationValue(client.edge.onboardHostname({
+      mode: modeFlag as never,
+      ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
+      ...(localTargetFlag ? { localTargetUrl: localTargetFlag } : {}),
+    })));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (action === "certificates") {
+    if (subArgs.length > 0) throw new Error(`edge certificates does not accept arguments. ${usage}`);
+    const result = (yield* integrationValue(client.edge.certificates()));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (action === "renew") {
+    if (subArgs.length > 0) throw new Error(`edge renew does not accept arguments. ${usage}`);
+    const result = (yield* integrationValue(client.edge.renewCertificates({
+      ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
+      ...(renewWithinFlag === undefined ? {} : { renewIfWithinDays: renewWithinFlag }),
+    })));
+    print(result, () => JSON.stringify(result, null, 2));
     return;
   }
 

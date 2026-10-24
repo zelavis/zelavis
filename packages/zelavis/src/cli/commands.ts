@@ -24,6 +24,8 @@ import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runStorageCommand } from "./storage.js";
 import { runFabricCommand } from "./fabric.js";
+import { runRuntimeCommand } from "./runtime.js";
+import { runEnvironmentCommand } from "./environment.js";
 import { runAssistantCommand } from "./assistant.js";
 import { runBackendsCommand } from "./backends.js";
 import { runAgentStatusCommand } from "./agent-status.js";
@@ -153,6 +155,8 @@ Usage:
   zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
+  zelavis runtime <config|access|settings|update-settings> [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis environment <identity|health|create-session|update-session|session|close-session|usage|start-process|process|operate-process|events> [id] [--data JSON] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
   zelavis fabric <snapshot|health|nodes|node|placements|placement|plan|migrations> [id] [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis assistant <audit|provider|set-provider|clear-provider|project-provider|set-project-provider|clear-project-provider|threads|create-thread|thread|delete-thread|send|stream|decide> [id] [text|approval-id] [--data JSON] [--project ID] [--decision approve|deny] [--confirm ID] [--url <url>] [--token <token>] [--json]
   zelavis backends <list|detect|enable|disable|default> [backend-id] [--url <url>] [--token <token>] [--json]
@@ -645,6 +649,14 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     // `zelavis agent` runs the Agent; with one of these words it asks the Platform what the Agent reports.
     if (args[0] === "agent" && ["status", "operations", "operation"].includes(args[1] ?? "")) {
       (yield* integration(() => runAgentStatusCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "runtime") {
+      (yield* integration(() => runRuntimeCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "environment") {
+      (yield* integration(() => runEnvironmentCommand(args.slice(1))));
       return;
     }
     if (args[0] === "fabric") {

@@ -1,8 +1,8 @@
 import {
-  createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient,
-  type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
+  createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient,
+  type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
 } from "./platform-clients.js";
-export type { ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
+export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
 import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
@@ -339,6 +339,8 @@ export interface ZelavisClient {
   readonly assistant: ZelavisAssistantClient;
   /** Where Projects may run. Same contract as `zelavis backends`. */
   readonly deploymentBackends: ZelavisDeploymentBackendsClient;
+  /** Registering, installing and listing the services that extend others. Same contract as `zelavis services`. */
+  readonly services: ZelavisServicesClient;
   /** The Agent's status and operations. Same contract as `zelavis agent status`. */
   readonly agent: ZelavisAgentClient;
   /**
@@ -1531,6 +1533,7 @@ export function createZelavisClient(
     assistant: createAssistantClient(json, request),
     deploymentBackends: createDeploymentBackendsClient(json),
     agent: createAgentClient(json),
+    services: createServicesClient(json),
     workloads: (projectId) => createWorkloadsClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),
