@@ -4,7 +4,7 @@ title: Platform Operations
 
 Everything the Platform does is reachable three ways that answer alike, refusals included: the HTTP route, the JS SDK (`createZelavisClient`) and the CLI. This page maps the Platform's own operations to all three. Paths are under `/zelavis/api/v1/`. The Project-level operations are in [Project files and workloads](/api/project-files-and-workloads) and [App Data](/api/app-data); the database's are in [Database](/api/database).
 
-Answers are the Platform's own JSON, passed through by the SDK and the CLI. `--url` and `--token` pick the Platform and the credential; `--json` prints the answer as JSON.
+Answers are the Platform's own JSON, passed through by the SDK and the CLI. In the SDK their inputs and answers are the server's own TypeScript types, so a wrong field is a compile error; the CLI takes `--data` as JSON and the route validates it. `--url` and `--token` pick the Platform and the credential; `--json` prints the answer as JSON.
 
 ## Fabric
 

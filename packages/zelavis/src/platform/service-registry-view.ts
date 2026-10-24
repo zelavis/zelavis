@@ -65,3 +65,24 @@ export function publicServiceRegistryIdentity<TContext>(
     order: entry.order,
   };
 }
+
+/** One service that extends another, as `runtime/extensions` reports it. */
+export interface ServiceExtensionEntry {
+  readonly name: string;
+  readonly version?: string;
+  readonly status: string;
+  readonly source?: string;
+  readonly capabilities: readonly string[];
+  readonly marketplace?: unknown;
+}
+
+/** Everything that extends one owner (a service or a native subsystem), as `runtime/extensions` reports it. */
+export interface ServiceExtensionPoint {
+  readonly owner: string;
+  /** Whether what it extends is there, so a client does not offer an install that would do nothing. */
+  readonly ownerInstalled: boolean;
+  /** Whether anything answers to that name at all, so a misspelled owner does not read as merely not installed. */
+  readonly ownerKnown: boolean;
+  readonly capabilities: readonly string[];
+  readonly extensions: readonly ServiceExtensionEntry[];
+}

@@ -7,7 +7,7 @@ import { setUnexpectedErrorSink } from "./core/runtime/error-policy.js";
 import { createZelavisPlainHandler } from "./core/runtime/request-dispatcher.js";
 import { evaluate, integration, present, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 import { provisionProjectHostPackages, ZelavisHostPackageProvisioningError } from "./platform/host-package-provisioning.js";
-import { publicInstallChoices, publicProjectRecipe, publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
+import { publicInstallChoices, publicProjectRecipe, publicServiceRegistryIdentity, type ServiceExtensionEntry, type ServiceExtensionPoint } from "./platform/service-registry-view.js";
 import { createProjectIdentityEndpointGroup } from "./app/app-service.js";
 import {
   identityEndpointGroup as createIdentityEndpointGroup,
@@ -2890,7 +2890,7 @@ function resolveRuntimeManagementCore(
                 ...presentNativeExtensionOwners(context.capabilities),
               ]);
 
-              const points = new Map<string, any>();
+              const points = new Map<string, { -readonly [Key in keyof ServiceExtensionPoint]: Key extends "capabilities" ? Set<string> : Key extends "extensions" ? ServiceExtensionEntry[] : ServiceExtensionPoint[Key] }>();
               for (const service of services as any[]) {
                 for (const point of service.extends ?? []) {
                   if (wanted && point.owner !== wanted) continue;
@@ -2911,7 +2911,7 @@ function resolveRuntimeManagementCore(
                         (candidate: any) => candidate.name === point.owner,
                       ),
                     capabilities: new Set<string>(),
-                    extensions: [] as unknown[],
+                    extensions: [] as ServiceExtensionEntry[],
                   };
                   for (const capability of point.capabilities) {
                     group.capabilities.add(capability);

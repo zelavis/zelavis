@@ -1,4 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { Effect } from "effect";
+import { evaluate, integration, present } from "../core/runtime/effect-boundary.js";
 import { bodyFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
@@ -19,33 +21,39 @@ const table: CliTable = {
     },
     metadata: { run: (input) => files(input).metadata(path(input)) },
     get: {
-      run: async (input) => {
-        const target = path(input);
-        const file = await files(input).read(target);
+      run: (input) => present(Effect.gen(function* () {
+        const target = yield* evaluate(() => path(input));
+        const file = yield* integration(() => files(input).read(target));
         const output = input.flags.get("--output");
         const summary = { path: target, contentType: file.contentType, size: file.bytes.byteLength, ...(file.checksum === undefined ? {} : { checksum: file.checksum }) };
         // With an output file the bytes go there untouched; otherwise they travel in the answer, as text when they are text.
-        if (output !== undefined) { await writeFile(output, file.bytes); return { ...summary, file: output }; }
-        try { return { ...summary, encoding: "utf8", content: new TextDecoder("utf-8", { fatal: true }).decode(file.bytes) }; }
-        catch { return { ...summary, encoding: "base64", content: Buffer.from(file.bytes).toString("base64") }; }
-      },
+        if (output !== undefined) {
+          yield* integration(() => writeFile(output, file.bytes));
+          return { ...summary, file: output };
+        }
+        const text = yield* Effect.try({ try: () => new TextDecoder("utf-8", { fatal: true }).decode(file.bytes), catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined));
+        return text === undefined
+          ? { ...summary, encoding: "base64", content: Buffer.from(file.bytes).toString("base64") }
+          : { ...summary, encoding: "utf8", content: text };
+      })),
       text: (result: { encoding?: string; content?: string; file?: string; path: string; size: number }) =>
         result.encoding === "utf8" ? (result.content ?? "") : `${result.path}: ${result.size} bytes${result.file ? ` written to ${result.file}` : " (binary; use --output FILE or --json)"}`,
     },
     put: {
-      run: async (input) => {
-        const target = path(input);
+      run: (input) => present(Effect.gen(function* () {
+        const target = yield* evaluate(() => path(input));
         const file = input.flags.get("--file"), text = input.flags.get("--text");
-        if ((file === undefined) === (text === undefined)) throw new Error("storage put needs exactly one of --file FILE and --text TEXT.");
-        const metadata = input.flags.has("--metadata") ? bodyFlag(input, "--metadata", "storage put") as Record<string, string> : undefined;
+        if ((file === undefined) === (text === undefined)) return yield* evaluate(() => { throw new Error("storage put needs exactly one of --file FILE and --text TEXT."); });
+        const metadata = input.flags.has("--metadata") ? yield* evaluate(() => bodyFlag<Record<string, string>>(input, "--metadata", "storage put")) : undefined;
         const options = {
           ...(input.flags.has("--content-type") ? { contentType: input.flags.get("--content-type")! } : {}),
           ...(input.flags.has("--cache-control") ? { cacheControl: input.flags.get("--cache-control")! } : {}),
           ...(input.flags.has("--content-disposition") ? { contentDisposition: input.flags.get("--content-disposition")! } : {}),
           ...(metadata ? { metadata } : {}),
         };
-        return files(input).write(target, file !== undefined ? new Uint8Array(await readFile(file)) : text!, options);
-      },
+        const body = file !== undefined ? new Uint8Array(yield* integration(() => readFile(file))) : text!;
+        return yield* integration(() => files(input).write(target, body, options));
+      })),
       text: (result: { file: { path: string; size?: number } }) => `Stored ${result.file.path} (${result.file.size ?? "?"} bytes).`,
     },
     delete: { run: (input) => files(input).delete(path(input)), text: (result: { path: string }) => `Deleted ${result.path}.` },

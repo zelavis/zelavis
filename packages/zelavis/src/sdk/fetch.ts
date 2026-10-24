@@ -3,6 +3,10 @@ import {
   type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
 } from "./platform-clients.js";
 export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
+import type { SystemView, SystemViewResult } from "../db/system-views.js";
+import type { ZelavisFileReference } from "../platform/storage-types.js";
+import type { WorkloadDefinition, WorkloadRunLog } from "../app/workloads/workloads-service.js";
+import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "../db/schema/index.js";
 import type {
   Analyzer, CheckConstraint, DocumentsApi, EmbeddingIndex, GroupedSummary, IndexDefinition, ReferenceConstraint, RelatedDocuments,
   SpatialIndex, SummarizeInput, Summary, TraverseInput, TraverseResult,
@@ -14,9 +18,10 @@ import type {
 import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
-import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { present, integration, evaluate, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
 import type { IdentityApi } from "../app/identity/index.js";
+import type { IdentityBootstrapCapability } from "../app/identity/core/types.js";
 import type { ZelavisUpdateRun, ZelavisUpdateStatus } from "../updates.js";
 import { stringifyJsonRequest } from "../core/runtime/json-request.js";
 import type { PublicServiceRegistryIdentity, ServiceSourceDiagnostic, ServiceUpdateResult } from "../platform/service-registry-view.js";
@@ -259,24 +264,24 @@ export interface ZelavisAuthClient {
   refreshSession(): Promise<{ readonly token: string; readonly session: ZelavisAuthSession }>;
   signOut(): Promise<void>;
   /** The signed-in account's own sessions, and ending one of them. */
-  sessions(): Promise<ZelavisDataResult>;
+  sessions(): Promise<{ readonly sessions: readonly ZelavisAuthSession[]; readonly currentSessionId?: string }>;
   revokeSession(sessionId: string): Promise<void>;
   /** The providers that can recover a credential, and the two steps of a recovery: ask, then complete with what was sent. */
-  recoveryProviders(): Promise<ZelavisDataResult>;
-  beginRecovery(provider: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
-  completeRecovery(provider: string, input: ZelavisDataBody): Promise<void>;
+  recoveryProviders(): Promise<ZelavisIdentityResult<"authentication", "listRecoveryProviders">>;
+  beginRecovery(provider: string, input: Parameters<IdentityApi["authentication"]["beginRecovery"]>[1]): Promise<ZelavisIdentityResult<"authentication", "beginRecovery">>;
+  completeRecovery(provider: string, input: Parameters<IdentityApi["authentication"]["completeRecovery"]>[1]): Promise<void>;
   /** Whether a first owner still has to be created, and creating one with the bootstrap token (`{ bootstrapToken, … }`). */
-  bootstrapStatus(): Promise<ZelavisDataResult>;
-  bootstrap(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  bootstrapStatus(): Promise<Awaited<ReturnType<IdentityBootstrapCapability["status"]>> & { readonly available: boolean; readonly tokenRequired: boolean }>;
+  bootstrap(input: Parameters<IdentityBootstrapCapability["bootstrap"]>[0]): Promise<{ readonly account: Awaited<ReturnType<IdentityBootstrapCapability["bootstrap"]>>["account"]; readonly session: { readonly token: string; readonly session: ZelavisAuthSession } }>;
   readonly admin: {
-    accounts(): Promise<ZelavisDataResult>;
-    createAccount(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    accounts(): Promise<ZelavisIdentityResult<"accounts", "list">>;
+    createAccount(input: Parameters<IdentityApi["accounts"]["create"]>[0]): Promise<ZelavisIdentityResult<"accounts", "create">>;
     /** Credentials for an account: `{ accountId, provider, … }`, as the provider defines them. */
-    createCredentials(input: ZelavisDataBody): Promise<ZelavisDataResult>;
-    accountSessions(accountId: string): Promise<ZelavisDataResult>;
-    revokeAccountSessions(accountId: string): Promise<ZelavisDataResult>;
-    revokeAccountSession(accountId: string, sessionId: string): Promise<ZelavisDataResult>;
-    securityEvents(): Promise<ZelavisDataResult>;
+    createCredentials(input: Parameters<IdentityApi["credentials"]["create"]>[0]): Promise<Omit<ZelavisIdentityResult<"credentials", "create">, "secretHash">>;
+    accountSessions(accountId: string): Promise<readonly ZelavisAuthSession[]>;
+    revokeAccountSessions(accountId: string): Promise<{ readonly revoked: readonly ZelavisAuthSession[] }>;
+    revokeAccountSession(accountId: string, sessionId: string): Promise<void>;
+    securityEvents(): Promise<{ readonly events: ZelavisIdentityResult<"security", "listEvents"> }>;
     oauthConnections(): Promise<readonly ZelavisOAuthConnection[]>;
     configureOAuth(provider: string, input: {
       readonly issuer?: string;
@@ -461,13 +466,13 @@ export interface ZelavisDataClient {
   /** Versioned schemas. A version governs what is accepted next, not what is already stored. */
   readonly schemas: {
     /** Every collection with a schema, and its active version. */
-    list(): Promise<ZelavisDataResult>;
-    versions(collection: string): Promise<ZelavisDataResult>;
+    list(): Promise<{ readonly collections: readonly CollectionSchemaSummary[] }>;
+    versions(collection: string): Promise<{ readonly collection: string; readonly schemas: readonly StoredCollectionSchema[] }>;
     /** Save a version (`{ version, fields, activate? }`). */
-    save(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
-    activate(collection: string, version: number): Promise<ZelavisDataResult>;
+    save(collection: string, input: Omit<CollectionSchema, "collection">): Promise<StoredCollectionSchema>;
+    activate(collection: string, version: number): Promise<StoredCollectionSchema>;
     /** Check a document's data against the active schema without writing it. */
-    validate(collection: string, data: Readonly<Record<string, unknown>>): Promise<ZelavisDataResult>;
+    validate(collection: string, data: Readonly<Record<string, unknown>>): Promise<SchemaValidationResult>;
   };
   /** Series the database derives from the event log. Bodies are the database's own vocabulary, passed through. */
   readonly timeseries: {
@@ -488,7 +493,7 @@ export interface ZelavisDataClient {
     ingest(series: string): Promise<IngestResult>;
   };
   /** Whether the Project's database answers, and what it reports about itself. */
-  health(): Promise<ZelavisDataResult>;
+  health(): Promise<ZelavisDataHealth>;
   /** A collection addressed by document id, over the same payloads and projections. */
   readonly kv: {
     get(namespace: string, key: string): Promise<ZelavisDataKeyValueEntry | undefined>;
@@ -666,9 +671,9 @@ export interface ZelavisStorageFile {
 
 export interface ZelavisStorageClient {
   /** Files under `prefix` (all of them without one), with a ready-to-use reference to each. */
-  list(prefix?: string): Promise<{ readonly files: readonly ZelavisStorageFile[]; readonly references: readonly ZelavisDataResult[] }>;
+  list(prefix?: string): Promise<{ readonly files: readonly ZelavisStorageFile[]; readonly references: readonly ZelavisFileReference[] }>;
   /** A file's description and reference without its bytes. */
-  metadata(path: string): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisDataResult }>;
+  metadata(path: string): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisFileReference }>;
   /** A file's bytes and the headers it is served with. */
   read(path: string): Promise<{ readonly bytes: Uint8Array; readonly contentType: string; readonly cacheControl?: string; readonly contentDisposition?: string; readonly checksum?: string }>;
   /** Store bytes (or UTF-8 text) at a path, replacing what was there. `metadata` travels as `x-file-meta-*` headers. */
@@ -677,42 +682,40 @@ export interface ZelavisStorageClient {
     readonly cacheControl?: string;
     readonly contentDisposition?: string;
     readonly metadata?: Readonly<Record<string, string>>;
-  }): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisDataResult }>;
+  }): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisFileReference }>;
   /** Remove a file. Refused when there is none. */
   delete(path: string): Promise<{ readonly deleted: boolean; readonly path: string }>;
 }
 
+/** What a workload definition may carry; the Project is the client's. */
+export interface ZelavisWorkloadInput { readonly name?: string; readonly code?: string; readonly route?: string; readonly schedule?: string; readonly enabled?: boolean }
 export type ZelavisWorkloadType = "function" | "job" | "schedule" | "webhook";
 
 export interface ZelavisWorkloadsClient {
-  health(): Promise<ZelavisDataResult>;
+  health(): Promise<{ readonly status: "ready" }>;
   /** The workloads of one kind as dashboard menu items. */
-  menu(section: "functions" | "jobs" | "schedules" | "webhooks"): Promise<ZelavisDataResult>;
-  list(options?: { readonly type?: ZelavisWorkloadType }): Promise<ZelavisDataResult>;
+  menu(section: "functions" | "jobs" | "schedules" | "webhooks"): Promise<{ readonly items: readonly { readonly title: string; readonly path: string; readonly pageLabel: string }[] }>;
+  list(options?: { readonly type?: ZelavisWorkloadType }): Promise<{ readonly workloads: readonly WorkloadDefinition[] }>;
   /** Create one: `{ type, name, code?, route?, schedule?, enabled? }`. The Project is this client's. */
-  create(input: ZelavisDataBody): Promise<ZelavisDataResult>;
-  get(id: string): Promise<ZelavisDataResult>;
+  create(input: ZelavisWorkloadInput & { readonly type: ZelavisWorkloadType; readonly name: string }): Promise<WorkloadDefinition>;
+  get(id: string): Promise<WorkloadDefinition>;
   /** Replace a definition: `{ name?, code?, route?, schedule?, enabled? }`. */
-  update(id: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  update(id: string, input: ZelavisWorkloadInput): Promise<WorkloadDefinition>;
   /** Run it now; the answer is the run's log entry. */
-  run(id: string): Promise<ZelavisDataResult>;
-  logs(options?: { readonly workloadId?: string }): Promise<ZelavisDataResult>;
+  run(id: string): Promise<WorkloadRunLog>;
+  logs(options?: { readonly workloadId?: string }): Promise<{ readonly logs: readonly WorkloadRunLog[] }>;
 }
 
-/**
- * A body the database defines. The data client passes it through rather than reshaping it: the query,
- * definition and series vocabulary is the database's own, and a translation here would be a second dialect to keep
- * in step with it. The fields each operation reads are listed beside it.
- */
 /** What a database operation answers on success, taken from the server's own signature so the two cannot drift. */
 export type ZelavisDataSuccess<Operation extends keyof DocumentsApi> =
   DocumentsApi[Operation] extends (...args: never[]) => Effect.Effect<infer Success, unknown> ? Success : never;
+/** What an identity operation answers, taken from the identity API's own signature. */
+export type ZelavisIdentityResult<Group extends keyof IdentityApi, Operation extends keyof IdentityApi[Group]> =
+  IdentityApi[Group][Operation] extends (...args: never[]) => infer Result ? Awaited<Result> : never;
+/** What the Project's database reports about itself. */
+export interface ZelavisDataHealth { readonly status: "ok"; readonly nodeId: string; readonly shards: number; readonly virtualRanges: number; readonly partitionMapVersion: number }
 /** What dropping an index, check or reference answers. */
 export interface ZelavisDataDropped { readonly dropped: boolean }
-export type ZelavisDataBody = Readonly<Record<string, unknown>>;
-
-/** The database's own answer to such an operation, as it sent it. */
-export type ZelavisDataResult = Readonly<Record<string, unknown>>;
 
 export interface ZelavisDataQueryInput {
   readonly where?: readonly unknown[];
@@ -1156,8 +1159,8 @@ export interface ZelavisProjectsClient {
    * own Tenant unless `tenantId` names another. Needs `database.inspect`, carried by `project.view`. Same
    * contract as `zelavis projects system-views`.
    */
-  systemViews(projectId: string, options?: { readonly tenantId?: string }): Promise<ZelavisDataResult>;
-  systemView(projectId: string, view: string, options?: { readonly tenantId?: string; readonly limit?: number; readonly after?: string }): Promise<ZelavisDataResult>;
+  systemViews(projectId: string, options?: { readonly tenantId?: string }): Promise<{ readonly views: readonly SystemView[] }>;
+  systemView(projectId: string, view: string, options?: { readonly tenantId?: string; readonly limit?: number; readonly after?: string }): Promise<SystemViewResult>;
   /**
    * A Tenant exists once it holds something, so creating one writes its first table. Refused when the
    * Tenant already has that table. Needs `database.write`. Same contract as `zelavis projects create-tenant`.
@@ -2092,9 +2095,10 @@ function storageSegments(path: string): string {
   return segments.map(encodeURIComponent).join("/");
 }
 
-async function failure(response: Response): Promise<never> {
-  throw new ZelavisClientHttpError(response, await response.clone().json().catch(() => undefined));
-}
+const failureOf = (response: Response) => Effect.gen(function* () {
+  const body = yield* integration(() => response.clone().json()).pipe(Effect.orElseSucceed(() => undefined));
+  return yield* Effect.fail(new ZelavisClientHttpError(response, body));
+});
 
 function createStorageClient(
   request: (path: string, options?: ZelavisClientRequestOptions) => Promise<Response>,
@@ -2106,30 +2110,32 @@ function createStorageClient(
   return {
     list: (prefix) => json(projectPath(projectId, base) + (prefix === undefined || prefix === "" ? "" : `?prefix=${encodeURIComponent(prefix)}`)),
     metadata: (path) => json(`${at(path)}?format=metadata`),
-    read: async (path) => {
-      const response = await request(at(path));
-      if (!response.ok) return failure(response);
+    read: (path) => present(Effect.gen(function* () {
+      const target = yield* evaluate(() => at(path));
+      const response = yield* integration(() => request(target));
+      if (!response.ok) return yield* failureOf(response);
       const header = (name: string) => response.headers.get(name) ?? undefined;
       const cacheControl = header("cache-control"), contentDisposition = header("content-disposition"), checksum = header("x-zelavis-checksum-sha256");
       return {
-        bytes: new Uint8Array(await response.arrayBuffer()),
+        bytes: new Uint8Array(yield* integration(() => response.arrayBuffer())),
         contentType: header("content-type") ?? "application/octet-stream",
         ...(cacheControl === undefined ? {} : { cacheControl }),
         ...(contentDisposition === undefined ? {} : { contentDisposition }),
         ...(checksum === undefined ? {} : { checksum }),
       };
-    },
-    write: async (path, body, options) => {
+    })),
+    write: (path, body, options) => present(Effect.gen(function* () {
       const headers = new Headers();
       if (options?.contentType !== undefined) headers.set("content-type", options.contentType);
       if (options?.cacheControl !== undefined) headers.set("cache-control", options.cacheControl);
       if (options?.contentDisposition !== undefined) headers.set("content-disposition", options.contentDisposition);
       for (const [name, value] of Object.entries(options?.metadata ?? {})) headers.set(`x-file-meta-${name}`, value);
       const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
-      const response = await request(at(path), { method: "PUT", headers, body: bytes as unknown as BodyInit });
-      if (!response.ok) return failure(response);
-      return response.json();
-    },
+      const target = yield* evaluate(() => at(path));
+      const response = yield* integration(() => request(target, { method: "PUT", headers, body: bytes as unknown as BodyInit }));
+      if (!response.ok) return yield* failureOf(response);
+      return yield* integration(() => response.json() as Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisFileReference }>);
+    })),
     delete: (path) => json(at(path), { method: "DELETE" }),
   };
 }
@@ -2251,9 +2257,9 @@ function createProjectsClient(
         body: { tenantId: input.tenantId, name: input.table, surface: "database", metadata: { kind: "table" } },
       }),
     systemViews: (projectId, options) =>
-      json<ZelavisDataResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views${systemViewQuery(options)}`)),
+      json<{ views: readonly SystemView[] }>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views${systemViewQuery(options)}`)),
     systemView: (projectId, view, options) =>
-      json<ZelavisDataResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views/${encodeURIComponent(view)}${systemViewQuery(options)}`)),
+      json<SystemViewResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/system/views/${encodeURIComponent(view)}${systemViewQuery(options)}`)),
     deleteTenant: (projectId, input) =>
       json<ZelavisTenantRemoval>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}`), {
         method: "DELETE",

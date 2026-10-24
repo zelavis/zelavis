@@ -43,10 +43,11 @@ export function jsonFlag(input: CliInput, flag: string): unknown {
 }
 
 /** A flag whose value is JSON, which must be an object. */
-export function bodyFlag(input: CliInput, flag: string, action: string): Record<string, unknown> {
+/** The flag's JSON object. The route validates it, so the caller only claims the shape its call site expects. */
+export function bodyFlag<Shape = Record<string, unknown>>(input: CliInput, flag: string, action: string): Shape {
   const value = jsonFlag(input, flag);
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${action} requires ${flag} with a JSON object.`);
-  return value as Record<string, unknown>;
+  return value as Shape;
 }
 
 export function integerFlag(input: CliInput, flag: string): number | undefined {

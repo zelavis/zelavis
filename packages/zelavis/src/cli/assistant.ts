@@ -1,4 +1,6 @@
 import { bodyFlag, integerFlag, required, runTable, type CliTable } from "./command-table.js";
+import { Effect } from "effect";
+import { evaluate, integration, present } from "../core/runtime/effect-boundary.js";
 import type { ZelavisAssistantEvent } from "../sdk/fetch.js";
 
 const usage =
@@ -35,11 +37,16 @@ const table: CliTable = {
     "delete-thread": { run: (input) => input.client.assistant.deleteThread(required(input, 0, "A thread id")) },
     send: { run: (input) => input.client.assistant.sendMessage(required(input, 0, "A thread id"), required(input, 1, "The message")) },
     stream: {
-      run: async (input) => {
+      run: (input) => present(Effect.gen(function* () {
+        const stream = yield* evaluate(() => input.client.assistant.streamMessage(required(input, 0, "A thread id"), required(input, 1, "The message")));
+        const iterator = stream[Symbol.asyncIterator]();
         const events: ZelavisAssistantEvent[] = [];
-        for await (const event of input.client.assistant.streamMessage(required(input, 0, "A thread id"), required(input, 1, "The message"))) events.push(event);
-        return events;
-      },
+        for (;;) {
+          const next = yield* integration(() => iterator.next());
+          if (next.done) return events;
+          events.push(next.value);
+        }
+      })),
       text: (events: readonly ZelavisAssistantEvent[]) => events.map((entry) => entry.event === "text" ? String((entry.data as { text?: string })?.text ?? entry.data) : `[${entry.event}] ${JSON.stringify(entry.data)}`).join(""),
     },
     decide: {
