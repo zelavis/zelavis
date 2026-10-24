@@ -10,6 +10,7 @@ import { button, field, link, message, node } from "../dom.ts";
 import { object } from "../api.ts";
 import { stripMount } from "../mount.ts";
 import { mountCreateTable } from "../create-table-dialog.ts";
+import { dropdown, setDropdownOptions, type DropdownElement } from "../dropdown.ts";
 
 export default {
   mountPersistent(host, initial): PersistentClient {
@@ -19,11 +20,11 @@ export default {
     let props = initial;
     const tenantList = () => { const tenants: unknown = JSON.parse(String(props.tenantsJson ?? "[]")); return Array.isArray(tenants) ? tenants.filter((value): value is string => typeof value === "string") : []; };
     const tenantsWithTables = () => new Set(JSON.parse(String(props.choicesJson ?? "[]")).map((item: unknown) => object(object(item).search)).filter((search: Record<string, unknown>) => typeof search.databaseTable === "string").map((search: Record<string, unknown>) => search.databaseTenant));
-    const tenant = node("label", {}, node("span", {}, "Tenant"), node("select", { name: "tenantId", "aria-label": "Tenant" }));
+    const tenant = node("label", {}, node("span", {}, "Tenant"), dropdown({ name: "tenantId", label: "Tenant" }, []));
     function tenants() {
-      const select = tenant.querySelector("select")!; const withTables = tenantsWithTables();
+      const select = tenant.querySelector("fuzor-select") as DropdownElement; const withTables = tenantsWithTables();
       const names = [...new Set([...tenantList(), String(props.tenant)].filter(Boolean))];
-      select.replaceChildren(...names.map(name => { const option = node("option", { value: name }, withTables.has(name) ? name : `${name} (no tables)`); option.selected = name === String(props.tenant); return option; }));
+      setDropdownOptions(select, names.map(name => ({ value: name, label: withTables.has(name) ? name : `${name} (no tables)` })), String(props.tenant));
     }
     // What is open comes from the sidebar (a table carries its Tenant), so this is a heading, not a picker. Only a system view has no
     // Tenant of its own, so it alone offers the Tenant choice.
@@ -43,8 +44,8 @@ export default {
       void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(error => errors.replaceChildren(message(String(error), true)));
     };
     // Choosing a Tenant applies at once: a system view stays open for the new Tenant; a table does not carry over, since the other Tenant has its own.
-    tenant.querySelector("select")!.addEventListener("change", event => {
-      const name = (event.currentTarget as HTMLSelectElement).value;
+    tenant.querySelector("fuzor-select")!.addEventListener("change", event => {
+      const name = (event.currentTarget as DropdownElement).value;
       search({ databaseTenant: name, ...(props.systemView ? {} : { databaseTable: undefined }), databaseRow: undefined, databaseAfter: undefined, databaseWhere: undefined, databaseSort: undefined, databaseHide: undefined });
     });
     let disposed = false;
@@ -97,8 +98,7 @@ export default {
         const previous = button("Previous page", () => { const back = trail.pop() ?? ""; search({ databaseAfter: back || undefined, databaseRow: undefined }); }); previous.disabled = trail.length === 0;
         const next = button("Next page", () => { trail.push(after); search({ databaseAfter: following, databaseRow: undefined }); }); next.disabled = following === "";
         paging.append(first, previous, next);
-        const size = node("select", { "aria-label": "Records per page" });
-        for (const count of [...new Set([25, 100, 250, Number(props.limit)])]) { const option = node("option", { value: String(count) }, String(count)); option.selected = count === Number(props.limit); size.append(option); }
+        const size = dropdown({ label: "Records per page", value: String(props.limit) }, [...new Set([25, 100, 250, Number(props.limit)])].map(count => ({ value: String(count), label: String(count) })));
         size.addEventListener("change", () => search({ databaseLimit: size.value, databaseAfter: undefined, databaseRow: undefined }));
         paging.append(node("label", {}, "Page size ", size));
       }

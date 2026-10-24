@@ -3,6 +3,7 @@ import { ApiError, array, label, object, request } from "./api.ts";
 import { button, empty, link, message, node } from "./dom.ts";
 import { badge, card, columns, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
 
@@ -53,7 +54,7 @@ export function siteUrl(project: Record<string, unknown>, browser: URL): string 
 
 const dateText = (value: unknown) => { const date = new Date(label(value, "")); return Number.isNaN(date.getTime()) ? label(value) : date.toLocaleString(); };
 const select = (name: string, aria: string, options: readonly (readonly [value: string, text: string, disabled?: boolean])[], selected: string) =>
-  node("select", { name, "aria-label": aria }, ...options.map(([value, text, disabled]) => node("option", { value, ...(value === selected ? { selected: "" } : {}), ...(disabled ? { disabled: "" } : {}) }, text)));
+  dropdown({ name, label: aria, value: selected }, options.map(([value, text, disabled]) => ({ value, label: text, ...(disabled ? { disabled } : {}) })));
 
 export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*(context: ScreenContext) {
   const api = context.config.api.basePath;
@@ -215,7 +216,7 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
       ? `A newer recipe is available: ${label(status.version)}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
       : `A newer recipe is available: ${label(status.version)}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`
     : `${label(status.reason, "")} Choose a recipe to move this Project to; its data is kept${restarts ? ", and it is restarted for the move" : ""}.`;
-  const target = node("select", { "aria-label": "Recipe to move to" }, ...recipes.map(recipe => node("option", { value: recipe.name }, recipe.title)));
+  const target = dropdown({ label: "Recipe to move to" }, recipes.map(recipe => ({ value: recipe.name, label: recipe.title })));
   const go = button(integration ? "Update recipe" : "Upgrade recipe", () => upgrade(status.state === "unavailable" ? target.value : undefined));
   if (!canUpgrade || status.state === "unavailable" && recipes.length === 0) go.setAttribute("disabled", "");
   return node("div", { class: "notice", "aria-label": "Recipe upgrade" }, node("p", {}, copy), ...(status.state === "unavailable" ? [target] : []), go,

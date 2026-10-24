@@ -3,6 +3,7 @@ import { array, label, object, request } from "./api.ts";
 import { button, link, node } from "./dom.ts";
 import { card, page } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** The Assistant: a conversation scoped to the Platform or to one Project, read from the Platform's Assistant endpoints. */
 export const assistantScreen = Effect.fn("ui.assistantScreen")(function*(context: ScreenContext) {
@@ -17,7 +18,7 @@ export const assistantScreen = Effect.fn("ui.assistantScreen")(function*(context
     ? yield* request(`${api}/runtime/assistant/threads/${encodeURIComponent(selected)}`).pipe(Effect.map(result => ({ ...object(object(result).thread), approvals: array(object(result).approvals) } as Record<string, unknown>)), Effect.catch(() => Effect.succeed(undefined)))
     : undefined;
 
-  const scope = node("select", { "aria-label": "Assistant scope" }, node("option", { value: "" }, "Platform"), ...projects.map(project => node("option", { value: label(project.id, ""), ...(label(project.id, "") === projectId ? { selected: "" } : {}) }, label(project.name))));
+  const scope = dropdown({ label: "Assistant scope", value: projectId ?? "" }, [{ value: "", label: "Platform" }, ...projects.map(project => ({ value: label(project.id, ""), label: label(project.name) }))]);
   scope.addEventListener("change", () => context.navigate(scope.value ? `/assistant?${new URLSearchParams({ project: scope.value })}` : "/assistant"));
   const search = (id?: string) => { const query = new URLSearchParams(); if (id) query.set("thread", id); if (projectId) query.set("project", projectId); const text = query.toString(); return text ? `/assistant?${text}` : "/assistant"; };
   const history = node("div", { class: "actions" },

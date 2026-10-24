@@ -89,7 +89,7 @@ try {
   const fields = [{ name: "title", field: { _tag: "TextField", label: "Article title", required: true } }, { name: "count", field: { _tag: "IntegerField", label: "Article count", required: false } }, { name: "published", field: { _tag: "BooleanField", label: "Published", required: false } }];
   await page.getByLabel("Schema fields JSON").fill(JSON.stringify(fields, null, 2));
   await page.getByRole("button", { name: "Save and activate new schema version", exact: true }).click();
-  await page.getByRole("option", { name: `v${nextVersion} · active`, exact: true }).waitFor({ state: "attached", timeout: 10000 }).catch(async error => { console.error("Schema save:", errors, previousSchemas, (await page.locator("body").innerText()).slice(-2500)); throw error; });
+  await page.locator("fuzor-select-item", { hasText: `v${nextVersion} · active` }).waitFor({ state: "attached", timeout: 10000 }).catch(async error => { console.error("Schema save:", errors, previousSchemas, (await page.locator("body").innerText()).slice(-2500)); throw error; });
   assert.equal((await request(proxy + "/database/schemas/articles?tenantId=tenant-a")).schemas.find(schema => schema.version === nextVersion).active, true);
   await page.getByRole("button", { name: "Records", exact: true }).click();
   await page.getByLabel("Article title", { exact: true }).waitFor();

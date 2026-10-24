@@ -1,5 +1,6 @@
 import { button, node } from "./dom.ts";
 import { getContentSchemaUi, getReferenceCollection, getRepeaterNestedDefinitions, isMultiSelectSchemaField, isReferenceMultiple, isReferenceSchemaField, isRepeaterSchemaField, isRichTextSchemaField, type ContentSchemaDefinition } from "./content-schema.ts";
+import { dropdown, setDropdownOptions } from "./dropdown.ts";
 
 /**
  * Entry field editors, one per schema field type. Each takes its current value and reports every change; composite
@@ -80,7 +81,7 @@ function fieldInput(name: string, definition: ContentSchemaDefinition, value: un
   if (isRepeaterSchemaField(definition)) return repeaterInput(definition, Array.isArray(value) ? value : [], context, disabled, report);
 
   if (definition.type === "string" && Array.isArray(definition.enum) && definition.enum.every(entry => typeof entry === "string")) {
-    const select = node("select", { ...(disabled ? { disabled: "" } : {}) }, node("option", { value: "" }, "Select…"), ...(definition.enum as string[]).map(entry => node("option", { value: entry, ...(entry === value ? { selected: "" } : {}) }, entry)));
+    const select = dropdown({ label: "Value", value: typeof value === "string" ? value : "", disabled }, [{ value: "", label: "Select…" }, ...(definition.enum as string[]).map(entry => ({ value: entry, label: entry }))]);
     select.addEventListener("change", () => report(select.value));
     return select;
   }
@@ -126,9 +127,9 @@ function referenceInput(definition: ContentSchemaDefinition, value: unknown, con
       return node("label", { class: "field-option" }, box, node("span", {}, `${titleOf(document)}${slugOf(document)}`));
     }));
   };
-  const select = node("select", { ...(disabled ? { disabled: "" } : {}) });
+  const select = dropdown({ label: "Related entry", disabled }, []);
   const drawSingle = () => {
-    select.replaceChildren(node("option", { value: "" }, "Select related entry…"), ...matches().map(document => node("option", { value: String(document.id), ...(String(document.id) === current ? { selected: "" } : {}) }, `${titleOf(document)}${slugOf(document)}`)));
+    setDropdownOptions(select, [{ value: "", label: "Select related entry…" }, ...matches().map(document => ({ value: String(document.id), label: `${titleOf(document)}${slugOf(document)}` }))], current ?? "");
   };
   select.addEventListener("change", () => report(select.value ? { collection: collection ?? "", id: select.value } : undefined));
   const draw = multiple ? drawMultiple : drawSingle;

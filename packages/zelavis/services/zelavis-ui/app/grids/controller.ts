@@ -7,6 +7,7 @@ import { Cause, Effect, Fiber } from "effect";
 import { getRouter } from "fuzor/runtime";
 import { request, object } from "../api.ts";
 import { button, message, node } from "../dom.ts";
+import { dropdown } from "../dropdown.ts";
 import { gridData, filterOperators, filterParam, hiddenParam, parseFilter, parseHidden, parseSort, parseEdit, changedRecord, type FilterOperator, type GridAdapter, type GridAdapterOptions, type GridRecord } from "./model.ts";
 
 /** A Fuzor island owns the shared workspace; vendor grids only render and edit cells. */
@@ -48,14 +49,12 @@ export function mountPersistent(host: HTMLElement, initialProps: Record<string, 
   const where = parseFilter(new URL(router.url()).searchParams.get("databaseWhere")), order = parseSort(new URL(router.url()).searchParams.get("databaseSort"));
   const paths = node("datalist", { id: `grid-fields-${props.collection ?? "records"}` }, ...initial.columns.filter(column => column.key !== undefined).map(column => node("option", { value: column.key! })));
   const filterPath = node("input", { "aria-label": "Filter field", placeholder: "Field", list: paths.id, value: where?.path ?? "" });
-  const filterOp = node("select", { "aria-label": "Filter operator" }, ...filterOperators.map(op => node("option", { value: op }, op)));
-  filterOp.value = where?.op ?? "eq";
+  const filterOp = dropdown({ label: "Filter operator", value: where?.op ?? "eq" }, filterOperators.map(op => ({ value: op, label: op })));
   const filterText = node("input", { "aria-label": "Filter value", placeholder: "Value (JSON or text)", value: where ? (typeof where.value === "string" ? where.value : JSON.stringify(where.value)) : "" });
   const filterForm = node("form", { class: "grid-filter grid-controls" }, paths, filterPath, filterOp, filterText, node("button", { type: "submit" }, "Apply filter"), button("Clear filter", () => search({ databaseWhere: undefined, databaseAfter: undefined, databaseRow: undefined })));
   filterForm.addEventListener("submit", event => { event.preventDefault(); search({ databaseWhere: filterPath.value ? filterParam(filterPath.value, filterOp.value as FilterOperator, filterText.value) : undefined, databaseAfter: undefined, databaseRow: undefined }); });
   const sortPath = node("input", { "aria-label": "Sort field", placeholder: "Sort by field", list: paths.id, value: order?.path ?? "" });
-  const sortDirection = node("select", { "aria-label": "Sort direction" }, node("option", { value: "asc" }, "ascending"), node("option", { value: "desc" }, "descending"));
-  sortDirection.value = order?.direction ?? "asc";
+  const sortDirection = dropdown({ label: "Sort direction", value: order?.direction ?? "asc" }, [{ value: "asc", label: "ascending" }, { value: "desc", label: "descending" }]);
   const sortForm = node("form", { class: "grid-sort grid-controls" }, sortPath, sortDirection, node("button", { type: "submit" }, "Sort"), button("Server order", () => search({ databaseSort: undefined, databaseAfter: undefined, databaseRow: undefined })));
   sortForm.addEventListener("submit", event => { event.preventDefault(); search({ databaseSort: sortPath.value ? `${sortPath.value}:${sortDirection.value}` : undefined, databaseAfter: undefined, databaseRow: undefined }); });
   const queryError = node("div", { "aria-live": "polite" });

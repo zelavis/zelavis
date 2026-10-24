@@ -8,6 +8,7 @@ import {
 import { button, node } from "./dom.ts";
 import { fieldEditor } from "./field-editors.ts";
 import { resourceNotice } from "./page-kit.ts";
+import { dropdown } from "./dropdown.ts";
 
 /**
  * The content type builder island: fields, raw type editor, and type settings. It owns the draft schema and the field
@@ -197,7 +198,7 @@ export function mount(host: HTMLElement, props: Record<string, unknown>) {
   function nestedEditor() {
     const nested = state.input.nestedFields ?? [];
     let nestedName = "", nestedLabel = "", nestedKind: ContentFieldBuilderKind = "text";
-    const kindSelect = node("select", { "aria-label": "Nested field type" }, ...(["text", "long-text", "number", "integer", "boolean"] as const).map(value => node("option", { value }, FIELD_TYPES.find(entry => entry.value === value)!.label)));
+    const kindSelect = dropdown({ label: "Nested field type" }, (["text", "long-text", "number", "integer", "boolean"] as const).map(value => ({ value, label: FIELD_TYPES.find(entry => entry.value === value)!.label })));
     kindSelect.addEventListener("change", () => { nestedKind = kindSelect.value as ContentFieldBuilderKind; });
     const add = () => {
       const name = nestedName.trim() || slugifyFieldName(nestedLabel);

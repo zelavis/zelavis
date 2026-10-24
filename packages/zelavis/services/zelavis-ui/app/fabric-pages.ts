@@ -4,6 +4,7 @@ import { CLOUD_PROVIDERS, describeScaleOutOutcome, joinCommand, newRequestId } f
 import { button, field, node } from "./dom.ts";
 import { badge, card, dataRow, columns, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** Server → Fabric: the control plane's placements, nodes, data fabric, infrastructure and policy. */
 
@@ -161,7 +162,7 @@ const cloudPage = Effect.fn("ui.fabricCloud")(function*(context: ScreenContext) 
     sections.push(rowsCard("Cloud provider", dataRow(`${label(connection.label)} (${label(connection.provider)})`, `Token ending ${label(connection.tokenHint)} · connected ${when(connection.connectedAt)} by ${label(connection.connectedBy)}`,
       (() => { const disconnect = button("Disconnect", () => context.run(request(`${api}/connection`, "DELETE"), refresh)); if (machines.length) disconnect.setAttribute("disabled", ""); return disconnect; })())));
   } else {
-    const provider = node("select", { name: "provider", "aria-label": "Provider" }, ...CLOUD_PROVIDERS.map(entry => node("option", { value: entry.id }, entry.label)));
+    const provider = dropdown({ name: "provider", label: "Provider" }, CLOUD_PROVIDERS.map(entry => ({ value: entry.id, label: entry.label })));
     const form = node("form", { class: "form" },
       node("p", {}, "The token can create and delete machines in its cloud project, so use a token from a dedicated project. It is stored encrypted, never shown again, and every use is audited."),
       provider, node("input", { name: "label", placeholder: "Label (optional)", "aria-label": "Label" }), node("input", { name: "token", type: "password", autocomplete: "off", placeholder: "API token", required: "", "aria-label": "API token" }),

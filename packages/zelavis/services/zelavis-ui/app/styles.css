@@ -82,3 +82,18 @@ fuzor-dialog-header{display:block;margin-bottom:12px}fuzor-dialog-title{display:
 .back-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.panel-heading>button.back-row,.back-chevron{transition:none}.back-row:hover .back-chevron,.back-row:focus-visible .back-chevron{transform:none}}
 @media (hover:none){.panel-heading>button.back-row{min-height:48px}}
+
+fuzor-select{display:inline-block;position:relative;min-width:0;max-width:240px;width:auto}
+fuzor-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;border:1px solid var(--border);border-radius:6px;padding:9px 11px;background:var(--surface);color:inherit;cursor:pointer;user-select:none}
+fuzor-select-trigger:hover{background:var(--hover)}fuzor-select-trigger:focus-visible{outline:2px solid #71717a;outline-offset:3px}
+fuzor-select[disabled] fuzor-select-trigger{opacity:.5;cursor:not-allowed}
+fuzor-select-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}fuzor-select-value:empty:before{content:"\00a0"}
+fuzor-select-indicator{display:inline-flex;color:var(--muted);transition:transform .15s}fuzor-select[open] fuzor-select-indicator{transform:rotate(180deg)}
+fuzor-select-positioner{z-index:9500}
+fuzor-select-content{display:block;min-width:max-content;max-height:min(320px,60vh);overflow:auto;padding:4px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:inherit;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+fuzor-select-content[hidden]{display:none}
+fuzor-select-item{display:block;padding:7px 10px;border-radius:5px;cursor:pointer;white-space:nowrap}
+fuzor-select-item[data-highlighted]{background:var(--hover)}fuzor-select-item[data-state=checked],fuzor-select-item[aria-selected=true]{font-weight:600}
+fuzor-select-item[data-disabled],fuzor-select-item[disabled]{opacity:.45;cursor:not-allowed}
+fuzor-select-group-label{display:block;padding:6px 10px;font-size:12px;color:var(--muted)}
+fuzor-select-content:focus,fuzor-select-content:focus-visible{outline:none}

@@ -3,6 +3,7 @@ import { array, bootstrap, label, object, request } from "./api.ts";
 import { button, message, node } from "./dom.ts";
 import { stripMount } from "./mount.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** Sign in, sign out and first-run setup. Setup is the one-time claim of the first owner, then the Edge step. */
 
@@ -81,8 +82,8 @@ export const setupScreen = Effect.fn("ui.setupScreen")(function*(context: Screen
       ...(!canBegin ? [message(!status.required ? "Configure ZELAVIS_BOOTSTRAP_TOKEN with at least 32 characters and restart Zelavis." : "Install a credential-enrollment auth provider and restart Zelavis.", true)] : []),
       node("div", { class: "actions end" }, button("Get started", () => go("owner"), { class: "primary", ...(canBegin ? {} : { disabled: "" }) })));
   } else if (step === "owner") {
-    const providerSelect = status.enrollmentProviders.length > 1 ? node("label", {}, node("span", {}, "Credential provider"), node("select", { id: "setup-provider", "aria-label": "Credential provider" }, ...status.enrollmentProviders.map(name => node("option", { value: name, ...(name === draft.provider ? { selected: "" } : {}) }, name)))) : undefined;
-    providerSelect?.querySelector("select")?.addEventListener("change", event => { draft.provider = (event.target as HTMLSelectElement).value; });
+    const providerSelect = status.enrollmentProviders.length > 1 ? node("label", {}, node("span", {}, "Credential provider"), dropdown({ label: "Credential provider", value: draft.provider }, status.enrollmentProviders.map(name => ({ value: name, label: name })))) : undefined;
+    providerSelect?.querySelector("fuzor-select")?.addEventListener("change", event => { draft.provider = (event.target as HTMLInputElement).value; });
     const identifier = field("setup-identifier", acceptsUsername ? "Email or username" : "Email", { type: acceptsUsername ? "text" : "email", value: draft.identifier, placeholder: "owner@example.com", autocomplete: "username" });
     const display = field("setup-name", "Display name", { value: draft.displayName, placeholder: "Platform Owner", autocomplete: "name" });
     panel.append(node("h2", {}, "Create the Platform owner"), node("p", {}, "This account receives full Platform authority. Additional users can be invited with narrower permissions later."),

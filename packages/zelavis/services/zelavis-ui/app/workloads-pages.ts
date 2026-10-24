@@ -4,6 +4,7 @@ import { button, empty, link, node } from "./dom.ts";
 import { columns, dataRow, page, rowsCard, statCard } from "./page-kit.ts";
 import { notRunning, projectContext } from "./project-context.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** Project → Workloads: functions, jobs, schedules and webhooks, their editor, run output and logs. */
 
@@ -69,7 +70,7 @@ function editorScreen(context: ScreenContext, scoped: Config, base: string, work
   let code = label(workload?.code, DEFAULT_CODE);
   const type = label(workload?.type, "function");
   const name = node("input", { name: "name", value: label(workload?.name, "hello-world"), required: "", "aria-label": "Name" });
-  const kind = node("select", { name: "type", "aria-label": "Type", ...(editing ? { disabled: "" } : {}) }, ...["function", "job", "schedule", "webhook"].map(entry => node("option", { value: entry, ...(entry === type ? { selected: "" } : {}) }, entry[0].toUpperCase() + entry.slice(1))));
+  const kind = dropdown({ name: "type", label: "Type", value: type, disabled: Boolean(editing) }, ["function", "job", "schedule", "webhook"].map(entry => ({ value: entry, label: entry[0].toUpperCase() + entry.slice(1) })));
   const route = node("input", { name: "route", value: label(workload?.route, "/api/hello"), "aria-label": "Route" });
   const schedule = node("input", { name: "schedule", value: label(workload?.schedule, ""), placeholder: "0 * * * *", "aria-label": "Schedule" });
   const enabled = node("input", { type: "checkbox", name: "enabled", ...(workload?.enabled === false ? {} : { checked: "" }) });

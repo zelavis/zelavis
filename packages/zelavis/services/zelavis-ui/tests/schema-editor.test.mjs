@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseSchemaFields, schemaVersions, nextSchemaVersion } from "../app/schema-editor.ts";
+import { parseSchemaFields, schemaVersions, nextSchemaVersion } from "../app/schema-model.ts";
 const field = (name, tag = "TextField") => ({ name, field: { _tag: tag, label: name, required: false } });
 test("schema field parsing uses the public typed codec and preserves nested definitions", () => {
   const fields = [field("title"), { name: "items", field: { _tag: "RepeaterField", label: "Items", required: false, fields: [field("quantity", "IntegerField")] } }];

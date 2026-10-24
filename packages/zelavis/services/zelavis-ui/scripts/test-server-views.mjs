@@ -162,6 +162,25 @@ try {
     const queryRow = await page.evaluate(() => ["grid-filter", "grid-sort"].map(name => { const box = document.querySelector(`.${name}`)?.getBoundingClientRect(); return box && { top: box.top, bottom: box.bottom, right: box.right }; }));
     assert.ok(queryRow.every(Boolean) && Math.abs(queryRow[0].top - queryRow[1].top) < 2, `Filter and sort share one desktop row: ${JSON.stringify(queryRow)}`);
     if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-database-query-row.png" });
+    // The dropdowns are fuzor/ui selects: a styled list in place of the browser's, keyboard-operable, and still firing `change`.
+    const direction = page.locator('fuzor-select[data-dropdown="Sort direction"]');
+    await page.evaluate(() => { window.directionChanges = 0; document.querySelector('fuzor-select[data-dropdown="Sort direction"]').addEventListener("change", () => { window.directionChanges += 1; }); });
+    await direction.locator("fuzor-select-trigger").click();
+    await page.locator("fuzor-select-item", { hasText: "descending" }).waitFor({ state: "visible", timeout: 5000 });
+    if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-dropdown-open.png" });
+    await page.locator("fuzor-select-item", { hasText: "descending" }).click();
+    await page.waitForFunction(() => document.querySelector('fuzor-select[data-dropdown="Sort direction"] fuzor-select-value').textContent === "descending", null, { timeout: 5000 });
+    assert.equal(await page.evaluate(() => window.directionChanges), 1, "Choosing an item raises one change event");
+    assert.equal(await page.evaluate(() => document.querySelector('fuzor-select[data-dropdown="Sort direction"]').value), "desc");
+    // A dropdown inside the Create Table dialog is not clipped by the dialog's own scrolling.
+    await page.goto(route + "&databaseDialog=create-table", { waitUntil: "networkidle" });
+    await page.locator('fuzor-select[data-dropdown="Tenant"] fuzor-select-trigger').click();
+    const choice = page.locator('fuzor-dialog-content fuzor-select-item').first();
+    await choice.waitFor({ state: "visible", timeout: 5000 }).catch(async error => { await page.screenshot({ path: "/tmp/new-ui-dropdown-dialog-fail.png" }); console.error(await page.evaluate(() => { const item = document.querySelector("fuzor-dialog-content fuzor-select-item"), content = document.querySelector("fuzor-dialog-content fuzor-select-content"); return JSON.stringify({ items: document.querySelectorAll("fuzor-dialog-content fuzor-select-item").length, content: content?.outerHTML.slice(0, 300), style: item && getComputedStyle(item).display, rect: item?.getBoundingClientRect() }); })); throw error; });
+    const [itemBox, dialogBox] = await Promise.all([choice.boundingBox(), page.locator("fuzor-dialog-content").boundingBox()]);
+    assert.ok(itemBox && dialogBox && itemBox.y >= dialogBox.y && itemBox.y + itemBox.height <= dialogBox.y + dialogBox.height + 1, `Tenant choices stay visible: ${JSON.stringify({ itemBox, dialogBox })}`);
+    if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-dropdown-dialog.png" });
+    await page.goto(route, { waitUntil: "networkidle" });
     await json.fill(JSON.stringify({ title: `Utility draft ${library}` }));
     const switches = page.getByRole("navigation", { name: "Sidebar view switches" });
     const footerBoxes = await switches.getByRole("button").evaluateAll(buttons => buttons.map(button => ({ top: button.getBoundingClientRect().top, width: button.getBoundingClientRect().width })));
@@ -264,14 +283,15 @@ try {
   await page.getByLabel("Schema fields JSON").waitFor();
   const fieldName = page.getByLabel("Field name", { exact: true }); await fieldName.fill("published");
   await page.getByLabel("Field label", { exact: true }).fill("Published");
-  await page.getByLabel("Field type", { exact: true }).selectOption("BooleanField");
+  await page.getByLabel("Field type", { exact: true }).click();
+  await page.locator("fuzor-select-item", { hasText: "Boolean" }).click();
   await page.getByRole("button", { name: "Add field", exact: true }).click();
   await page.getByRole("button", { name: "Refresh records", exact: true }).click();
   await page.getByText("published · BooleanField", { exact: false }).waitFor();
   await page.reload({ waitUntil: "networkidle" }); await page.getByLabel("Schema fields JSON").waitFor();
   assert.equal(JSON.parse(await page.getByLabel("Schema fields JSON").inputValue()).at(-1).name, "published");
   await page.getByRole("button", { name: "Save and activate new schema version", exact: true }).click();
-  await page.getByRole("option", { name: "v2 · active", exact: true }).waitFor({ state: "attached" });
+  await page.locator("fuzor-select-item", { hasText: "v2 · active" }).waitFor({ state: "attached" });
   assert.equal(schemas.at(-1).fields.at(-1).name, "published");
   await page.getByRole("button", { name: "Records", exact: true }).click();
   await page.getByLabel("Article title", { exact: true }).waitFor();

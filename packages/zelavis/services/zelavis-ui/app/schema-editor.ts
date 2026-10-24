@@ -3,39 +3,10 @@ import { Effect, Schema } from "effect";
 import { CollectionFieldEntrySchema, StoredCollectionSchemaCodec, type CollectionFieldEntry, type StoredCollectionSchema } from "zelavis/db/schema";
 import { ApiError, request } from "./api.ts";
 import { button, field, message, node } from "./dom.ts";
+import { dropdown, setDropdownOptions } from "./dropdown.ts";
+import { nextSchemaVersion, parseSchemaFields, schemaVersions } from "./schema-model.ts";
 
-export function parseSchemaFields(text: string): readonly CollectionFieldEntry[] {
-  if (text.length > 1024 * 1024) throw new Error("Schema draft exceeded 1 MB.");
-  const fields = Schema.decodeUnknownSync(Schema.Array(CollectionFieldEntrySchema))(JSON.parse(text) as unknown);
-  let count = 0;
-  const validate = (values: readonly CollectionFieldEntry[], depth: number) => {
-    if (depth > 12) throw new Error("Schema draft exceeded 12 nested field levels.");
-    const names = new Set<string>();
-    for (const entry of values) {
-      if (++count > 256) throw new Error("Schema draft exceeded 256 fields.");
-      if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(entry.name) || names.has(entry.name)) throw new Error(`Invalid or duplicate field name: ${entry.name}`);
-      names.add(entry.name);
-      if (entry.field._tag === "RepeaterField") validate(entry.field.fields, depth + 1);
-    }
-  };
-  validate(fields, 0);
-  return fields;
-}
-export function schemaVersions(text: string): readonly StoredCollectionSchema[] {
-  const values = Schema.decodeUnknownSync(Schema.Array(StoredCollectionSchemaCodec))(JSON.parse(text) as unknown);
-  const versions = new Set<number>();
-  for (const value of values) {
-    if (!Number.isSafeInteger(value.version) || value.version < 1 || versions.has(value.version)) throw new Error("Invalid schema version catalogue.");
-    versions.add(value.version);
-  }
-  if (values.filter(value => value.active).length > 1) throw new Error("The catalogue has multiple active schemas.");
-  return values;
-}
-export function nextSchemaVersion(schemas: readonly StoredCollectionSchema[]): number {
-  const version = Math.max(0, ...schemas.map(schema => schema.version)) + 1;
-  if (!Number.isSafeInteger(version)) throw new Error("No safe schema version remains.");
-  return version;
-}
+export { nextSchemaVersion, parseSchemaFields, schemaVersions };
 
 export function mountSchemaEditor(host: HTMLElement, options: { api: string; tenant: string; collection: string; schemasJson: string; selectedVersion?: string; draftScope?: unknown; projectId?: unknown; run(effect: Effect.Effect<unknown, unknown>): void; select(version: string): void }) {
   let schemas = schemaVersions(options.schemasJson);
@@ -53,7 +24,7 @@ export function mountSchemaEditor(host: HTMLElement, options: { api: string; ten
     if (!journal) return;
     Effect.runSync(journal.write({ records: [], ...(dirty ? { inspector: { id: "schema", version: draftVersion ?? selected()?.version ?? 0, text: draft } } : {}) }).pipe(Effect.catch(cause => Effect.sync(() => journalStatus.replaceChildren(message(`Schema draft remains in memory; reload recovery failed: ${String(cause)}`, true))))));
   }
-  const versions = node("select", { "aria-label": "Schema version" });
+  const versions = dropdown({ label: "Schema version" }, []);
   const text = node("textarea", { rows: "16", maxlength: "1048576", "aria-label": "Schema fields JSON" }, draft);
   const list = node("ol", { class: "schema-fields" });
   const base = `${options.api}/database/schemas/${encodeURIComponent(options.collection)}`;
@@ -61,7 +32,7 @@ export function mountSchemaEditor(host: HTMLElement, options: { api: string; ten
     status.replaceChildren();
     activate.disabled = busy || selected()?.active === true || !selected();
     if (!dirty) save.disabled = busy;
-    versions.replaceChildren(...schemas.map(schema => node("option", { value: String(schema.version), ...(schema.version === selected()?.version ? { selected: "" } : {}) }, `v${schema.version}${schema.active ? " · active" : ""}`)));
+    setDropdownOptions(versions, schemas.map(schema => ({ value: String(schema.version), label: `v${schema.version}${schema.active ? " · active" : ""}` })), selected() ? String(selected()!.version) : undefined);
     list.replaceChildren();
     try {
       const entries = parseSchemaFields(text.value);
@@ -72,7 +43,7 @@ export function mountSchemaEditor(host: HTMLElement, options: { api: string; ten
   text.addEventListener("input", () => { draft = text.value; dirty = true; draftVersion ??= selected()?.version; retain(); redraw(); });
   versions.addEventListener("change", () => { if (dirty && !window.confirm("Discard this unsaved schema draft and switch versions?")) { redraw(); return; } dirty = false; draftVersion = undefined; retain(); options.select(versions.value); });
   const kinds = ["TextField", "LongTextField", "RichTextField", "NumberField", "IntegerField", "BooleanField", "DateTimeField", "SelectField", "MultiSelectField", "ReferenceField", "RepeaterField", "JsonField", "SlugField", "UrlField", "FileField", "ImageField", "AudioField", "VideoField"];
-  const kind = node("select", { name: "kind", "aria-label": "Field type" }, ...kinds.map(tag => node("option", { value: tag }, tag.replace(/Field$/, ""))));
+  const kind = dropdown({ name: "kind", label: "Field type" }, kinds.map(tag => ({ value: tag, label: tag.replace(/Field$/, "") })));
   const builder = node("form", { class: "form" }, field("name", "Field name"), field("label", "Field label", "text", "", false), kind, node("label", {}, node("input", { type: "checkbox", name: "required" }), "Required"), field("options", "Select options (comma separated)", "text", "", false), field("collection", "Related collection", "text", "", false), node("button", { type: "submit" }, "Add field"));
   builder.addEventListener("submit", event => {
     event.preventDefault();

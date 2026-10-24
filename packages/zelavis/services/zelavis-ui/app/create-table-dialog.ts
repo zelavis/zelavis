@@ -2,6 +2,7 @@ import { Cause, Effect } from "effect";
 import { registerDialog } from "fuzor/ui/components/dialog";
 import { label, object, request } from "./api.ts";
 import { message, node } from "./dom.ts";
+import { dropdown, setDropdownOptions } from "./dropdown.ts";
 
 /** A table name the database accepts: lowercase letters, digits, underscore and hyphen, starting with a letter or underscore. */
 export function slugifyTableName(value: string) {
@@ -28,7 +29,7 @@ export function mountCreateTable(host: HTMLElement, options: CreateTableOptions)
   registerDialog();
   const doc = host.ownerDocument;
   const lifetime = new AbortController();
-  const tenant = node("select", { name: "tenantId", "aria-label": "Tenant" });
+  const tenant = dropdown({ name: "tenantId", label: "Tenant" }, [{ value: options.tenant, label: options.tenant }]);
   const name = node("input", { name: "name", placeholder: "articles", "aria-label": "Table name", autocomplete: "off", required: "", maxlength: "128" });
   name.addEventListener("input", () => { name.value = slugifyTableName(name.value); });
   const errors = node("div", { "aria-live": "polite" });
@@ -78,7 +79,7 @@ export function mountCreateTable(host: HTMLElement, options: CreateTableOptions)
     sync(wanted: boolean, tenants: readonly string[], current: string) {
       const names = [...new Set([...tenants, current].filter(Boolean))];
       const selected = tenant.value || current;
-      tenant.replaceChildren(...names.map(value => { const option = node("option", { value }, value); option.selected = value === selected; return option; }));
+      setDropdownOptions(tenant, names.map(value => ({ value, label: value })), selected);
       if (wanted !== open) { open = wanted; dialog.setOpen(wanted); if (wanted) setTimeout(() => name.focus(), 0); }
       if (!wanted) { errors.replaceChildren(); submit.removeAttribute("disabled"); }
     },

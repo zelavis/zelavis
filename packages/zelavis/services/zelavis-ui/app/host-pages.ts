@@ -4,6 +4,7 @@ import { button, empty, field, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, facts, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
 import { API_KEY_PRESETS } from "./api-key-presets.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
 
@@ -240,7 +241,7 @@ export const accessUsersScreen = Effect.fn("ui.accessUsersScreen")(function*(con
 
   const nameField = field("name", "Key name", "text", "", true);
   const projectField = field("projectId", "Project ID for a Project client's scoped grants (optional)", "text", "", false);
-  const presetField = node("label", {}, node("span", {}, "What it can do"), node("select", { name: "preset" }, ...API_KEY_PRESETS.map(preset => node("option", { value: preset.id }, `${preset.title}: ${preset.detail}`))));
+  const presetField = node("label", {}, node("span", {}, "What it can do"), dropdown({ name: "preset", label: "What it can do" }, API_KEY_PRESETS.map(preset => ({ value: preset.id, label: `${preset.title}: ${preset.detail}` }))));
   const daysField = field("days", "Valid for (days)", "number", "90", true);
   const form = node("form", { class: "k-inline" }, nameField, presetField, daysField, projectField, node("button", { type: "submit", class: "primary" }, "Create API key"));
   const showToken = (issued: Record<string, unknown>) => {

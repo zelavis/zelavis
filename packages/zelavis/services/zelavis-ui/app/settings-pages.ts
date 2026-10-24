@@ -3,6 +3,7 @@ import { ApiError, array, label, object, request } from "./api.ts";
 import { button, field, link, node } from "./dom.ts";
 import { card, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 /** Settings: the dashboard's configuration, hostname onboarding, updates, the Assistant, and appearance. */
 
@@ -33,7 +34,7 @@ export const providerCard = Effect.fn("ui.assistantProvider")(function*(context:
   const body: Node[] = [node("p", {}, summary)];
   if (environment) body.push(resourceNotice("Managed by the environment", "Unset ZELAVIS_ASSISTANT_API_KEY and restart to manage the provider here."));
   else {
-    const provider = node("select", { name: "provider", "aria-label": "Provider" }, ...PROVIDERS.map(([id, title]) => node("option", { value: id, ...(id === (current?.[0] ?? "openrouter") ? { selected: "" } : {}) }, title)));
+    const provider = dropdown({ name: "provider", label: "Provider", value: current?.[0] ?? "openrouter" }, PROVIDERS.map(([id, title]) => ({ value: id, label: title })));
     const form = node("form", { class: "form", autocomplete: "off" },
       node("label", {}, node("span", {}, "Provider"), provider),
       field("model", "Model", "text", label(status.model, "")),
@@ -86,7 +87,7 @@ export const settingsScreen = Effect.fn("ui.settingsScreen")(function*(context: 
   const rootPath = label(settings.pendingRootPath ?? settings.rootPath, "");
   const patch = (body: Record<string, unknown>, done: (saved: Record<string, unknown>) => string) => context.run(request(`${api}/runtime/settings`, "PATCH", body), saved => { setFlash(done(object(saved))); context.refresh(); });
 
-  const engineSelect = node("select", { name: "engine", "aria-label": "Engine", ...(editable.runtimeEngine === true ? {} : { disabled: "" }) }, ...engines.map(name => node("option", { value: name, ...(name === engine.desired ? { selected: "" } : {}) }, name)));
+  const engineSelect = dropdown({ name: "engine", label: "Engine", value: String(engine.desired), disabled: editable.runtimeEngine !== true }, engines.map(name => ({ value: name, label: name })));
   const engineForm = node("form", { class: "k-inline" }, node("label", {}, node("span", {}, "Engine"), engineSelect), node("button", { type: "submit", class: "primary", ...(editable.runtimeEngine === true ? {} : { disabled: "" }) }, "Save"));
   engineForm.addEventListener("submit", event => { event.preventDefault(); if (engineSelect.value === engine.desired) return; patch({ runtimeEngine: engineSelect.value }, saved => object(saved.runtimeEngine).restartRequired === true ? `Saved ${engineSelect.value}. Restart the runtime to switch engines.` : "Runtime engine saved."); });
 
@@ -95,7 +96,7 @@ export const settingsScreen = Effect.fn("ui.settingsScreen")(function*(context: 
   pathForm.addEventListener("submit", event => { event.preventDefault(); if (pathInput.value.trim() === rootPath) return; patch({ rootPath: pathInput.value }, saved => saved.restartRequired === true ? `Saved ${label(saved.pendingRootPath)}. Restart the runtime to apply the new root path.` : "Root path saved."); });
 
   const hostname = field("hostname", "Platform hostname", "text", "", false);
-  const mode = node("select", { name: "mode", "aria-label": "HTTPS configuration" }, node("option", { value: "managed" }, "Verify DNS & enable HTTPS"), node("option", { value: "external" }, "Externally terminated TLS"), node("option", { value: "later" }, "Configure later"));
+  const mode = dropdown({ name: "mode", label: "HTTPS configuration" }, [{ value: "managed", label: "Verify DNS & enable HTTPS" }, { value: "external", label: "Externally terminated TLS" }, { value: "later", label: "Configure later" }]);
   const hostnameForm = node("form", { class: "form" }, hostname, node("label", {}, node("span", {}, "HTTPS configuration"), mode), node("button", { type: "submit", class: "primary" }, "Save hostname configuration"));
   const hostnameResult = node("div");
   hostnameForm.addEventListener("submit", event => {
@@ -134,7 +135,7 @@ export const appearanceScreen = Effect.fn("ui.appearanceScreen")(function*(conte
   const settings = object(yield* request(`${api}/runtime/settings`));
   const stored = Effect.runSync(Effect.try({ try: () => localStorage.getItem("theme"), catch: cause => cause }).pipe(Effect.orElseSucceed(() => null)));
   const current = THEMES.some(([id]) => id === stored) ? String(stored) : label(settings.theme, "auto");
-  const select = node("select", { name: "theme", "aria-label": "Theme" }, ...THEMES.map(([id, title]) => node("option", { value: id, ...(id === current ? { selected: "" } : {}) }, title)));
+  const select = dropdown({ name: "theme", label: "Theme", value: current }, THEMES.map(([id, title]) => ({ value: id, label: title })));
   select.addEventListener("change", () => {
     const mode = select.value;
     Effect.runSync(Effect.try({ try: () => localStorage.setItem("theme", mode), catch: cause => cause }).pipe(Effect.catch(cause => Effect.logWarning("Could not remember the theme in this browser", cause))));

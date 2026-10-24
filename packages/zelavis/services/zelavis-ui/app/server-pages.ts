@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { array, label, object, request } from "./api.ts";
 import { button, empty, link, message, node } from "./dom.ts";
 import type { ScreenContext } from "./screens.ts";
+import { dropdown } from "./dropdown.ts";
 
 const LEVELS = ["debug", "info", "warn", "error"] as const;
 const heading = (text: string, ...actions: HTMLElement[]) => node("div", { class: "toolbar" }, node("h1", {}, text), node("div", { class: "actions" }, ...actions));
@@ -25,7 +26,7 @@ export const logsScreen = Effect.fn("ui.logsScreen")(function*(context: ScreenCo
   const entries = array(page.entries).map(object).reverse();
 
   const referenceInput = node("input", { name: "ref", value: reference, placeholder: "8ad2ea39082e4cf6", autocomplete: "off", spellcheck: "false", ...(requestedReference && !reference ? { "aria-invalid": "true" } : {}) });
-  const levelSelect = node("select", { name: "level", "aria-label": "Level" }, node("option", { value: "" }, "All levels"), ...LEVELS.map(entry => node("option", { value: entry, ...(entry === level ? { selected: "" } : {}) }, `${entry} and above`)));
+  const levelSelect = dropdown({ name: "level", label: "Level", value: level ?? "" }, [{ value: "", label: "All levels" }, ...LEVELS.map(entry => ({ value: entry, label: `${entry} and above` }))]);
   const filters = node("form", { class: "filters" },
     node("label", {}, node("span", {}, "Reference"), referenceInput),
     node("label", {}, node("span", {}, "Level"), levelSelect),
