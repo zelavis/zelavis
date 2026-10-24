@@ -27,7 +27,7 @@ async function boot(t) {
   });
   const call = (path, init, context) => runtime.fetch(new Request(`http://localhost${path}`, init), context);
   // The context is explicit, never defaulted: a default would turn "call this anonymously" into "call this as the owner".
-  const mint = (body, context) => call("/zelavis/api/v1/runtime/service-page-capabilities", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, context);
+  const mint = (query, context) => call(`/zelavis/api/v1/runtime/service-page-capability?${new URLSearchParams(query)}`, undefined, context);
   return { call, mint };
 }
 
@@ -41,6 +41,8 @@ test("a minted capability reads a page and its sibling files with no credentials
   // No context: what a sandboxed frame's own requests look like.
   const page = await call(src);
   assert.equal(page.status, 200);
+  // A module the sandboxed page imports is a CORS request from an opaque origin.
+  assert.equal(page.headers.get("access-control-allow-origin"), "*");
   const html = await page.text();
   assert.match(html, /own script|src="\.\/app\.js"/);
   assert.match(html, /service-ui\.js/, "the component runtime is injected into the page");

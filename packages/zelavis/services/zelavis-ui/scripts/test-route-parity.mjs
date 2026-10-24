@@ -125,7 +125,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   page.off("response", onRuntime);
   // The page's own files too: the dashboard frames a sandboxed page at a capability URL, so what the page itself loads
   // (relative links resolve under the capability) needs no session.
-  const capability = yield* request("/runtime/service-page-capabilities", "POST", { service: "@zelavis/auth", bundle: "dashboard", file: "auth.html" });
+  const capability = yield* request("/runtime/service-page-capability?" + new URLSearchParams({ service: "@zelavis/auth", bundle: "dashboard", file: "auth.html" }));
   assert.match(capability.src, /\/runtime\/page-capabilities\/[^/]+\/dashboard\/auth\.html$/);
   const fromCapability = [];
   const onCapability = response => { const path = new URL(response.url()).pathname; if (/\/(page-capabilities\/|service-ui\.|service-page\.css)/.test(path)) fromCapability.push(`${response.status()} ${path.split("/").pop()} ${response.frame()?.name() ?? ""}`); };
@@ -136,6 +136,66 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   }), capability.src));
   page.off("response", onCapability);
   for (const file of ["auth.html", "service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(fromCapability.some(entry => entry.startsWith(`200 ${file} `)), `the sandboxed capability frame loads ${file}: ${fromCapability.join(", ")}`);
+  // An extension installed inside a Project: a real folder service in the Project's own services folder, with a page that
+  // loads its own script and stylesheet. Its page is read from the Project's runtime, through the Platform's Gateway, at a
+  // capability URL, by a sandboxed frame that sends no session.
+  yield* request("/runtime/projects", "POST", { id: "ext-lab", name: "Extension laboratory", recipeName: "@zelavis/app", start: true });
+  const extProxy = "/runtime/projects/ext-lab/proxy/zelavis/api/v1";
+  const waitRunning = Effect.gen(function*() {
+    for (let count = 0; count < 150; count++) {
+      const response = yield* io(() => context.request.get(api + extProxy + "/runtime/config"));
+      if (response.ok()) return;
+      yield* Effect.sleep("200 millis");
+    }
+    throw new Error("The extension Project failed to start: " + logs);
+  });
+  yield* waitRunning;
+  const extension = join(data, "projects", "ext-lab", ".zelavis", "services", "ext-page");
+  yield* io(async () => {
+    await mkdir(join(extension, "dashboard"), { recursive: true });
+    await writeFile(join(extension, "package.json"), JSON.stringify({ name: "@example/ext-page", version: "1.0.0", type: "module", exports: "./index.js", zelavis: { kind: "plugin", namespace: "extpage" } }));
+    await writeFile(join(extension, "index.js"), 'import { zelavis } from "zelavis/sdk";\nexport function register() { zelavis.plugins.ui.menus.create({ title: "Ext Page", path: "/ext-page", page: { id: "main", title: "Ext Page", bundle: "dashboard", file: "page.html" } }); }\n');
+    await writeFile(join(extension, "dashboard", "page.html"), '<!doctype html><html><head><title>Ext</title><link rel="stylesheet" href="./styles.css"></head><body><p id="out">extension page</p><script type="module" src="./app.js"></script></body></html>');
+    await writeFile(join(extension, "dashboard", "styles.css"), "#out{color:rgb(1,2,3)}");
+    await writeFile(join(extension, "dashboard", "app.js"), 'parent.postMessage({ extension: "ran", sandboxed: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) }, "*");\n');
+  });
+  yield* request("/runtime/projects/ext-lab/restart", "POST", {});
+  yield* waitRunning;
+  const listed = yield* Effect.gen(function*() {
+    for (let count = 0; count < 100; count++) {
+      const config = yield* io(() => context.request.get(api + extProxy + "/runtime/config").then(response => response.json()));
+      if (config.services?.some(service => service.name === "@example/ext-page")) return config;
+      yield* Effect.sleep("300 millis");
+    }
+    throw new Error("The Project never listed the extension: " + logs);
+  });
+  // A folder-discovered package is an extension, never the operator's own: its page must not run with the viewer's session.
+  assert.equal(listed.services.find(service => service.name === "@example/ext-page")?.scope, "extension");
+  const extCapability = yield* request("/runtime/service-page-capability?" + new URLSearchParams({ service: "@example/ext-page", bundle: "dashboard", file: "page.html", projectId: "ext-lab" }));
+  assert.match(extCapability.src, /\/runtime\/page-capabilities\/[^/]+\/dashboard\/page\.html$/);
+  // No cookie: the Platform reads the Project's files for the capability alone.
+  const extPage = yield* io(() => fetch(new URL(extCapability.src, origin)));
+  assert.equal(extPage.status, 200, "the Project's page is served at its capability");
+  const extHtml = yield* io(() => extPage.text());
+  assert.match(extHtml, /extension page/);
+  assert.match(extHtml, /service-ui\.js/, "the Platform adds the component runtime to a Project's page");
+  const extScript = yield* io(() => fetch(new URL(extCapability.src.replace("page.html", "app.js"), origin)));
+  assert.equal(extScript.status, 200);
+  assert.equal((yield* io(() => fetch(new URL(extCapability.src.replace("page.html", "../../../x.txt"), origin)))).status === 200, false);
+  // The same URL in a sandboxed frame: the page's own script runs and finds the components defined.
+  const ran = yield* io(() => page.evaluate(src => new Promise(resolve => {
+    const onMessage = event => { if (event.data?.extension === "ran") { removeEventListener("message", onMessage); resolve(event.data); } };
+    addEventListener("message", onMessage);
+    const frame = document.createElement("iframe"); frame.setAttribute("sandbox", "allow-scripts"); frame.src = src; frame.style.display = "none"; document.body.append(frame);
+    setTimeout(() => resolve({ timedOut: true }), 8000);
+  }), extCapability.src));
+  assert.deepEqual(ran, { extension: "ran", sandboxed: true, select: true, dialog: true });
+  // And through the dashboard itself, which frames a Project's extension page at a capability.
+  yield* visit("/projects/ext-lab/ext-page");
+  const framed = yield* io(() => page.locator("iframe.service-frame").getAttribute("src"));
+  assert.match(framed ?? "", /\/runtime\/page-capabilities\//, "the dashboard frames the extension page at a capability URL");
+  assert.equal(yield* io(() => page.locator("iframe.service-frame").getAttribute("sandbox")), "allow-scripts allow-forms", "an extension's page is sandboxed without the dashboard's origin");
+  console.log("Project extension page: served through its capability, sandboxed frame ran its own script with the components defined.");
   const anonymous = yield* io(() => fetch(new URL(capability.src, origin)));
   assert.equal(anonymous.status, 200, "a capability URL needs no cookie");
   assert.equal((yield* io(() => fetch(new URL(capability.src.replace(/\/[^/]+\/dashboard\/auth\.html$/, "/tampered.token/dashboard/auth.html"), origin)))).status, 404);

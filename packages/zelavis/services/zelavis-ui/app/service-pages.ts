@@ -128,9 +128,8 @@ const sandboxedPageSrc = Effect.fn("new-ui.sandboxedPageSrc")(function*(src: str
   const match = /\/runtime\/service-page-assets\/([^/]+)\/([^/]+)\/(.+)$/.exec(src.split(/[?#]/)[0]!);
   if (!match) return src;
   const [, service, bundle, file] = match;
-  const minted = yield* request(`${API_PREFIX}v1/runtime/service-page-capabilities`, "POST", {
-    service: decodeURIComponent(service!), bundle: decodeURIComponent(bundle!), file: decodeURIComponent(file!), ...(projectId ? { projectId } : {}),
-  }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+  const query = new URLSearchParams({ service: decodeURIComponent(service!), bundle: decodeURIComponent(bundle!), file: decodeURIComponent(file!), ...(projectId ? { projectId } : {}) });
+  const minted = yield* request(`${API_PREFIX}v1/runtime/service-page-capability?${query}`).pipe(Effect.catch(() => Effect.succeed(undefined)));
   const capability = object(minted).src;
   return typeof capability === "string" && capability.startsWith(API_PREFIX) ? capability : src;
 });

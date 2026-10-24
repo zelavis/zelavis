@@ -2132,6 +2132,12 @@ function resolveRuntimeManagementCore(
     const headers = new Headers({ "content-type": contentType, "cache-control": "no-cache", "access-control-allow-origin": "*", etag });
     return request.headers.get("if-none-match") === etag ? { status: 304, headers, body: "" } : { status: 200, headers, body: text };
   };
+  /** A module script a sandboxed page imports is a CORS request from an opaque origin; the capability in the path is the authorization, and no credential is involved. */
+  const crossOrigin = (response: ZelavisRouteResponse): ZelavisRouteResponse => {
+    const headers = new Headers(response.headers);
+    headers.set("access-control-allow-origin", "*");
+    return { ...response, headers };
+  };
   const injectIntoPage = (response: ZelavisRouteResponse): ZelavisRouteResponse => {
     const ui = context.serviceUi;
     const body = response.body;
@@ -2379,9 +2385,10 @@ function resolveRuntimeManagementCore(
         name: service.name,
         namespace: service.namespace,
         kind: service.kind,
-        // These are package-backed services selected by the operator. Native
-        // Platform capabilities are reported separately above.
-        scope: "system" as const,
+        // Services the operator composed in code are trusted; a runtime-installed or folder-discovered package was forced
+        // to `extension` when it was loaded (`asExtensionScoped`), and must be reported as it is, or the dashboard would
+        // frame its page with the operator's own session. Native Platform capabilities are reported separately above.
+        scope: (service as { scope?: "system" | "extension" }).scope ?? ("system" as const),
         apiPath:
           service.name === "@zelavis/frontend"
             ? "/"
@@ -3196,28 +3203,28 @@ function resolveRuntimeManagementCore(
           {
             // Hands the dashboard the URL a sandboxed extension page is framed at. The caller needs what reading the page
             // through the authenticated routes needed: a session, and `project.view` for a Project's page.
-            id: "runtime.service-page-capability.create",
+            id: "runtime.service-page-capability.read",
             spec: {
-              operationId: "createServicePageCapability",
+              operationId: "getServicePageCapability",
               summary: "Mint the URL of a service page for a sandboxed frame",
+              description: "A read, not a change: it returns a URL and records nothing, so the dashboard can ask for it while rendering.",
               tags: ["runtime"],
-              requestBody: { required: true, schema: { type: "object", required: ["service", "file"], properties: {
-                service: { type: "string", description: "The service that ships the page" },
-                bundle: { type: "string", description: "The bundle holding it; `dist` when omitted" },
-                file: { type: "string", description: "The page's entry file" },
-                projectId: { type: "string", description: "The Project the page is shown in, when it is a Project's" },
-              } } },
+              queryParams: {
+                service: { type: "string" as const, required: true, description: "The service that ships the page" },
+                bundle: { type: "string" as const, description: "The bundle holding it; `dist` when omitted" },
+                file: { type: "string" as const, required: true, description: "The page's entry file" },
+                projectId: { type: "string" as const, description: "The Project the page is shown in, when it is a Project's" },
+              },
               responses: { 200: { description: "The page's URL" }, 400: { description: "Invalid request" }, 403: { description: "No access to that Project" } },
             },
-            method: "POST" as const,
+            method: "GET" as const,
             access: { authenticated: true },
-            path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/service-page-capabilities"),
-            handler: ({ body, principal }: { body: unknown; principal?: ZelavisPrincipal }) => present(Effect.gen(function* () {
-              const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-              const service = typeof input.service === "string" ? input.service.trim() : "";
-              const bundle = typeof input.bundle === "string" && input.bundle.trim() ? input.bundle.trim() : "dist";
-              const file = typeof input.file === "string" ? normalizeBundleAssetPath(input.file) : "";
-              const projectId = typeof input.projectId === "string" && input.projectId.trim() ? input.projectId.trim() : undefined;
+            path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/service-page-capability"),
+            handler: ({ query, principal }: { query: URLSearchParams; principal?: ZelavisPrincipal }) => present(Effect.gen(function* () {
+              const service = query.get("service")?.trim() ?? "";
+              const bundle = query.get("bundle")?.trim() || "dist";
+              const file = query.get("file") ? normalizeBundleAssetPath(query.get("file")!) : "";
+              const projectId = query.get("projectId")?.trim() || undefined;
               if (!service || !file || service.length > 214 || bundle.length > 128) throw new ZelavisValidationError("A service, a bundle and a page file are required.");
               if (projectId && !principalHasPermission(principal, "project.view", { type: "project", projectId })) {
                 return { status: 403, body: { error: "You cannot view that Project." } };
@@ -3247,7 +3254,7 @@ function resolveRuntimeManagementCore(
               // The bundle is in the path so a page's relative links (`../../../service-page.css`) climb the same number of
               // levels as they do under `service-page-assets/<service>/<bundle>/`; the token already says which one it is.
               if (!claims || !file || params.bundle !== encodeURIComponent(claims.bundle) && params.bundle !== claims.bundle) return { status: 404, body: { error: "Service asset not found." } };
-              if (!claims.projectId) return yield* integration(() => renderServicePageAsset(claims.service, claims.bundle, file));
+              if (!claims.projectId) return crossOrigin(yield* integration(() => renderServicePageAsset(claims.service, claims.bundle, file)));
               // A Project's page lives in its own runtime. The path is built here from the claims, and the request goes
               // as the Platform's service-page principal, which holds no permission: only the page files are reachable.
               const response = yield* integration(() => capability.forward({
@@ -3256,7 +3263,7 @@ function resolveRuntimeManagementCore(
                 request,
                 allowFrontend: false,
               }));
-              return injectIntoPage(response);
+              return crossOrigin(injectIntoPage(response));
             }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
           },
         ] : []),

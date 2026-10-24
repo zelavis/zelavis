@@ -481,7 +481,7 @@ Rules that hold for every change:
   For the same reason the dashboard frames an extension's page at a page capability URL
   (`runtime/page-capabilities/<token>/<bundle>/<file>`, `platform/page-capability.ts`): an HMAC token
   (key derived from the installation master secret) naming service, bundle and optional Project, expiring in hours,
-  minted for an authenticated viewer (`project.view` for a Project's page). The Platform builds every path it reads
+  minted for an authenticated viewer by a GET that records nothing (`project.view` for a Project's page). The Platform builds every path it reads
   from the token's claims, never from the request, and a Project's files are fetched through the Gateway forwarder
   as a `service-page` principal with no permissions. Never widen it to files outside that bundle.
 
