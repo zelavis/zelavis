@@ -75,6 +75,7 @@ import {
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { injectServiceUi, serviceUiRevision } from "./platform/service-page-ui.js";
+import { PAGE_CAPABILITY_LIFETIME_MS, mintPageCapability, projectPageRequest, verifyPageCapability } from "./platform/page-capability.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
 import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
@@ -84,6 +85,7 @@ import { createPlatformEndpointGroup } from "./platform/endpoints.js";
 import {
   createProjectForwarder,
   createProjectGatewayRoutes,
+  type ProjectForwardOptions,
 } from "./platform/project-gateway.js";
 import { createAssistantProjectReader } from "./platform/assistant-project-reader.js";
 import type { ZelavisEdgePreviews } from "./edge/previews.js";
@@ -1899,6 +1901,42 @@ function resolveLiveServiceRegistry(options: {
   }));
 }
 
+function unavailableProjectsResponse() {
+  return {
+    status: 503,
+    body: {
+      error:
+        "Project management requires a System Store and project runtime driver.",
+    },
+  };
+}
+
+function projectErrorResponse(error: unknown) {
+  if (error instanceof ZelavisProjectIsolationError) {
+    // A stable code and the assessment, so SDK and CLI callers can act on
+    // the refusal without parsing its message.
+    return {
+      status: 409,
+      body: {
+        error: error.message,
+        code: "project.isolation.unsatisfied",
+        isolation: error.assessment,
+      },
+    };
+  }
+  const status =
+    error instanceof ZelavisProjectNotFoundError
+      ? 404
+      : error instanceof ZelavisProjectConflictError
+        ? 409
+        : error instanceof ZelavisProjectValidationError
+          ? 400
+          : error instanceof ZelavisProjectRuntimeError
+            ? 503
+          : 500;
+  return createJsonErrorResponse(status, error);
+}
+
 function resolveRuntimeManagementCore(
   option: ZelavisFrontendInput | undefined,
   context: {
@@ -1951,6 +1989,12 @@ function resolveRuntimeManagementCore(
     serviceElementsScript?: string;
     /** Components the installed frontend adds to every HTML service page. */
     serviceUi?: { readonly script: string; readonly stylesheet: string };
+    /** What lets a sandboxed extension page read its own files without credentials (`platform/page-capability.ts`). */
+    pageCapability?: {
+      readonly secret: string;
+      /** Reads a file from a Project's runtime for a page capability, as the Platform's own service-page principal. */
+      readonly forward: (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse>;
+    };
     /** Name of the service serving the root path, whichever frontend that is. */
     frontendServiceName?: string;
     capabilities: Readonly<Record<string, { available: boolean }>>;
@@ -2088,17 +2132,17 @@ function resolveRuntimeManagementCore(
     const headers = new Headers({ "content-type": contentType, "cache-control": "no-cache", "access-control-allow-origin": "*", etag });
     return request.headers.get("if-none-match") === etag ? { status: 304, headers, body: "" } : { status: 200, headers, body: text };
   };
+  const injectIntoPage = (response: ZelavisRouteResponse): ZelavisRouteResponse => {
+    const ui = context.serviceUi;
+    const body = response.body;
+    const type = response.headers ? new Headers(response.headers).get("content-type") ?? "" : "";
+    if (!ui || response.status !== 200 || !type.startsWith("text/html") || !(typeof body === "string" || body instanceof Uint8Array)) return response;
+    const base = joinPathParts(rootPath, context.apiPrefix, context.apiVersion, "runtime");
+    return { ...response, body: injectServiceUi(typeof body === "string" ? body : new TextDecoder().decode(body), { stylesheet: `${base}/service-ui.css`, script: `${base}/service-ui.js` }) };
+  };
   /** An HTML page gets the installed frontend's components unless it opts out (see `platform/service-page-ui.ts`). */
   const renderServicePageAsset = (serviceName: string, bundle: string, assetPath: string) =>
-    readServicePageAsset(serviceName, bundle, assetPath).then((response) => {
-      const ui = context.serviceUi;
-      const body = response.body;
-      const type = response.headers?.get("content-type") ?? "";
-      if (!ui || response.status !== 200 || !type.startsWith("text/html") || !(typeof body === "string" || body instanceof Uint8Array)) return response;
-      const base = joinPathParts(rootPath, context.apiPrefix, context.apiVersion, "runtime");
-      const html = injectServiceUi(typeof body === "string" ? body : new TextDecoder().decode(body), { stylesheet: `${base}/service-ui.css`, script: `${base}/service-ui.js` });
-      return { ...response, body: html };
-    });
+    readServicePageAsset(serviceName, bundle, assetPath).then(injectIntoPage);
   const readServicePageAsset = (
     serviceName: string,
     bundle: string,
@@ -3148,6 +3192,74 @@ function resolveRuntimeManagementCore(
             ? sharedServiceAsset(request, kind === "js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8", kind === "js" ? context.serviceUi.script : context.serviceUi.stylesheet)
             : { status: 404, body: { error: "The installed frontend supplies no service page components." } },
         })),
+        ...(context.pageCapability ? [
+          {
+            // Hands the dashboard the URL a sandboxed extension page is framed at. The caller needs what reading the page
+            // through the authenticated routes needed: a session, and `project.view` for a Project's page.
+            id: "runtime.service-page-capability.create",
+            spec: {
+              operationId: "createServicePageCapability",
+              summary: "Mint the URL of a service page for a sandboxed frame",
+              tags: ["runtime"],
+              requestBody: { required: true, schema: { type: "object", required: ["service", "file"], properties: {
+                service: { type: "string", description: "The service that ships the page" },
+                bundle: { type: "string", description: "The bundle holding it; `dist` when omitted" },
+                file: { type: "string", description: "The page's entry file" },
+                projectId: { type: "string", description: "The Project the page is shown in, when it is a Project's" },
+              } } },
+              responses: { 200: { description: "The page's URL" }, 400: { description: "Invalid request" }, 403: { description: "No access to that Project" } },
+            },
+            method: "POST" as const,
+            access: { authenticated: true },
+            path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/service-page-capabilities"),
+            handler: ({ body, principal }: { body: unknown; principal?: ZelavisPrincipal }) => present(Effect.gen(function* () {
+              const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+              const service = typeof input.service === "string" ? input.service.trim() : "";
+              const bundle = typeof input.bundle === "string" && input.bundle.trim() ? input.bundle.trim() : "dist";
+              const file = typeof input.file === "string" ? normalizeBundleAssetPath(input.file) : "";
+              const projectId = typeof input.projectId === "string" && input.projectId.trim() ? input.projectId.trim() : undefined;
+              if (!service || !file || service.length > 214 || bundle.length > 128) throw new ZelavisValidationError("A service, a bundle and a page file are required.");
+              if (projectId && !principalHasPermission(principal, "project.view", { type: "project", projectId })) {
+                return { status: 403, body: { error: "You cannot view that Project." } };
+              }
+              const token = yield* integration(() => mintPageCapability(context.pageCapability!.secret, {
+                service, bundle, ...(projectId ? { projectId } : {}), expiresAt: Date.now() + PAGE_CAPABILITY_LIFETIME_MS,
+              }));
+              const src = joinPathParts(rootPath, context.apiPrefix, context.apiVersion, "runtime", "page-capabilities", token, encodeURIComponent(bundle), encodeStoragePath(file)).replace(/\/\/+/g, "/");
+              return { status: 200, body: { src } };
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+          },
+          {
+            // Public by design: the token in the path is the whole authorization (see `platform/page-capability.ts`).
+            id: "runtime.page-capability.read",
+            spec: {
+              operationId: "getPageCapabilityFile",
+              summary: "Read a service page file through a page capability",
+              tags: ["runtime"],
+              responses: { 200: { description: "The file" }, 404: { description: "No such file, or the capability is not valid" } },
+            },
+            method: "GET" as const,
+            path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/page-capabilities/:token/:bundle/*path"),
+            handler: ({ params, request, query }: { params: Record<string, string>; request: Request; query: URLSearchParams }) => present(Effect.gen(function* () {
+              const capability = context.pageCapability!;
+              const claims = yield* integration(() => verifyPageCapability(capability.secret, params.token ?? ""));
+              const file = params.path?.trim();
+              // The bundle is in the path so a page's relative links (`../../../service-page.css`) climb the same number of
+              // levels as they do under `service-page-assets/<service>/<bundle>/`; the token already says which one it is.
+              if (!claims || !file || params.bundle !== encodeURIComponent(claims.bundle) && params.bundle !== claims.bundle) return { status: 404, body: { error: "Service asset not found." } };
+              if (!claims.projectId) return yield* integration(() => renderServicePageAsset(claims.service, claims.bundle, file));
+              // A Project's page lives in its own runtime. The path is built here from the claims, and the request goes
+              // as the Platform's service-page principal, which holds no permission: only the page files are reachable.
+              const response = yield* integration(() => capability.forward({
+                ...projectPageRequest({ ...claims, projectId: claims.projectId! }, file),
+                query,
+                request,
+                allowFrontend: false,
+              }));
+              return injectIntoPage(response);
+            }).pipe(Effect.catchCause((cause) => Effect.succeed(zelavisErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+          },
+        ] : []),
         {
           id: "runtime.service-page-asset.read",
           spec: {
@@ -4485,42 +4597,6 @@ function resolvePlatformEndpointGroup(
           ...(assistantResponder ? { responder: assistantResponder } : {}),
         })
       : undefined;
-
-  function unavailableProjectsResponse() {
-    return {
-      status: 503,
-      body: {
-        error:
-          "Project management requires a System Store and project runtime driver.",
-      },
-    };
-  }
-
-  function projectErrorResponse(error: unknown) {
-    if (error instanceof ZelavisProjectIsolationError) {
-      // A stable code and the assessment, so SDK and CLI callers can act on
-      // the refusal without parsing its message.
-      return {
-        status: 409,
-        body: {
-          error: error.message,
-          code: "project.isolation.unsatisfied",
-          isolation: error.assessment,
-        },
-      };
-    }
-    const status =
-      error instanceof ZelavisProjectNotFoundError
-        ? 404
-        : error instanceof ZelavisProjectConflictError
-          ? 409
-          : error instanceof ZelavisProjectValidationError
-            ? 400
-            : error instanceof ZelavisProjectRuntimeError
-              ? 503
-            : 500;
-    return createJsonErrorResponse(status, error);
-  }
 
   function assistantErrorResponse(error: unknown) {
     const status =
@@ -7329,6 +7405,7 @@ export function zelavis(
         };
         setUnexpectedErrorSink(recordUnexpected);
         yield* Effect.addFinalizer(() => Effect.sync(() => setUnexpectedErrorSink(undefined)));
+        const pageCapabilitySecret = systemStore ? yield* integration(() => loadPlatformMasterSecret(systemStore)) : undefined;
         runtimeManagement = yield* integration(() =>
           resolveRuntimeManagementCore(options.frontend, {
             apiPrefix,
@@ -7372,6 +7449,14 @@ export function zelavis(
                 }
               : {}),
             ...(platformFrontend?.serviceUi ? { serviceUi: platformFrontend.serviceUi } : {}),
+            ...(systemStore
+              ? {
+                  pageCapability: {
+                    secret: pageCapabilitySecret!,
+                    forward: createProjectForwarder({ projects, fabric: fabricCoreService?.context, unavailableProjectsResponse, projectErrorResponse }),
+                  },
+                }
+              : {}),
             ...(frontendPackageService
               ? { frontendServiceName: frontendPackageService.name }
               : {}),

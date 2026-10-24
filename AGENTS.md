@@ -478,6 +478,12 @@ Rules that hold for every change:
   every HTML page it serves unless the page opts out with
   `<meta name="zelavis-service-ui" content="none">`. Those two assets are public on purpose:
   an extension's page is sandboxed with an opaque origin and sends no credentials.
+  For the same reason the dashboard frames an extension's page at a page capability URL
+  (`runtime/page-capabilities/<token>/<bundle>/<file>`, `platform/page-capability.ts`): an HMAC token
+  (key derived from the installation master secret) naming service, bundle and optional Project, expiring in hours,
+  minted for an authenticated viewer (`project.view` for a Project's page). The Platform builds every path it reads
+  from the token's claims, never from the request, and a Project's files are fetched through the Gateway forwarder
+  as a `service-page` principal with no permissions. Never widen it to files outside that bundle.
 
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define

@@ -230,6 +230,16 @@ input, pagination, password input, pin input, popover, progress, radio group, ra
 separator, slider, steps, switch, tabs, tags input, toast, toggle, toggle group, tooltip, tree view. The installed frontend
 supplies the runtime (`serviceUi` on a frontend), so another frontend can supply its own.
 
+### Pages from an installed extension
+
+A page an installed extension ships runs in a sandboxed frame with an opaque origin, so nothing it loads carries the
+operator's session. The dashboard therefore frames it at a URL with a signed, expiring capability in its path
+(`/zelavis/api/v1/runtime/page-capabilities/<token>/<bundle>/<file>`), minted for the signed-in viewer by
+`POST runtime/service-page-capabilities` (a Project's page also needs `project.view` on that Project). Relative links in
+the page resolve under that path, so `./dashboard.js`, `./styles.css` and `../../../service-page.css` all load without a
+cookie. The capability reads that one bundle's files and nothing else, and a Project's page is read from the Project's
+runtime by the Platform. The page still reaches the API only through the dashboard's broker.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.

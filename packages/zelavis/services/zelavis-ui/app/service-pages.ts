@@ -123,13 +123,28 @@ const readBrokerBody = Effect.fn("new-ui.readBrokerBody")(function*(response: Re
   }), reader => Effect.tryPromise({ try: () => reader.cancel(), catch: cause => cause }).pipe(Effect.timeout("1 second"), Effect.catchCause(cause => Effect.logWarning("Service response cleanup failed", cause))));
 });
 
+/** The capability URL of a page, or the page's own URL where this installation cannot mint one. */
+const sandboxedPageSrc = Effect.fn("new-ui.sandboxedPageSrc")(function*(src: string, projectId?: string) {
+  const match = /\/runtime\/service-page-assets\/([^/]+)\/([^/]+)\/(.+)$/.exec(src.split(/[?#]/)[0]!);
+  if (!match) return src;
+  const [, service, bundle, file] = match;
+  const minted = yield* request(`${API_PREFIX}v1/runtime/service-page-capabilities`, "POST", {
+    service: decodeURIComponent(service!), bundle: decodeURIComponent(bundle!), file: decodeURIComponent(file!), ...(projectId ? { projectId } : {}),
+  }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+  const capability = object(minted).src;
+  return typeof capability === "string" && capability.startsWith(API_PREFIX) ? capability : src;
+});
+
 export const servicePageScreen = Effect.fn("new-ui.servicePageScreen")(function*(config: Config, path: string, projectId?: string) {
   const registry = Array.isArray(config.serviceRegistry) ? config.serviceRegistry : object(yield* request(`${config.api.basePath}/runtime/services`)).services;
   const pages = yield* Effect.try({ try: () => servicePages(config, registry, projectId), catch: cause => new ApiError({ message: String(cause) }) });
   const page = pages.find(page => page.path === path);
   if (!page || !page.hasPage) return undefined;
   if (!page.src) return node("section", { class: "panel" }, node("h2", {}, page.title), message("This service has no valid dashboard page at this address."));
-  const frame = node("iframe", { src: page.src, title: page.title, class: "service-frame", sandbox: page.trusted ? "allow-scripts allow-same-origin allow-forms allow-popups" : "allow-scripts allow-forms", referrerpolicy: "no-referrer" });
+  // A sandboxed page has an opaque origin, so what it loads sends no session. Its frame is given a URL that carries a signed,
+  // expiring capability to read that bundle (`platform/page-capability.ts`), so its scripts and styles load as well as its HTML.
+  const src = page.trusted ? page.src : yield* sandboxedPageSrc(page.src, projectId);
+  const frame = node("iframe", { src, title: page.title, class: "service-frame", sandbox: page.trusted ? "allow-scripts allow-same-origin allow-forms allow-popups" : "allow-scripts allow-forms", referrerpolicy: "no-referrer" });
   if (!page.trusted && page.apiPath) yield* installServiceBroker(frame, { serviceName: page.serviceName, apiPath: page.apiPath });
   return node("section", { class: "panel service-page" }, frame);
 });

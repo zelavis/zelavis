@@ -123,6 +123,22 @@ const qualify = Effect.scoped(Effect.gen(function*() {
     setTimeout(() => resolve({ trusted: Boolean(trusted.contentWindow.customElements.get("zv-select") && trusted.contentWindow.customElements.get("zv-dialog")) }), 3000);
   }), authPage));
   page.off("response", onRuntime);
+  // The page's own files too: the dashboard frames a sandboxed page at a capability URL, so what the page itself loads
+  // (relative links resolve under the capability) needs no session.
+  const capability = yield* request("/runtime/service-page-capabilities", "POST", { service: "@zelavis/auth", bundle: "dashboard", file: "auth.html" });
+  assert.match(capability.src, /\/runtime\/page-capabilities\/[^/]+\/dashboard\/auth\.html$/);
+  const fromCapability = [];
+  const onCapability = response => { const path = new URL(response.url()).pathname; if (/\/(page-capabilities\/|service-ui\.|service-page\.css)/.test(path)) fromCapability.push(`${response.status()} ${path.split("/").pop()} ${response.frame()?.name() ?? ""}`); };
+  page.on("response", onCapability);
+  yield* io(() => page.evaluate(src => new Promise(resolve => {
+    const frame = document.createElement("iframe"); frame.name = "capability"; frame.setAttribute("sandbox", "allow-scripts"); frame.src = src; frame.style.display = "none"; document.body.append(frame);
+    setTimeout(resolve, 3000);
+  }), capability.src));
+  page.off("response", onCapability);
+  for (const file of ["auth.html", "service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(fromCapability.some(entry => entry.startsWith(`200 ${file} `)), `the sandboxed capability frame loads ${file}: ${fromCapability.join(", ")}`);
+  const anonymous = yield* io(() => fetch(new URL(capability.src, origin)));
+  assert.equal(anonymous.status, 200, "a capability URL needs no cookie");
+  assert.equal((yield* io(() => fetch(new URL(capability.src.replace(/\/[^/]+\/dashboard\/auth\.html$/, "/tampered.token/dashboard/auth.html"), origin)))).status, 404);
   assert.equal(frames.trusted, true, "a trusted service page defines <zv-select> and <zv-dialog>");
   for (const frame of ["trusted", "sandboxed"]) for (const file of ["service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(runtimeLoads.includes(`200 ${file} ${frame}`), `the ${frame} frame loads ${file}: ${runtimeLoads.join(", ")}`);
   console.log(`Service page runtime requests: ${runtimeLoads.join(", ")}`);

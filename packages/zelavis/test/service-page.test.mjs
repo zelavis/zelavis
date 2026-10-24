@@ -244,3 +244,25 @@ test("a frontend with no component runtime adds nothing and serves 404", async (
   const response = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/service-ui.js"), OWNER);
   assert.equal(response.status, 404);
 });
+
+test("a page capability is authentic, scoped, expiring, and tamper-evident", async () => {
+  const { mintPageCapability, verifyPageCapability } = await import("../dist/platform/page-capability.js");
+  const secret = "installation-secret";
+  const claims = { service: "@acme/shop", bundle: "dist", expiresAt: Date.now() + 60_000 };
+  const token = await mintPageCapability(secret, claims);
+
+  assert.deepEqual(await verifyPageCapability(secret, token), claims);
+  assert.deepEqual(await verifyPageCapability(secret, await mintPageCapability(secret, { ...claims, projectId: "p1" })), { ...claims, projectId: "p1" });
+  // Another installation's secret, a changed payload and a changed signature are all just "not authorized".
+  assert.equal(await verifyPageCapability("another-secret", token), undefined);
+  const [payload, signature] = token.split(".");
+  const other = await mintPageCapability(secret, { ...claims, service: "@acme/other" });
+  assert.equal(await verifyPageCapability(secret, `${other.split(".")[0]}.${signature}`), undefined);
+  assert.equal(await verifyPageCapability(secret, `${payload}.${signature.slice(0, -2)}AA`), undefined);
+  assert.equal(await verifyPageCapability(secret, `${payload}.`), undefined);
+  assert.equal(await verifyPageCapability(secret, "not a token"), undefined);
+  assert.equal(await verifyPageCapability(secret, `${payload}.a`), undefined);
+  assert.equal(await verifyPageCapability(secret, "x".repeat(3000)), undefined);
+  // Expiry is checked against the clock it is asked about.
+  assert.equal(await verifyPageCapability(secret, token, claims.expiresAt + 1), undefined);
+});
