@@ -1,6 +1,9 @@
 // Clients for the Platform's own operations that were HTTP-only: the Fabric, the Assistant, deployment backends and the
 // Agent's status. Each is a thin, typed map of method to route, over the SDK's `json` helper; bodies and answers are the
 // Platform's own JSON, passed through, so the three forms (route, SDK, CLI) cannot say different things.
+import type { ZelavisAssistantThread } from "../assistant.js";
+import type { AssistantApproval } from "../assistant-approvals.js";
+import type { AssistantAuditPage } from "../assistant-audit.js";
 import type { ZelavisClientRequestOptions, ZelavisDataBody, ZelavisDataResult } from "./fetch.js";
 
 type Json = <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>;
@@ -54,7 +57,7 @@ export interface ZelavisAssistantEvent {
 /** The Assistant: threads, replies, approvals, providers and the audit trail, over `/runtime/assistant`. Same contract as `zelavis assistant`. */
 export interface ZelavisAssistantClient {
   /** The trail of tool calls, newest first: `{ limit?, before?, principalId?, tool?, decision? }`. Needs `server.assistant.audit`. */
-  audit(query?: { readonly limit?: number; readonly before?: string; readonly principalId?: string; readonly tool?: string; readonly decision?: string }): Promise<ZelavisDataResult>;
+  audit(query?: { readonly limit?: number; readonly before?: string; readonly principalId?: string; readonly tool?: string; readonly decision?: string }): Promise<AssistantAuditPage>;
   /** The Platform's model provider, and whether it is set by code or by settings. */
   provider(): Promise<ZelavisDataResult>;
   setProvider(input: ZelavisDataBody): Promise<ZelavisDataResult>;
@@ -63,10 +66,10 @@ export interface ZelavisAssistantClient {
   projectProvider(projectId: string): Promise<ZelavisDataResult>;
   setProjectProvider(projectId: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
   clearProjectProvider(projectId: string): Promise<ZelavisDataResult>;
-  threads(options?: { readonly projectId?: string }): Promise<ZelavisDataResult>;
-  createThread(input?: { readonly title?: string; readonly projectId?: string }): Promise<ZelavisDataResult>;
-  thread(threadId: string): Promise<ZelavisDataResult>;
-  deleteThread(threadId: string): Promise<ZelavisDataResult>;
+  threads(options?: { readonly projectId?: string }): Promise<{ readonly threads: readonly ZelavisAssistantThread[] }>;
+  createThread(input?: { readonly title?: string; readonly projectId?: string }): Promise<{ readonly thread: ZelavisAssistantThread }>;
+  thread(threadId: string): Promise<{ readonly thread: ZelavisAssistantThread; readonly approvals: readonly AssistantApproval[] }>;
+  deleteThread(threadId: string): Promise<{ readonly deleted: boolean }>;
   /** Send a message and wait for the whole reply. */
   sendMessage(threadId: string, content: string): Promise<ZelavisDataResult>;
   /** Send a message and read the reply as it is written. Reading ends with a `done` or an `error` event. */

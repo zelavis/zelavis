@@ -3,6 +3,14 @@ import {
   type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
 } from "./platform-clients.js";
 export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
+import type {
+  Analyzer, CheckConstraint, DocumentsApi, EmbeddingIndex, GroupedSummary, IndexDefinition, ReferenceConstraint, RelatedDocuments,
+  SpatialIndex, SummarizeInput, Summary, TraverseInput, TraverseResult,
+} from "../db/document-model.js";
+import type {
+  AggregateInput, HistogramInput, HistogramResult, IngestResult, InterpolateInput, MovingInput, RangeInput, TimeSeriesBucket,
+  TimeSeriesPoint, TimeSeriesSummary, WindowsInput,
+} from "../db/time-series.js";
 import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
@@ -407,13 +415,13 @@ export interface ZelavisDataClient {
      * How text in a collection becomes searchable terms (`{ fields, language?, stemming?, … }`), and the
      * backfill that follows. The database's own analyzer definition, passed through.
      */
-    setAnalyzer(collection: string, analyzer: ZelavisDataBody): Promise<ZelavisDataResult>;
+    setAnalyzer(collection: string, analyzer: Analyzer): Promise<ZelavisDataSuccess<"analyze">>;
     /** Which field holds geometry and how it is indexed (`{ field, … }`). The database's own definition, passed through. */
-    setSpatial(collection: string, spatial: ZelavisDataBody): Promise<ZelavisDataResult>;
+    setSpatial(collection: string, spatial: SpatialIndex): Promise<ZelavisDataSuccess<"locate">>;
     /** Which field holds an embedding and how it is compared (`{ field, dimension, metric, … }`). Passed through. */
-    setEmbedding(collection: string, embedding: ZelavisDataBody): Promise<ZelavisDataResult>;
+    setEmbedding(collection: string, embedding: EmbeddingIndex): Promise<ZelavisDataSuccess<"embed">>;
     /** Write documents back so their postings match today's lenses: one collection, or every one. */
-    rewrite(collection?: string): Promise<ZelavisDataResult>;
+    rewrite(collection?: string): Promise<ZelavisDataSuccess<"rewrite">>;
   };
   readonly documents: {
     insert(collection: string, input: ZelavisDataInsertInput): Promise<ZelavisDataDocument>;
@@ -427,28 +435,28 @@ export interface ZelavisDataClient {
     /** Several changes applied atomically, in the order given. */
     write(input: ZelavisDataWriteInput): Promise<readonly ZelavisDataWritten[]>;
     /** Breadth-first traversal along a declared edge: `{ id, edge, edgeCollection?, direction?, maxDepth?, maxVisits?, where? }`. */
-    traverse(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    traverse(collection: string, input: Omit<TraverseInput, "collection">): Promise<TraverseResult>;
     /** One aggregate over matching documents: `{ measure, op, where?, related?, search?, geometry?, linked? }`. */
-    summarize(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    summarize(collection: string, input: Omit<SummarizeInput, "collection">): Promise<Summary>;
     /** An aggregate per group: `summarize`'s input plus `{ groupBy, groups? }`. */
-    summarizeBy(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    summarizeBy(collection: string, input: Omit<SummarizeInput, "collection"> & { readonly groupBy: string; readonly groups?: number }): Promise<{ readonly groups: readonly GroupedSummary[] }>;
     /** The documents other collections' references name, resolved in one pass: `{ documents, references? }`. */
-    related(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    related(collection: string, input: { readonly documents: readonly ZelavisDataDocument[]; readonly references?: readonly string[] }): Promise<{ readonly documents: readonly RelatedDocuments[] }>;
   };
   /** Composite indexes over a collection's documents (`{ name, fields: [{ path, direction?, nulls? }], unique? }`). */
   readonly indexes: {
-    create(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
-    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+    create(collection: string, input: Omit<IndexDefinition, "collection">): Promise<ZelavisDataSuccess<"createIndex">>;
+    drop(collection: string, name: string): Promise<ZelavisDataDropped>;
   };
   /** What every document's values must satisfy: `{ name, where }`. */
   readonly checks: {
-    add(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
-    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+    add(collection: string, input: Omit<CheckConstraint, "collection">): Promise<ZelavisDataSuccess<"addCheck">>;
+    drop(collection: string, name: string): Promise<ZelavisDataDropped>;
   };
   /** Fields naming documents of other collections: `{ name, path, collection, onDelete? }`. */
   readonly references: {
-    add(collection: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
-    drop(collection: string, name: string): Promise<ZelavisDataResult>;
+    add(collection: string, input: Omit<ReferenceConstraint, "from">): Promise<ZelavisDataSuccess<"addReference">>;
+    drop(collection: string, name: string): Promise<ZelavisDataDropped>;
   };
   /** Versioned schemas. A version governs what is accepted next, not what is already stored. */
   readonly schemas: {
@@ -463,21 +471,21 @@ export interface ZelavisDataClient {
   };
   /** Series the database derives from the event log. Bodies are the database's own vocabulary, passed through. */
   readonly timeseries: {
-    list(): Promise<ZelavisDataResult>;
+    list(): Promise<{ readonly series: readonly TimeSeriesSummary[] }>;
     /** Points in a range: `{ start?, end?, limit?, order?, tags? }`. */
-    range(series: string, input?: ZelavisDataBody): Promise<ZelavisDataResult>;
+    range(series: string, input?: RangeInput): Promise<{ readonly points: readonly TimeSeriesPoint[] }>;
     /** One aggregate over a range: `{ op, start?, end?, p?, tags? }`. */
-    aggregate(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    aggregate(series: string, input: AggregateInput): Promise<{ readonly value: number }>;
     /** An aggregate per interval: `{ interval, step?, op?, start?, end?, fill?, p?, tags? }`. */
-    windows(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    windows(series: string, input: WindowsInput): Promise<{ readonly buckets: readonly TimeSeriesBucket[] }>;
     /** A moving aggregate: `{ window, op?, start?, end?, p?, tags? }`. */
-    moving(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    moving(series: string, input: MovingInput): Promise<{ readonly points: readonly TimeSeriesPoint[] }>;
     /** Counts per bin: `{ bins?, boundaries?, step?, min?, max?, start?, end?, tags? }`. */
-    histogram(series: string, input?: ZelavisDataBody): Promise<ZelavisDataResult>;
+    histogram(series: string, input?: HistogramInput): Promise<HistogramResult>;
     /** Values on a regular step: `{ step, method?, start?, end?, tags? }`. */
-    interpolate(series: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    interpolate(series: string, input: InterpolateInput): Promise<{ readonly points: readonly TimeSeriesPoint[] }>;
     /** Bring the series up to the event log's head. */
-    ingest(series: string): Promise<ZelavisDataResult>;
+    ingest(series: string): Promise<IngestResult>;
   };
   /** Whether the Project's database answers, and what it reports about itself. */
   health(): Promise<ZelavisDataResult>;
@@ -696,6 +704,11 @@ export interface ZelavisWorkloadsClient {
  * definition and series vocabulary is the database's own, and a translation here would be a second dialect to keep
  * in step with it. The fields each operation reads are listed beside it.
  */
+/** What a database operation answers on success, taken from the server's own signature so the two cannot drift. */
+export type ZelavisDataSuccess<Operation extends keyof DocumentsApi> =
+  DocumentsApi[Operation] extends (...args: never[]) => Effect.Effect<infer Success, unknown> ? Success : never;
+/** What dropping an index, check or reference answers. */
+export interface ZelavisDataDropped { readonly dropped: boolean }
 export type ZelavisDataBody = Readonly<Record<string, unknown>>;
 
 /** The database's own answer to such an operation, as it sent it. */

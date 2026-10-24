@@ -155,7 +155,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   }
   // The operations whose bodies are the database's own vocabulary: the CLI hands `--data` through, as the SDK does, and prints the database's answer.
   const answer = (result: unknown) => print(result, () => JSON.stringify(result, null, 2));
-  const body = () => requireData();
+  // `--data` is handed to the route as typed JSON; the route validates it, so the CLI claims only the shape each call site expects.
+  const body = <Shape>() => requireData() as unknown as Shape;
   const named = () => requireDocumentId();
   const bodied: Record<string, () => Promise<unknown>> = {
     "set-analyzer": () => api.collections.setAnalyzer(requireCollection(), body()),

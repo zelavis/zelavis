@@ -127,8 +127,10 @@ one of them, and an unknown collection is a 404.
 ### Definitions, summaries, schemas and series
 
 The rest of the database's operations are in all three forms too. Their bodies are the database's own vocabulary
-(`/api/database/...` in the OpenAPI spec); the SDK and CLI pass them through and print the database's own answer, so
-the three answer alike, refusals included. In the CLI the body is `--data JSON`, and a name (an index, check, reference
+(`/api/database/...` in the OpenAPI spec). In the SDK the analyzer, spatial, embedding, index, check, reference,
+traversal, summary, related and time-series inputs and answers are the server's own TypeScript types, so a wrong field
+is a compile error; the CLI passes `--data` through and prints the database's own answer, so the three answer alike,
+refusals included. In the CLI the body is `--data JSON`, and a name (an index, check, reference
 or schema version) is the third argument. HTTP paths are under `/zelavis/api/v1/runtime/projects/:projectId/data/`.
 
 | What | HTTP (`data/…`) | SDK (`data.…`) | CLI (`zelavis data … --project ID`) |
