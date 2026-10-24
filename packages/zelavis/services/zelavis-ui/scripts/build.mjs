@@ -11,6 +11,10 @@ if (styles.status !== 0) process.exit(styles.status ?? 1);
 const result = spawnSync(process.execPath, ["node_modules/fuzor/dist/cli.js", "build", "--target", "spa"], { cwd: packageRoot, stdio: "inherit" });
 process.exitCode = result.status ?? 1;
 
+if (result.status === 0) {
+  const runtime = spawnSync(process.execPath, ["scripts/build-service-ui.mjs"], { cwd: packageRoot, stdio: "inherit" });
+  if (runtime.status !== 0) process.exit(runtime.status ?? 1);
+}
 if (result.status === 0) { writeGridNotices(); writeFuzorProvenance(); }
 
 // The shipped server entry may import only `effect` (the Platform provides it) and Node itself. Anything else would

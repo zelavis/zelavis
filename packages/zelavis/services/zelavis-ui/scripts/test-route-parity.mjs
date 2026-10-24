@@ -108,6 +108,24 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   }
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   const visit = path => io(() => page.goto(origin + "/zelavis" + path, { waitUntil: "networkidle" }));
+  // A service page gets the component runtime without asking, both as a trusted frame and as the sandboxed frame an
+  // installed extension runs in (an opaque origin, which sends no ambient credentials of its own).
+  yield* visit("/projects");
+  const configuration = yield* request("/runtime/config");
+  const authPage = configuration.services.find(service => service.name === "@zelavis/auth")?.menu?.page?.src;
+  assert.ok(authPage, "the Auth service ships a framed page");
+  const runtimeLoads = [];
+  const onRuntime = response => { if (/\/runtime\/service-ui\.(js|css)$/.test(new URL(response.url()).pathname)) runtimeLoads.push(`${response.status()} ${new URL(response.url()).pathname.split(".").pop()} ${response.frame()?.name() ?? ""}`); };
+  page.on("response", onRuntime);
+  const frames = yield* io(() => page.evaluate(src => new Promise(resolve => {
+    const make = (sandbox, name) => { const frame = document.createElement("iframe"); frame.name = name; frame.setAttribute("sandbox", sandbox); frame.src = src; frame.style.display = "none"; document.body.append(frame); return frame; };
+    const trusted = make("allow-scripts allow-same-origin", "trusted"); make("allow-scripts", "sandboxed");
+    setTimeout(() => resolve({ trusted: Boolean(trusted.contentWindow.customElements.get("zv-select") && trusted.contentWindow.customElements.get("zv-dialog")) }), 3000);
+  }), authPage));
+  page.off("response", onRuntime);
+  assert.equal(frames.trusted, true, "a trusted service page defines <zv-select> and <zv-dialog>");
+  for (const frame of ["trusted", "sandboxed"]) for (const kind of ["js", "css"]) assert.ok(runtimeLoads.includes(`200 ${kind} ${frame}`), `the ${frame} frame loads the component ${kind}: ${runtimeLoads.join(", ")}`);
+  console.log(`Service page runtime requests: ${runtimeLoads.join(", ")}`);
   yield* visit("/projects/parity-lab/database?databaseDialog=create-table");
   yield* io(() => page.getByRole("dialog").getByLabel("Table name").waitFor());
   const databaseLinks = yield* io(() => page.locator('nav a[href^="/"]').evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));

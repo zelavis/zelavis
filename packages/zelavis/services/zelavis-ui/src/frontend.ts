@@ -24,9 +24,16 @@ export const zelavisUiFrontend = (context: ZelavisPlatformFrontendContext): Prom
     return text;
   };
   const service = yield* Effect.tryPromise({ try: () => loadPluginPackage({ manifest, scope: "system", configuration: context, importer: () => import("./dashboard-service.ts") }), catch: cause => new AssetReadError({ message: cause instanceof Error ? cause.message : "Could not load the Fuzor frontend.", cause }) });
+  // The component runtime service pages are given (scripts/build-service-ui.mjs); a checkout that has not built it offers none.
+  const readRuntimeFile = (name: string) => Effect.tryPromise({ try: () => readFile(resolve(root, "service-ui", name), "utf8"), catch: cause => new AssetReadError({ message: `Could not read the service page runtime ${name}.`, cause }) }).pipe(
+    Effect.map((text): string | undefined => text),
+    Effect.catch(error => error.cause && typeof error.cause === "object" && "code" in error.cause && error.cause.code === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(error)),
+  );
+  const [serviceUiScript, serviceUiStylesheet] = yield* Effect.all([readRuntimeFile("service-ui.js"), readRuntimeFile("service-ui.css")]);
   return {
     service,
     servicePageStylesheet: zelavisServicePageStylesheet,
+    ...(serviceUiScript !== undefined && serviceUiStylesheet !== undefined ? { serviceUi: { script: serviceUiScript, stylesheet: serviceUiStylesheet } } : {}),
     clientRoutes: ["/*", "/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login"],
     bundleStore: {
       read(_scope, path) {

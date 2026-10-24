@@ -74,6 +74,7 @@ import {
   UnusablePackage,
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
+import { injectServiceUi, serviceUiRevision } from "./platform/service-page-ui.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
 import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
@@ -1948,6 +1949,8 @@ function resolveRuntimeManagementCore(
     /** Design tokens the installed frontend supplies for service pages. */
     servicePageStylesheet?: string;
     serviceElementsScript?: string;
+    /** Components the installed frontend adds to every HTML service page. */
+    serviceUi?: { readonly script: string; readonly stylesheet: string };
     /** Name of the service serving the root path, whichever frontend that is. */
     frontendServiceName?: string;
     capabilities: Readonly<Record<string, { available: boolean }>>;
@@ -2074,7 +2077,18 @@ function resolveRuntimeManagementCore(
       ) as readonly DashboardSerializedServiceMenuDefinition[] | undefined,
     };
   };
-  const renderServicePageAsset = (
+  /** An HTML page gets the installed frontend's components unless it opts out (see `platform/service-page-ui.ts`). */
+  const renderServicePageAsset = (serviceName: string, bundle: string, assetPath: string) =>
+    readServicePageAsset(serviceName, bundle, assetPath).then((response) => {
+      const ui = context.serviceUi;
+      const body = response.body;
+      const type = response.headers?.get("content-type") ?? "";
+      if (!ui || response.status !== 200 || !type.startsWith("text/html") || !(typeof body === "string" || body instanceof Uint8Array)) return response;
+      const base = joinPathParts(rootPath, context.apiPrefix, context.apiVersion, "runtime");
+      const html = injectServiceUi(typeof body === "string" ? body : new TextDecoder().decode(body), { stylesheet: `${base}/service-ui.css`, script: `${base}/service-ui.js` });
+      return { ...response, body: html };
+    });
+  const readServicePageAsset = (
     serviceName: string,
     bundle: string,
     assetPath: string,
@@ -3116,6 +3130,36 @@ function resolveRuntimeManagementCore(
               ZELAVIS_BASELINE_SERVICE_ELEMENTS,
           }),
         },
+        ...(["js", "css"] as const).map((kind) => ({
+          // The components the frontend adds to service pages (see `platform/service-page-ui.ts`).
+          id: `runtime.service-ui-${kind}.read`,
+          spec: {
+            operationId: kind === "js" ? "getServiceUiScript" : "getServiceUiStylesheet",
+            summary: kind === "js" ? "Read the component runtime service pages load" : "Read the stylesheet of the components service pages load",
+            tags: ["runtime"],
+            responses: {
+              200: { description: kind === "js" ? "Module" : "Stylesheet" },
+              404: { description: "The installed frontend supplies no service page components" },
+            },
+          },
+          method: "GET" as const,
+          // Public on purpose. A page an extension ships runs in a sandboxed frame with an opaque origin, which sends no
+          // credentials and needs CORS to load a module, so an authenticated runtime would load for core pages only. It is
+          // open-source component code with no installation data in it.
+          path: joinPathParts(context.apiPrefix, context.apiVersion, `runtime/service-ui.${kind}`),
+          handler: ({ request }: { request: Request }) => {
+            if (!context.serviceUi) return { status: 404, body: { error: "The installed frontend supplies no service page components." } };
+            const text = kind === "js" ? context.serviceUi.script : context.serviceUi.stylesheet;
+            const etag = `"${serviceUiRevision(text)}"`;
+            const headers = new Headers({
+              "content-type": kind === "js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8",
+              "cache-control": "no-cache",
+              "access-control-allow-origin": "*",
+              etag,
+            });
+            return request.headers.get("if-none-match") === etag ? { status: 304, headers, body: "" } : { status: 200, headers, body: text };
+          },
+        })),
         {
           id: "runtime.service-page-asset.read",
           spec: {
@@ -7339,6 +7383,7 @@ export function zelavis(
                   serviceElementsScript: platformFrontend.serviceElementsScript,
                 }
               : {}),
+            ...(platformFrontend?.serviceUi ? { serviceUi: platformFrontend.serviceUi } : {}),
             ...(frontendPackageService
               ? { frontendServiceName: frontendPackageService.name }
               : {}),

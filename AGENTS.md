@@ -473,6 +473,11 @@ Rules that hold for every change:
   dashboard pages and static assets stream directly from disk via `packageDir`
   (resolved from `dashboard/` or package root) with classic 90s webspace
   semantics. Inlined asset string maps are not supported.
+  The installed frontend may supply a component runtime (`serviceUi`: `@zelavis/ui`
+  builds `fuzor/ui` under the `zv` brand); the Platform adds its stylesheet and module to
+  every HTML page it serves unless the page opts out with
+  `<meta name="zelavis-service-ui" content="none">`. Those two assets are public on purpose:
+  an extension's page is sandboxed with an opaque origin and sends no credentials.
 
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define

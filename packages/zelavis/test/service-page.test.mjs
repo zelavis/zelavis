@@ -54,7 +54,7 @@ test("every URL a service page builds actually resolves", async () => {
   const base = new URL(pageSrc, "http://localhost");
 
   const stylesheetHref = page.body.match(
-    /<link rel="stylesheet" href="([^"]+)"/,
+    /<link rel="stylesheet" href="([^"]*service-page\.css)"/,
   )?.[1];
   assert.ok(stylesheetHref, "the page links no stylesheet");
 
@@ -169,4 +169,70 @@ test("a frontend can supply its own element library", async () => {
   );
 
   assert.equal(await response.text(), "/* the frontend's own components */");
+});
+
+test("an HTML service page gets the frontend's components without asking", async () => {
+  const { get, pageSrc } = await boot();
+  const page = await get(pageSrc, OWNER);
+
+  assert.match(page.body, /<link rel="stylesheet" href="\/zelavis\/api\/v1\/runtime\/service-ui\.css" data-zelavis-service-ui>/);
+  assert.match(page.body, /<script type="module" src="\/zelavis\/api\/v1\/runtime\/service-ui\.js" data-zelavis-service-ui><\/script>/);
+  // At the top of the head, so the elements are defined before the page's own module runs its first line.
+  assert.ok(page.body.indexOf("service-ui.js") < page.body.indexOf("<body"));
+
+  const script = await get("/zelavis/api/v1/runtime/service-ui.js", OWNER);
+  assert.equal(script.status, 200);
+  assert.match(script.contentType, /text\/javascript/);
+  // The runtime is the zv brand of fuzor/ui: one module defining the tags a page writes.
+  assert.match(script.body, /zv/);
+  const stylesheet = await get("/zelavis/api/v1/runtime/service-ui.css", OWNER);
+  assert.equal(stylesheet.status, 200);
+  assert.match(stylesheet.contentType, /text\/css/);
+  assert.match(stylesheet.body, /zv-select-trigger/);
+  // It reads a service page's tokens as well as the dashboard's.
+  assert.match(stylesheet.body, /--popover/);
+});
+
+test("the component runtime is public, cross-origin readable and revalidates by ETag", async () => {
+  const runtime = await zelavis({ frontend: zelavisUiFrontend, serviceRegistry: await bundledServiceRegistry() });
+  // A sandboxed extension page has an opaque origin and no credentials, so the runtime cannot require either.
+  for (const kind of ["js", "css"]) {
+    const url = `http://localhost/zelavis/api/v1/runtime/service-ui.${kind}`;
+    const response = await runtime.fetch(new Request(url));
+    assert.equal(response.status, 200, kind);
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
+    const etag = response.headers.get("etag");
+    assert.ok(etag, "an ETag names the revision");
+    const again = await runtime.fetch(new Request(url, { headers: { "if-none-match": etag } }));
+    assert.equal(again.status, 304, "an unchanged asset is not sent again");
+  }
+});
+
+test("injection puts the runtime at the top of the head, once, and respects an opt-out", async () => {
+  const { injectServiceUi } = await import("../dist/platform/service-page-ui.js");
+  const links = { stylesheet: "/ui.css", script: "/ui.js" };
+
+  const page = injectServiceUi('<!doctype html><html><head><meta charset="utf-8"><title>x</title></head><body></body></html>', links);
+  assert.match(page, /<head><link rel="stylesheet" href="\/ui\.css" data-zelavis-service-ui><script type="module" src="\/ui\.js" data-zelavis-service-ui><\/script><meta charset/);
+  assert.equal(injectServiceUi(page, links), page, "a page that already has it is left alone");
+
+  const bare = injectServiceUi("<p>hi</p>", links);
+  assert.ok(bare.startsWith('<link rel="stylesheet"'), "a fragment with no head still gets it");
+  assert.match(injectServiceUi("<html><body>x</body></html>", links), /^<html><head><link/);
+
+  const optedOut = '<head><meta name="zelavis-service-ui" content="none"></head><body></body>';
+  assert.equal(injectServiceUi(optedOut, links), optedOut);
+  assert.equal(injectServiceUi("<head><META NAME='zelavis-service-ui' CONTENT='none'></head>", links), "<head><META NAME='zelavis-service-ui' CONTENT='none'></head>");
+});
+
+test("a frontend with no component runtime adds nothing and serves 404", async () => {
+  const runtime = await zelavis({
+    frontend: async (context) => {
+      const { serviceUi: _omitted, ...rest } = await zelavisUiFrontend(context);
+      return rest;
+    },
+    serviceRegistry: await bundledServiceRegistry(),
+  });
+  const response = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/service-ui.js"), OWNER);
+  assert.equal(response.status, 404);
 });

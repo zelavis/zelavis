@@ -198,6 +198,38 @@ plain HTML or boot a client app:
 contains a client router, tabs, or a local menu, that navigation belongs to the
 embedded page itself.
 
+### Components in a service page
+
+Zelavis adds its component runtime to every HTML page it serves from a bundle, so a plain page can write the same
+components the dashboard uses with no build step and no import:
+
+```html
+<label>Model
+  <zv-select name="model" value="opus">
+    <zv-select-trigger><zv-select-value placeholder="Choose…"></zv-select-value></zv-select-trigger>
+    <zv-select-content>
+      <zv-select-item value="opus">Opus</zv-select-item>
+      <zv-select-item value="sonnet">Sonnet</zv-select-item>
+    </zv-select-content>
+  </zv-select>
+</label>
+```
+
+The `zv-*` tags are `fuzor/ui` components under the `zv` brand: dialogs, tabs, menus, popovers,
+tooltips, accordions, switches, checkboxes, sliders, toasts, tree views and the rest of the set listed below. They
+fire `ui:*` events (`ui:value-change`, `ui:open-change`), take their colours from the page's design tokens, and a named
+`zv-select` still submits in a form. `zv-page`, `zv-card`, `zv-stack`, `zv-badge`, `zv-button` and the other
+presentational elements come from `service-elements.js` and are unchanged.
+
+The runtime is a single module at `/zelavis/api/v1/runtime/service-ui.js` with its stylesheet beside it; both are public,
+because a page an extension ships runs in a sandboxed frame that sends no credentials. A page that brings its own
+components opts out with `<meta name="zelavis-service-ui" content="none">`.
+
+Included: accordion, avatar, checkbox, collapsible, combobox, dialog, drawer, editable, hover card, listbox, menu, number
+input, pagination, password input, pin input, popover, progress, radio group, rating group, scroll area, select,
+separator, slider, steps, switch, tabs, tags input, toast, toggle, toggle group, tooltip, tree view. The installed frontend
+supplies the runtime (`serviceUi` on a frontend), so another frontend can supply its own.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.

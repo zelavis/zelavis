@@ -66,6 +66,13 @@ export interface ZelavisPlatformFrontend {
    * components rather than reinventing a card.
    */
   readonly serviceElementsScript?: string;
+  /**
+   * A component runtime and its stylesheet that the Platform adds to every HTML service page it serves, so a plain page
+   * can write the frontend's components (`<zv-select>`) without a build step. A page opts out with
+   * `<meta name="zelavis-service-ui" content="none">`. The runtime is served publicly (with CORS), because a sandboxed extension
+   * page has an opaque origin and sends no credentials; it holds no installation data.
+   */
+  readonly serviceUi?: { readonly script: string; readonly stylesheet: string };
 }
 
 export type ZelavisPlatformFrontendFactory = (
