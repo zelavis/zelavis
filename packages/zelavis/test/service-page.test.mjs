@@ -285,6 +285,9 @@ test("a page capability is authentic, scoped, expiring, and tamper-evident", asy
   assert.equal(await verifyPageCapability(secret, "not a token"), undefined);
   assert.equal(await verifyPageCapability(secret, `${payload}.a`), undefined);
   assert.equal(await verifyPageCapability(secret, "x".repeat(3000)), undefined);
+  for (const invalid of [{ bundle: ".." }, { service: "@acme/../shop" }, { projectId: "p1/../p2" }, { expiresAt: claims.expiresAt + 0.5 }]) {
+    assert.equal(await verifyPageCapability(secret, await mintPageCapability(secret, { ...claims, ...invalid })), undefined, JSON.stringify(invalid));
+  }
   // Expiry is checked against the clock it is asked about.
   assert.equal(await verifyPageCapability(secret, token, claims.expiresAt + 1), undefined);
 });
