@@ -22,6 +22,7 @@ async function boot(t) {
   writeFileSync(join(directory, "other", "private.txt"), "another bundle");
   symlinkSync(join(directory, "secret.txt"), join(directory, "dashboard", "linked.txt"));
   symlinkSync(join(directory, "other"), join(directory, "dashboard", "linked-directory"));
+  symlinkSync(directory, join(directory, "root-alias"));
   const page = { id: "main", title: "Main", bundle: "dashboard", file: "index.html" };
   const service = (name) => ({ name, kind: "plugin", packageDir: directory, menu: { title: name, path: `/${name.split("/")[1]}`, page } });
   const runtime = await zelavis({
@@ -82,6 +83,8 @@ test("a capability never falls back to package-root files or follows a symlink o
     assert.equal(response.status, 404, file);
     assert.doesNotMatch(await response.text(), /outside the bundle|another bundle/);
   }
+  const alias = await (await mint({ service: "@example/one", bundle: "root-alias", file: "secret.txt" }, OWNER)).json();
+  assert.equal((await call(alias.src)).status, 404, "a symlink cannot make the package root into a page bundle");
 });
 
 test("minting refuses bundle traversal and invalid owner identities", async (t) => {
