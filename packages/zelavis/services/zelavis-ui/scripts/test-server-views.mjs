@@ -159,6 +159,9 @@ try {
     await page.goto(route, { waitUntil: "networkidle" });
     await page.getByLabel("Selected record JSON").waitFor({ timeout: 10000 }).catch(async error => { console.error("Database boot:", errors, observed, (await page.locator("body").innerText()).slice(-2500)); throw error; });
     const json = page.getByLabel("Selected record JSON");
+    const queryRow = await page.evaluate(() => ["grid-filter", "grid-sort"].map(name => { const box = document.querySelector(`.${name}`)?.getBoundingClientRect(); return box && { top: box.top, bottom: box.bottom, right: box.right }; }));
+    assert.ok(queryRow.every(Boolean) && Math.abs(queryRow[0].top - queryRow[1].top) < 2, `Filter and sort share one desktop row: ${JSON.stringify(queryRow)}`);
+    if (process.argv.includes("--screenshots") && library === "glide") await page.screenshot({ path: "/tmp/new-ui-database-query-row.png" });
     await json.fill(JSON.stringify({ title: `Utility draft ${library}` }));
     const switches = page.getByRole("navigation", { name: "Sidebar view switches" });
     const footerBoxes = await switches.getByRole("button").evaluateAll(buttons => buttons.map(button => ({ top: button.getBoundingClientRect().top, width: button.getBoundingClientRect().width })));
