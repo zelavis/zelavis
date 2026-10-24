@@ -97,11 +97,13 @@ test("the stylesheet keeps the hidden attribute working", async () => {
   assert.match(stylesheet.body, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
 });
 
-test("service page styles are not readable by an anonymous caller", async () => {
+test("service page styles are public, so a sandboxed extension page can load them", async () => {
   const { get } = await boot();
+  // A page an extension ships runs in a frame with an opaque origin, which sends no credentials.
   const stylesheet = await get("/zelavis/api/v1/runtime/service-page.css");
 
-  assert.equal(stylesheet.status, 401);
+  assert.equal(stylesheet.status, 200);
+  assert.match(stylesheet.body, /--background:/);
 });
 
 test("a service page drives the real API, not a mock", async () => {
@@ -146,11 +148,17 @@ test("the element library defines the tags a service page composes", async () =>
   assert.match(elements.body, /var\(--border\)/);
 });
 
-test("the element library is not readable by an anonymous caller", async () => {
-  const { get } = await boot();
-  const elements = await get("/zelavis/api/v1/runtime/service-elements.js");
-
-  assert.equal(elements.status, 401);
+test("the element library is public, cross-origin readable and revalidates by ETag", async () => {
+  const runtime = await zelavis({ frontend: zelavisUiFrontend, serviceRegistry: await bundledServiceRegistry() });
+  for (const name of ["service-elements.js", "service-page.css"]) {
+    const url = `http://localhost/zelavis/api/v1/runtime/${name}`;
+    const response = await runtime.fetch(new Request(url));
+    assert.equal(response.status, 200, name);
+    assert.equal(response.headers.get("access-control-allow-origin"), "*", name);
+    const etag = response.headers.get("etag");
+    assert.ok(etag, `${name} has an ETag`);
+    assert.equal((await runtime.fetch(new Request(url, { headers: { "if-none-match": etag } }))).status, 304, name);
+  }
 });
 
 test("a frontend can supply its own element library", async () => {

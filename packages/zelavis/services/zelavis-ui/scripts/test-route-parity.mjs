@@ -115,7 +115,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const authPage = configuration.services.find(service => service.name === "@zelavis/auth")?.menu?.page?.src;
   assert.ok(authPage, "the Auth service ships a framed page");
   const runtimeLoads = [];
-  const onRuntime = response => { if (/\/runtime\/service-ui\.(js|css)$/.test(new URL(response.url()).pathname)) runtimeLoads.push(`${response.status()} ${new URL(response.url()).pathname.split(".").pop()} ${response.frame()?.name() ?? ""}`); };
+  const onRuntime = response => { if (/\/runtime\/service-(ui\.(js|css)|page\.css)$/.test(new URL(response.url()).pathname)) runtimeLoads.push(`${response.status()} ${new URL(response.url()).pathname.split("/").pop()} ${response.frame()?.name() ?? ""}`); };
   page.on("response", onRuntime);
   const frames = yield* io(() => page.evaluate(src => new Promise(resolve => {
     const make = (sandbox, name) => { const frame = document.createElement("iframe"); frame.name = name; frame.setAttribute("sandbox", sandbox); frame.src = src; frame.style.display = "none"; document.body.append(frame); return frame; };
@@ -124,7 +124,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   }), authPage));
   page.off("response", onRuntime);
   assert.equal(frames.trusted, true, "a trusted service page defines <zv-select> and <zv-dialog>");
-  for (const frame of ["trusted", "sandboxed"]) for (const kind of ["js", "css"]) assert.ok(runtimeLoads.includes(`200 ${kind} ${frame}`), `the ${frame} frame loads the component ${kind}: ${runtimeLoads.join(", ")}`);
+  for (const frame of ["trusted", "sandboxed"]) for (const file of ["service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(runtimeLoads.includes(`200 ${file} ${frame}`), `the ${frame} frame loads ${file}: ${runtimeLoads.join(", ")}`);
   console.log(`Service page runtime requests: ${runtimeLoads.join(", ")}`);
   yield* visit("/projects/parity-lab/database?databaseDialog=create-table");
   yield* io(() => page.getByRole("dialog").getByLabel("Table name").waitFor());

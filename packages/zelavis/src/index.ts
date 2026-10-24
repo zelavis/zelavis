@@ -2077,6 +2077,17 @@ function resolveRuntimeManagementCore(
       ) as readonly DashboardSerializedServiceMenuDefinition[] | undefined,
     };
   };
+  /**
+   * Answers a shared service page asset (tokens, element library, component runtime). Public on purpose: a page an
+   * extension ships runs in a sandboxed frame with an opaque origin, which sends no credentials and needs CORS to load a
+   * module, so an authenticated asset would load for core pages only. These hold no installation data. An ETag lets an
+   * unchanged asset be revalidated rather than sent again.
+   */
+  const sharedServiceAsset = (request: Request, contentType: string, text: string) => {
+    const etag = `"${serviceUiRevision(text)}"`;
+    const headers = new Headers({ "content-type": contentType, "cache-control": "no-cache", "access-control-allow-origin": "*", etag });
+    return request.headers.get("if-none-match") === etag ? { status: 304, headers, body: "" } : { status: 200, headers, body: text };
+  };
   /** An HTML page gets the installed frontend's components unless it opts out (see `platform/service-page-ui.ts`). */
   const renderServicePageAsset = (serviceName: string, bundle: string, assetPath: string) =>
     readServicePageAsset(serviceName, bundle, assetPath).then((response) => {
@@ -3082,22 +3093,16 @@ function resolveRuntimeManagementCore(
             },
           },
           method: "GET",
-          access: { authenticated: true },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
             "runtime/service-page.css",
           ),
-          handler: () => ({
-            status: 200,
-            headers: new Headers({
-              "content-type": "text/css; charset=utf-8",
-              "cache-control": "no-cache",
-            }),
-            body:
-              context.servicePageStylesheet ??
-              ZELAVIS_BASELINE_SERVICE_PAGE_STYLESHEET,
-          }),
+          handler: ({ request }: { request: Request }) => sharedServiceAsset(
+            request,
+            "text/css; charset=utf-8",
+            context.servicePageStylesheet ?? ZELAVIS_BASELINE_SERVICE_PAGE_STYLESHEET,
+          ),
         },
         {
           // The components half of the same contract as the stylesheet above.
@@ -3113,22 +3118,16 @@ function resolveRuntimeManagementCore(
             },
           },
           method: "GET",
-          access: { authenticated: true },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
             "runtime/service-elements.js",
           ),
-          handler: () => ({
-            status: 200,
-            headers: new Headers({
-              "content-type": "text/javascript; charset=utf-8",
-              "cache-control": "no-cache",
-            }),
-            body:
-              context.serviceElementsScript ??
-              ZELAVIS_BASELINE_SERVICE_ELEMENTS,
-          }),
+          handler: ({ request }: { request: Request }) => sharedServiceAsset(
+            request,
+            "text/javascript; charset=utf-8",
+            context.serviceElementsScript ?? ZELAVIS_BASELINE_SERVICE_ELEMENTS,
+          ),
         },
         ...(["js", "css"] as const).map((kind) => ({
           // The components the frontend adds to service pages (see `platform/service-page-ui.ts`).
@@ -3143,22 +3142,11 @@ function resolveRuntimeManagementCore(
             },
           },
           method: "GET" as const,
-          // Public on purpose. A page an extension ships runs in a sandboxed frame with an opaque origin, which sends no
-          // credentials and needs CORS to load a module, so an authenticated runtime would load for core pages only. It is
-          // open-source component code with no installation data in it.
+          // Public, like the other shared service page assets (see `sharedServiceAsset`).
           path: joinPathParts(context.apiPrefix, context.apiVersion, `runtime/service-ui.${kind}`),
-          handler: ({ request }: { request: Request }) => {
-            if (!context.serviceUi) return { status: 404, body: { error: "The installed frontend supplies no service page components." } };
-            const text = kind === "js" ? context.serviceUi.script : context.serviceUi.stylesheet;
-            const etag = `"${serviceUiRevision(text)}"`;
-            const headers = new Headers({
-              "content-type": kind === "js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8",
-              "cache-control": "no-cache",
-              "access-control-allow-origin": "*",
-              etag,
-            });
-            return request.headers.get("if-none-match") === etag ? { status: 304, headers, body: "" } : { status: 200, headers, body: text };
-          },
+          handler: ({ request }: { request: Request }) => context.serviceUi
+            ? sharedServiceAsset(request, kind === "js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8", kind === "js" ? context.serviceUi.script : context.serviceUi.stylesheet)
+            : { status: 404, body: { error: "The installed frontend supplies no service page components." } },
         })),
         {
           id: "runtime.service-page-asset.read",
