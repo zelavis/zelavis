@@ -66,6 +66,8 @@ export function platformMenu(config: Config, namespaces: readonly string[]): Men
   const contributed = array(config.services).map(object).filter(service => service.scope === "system").flatMap(service => menusOf(service).filter(menu => surfaceOf(menu, service) === "platform").map(menu => ({ order: Number(menu.order ?? Number.MAX_SAFE_INTEGER), item: fromMenu(menu, label(service.name, "")) })));
   contributed.sort((left, right) => left.order - right.order);
   const items = contributed.map(entry => entry.item.path === "/server" ? { ...entry.item, items: (entry.item.items ?? []).map(child => child.path === "/server/database" ? { ...child, items: namespaces.map(namespace => ({ title: namespace, path: "/server/database", search: { namespace } })) } : child) } : entry.item);
+  const extensions = array(config.services).map(object).filter(service => service.scope !== "system").flatMap(service => menusOf(service).map(menu => fromMenu(menu, label(service.name, ""))));
+  if (extensions.length) items.push({ title: "Extensions", path: "/services", items: extensions });
   return filterMenu([{ title: "Projects", path: "/projects", access: { permissions: ["projects.list"], scope: { type: "system" } } }, ...items], config.access);
 }
 
@@ -174,4 +176,3 @@ export const loadPlatformMenu = Effect.fn("ui.loadPlatformMenu")(function*(confi
   const namespaces = yield* request(`${config.api.basePath}/runtime/system-store/namespaces`).pipe(Effect.map(result => array(object(result).namespaces).map(object).map(entry => label(entry.namespace, ""))), Effect.catch(() => Effect.succeed([] as string[])));
   return platformMenu(config, namespaces);
 });
-

@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { panelsFor, resolveTrail, workspacePanels, trailForLocation, itemIsActive, createMenuStore } from "../app/navigation-model.ts";
-import { projectMenu } from "../app/navigation-menu.ts";
+import { platformMenu, projectMenu } from "../app/navigation-menu.ts";
 const project = { id: "customer café", name: "Customer", recipe: {} };
+test("Platform extensions appear only in their own slide regardless of claimed surface", () => {
+  const services = ["extension", undefined].map((scope, index) => ({ name: `@example/ext${index}`, scope, menus: [{ title: `Extension ${index}`, path: `/ext${index}`, surface: "platform" }] }));
+  const menu = platformMenu({ services }, []);
+  assert.deepEqual(menu.map(item => item.title), ["Projects", "Extensions"]);
+  assert.deepEqual(menu[1].items.map(item => item.path), ["/ext0", "/ext1"]);
+});
 test("reconstructs Project domain ancestry and validates explicit URL trails", () => {
   const panels = panelsFor(project.id, project);
   assert.deepEqual(resolveTrail(panels, ["projects", "project", "database"], null).map(p => p.id), ["platform", "projects", "project", "database"]);

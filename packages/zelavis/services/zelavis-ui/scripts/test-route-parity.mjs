@@ -19,6 +19,15 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const port = listener.address().port;
   yield* io(() => new Promise(resolve => listener.close(resolve)));
   const data = yield* Effect.acquireRelease(io(() => mkdtemp(join(tmpdir(), "zelavis-route-parity-"))), path => io(() => rm(path, { recursive: true, force: true })).pipe(Effect.orDie));
+  // A real package discovered at <data>/services before the Platform composes its runtime.
+  const platformExtension = join(data, "services", "platform-page");
+  yield* io(() => mkdir(join(platformExtension, "dashboard"), { recursive: true }));
+  yield* io(() => writeFile(join(platformExtension, "package.json"), JSON.stringify({ name: "@example/platform-page", version: "1.0.0", type: "module", exports: "./index.js", zelavis: { kind: "plugin", namespace: "platformpage" } })));
+  yield* io(() => writeFile(join(platformExtension, "index.js"), 'import { zelavis } from "zelavis/sdk"; export function register() { zelavis.plugins.ui.menus.create({ title: "Platform extension", surface: "platform", path: "/platform-extension", page: { id: "main", title: "Platform extension", bundle: "dashboard", file: "page.html" } }); }'));
+  yield* io(() => writeFile(join(platformExtension, "dashboard", "page.html"), '<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><p id="out">Platform extension</p><script type="module" src="./app.js"></script></body></html>'));
+  yield* io(() => writeFile(join(platformExtension, "dashboard", "style.css"), '#out{color:rgb(1,2,3)}'));
+  yield* io(() => writeFile(join(platformExtension, "dashboard", "app.js"), 'document.querySelector("#out").dataset.result = JSON.stringify({ opaque: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) });'));
+  yield* io(() => writeFile(join(platformExtension, "private.txt"), "outside the Platform bundle"));
   const origin = `http://127.0.0.1:${port}`, api = `${origin}/zelavis/api/v1`, token = randomBytes(32).toString("base64url"), password = randomBytes(32).toString("base64url");
   let logs = "";
   const child = yield* Effect.acquireRelease(Effect.sync(() => {
@@ -113,6 +122,26 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   // installed extension runs in (an opaque origin, which sends no ambient credentials of its own).
   yield* visit("/projects");
   const configuration = yield* request("/runtime/config");
+  const platformService = configuration.services.find(service => service.name === "@example/platform-page");
+  assert.equal(platformService?.scope, "extension", "folder discovery forces extension trust on the Platform");
+  const platformRegistry = (yield* request("/runtime/services")).services;
+  assert.equal(platformRegistry.find(service => service.name === platformService.name)?.scope, platformService.scope, "config and registry agree");
+  assert.ok(selectItems(platformRegistry, "plugins").some(service => service.name === platformService.name), "Platform Marketplace lists the folder extension");
+  yield* visit("/platform-extension");
+  const platformFrame = page.locator("iframe.service-frame");
+  assert.equal(yield* io(() => platformFrame.getAttribute("sandbox")), "allow-scripts allow-forms");
+  const platformSrc = yield* io(() => platformFrame.getAttribute("src"));
+  assert.match(platformSrc ?? "", /\/runtime\/page-capabilities\/[^/]+\/dashboard\/page\.html$/);
+  const extensionResult = page.frameLocator("iframe.service-frame").locator("#out");
+  yield* io(() => page.frameLocator("iframe.service-frame").locator("#out[data-result]").waitFor());
+  const resultText = yield* io(() => extensionResult.getAttribute("data-result"));
+  assert.deepEqual(JSON.parse(resultText), { opaque: true, select: true, dialog: true });
+  assert.match(yield* io(() => page.locator("nav, aside, .sidebar").first().innerText()), /Extensions[\s\S]*Platform extension/);
+  const platformAnonymous = yield* io(() => fetch(new URL(platformSrc, origin)));
+  assert.equal(platformAnonymous.status, 200, "Platform capability needs no cookie");
+  assert.equal((yield* io(() => fetch(new URL(platformSrc.replace("page.html", "private.txt"), origin)))).status, 404, "Platform capability cannot fall back to package root");
+  console.log("Platform folder extension: config/registry/Marketplace agree, Extensions slide, opaque frame, own module and components loaded, package-root read refused.");
+  yield* visit("/projects");
   const authPage = configuration.services.find(service => service.name === "@zelavis/auth")?.menu?.page?.src;
   assert.ok(authPage, "the Auth service ships a framed page");
   const runtimeLoads = [];
