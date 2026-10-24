@@ -470,9 +470,9 @@ Rules that hold for every change:
   `packages/zelavis/services/*`, officially maintained services in `zelavis-services/*`, Project recipes,
   and external extensions.
 - **Service Dashboard Pages**: `pageAssets` is obsolete and removed. All service
-  dashboard pages and static assets stream directly from disk via `packageDir`
-  (resolved from `dashboard/` or package root) with classic 90s webspace
-  semantics. Inlined asset string maps are not supported.
+  dashboard pages and static assets stream directly from their named bundle directory below `packageDir`.
+  A bundle is one safe directory name; never fall back to the package root, and resolve symlinks before
+  proving a file remains inside that bundle. Inlined asset string maps are not supported.
   The installed frontend may supply a component runtime (`serviceUi`: `@zelavis/ui`
   builds `fuzor/ui` under the `zv` brand); the Platform adds its stylesheet and module to
   every HTML page it serves unless the page opts out with

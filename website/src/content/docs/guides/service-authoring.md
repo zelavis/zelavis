@@ -240,13 +240,17 @@ the page resolve under that path, so `./dashboard.js`, `./styles.css` and `../..
 cookie. The capability reads that one bundle's files and nothing else, and a Project's page is read from the Project's
 runtime by the Platform. The page still reaches the API only through the dashboard's broker.
 
+Keep the page and its assets inside the named bundle directory (for example `dashboard/` below the package directory).
+The bundle name is one directory name. Missing files return 404; there is no package-root fallback, and symlinks cannot
+escape the bundle. The shared component runtime and styles are static build assets and contain no installation state.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.
 - `version` is service metadata; package publishing still follows the package registry.
 - `menu` is plain metadata. Services never reach into dashboard sidebar internals.
-- Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
-- `menu.path` is the dashboard URL owned by React Router. `menu.page.file` is
+- Service pages are mounted in the dashboard through a service-frame iframe. Extension frames have an opaque origin.
+- `menu.path` is the dashboard URL owned by Fuzor. `menu.page.file` is
   the browser-extension-style HTML entry file for iframe-backed service UI,
   such as `dashboard.html`, `settings.html`, or `options.html`.
 - Zelavis serves `page.file` and sibling assets from the service bundle. A page

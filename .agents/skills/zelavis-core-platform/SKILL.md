@@ -414,6 +414,10 @@ before editing.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,
   and asset paths before composition; filesystem root containment is not enough.
+  Disk service pages read only their named bundle directory below the package root, with realpath containment.
+  Never fall back to package-root files or follow a symlink into another bundle. Public service-page UI assets
+  contain static build code/styles only, never installation state. Folder-discovered Platform extensions belong
+  in the Extensions slide and are framed without `allow-same-origin`, just like Project extensions.
 - Treat local physical sharding as the official `@zelavis/app` default, not a
   future multi-node migration. A new official App routes stable virtual shard
   ranges across several SQLite files even when all placements share one Node.

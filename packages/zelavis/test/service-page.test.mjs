@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { zelavis } from "../dist/index.js";
+import { createMemorySystemStore, zelavis } from "../dist/index.js";
 import { bundledServiceRegistry } from "./_bundled-services.mjs";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const OWNER = {
   principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] },
 };
+
+test("public service-page assets contain only build data across installations and viewers", async () => {
+  const instances = [];
+  for (const secret of ["private-installation-one", "private-installation-two"]) {
+    const systemStore = createMemorySystemStore();
+    await systemStore.set("platform", "master-secret", secret);
+    instances.push(await zelavis({ systemStore, frontend: zelavisUiFrontend }));
+  }
+  for (const name of ["service-page.css", "service-elements.js", "service-ui.js", "service-ui.css"]) {
+    const url = `http://localhost/zelavis/api/v1/runtime/${name}`;
+    const responses = await Promise.all([
+      instances[0].fetch(new Request(url)),
+      instances[0].fetch(new Request(url), OWNER),
+      instances[1].fetch(new Request(url)),
+    ]);
+    assert.ok(responses.every(response => response.status === 200), name);
+    const bodies = await Promise.all(responses.map(response => response.text()));
+    assert.equal(bodies[0], bodies[1], `${name}: viewer-independent`);
+    assert.equal(bodies[0], bodies[2], `${name}: installation-independent`);
+    assert.doesNotMatch(bodies[0], /private-installation-(one|two)/);
+  }
+});
 
 async function boot() {
   const runtime = await zelavis({

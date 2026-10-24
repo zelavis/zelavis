@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,10 @@ async function boot(t) {
   writeFileSync(join(directory, "dashboard", "app.js"), "console.log('own script');");
   writeFileSync(join(directory, "dashboard", "styles.css"), "body{color:red}");
   writeFileSync(join(directory, "secret.txt"), "outside the bundle");
+  mkdirSync(join(directory, "other"));
+  writeFileSync(join(directory, "other", "private.txt"), "another bundle");
+  symlinkSync(join(directory, "secret.txt"), join(directory, "dashboard", "linked.txt"));
+  symlinkSync(join(directory, "other"), join(directory, "dashboard", "linked-directory"));
   const page = { id: "main", title: "Main", bundle: "dashboard", file: "index.html" };
   const service = (name) => ({ name, kind: "plugin", packageDir: directory, menu: { title: name, path: `/${name.split("/")[1]}`, page } });
   const runtime = await zelavis({
@@ -68,6 +72,26 @@ test("a capability reads only the bundle it names", async (t) => {
   // The bundle in the path must be the one the token names.
   const wrongBundle = await call(src.replace("/dashboard/", "/elsewhere/"));
   assert.equal(wrongBundle.status, 404);
+});
+
+test("a capability never falls back to package-root files or follows a symlink outside its bundle", async (t) => {
+  const { call, mint } = await boot(t);
+  const { src } = await (await mint({ service: "@example/one", bundle: "dashboard", file: "index.html" }, OWNER)).json();
+  for (const file of ["secret.txt", "other/private.txt", "linked.txt", "linked-directory/private.txt"]) {
+    const response = await call(`${dirname(src)}/${file}`);
+    assert.equal(response.status, 404, file);
+    assert.doesNotMatch(await response.text(), /outside the bundle|another bundle/);
+  }
+});
+
+test("minting refuses bundle traversal and invalid owner identities", async (t) => {
+  const { mint } = await boot(t);
+  for (const bundle of ["..", ".", "../other", "dashboard/../other", "/dashboard", "dashboard\\..", "x\0y"]) {
+    assert.equal((await mint({ service: "@example/one", bundle, file: "index.html" }, OWNER)).status, 400, bundle);
+  }
+  for (const service of ["../one", "@example/../one", "@example/one/extra"]) {
+    assert.equal((await mint({ service, bundle: "dashboard", file: "index.html" }, OWNER)).status, 400, service);
+  }
 });
 
 test("a tampered, truncated or foreign token reads nothing", async (t) => {

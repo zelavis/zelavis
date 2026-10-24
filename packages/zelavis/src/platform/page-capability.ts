@@ -10,6 +10,7 @@
  */
 import { Effect } from "effect";
 import { integration, integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
+import { buildBundleStorageKey } from "../bundle-store.js";
 
 export interface PageCapabilityClaims {
   readonly service: string;
@@ -69,11 +70,15 @@ export function verifyPageCapability(secret: string, token: string, now = Date.n
     if (!payload || !signature) return undefined;
     const valid = yield* integrationValue(crypto.subtle.verify("HMAC", yield* integrationValue(key(secret)), signature, payload));
     if (!valid) return undefined;
-    const decoded = Effect.runSync(Effect.try({ try: () => JSON.parse(new TextDecoder().decode(payload)) as unknown, catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined)));
+    const decoded = yield* Effect.try({ try: () => JSON.parse(new TextDecoder().decode(payload)) as unknown, catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined));
     if (!Array.isArray(decoded) || decoded.length !== 4) return undefined;
     const [service, bundle, projectId, expiresAt] = decoded as unknown[];
     if (typeof service !== "string" || !service || typeof bundle !== "string" || !bundle || typeof projectId !== "string" || typeof expiresAt !== "number") return undefined;
-    if (expiresAt <= now) return undefined;
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return undefined;
+    // Authenticity does not substitute for valid namespace boundaries.
+    const scope = { serviceName: service, bundle, ...(projectId ? { projectId } : {}) };
+    const safe = yield* Effect.try({ try: () => buildBundleStorageKey(scope, ""), catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined));
+    if (!safe) return undefined;
     return { service, bundle, ...(projectId ? { projectId } : {}), expiresAt };
   }));
 }
@@ -89,6 +94,7 @@ export function projectPageRequest(claims: PageCapabilityClaims & { readonly pro
   readonly principal: { readonly id: string; readonly type: "service" };
   readonly permissions: readonly string[];
 } {
+  buildBundleStorageKey({ serviceName: claims.service, bundle: claims.bundle, projectId: claims.projectId }, file);
   return {
     projectId: claims.projectId,
     wildcardPath: `zelavis/api/v1/runtime/service-page-assets/${encodeURIComponent(claims.service)}/${encodeURIComponent(claims.bundle)}/${file.split("/").map(encodeURIComponent).join("/")}`,

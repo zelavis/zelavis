@@ -75,6 +75,7 @@ import {
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { injectServiceUi, serviceUiRevision } from "./platform/service-page-ui.js";
+import { readServicePageFile } from "./adapters/_service-page-file.js";
 import { PAGE_CAPABILITY_LIFETIME_MS, mintPageCapability, projectPageRequest, verifyPageCapability } from "./platform/page-capability.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
@@ -247,7 +248,7 @@ export * from "./tls.js";
 export * from "./domain-binding.js";
 export * from "./domain-verifier.js";
 export * from "./edge/index.js";
-import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
+import { buildBundleStorageKey, createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
 import {
   deleteProjectDomainBindings,
@@ -2185,96 +2186,19 @@ function resolveRuntimeManagementCore(
 
     const normalizedPath = normalizeBundleAssetPath(assetPath);
 
-    // Static service page assets served directly from disk (classic webspace behavior).
-    // If the service has a package directory on disk, resolve files within it.
-    let packageDir = entry.service.packageDir ?? (entry as any).packageDir;
-    if (typeof packageDir === "string" && packageDir.startsWith("file://")) {
-      try {
-        const { fileURLToPath } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:url"))));
-        packageDir = fileURLToPath(packageDir);
-      } catch {
-        packageDir = undefined;
-      }
-    }
-
-    if (!packageDir && (entry as any).specifier) {
-      const spec = (entry as any).specifier as string;
-      if (spec.startsWith("file://") || spec.startsWith("/") || spec.startsWith(".")) {
-        try {
-          const { fileURLToPath } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:url"))));
-          const { dirname, join } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:path"))));
-          const { stat, readFile } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:fs/promises"))));
-          const filePath = spec.startsWith("file://") ? fileURLToPath(spec) : spec;
-          const s = unwrapIntegrationResult(yield* Effect.result(integrationValue(stat(filePath).catch(() => undefined))));
-          if (s?.isDirectory()) {
-            packageDir = filePath;
-          } else if (s?.isFile()) {
-            let cur = dirname(filePath);
-            while (cur !== dirname(cur)) {
-              const hasPkg = unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(join(cur, "package.json")).then(
-                () => true,
-                () => false,
-              ))));
-              if (hasPkg) {
-                packageDir = cur;
-                break;
-              }
-              cur = dirname(cur);
-            }
-            if (!packageDir) {
-              packageDir = dirname(filePath);
-            }
-          }
-        } catch {
-          packageDir = undefined;
-        }
-      }
-    }
-
-    if (packageDir) {
-      try {
-        const { resolve, join, sep } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:path"))));
-        const { stat, readFile } = unwrapIntegrationResult(yield* Effect.result(integrationValue(import("node:fs/promises"))));
-        const root = resolve(packageDir);
-
-        const isContained = (candidate: string) => {
-          const res = resolve(candidate);
-          return res === root || res.startsWith(`${root}${sep}`);
-        };
-
-        const cleanBundle = bundle.replace(/^[/\\]+/, "");
-        const cleanPath = normalizedPath.replace(/^[/\\]+/, "");
-
-        const candidates = [
-          join(root, cleanBundle, cleanPath),
-          join(root, cleanPath),
-        ];
-
-        for (const candidate of candidates) {
-          if (isContained(candidate)) {
-            try {
-              const candidateStat = unwrapIntegrationResult(yield* Effect.result(integrationValue(stat(candidate))));
-              if (candidateStat.isFile()) {
-                const body = unwrapIntegrationResult(yield* Effect.result(integrationValue(readFile(candidate))));
-                const headers = new Headers();
-                headers.set(
-                  "content-type",
-                  guessServiceAssetContentType(candidate),
-                );
-                headers.set("cache-control", "no-cache");
-                return { status: 200, headers, body };
-              }
-            } catch (cause) {
-              const code = (cause as { code?: string }).code;
-              if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES") throw cause;
-            }
-          }
-        }
-      } catch {
-        // The bundle store remains the runtime-neutral supported fallback.
-        console.warn("Local service assets are unavailable; using the bundle store.");
-      }
-    }
+    // Validate every namespace independently, even when disk rather than object storage serves the file.
+    buildBundleStorageKey({ serviceName, bundle }, normalizedPath);
+    const body = yield* readServicePageFile(
+      entry.service.packageDir ?? (entry as any).packageDir,
+      (entry as any).specifier,
+      bundle,
+      normalizedPath,
+    );
+    if (body) return {
+      status: 200,
+      headers: new Headers({ "content-type": guessServiceAssetContentType(normalizedPath), "cache-control": "no-cache" }),
+      body,
+    };
 
     const asset = (yield* integrationValue(context.bundleStore?.read(
       {
@@ -3229,6 +3153,7 @@ function resolveRuntimeManagementCore(
               const file = query.get("file") ? normalizeBundleAssetPath(query.get("file")!) : "";
               const projectId = query.get("projectId")?.trim() || undefined;
               if (!service || !file || service.length > 214 || bundle.length > 128) throw new ZelavisValidationError("A service, a bundle and a page file are required.");
+              buildBundleStorageKey({ serviceName: service, bundle, projectId }, file);
               if (projectId && !principalHasPermission(principal, "project.view", { type: "project", projectId })) {
                 return { status: 403, body: { error: "You cannot view that Project." } };
               }
