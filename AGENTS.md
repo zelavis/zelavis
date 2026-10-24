@@ -484,6 +484,11 @@ Rules that hold for every change:
   minted for an authenticated viewer by a GET that records nothing (`project.view` for a Project's page). The Platform builds every path it reads
   from the token's claims, never from the request, and a Project's files are fetched through the Gateway forwarder
   as a `service-page` principal with no permissions. Never widen it to files outside that bundle.
+  Trust is the `scope` the host composed a service with: services the operator passes to `zelavis()`, the bundled
+  ones (`loadSystemPackage`) and the selected frontend are `system`; anything installed or dropped into a services
+  folder is forced to `extension`, and a service reported with no scope is treated as one. `runtime/config` and the
+  registry listing say the same, and the dashboard puts an extension's menus only in the Extensions slide and frames
+  its page without the dashboard's origin.
 
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define

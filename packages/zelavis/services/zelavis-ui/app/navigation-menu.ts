@@ -58,7 +58,8 @@ function fromMenu(menu: Record<string, unknown>, serviceName: string | undefined
 }
 
 const menusOf = (service: Record<string, unknown>) => (array(service.menus).length ? array(service.menus) : service.menu ? [service.menu] : []).map(object);
-const surfaceOf = (menu: Record<string, unknown>, service: Record<string, unknown>) => label(menu.surface ?? object(service.menu).surface, "core");
+/** Where a menu belongs. Only a trusted service names its own surface; an extension (installed at runtime or dropped into a services folder) is always the Extensions slide, whatever its definition says. */
+const surfaceOf = (menu: Record<string, unknown>, service: Record<string, unknown>) => service.scope === "system" ? label(menu.surface ?? object(service.menu).surface, "core") : "extensions";
 
 /** The Platform's own menus: Projects, and what trusted services contribute to the global shell (Server, Marketplace...). */
 export function platformMenu(config: Config, namespaces: readonly string[]): MenuItem[] {

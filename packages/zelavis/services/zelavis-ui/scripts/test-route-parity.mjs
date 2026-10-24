@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { chromium } from "@playwright/test";
 import { packageRoot } from "./fuzor-source.mjs";
 import { dashboardRoutes } from "../app/dashboard-routes.ts";
+import { selectItems } from "../app/marketplace-pages.ts";
 
 const io = work => Effect.tryPromise({ try: work, catch: cause => cause instanceof Error ? cause : new Error(String(cause)) });
 const qualify = Effect.scoped(Effect.gen(function*() {
@@ -171,6 +172,10 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   });
   // A folder-discovered package is an extension, never the operator's own: its page must not run with the viewer's session.
   assert.equal(listed.services.find(service => service.name === "@example/ext-page")?.scope, "extension");
+  // The Marketplace lists the Project's own extension under Plugins, from the registry the Project reports.
+  const extRegistry = (yield* request(extProxy + "/runtime/services")).services;
+  assert.equal(extRegistry.find(service => service.name === "@example/ext-page")?.scope, "extension");
+  assert.ok(selectItems(extRegistry, "plugins").some(service => service.name === "@example/ext-page"), "the Marketplace's Plugins tab lists the extension");
   const extCapability = yield* request("/runtime/service-page-capability?" + new URLSearchParams({ service: "@example/ext-page", bundle: "dashboard", file: "page.html", projectId: "ext-lab" }));
   assert.match(extCapability.src, /\/runtime\/page-capabilities\/[^/]+\/dashboard\/page\.html$/);
   // No cookie: the Platform reads the Project's files for the capability alone.
@@ -194,6 +199,10 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* visit("/projects/ext-lab/ext-page");
   const framed = yield* io(() => page.locator("iframe.service-frame").getAttribute("src"));
   assert.match(framed ?? "", /\/runtime\/page-capabilities\//, "the dashboard frames the extension page at a capability URL");
+  // The sidebar puts an extension's menu in the Extensions slide, never in a trusted one such as Backend.
+  const sidebar = yield* io(() => page.locator("nav, aside, .sidebar").first().innerText());
+  assert.ok(/Extensions\nAgents\nExt Page\s*$/.test(sidebar), `the extension's menu is the Extensions slide's: ${JSON.stringify(sidebar.slice(-120))}`);
+  assert.ok(!/Workloads\n›?\n?Ext Page/.test(sidebar), "and is not beside the Backend items");
   assert.equal(yield* io(() => page.locator("iframe.service-frame").getAttribute("sandbox")), "allow-scripts allow-forms", "an extension's page is sandboxed without the dashboard's origin");
   console.log("Project extension page: served through its capability, sandboxed frame ran its own script with the components defined.");
   const anonymous = yield* io(() => fetch(new URL(capability.src, origin)));

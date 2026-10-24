@@ -124,3 +124,36 @@ test("a Project's menu survives the Platform's menu being reported after it", ()
   assert.equal(store.get(undefined), platformMenuItems);
   assert.equal(store.get("other"), undefined, "a scope with no reported menu has none, and falls back to the basic one");
 });
+
+test("a Project is offered the menus of trusted Platform services, never an extension's", () => {
+  const service = (name, scope, surface, title) => ({ name, scope, menu: { title, path: `/${name.split("/")[1]}`, surface, page: { id: "main", title, file: "page.html", src: "/x" } } });
+  const control = { services: [
+    service("@zelavis/core-thing", "system", "core", "Core Thing"),
+    service("@example/ext-thing", "extension", "core", "Extension Thing"),
+    // The Platform's own `platform` surface menus never cross into a Project, whoever ships them.
+    service("@zelavis/shell-thing", "system", "platform", "Shell Thing"),
+  ] };
+  const runtime = { capabilities: {}, services: [service("@example/own-ext", "extension", undefined, "Own Extension")] };
+  const menu = projectMenu({ control, project, runtime, content: [], tables: [], workloads: {} });
+  const titles = items => items.flatMap(item => [item.title, ...(item.items ? titles(item.items) : [])]);
+  const all = titles(menu);
+  assert.ok(all.includes("Core Thing"), "a trusted Platform service's Project-surface menu is offered");
+  assert.ok(!all.includes("Extension Thing"), "an extension installed on the Platform is not offered to every Project");
+  assert.ok(!all.includes("Shell Thing"), "platform-surface menus never cross into a Project");
+  // A Project's own extension lands in the Extensions slide, not in a trusted slide.
+  const extensions = menu.find(item => item.title === "Extensions");
+  assert.ok(titles(extensions.items).includes("Own Extension"));
+  assert.ok(!titles(menu.filter(item => item.title !== "Extensions")).includes("Own Extension"));
+});
+
+test("the Marketplace lists an extension under Plugins and keeps trusted services out of that tab", async () => {
+  const { selectItems } = await import("../app/marketplace-pages.ts");
+  const registry = [
+    { name: "@zelavis/auth", kind: "plugin", scope: "system", status: "installed" },
+    { name: "@example/ext-page", kind: "plugin", scope: "extension", status: "installed" },
+    { name: "@example/available", kind: "plugin", scope: "extension", status: "available" },
+    { name: "@zelavis/app", kind: "app", scope: "system", status: "installed" },
+  ];
+  assert.deepEqual(selectItems(registry, "plugins").map(item => item.name), ["@example/ext-page", "@example/available"]);
+  assert.deepEqual(selectItems(registry, "apps").map(item => item.name), ["@zelavis/app"], "apps keep their own tab, trusted or not");
+});

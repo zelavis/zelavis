@@ -2348,6 +2348,9 @@ function resolveRuntimeManagementCore(
   };
   const createDashboardRuntimeConfig = () => present(Effect.gen(function* () {
     const serviceRegistry = (yield* integrationValue(readResolvedServiceRegistry()));
+    // The loaded service object may carry no scope even when the registry composed it as the operator's (a static service is
+    // `system`), so the registry is asked too, and the two cannot disagree about one service.
+    const registryScopes = new Map(serviceRegistry.map((entry) => [entry.service.name, entry.service.scope] as const));
     const serializedServices = serviceRegistry.map((entry) => ({
       ...publicServiceRegistryIdentity(entry),
       marketplace: entry.service.marketplace,
@@ -2388,7 +2391,7 @@ function resolveRuntimeManagementCore(
         // Services the operator composed in code are trusted; a runtime-installed or folder-discovered package was forced
         // to `extension` when it was loaded (`asExtensionScoped`), and must be reported as it is, or the dashboard would
         // frame its page with the operator's own session. Native Platform capabilities are reported separately above.
-        scope: (service as { scope?: "system" | "extension" }).scope ?? ("system" as const),
+        scope: (service as { scope?: "system" | "extension" }).scope ?? registryScopes.get(service.name) ?? ("extension" as const),
         apiPath:
           service.name === "@zelavis/frontend"
             ? "/"

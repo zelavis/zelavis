@@ -102,3 +102,17 @@ test("a Project's page is requested from its runtime by claims alone, as a princ
   // A path cannot add segments or traverse: each segment is encoded.
   assert.equal(projectPageRequest({ service: "@acme/shop", bundle: "dist", projectId: "p1", expiresAt: 0 }, "a b/c%2Fd").wildcardPath.endsWith("/dist/a%20b/c%252Fd"), true);
 });
+
+test("the config and the registry listing agree about a service's trust", async (t) => {
+  const { call } = await boot(t);
+  const config = await (await call("/zelavis/api/v1/runtime/config", undefined, OWNER)).json();
+  const registry = await (await call("/zelavis/api/v1/runtime/services", undefined, OWNER)).json();
+  const fromConfig = Object.fromEntries(config.services.map((service) => [service.name, service.scope]));
+  const fromRegistry = Object.fromEntries(registry.services.map((service) => [service.name, service.scope]));
+  // A service the operator passes to zelavis() is composed by the operator, so it is trusted; the frontend the host
+  // selected is too. What the dashboard reads in two places must not disagree about one service.
+  for (const name of ["@zelavis/ui", "@example/one", "@example/two"]) {
+    assert.equal(fromConfig[name], "system", name);
+    if (name in fromRegistry) assert.equal(fromRegistry[name], fromConfig[name], `${name}: the registry says what the config says`);
+  }
+});
