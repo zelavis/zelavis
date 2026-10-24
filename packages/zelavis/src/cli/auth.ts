@@ -1,3 +1,4 @@
+import { runAuthOperations } from "./auth-operations.js";
 import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
@@ -11,6 +12,8 @@ const usage =
  * deployment clients without turning the identity into a Platform owner.
  */
 export function runAuthCommand(args: readonly string[]): Promise<void> {
+  // Everything but service accounts is the table of operations beside them.
+  if (args[0] !== undefined && args[0] !== "service-accounts" && !args[0].startsWith("-")) return runAuthOperations(args);
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const permissions: string[] = [];

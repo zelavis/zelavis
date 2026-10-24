@@ -250,7 +250,25 @@ export interface ZelavisAuthClient {
   getSession(): Promise<{ readonly principal: ZelavisPrincipal }>;
   refreshSession(): Promise<{ readonly token: string; readonly session: ZelavisAuthSession }>;
   signOut(): Promise<void>;
+  /** The signed-in account's own sessions, and ending one of them. */
+  sessions(): Promise<ZelavisDataResult>;
+  revokeSession(sessionId: string): Promise<void>;
+  /** The providers that can recover a credential, and the two steps of a recovery: ask, then complete with what was sent. */
+  recoveryProviders(): Promise<ZelavisDataResult>;
+  beginRecovery(provider: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  completeRecovery(provider: string, input: ZelavisDataBody): Promise<void>;
+  /** Whether a first owner still has to be created, and creating one with the bootstrap token (`{ bootstrapToken, … }`). */
+  bootstrapStatus(): Promise<ZelavisDataResult>;
+  bootstrap(input: ZelavisDataBody): Promise<ZelavisDataResult>;
   readonly admin: {
+    accounts(): Promise<ZelavisDataResult>;
+    createAccount(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    /** Credentials for an account: `{ accountId, provider, … }`, as the provider defines them. */
+    createCredentials(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+    accountSessions(accountId: string): Promise<ZelavisDataResult>;
+    revokeAccountSessions(accountId: string): Promise<ZelavisDataResult>;
+    revokeAccountSession(accountId: string, sessionId: string): Promise<ZelavisDataResult>;
+    securityEvents(): Promise<ZelavisDataResult>;
     oauthConnections(): Promise<readonly ZelavisOAuthConnection[]>;
     configureOAuth(provider: string, input: {
       readonly issuer?: string;
@@ -1555,7 +1573,21 @@ export function createZelavisClient(
           { method: "POST" },
         ),
       signOut: () => json<void>("/auth/session", { method: "DELETE" }),
+      sessions: () => json("/auth/sessions"),
+      revokeSession: (sessionId) => json<void>(`/auth/sessions/${dataName(sessionId, "session id")}`, { method: "DELETE" }),
+      recoveryProviders: () => json("/auth/recovery/providers"),
+      beginRecovery: (provider, input) => json(`/auth/recovery/${dataName(provider, "provider")}`, { method: "POST", body: input }),
+      completeRecovery: (provider, input) => json<void>(`/auth/recovery/${dataName(provider, "provider")}/complete`, { method: "POST", body: input }),
+      bootstrapStatus: () => json("/auth/bootstrap"),
+      bootstrap: (input) => json("/auth/bootstrap", { method: "POST", body: input }),
       admin: {
+        accounts: () => json("/auth/accounts"),
+        createAccount: (input) => json("/auth/accounts", { method: "POST", body: input }),
+        createCredentials: (input) => json("/auth/credentials", { method: "POST", body: input }),
+        accountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`),
+        revokeAccountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`, { method: "DELETE" }),
+        revokeAccountSession: (accountId, sessionId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions/${dataName(sessionId, "session id")}`, { method: "DELETE" }),
+        securityEvents: () => json("/auth/security/events"),
         oauthConnections: () =>
           present(Effect.gen(function* () {
     return ((yield* integrationValue(json<{ readonly providers: readonly ZelavisOAuthConnection[] }>(
