@@ -157,6 +157,10 @@ command tree.
   `client.projects.exportTenant|restoreTenant` and the database's
   `maintenance/backups/export|restore` route through the Project proxy, and need
   `project.runtime.manage`. See [Database](../api/database/#backups-and-restore).
+- `storage <list|metadata|get|put|delete> --project ID [PATH]` and
+  `workloads <health|menu|list|create|get|update|run|logs> --project ID [ID]` manage an App
+  Project's files and workloads through `client.storage|workloads(projectId)`, over the Project
+  proxy; see [Project files and workloads](../api/project-files-and-workloads/).
 - `data <action> --project ID` reads and writes an App Project's data as the
   token's own Tenant (`client.data(projectId)`, the Project's `data/*` route):
   collections and documents, the KV commands, and the outbox — `data outbox

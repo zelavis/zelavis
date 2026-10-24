@@ -22,6 +22,8 @@ import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
+import { runStorageCommand } from "./storage.js";
+import { runWorkloadsCommand } from "./workloads.js";
 import { runEdgeCommand } from "./edge.js";
 import { ZelavisClientHttpError } from "../sdk/fetch.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
@@ -146,6 +148,8 @@ Usage:
   zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
+  zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
+  zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
@@ -627,6 +631,14 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "data") {
       (yield* integration(() => runDataCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "storage") {
+      (yield* integration(() => runStorageCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "workloads") {
+      (yield* integration(() => runWorkloadsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "host-operations") {

@@ -17,5 +17,7 @@ export * from "./setup.js";
 export * from "./commands.js";
 export * from "./projects.js";
 export * from "./host-operations.js";
+export * from "./storage.js";
+export * from "./workloads.js";
 export * from "./services.js";
 export * from "./auth.js";

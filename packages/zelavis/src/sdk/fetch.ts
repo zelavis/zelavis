@@ -305,6 +305,16 @@ export interface ZelavisClient {
    * client ends up writing another App's records.
    */
   data(projectId: string): ZelavisDataClient;
+  /**
+   * The files an App Project stores, through the Project proxy with the caller's own Project authority
+   * (`project.view` reads, `project.runtime.manage` writes). Same contract as `zelavis storage`.
+   */
+  storage(projectId: string): ZelavisStorageClient;
+  /**
+   * The functions, jobs, schedules and webhooks an App Project runs, through the Project proxy
+   * (`project.view` reads, `project.runtime.manage` changes and runs). Same contract as `zelavis workloads`.
+   */
+  workloads(projectId: string): ZelavisWorkloadsClient;
   /** Host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
   readonly environment: ZelavisEnvironmentClient;
@@ -598,6 +608,54 @@ export interface ZelavisDataIdempotent {
 export interface ZelavisDataInsertInput extends ZelavisDataIdempotent {
   readonly id?: string;
   readonly data: Readonly<Record<string, unknown>>;
+}
+
+/** One stored file as the storage service describes it. */
+export interface ZelavisStorageFile {
+  readonly path: string;
+  readonly size?: number;
+  readonly updatedAt?: string;
+  readonly contentType?: string;
+  readonly cacheControl?: string;
+  readonly contentDisposition?: string;
+  readonly metadata?: Readonly<Record<string, string>>;
+  /** SHA-256 of the bytes, hex, computed when the file was written. */
+  readonly checksum?: string;
+}
+
+export interface ZelavisStorageClient {
+  /** Files under `prefix` (all of them without one), with a ready-to-use reference to each. */
+  list(prefix?: string): Promise<{ readonly files: readonly ZelavisStorageFile[]; readonly references: readonly ZelavisDataResult[] }>;
+  /** A file's description and reference without its bytes. */
+  metadata(path: string): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisDataResult }>;
+  /** A file's bytes and the headers it is served with. */
+  read(path: string): Promise<{ readonly bytes: Uint8Array; readonly contentType: string; readonly cacheControl?: string; readonly contentDisposition?: string; readonly checksum?: string }>;
+  /** Store bytes (or UTF-8 text) at a path, replacing what was there. `metadata` travels as `x-file-meta-*` headers. */
+  write(path: string, body: Uint8Array | string, options?: {
+    readonly contentType?: string;
+    readonly cacheControl?: string;
+    readonly contentDisposition?: string;
+    readonly metadata?: Readonly<Record<string, string>>;
+  }): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisDataResult }>;
+  /** Remove a file. Refused when there is none. */
+  delete(path: string): Promise<{ readonly deleted: boolean; readonly path: string }>;
+}
+
+export type ZelavisWorkloadType = "function" | "job" | "schedule" | "webhook";
+
+export interface ZelavisWorkloadsClient {
+  health(): Promise<ZelavisDataResult>;
+  /** The workloads of one kind as dashboard menu items. */
+  menu(section: "functions" | "jobs" | "schedules" | "webhooks"): Promise<ZelavisDataResult>;
+  list(options?: { readonly type?: ZelavisWorkloadType }): Promise<ZelavisDataResult>;
+  /** Create one: `{ type, name, code?, route?, schedule?, enabled? }`. The Project is this client's. */
+  create(input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  get(id: string): Promise<ZelavisDataResult>;
+  /** Replace a definition: `{ name?, code?, route?, schedule?, enabled? }`. */
+  update(id: string, input: ZelavisDataBody): Promise<ZelavisDataResult>;
+  /** Run it now; the answer is the run's log entry. */
+  run(id: string): Promise<ZelavisDataResult>;
+  logs(options?: { readonly workloadId?: string }): Promise<ZelavisDataResult>;
 }
 
 /**
@@ -1437,6 +1495,8 @@ export function createZelavisClient(
       remove: (nodeId) => json<{ removed: boolean }>(`/runtime/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     data: (projectId) => createDataClient(json, projectId),
+    storage: (projectId) => createStorageClient(request, json, projectId),
+    workloads: (projectId) => createWorkloadsClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),
       oauthProviders: () => json<readonly string[]>("/auth/oauth/providers"),
@@ -1957,6 +2017,81 @@ function createDataClient(
   };
 }
 
+/** What a Project runtime's own API sits under, behind the Project proxy. */
+const PROJECT_RUNTIME_PROXY_PATH = "proxy/zelavis/api/v1";
+
+function storageSegments(path: string): string {
+  if (typeof path !== "string" || !path.trim()) throw new TypeError("A storage file path is required.");
+  const segments = path.split("/").filter((segment) => segment !== "");
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) throw new TypeError("Invalid storage file path.");
+  return segments.map(encodeURIComponent).join("/");
+}
+
+async function failure(response: Response): Promise<never> {
+  throw new ZelavisClientHttpError(response, await response.clone().json().catch(() => undefined));
+}
+
+function createStorageClient(
+  request: (path: string, options?: ZelavisClientRequestOptions) => Promise<Response>,
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisStorageClient {
+  const base = `${PROJECT_RUNTIME_PROXY_PATH}/storage/files`;
+  const at = (path: string) => projectPath(projectId, `${base}/${storageSegments(path)}`);
+  return {
+    list: (prefix) => json(projectPath(projectId, base) + (prefix === undefined || prefix === "" ? "" : `?prefix=${encodeURIComponent(prefix)}`)),
+    metadata: (path) => json(`${at(path)}?format=metadata`),
+    read: async (path) => {
+      const response = await request(at(path));
+      if (!response.ok) return failure(response);
+      const header = (name: string) => response.headers.get(name) ?? undefined;
+      const cacheControl = header("cache-control"), contentDisposition = header("content-disposition"), checksum = header("x-zelavis-checksum-sha256");
+      return {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        contentType: header("content-type") ?? "application/octet-stream",
+        ...(cacheControl === undefined ? {} : { cacheControl }),
+        ...(contentDisposition === undefined ? {} : { contentDisposition }),
+        ...(checksum === undefined ? {} : { checksum }),
+      };
+    },
+    write: async (path, body, options) => {
+      const headers = new Headers();
+      if (options?.contentType !== undefined) headers.set("content-type", options.contentType);
+      if (options?.cacheControl !== undefined) headers.set("cache-control", options.cacheControl);
+      if (options?.contentDisposition !== undefined) headers.set("content-disposition", options.contentDisposition);
+      for (const [name, value] of Object.entries(options?.metadata ?? {})) headers.set(`x-file-meta-${name}`, value);
+      const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+      const response = await request(at(path), { method: "PUT", headers, body: bytes as unknown as BodyInit });
+      if (!response.ok) return failure(response);
+      return response.json();
+    },
+    delete: (path) => json(at(path), { method: "DELETE" }),
+  };
+}
+
+function createWorkloadsClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisWorkloadsClient {
+  const base = `${PROJECT_RUNTIME_PROXY_PATH}/workloads`;
+  const at = (suffix = "", query?: Record<string, string | undefined>) => {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(query ?? {})) if (value !== undefined) params.set(name, value);
+    return projectPath(projectId, `${base}${suffix}`) + (params.size ? `?${params}` : "");
+  };
+  const id = (value: string) => dataName(value, "workload id");
+  return {
+    health: () => json(at("/health")),
+    menu: (section) => json(at(`/menu/${dataName(section, "workload section")}`)),
+    list: (options) => json(at("", { projectId, type: options?.type })),
+    create: (input) => json(at(""), { method: "POST", body: { projectId, ...input } }),
+    get: (workload) => json(at(`/${id(workload)}`)),
+    update: (workload, input) => json(at(`/${id(workload)}`), { method: "PUT", body: input }),
+    run: (workload) => json(at(`/${id(workload)}/run`), { method: "POST", body: {} }),
+    logs: (options) => json(at("/logs", { projectId, workloadId: options?.workloadId })),
+  };
+}
+
 function projectPath(projectId: string, action?: string): string {
   if (typeof projectId !== "string" || !projectId.trim()) {
     throw new TypeError("A Project id is required.");
@@ -2214,6 +2349,8 @@ function isBodyInit(value: unknown): value is BodyInit {
   return (
     typeof value === "string" ||
     value instanceof ArrayBuffer ||
+    // Typed arrays and views are raw bytes, not objects to be sent as JSON.
+    ArrayBuffer.isView(value) ||
     (typeof Blob !== "undefined" && value instanceof Blob) ||
     (typeof FormData !== "undefined" && value instanceof FormData) ||
     (typeof URLSearchParams !== "undefined" &&
