@@ -39,7 +39,7 @@ export function schemaRecordFields(fields: readonly CollectionFieldEntry[], text
       decode = () => input.value === "" && !field.required ? undefined : input.value;
       update = value => { input.value = value === undefined ? "" : String(value); };
     }
-    if (control.localName !== "fuzor-select") control.setAttribute("aria-label", field.label || entry.name);
+    if (control.localName !== "zv-select") control.setAttribute("aria-label", field.label || entry.name);
     if (readonly) control.disabled = true;
     controls.push({ name: entry.name, control, update });
     control.addEventListener("input", () => {

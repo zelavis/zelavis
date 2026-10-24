@@ -22,7 +22,7 @@ export default {
     const tenantsWithTables = () => new Set(JSON.parse(String(props.choicesJson ?? "[]")).map((item: unknown) => object(object(item).search)).filter((search: Record<string, unknown>) => typeof search.databaseTable === "string").map((search: Record<string, unknown>) => search.databaseTenant));
     const tenant = node("label", {}, node("span", {}, "Tenant"), dropdown({ name: "tenantId", label: "Tenant" }, []));
     function tenants() {
-      const select = tenant.querySelector("fuzor-select") as DropdownElement; const withTables = tenantsWithTables();
+      const select = tenant.querySelector("zv-select") as DropdownElement; const withTables = tenantsWithTables();
       const names = [...new Set([...tenantList(), String(props.tenant)].filter(Boolean))];
       setDropdownOptions(select, names.map(name => ({ value: name, label: withTables.has(name) ? name : `${name} (no tables)` })), String(props.tenant));
     }
@@ -44,7 +44,7 @@ export default {
       void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(error => errors.replaceChildren(message(String(error), true)));
     };
     // Choosing a Tenant applies at once: a system view stays open for the new Tenant; a table does not carry over, since the other Tenant has its own.
-    tenant.querySelector("fuzor-select")!.addEventListener("change", event => {
+    tenant.querySelector("zv-select")!.addEventListener("change", event => {
       const name = (event.currentTarget as DropdownElement).value;
       search({ databaseTenant: name, ...(props.systemView ? {} : { databaseTable: undefined }), databaseRow: undefined, databaseAfter: undefined, databaseWhere: undefined, databaseSort: undefined, databaseHide: undefined });
     });

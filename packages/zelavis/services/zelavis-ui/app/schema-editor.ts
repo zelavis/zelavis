@@ -58,7 +58,7 @@ export function mountSchemaEditor(host: HTMLElement, options: { api: string; ten
   const submit = (work: Effect.Effect<unknown, unknown>) => {
     if (busy) return;
     busy = true;
-    const buttons = [...host.querySelectorAll<HTMLButtonElement | HTMLInputElement | DropdownElement | HTMLTextAreaElement>("button:not(:disabled), input:not(:disabled), fuzor-select:not([disabled]), textarea:not(:disabled)")];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement | HTMLInputElement | DropdownElement | HTMLTextAreaElement>("button:not(:disabled), input:not(:disabled), zv-select:not([disabled]), textarea:not(:disabled)")];
     buttons.forEach(button => { button.disabled = true; });
     options.run(work.pipe(Effect.ensuring(Effect.sync(() => { busy = false; buttons.forEach(button => { button.disabled = false; }); }))));
   };

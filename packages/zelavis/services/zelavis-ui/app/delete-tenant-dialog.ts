@@ -2,6 +2,7 @@ import { Cause, Effect } from "effect";
 import { registerDialog } from "fuzor/ui/components/dialog";
 import { request } from "./api.ts";
 import { message, node } from "./dom.ts";
+import { ensureBrand } from "./brand.ts";
 
 export interface DeleteTenant {
   tenantId: string;
@@ -15,23 +16,24 @@ export interface DeleteTenant {
  * so the button stays disabled until the Tenant ID is typed again, the same confirmation the HTTP route, the SDK and the CLI ask for.
  */
 export function mountDeleteTenant(host: HTMLElement, options: { api: string; removed(tenant: string): void }) {
+  ensureBrand();
   registerDialog();
   const doc = host.ownerDocument;
   const lifetime = new AbortController();
-  const dialog = doc.createElement("fuzor-dialog") as HTMLElement & { setOpen(open: boolean): void };
-  const title = doc.createElement("fuzor-dialog-title");
-  const description = doc.createElement("fuzor-dialog-description");
+  const dialog = doc.createElement("zv-dialog") as HTMLElement & { setOpen(open: boolean): void };
+  const title = doc.createElement("zv-dialog-title");
+  const description = doc.createElement("zv-dialog-description");
   const confirm = node("input", { name: "confirm", "aria-label": "Type the Tenant ID to confirm", autocomplete: "off", spellcheck: "false" });
   const errors = node("div", { "aria-live": "polite" });
   const remove = node("button", { type: "submit", class: "danger", disabled: "" }, "Delete tenant");
   const cancel = node("button", { type: "button" }, "Cancel");
   const prompt = node("span", {});
   const form = node("form", { class: "form" }, node("label", {}, prompt, confirm), errors, node("div", { class: "actions" }, remove, cancel));
-  const content = doc.createElement("fuzor-dialog-content");
+  const content = doc.createElement("zv-dialog-content");
   content.setAttribute("aria-label", "Delete tenant");
-  const header = doc.createElement("fuzor-dialog-header"); header.append(title, description);
+  const header = doc.createElement("zv-dialog-header"); header.append(title, description);
   content.append(header, form);
-  const portal = doc.createElement("fuzor-dialog-portal"); portal.append(doc.createElement("fuzor-dialog-overlay"), content);
+  const portal = doc.createElement("zv-dialog-portal"); portal.append(doc.createElement("zv-dialog-overlay"), content);
   dialog.append(portal);
   host.append(dialog);
 

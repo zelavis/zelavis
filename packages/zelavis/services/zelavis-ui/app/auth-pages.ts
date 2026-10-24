@@ -83,7 +83,7 @@ export const setupScreen = Effect.fn("ui.setupScreen")(function*(context: Screen
       node("div", { class: "actions end" }, button("Get started", () => go("owner"), { class: "primary", ...(canBegin ? {} : { disabled: "" }) })));
   } else if (step === "owner") {
     const providerSelect = status.enrollmentProviders.length > 1 ? node("label", {}, node("span", {}, "Credential provider"), dropdown({ label: "Credential provider", value: draft.provider }, status.enrollmentProviders.map(name => ({ value: name, label: name })))) : undefined;
-    providerSelect?.querySelector("fuzor-select")?.addEventListener("change", event => { draft.provider = (event.target as HTMLInputElement).value; });
+    providerSelect?.querySelector("zv-select")?.addEventListener("change", event => { draft.provider = (event.target as HTMLInputElement).value; });
     const identifier = field("setup-identifier", acceptsUsername ? "Email or username" : "Email", { type: acceptsUsername ? "text" : "email", value: draft.identifier, placeholder: "owner@example.com", autocomplete: "username" });
     const display = field("setup-name", "Display name", { value: draft.displayName, placeholder: "Platform Owner", autocomplete: "name" });
     panel.append(node("h2", {}, "Create the Platform owner"), node("p", {}, "This account receives full Platform authority. Additional users can be invited with narrower permissions later."),

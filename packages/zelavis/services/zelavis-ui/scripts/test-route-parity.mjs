@@ -149,9 +149,9 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const relationObserver = request => { if (request.url().includes("/documents/tags/query")) relationRequests.push(request.url()); };
   page.on("request", relationObserver);
   yield* visit("/projects/parity-lab/content/articles/entry-a");
-  yield* io(() => page.locator("fuzor-select-item", { hasText: "Scoped tag alpha" }).waitFor({ state: "attached" }));
-  yield* io(() => page.locator(".content fuzor-select-trigger").click());
-  yield* io(() => page.locator("fuzor-select-item", { hasText: "Scoped tag alpha" }).click());
+  yield* io(() => page.locator("zv-select-item", { hasText: "Scoped tag alpha" }).waitFor({ state: "attached" }));
+  yield* io(() => page.locator(".content zv-select-trigger").click());
+  yield* io(() => page.locator("zv-select-item", { hasText: "Scoped tag alpha" }).click());
   yield* io(() => page.getByRole("button", { name: "Save Entry", exact: true }).click());
   yield* io(() => page.getByText("Saved entry-a.", { exact: true }).waitFor());
   const records = yield* request(proxy + "/database/documents/articles/query", "POST", { tenantId: "zelavis-app" });
@@ -205,7 +205,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
 
   yield* visit("/settings/appearance");
   yield* io(() => page.getByLabel("Theme", { exact: true }).click());
-  yield* io(() => page.locator("fuzor-select-item", { hasText: "Dark" }).click());
+  yield* io(() => page.locator("zv-select-item", { hasText: "Dark" }).click());
   yield* io(() => page.waitForFunction(() => document.documentElement.dataset.dashboardTheme === "dark"));
   assert.equal((yield* request("/runtime/settings")).theme, "dark");
   console.log("Action: theme persists through the existing runtime API and synchronizes with the Fuzor shell.");

@@ -1,0 +1,19 @@
+/* The Zelavis component vocabulary: fuzor/ui components under the `zv` brand (`defineBrand("zv")`). The dashboard and,
+   later, plugin pages share this file, so a `<zv-select>` looks the same wherever it is written. */
+zv-dialog-overlay{position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.45)}zv-dialog-overlay[hidden],zv-dialog-content[hidden],zv-dialog-portal[hidden]{display:none}
+zv-dialog-content{position:fixed;z-index:9001;top:50%;left:50%;transform:translate(-50%,-50%);display:block;width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:inherit;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+zv-dialog-header{display:block;margin-bottom:12px}zv-dialog-title{display:block;font-size:16px;font-weight:600}zv-dialog-description{display:block;margin-top:4px;font-size:12px;color:var(--muted)}
+zv-select{display:inline-block;position:relative;min-width:0;max-width:240px;width:auto}
+zv-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;border:1px solid var(--border);border-radius:6px;padding:9px 11px;background:var(--surface);color:inherit;cursor:pointer;user-select:none}
+zv-select-trigger:hover{background:var(--hover)}zv-select-trigger:focus-visible{outline:2px solid #71717a;outline-offset:3px}
+zv-select[disabled] zv-select-trigger{opacity:.5;cursor:not-allowed}zv-select[disabled]{pointer-events:none}
+zv-select-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}zv-select-value:empty:before{content:"\00a0"}
+zv-select-indicator{display:inline-flex;color:var(--muted);transition:transform .15s}zv-select[open] zv-select-indicator{transform:rotate(180deg)}
+zv-select-positioner{z-index:9500}
+zv-select-content{display:block;min-width:max-content;max-height:min(320px,60vh);overflow:auto;padding:4px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:inherit;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+zv-select-content[hidden]{display:none}
+zv-select-item{display:block;padding:7px 10px;border-radius:5px;cursor:pointer;white-space:nowrap}
+zv-select-item[data-highlighted]{background:var(--hover)}zv-select-item[data-state=checked],zv-select-item[aria-selected=true]{font-weight:600}
+zv-select-item[data-disabled],zv-select-item[disabled]{opacity:.45;cursor:not-allowed}
+zv-select-group-label{display:block;padding:6px 10px;font-size:12px;color:var(--muted)}
+zv-select-content:focus,zv-select-content:focus-visible{outline:none}

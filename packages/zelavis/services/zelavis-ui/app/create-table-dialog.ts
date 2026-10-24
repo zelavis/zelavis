@@ -3,6 +3,7 @@ import { registerDialog } from "fuzor/ui/components/dialog";
 import { label, object, request } from "./api.ts";
 import { message, node } from "./dom.ts";
 import { dropdown, setDropdownOptions } from "./dropdown.ts";
+import { ensureBrand } from "./brand.ts";
 
 /** A table name the database accepts: lowercase letters, digits, underscore and hyphen, starting with a letter or underscore. */
 export function slugifyTableName(value: string) {
@@ -26,6 +27,7 @@ export interface CreateTableOptions {
  * (`databaseDialog=create-table`, set by the sidebar's Create Table item), so a reload or a shared link reopens it.
  */
 export function mountCreateTable(host: HTMLElement, options: CreateTableOptions) {
+  ensureBrand();
   registerDialog();
   const doc = host.ownerDocument;
   const lifetime = new AbortController();
@@ -36,15 +38,15 @@ export function mountCreateTable(host: HTMLElement, options: CreateTableOptions)
   const submit = node("button", { type: "submit", class: "primary" }, "Create and Open Table");
   const cancel = node("button", { type: "button" }, "Cancel");
   const form = node("form", { class: "form" }, node("label", {}, node("span", {}, "Tenant"), tenant), node("label", {}, node("span", {}, "Table name"), name), errors, node("div", { class: "actions" }, submit, cancel));
-  const dialog = doc.createElement("fuzor-dialog") as HTMLElement & { setOpen(open: boolean): void; isOpen: boolean };
-  const content = doc.createElement("fuzor-dialog-content");
+  const dialog = doc.createElement("zv-dialog") as HTMLElement & { setOpen(open: boolean): void; isOpen: boolean };
+  const content = doc.createElement("zv-dialog-content");
   content.setAttribute("aria-label", "Create table");
-  const title = doc.createElement("fuzor-dialog-title"); title.textContent = "Create table";
-  const description = doc.createElement("fuzor-dialog-description"); description.textContent = "A table holds records in one Tenant. Its name uses lowercase letters, digits, _ and -.";
-  const header = doc.createElement("fuzor-dialog-header"); header.append(title, description);
+  const title = doc.createElement("zv-dialog-title"); title.textContent = "Create table";
+  const description = doc.createElement("zv-dialog-description"); description.textContent = "A table holds records in one Tenant. Its name uses lowercase letters, digits, _ and -.";
+  const header = doc.createElement("zv-dialog-header"); header.append(title, description);
   content.append(header, form);
-  const overlay = doc.createElement("fuzor-dialog-overlay");
-  const portal = doc.createElement("fuzor-dialog-portal"); portal.append(overlay, content);
+  const overlay = doc.createElement("zv-dialog-overlay");
+  const portal = doc.createElement("zv-dialog-portal"); portal.append(overlay, content);
   dialog.append(portal);
   host.append(dialog);
 
