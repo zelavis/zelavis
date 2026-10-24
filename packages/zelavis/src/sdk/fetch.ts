@@ -1,3 +1,8 @@
+import {
+  createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient,
+  type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
+} from "./platform-clients.js";
+export type { ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
 import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
 import { Effect } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
@@ -310,6 +315,14 @@ export interface ZelavisClient {
    * (`project.view` reads, `project.runtime.manage` writes). Same contract as `zelavis storage`.
    */
   storage(projectId: string): ZelavisStorageClient;
+  /** The Fabric's nodes, Project placements and migrations. Same contract as `zelavis fabric`. */
+  readonly fabric: ZelavisFabricClient;
+  /** The Assistant's threads, replies, approvals, providers and audit. Same contract as `zelavis assistant`. */
+  readonly assistant: ZelavisAssistantClient;
+  /** Where Projects may run. Same contract as `zelavis backends`. */
+  readonly deploymentBackends: ZelavisDeploymentBackendsClient;
+  /** The Agent's status and operations. Same contract as `zelavis agent status`. */
+  readonly agent: ZelavisAgentClient;
   /**
    * The functions, jobs, schedules and webhooks an App Project runs, through the Project proxy
    * (`project.view` reads, `project.runtime.manage` changes and runs). Same contract as `zelavis workloads`.
@@ -1496,6 +1509,10 @@ export function createZelavisClient(
     },
     data: (projectId) => createDataClient(json, projectId),
     storage: (projectId) => createStorageClient(request, json, projectId),
+    fabric: createFabricClient(json),
+    assistant: createAssistantClient(json, request),
+    deploymentBackends: createDeploymentBackendsClient(json),
+    agent: createAgentClient(json),
     workloads: (projectId) => createWorkloadsClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),

@@ -157,6 +157,9 @@ command tree.
   `client.projects.exportTenant|restoreTenant` and the database's
   `maintenance/backups/export|restore` route through the Project proxy, and need
   `project.runtime.manage`. See [Database](../api/database/#backups-and-restore).
+- `fabric`, `assistant`, `backends` and `agent status|operations|operation` read and change the
+  Fabric, the Assistant, the deployment backends and the Agent's report through the SDK; see
+  [Platform operations](../api/platform-operations/).
 - `storage <list|metadata|get|put|delete> --project ID [PATH]` and
   `workloads <health|menu|list|create|get|update|run|logs> --project ID [ID]` manage an App
   Project's files and workloads through `client.storage|workloads(projectId)`, over the Project
