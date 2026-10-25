@@ -476,7 +476,11 @@ Rules that hold for every change:
   The installed frontend may supply a component runtime (`serviceUi`: `@zelavis/ui`
   builds `fuzor/ui` under the `zv` brand); the Platform adds its stylesheet and module to
   every HTML page it serves unless the page opts out with
-  `<meta name="zelavis-service-ui" content="none">`. Those two assets are public on purpose:
+  `<meta name="zelavis-service-ui" content="none">`. The entry discovers component tags and imports only their families,
+  including markup added later; page code waits for `customElements.whenDefined` before using a component's methods
+  or form value. `serviceUi.modules` is a map of flat content-hashed JavaScript filenames to static build source.
+  `runtime/service-ui/:file` serves only exact own entries in that map, never arbitrary filesystem or service paths.
+  The entry, stylesheet and build modules are public on purpose:
   an extension's page is sandboxed with an opaque origin and sends no credentials.
   For the same reason the dashboard frames an extension's page at a page capability URL
   (`runtime/page-capabilities/<token>/<bundle>/<file>`, `platform/page-capability.ts`): an HMAC token

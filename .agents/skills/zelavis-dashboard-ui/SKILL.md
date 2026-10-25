@@ -41,7 +41,9 @@ The private `zelavis-ui-legacy` package is reference material only.
   only the claims' service, bundle and optional Project authorize its files.
 - Disk reads stay within the named bundle after symlink resolution, with no
   package-root fallback. Public service-page UI assets are static build code
-  and styles and contain no installation state.
+  and styles and contain no installation state. The component entry discovers initial and late-added tags and
+  imports their families on demand. Its public module route reads only exact own keys from the frontend's static
+  `serviceUi.modules` map. Wait for `customElements.whenDefined` before component methods or form reads.
 - Broker messages require the frame's source window and only its owning service
   namespace through the exact Project proxy. Bound requests and clean up with
   the page scope. A new iframe document cannot inherit the previous grant.

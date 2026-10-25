@@ -11,12 +11,18 @@ const OWNER = {
 
 test("public service-page assets contain only build data across installations and viewers", async () => {
   const instances = [];
+  let modules = [];
   for (const secret of ["private-installation-one", "private-installation-two"]) {
     const systemStore = createMemorySystemStore();
     await systemStore.set("platform", "master-secret", secret);
-    instances.push(await zelavis({ systemStore, frontend: zelavisUiFrontend }));
+    instances.push(await zelavis({ systemStore, frontend: async context => {
+      const frontend = await zelavisUiFrontend(context);
+      modules = Object.keys(frontend.serviceUi.modules);
+      return frontend;
+    } }));
   }
-  for (const name of ["service-page.css", "service-elements.js", "service-ui.js", "service-ui.css"]) {
+  assert.ok(modules.length > 1, "the built frontend supplies split modules");
+  for (const name of ["service-page.css", "service-elements.js", "service-ui.js", "service-ui.css", ...modules.map(name => `service-ui/${name}`)]) {
     const url = `http://localhost/zelavis/api/v1/runtime/${name}`;
     const responses = await Promise.all([
       instances[0].fetch(new Request(url)),
@@ -24,6 +30,7 @@ test("public service-page assets contain only build data across installations an
       instances[1].fetch(new Request(url)),
     ]);
     assert.ok(responses.every(response => response.status === 200), name);
+    assert.ok(responses.every(response => response.headers.get("access-control-allow-origin") === "*"), name);
     const bodies = await Promise.all(responses.map(response => response.text()));
     assert.equal(bodies[0], bodies[1], `${name}: viewer-independent`);
     assert.equal(bodies[0], bodies[2], `${name}: installation-independent`);
@@ -207,14 +214,13 @@ test("an HTML service page gets the frontend's components without asking", async
 
   assert.match(page.body, /<link rel="stylesheet" href="\/zelavis\/api\/v1\/runtime\/service-ui\.css" data-zelavis-service-ui>/);
   assert.match(page.body, /<script type="module" src="\/zelavis\/api\/v1\/runtime\/service-ui\.js" data-zelavis-service-ui><\/script>/);
-  // At the top of the head, so the elements are defined before the page's own module runs its first line.
+  // Discovery starts at the top of the head. Page code waits for the specific element with whenDefined.
   assert.ok(page.body.indexOf("service-ui.js") < page.body.indexOf("<body"));
 
   const script = await get("/zelavis/api/v1/runtime/service-ui.js", OWNER);
   assert.equal(script.status, 200);
   assert.match(script.contentType, /text\/javascript/);
-  // The runtime is the zv brand of fuzor/ui: one module defining the tags a page writes.
-  assert.match(script.body, /zv/);
+  assert.match(script.body, /service-ui\/.+\.js/);
   const stylesheet = await get("/zelavis/api/v1/runtime/service-ui.css", OWNER);
   assert.equal(stylesheet.status, 200);
   assert.match(stylesheet.contentType, /text\/css/);
@@ -235,6 +241,31 @@ test("the component runtime is public, cross-origin readable and revalidates by 
     assert.ok(etag, "an ETag names the revision");
     const again = await runtime.fetch(new Request(url, { headers: { "if-none-match": etag } }));
     assert.equal(again.status, 304, "an unchanged asset is not sent again");
+  }
+});
+
+test("public component modules serve only exact frontend build entries, including at a custom mount", async () => {
+  const modules = Object.assign(Object.create({ "inherited-12345678.js": "private prototype" }), {
+    "select-12345678.js": "/* static select module */",
+    "../outside-12345678.js": "private invalid key",
+  });
+  const runtime = await zelavis({
+    rootPath: "/control",
+    frontend: async context => ({
+      ...(await zelavisUiFrontend(context)),
+      serviceUi: { script: "/* loader */", stylesheet: "/* styles */", modules },
+    }),
+  });
+  const url = "http://localhost/control/api/v1/runtime/service-ui/select-12345678.js";
+  const response = await runtime.fetch(new Request(url));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assert.equal(response.headers.get("content-type"), "text/javascript; charset=utf-8");
+  assert.equal(await response.text(), modules["select-12345678.js"]);
+  const again = await runtime.fetch(new Request(url, { headers: { "if-none-match": response.headers.get("etag") } }));
+  assert.equal(again.status, 304);
+  for (const file of ["unknown-12345678.js", "inherited-12345678.js", "constructor", "__proto__", "select-12345678.js/extra", "%2e%2e%2foutside-12345678.js", "secret.txt"]) {
+    assert.equal((await runtime.fetch(new Request(`http://localhost/control/api/v1/runtime/service-ui/${file}`))).status, 404, file);
   }
 });
 
@@ -265,6 +296,7 @@ test("a frontend with no component runtime adds nothing and serves 404", async (
   });
   const response = await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/service-ui.js"), OWNER);
   assert.equal(response.status, 404);
+  assert.equal((await runtime.fetch(new Request("http://localhost/zelavis/api/v1/runtime/service-ui/select-12345678.js"))).status, 404);
 });
 
 test("a page capability is authentic, scoped, expiring, and tamper-evident", async () => {

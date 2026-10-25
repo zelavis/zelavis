@@ -72,7 +72,12 @@ export interface ZelavisPlatformFrontend {
    * `<meta name="zelavis-service-ui" content="none">`. The runtime is served publicly (with CORS), because a sandboxed extension
    * page has an opaque origin and sends no credentials; it holds no installation data.
    */
-  readonly serviceUi?: { readonly script: string; readonly stylesheet: string };
+  readonly serviceUi?: {
+    readonly script: string;
+    readonly stylesheet: string;
+    /** Static JavaScript build modules, keyed by flat content-hashed filename. Never include installation data. */
+    readonly modules: Readonly<Record<string, string>>;
+  };
 }
 
 export type ZelavisPlatformFrontendFactory = (

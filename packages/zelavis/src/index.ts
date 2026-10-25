@@ -1989,7 +1989,7 @@ function resolveRuntimeManagementCore(
     servicePageStylesheet?: string;
     serviceElementsScript?: string;
     /** Components the installed frontend adds to every HTML service page. */
-    serviceUi?: { readonly script: string; readonly stylesheet: string };
+    serviceUi?: ZelavisPlatformFrontend["serviceUi"];
     /** What lets a sandboxed extension page read its own files without credentials (`platform/page-capability.ts`). */
     pageCapability?: {
       readonly secret: string;
@@ -3126,6 +3126,26 @@ function resolveRuntimeManagementCore(
             ? sharedServiceAsset(request, kind === "js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8", kind === "js" ? context.serviceUi.script : context.serviceUi.stylesheet)
             : { status: 404, body: { error: "The installed frontend supplies no service page components." } },
         })),
+        {
+          // Public build code only. An exact own-key lookup never reads a service bundle or the filesystem.
+          id: "runtime.service-ui-module.read",
+          spec: {
+            operationId: "getServiceUiModule",
+            summary: "Read a static component module from the installed frontend build",
+            tags: ["runtime"],
+            pathParams: { file: { type: "string" as const, required: true, description: "A flat content-hashed JavaScript build filename" } },
+            responses: { 200: { description: "JavaScript module" }, 404: { description: "No such frontend build module" } },
+          },
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/service-ui/:file"),
+          handler: ({ request, params }: { request: Request; params: Record<string, string> }) => {
+            const file = params.file ?? "";
+            const modules = context.serviceUi?.modules;
+            return file.length <= 160 && /^[a-zA-Z0-9_-]+-[a-zA-Z0-9_-]{8}\.js$/.test(file) && modules && Object.hasOwn(modules, file)
+              ? sharedServiceAsset(request, "text/javascript; charset=utf-8", modules[file]!)
+              : { status: 404, body: { error: "No such frontend build module." } };
+          },
+        },
         ...(context.pageCapability ? [
           {
             // Hands the dashboard the URL a sandboxed extension page is framed at. The caller needs what reading the page

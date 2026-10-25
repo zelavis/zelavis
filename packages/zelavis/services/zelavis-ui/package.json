@@ -52,7 +52,7 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:browser": "node scripts/build.mjs && node scripts/test-server-views.mjs && node scripts/test-route-parity.mjs && node scripts/test-embedded-server-views.mjs",
+    "test:browser": "node scripts/build.mjs && node scripts/test-service-ui.mjs && node scripts/test-server-views.mjs && node scripts/test-route-parity.mjs && node scripts/test-embedded-server-views.mjs",
     "test:browser:dev": "node scripts/test-embedded-server-views.mjs --dev",
     "build:plugin": "tsc -p tsconfig.plugin.json",
     "dev:server": "node scripts/dev-server.mjs"

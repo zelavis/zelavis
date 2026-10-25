@@ -416,7 +416,10 @@ before editing.
   and asset paths before composition; filesystem root containment is not enough.
   Disk service pages read only their named bundle directory below the package root, with realpath containment.
   Never fall back to package-root files or follow a symlink into another bundle. Public service-page UI assets
-  contain static build code/styles only, never installation state. Folder-discovered Platform extensions belong
+  contain static build code/styles only, never installation state. The component entry discovers tags and loads their
+  families on demand. `runtime/service-ui/:file` reads only exact own entries of the frontend's `serviceUi.modules`
+  map (flat content-hashed JS names); it never reads filesystem or service paths. Page code waits for
+  `customElements.whenDefined` before component methods or form reads. Folder-discovered Platform extensions belong
   in the Extensions slide and are framed without `allow-same-origin`, just like Project extensions.
 - Treat local physical sharding as the official `@zelavis/app` default, not a
   future multi-node migration. A new official App routes stable virtual shard

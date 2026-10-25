@@ -221,14 +221,33 @@ fire `ui:*` events (`ui:value-change`, `ui:open-change`), take their colours fro
 `zv-select` still submits in a form. `zv-page`, `zv-card`, `zv-stack`, `zv-badge`, `zv-button` and the other
 presentational elements come from `service-elements.js` and are unchanged.
 
-The runtime is a single module at `/zelavis/api/v1/runtime/service-ui.js` with its stylesheet beside it; both are public,
-because a page an extension ships runs in a sandboxed frame that sends no credentials. A page that brings its own
+The discovery entry at `/zelavis/api/v1/runtime/service-ui.js` loads only the component families whose `zv-*` or
+canonical `fuzor-*` tags appear in the document, including markup inserted later. Repeated tags share one import.
+Discovery covers the document's light DOM; a page that puts components exclusively inside a shadow root registers
+them in its own bundle.
+The stylesheet remains at `runtime/service-ui.css`; component and shared modules load from
+`runtime/service-ui/<name>-<hash>.js`. These assets are public and CORS-readable because an extension's sandboxed
+frame sends no credentials. The module route serves only exact entries from the installed frontend's static build
+map: it cannot read service bundles, arbitrary files or installation data. Page-capability routes are unchanged.
+
+Registration is asynchronous. Code that calls a component's methods or reads a form containing it waits for its tag
+after putting the markup in the document:
+
+```js
+await customElements.whenDefined("zv-select");
+const values = new FormData(document.querySelector("form"));
+```
+
+A failed import reports a console error and a document `zelavis-service-ui-error` event whose `detail.component`
+names the family. Reload to retry; repeated DOM mutations do not retry a failed import. A page that brings its own
 components opts out with `<meta name="zelavis-service-ui" content="none">`.
 
 Included: accordion, avatar, checkbox, collapsible, combobox, dialog, drawer, editable, hover card, listbox, menu, number
 input, pagination, password input, pin input, popover, progress, radio group, rating group, scroll area, select,
 separator, slider, steps, switch, tabs, tags input, toast, toggle, toggle group, tooltip, tree view. The installed frontend
-supplies the runtime (`serviceUi` on a frontend), so another frontend can supply its own.
+supplies the runtime (`serviceUi` on a frontend: `script`, `stylesheet`, and a `modules` map of flat content-hashed
+JavaScript filenames to static source), so another frontend can supply its own. Use an empty map for an entry that
+has no imports. Relative imports resolve under the installation's mount; the frontend owns the complete build.
 
 ### Pages from an installed extension
 

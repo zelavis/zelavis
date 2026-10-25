@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Data, Effect } from "effect";
@@ -30,10 +30,24 @@ export const zelavisUiFrontend = (context: ZelavisPlatformFrontendContext): Prom
     Effect.catch(error => error.cause && typeof error.cause === "object" && "code" in error.cause && error.cause.code === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(error)),
   );
   const [serviceUiScript, serviceUiStylesheet] = yield* Effect.all([readRuntimeFile("service-ui.js"), readRuntimeFile("service-ui.css")]);
+  // Snapshot only the isolated build directory at composition. Requests never select a filesystem path.
+  const modules: Record<string, string> = Object.create(null);
+  if (serviceUiScript !== undefined && serviceUiStylesheet !== undefined) {
+    const directory = resolve(root, "service-ui/service-ui");
+    const files = yield* Effect.tryPromise({ try: () => readdir(directory, { withFileTypes: true }), catch: cause => new AssetReadError({ message: "Could not read service-page build modules.", cause }) });
+    if (files.length > 127 || files.some(file => !file.isFile() || file.name.length > 160 || !/^[a-zA-Z0-9_-]+-[a-zA-Z0-9_-]{8}\.js$/.test(file.name))) {
+      return yield* new AssetReadError({ message: "Invalid service-page build module directory.", cause: directory });
+    }
+    const sizes = yield* Effect.forEach(files, file => Effect.tryPromise({ try: () => stat(resolve(directory, file.name)), catch: cause => new AssetReadError({ message: "Could not measure service-page build module.", cause }) }).pipe(Effect.map(info => info.size)), { concurrency: 4 });
+    if (sizes.some(size => size > 2 * 1024 * 1024) || sizes.reduce((sum, size) => sum + size, 0) > 8 * 1024 * 1024) {
+      return yield* new AssetReadError({ message: "Service-page build modules exceed the size limit.", cause: directory });
+    }
+    yield* Effect.forEach(files, file => Effect.tryPromise({ try: () => readFile(resolve(directory, file.name), "utf8"), catch: cause => new AssetReadError({ message: "Could not read service-page build module.", cause }) }).pipe(Effect.tap(text => Effect.sync(() => { modules[file.name] = text; }))), { concurrency: 4, discard: true });
+  }
   return {
     service,
     servicePageStylesheet: zelavisServicePageStylesheet,
-    ...(serviceUiScript !== undefined && serviceUiStylesheet !== undefined ? { serviceUi: { script: serviceUiScript, stylesheet: serviceUiStylesheet } } : {}),
+    ...(serviceUiScript !== undefined && serviceUiStylesheet !== undefined ? { serviceUi: { script: serviceUiScript, stylesheet: serviceUiStylesheet, modules } } : {}),
     clientRoutes: ["/*", "/", "/projects", "/projects/*", "/server", "/server/*", "/marketplace", "/settings", "/settings/*", "/assistant", "/setup", "/login"],
     bundleStore: {
       read(_scope, path) {

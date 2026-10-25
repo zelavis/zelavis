@@ -24,9 +24,9 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => mkdir(join(platformExtension, "dashboard"), { recursive: true }));
   yield* io(() => writeFile(join(platformExtension, "package.json"), JSON.stringify({ name: "@example/platform-page", version: "1.0.0", type: "module", exports: "./index.js", zelavis: { kind: "plugin", namespace: "platformpage" } })));
   yield* io(() => writeFile(join(platformExtension, "index.js"), 'import { zelavis } from "zelavis/sdk"; export function register() { zelavis.plugins.ui.menus.create({ title: "Platform extension", surface: "platform", path: "/platform-extension", page: { id: "main", title: "Platform extension", bundle: "dashboard", file: "page.html" } }); }'));
-  yield* io(() => writeFile(join(platformExtension, "dashboard", "page.html"), '<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><p id="out">Platform extension</p><script type="module" src="./app.js"></script></body></html>'));
+  yield* io(() => writeFile(join(platformExtension, "dashboard", "page.html"), '<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><p id="out">Platform extension</p><zv-select></zv-select><zv-dialog></zv-dialog><script type="module" src="./app.js"></script></body></html>'));
   yield* io(() => writeFile(join(platformExtension, "dashboard", "style.css"), '#out{color:rgb(1,2,3)}'));
-  yield* io(() => writeFile(join(platformExtension, "dashboard", "app.js"), 'document.querySelector("#out").dataset.result = JSON.stringify({ opaque: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) });'));
+  yield* io(() => writeFile(join(platformExtension, "dashboard", "app.js"), 'await Promise.all([customElements.whenDefined("zv-select"), customElements.whenDefined("zv-dialog")]); document.querySelector("#out").dataset.result = JSON.stringify({ opaque: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) });'));
   yield* io(() => writeFile(join(platformExtension, "private.txt"), "outside the Platform bundle"));
   const origin = `http://127.0.0.1:${port}`, api = `${origin}/zelavis/api/v1`, token = randomBytes(32).toString("base64url"), password = randomBytes(32).toString("base64url");
   let logs = "";
@@ -150,7 +150,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const frames = yield* io(() => page.evaluate(src => new Promise(resolve => {
     const make = (sandbox, name) => { const frame = document.createElement("iframe"); frame.name = name; frame.setAttribute("sandbox", sandbox); frame.src = src; frame.style.display = "none"; document.body.append(frame); return frame; };
     const trusted = make("allow-scripts allow-same-origin", "trusted"); make("allow-scripts", "sandboxed");
-    setTimeout(() => resolve({ trusted: Boolean(trusted.contentWindow.customElements.get("zv-select") && trusted.contentWindow.customElements.get("zv-dialog")) }), 3000);
+    setTimeout(() => resolve({ select: Boolean(trusted.contentWindow.customElements.get("zv-select")), dialog: Boolean(trusted.contentWindow.customElements.get("zv-dialog")) }), 3000);
   }), authPage));
   page.off("response", onRuntime);
   // The page's own files too: the dashboard frames a sandboxed page at a capability URL, so what the page itself loads
@@ -187,7 +187,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
     await writeFile(join(extension, "index.js"), 'import { zelavis } from "zelavis/sdk";\nexport function register() { zelavis.plugins.ui.menus.create({ title: "Ext Page", path: "/ext-page", page: { id: "main", title: "Ext Page", bundle: "dashboard", file: "page.html" } }); }\n');
     await writeFile(join(extension, "dashboard", "page.html"), '<!doctype html><html><head><title>Ext</title><link rel="stylesheet" href="./styles.css"></head><body><p id="out">extension page</p><script type="module" src="./app.js"></script></body></html>');
     await writeFile(join(extension, "dashboard", "styles.css"), "#out{color:rgb(1,2,3)}");
-    await writeFile(join(extension, "dashboard", "app.js"), 'parent.postMessage({ extension: "ran", sandboxed: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) }, "*");\n');
+    await writeFile(join(extension, "dashboard", "app.js"), 'document.body.insertAdjacentHTML("beforeend", "<zv-select></zv-select><zv-dialog></zv-dialog>"); await Promise.all([customElements.whenDefined("zv-select"), customElements.whenDefined("zv-dialog")]); parent.postMessage({ extension: "ran", sandboxed: self.origin === "null", select: Boolean(customElements.get("zv-select")), dialog: Boolean(customElements.get("zv-dialog")) }, "*");\n');
   });
   yield* request("/runtime/projects/ext-lab/restart", "POST", {});
   yield* waitRunning;
@@ -237,7 +237,7 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const anonymous = yield* io(() => fetch(new URL(capability.src, origin)));
   assert.equal(anonymous.status, 200, "a capability URL needs no cookie");
   assert.equal((yield* io(() => fetch(new URL(capability.src.replace(/\/[^/]+\/dashboard\/auth\.html$/, "/tampered.token/dashboard/auth.html"), origin)))).status, 404);
-  assert.equal(frames.trusted, true, "a trusted service page defines <zv-select> and <zv-dialog>");
+  assert.deepEqual(frames, { select: false, dialog: false }, "a page without component tags does not load unused families");
   for (const frame of ["trusted", "sandboxed"]) for (const file of ["service-ui.js", "service-ui.css", "service-page.css"]) assert.ok(runtimeLoads.includes(`200 ${file} ${frame}`), `the ${frame} frame loads ${file}: ${runtimeLoads.join(", ")}`);
   console.log(`Service page runtime requests: ${runtimeLoads.join(", ")}`);
   yield* visit("/projects/parity-lab/database?databaseDialog=create-table");
