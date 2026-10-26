@@ -215,7 +215,7 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "effect": "4.0.0",
-    "jose": "^6.2.12",
+    "jose": "^6.2.13",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
