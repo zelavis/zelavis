@@ -69,7 +69,7 @@
   },
   "type": "commonjs",
   "devDependencies": {
-    "effect": "4.0.0",
+    "effect": "4.0.6",
     "@babel/parser": "7.29.9",
     "@changesets/changelog-git": "^1.0.0",
     "@changesets/cli": "^3.0.3",
