@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import { createHash } from "node:crypto";
 import { defineServerComponent, view, type ServerViewDefinition } from "fuzor/server-components/server";
+import { streamView } from "fuzor/server-components/stream-server";
 import type { ServerRequestContext } from "fuzor/server";
 import template from "./database.fragment.html";
 import workspace from "./database.view-client.ts";
@@ -111,7 +112,7 @@ const streamedDatabase = defineServerComponent((context: ServerRequestContext) =
   [view.server(database, context)],
 ));
 export default {
-  streaming: true,
+  streaming: streamView,
   routes: Object.fromEntries(databaseRoutes.map(route => [route, streamedDatabase])),
   // Scope is an opaque session partition, never an authentication or authorization decision.
   // Every API request above still authenticates and authorizes through Zelavis itself.
