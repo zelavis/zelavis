@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
-import { createElement, useState } from "react";
+import { createElement, useLayoutEffect, useState, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { DataEditor, GridCellKind, GridColumnIcon, type GridCell, type Item, type Theme } from "@glideapps/glide-data-grid";
-import { reactIsland } from "fuzor/islands/react";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { cellText, cellValue, columnKind, columnWidth, editText, type ColumnKind, type GridAdapterOptions } from "./model.ts";
 
-// Keep the isolated React 18 island typed against its own runtime, even when vendor declarations resolve host React types.
+// The grid is the one place React is used: a single root per grid, updated in place. Typed against its own runtime, even when vendor declarations resolve host React types.
 const CanvasEditor = DataEditor as unknown as import("react").ComponentType<Parameters<typeof DataEditor>[0]>;
 const headerIcons: Record<ColumnKind, GridColumnIcon> = {
   id: GridColumnIcon.HeaderRowID, number: GridColumnIcon.HeaderNumber, boolean: GridColumnIcon.HeaderBoolean,
@@ -58,6 +58,10 @@ function Grid(props: GridAdapterOptions) {
     onColumnResize: (column, width) => setWidths(previous => ({ ...previous, [column.id!]: width })),
   });
 }
+function Committed(props: { readonly onCommit: () => void; readonly children: ReactNode }): ReactNode {
+  useLayoutEffect(() => { props.onCommit(); }, [props.onCommit]);
+  return props.children;
+}
 export function mount(host: HTMLElement, options: GridAdapterOptions, signal?: AbortSignal) {
   return Effect.runPromise(Effect.gen(function* () {
   const ownedPortal = !document.getElementById("portal");
@@ -65,8 +69,16 @@ export function mount(host: HTMLElement, options: GridAdapterOptions, signal?: A
   if (ownedPortal) { portal.id = "portal"; document.body.append(portal); }
   let mounted = false;
   yield* Effect.addFinalizer(() => Effect.sync(() => { if (!mounted && ownedPortal) portal.remove(); }));
-    const client = yield* Effect.tryPromise({ try: signal => reactIsland(Grid).mountPersistent(host, options, { signal }), catch: cause => cause });
-    mounted = true;
-    return { update(next: GridAdapterOptions) { return client.update(next); }, dispose() { void client.dispose(); if (ownedPortal) portal.remove(); } };
+  const root = createRoot(host);
+  let disposed = false;
+  const commit = (props: GridAdapterOptions) => Effect.callback<void, unknown>(resume => {
+    if (disposed) { resume(Effect.fail(new Error("The grid was disposed."))); return; }
+    try { root.render(createElement(Committed, { onCommit: () => resume(Effect.void), children: createElement(Grid, props) })); }
+    catch (error) { resume(Effect.fail(error)); }
+  }).pipe(Effect.timeout("10 seconds"));
+  const dispose = () => { if (disposed) return; disposed = true; root.unmount(); if (ownedPortal) portal.remove(); };
+  yield* commit(options).pipe(Effect.onExit(exit => Effect.sync(() => { if (exit._tag === "Failure") dispose(); })));
+  mounted = true;
+  return { update(next: GridAdapterOptions) { return Effect.runPromise(commit(next)); }, dispose };
   }).pipe(Effect.scoped), signal ? { signal } : undefined);
 }
