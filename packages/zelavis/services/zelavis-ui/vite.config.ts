@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { fuzorPlugin } from "fuzor/vite";
-import { clientRoutes, routeTree, databaseRoutes } from "./app/routes.ts";
+import { clientRoutes, routeTree } from "./app/routes.ts";
 const runtime = process.env.ZELAVIS_DEV_SERVER ?? "http://127.0.0.1:3000";
 // A build is compiled against a placeholder root that the frontend adapter replaces with the Platform's `rootPath`
 // (src/mount-rewrite.ts); the dev server has no adapter in front of it, so it mounts at `/zelavis` (ZELAVIS_UI_BASE_PATH).
@@ -16,7 +16,6 @@ export default defineConfig(({ isSsrBuild }) => ({
     // The Platform provides `effect` to the services it loads; Fuzor's server runtime is bundled into the entry so
     // the shipped dashboard needs nothing installed beside it.
     serverExternal: ["effect"],
-    serverComponents: { server: "app/views/dashboard.server.ts", references: "app/views", routes: databaseRoutes },
     prefetch: "intent"
   })],
   // The dashboard targets current browsers. Vite's default list (down to safari14) asks esbuild to downlevel

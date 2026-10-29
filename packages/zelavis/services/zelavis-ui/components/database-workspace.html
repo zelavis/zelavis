@@ -1,0 +1,31 @@
+<script server lang="ts">
+  import { readDatabaseWorkspace } from "../app/database-reads.ts"
+  export default async (context) => {
+    const workspace = await readDatabaseWorkspace(context)
+    const count = workspace.recordsJson ? (JSON.parse(String(workspace.recordsJson)) as unknown[]).length : 0
+    return { workspace, summary: `Server view · ${count} records · ${new Date().toISOString()}` }
+  }
+</script>
+<script lang="ts">
+  import { disposeDatabaseWorkspace } from "../app/database-workspace.ts"
+  onCleanup(() => disposeDatabaseWorkspace(host))
+</script>
+<script lang="ts">
+  import { syncDatabaseWorkspace } from "../app/database-workspace.ts"
+  import { getRouter } from "fuzor/runtime"
+  const workspace = fuzor.state("workspace", fuzor.props.workspace ?? null)
+  // Refreshing revalidates the route: Fuzor reevaluates the loader above and patches the workspace in place.
+  fuzor.action("refresh", context => {
+    const router = getRouter(context.element.ownerDocument)
+    return router?.navigate(router.url(), { focus: "preserve", scroll: "preserve" }).then(() => {})
+  })
+  fuzor.effect("draw", [workspace], context => {
+    const host = context.element.querySelector<HTMLElement>("[data-database-host]")!
+    syncDatabaseWorkspace(host, workspace.get())
+    host.dispatchEvent(new CustomEvent("zelavis:database-drawn", { bubbles: true }))
+  })
+</script>
+<section class="server-database">
+  <div class="server-view-status"><span><fz-state name="summary"></fz-state></span><button type="button" data-fz-click="refresh">Refresh records</button></div>
+  <div data-database-host></div>
+</section>

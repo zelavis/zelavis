@@ -28,16 +28,15 @@ export function requestIntoBuild(request: Request, mount: string): Request | und
   if (mount === "") url.pathname = `${PLACEHOLDER}${url.pathname}`;
   else if (url.pathname === mount || url.pathname.startsWith(`${mount}/`)) url.pathname = `${PLACEHOLDER}${url.pathname.slice(mount.length)}`;
   else return undefined;
-  // Fuzor's server-view endpoint takes the page it should render as a path in its query, written with the real mount.
-  if (url.pathname === `${PLACEHOLDER}/_fuzor/render`) {
-    const target = url.searchParams.get("url");
-    if (target !== null) {
-      if (mount === "") url.searchParams.set("url", `${PLACEHOLDER}${target}`);
-      else if (target === mount || target.startsWith(`${mount}/`) || target.startsWith(`${mount}?`)) url.searchParams.set("url", `${PLACEHOLDER}${target.slice(mount.length)}`);
-    }
+  // Fuzor's data and action requests name the page they belong to by its path, written with the real mount.
+  const headers = new Headers(request.headers);
+  const page = headers.get("x-fuzor-page");
+  if (page !== null) {
+    if (mount === "") headers.set("x-fuzor-page", `${PLACEHOLDER}${page}`);
+    else if (page === mount || page.startsWith(`${mount}/`)) headers.set("x-fuzor-page", `${PLACEHOLDER}${page.slice(mount.length)}`);
   }
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : request.body;
-  return new Request(url, { method: request.method, headers: request.headers, signal: request.signal, ...(body ? { body, duplex: "half" } as RequestInit : {}) });
+  return new Request(url, { method: request.method, headers, signal: request.signal, ...(body ? { body, duplex: "half" } as RequestInit : {}) });
 }
 
 const TEXTUAL = /^(?:text\/|application\/(?:json|javascript|x-ndjson|manifest\+json|xml)|image\/svg\+xml)/i;

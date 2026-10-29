@@ -183,13 +183,8 @@ export function mount(host: HTMLElement) {
   const dataIdentity = (raw: string) => { const url = new URL(raw); for (const key of ["sidebar", "sidebarView", "sidebarUtility", "sidebarUtilityPanel", "databaseRow"]) url.searchParams.delete(key); url.hash = ""; return url.href; };
   let renderedData = dataIdentity(router.url());
   const syncNavigation = () => { const path = unmounted(new URL(router!.url()).pathname); navigation(path, router!.params().projectId); };
-  const viewCommitted = () => { if (config && isServerView()) reload(); };
-  const refreshRequested = (event: Event) => {
-    const projectId = (event as CustomEvent<{ projectId: string }>).detail?.projectId;
-    if (isServerView() && router!.params().projectId === projectId) refreshPage();
-  };
-  outlet.addEventListener("fuzor:view-commit", viewCommitted);
-  document.addEventListener("newui:refresh", refreshRequested);
+  const workspaceDrawn = () => { if (config && isServerView()) reload(); };
+  outlet.addEventListener("zelavis:database-drawn", workspaceDrawn);
   const unsubscribeRoute = router.subscribeRoute(() => { renderedPath = new URL(router!.url()).pathname; renderedData = dataIdentity(router!.url()); if (config) reload(); });
   const unsubscribeUrl = router.subscribeUrl(url => {
     if (new URL(url).pathname !== renderedPath || !config) return;
@@ -207,7 +202,7 @@ export function mount(host: HTMLElement) {
   })), Effect.catch(error => Effect.sync(() => legacyContent.replaceChildren(message(error.message, true))))));
   return () => {
     disposed = true; themeMedia.removeEventListener("change", applyTheme); window.removeEventListener("storage", applyTheme);
-    outlet.removeEventListener("fuzor:view-commit", viewCommitted); document.removeEventListener("newui:refresh", refreshRequested);
+    outlet.removeEventListener("zelavis:database-drawn", workspaceDrawn);
     unsubscribeRoute(); unsubscribeUrl(); sidebarController.dispose(); host.removeEventListener("keydown", escape);
     stopUpdates?.(); unmountUpdateBanner();
     for (const fiber of fibers) Effect.runFork(Fiber.interrupt(fiber));

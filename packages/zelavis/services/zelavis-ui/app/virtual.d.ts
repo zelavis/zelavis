@@ -6,4 +6,3 @@ interface ImportMeta { readonly hot?: { dispose(callback: () => void): void }; }
 
 declare module "*.css";
 
-declare module "*.fragment.html" { const template: import("fuzor/server-components/protocol").CompiledFragment; export default template; }

@@ -1,19 +1,20 @@
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import { createHash } from "node:crypto";
-import { defineServerComponent, view, type ServerViewDefinition } from "fuzor/server-components/server";
-import { streamView } from "fuzor/server-components/stream-server";
 import type { ServerRequestContext } from "fuzor/server";
-import template from "./database.fragment.html";
-import workspace from "./database.view-client.ts";
-import { refresh } from "./database.handlers.ts";
-import { pageNumber, parseFilter, parseSort } from "../grids/model.ts";
+import { API_PREFIX } from "./mount.ts";
+import { pageNumber, parseFilter, parseSort } from "./grids/model.ts";
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
-import { databaseRoutes } from "../routes.ts";
-import { API_PREFIX } from "../mount.ts";
-const database = defineServerComponent((context: ServerRequestContext) => Effect.runPromise(Effect.gen(function* () {
+/** The public answer the Database workspace component renders: everything here is visible to the browser. */
+export type DatabaseWorkspace = Record<string, unknown>;
+
+/**
+ * Reads one Project's Database workspace from the Platform with the caller's own session. It runs only on the server, from the
+ * component's `<script server>`; every request it makes is authenticated and authorized by Zelavis itself.
+ */
+export const readDatabaseWorkspace = (context: Pick<ServerRequestContext, "request" | "url" | "params" | "signal">): Promise<DatabaseWorkspace> => Effect.runPromise(Effect.gen(function* () {
     const signal = context.signal;
     // Inside a Platform the dashboard calls it in-process (`src/dashboard-service.ts` hands over its `fetch`), so no
     // address is guessed and no caller's Host header chooses an upstream. Only the dev server, which runs apart from a
@@ -95,26 +96,14 @@ const database = defineServerComponent((context: ServerRequestContext) => Effect
         );
       }
       const draftScope = createHash("sha256").update(context.request.headers.get("cookie") ?? "").update(context.request.headers.get("authorization") ?? "").digest("hex");
-      const props = { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, after: after ?? "", next: next ?? "", limit, readonly: Boolean(systemView), ...(queryError ? { queryError } : {}), recordsJson: JSON.stringify(records), choicesJson: JSON.stringify(choices), tenantsJson: JSON.stringify(tenants), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu }) };
-      const key = createHash("sha256").update(JSON.stringify([projectId, tenant, collection, systemView, schemaPanel])).digest("hex").slice(0, 24);
-      return view.fragment(template.id, "database-frame", { summary: `Server view · ${records.length} records · ${new Date().toISOString()}` }, { handlers: { refresh: view.handler(event => {
-        event.element.ownerDocument.dispatchEvent(new CustomEvent("newui:refresh", { detail: { projectId } }));
-      }) }, slots: { workspace: [view.client(workspace, key, props)] } });
-    }).pipe(Effect.catchCause(cause => Effect.sync(() => {
+      const recordsJson = JSON.stringify(records);
+      // Public answers are bounded (2 MiB); a page of very large documents says so instead of failing the whole view.
+      const tooLarge = recordsJson.length > MAX_RECORDS_JSON;
+      return { schemaPanel, schemasJson: JSON.stringify(schemas), selectedSchemaVersion: context.url.searchParams.get("schemaVersion") ?? "", draftScope, projectId, apiBase, tenant, collection, systemView, after: after ?? "", next: next ?? "", limit, readonly: Boolean(systemView), ...(queryError || tooLarge ? { queryError: queryError ?? "This page of records is too large to load at once. Choose a smaller page size." } : {}), recordsJson: tooLarge ? "[]" : recordsJson, choicesJson: JSON.stringify(choices), tenantsJson: JSON.stringify(tenants), navigationJson: JSON.stringify({ project, projects, runtime: scoped, menu }) } satisfies DatabaseWorkspace;
+    }).pipe(Effect.catchCause(cause => {
       const error = Cause.squash(cause);
-      if (signal.aborted) throw error;
-      return view.fragment(template.id, "database-error", { summary: error instanceof Error ? error.message : "Could not open the database" }, { handlers: { refresh: view.handler(refresh) }, slots: { workspace: [view.client(workspace, "unavailable", { error: true, signin: requiresLogin })] } });
-    })));
-}).pipe(Effect.timeout("30 seconds")), { signal: context.signal }));
-const streamedDatabase = defineServerComponent((context: ServerRequestContext) => view.boundary(
-  createHash("sha256").update(JSON.stringify([context.params.projectId, context.url.searchParams.get("databaseTenant") ?? "", context.url.searchParams.get("databaseTable") ?? "", context.url.searchParams.get("databaseSystemView") ?? "", context.url.searchParams.get("databasePanel") ?? ""])).digest("hex").slice(0, 24),
-  [view.fragment(template.id, "database-loading", { summary: "Loading database…" }, { handlers: { refresh: view.handler(refresh) } })],
-  [view.server(database, context)],
-));
-export default {
-  streaming: streamView,
-  routes: Object.fromEntries(databaseRoutes.map(route => [route, streamedDatabase])),
-  // Scope is an opaque session partition, never an authentication or authorization decision.
-  // Every API request above still authenticates and authorizes through Zelavis itself.
-  scope: context => createHash("sha256").update(context.request.headers.get("cookie") ?? "").update(context.request.headers.get("authorization") ?? "").digest("hex").slice(0, 32),
-} satisfies ServerViewDefinition;
+      if (signal.aborted) return Effect.fail(error);
+      return Effect.succeed({ error: error instanceof Error ? error.message : "Could not open the database", signin: requiresLogin } satisfies DatabaseWorkspace);
+    }));
+}).pipe(Effect.timeout("30 seconds")), { signal: context.signal });
+const MAX_RECORDS_JSON = 1_500_000;

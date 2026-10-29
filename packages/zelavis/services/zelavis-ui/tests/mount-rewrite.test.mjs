@@ -20,14 +20,12 @@ test("requests enter the build under the placeholder and nothing outside the mou
   assert.equal(new URL(requestIntoBuild(new Request("http://h/projects/p"), "").url).pathname, "/__zelavis__/projects/p");
 });
 
-test("a server view asked for by its page address is asked for it under the placeholder", () => {
-  const asked = (request, mount) => new URL(request.url).searchParams.get("url");
-  const render = (mount, target) => requestIntoBuild(new Request(`http://h${mount}/_fuzor/render?url=${encodeURIComponent(target)}`), mount);
-  assert.equal(asked(render("/admin", "/admin/projects/p/database?x=1&y=2"), "/admin"), "/__zelavis__/projects/p/database?x=1&y=2");
-  assert.equal(asked(render("", "/projects/p/database?x=1"), ""), "/__zelavis__/projects/p/database?x=1");
-  assert.equal(asked(render("/admin", "/elsewhere/x"), "/admin"), "/elsewhere/x", "a page outside the mount is left for Fuzor to refuse");
-  const other = requestIntoBuild(new Request("http://h/admin/api/v1/runtime?url=/admin/x"), "/admin");
-  assert.equal(new URL(other.url).searchParams.get("url"), "/admin/x", "only the render endpoint's address is rewritten");
+test("the page a data or action request names is named under the placeholder", () => {
+  const named = (mount, page) => requestIntoBuild(new Request(`http://h${mount}/_fuzor/data/x`, { headers: { "x-fuzor-page": page } }), mount).headers.get("x-fuzor-page");
+  assert.equal(named("/admin", "/admin/projects/p/database"), "/__zelavis__/projects/p/database");
+  assert.equal(named("", "/projects/p/database"), "/__zelavis__/projects/p/database");
+  assert.equal(named("/admin", "/elsewhere/x"), "/elsewhere/x", "a page outside the mount is left for Fuzor to refuse");
+  assert.equal(requestIntoBuild(new Request("http://h/admin/x"), "/admin").headers.get("x-fuzor-page"), null);
 });
 
 test("the placeholder is replaced across chunk boundaries and a partial match is not lost", async () => {

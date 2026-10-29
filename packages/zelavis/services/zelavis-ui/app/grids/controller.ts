@@ -1,8 +1,6 @@
 import { schemaVersions } from "../schema-editor.ts";
 import { schemaRecordFields } from "../schema-record.ts";
 import { draftJournal, type InspectorDraft } from "./drafts.ts";
-import type { ClientOperation, PersistentClient } from "fuzor/server-components/browser";
-import type { Values } from "fuzor/server-components/protocol";
 import { Cause, Effect, Fiber } from "effect";
 import { getRouter } from "fuzor/runtime";
 import { request, object } from "../api.ts";
@@ -10,7 +8,10 @@ import { button, message, node } from "../dom.ts";
 import { dropdown } from "../dropdown.ts";
 import { gridData, filterOperators, filterParam, hiddenParam, parseFilter, parseHidden, parseSort, parseEdit, changedRecord, type FilterOperator, type GridAdapter, type GridAdapterOptions, type GridRecord } from "./model.ts";
 
-/** A Fuzor island owns the shared workspace; vendor grids only render and edit cells. */
+/** A mounted workspace piece: the grid or schema editor. `update` receives the freshest public answer; `dispose` ends its work. */
+export type PersistentClient = { update(props: Record<string, unknown>, operation?: { readonly signal: AbortSignal }): unknown; dispose(): unknown };
+
+/** The database workspace component owns the shared workspace; vendor grids only render and edit cells. */
 export function mountPersistent(host: HTMLElement, initialProps: Record<string, unknown>) {
   let props = initialProps;
   const router = getRouter(host.ownerDocument);
@@ -178,7 +179,7 @@ export function mountPersistent(host: HTMLElement, initialProps: Record<string, 
   const unsubscribe = router.subscribeUrl(() => { void draw(); });
   void draw();
   return {
-    update(next: Values, operation?: ClientOperation) {
+    update(next: Record<string, unknown>, operation?: { readonly signal: AbortSignal }) {
       const loaded = gridData(typeof next.recordsJson === "string" ? JSON.parse(next.recordsJson) : next.records as unknown as unknown[]);
       const changed = JSON.stringify(initial.records) !== JSON.stringify(loaded.records);
       const loadedIds = new Set(loaded.records.map(row => row.id));
