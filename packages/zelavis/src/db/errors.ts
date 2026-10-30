@@ -371,6 +371,24 @@ export class DocumentConflict extends Schema.TaggedError<DocumentConflict>()("Do
   reason: Schema.String,
 }) {}
 
+/** No cross-Tenant index has this name. */
+export class CrossTenantIndexNotFound extends Schema.TaggedError<CrossTenantIndexNotFound>()(
+  "CrossTenantIndexNotFound",
+  { name: Schema.String },
+) {}
+
+/** A cross-Tenant index with this name already exists; drop it to define it differently. */
+export class CrossTenantIndexExists extends Schema.TaggedError<CrossTenantIndexExists>()(
+  "CrossTenantIndexExists",
+  { name: Schema.String },
+) {}
+
+/** A cross-Tenant index definition that cannot be built as given. */
+export class InvalidCrossTenantIndex extends Schema.TaggedError<InvalidCrossTenantIndex>()(
+  "InvalidCrossTenantIndex",
+  { name: Schema.String, reason: Schema.String },
+) {}
+
 export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()(
   "ProjectionNotFound",
   { name: Schema.String },

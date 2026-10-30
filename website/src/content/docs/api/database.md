@@ -282,6 +282,37 @@ Global data is not the Tenant's and stays.
 The dashboard's Database → Tenants page is a client of these routes. It offers Delete only for Tenants the operator made:
 the App's own Tenant and a plugin's `service:` Tenant are not deleted from there.
 
+## Cross-Tenant indexes
+
+A Tenant is the unit of locality, so a question about every Tenant at once (every listing priced under 10 000, say) has
+no one shard to ask. A cross-Tenant index is the answer for a live request: one collection's documents from every Tenant,
+copied into one partition of its own and kept current from each Tenant's event log, so a query reads that one partition
+however many Tenants there are. Plugins' `service:` Tenants are never read.
+
+It is derived and eventually consistent. Each Tenant partition is followed from its own cursor, and every batch of
+entries is committed in the same transaction as the cursor it reached, so a refresh cut off anywhere repeats nothing and
+skips nothing. A moved Tenant carries on from its cursor; one compacted past it, or removed and written again, has its
+entries derived again from its records. In a Project runtime the index is refreshed shortly after each write and swept
+every minute; a query answers as of the last full refresh and says when that was (`refreshedAt`). A Tenant whose entries
+are being derived again may show stale entries until that finishes.
+
+An index names one collection, the `columns` a query may filter, range over and order by (every scalar field when
+omitted) and optionally an `analyzer` for text search, exactly as a collection declares them. Queries use the source
+documents' own field paths; each match carries its `tenant` (and `part` for a divided Tenant), `id`, `version` and `data`.
+The definition is fixed: drop the index and define it again to change it. Reading and querying need `database.inspect`
+(carried by `project.view`); defining, refreshing and dropping need `database.indexes.manage` (carried by
+`project.runtime.manage`), because an index reads every Tenant.
+
+| Form | List / get | Define | Query | Refresh | Drop |
+|---|---|---|---|---|---|
+| HTTP (under `…/proxy/zelavis/api/v1/database`) | `GET /cross-tenant-indexes`, `GET /cross-tenant-indexes/:name` | `POST /cross-tenant-indexes` with `{ name, collection, columns?, analyzer? }` | `POST /cross-tenant-indexes/:name/query` with `{ where?, tenants?, search?, orderBy?, limit?, after? }` | `POST /cross-tenant-indexes/:name/refresh` | `DELETE /cross-tenant-indexes/:name` |
+| SDK | `client.crossTenantIndexes(projectId).list()`, `.get(name)` | `.define(definition)` | `.query(name, input)` | `.refresh(name)` | `.drop(name)` |
+| CLI | `zelavis cross-tenant-indexes list --project P`, `get NAME` | `define --definition JSON` | `query NAME [--where JSON] [--order-by JSON] [--tenants A,B] [--search T]` | `refresh NAME` | `drop NAME` |
+
+Embedded, the same operations are `db.crossTenantIndexes.define/list/get/query/refresh/drop`; `makeDatabase` refreshes in
+the background unless `crossTenantRefresh: false`. Not yet: a dashboard page, an index spread over more than one shard (it
+lives on the database's global shard), and vector, geometry or composite indexes inside a cross-Tenant index.
+
 ## Backups and restore
 
 A backup is one Tenant: its records and the events logged while the export ran,

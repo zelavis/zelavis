@@ -35,6 +35,10 @@ import type { OutboxPage } from "./outbox.js";
 import type { EventCursor } from "./events.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
 import type { ProjectionSummary } from "./projections.js";
+import type {
+  CrossTenantIndexDefinition, CrossTenantIndexSummary, CrossTenantQueryInput, CrossTenantQueryResult,
+  CrossTenantRefreshResult,
+} from "./cross-tenant-index.js";
 import type { QuerySystemViewInput, SystemView, SystemViewResult } from "./system-views.js";
 import type {
   AggregateInput,
@@ -284,6 +288,15 @@ export interface DatabaseRuntimeApi {
   readonly dropTenant: (tenant: TenantId) => Promise<{ readonly tenant: TenantId; readonly shard: string; readonly records: number }>;
   readonly tenantUsage: () => Promise<ReadonlyArray<{ readonly tenant: TenantId; readonly shard: string; readonly records: number; readonly bytes: number }>>;
   readonly context: { readonly nodeId: string };
+  /** One collection's documents from every Tenant, queried from one partition; see `DatabaseApi.crossTenantIndexes`. */
+  readonly crossTenantIndexes: {
+    readonly define: (definition: CrossTenantIndexDefinition) => Promise<CrossTenantIndexSummary>;
+    readonly list: () => Promise<ReadonlyArray<CrossTenantIndexSummary>>;
+    readonly get: (name: string) => Promise<CrossTenantIndexSummary>;
+    readonly drop: (name: string) => Promise<{ readonly name: string; readonly entries: number }>;
+    readonly refresh: (name?: string) => Promise<ReadonlyArray<CrossTenantRefreshResult>>;
+    readonly query: (input: CrossTenantQueryInput) => Promise<CrossTenantQueryResult>;
+  };
   /**
    * What a health or operator surface may report about placement.
    *
@@ -395,6 +408,14 @@ export const runtimeApiFor = (
   dropTenant: (tenant) => run(database.dropTenant(tenant)),
   tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
   context: { nodeId: options?.nodeId ?? "local" },
+  crossTenantIndexes: {
+    define: (definition) => run(database.crossTenantIndexes.define(definition)),
+    list: () => run(database.crossTenantIndexes.list),
+    get: (name) => run(database.crossTenantIndexes.get(name)),
+    drop: (name) => run(database.crossTenantIndexes.drop(name)),
+    refresh: (name) => run(database.crossTenantIndexes.refresh(name)),
+    query: (input) => run(database.crossTenantIndexes.query(input)),
+  },
   topology: {
     shards: shardsOf(database.partitionMap),
     virtualRanges: database.partitionMap.virtualRanges,

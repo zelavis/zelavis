@@ -1,7 +1,7 @@
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
-import { makeDatabase, type DatabaseApi } from "./database.js";
+import { makeDatabase, type DatabaseApi, type MakeDatabaseOptions } from "./database.js";
 import type { StoreError } from "./errors.js";
 import { makeLibsqlStore } from "./engines/libsql.js";
 import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
@@ -61,6 +61,8 @@ export interface OpenNodeDatabaseOptions {
   readonly shards?: ReadonlyArray<ShardId>;
   readonly virtualRanges?: number;
   readonly nodeId?: string;
+  /** How cross-Tenant indexes are kept current; see `MakeDatabaseOptions.crossTenantRefresh`. */
+  readonly crossTenantRefresh?: MakeDatabaseOptions["crossTenantRefresh"];
 }
 
 export interface OpenNodeDatabase {
@@ -125,6 +127,7 @@ export const openNodeDatabase = (
       makeDatabase({
         partitionMap: fallback,
         ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
+        ...(options.crossTenantRefresh === undefined ? {} : { crossTenantRefresh: options.crossTenantRefresh }),
         openShard: openShardWith(options.engine, options.directory),
       }),
       scope,

@@ -19,6 +19,9 @@ import {
 } from "./topology-store.js";
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
+import {
+  crossTenantIndexesOver, type CrossTenantIndexesApi, type CrossTenantRefreshOptions,
+} from "./cross-tenant-index.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
@@ -280,6 +283,14 @@ export interface DatabaseApi {
    * choosing it.
    */
   readonly scatter: ScatterApi;
+
+  /**
+   * One collection's documents from every Tenant, kept current from each
+   * Tenant's log, so a live question across Tenants reads one partition
+   * instead of asking every Tenant. Eventually consistent; see
+   * `cross-tenant-index.ts`.
+   */
+  readonly crossTenantIndexes: CrossTenantIndexesApi;
 }
 
 export interface MakeDatabaseOptions {
@@ -300,6 +311,11 @@ export interface MakeDatabaseOptions {
    * the old shard still holding the tenant, fenced, until a resume clears it.
    */
   readonly drainTimeout?: Duration.Input;
+  /**
+   * How cross-Tenant indexes are kept current in the background while the
+   * database is open, or `false` to refresh them only when asked.
+   */
+  readonly crossTenantRefresh?: CrossTenantRefreshOptions | false;
   /**
    * Opens one physical shard.
    *
@@ -390,7 +406,30 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
    * over it runs against where the tenant is routed when it starts (see
    * `partitionRouter`), so no handle keeps using a shard a move took it off.
    */
-  const storeFor = (tenant: TenantId): ObjectStoreApi => router.routed(tenant);
+  const crossTenant = yield* crossTenantIndexesOver({
+    globalShard,
+    shards,
+    tenantsOn,
+    routed: (partition) => router.routed(partition),
+  });
+
+  /**
+   * A partition's store whose changes tell the cross-Tenant indexes to read it
+   * soon. Only a hint: their sweep finds what this misses.
+   */
+  const watched = (store: ObjectStoreApi, partition: PartitionKey): ObjectStoreApi => ({
+    ...store,
+    get generation() {
+      return store.generation;
+    },
+    transact: (f) => Effect.tap(store.transact(f), () => crossTenant.touched(partition)),
+    events: {
+      ...store.events,
+      apply: (event) => Effect.tap(store.events.apply(event), () => crossTenant.touched(partition)),
+    },
+  });
+
+  const storeFor = (tenant: TenantId): ObjectStoreApi => watched(router.routed(tenant), tenant);
 
   // The topology store is a store like any other: it takes writes, so it grows
   // like any other, and upkeep that skipped it would leave the one store an
@@ -617,6 +656,11 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // the one moment every shard is known to be reachable.
   yield* replication.refresh;
 
+  // Last, so its first pass reads shards nothing is still finishing.
+  if (options.crossTenantRefresh !== false) {
+    yield* Effect.forkScoped(crossTenant.background(options.crossTenantRefresh));
+  }
+
   return {
     get partitionMap() {
       return topology.current();
@@ -624,6 +668,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     maintenance,
     replication,
     scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
+    crossTenantIndexes: crossTenant.api,
     movement,
     topology,
     shardOf,

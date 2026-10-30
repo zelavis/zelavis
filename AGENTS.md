@@ -1349,7 +1349,18 @@ Key rules:
   under every cursor handed out before.
 - Crossing partitions is a separate API, never a fallback. `forTenant` is
   single-partition by construction; `db.scatter` is the only thing that fans
-  out, and it reports what each leg cost. A `Seq` names an object only together
+  out, and it reports what each leg cost. A live question across Tenants does
+  not fan out at all: it reads a cross-Tenant index (`db.crossTenantIndexes`),
+  one collection's documents from every Tenant copied into one partition of
+  the global shard. The index is derived, never authoritative: it follows each
+  Tenant partition's log from a cursor kept per partition and committed in the
+  same transaction as the entries that batch produced, and it trusts a cursor
+  only in the partition life it was read in (`PartitionStats.incarnation`,
+  written with a partition's first batch, kept by a copy, new after a removal).
+  A cursor compacted past or from another life derives that partition's
+  entries again from its records. Plugins' `service:` partitions are never
+  read. Defining one needs `database.indexes.manage`; querying needs
+  `database.inspect`. A `Seq` names an object only together
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.

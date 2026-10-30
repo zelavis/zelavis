@@ -4,6 +4,10 @@ import {
 } from "./platform-clients.js";
 export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
 import type { SystemView, SystemViewResult } from "../db/system-views.js";
+import type {
+  CrossTenantIndexDefinition, CrossTenantIndexSummary, CrossTenantQueryInput, CrossTenantQueryResult,
+  CrossTenantRefreshResult,
+} from "../db/cross-tenant-index.js";
 import type { ZelavisFileReference } from "../platform/storage-types.js";
 import type { WorkloadDefinition, WorkloadRunLog } from "../app/workloads/workloads-service.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "../db/schema/index.js";
@@ -346,6 +350,13 @@ export interface ZelavisClient {
    * (`project.view` reads, `project.runtime.manage` writes). Same contract as `zelavis storage`.
    */
   storage(projectId: string): ZelavisStorageClient;
+  /**
+   * An App Project's cross-Tenant indexes: one collection's documents from every Tenant, queried from one
+   * partition. Reading and querying need `database.inspect` (carried by `project.view`); defining, dropping and
+   * refreshing need `database.indexes.manage` (carried by `project.runtime.manage`). Same contract as
+   * `zelavis cross-tenant-indexes`.
+   */
+  crossTenantIndexes(projectId: string): ZelavisCrossTenantIndexesClient;
   /** The Fabric's nodes, Project placements and migrations. Same contract as `zelavis fabric`. */
   readonly fabric: ZelavisFabricClient;
   /** The Assistant's threads, replies, approvals, providers and audit. Same contract as `zelavis assistant`. */
@@ -667,6 +678,19 @@ export interface ZelavisStorageFile {
   readonly metadata?: Readonly<Record<string, string>>;
   /** SHA-256 of the bytes, hex, computed when the file was written. */
   readonly checksum?: string;
+}
+
+export interface ZelavisCrossTenantIndexesClient {
+  list(): Promise<{ readonly indexes: readonly CrossTenantIndexSummary[] }>;
+  get(name: string): Promise<CrossTenantIndexSummary>;
+  /** Fixed once defined: drop it and define it again to change it. Filled by the next refresh. */
+  define(definition: CrossTenantIndexDefinition): Promise<CrossTenantIndexSummary>;
+  /** Removes the index and what it holds; the Tenants' documents are untouched. */
+  drop(name: string): Promise<{ readonly name: string; readonly entries: number }>;
+  /** Reads every Tenant's log now, instead of waiting for the background refresh. */
+  refresh(name: string): Promise<CrossTenantRefreshResult>;
+  /** One page of matches across Tenants; filters and order use the source documents' declared columns. */
+  query(name: string, input?: Omit<CrossTenantQueryInput, "index">): Promise<CrossTenantQueryResult>;
 }
 
 export interface ZelavisStorageClient {
@@ -1545,6 +1569,7 @@ export function createZelavisClient(
     },
     data: (projectId) => createDataClient(json, projectId),
     storage: (projectId) => createStorageClient(request, json, projectId),
+    crossTenantIndexes: (projectId) => createCrossTenantIndexesClient(json, projectId),
     fabric: createFabricClient(json),
     assistant: createAssistantClient(json, request),
     deploymentBackends: createDeploymentBackendsClient(json),
@@ -2099,6 +2124,23 @@ const failureOf = (response: Response) => Effect.gen(function* () {
   const body = yield* integration(() => response.clone().json()).pipe(Effect.orElseSucceed(() => undefined));
   return yield* Effect.fail(new ZelavisClientHttpError(response, body));
 });
+
+function createCrossTenantIndexesClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisCrossTenantIndexesClient {
+  const base = `${PROJECT_DATABASE_PROXY_PATH}/cross-tenant-indexes`;
+  const at = (name?: string, action?: string) =>
+    projectPath(projectId, `${base}${name === undefined ? "" : `/${encodeURIComponent(name)}`}${action === undefined ? "" : `/${action}`}`);
+  return {
+    list: () => json(at()),
+    get: (name) => json(at(name)),
+    define: (definition) => json(at(), { method: "POST", body: definition }),
+    drop: (name) => json(at(name), { method: "DELETE" }),
+    refresh: (name) => json(at(name, "refresh"), { method: "POST", body: {} }),
+    query: (name, input) => json(at(name, "query"), { method: "POST", body: input ?? {} }),
+  };
+}
 
 function createStorageClient(
   request: (path: string, options?: ZelavisClientRequestOptions) => Promise<Response>,

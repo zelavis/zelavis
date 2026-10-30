@@ -170,6 +170,12 @@ export interface PartitionStats {
   readonly nextSeq: number;
   /** A seed began here and did not finish: the records are part of a copy. */
   readonly seeding: boolean;
+  /**
+   * Names this life of the partition: set by its first write, kept by a copy,
+   * new after it is removed and written again. Absent while nothing has been
+   * written. A cursor is only meaningful with the incarnation it was read in.
+   */
+  readonly incarnation?: string;
 }
 
 export interface ObjectStoreApi {

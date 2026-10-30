@@ -35,6 +35,7 @@ export * from "./outbox.js";
 export * from "./topology-store.js";
 export * from "./system-views.js";
 export * from "./scatter.js";
+export * from "./cross-tenant-index.js";
 export * from "./movement.js";
 export * from "./followers.js";
 export * from "./replication.js";

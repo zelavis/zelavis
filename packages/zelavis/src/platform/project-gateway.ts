@@ -138,6 +138,9 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
     "database.backup",
     "database.restore",
     "database.drop",
+    // Cross-Tenant indexes read every Tenant, so defining one is the
+    // Project's infrastructure authority, not an App client's data authority.
+    "database.indexes.manage",
   ]),
 });
 

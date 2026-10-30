@@ -23,6 +23,7 @@ import { runSystemStoreCommand } from "./system-store.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runStorageCommand } from "./storage.js";
+import { runCrossTenantIndexesCommand } from "./cross-tenant-indexes.js";
 import { runFabricCommand } from "./fabric.js";
 import { runRuntimeCommand } from "./runtime.js";
 import { runEnvironmentCommand } from "./environment.js";
@@ -162,6 +163,7 @@ Usage:
   zelavis backends <list|detect|enable|disable|default> [backend-id] [--url <url>] [--token <token>] [--json]
   zelavis agent <status|operations|operation> [operation-id] [--url <url>] [--token <token>] [--json]
   zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
+  zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project <id> [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
   zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
@@ -207,6 +209,8 @@ Commands:
                             tenants, create-tenant and delete-tenant list, add and remove
                             the Tenants of an App Project's database; export-tenant and restore-tenant
                             back up and restore one of them.
+  cross-tenant-indexes      Define, list, refresh, query and drop an App Project's
+                            cross-Tenant indexes: one collection from every Tenant.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.
   services list             List runtime service registry entries.
@@ -673,6 +677,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "storage") {
       (yield* integration(() => runStorageCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "cross-tenant-indexes") {
+      (yield* integration(() => runCrossTenantIndexesCommand(args.slice(1))));
       return;
     }
     if (args[0] === "workloads") {

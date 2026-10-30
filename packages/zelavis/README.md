@@ -665,6 +665,18 @@ anything, so a Tenant holding only messages, time series or history moves too.
 Reopening also finishes any lens rebuild or reindex a crash cut off; until then
 that partition answers `LensesRebuilding`.
 
+`db.crossTenantIndexes` keeps one collection's documents from every Tenant in a
+partition of its own on the global shard, so a live query across Tenants reads
+one partition instead of fanning out (`scatter` remains the operator's tool).
+Each Tenant partition is followed from its own cursor, committed with the
+entries it produced; a Tenant compacted past its cursor, or removed and written
+again (told apart by its partition's `incarnation`), is derived again from its
+records. Plugins' `service:` Tenants are never read. It is eventually
+consistent: refreshed shortly after each write and swept every minute while the
+database is open (`crossTenantRefresh`), and a query reports `refreshedAt`. The
+same operations are HTTP routes under `database/cross-tenant-indexes`,
+`client.crossTenantIndexes(projectId)` and `zelavis cross-tenant-indexes`.
+
 A read of several steps answers from one snapshot of its shard, so a query sees
 one moment however many writes land while it runs; writes still see the shard
 as it is. `documents.write({ emit })` records messages in the Tenant's outbox in

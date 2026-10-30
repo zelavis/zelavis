@@ -130,6 +130,18 @@ const META_FENCE = "fence";
  */
 const META_SEEDING = "seeding";
 
+/**
+ * Random bytes naming this life of the partition: written with the first
+ * batch that ever reaches it, copied by a seed, and gone when the partition
+ * is removed. A partition removed and written again starts a new log whose
+ * positions begin over, so a cursor kept from before means nothing in it;
+ * this is how a reader holding one can tell.
+ */
+const META_INCARNATION = "incarnation";
+
+const toHex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+const fromHex = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
+
 /** The highest version a record can reach: four bytes in every record and event. */
 const MAX_VERSION = 0xffffffff;
 
@@ -365,6 +377,7 @@ const openPartition = (
   const { generation, session } = context.claim;
   const keys = partitionKeys(partition);
   const revisionKey = keys.meta(META_REVISION);
+  const incarnationKey = keys.meta(META_INCARNATION);
 
   const readMetaFrom = (source: KvEngine) => (name: string) =>
     Effect.flatMap(source.get(keys.meta(name)), (bytes) => Effect.try({
@@ -534,8 +547,15 @@ const openPartition = (
       return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
     }
     const nextRevision = encoder.encode(crypto.randomUUID());
+    // No revision is a partition nothing has written: this batch begins its life.
+    const incarnationId = keyId(incarnationKey);
+    const begins = revision === undefined && !writes.some((entry) => keyId(entry.key) === incarnationId);
     const accepted = yield* engine.conditionalWrite(
-      [...writes, { op: "put", key: revisionKey, value: nextRevision }],
+      [
+        ...(begins ? [{ op: "put" as const, key: incarnationKey, value: crypto.getRandomValues(new Uint8Array(16)) }] : []),
+        ...writes,
+        { op: "put", key: revisionKey, value: nextRevision },
+      ],
       conditions(),
     ).pipe(Effect.onError(() => Effect.sync(forget)));
     if (!accepted) {
@@ -2159,14 +2179,15 @@ const openPartition = (
     return yield* removeAll;
   }));
 
-  const stats: Effect.Effect<PartitionStats, StoreError> = Effect.all({
+  const stats: Effect.Effect<PartitionStats, StoreError> = Effect.map(Effect.all({
     records: readMeta(META_RECORDS),
     bytes: readMeta(META_BYTES),
     head: readMeta(META_HEAD),
     compactedTo: readMeta(META_COMPACTED_TO),
     nextSeq: readMeta(META_NEXT_SEQ),
     seeding: Effect.map(readMeta(META_SEEDING), (state) => state > 0),
-  });
+    incarnation: Effect.map(engine.get(incarnationKey), (bytes) => bytes === undefined ? undefined : toHex(bytes)),
+  }), ({ incarnation, ...counted }) => incarnation === undefined ? counted : { ...counted, incarnation });
 
   const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
     // Copied first: an engine may hand back a view of a buffer it reuses, and
@@ -2212,6 +2233,8 @@ const openPartition = (
       let pending = new Map<string, KvWrite>();
       let into: Projection = { view: pendingView(pending), sealed: false, counters };
       into.view.put(keys.meta(META_SEEDING), u64Bytes(1));
+      // A copy is the same life of the partition, so it keeps the source's name for it.
+      if (start.incarnation !== undefined) into.view.put(incarnationKey, fromHex(start.incarnation));
       let copied = 0;
       let highest = 0;
       const flush = Effect.gen(function* () {

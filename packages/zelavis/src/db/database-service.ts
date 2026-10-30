@@ -44,6 +44,7 @@ import type {
   WindowsInput,
 } from "./time-series.js";
 import type { KeyValueWrite, KvCursor } from "./key-value.js";
+import type { CrossTenantIndexDefinition } from "./cross-tenant-index.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -206,6 +207,41 @@ function readFilters(value: unknown): DocumentFilter[] {
 
 function readSort(value: unknown): DocumentSort[] {
   return Array.isArray(value) ? (value as DocumentSort[]) : [];
+}
+
+function readStrings(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new TypeError(`${name} must be an array of strings.`);
+  }
+  return value as string[];
+}
+
+/** A cross-Tenant index definition as sent; the database checks what it means. */
+function readCrossTenantIndexDefinition(input: Record<string, unknown>): CrossTenantIndexDefinition {
+  if (typeof input.name !== "string") throw new TypeError("name must be a string.");
+  if (typeof input.collection !== "string") throw new TypeError("collection must be a string.");
+  const columns = input.columns === undefined ? undefined : readStrings(input.columns, "columns");
+  let analyzer: Analyzer | undefined;
+  if (input.analyzer !== undefined) {
+    const raw = input.analyzer;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new TypeError("analyzer must be an object.");
+    const given = raw as Record<string, unknown>;
+    if (typeof given.version !== "number" || !Number.isFinite(given.version)) throw new TypeError("analyzer.version must be a number.");
+    analyzer = {
+      fields: readStrings(given.fields, "analyzer.fields"),
+      version: given.version,
+      ...(typeof given.fold === "boolean" ? { fold: given.fold } : {}),
+      ...(given.stopWords === undefined ? {} : { stopWords: readStrings(given.stopWords, "analyzer.stopWords") }),
+      ...(typeof given.minLength === "number" ? { minLength: given.minLength } : {}),
+      ...(typeof given.language === "string" ? { language: given.language } : {}),
+    };
+  }
+  return {
+    name: input.name,
+    collection: input.collection,
+    ...(columns === undefined ? {} : { columns }),
+    ...(analyzer === undefined ? {} : { analyzer }),
+  };
 }
 
 /** Filters carried in a query string, where a body would be the wrong shape. */
@@ -414,6 +450,7 @@ const CONFLICT_TAGS = new Set([
   "DocumentConflict",
   "SchemaVersionExists",
   "MessageExists",
+  "CrossTenantIndexExists",
   // Refused only while a move is fenced; the same request succeeds once
   // routing points at the new shard.
   "TenantMoving",
@@ -431,6 +468,7 @@ const NOT_FOUND_TAGS = new Set([
   "TimeSeriesNotFound",
   "UnknownReference",
   "UnknownSystemView",
+  "CrossTenantIndexNotFound",
 ]);
 
 const BAD_REQUEST_TAGS = new Set([
@@ -461,6 +499,7 @@ const BAD_REQUEST_TAGS = new Set([
   "TenantDivided",
   "UnknownPart",
   "UnindexedField",
+  "InvalidCrossTenantIndex",
 ]);
 
 /**
@@ -554,6 +593,12 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return failure.to === "removed"
         ? `Tenant "${failure.tenant}" is being removed; it refuses changes.`
         : `Tenant "${failure.tenant}" is being moved to another shard; retry shortly.`;
+    case "CrossTenantIndexNotFound":
+      return `No cross-Tenant index is named "${failure.name}".`;
+    case "CrossTenantIndexExists":
+      return `A cross-Tenant index named "${failure.name}" already exists; drop it to define it differently.`;
+    case "InvalidCrossTenantIndex":
+      return `Cross-Tenant index "${failure.name}": ${failure.reason}.`;
     case "TenantNotDroppable":
       return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
     case "PlacementInUse":
@@ -703,6 +748,167 @@ function defineDatabaseRootService(
               return { status: 400, body: { error: `Tenant "${tenantId}" belongs to a plugin and cannot be removed; uninstall the plugin or drop its tables instead.` } };
             }
             return { body: yield* integration(() => service.dropTenant(tenantId)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.crossTenantIndexes.list",
+          spec: {
+            operationId: "listCrossTenantIndexes",
+            summary: "List cross-Tenant indexes",
+            description:
+              "Each index's definition, how many Tenant partitions it follows, when it was last refreshed from every Tenant in this runtime, and what the last refresh could not read.",
+            tags: ["database"],
+            responses: { 200: { description: "{ indexes }" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/cross-tenant-indexes",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            return { body: { indexes: yield* integration(() => service.crossTenantIndexes.list()) } };
+          })),
+        },
+        {
+          id: "database.crossTenantIndexes.define",
+          spec: {
+            operationId: "defineCrossTenantIndex",
+            summary: "Define a cross-Tenant index",
+            description:
+              "One collection's documents from every Tenant (plugins' service: Tenants excluded), kept current from each Tenant's log in the background, so a query across Tenants reads one partition. The definition is fixed: drop the index and define it again to change it.",
+            tags: ["database"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["name", "collection"],
+                properties: {
+                  name: { type: "string", description: "Letters, numbers, underscores and hyphens, like a collection name" },
+                  collection: { type: "string", description: "The collection every Tenant contributes" },
+                  columns: { type: "array", items: { type: "string" }, description: "Fields a query may filter, range over and order by; every scalar field when omitted" },
+                  analyzer: { type: "object", description: "Fields made searchable as text: { fields, version, fold?, stopWords?, minLength?, language? }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The index" },
+              400: { description: "A definition that cannot be built" },
+              409: { description: "An index with that name exists" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["database.indexes.manage"] },
+          path: "/cross-tenant-indexes",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => service.crossTenantIndexes.define(readCrossTenantIndexDefinition(input))) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.crossTenantIndexes.get",
+          spec: {
+            operationId: "getCrossTenantIndex",
+            summary: "Read one cross-Tenant index",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Index name" } },
+            responses: { 200: { description: "The index" }, 404: { description: "No such index" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/cross-tenant-indexes/:name",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.crossTenantIndexes.get(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
+        },
+        {
+          id: "database.crossTenantIndexes.drop",
+          spec: {
+            operationId: "dropCrossTenantIndex",
+            summary: "Drop a cross-Tenant index",
+            description: "Removes the index and everything it holds. The Tenants' own documents are untouched.",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Index name" } },
+            responses: { 200: { description: "{ name, entries }" }, 404: { description: "No such index" } },
+          },
+          method: "DELETE",
+          access: { permissions: ["database.indexes.manage"] },
+          path: "/cross-tenant-indexes/:name",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.crossTenantIndexes.drop(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
+        },
+        {
+          id: "database.crossTenantIndexes.refresh",
+          spec: {
+            operationId: "refreshCrossTenantIndex",
+            summary: "Bring a cross-Tenant index up to date now",
+            description: "Reads every Tenant's log from the index's cursor for it, instead of waiting for the background refresh.",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Index name" } },
+            responses: { 200: { description: "{ index, partitions, applied, rederived, removed, failures }" }, 404: { description: "No such index" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.indexes.manage"] },
+          path: "/cross-tenant-indexes/:name/refresh",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            const [result] = yield* integration(() => service.crossTenantIndexes.refresh(params.name));
+            return { body: result };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))))),
+        },
+        {
+          id: "database.crossTenantIndexes.query",
+          spec: {
+            operationId: "queryCrossTenantIndex",
+            summary: "Query a cross-Tenant index",
+            description:
+              "One page of matches from every Tenant, read from the index alone. Filters and order use the source documents' field paths and must be declared columns. Answers as of the last refresh, given as refreshedAt.",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Index name" } },
+            requestBody: {
+              required: false,
+              schema: {
+                type: "object",
+                properties: {
+                  where: { type: "array", description: "Filters on the source documents' fields" },
+                  tenants: { type: "array", items: { type: "string" }, description: "Only these Tenants" },
+                  search: { type: "string", description: "Words to find in the analyzed fields" },
+                  fuzzy: { description: "When true or edit distance (1 or 2), terms match fuzzily" },
+                  prefix: { type: "boolean", description: "When true, terms match as prefixes" },
+                  orderBy: { type: "array", description: "Declared columns to order by" },
+                  limit: { type: "number", description: "Matches per page: 1 to 1000, 50 when omitted" },
+                  after: { type: "string", description: "The next cursor from the previous page" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "{ matches: [{ tenant, part?, id, version, data, updatedAt }], next?, refreshedAt? }" },
+              400: { description: "An undeclared field, a bad cursor or limit" },
+              404: { description: "No such index" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["database.inspect"] },
+          path: "/cross-tenant-indexes/:name/query",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const limit = readNumber(input.limit, 50);
+            if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new TypeError("limit must be an integer from 1 to 1000.");
+            if (input.after !== undefined && typeof input.after !== "string") throw new TypeError("after must be the next cursor from a previous page.");
+            if (input.search !== undefined && typeof input.search !== "string") throw new TypeError("search must be a string.");
+            if (input.prefix !== undefined && typeof input.prefix !== "boolean") throw new TypeError("prefix must be a boolean.");
+            if (input.fuzzy !== undefined && typeof input.fuzzy !== "boolean" && typeof input.fuzzy !== "number") throw new TypeError("fuzzy must be a boolean or an edit distance.");
+            const tenants = input.tenants === undefined ? undefined : readStrings(input.tenants, "tenants");
+            return {
+              body: yield* integration(() => service.crossTenantIndexes.query({
+                index: params.name,
+                where: readFilters(input.where),
+                orderBy: readSort(input.orderBy),
+                limit,
+                ...(tenants === undefined ? {} : { tenants }),
+                ...(input.search === undefined ? {} : { search: input.search as string }),
+                ...(input.fuzzy === undefined ? {} : { fuzzy: input.fuzzy as boolean | number }),
+                ...(input.prefix === undefined ? {} : { prefix: input.prefix as boolean }),
+                ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),
+              })),
+            };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {

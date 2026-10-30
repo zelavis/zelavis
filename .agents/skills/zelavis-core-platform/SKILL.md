@@ -451,6 +451,12 @@ before editing.
   partition existence (`tenantsOn`), not a marker. Followers are kept level by
   `levelFollower`/`followLeader`, which copy again only when carrying on cannot
   be exact.
+- A live query across Tenants reads a cross-Tenant index
+  (`db.crossTenantIndexes`, `cross-tenant-index.ts`), never a fan-out: one
+  collection from every Tenant in one global-shard partition, fed from each
+  Tenant partition's log by a per-partition cursor committed with its entries,
+  trusted only in the same partition `incarnation`; otherwise that partition is
+  derived again from its records. `service:` partitions are never read.
 - The transactional outbox is `documents.write({ emit })` plus
   `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
   the batch, read in log order, at least once, deduplicated by id. JS, HTTP,
