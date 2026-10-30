@@ -462,9 +462,14 @@ before editing.
   position read after them, under the target's writer. It records its lineage,
   the only way a partition accepts another's cursor (up to the branch point),
   which keeps copied checkpoints valid without rewriting them. An unfinished
-  branch refuses reads and writes (`TenantBranching`) until run again. No merge
-  back. JS, HTTP (`POST database/tenants/:id/branch`), SDK
-  (`client.projects.branchTenant`) and CLI (`zelavis projects branch-tenant`).
+  branch refuses reads and writes (`TenantBranching`) until run again or the
+  database reopens. Only the target is leased; the source is read a page per
+  routed call so it can move meanwhile. The outbox is left behind by default
+  (copied, then retracted in the branch's own log before it finishes);
+  receipts are kept. A divided Tenant branches part by part. No merge back.
+  JS, HTTP (`POST database/tenants/:id/branch`), SDK
+  (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
+  the dashboard's Database → Tenants Branch action.
 - The transactional outbox is `documents.write({ emit })` plus
   `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
   the batch, read in log order, at least once, deduplicated by id. JS, HTTP,

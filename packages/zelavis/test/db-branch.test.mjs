@@ -3,24 +3,31 @@
 // goes its own way from there. These tests hold a branch to its source as of
 // the branch point while the source keeps taking writes, to cursors and
 // checkpoints carrying on across it, to a branch of a branch, a compacted
-// source, a branch cut off part way, and to what it refuses.
+// source, a branch cut off part way and finished when the database reopens, a
+// source moved while it is branched, the outbox it leaves behind or copies, a
+// divided Tenant branched part by part, and to what it refuses.
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { Cause, Effect, Exit, Fiber, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect";
 import { makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
+import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { openShardOverKv } from "../dist/db/kv-store.js";
 import { StoreError } from "../dist/db/errors.js";
 
 const map = partitionMapFor(["s0", "s1"]);
 
 /** A database over memory engines, with each shard's store at hand and an optional engine in front. */
-const withDatabase = (body, { wrap } = {}) =>
+const withDatabase = (body, { wrap, drainTimeout } = {}) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const shards = new Map();
     const db = yield* makeDatabase({
       partitionMap: map,
       crossTenantRefresh: false,
+      ...(drainTimeout === undefined ? {} : { drainTimeout }),
       openShard: (shard) => {
         const engine = memoryKvEngine();
         return Effect.tap(openShardOverKv(shard, wrap === undefined ? engine : wrap(shard, engine)), (store) =>
@@ -29,6 +36,38 @@ const withDatabase = (body, { wrap } = {}) =>
     });
     return yield* body(db, shards);
   })));
+
+/** The same over SQLite files in `dir`, so a second open finds what the first left. */
+const onDisk = (dir, body, { wrap } = {}) =>
+  Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const shards = new Map();
+    const db = yield* makeDatabase({
+      partitionMap: map,
+      crossTenantRefresh: false,
+      openShard: (shard) => Effect.flatMap(makeNodeSqliteEngine(shard, dir), (engine) =>
+        Effect.tap(openShardOverKv(shard, wrap === undefined ? engine : wrap(shard, engine)), (store) =>
+          Effect.sync(() => shards.set(shard, store)))),
+    });
+    return yield* body(db, shards);
+  })));
+
+/** Fail the `failAt`-th batch written to `shard` (or touching `partition`) while armed. */
+const cutting = (armed) => (shard, engine) => ({
+  ...engine,
+  conditionalWrite: (writes, conditions) => {
+    const hit = armed.partition === undefined
+      ? armed.target === shard
+      : writes.some((write) => Buffer.from(write.key).includes(armed.partition));
+    if (hit && (armed.target !== undefined || armed.partition !== undefined)) {
+      armed.writes += 1;
+      if (armed.writes === armed.failAt) return Effect.fail(new StoreError({ op: "test", cause: "cut off" }));
+    }
+    return engine.conditionalWrite(writes, conditions);
+  },
+});
+
+const messageIds = (tenant, after) => Effect.map(tenant.outbox.read({ ...(after === undefined ? {} : { after }), limit: 1000 }),
+  (page) => page.messages.map((message) => message.id));
 
 /** Two Tenant names on different shards, so a branch crosses shards; and two sharing one. */
 const across = (() => {
@@ -247,7 +286,7 @@ test("a branch cut off part way refuses every read and write until the same bran
   });
 });
 
-test("a branch is refused for the same name, reserved and plugin Tenants, divided ones, an empty source and an occupied target", () =>
+test("a branch is refused for the same name, reserved and plugin Tenants, part names, a divided target, an empty source and an occupied target", () =>
   withDatabase((db) => Effect.gen(function* () {
     yield* seedPosts(db.forTenant(across.first), ["p1"]);
     yield* seedPosts(db.forTenant(across.same), ["q1"]);
@@ -256,7 +295,13 @@ test("a branch is refused for the same name, reserved and plugin Tenants, divide
     assert.equal(yield* reason(across.first, across.first), "TenantNotBranchable: a Tenant cannot be branched into itself");
     assert.equal(yield* reason(across.first, "zv.copy"), `TenantNotBranchable: "zv.copy" is reserved`);
     assert.equal(yield* reason("service:shop", across.other), `TenantNotBranchable: "service:shop" belongs to a plugin`);
-    assert.equal(yield* reason(across.first, "whale"), `TenantNotBranchable: "whale" is divided into parts`);
+    assert.equal(yield* reason(across.first, "whale"), `TenantNotBranchable: "whale" is divided into parts and "${across.first}" is not`);
+    assert.equal(yield* reason(across.first, "whale#a"), `TenantNotBranchable: "whale#a" names a part; branch the Tenant it belongs to`);
+    assert.equal(yield* reason("whale", across.other), `TenantNotBranchable: "whale" holds nothing`);
+    assert.equal(
+      yield* Effect.map(Effect.flip(db.branchTenant(across.first, across.other, { outbox: "keep" })), (error) => error.reason),
+      `outbox must be "leave" or "copy", not "keep"`,
+    );
     assert.equal(yield* reason("nobody", across.other), `TenantNotBranchable: "nobody" holds nothing`);
     assert.equal(yield* reason(across.first, across.same), `TenantNotBranchable: "${across.same}" already holds data`);
     assert.deepEqual(yield* posts(db.forTenant(across.same)), { q1: "q1@1" }, "a refused branch leaves the target as it was");
@@ -272,3 +317,141 @@ test("a cross-Tenant index picks the branch up as a Tenant of its own", () =>
     const found = yield* db.crossTenantIndexes.query({ index: "posts", where: [{ path: "title", value: "p1" }] });
     assert.deepEqual(found.matches.map((match) => match.tenant).sort(), [across.first, across.other].sort());
   })));
+
+test("a branch leaves the source's undelivered outbox messages with it by default, keeps its receipts, and copies the messages when asked", () =>
+  withDatabase((db, shards) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    yield* seedPosts(source, ["p1"]);
+    const before = (yield* source.events.read({ limit: 100 })).cursor;
+    for (const id of ["m0", "m1", "m2"]) yield* source.outbox.emit({ topic: "mail", payload: { id }, id });
+    yield* source.outbox.emit({ topic: "mail", payload: { keyed: true }, idempotencyKey: "k1" });
+    yield* source.outbox.remove({ ids: ["m0"] });
+
+    const left = yield* db.branchTenant(across.first, across.other);
+    const branch = db.forTenant(across.other);
+    assert.deepEqual(yield* messageIds(branch), [], "nothing the source still owes is read from the branch");
+    assert.deepEqual(yield* messageIds(branch, before), [], "not even from a source cursor before the branch point");
+    assert.deepEqual(yield* messageIds(source), ["m1", "m2", "idempotent:k1"], "the source keeps them to deliver");
+    assert.deepEqual(yield* posts(branch), yield* posts(source), "documents are copied all the same");
+
+    const stats = yield* shards.get(db.shardOf(across.other)).partition(across.other).stats;
+    assert.ok(stats.head > stats.lineage[0].upTo, "they are retracted in the branch's own log, past the branch point");
+    assert.equal(positionOf(left.cursor), stats.head);
+    assert.equal(stats.leaving, undefined, "a finished branch keeps no note of what it left");
+
+    // The receipt came along: a replay is the write that already happened, so no message is emitted again.
+    const replayed = yield* branch.outbox.emit({ topic: "mail", payload: { keyed: true }, idempotencyKey: "k1" });
+    assert.equal(replayed.id, "idempotent:k1");
+    yield* branch.outbox.emit({ topic: "mail", payload: { id: "m3" }, id: "m3" });
+    assert.deepEqual(yield* messageIds(branch), ["m3"], "only what the branch emits itself is its to deliver");
+    yield* shards.get(db.shardOf(across.other)).partition(across.other).rebuildLenses;
+    assert.deepEqual(yield* messageIds(branch), ["m3"]);
+
+    yield* db.branchTenant(across.first, across.same, { outbox: "copy" });
+    assert.deepEqual(yield* messageIds(db.forTenant(across.same)), ["m1", "m2", "idempotent:k1"], "copied, ids and order kept");
+  })));
+
+test("a divided Tenant branches into one divided the same way, part by part, and a part cut off is finished by the same call", () => {
+  const armed = { partition: undefined, writes: 0, failAt: 0 };
+  return withDatabase((db) => Effect.gen(function* () {
+    yield* db.topology.subdivision.subdivide("whale", ["a", "b", "c"]);
+    yield* seedPosts(db.forPart("whale", "a"), ["a1"]);
+    yield* seedPosts(db.forPart("whale", "b"), ["b1", "b2"]);
+    yield* db.forPart("whale", "b").outbox.emit({ topic: "mail", payload: {}, id: "owed" });
+
+    // Part b's copy is cut off after its first batch; part a's is whole by then.
+    armed.partition = "orca#b";
+    armed.writes = 0;
+    armed.failAt = 2;
+    assert.ok(Exit.isFailure(yield* Effect.exit(db.branchTenant("whale", "orca"))));
+    armed.partition = undefined;
+    assert.deepEqual(db.topology.subdivision.partsOf("orca"), ["a", "b", "c"], "the target is divided as the source is");
+    assert.equal(squashed(yield* Effect.exit(db.forPart("orca", "b").documents.findMany({ collection: "posts" })))?._tag, "TenantBranching");
+
+    const made = yield* db.branchTenant("whale", "orca");
+    assert.deepEqual(made.parts.map((entry) => entry.part), ["b"], "a finished part is not copied again; an empty one has nothing to copy");
+    assert.equal(made.shard, undefined);
+    assert.equal(made.records, made.parts[0].records);
+    for (const part of ["a", "b"]) {
+      assert.deepEqual(yield* posts(db.forPart("orca", part)), yield* posts(db.forPart("whale", part)), `part ${part} holds its counterpart's records`);
+    }
+    assert.deepEqual(yield* messageIds(db.forPart("orca", "b")), [], "each part leaves its outbox behind");
+    assert.throws(() => db.forTenant("orca"), (error) => error._tag === "TenantDivided");
+
+    const reason = (tenant, into) => Effect.map(Effect.flip(db.branchTenant(tenant, into)), (error) => error.reason);
+    assert.equal(yield* reason("whale", "orca"), `"orca" already holds data`);
+    yield* db.topology.subdivision.subdivide("shark", ["x", "y"]);
+    assert.equal(yield* reason("whale", "shark"), `"shark" is divided into x, y, not a, b, c`);
+    yield* seedPosts(db.forTenant(across.first), ["p1"]);
+    assert.equal(yield* reason("whale", across.first), `"${across.first}" already holds data`);
+    assert.equal(db.topology.subdivision.partsOf(across.first), undefined, "a refused target is not divided");
+  }), { wrap: cutting(armed) });
+});
+
+test("the source of a branch can be moved while it is copied: only the branch is leased for the whole copy", () => {
+  const pause = { armed: false, reached: undefined, resume: undefined };
+  return withDatabase((db) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    yield* source.documents.createCollection({ name: "posts", columns: ["title", "rank"] });
+    for (let batch = 0; batch < 9; batch++) {
+      yield* source.documents.write({
+        operations: Array.from({ length: 500 }, (_, at) => ({ _tag: "Insert", collection: "posts", id: `p${batch * 500 + at}`, data: { title: `p${batch}`, rank: at } })),
+      });
+    }
+    pause.reached = yield* Deferred.make();
+    pause.resume = yield* Deferred.make();
+    pause.armed = true;
+    const branching = yield* Effect.forkChild(db.branchTenant(across.first, across.other));
+    // The branch has written its first batch and stopped there, part way through the source's records.
+    yield* Deferred.await(pause.reached);
+    const destination = db.shardOf(across.other);
+    assert.notEqual(db.shardOf(across.first), destination);
+    yield* db.movement.rebalance({ version: 2, virtualRanges: 256, placements: [{ from: 0, to: 256, shard: destination }] });
+    assert.equal(db.shardOf(across.first), destination, "the source moved while its branch was being copied");
+    yield* Deferred.succeed(pause.resume, undefined);
+    const made = yield* Fiber.join(branching);
+    assert.equal(made.records > 4096, true, "the copy spans more than one page of the source");
+    const held = yield* posts(db.forTenant(across.other));
+    assert.equal(Object.keys(held).length, 4500);
+    assert.deepEqual(held, yield* posts(source), "the pages read after the move came from where the source went");
+  }), {
+    drainTimeout: "200 millis",
+    wrap: (shard, engine) => ({
+      ...engine,
+      conditionalWrite: (writes, conditions) => {
+        if (!pause.armed || !writes.some((write) => Buffer.from(write.key).includes(across.other))) return engine.conditionalWrite(writes, conditions);
+        pause.armed = false;
+        return Effect.flatMap(engine.conditionalWrite(writes, conditions), (accepted) =>
+          Effect.as(Effect.andThen(Deferred.succeed(pause.reached, undefined), Deferred.await(pause.resume)), accepted));
+      },
+    }),
+  });
+});
+
+test("a branch cut off by a crash is finished when the database next opens, leaving behind what it was leaving", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-branch-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const armed = { target: undefined, writes: 0, failAt: 0 };
+  await onDisk(dir, (db, shards) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    yield* seedPosts(source, ["p1", "p2"]);
+    yield* source.outbox.emit({ topic: "mail", payload: {}, id: "owed" });
+    armed.target = db.shardOf(across.other);
+    armed.writes = 0;
+    armed.failAt = 2;
+    assert.ok(Exit.isFailure(yield* Effect.exit(db.branchTenant(across.first, across.other))));
+    armed.target = undefined;
+    const stats = yield* shards.get(db.shardOf(across.other)).partition(across.other).stats;
+    assert.deepEqual([stats.seeding, stats.leaving], [true, ["zv.outbox"]], "the unfinished branch notes what it leaves");
+  }), { wrap: cutting(armed) });
+
+  await onDisk(dir, (db, shards) => Effect.gen(function* () {
+    const branch = db.forTenant(across.other);
+    assert.deepEqual(yield* posts(branch), yield* posts(db.forTenant(across.first)), "finished on open, before any call");
+    assert.deepEqual(yield* messageIds(branch), [], "and still left the outbox behind");
+    const stats = yield* shards.get(db.shardOf(across.other)).partition(across.other).stats;
+    assert.equal(stats.seeding, false);
+    assert.equal(stats.leaving, undefined);
+  }));
+});
+

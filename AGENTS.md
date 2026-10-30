@@ -1376,8 +1376,15 @@ Key rules:
   rewrite them instead. The lineage is written with the first batch and the
   seeding mark cleared with the last, all under the target's writer, and while
   the mark stands the partition refuses every read and write
-  (`TenantBranching`); running the branch again starts it over. There is no
-  merging back.
+  (`TenantBranching`); running the branch again, or the database opening,
+  starts it over. Only the target is leased for the copy: the source is read a
+  page per routed call (`scanRecords`), so it can move meanwhile and the next
+  page is read where it went; never hold the source for the whole copy. What a
+  branch leaves behind (`leave`, the outbox by default) is copied and then
+  retracted in the branch's own log while the mark stands, never skipped in
+  the copy, which would break the shared log; the namespaces are recorded
+  beside the mark so a resume leaves the same ones. A divided Tenant branches
+  part by part into a Tenant divided the same way. There is no merging back.
 - A restore says what to do about data already there — refuse, purge, or merge
   — and never guesses. Its label must name the tenant it is restored into, and
   it writes only into that tenant's own partition, so nothing in a backup can

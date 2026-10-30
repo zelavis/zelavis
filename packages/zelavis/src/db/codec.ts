@@ -431,3 +431,24 @@ export const decodeLineage = (bytes: Uint8Array): StoredLineage => {
   input.end();
   return out;
 };
+
+/** At most this many identity namespaces an unfinished branch leaves behind. */
+export const LEAVE_LIMIT = 16;
+
+/** The identity namespaces an unfinished branch leaves behind: a count, then each name. */
+export const encodeNames = (names: ReadonlyArray<string>): Uint8Array => {
+  const out = new Writer();
+  out.u32(names.length);
+  for (const name of names) out.string(name);
+  return out.finish();
+};
+
+export const decodeNames = (bytes: Uint8Array): ReadonlyArray<string> => {
+  const input = new Reader(bytes, "names");
+  const count = input.u32();
+  if (count > LEAVE_LIMIT) throw new RangeError(`a branch leaves ${count} namespaces behind, more than ${LEAVE_LIMIT}`);
+  const out: string[] = [];
+  for (let at = 0; at < count; at++) out.push(input.string());
+  input.end();
+  return out;
+};

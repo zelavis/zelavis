@@ -30,9 +30,11 @@ import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isReservedTenantId, isValidCollectionName, SERVICE_TENANT_PREFIX } from "./naming.js";
+import { OUTBOX_NAMESPACE } from "./tenancy.js";
 import {
   GLOBAL_SHARD,
   GLOBAL_TENANT,
+  PART_SEPARATOR,
   partitionKeyFor,
   shardFor,
   shardsOf,
@@ -244,22 +246,32 @@ export interface DatabaseApi {
 
   /**
    * Make `into` a new Tenant holding a copy of `tenant`: its records, its log up to one position, and
-   * everything defined in it — collections, schemas, projections, time series, outbox messages and
-   * idempotency receipts — as of that position. `tenant` keeps taking writes while it is copied; the
-   * branch is the source as of the position it read when its records were copied (`through`), and
-   * nothing written after that reaches it.
+   * everything defined in it — collections, schemas, projections, time series and idempotency
+   * receipts — as of that position. `tenant` keeps taking writes while it is copied; the branch is the
+   * source as of the position it read when its records were copied, and nothing written after that
+   * reaches it. Only the branch is leased for the whole copy: the source is read a page per call, so it
+   * can be moved while it is branched.
+   *
+   * Outbox messages the source has not yet had removed are its to deliver, so by default the branch
+   * leaves them behind (`outbox: "leave"`): they are retracted in the branch's own log, after the
+   * branch point, before anything can read them. `outbox: "copy"` keeps them, for a branch whose
+   * consumer is to deliver them again. Receipts stay either way: the writes they guard are in the
+   * branch too.
    *
    * The branch keeps the source's identifiers, versions and log positions, so its edges hold, and a
    * cursor or checkpoint from the source up to the branch point carries on in it. It is a Tenant of its
-   * own from then on: writes to either never reach the other, and there is no merging back. Until the
-   * copy is whole every read and write of `into` fails with `TenantBranching`; if the branch is cut off
-   * the same call starts it over. Refused for a reserved, plugin or divided Tenant on either side, a
-   * source holding nothing, a target already holding data, the same name twice, and while any
-   * relocation is pending.
+   * own from then on: writes to either never reach the other, and there is no merging back. A divided
+   * source makes `into` divided into the same parts and branches each part into its counterpart, each
+   * as of a position of its own. Until a copy is whole every read and write of its target fails with
+   * `TenantBranching`; a branch cut off is started over by the same call, or when the database next
+   * opens. Refused for a reserved or plugin Tenant on either side, a name holding the part separator,
+   * a source holding nothing, a target already holding data or divided otherwise, the same name twice,
+   * and while any relocation is pending.
    */
   readonly branchTenant: (
     tenant: TenantId,
     into: TenantId,
+    options?: BranchTenantOptions,
   ) => Effect.Effect<TenantBranch, DbError | TenantNotBranchable>;
 
   /**
@@ -314,18 +326,37 @@ export interface DatabaseApi {
   readonly crossTenantIndexes: CrossTenantIndexesApi;
 }
 
-/** What `branchTenant` made. */
-export interface TenantBranch {
-  readonly tenant: TenantId;
-  readonly into: TenantId;
-  /** The shard the branch lives on. */
+/** How `branchTenant` treats what is not simply state. */
+export interface BranchTenantOptions {
+  /** Leave the source's undelivered outbox messages with it (the default), or copy them too. */
+  readonly outbox?: "leave" | "copy";
+}
+
+/** One partition a branch copied: the whole Tenant, or one part of a divided one. */
+export interface PartitionBranch {
+  /** The shard the copy lives on. */
   readonly shard: ShardId;
   /** Records copied, retired ones included. */
   readonly records: number;
   /** Events of the source's log copied after its records. */
   readonly events: number;
-  /** The end of the branch's log: the source's log as of the branch point, as a cursor of the branch. */
+  /** The end of the copy's log, as a cursor of the branch. */
   readonly cursor?: EventCursor;
+}
+
+/**
+ * What `branchTenant` made. An undivided Tenant's branch carries its one copy's shard and cursor; a
+ * divided one's lists the parts this call copied (`parts`), which leave out any a call cut off had
+ * already finished. `records` and `events` are their sums.
+ */
+export interface TenantBranch {
+  readonly tenant: TenantId;
+  readonly into: TenantId;
+  readonly records: number;
+  readonly events: number;
+  readonly shard?: ShardId;
+  readonly cursor?: EventCursor;
+  readonly parts?: ReadonlyArray<PartitionBranch & { readonly part: string }>;
 }
 
 export interface MakeDatabaseOptions {
@@ -465,6 +496,32 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   });
 
   const storeFor = (tenant: TenantId): ObjectStoreApi => watched(router.routed(tenant), tenant);
+
+  /** Whether a partition holds anything where routing places it now. */
+  const holds = (partition: PartitionKey) =>
+    Effect.gen(function* () {
+      const store = shards.get(shardOf(partition));
+      return store !== undefined && (yield* tenantsOn(store)).includes(partition);
+    });
+
+  /**
+   * Branch one partition into another, both already checked. Only the target is leased for the whole
+   * copy; the source is read a page per call, each routed to wherever it lives then (`seed`), so a move
+   * of the source is never held up by its branch.
+   */
+  const branchPartition = (from: PartitionKey, to: PartitionKey, leave: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const target = storeFor(to);
+      const seeded = yield* target.seed(storeFor(from), { branch: true, leave });
+      yield* crossTenant.touched(to);
+      const cursor = yield* target.events.head;
+      return {
+        shard: shardOf(to),
+        records: seeded.records,
+        events: seeded.applied ?? 0,
+        ...(cursor === undefined ? {} : { cursor }),
+      } satisfies PartitionBranch;
+    });
 
   // The topology store is a store like any other: it takes writes, so it grows
   // like any other, and upkeep that skipped it would leave the one store an
@@ -686,6 +743,30 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     }
   }
 
+  // A branch cut off by a crash leaves its target refusing every read and write.
+  // It is started over here, from the source its lineage names and leaving
+  // behind what it was leaving. One that cannot be finished now — its source
+  // gone, or a relocation pending — stays as it was, still refusing, for
+  // `branchTenant` or `dropTenant` to settle, and the database opens regardless.
+  for (const [shardId, shard] of shards) {
+    for (const partition of yield* shard.partitions) {
+      if (shardOf(partition) !== shardId) continue;
+      const stats = yield* shard.partition(partition).stats;
+      const from = stats.lineage?.[0]?.partition;
+      if (!stats.seeding || from === undefined) continue;
+      yield* Effect.gen(function* () {
+        if ((yield* movement.pending).length > 0) {
+          return yield* Effect.logWarning(`Branch of "${from}" into "${partition}" not resumed: a relocation is pending`);
+        }
+        if (!(yield* holds(from))) {
+          return yield* Effect.logWarning(`Branch of "${from}" into "${partition}" not resumed: "${from}" holds nothing`);
+        }
+        yield* branchPartition(from, partition, stats.leaving ?? []);
+      }).pipe(Effect.catchCause((cause) =>
+        Effect.logWarning(`Branch of "${from}" into "${partition}" not resumed`, cause)));
+    }
+  }
+
   // A shard that joined while the database was closed, or one left behind by an
   // interrupted pass, holds a stale copy until something levels it. Opening is
   // the one moment every shard is known to be reachable.
@@ -714,36 +795,67 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       }
       return [...found].sort();
     }),
-    branchTenant: (tenant, into) =>
+    branchTenant: (tenant, into, branchOptions) =>
       Effect.gen(function* () {
         const refuse = (reason: string) => new TenantNotBranchable({ tenant, into, reason });
         for (const name of [tenant, into]) {
           if (isReservedTenantId(name) || name === GLOBAL_TENANT) return yield* refuse(`"${name}" is reserved`);
           if (name.startsWith(SERVICE_TENANT_PREFIX)) return yield* refuse(`"${name}" belongs to a plugin`);
-          if (topology.subdivision.partsOf(name) !== undefined) return yield* refuse(`"${name}" is divided into parts`);
+          // A name with the separator would be some divided Tenant's part.
+          if (name.includes(PART_SEPARATOR)) return yield* refuse(`"${name}" names a part; branch the Tenant it belongs to`);
         }
         if (tenant === into) return yield* refuse("a Tenant cannot be branched into itself");
+        const outbox = branchOptions?.outbox ?? "leave";
+        if (outbox !== "leave" && outbox !== "copy") return yield* refuse(`outbox must be "leave" or "copy", not "${String(outbox)}"`);
+        const leave = outbox === "leave" ? [OUTBOX_NAMESPACE] : [];
         if ((yield* movement.pending).length > 0) return yield* refuse("a relocation is pending");
-        const source = shards.get(shardOf(tenant));
-        if (source === undefined || !(yield* tenantsOn(source)).includes(tenant)) return yield* refuse(`"${tenant}" holds nothing`);
-        // Each side under a lease on its placement for the whole copy, so neither can be moved and
-        // cleared from under it.
-        const leased = <A, E>(partition: TenantId, effect: Effect.Effect<A, E>) =>
-          router.operations({ run: () => effect }, partition).run();
-        const target = storeFor(into);
-        const seeded = yield* leased(tenant, leased(into, target.seed(storeFor(tenant), { branch: true }))).pipe(
-          Effect.catchTag("TenantNotEmpty", () => Effect.fail(refuse(`"${into}" already holds data`))),
-        );
-        yield* crossTenant.touched(into);
-        const cursor = yield* target.events.head;
+        const occupied = () => refuse(`"${into}" already holds data`);
+        const parts = topology.subdivision.partsOf(tenant);
+        const intoParts = topology.subdivision.partsOf(into);
+
+        if (parts === undefined) {
+          if (intoParts !== undefined) return yield* refuse(`"${into}" is divided into parts and "${tenant}" is not`);
+          if (!(yield* holds(tenant))) return yield* refuse(`"${tenant}" holds nothing`);
+          const made = yield* branchPartition(tenant, into, leave).pipe(
+            Effect.catchTag("TenantNotEmpty", () => Effect.fail(occupied())),
+          );
+          return { tenant, into, ...made } satisfies TenantBranch;
+        }
+
+        // Divided: `into` is divided the same way, and each part is branched into its counterpart.
+        const held: string[] = [];
+        for (const part of parts) if (yield* holds(partitionKeyFor(tenant, part))) held.push(part);
+        if (held.length === 0) return yield* refuse(`"${tenant}" holds nothing`);
+        if (intoParts === undefined) {
+          if (yield* holds(into)) return yield* occupied();
+          yield* topology.subdivision.subdivide(into, parts).pipe(
+            Effect.catchTag("SubdivisionInvalid", (invalid) => Effect.fail(refuse(invalid.reason))),
+          );
+        } else if (intoParts.length !== parts.length || intoParts.some((part, at) => part !== parts[at])) {
+          return yield* refuse(`"${into}" is divided into ${intoParts.join(", ")}, not ${parts.join(", ")}`);
+        }
+        const made: Array<PartitionBranch & { readonly part: string }> = [];
+        for (const part of held) {
+          const from = partitionKeyFor(tenant, part);
+          const to = partitionKeyFor(into, part);
+          // Finished by an earlier call cut off before every part was: not copied again.
+          const stats = yield* storeFor(to).stats;
+          if (!stats.seeding && stats.lineage?.[0]?.partition === from) continue;
+          made.push({
+            part,
+            ...(yield* branchPartition(from, to, leave).pipe(
+              Effect.catchTag("TenantNotEmpty", () => Effect.fail(refuse(`part "${part}" of "${into}" already holds data`))),
+            )),
+          });
+        }
+        if (made.length === 0) return yield* occupied();
         return {
           tenant,
           into,
-          shard: shardOf(into),
-          records: seeded.records,
-          events: seeded.applied ?? 0,
-          ...(cursor === undefined ? {} : { cursor }),
-        };
+          records: made.reduce((sum, entry) => sum + entry.records, 0),
+          events: made.reduce((sum, entry) => sum + entry.events, 0),
+          parts: made,
+        } satisfies TenantBranch;
       }),
     dropTenant: (tenant) =>
       Effect.gen(function* () {

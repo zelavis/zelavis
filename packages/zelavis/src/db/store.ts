@@ -176,6 +176,15 @@ export interface SeedOptions {
    * branch is started over by seeding it as a branch again.
    */
   readonly branch?: boolean;
+  /**
+   * For a branch: identity namespaces whose records it does not keep. They
+   * are copied with everything else, so the log stays the source's up to the
+   * branch point, and then retracted in the branch's own log before the copy
+   * is finished — so no read of the branch ever finds them. Recorded with the
+   * unfinished branch (`stats.leaving`), so whatever starts it over can leave
+   * the same ones behind.
+   */
+  readonly leave?: ReadonlyArray<string>;
 }
 
 /** What a partition holds, kept as it changes rather than counted when asked. */
@@ -203,6 +212,8 @@ export interface PartitionStats {
    * nearest first, and the last position it shares with that one.
    */
   readonly lineage?: ReadonlyArray<{ readonly partition: PartitionKey; readonly upTo: number }>;
+  /** For an unfinished branch: the identity namespaces it leaves behind (`SeedOptions.leave`). */
+  readonly leaving?: ReadonlyArray<string>;
 }
 
 export interface ObjectStoreApi {
@@ -243,7 +254,9 @@ export interface ObjectStoreApi {
    * the same one on another shard, or, with `branch`, a Tenant this one is
    * branched from — keeping its identifiers.
    *
-   * Copies every record while the source carries on taking writes, then sets
+   * Copies every record while the source carries on taking writes, one page
+   * per call (`scanRecords`), so a routed source is leased only for a page at
+   * a time and can be moved meanwhile; then sets
    * this partition's log at the source's compaction point, so the source's
    * events from there can be applied with `followAll` at the positions they
    * hold on the source: the copy then has the source's state, history and

@@ -254,6 +254,19 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.ok(tables.collections.some(table => table.name === "ui_created_table"));
   console.log("Action: table creation redirects into the native database under the correct Project and tenant.");
 
+  yield* request(proxy + "/database/documents/collections", "POST", { tenantId: "parity-acme", name: "orders", surface: "database", metadata: { kind: "table" } });
+  yield* request(proxy + "/database/documents/orders", "POST", { tenantId: "parity-acme", id: "order-a", data: { total: 3 } });
+  yield* visit("/projects/parity-lab/database/tenants");
+  yield* io(() => page.getByRole("button", { name: "Branch Tenant parity-acme", exact: true }).click());
+  yield* io(() => page.getByRole("dialog").getByLabel("New Tenant ID").fill("parity-acme-branch"));
+  yield* io(() => page.getByRole("dialog").getByRole("button", { name: "Branch tenant", exact: true }).click());
+  yield* io(() => page.getByText("Branched Tenant parity-acme into parity-acme-branch.", { exact: true }).waitFor());
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Branch Tenant parity-acme-branch", exact: true }).count()), 1, "The branch is listed as a Tenant of its own");
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Branch Tenant zelavis-app", exact: true }).count()), 0, "The App's own Tenant offers no Branch");
+  const branchedOrder = yield* request(proxy + "/database/documents/orders/order-a?tenantId=parity-acme-branch");
+  assert.equal(branchedOrder.data.total, 3, "The branch holds the source's records");
+  console.log("Action: a Tenant is branched from Database → Tenants and the copy holds its records.");
+
   yield* visit("/projects/parity-lab/content/new");
   yield* io(() => page.getByLabel("Content type label").fill("UI Notes"));
   yield* io(() => page.getByLabel("Content type slug").fill("ui-notes"));

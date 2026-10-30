@@ -64,9 +64,13 @@ test("a follower whose seed was cut off is copied again rather than carried on",
   // Enough that the seed has written a batch, and marked itself unfinished,
   // before the cut.
   for (let seq = 1; seq <= 3000; seq++) yield* put(leader, seq, `v1-${seq}`, [`w${seq % 7}`, `u${seq}`]);
+  // The records are copied a page per call; the read of the leader after them is cut off, so every
+  // batch of records is written and the last, which clears the mark, never is.
+  let scanned = false;
   const cut = {
     ...leader,
-    records: Stream.concat(Stream.take(leader.records, 2500), Stream.fail(new StoreError({ op: "test.read", cause: "cut off" }))),
+    scanRecords: (input) => Effect.tap(leader.scanRecords(input), () => Effect.sync(() => { scanned = true; })),
+    stats: Effect.suspend(() => (scanned ? Effect.fail(new StoreError({ op: "test.read", cause: "cut off" })) : leader.stats)),
   };
   assert.equal((yield* Effect.flip(levelFollower(cut, follower)))._tag, "StoreError");
   assert.equal((yield* copy().stats).seeding, true, "the seed marked itself unfinished");

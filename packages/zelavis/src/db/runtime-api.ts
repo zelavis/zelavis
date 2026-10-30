@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { DatabaseApi, TenantApi, TenantBranch } from "./database.js";
+import type { BranchTenantOptions, DatabaseApi, TenantApi, TenantBranch } from "./database.js";
 import type { KvChangePage, KvCursor, KeyValueEntry, KeyValueWrite } from "./key-value.js";
 import type {
   Collection,
@@ -287,7 +287,7 @@ export interface DatabaseRuntimeApi {
   /** Remove a Tenant and everything it holds, history included; see `Database.dropTenant`. */
   readonly dropTenant: (tenant: TenantId) => Promise<{ readonly tenant: TenantId; readonly shard: string; readonly records: number }>;
   /** Make `into` a new Tenant holding a copy of `tenant` as of one position of its log; see `Database.branchTenant`. */
-  readonly branchTenant: (tenant: TenantId, into: TenantId) => Promise<TenantBranch>;
+  readonly branchTenant: (tenant: TenantId, into: TenantId, options?: BranchTenantOptions) => Promise<TenantBranch>;
   readonly tenantUsage: () => Promise<ReadonlyArray<{ readonly tenant: TenantId; readonly shard: string; readonly records: number; readonly bytes: number }>>;
   readonly context: { readonly nodeId: string };
   /** One collection's documents from every Tenant, queried from one partition; see `DatabaseApi.crossTenantIndexes`. */
@@ -408,7 +408,7 @@ export const runtimeApiFor = (
   shardOf: (tenant) => database.shardOf(tenant),
   tenants: () => run(database.tenants),
   dropTenant: (tenant) => run(database.dropTenant(tenant)),
-  branchTenant: (tenant, into) => run(database.branchTenant(tenant, into)),
+  branchTenant: (tenant, into, options) => run(database.branchTenant(tenant, into, options)),
   tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
   context: { nodeId: options?.nodeId ?? "local" },
   crossTenantIndexes: {

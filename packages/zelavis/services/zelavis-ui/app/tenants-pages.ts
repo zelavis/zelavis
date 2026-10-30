@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { array, label, object, request, type Config } from "./api.ts";
 import { slugifyTableName } from "./create-table-dialog.ts";
+import { mountBranchTenant } from "./branch-tenant-dialog.ts";
 import { mountDeleteTenant } from "./delete-tenant-dialog.ts";
 import { button, link, node } from "./dom.ts";
 import { badge, card, columns, dataRow, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
@@ -9,9 +10,9 @@ import { tenantKind, validTenantId } from "./tenant-ids.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /**
- * Project → Database → Tenants: every Tenant of the Project's database with what it holds, a way to add one, and a backup of
- * any of them. A Tenant exists once it holds something, so adding one writes its first table; the database has no operation to
- * delete a Tenant (a dropped table leaves its history), so there is no delete here.
+ * Project → Database → Tenants: every Tenant of the Project's database with what it holds, a way to add one, and, for any of
+ * them, a backup, a branch into a new Tenant and removal. A Tenant exists once it holds something, so adding one writes its
+ * first table. The App's own Tenant and plugins' Tenants are neither branched nor removed here.
  */
 
 export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: ScreenContext, scoped: Config, base: string, projectId: string) {
@@ -32,6 +33,11 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
   // One confirmation dialog for every row; it lives with the page and is removed when the page is.
   const dialogHost = node("div", { class: "dialog-host" });
   const confirmDelete = mountDeleteTenant(dialogHost, { api, removed: tenantId => { setFlash(`Deleted Tenant ${tenantId}.`); context.refresh(); } });
+  const branchDialog = mountBranchTenant(dialogHost, {
+    api,
+    taken: tenantId => tenants.some(entry => entry.tenantId === tenantId),
+    branched: (from, into) => { setFlash(`Branched Tenant ${from} into ${into}.`); context.refresh(); },
+  });
 
   const rows = tenants.map(entry => {
     const id = label(entry.tenantId, "");
@@ -42,7 +48,9 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     const actions = node("div", { class: "actions" }, badge(kind === "App" ? "active" : kind === "Plugin" ? "planned" : "ready"), node("span", { class: "muted" }, kind),
       tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
       button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }),
-      // The App's own Tenant and a plugin's are not for the operator to delete from here: the app and the plugin stand on them.
+      // The App's own Tenant and a plugin's are not for the operator to branch or delete from here: the app and the plugin stand on
+      // them, and the App's holds its accounts. A part of a divided Tenant is branched with the whole Tenant, never on its own.
+      ...(kind === "Tenant" && !id.includes("#") ? [button("Branch", () => branchDialog.open(id), { "aria-label": `Branch Tenant ${id}` })] : []),
       ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
     return dataRow(id, detail, actions);
   });
@@ -76,6 +84,6 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
       statCard("Tables", String(tenants.reduce((sum, entry) => sum + (Number(entry.tables) || 0), 0)), "Across every Tenant"),
       statCard("Documents", String(tenants.reduce((sum, entry) => sum + (Number(entry.documents) || 0), 0)), `${formatBytes(tenants.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0))} stored in every Tenant`)),
     rows.length ? rowsCard("Tenants", ...rows) : card("Tenants", node("p", { class: "muted" }, "No Tenant holds data yet.")),
-    card("Create a tenant", node("p", { class: "muted" }, "A Tenant exists once it holds something, so creating one adds its first table. Deleting a Tenant removes its tables and its whole history for good; the App's own Tenant and plugins' Tenants cannot be deleted here."), form),
+    card("Create a tenant", node("p", { class: "muted" }, "A Tenant exists once it holds something, so creating one adds its first table. Branching a Tenant makes a new one holding a copy of it as it is now, which then goes its own way. Deleting a Tenant removes its tables and its whole history for good. The App's own Tenant and plugins' Tenants cannot be branched or deleted here."), form),
   );
 });

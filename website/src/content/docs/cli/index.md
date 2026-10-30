@@ -146,8 +146,9 @@ command tree.
   shard, tables, stored records and bytes; `projects create-tenant <id> --tenant T --table N`
   adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`
   removes one with its history for good (needs `database.drop`);
-  `projects branch-tenant <id> --tenant T --to NEW` makes `NEW` a copy of `T` as of one
-  position of its log, which then goes its own way (needs `database.restore`). They call
+  `projects branch-tenant <id> --tenant T --to NEW [--outbox leave|copy]` makes `NEW` a copy of `T` as of one
+  position of its log, which then goes its own way; `T`'s undelivered outbox messages stay with it unless
+  `--outbox copy` (needs `database.restore`). They call
   `client.projects.tenants|createTenant|deleteTenant|branchTenant` and the database's `tenants/overview` and
   `documents/collections` routes through the Project proxy (`project.view` and
   `database.write`); the dashboard's Database → Tenants page uses the same routes.

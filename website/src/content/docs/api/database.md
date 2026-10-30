@@ -289,30 +289,44 @@ gives you a second database to try something on. It needs `database.restore`, ca
 
 | Form | Branch |
 |---|---|
-| HTTP | `POST …/database/tenants/:tenantId/branch` with `{ into }` |
-| SDK | `client.projects.branchTenant(projectId, { tenantId, into })` |
-| CLI | `zelavis projects branch-tenant <id> --tenant T --to NEW` |
-| JS | `db.branchTenant(tenant, into)` |
+| HTTP | `POST …/database/tenants/:tenantId/branch` with `{ into, outbox? }` |
+| SDK | `client.projects.branchTenant(projectId, { tenantId, into, outbox? })` |
+| CLI | `zelavis projects branch-tenant <id> --tenant T --to NEW [--outbox leave\|copy]` |
+| JS | `db.branchTenant(tenant, into, { outbox? })` |
+| Dashboard | **Branch** on a row of Database → Tenants |
 
 - **What it copies.** Everything the Tenant holds: records, history, collections and their indexes, schemas,
-  projection checkpoints and time-series state, outbox messages and idempotency receipts. Projection and time-series
-  definitions carry functions, so a process registers them on the branch as on any Tenant, and they carry on from where
-  the source had got to rather than starting over.
+  projection checkpoints, time-series state and idempotency receipts. Projection and time-series definitions carry
+  functions, so a process registers them on the branch as on any Tenant, and they carry on from where the source had
+  got to rather than starting over.
+- **The outbox stays with the source.** Messages the source has not yet had removed are the source's to deliver, so by
+  default (`outbox: "leave"`) the branch retracts them in its own log, after the branch point and before anything can
+  read them: a consumer of the branch never delivers them a second time. `outbox: "copy"` keeps them, ids and order
+  included, for a branch whose consumer is to deliver them again. Receipts stay either way, because the writes they
+  guard are in the branch too: a replayed write is answered as already done.
 - **As of one moment.** The source keeps taking writes while it is copied. The branch is the source as of the last
   position it read once its records were copied, and nothing written after that reaches it. The answer reports the
-  records and events copied and `cursor`, where the branch's log ends.
+  records and events copied, the branch's `shard` and `cursor`, where its log ends. Only the branch is held in place
+  for the whole copy: the source is read a page at a time, each page from wherever it lives then, so it can be moved
+  while it is branched.
 - **Its own Tenant from then on.** Writes to the branch never reach the source, and writes to the source never reach
   the branch. There is no merging back.
 - **History carries on.** The branch keeps the source's identifiers, versions and log positions. A cursor the source
   handed out up to the branch point names the same place in the branch, so a consumer or checkpoint carries on; one
   from after it is refused (`ForeignCursor`). A branch of a branch accepts cursors of both ancestors, each up to its
   own branch point.
-- **Cut off part way.** Until the copy is whole, every read and write of the branch fails with `TenantBranching` (409).
-  A branch that was cut off stays that way until the same request is repeated, which starts it over, or the Tenant is
-  removed.
+- **Divided Tenants.** A Tenant divided into parts branches into one divided into the same parts, each part copied
+  from its counterpart as of a position of its own (parts are separate partitions, so there is no one moment across
+  them). The answer lists the parts it copied in `parts`, each with its shard, counts and cursor.
+- **Cut off part way.** Until a copy is whole, every read and write of its target fails with `TenantBranching` (409).
+  A branch that was cut off is started over when the same request is repeated, or when the database next opens, which
+  finishes it from the source its lineage names, leaving behind what it was leaving. One the database cannot finish
+  then (its source gone, or a relocation pending) stays as it was, and is logged, until the request is repeated or the
+  Tenant is removed. For a divided Tenant, the parts a cut-off request had already finished are not copied again.
 - **Refusals.** It is refused (400) for a reserved Tenant, the App's own Tenant, a plugin's `service:` Tenant or a
-  divided one on either side, the same name twice, a source holding nothing, a target that already holds data, and
-  while a relocation is pending.
+  part's key (`name#part`) on either side, the same name twice, a source holding nothing, a target that already holds
+  data or is divided otherwise than the source, an `outbox` other than `leave` or `copy`, and while a relocation is
+  pending.
 
 ## Cross-Tenant indexes
 

@@ -763,7 +763,7 @@ function defineDatabaseRootService(
             operationId: "branchDatabaseTenant",
             summary: "Branch a Tenant into a new Tenant",
             description:
-              "Makes `into` a new Tenant holding a copy of the Tenant as of one position of its log: its records, history, collections, schemas, projections and time-series state, outbox messages and idempotency receipts. The source keeps taking writes while it is copied; nothing written after the branch point reaches the branch, and nothing written to the branch reaches the source. There is no merging back. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant or one divided into parts on either side, a source holding nothing, a target already holding data, and while a relocation is pending. A branch that was cut off answers 409 on every use of the target until the same request is repeated.",
+              "Makes `into` a new Tenant holding a copy of the Tenant as of one position of its log: its records, history, collections, schemas, projections and time-series state and idempotency receipts. The source's undelivered outbox messages stay with it (`outbox: \"leave\"`, the default) unless `outbox` is `\"copy\"`. The source keeps taking writes, and can be moved, while it is copied; nothing written after the branch point reaches the branch, and nothing written to the branch reaches the source. There is no merging back. A divided Tenant's branch is divided into the same parts, each copied from its counterpart. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant or a part's key on either side, a source holding nothing, a target already holding data or divided otherwise, and while a relocation is pending. A branch that was cut off answers 409 on every use of the target until the same request is repeated or the database next opens.",
             tags: ["database"],
             pathParams: { tenantId: { type: "string", required: true, description: "The Tenant to branch" } },
             requestBody: {
@@ -771,11 +771,14 @@ function defineDatabaseRootService(
               schema: {
                 type: "object",
                 required: ["into"],
-                properties: { into: { type: "string", description: "The new Tenant's ID" } },
+                properties: {
+                  into: { type: "string", description: "The new Tenant's ID" },
+                  outbox: { type: "string", enum: ["leave", "copy"], description: "Leave the source's undelivered outbox messages with it (default), or copy them" },
+                },
               },
             },
             responses: {
-              200: { description: "The branch: its shard, how many records and events it copied, and the cursor its log ends at" },
+              200: { description: "The branch: how many records and events it copied, with its shard and the cursor its log ends at, or per part for a divided Tenant" },
               400: { description: "The Tenant cannot be branched there" },
               409: { description: "The target is an unfinished branch; repeat the request" },
             },
@@ -794,7 +797,11 @@ function defineDatabaseRootService(
             if (tenantId === APP_TENANT_ID || into === APP_TENANT_ID) {
               return { status: 400, body: { error: `Tenant "${APP_TENANT_ID}" is the App's own Tenant; it is neither branched nor branched into.` } };
             }
-            return { body: yield* integration(() => service.branchTenant(tenantId, into)) };
+            const outbox = input.outbox;
+            if (outbox !== undefined && outbox !== "leave" && outbox !== "copy") {
+              return { status: 400, body: { error: `"outbox" is "leave" or "copy".` } };
+            }
+            return { body: yield* integration(() => service.branchTenant(tenantId, into, outbox === undefined ? undefined : { outbox })) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {

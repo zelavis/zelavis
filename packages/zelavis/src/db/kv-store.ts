@@ -19,8 +19,8 @@ import {
   containerOf, decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
 } from "./segments.js";
 import {
-  decodeEvent, decodeFence, decodeLineage, decodeRecord, encodeEvent, encodeFence, encodeLineage, encodeRecord,
-  LINEAGE_LIMIT, type StoredEvent, type StoredFence, type StoredLineage, type StoredRecord,
+  decodeEvent, decodeFence, decodeLineage, decodeNames, decodeRecord, encodeEvent, encodeFence, encodeLineage,
+  encodeNames, encodeRecord, LEAVE_LIMIT, LINEAGE_LIMIT, type StoredEvent, type StoredFence, type StoredLineage, type StoredRecord,
 } from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
 import { RoutedBy } from "./store.js";
@@ -139,6 +139,13 @@ const META_SEEDING = "seeding";
  * source, up to the branch point, carry on here.
  */
 const META_LINEAGE = "lineage";
+
+/**
+ * Written beside the lineage by a branch that leaves some records behind
+ * (`SeedOptions.leave`): the identity namespaces it retracts before it is
+ * finished. Cleared with the seeding mark.
+ */
+const META_LEAVING = "leaving";
 
 /**
  * Random bytes naming this life of the partition: written with the first
@@ -2236,10 +2243,13 @@ const openPartition = (
     incarnation: Effect.map(engine.get(incarnationKey), (bytes) => bytes === undefined ? undefined : toHex(bytes)),
     lineage: Effect.flatMap(engine.get(keys.meta(META_LINEAGE)), (bytes) =>
       bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("lineage.read", () => decodeLineage(bytes))),
-  }), ({ incarnation, lineage, ...counted }) => ({
+    leaving: Effect.flatMap(engine.get(keys.meta(META_LEAVING)), (bytes) =>
+      bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("leaving.read", () => decodeNames(bytes))),
+  }), ({ incarnation, lineage, leaving, ...counted }) => ({
     ...counted,
     ...(incarnation === undefined ? {} : { incarnation }),
     ...(lineage === undefined ? {} : { lineage }),
+    ...(leaving === undefined ? {} : { leaving }),
   }));
 
   const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
@@ -2280,16 +2290,25 @@ const openPartition = (
           // An unfinished branch holds part of a copy and nothing else: no
           // read or write was ever answered from it, so it is started over.
           if ((yield* branchHeld).unfinished) yield* removeAll;
-          return yield* Effect.flatMap(unfenced, () => copyInto(source, true));
+          return yield* Effect.flatMap(unfenced, () => copyInto(source, true, options.leave ?? []));
         }))
-      : exclusiveWrite(copyInto(source, false));
+      : exclusiveWrite(copyInto(source, false, []));
 
   /** Log entries read from the source and applied per batch while a branch follows it. */
   const BRANCH_FOLLOW_BATCH = 512;
+  /** Records a branch retracts per batch when it leaves a namespace behind. */
+  const LEAVE_BATCH = 512;
 
   /** `seed`'s work, under the permit. */
-  const copyInto = (source: ObjectStoreApi, branching: boolean): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+  const copyInto = (
+    source: ObjectStoreApi,
+    branching: boolean,
+    leave: ReadonlyArray<string>,
+  ): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
     Effect.gen(function* () {
+      if (leave.length > LEAVE_LIMIT || leave.some((name) => name.length === 0)) {
+        return yield* Effect.die(new RangeError(`a branch leaves 0 to ${LEAVE_LIMIT} named namespaces behind`));
+      }
       const held = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: 2 })))]
         .filter((entry) => compareKeys(entry.key, revisionKey) !== 0);
       if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
@@ -2310,6 +2329,7 @@ const openPartition = (
           ({ partition: entry.partition, upTo: Math.min(entry.upTo, upTo) }))].slice(0, LINEAGE_LIMIT);
       if (branching) {
         into.view.put(keys.meta(META_LINEAGE), encodeLineage(inherited(0)));
+        if (leave.length > 0) into.view.put(keys.meta(META_LEAVING), encodeNames(leave));
         branch = { lineage: inherited(0), unfinished: true };
       }
       let copied = 0;
@@ -2323,15 +2343,24 @@ const openPartition = (
         into = { view: pendingView(pending), sealed: false, counters };
       });
 
-      yield* Stream.runForEach(source.records, ({ seq, record }) =>
-        Effect.gen(function* () {
+      // A page per call rather than one scan of them all: a routed source is
+      // leased only while a page is read, so it can be moved while it is
+      // copied, and the next page is read wherever it went — the same records
+      // under the same identifiers.
+      let after: Seq | undefined;
+      for (;;) {
+        const page = yield* source.scanRecords({ ...(after === undefined ? {} : { after }), limit: SEAL_BATCH });
+        for (const { seq, record } of page) {
           if (record.live) yield* project(into, seq, undefined, record);
           else yield* retire(into, seq, undefined, record.version, record.retiredAt);
           if (record.live && snapshotted) into.view.put(keys.snapshot(SEED_SNAPSHOT_ID, seq), encodeRecord(record));
           copied += 1;
           highest = Math.max(highest, seq);
           if (pending.size >= SEAL_BATCH) yield* flush;
-        }));
+        }
+        if (page.length < SEAL_BATCH) break;
+        after = page[page.length - 1]!.seq;
+      }
 
       // Every record was read before this, so each copied version was written
       // at or before `end.head`: following the log up to there and no further
@@ -2378,7 +2407,29 @@ const openPartition = (
         at = wanted[wanted.length - 1]!.position;
       }
 
-      yield* write([{ op: "delete", key: keys.meta(META_SEEDING) }]);
+      // What the branch leaves behind is retracted in its own log, past the
+      // branch point, while it still refuses every read: the log up to there
+      // stays the source's, and nothing reads the records in between.
+      for (const namespace of leave) {
+        let previous: number | undefined;
+        for (;;) {
+          const held = [...(yield* Stream.runCollect(engine.scan(keys.identityPrefix(namespace), { limit: LEAVE_BATCH })))]
+            .map((entry) => asSeq(readSeqAt(new Uint8Array(entry.value), 0)));
+          if (held.length === 0) break;
+          // A retraction releases the identity, so each pass finds the next
+          // ones; finding the same first one again means it names nothing live.
+          if (held[0] === previous) {
+            return yield* new StoreError({ op: "branch.leave", cause: `an identity of "${namespace}" names no live record` });
+          }
+          previous = held[0];
+          yield* commitHeld((batch) => Effect.forEach(held, (seq) => txnFor(batch).retract(seq), { discard: true }));
+        }
+      }
+
+      yield* write([
+        { op: "delete", key: keys.meta(META_SEEDING) },
+        ...(leave.length > 0 ? [{ op: "delete" as const, key: keys.meta(META_LEAVING) }] : []),
+      ]);
       branch = { lineage: inherited(end.head), unfinished: false };
       return { records: copied, head: start.compactedTo, through: end.head, applied };
     });

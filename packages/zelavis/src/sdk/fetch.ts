@@ -1200,13 +1200,17 @@ export interface ZelavisProjectsClient {
   /**
    * Make `into` a new Tenant holding a copy of `tenantId` as of one position of its log: records, history,
    * definitions and derived state. The source keeps taking writes; the branch is the source at the branch
-   * point and goes its own way from there, with no merging back. Refused for a reserved, plugin, divided or
-   * App Tenant on either side, an empty source, an occupied target and while a relocation is pending; a 409
-   * means a branch into `into` was cut off, and repeating the call finishes it. Needs
-   * `project.runtime.manage`, which carries `database.restore`. Same contract as
-   * `zelavis projects branch-tenant`.
+   * point and goes its own way from there, with no merging back. The source's undelivered outbox messages
+   * stay with it unless `outbox` is `"copy"`. A divided source makes `into` divided into the same parts,
+   * each branched from its counterpart. Refused for a reserved, plugin or App Tenant on either side, an
+   * empty source, an occupied target and while a relocation is pending; a 409 means a branch into `into`
+   * was cut off, and repeating the call finishes it. Needs `project.runtime.manage`, which carries
+   * `database.restore`. Same contract as `zelavis projects branch-tenant`.
    */
-  branchTenant(projectId: string, input: { readonly tenantId: string; readonly into: string }): Promise<ZelavisTenantBranch>;
+  branchTenant(
+    projectId: string,
+    input: { readonly tenantId: string; readonly into: string; readonly outbox?: "leave" | "copy" },
+  ): Promise<ZelavisTenantBranch>;
   /**
    * Restore a backup into the Tenant it was taken from. `into` says what to do
    * about data already there: `empty` (the default) refuses unless there is
@@ -1221,18 +1225,30 @@ export interface ZelavisProjectsClient {
   ): Promise<ZelavisTenantRestoreResult>;
 }
 
-/** What branching a Tenant made. */
-export interface ZelavisTenantBranch {
-  readonly tenant: string;
-  readonly into: string;
-  /** The shard the branch lives on. */
+/** One partition a branch copied: the whole Tenant, or one part of a divided one. */
+export interface ZelavisPartitionBranch {
+  /** The shard the copy lives on. */
   readonly shard: string;
   /** Records copied, retired ones included. */
   readonly records: number;
   /** Events of the source's log copied after its records. */
   readonly events: number;
-  /** Where the branch's log ends: the source's log at the branch point. */
+  /** Where the copy's log ends, as a cursor of the branch. */
   readonly cursor?: string;
+}
+
+/**
+ * What branching a Tenant made: for an undivided Tenant its one copy's `shard` and `cursor`, for a divided
+ * one the `parts` this call copied. `records` and `events` are the sums.
+ */
+export interface ZelavisTenantBranch {
+  readonly tenant: string;
+  readonly into: string;
+  readonly records: number;
+  readonly events: number;
+  readonly shard?: string;
+  readonly cursor?: string;
+  readonly parts?: ReadonlyArray<ZelavisPartitionBranch & { readonly part: string }>;
 }
 
 /** What removing a Tenant did. */
@@ -2334,7 +2350,7 @@ function createProjectsClient(
     branchTenant: (projectId, input) =>
       json<ZelavisTenantBranch>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/branch`), {
         method: "POST",
-        body: { into: input.into },
+        body: { into: input.into, ...(input.outbox === undefined ? {} : { outbox: input.outbox }) },
       }),
     restoreTenant: (projectId, backup, options) =>
       json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {
