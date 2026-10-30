@@ -440,12 +440,14 @@ before editing.
   with its cursor in one transaction and rebuilds by generation; a projection's
   `apply` is at least once and idempotent by `eventId`.
 - A multi-step read runs in one engine snapshot (`store.reading`); writes,
-  upkeep and the handle's beliefs (revision, lens state, fence) always read the
+  upkeep and the handle's beliefs (revision, lens state, fence, relocation) always read the
   engine live. Every engine implements `snapshot`, taken at its first read.
 - Tenant handles route per operation (`PartitionRouter.operations`): every store
   call of one operation goes to one placement under an in-process lease, and a
   move drains those leases before dropping the source whole, fence included
-  (`PlacementInUse` past `drainTimeout`, finished by `resume`). Occupancy is
+  (`PlacementInUse` past `drainTimeout`, finished by `resume`), leaving only
+  the map version that moved it (`relocate`): a call routed by an older map
+  (`RoutedBy`) is refused with `TenantRelocated`, never answered empty. Occupancy is
   partition existence (`tenantsOn`), not a marker. Followers are kept level by
   `levelFollower`/`followLeader`, which copy again only when carrying on cannot
   be exact.

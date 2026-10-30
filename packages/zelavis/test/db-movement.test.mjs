@@ -636,12 +636,12 @@ test("SQLite reopening finishes routed movement cleanup without recopying or cha
         if (!interruptCleanup || shard !== "s0") return store;
         return {
           ...store,
-          drop: (partition) => Effect.suspend(() => {
+          relocate: (partition, mapVersion) => Effect.suspend(() => {
             if (db?.partitionMap.version === 2) {
               cleanupInterrupted = true;
               return Effect.die(new Error("injected interruption before source cleanup"));
             }
-            return store.drop(partition);
+            return store.relocate(partition, mapVersion);
           }),
         };
       }),

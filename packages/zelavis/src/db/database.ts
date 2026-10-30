@@ -363,7 +363,13 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
    * records were moved off.
    */
   const shardOf = (tenant: TenantId): ShardId => shardFor(topology.current(), tenant);
-  const router = partitionRouter({ shardOf, shards });
+  const router = partitionRouter({
+    route: (partition) => {
+      const map = topology.current();
+      return { shard: shardFor(map, partition), version: map.version };
+    },
+    shards,
+  });
   const drainTimeout = options.drainTimeout ?? DRAIN_TIMEOUT;
   const movement = movementOver({
     topologyStore,

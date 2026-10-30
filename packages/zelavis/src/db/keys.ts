@@ -408,6 +408,18 @@ export const shardMetaKey = (name: string): Uint8Array => {
   return Uint8Array.from(out);
 };
 
+/**
+ * `[Shard]["relocated"][partition]` — the map version that moved a partition
+ * off this shard. One of the shard's own records rather than the partition's,
+ * so removing the partition's range leaves it standing.
+ */
+export const shardRelocationKey = (partition: string): Uint8Array => {
+  const out: number[] = [Space.Shard];
+  writeString(out, "relocated");
+  writeString(out, partition);
+  return Uint8Array.from(out);
+};
+
 /** Where every partition's range begins. */
 export const partitionSpace = (): Uint8Array => Uint8Array.of(Space.Partition);
 

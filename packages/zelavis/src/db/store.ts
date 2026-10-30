@@ -486,7 +486,33 @@ export interface ShardStoreApi {
    * that a fence would have had to refuse.
    */
   readonly drop: (partition: PartitionKey) => Effect.Effect<number, DbError>;
+
+  /**
+   * Remove a partition a move has routed away, as `drop` does, leaving behind
+   * the partition-map version that moved it.
+   *
+   * The version is recorded with the shard's own records, outside the range
+   * being removed, in a batch of its own before the first removal, so from
+   * then on a call routed by an older map (`RoutedBy`) is refused with
+   * `TenantRelocated` rather than answered from a partition being emptied or
+   * already empty. A later relocation away records its own, higher version; a
+   * lower one never replaces it.
+   */
+  readonly relocate: (partition: PartitionKey, mapVersion: number) => Effect.Effect<number, DbError>;
 }
+
+/**
+ * The partition-map version the running call was routed by, when a router
+ * routed it.
+ *
+ * A partition a move has left refuses a call routed by a map older than the
+ * move (`ShardStoreApi.relocate`). A call nobody routed — upkeep walking a
+ * shard, a move copying onto it, a test opening it — names its shard itself
+ * and is not checked: it did not come here because of a map.
+ */
+export const RoutedBy = Context.Reference<number | undefined>("zelavis/db/RoutedBy", {
+  defaultValue: () => undefined,
+});
 
 /**
  * The partition handle. One per partition; owns that partition's lenses.

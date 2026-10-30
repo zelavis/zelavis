@@ -657,7 +657,10 @@ a move works after it. Once routing moves, the move waits for operations that
 reached the old shard to finish (up to `drainTimeout`, else `PlacementInUse`
 and a resume later) and then removes the Tenant from it entirely, fence
 included; until then a write that reached the old shard is refused there
-(`TenantMoving`, a 409 over HTTP). A shard's Tenants are the partitions holding
+(`TenantMoving`, a 409 over HTTP). The old shard keeps only the partition-map
+version that moved the Tenant, so a call routed there by an older map is refused
+with `TenantRelocated` (refresh routing and retry) instead of finding the Tenant
+empty. A shard's Tenants are the partitions holding
 anything, so a Tenant holding only messages, time series or history moves too.
 Reopening also finishes any lens rebuild or reindex a crash cut off; until then
 that partition answers `LensesRebuilding`.

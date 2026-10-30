@@ -94,6 +94,30 @@ export class TenantMoving extends Schema.TaggedError<TenantMoving>()("TenantMovi
 }) {}
 
 /**
+ * A call reached a shard a tenant has left, routed by a map older than the move.
+ *
+ * Once a move has cleared the source, what is left there is empty, and an
+ * empty answer would read as an empty tenant. The shard keeps the map version
+ * that moved the tenant away instead, and refuses a call routed by any older
+ * map: refresh routing to at least `mapVersion` and send the call again. It
+ * names no shard to go to, because routing, not the shard left behind, says
+ * where the tenant lives.
+ */
+export class TenantRelocated extends Schema.TaggedError<TenantRelocated>()("TenantRelocated", {
+  partition: Schema.String,
+  shard: Schema.String,
+  /** The partition-map version that moved the tenant off this shard. */
+  mapVersion: Schema.Finite,
+  /** The map version the refused call was routed by. */
+  routedBy: Schema.Finite,
+}) {
+  override get message() {
+    return `"${this.partition}" left shard "${this.shard}" at partition-map version ${this.mapVersion}; ` +
+      `this call was routed by version ${this.routedBy}. Refresh routing and retry.`;
+  }
+}
+
+/**
  * A divided tenant was addressed as a whole.
  *
  * There is no one shard to answer for it, and answering from one part would
@@ -565,6 +589,7 @@ export type DbError =
   | PartitionUnavailable
   | PartitionExhausted
   | LensesRebuilding
+  | TenantRelocated
   | TenantMoving;
 
 /**
@@ -581,6 +606,11 @@ const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]:
   PartitionUnavailable: true,
   PartitionExhausted: true,
   LensesRebuilding: true,
+  // The in-process router routes every call by the map in force, which is never
+  // older than a move it made, so reaching a relocated partition here is a
+  // broken invariant. A caller routing by a map of its own sees it typed, at
+  // the store.
+  TenantRelocated: true,
 };
 
 /**

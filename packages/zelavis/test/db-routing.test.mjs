@@ -20,7 +20,7 @@ const setup = Effect.gen(function* () {
     ["s1", yield* openShardOverKv("s1", memoryKvEngine())],
   ]);
   const placement = { acme: "s0" };
-  const router = partitionRouter({ shardOf: (partition) => placement[partition] ?? "s0", shards });
+  const router = partitionRouter({ route: (partition) => ({ shard: placement[partition] ?? "s0", version: 1 }), shards });
   return { shards, placement, router };
 });
 

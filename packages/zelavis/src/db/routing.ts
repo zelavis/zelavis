@@ -1,7 +1,7 @@
 import { Context, Deferred, Duration, Effect, Option, Stream } from "effect";
 import { PartitionUnavailable, PlacementInUse } from "./errors.js";
 import type { PartitionKey } from "./model.js";
-import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
+import { RoutedBy, type ObjectStoreApi, type ShardStoreApi } from "./store.js";
 import type { ShardId } from "./topology.js";
 
 /**
@@ -25,6 +25,11 @@ import type { ShardId } from "./topology.js";
  * Leases are in-process because the writer is: a shard admits one writer
  * process, so only calls in this process can reach its partitions. A restart
  * holds none.
+ *
+ * Every call carries the map version it was routed by (`RoutedBy`), read in
+ * the same step as the shard, so a shard a move has since cleared refuses a
+ * router whose map predates the move (`TenantRelocated`) rather than answering
+ * from an empty partition.
  */
 export interface PartitionRouter {
   /**
@@ -74,6 +79,14 @@ interface Lease {
   readonly shard: ShardId;
   readonly partition: PartitionKey;
   readonly store: ObjectStoreApi;
+  /** The map version that placed the partition on `shard`. */
+  readonly version: number;
+}
+
+/** Where routing places a partition, and the version of the map that says so. */
+export interface Route {
+  readonly shard: ShardId;
+  readonly version: number;
 }
 
 interface Held {
@@ -96,17 +109,18 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
 
 export const partitionRouter = (options: {
-  readonly shardOf: (partition: PartitionKey) => ShardId;
+  /** Read once per call, so the shard and the version always come from one map. */
+  readonly route: (partition: PartitionKey) => Route;
   readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
 }): PartitionRouter => {
-  const { shardOf, shards } = options;
+  const { route, shards } = options;
   // Nested rather than keyed by a joined string: a partition name may hold any
   // character, so no separator is safe.
   const held = new Map<ShardId, Map<PartitionKey, Held>>();
   /** This router's own key into `PlacementPins`. */
   const token = {};
 
-  const take = (shard: ShardId, partition: PartitionKey, store: ObjectStoreApi): Lease => {
+  const take = (shard: ShardId, partition: PartitionKey, store: ObjectStoreApi, version: number): Lease => {
     let onShard = held.get(shard);
     if (onShard === undefined) {
       onShard = new Map();
@@ -115,7 +129,7 @@ export const partitionRouter = (options: {
     const entry = onShard.get(partition);
     if (entry === undefined) onShard.set(partition, { count: 1, idle: [] });
     else entry.count += 1;
-    return { shard, partition, store };
+    return { shard, partition, store, version };
   };
 
   const release = (lease: Lease) =>
@@ -139,9 +153,9 @@ export const partitionRouter = (options: {
   const acquire = (partition: PartitionKey, by: PartitionKey) =>
     Effect.flatMap(
       Effect.sync(() => {
-        const shard = shardOf(by);
+        const { shard, version } = route(by);
         const holder = shards.get(shard);
-        return holder === undefined ? { shard } : take(shard, partition, holder.partition(partition));
+        return holder === undefined ? { shard } : take(shard, partition, holder.partition(partition), version);
       }),
       (lease) =>
         "store" in lease
@@ -164,6 +178,12 @@ export const partitionRouter = (options: {
   /** The partition on the shard a pin names: open, since routing resolved to it. */
   const atPin = (pin: Lease, partition: PartitionKey) =>
     partition === pin.partition ? pin.store : shards.get(pin.shard)!.partition(partition);
+
+  /** Run a call on a leased placement, carrying the map version that routed it there. */
+  const onLease = <A, E, R>(lease: Lease, partition: PartitionKey, use: (store: ObjectStoreApi) => Effect.Effect<A, E, R>) =>
+    Effect.provideService(use(atPin(lease, partition)), RoutedBy, lease.version);
+  const flowingOnLease = <A, E, R>(lease: Lease, partition: PartitionKey, use: (store: ObjectStoreApi) => Stream.Stream<A, E, R>) =>
+    Stream.provideService(use(atPin(lease, partition)), RoutedBy, lease.version);
 
   /** Run an operation pinned to where `by` is routed now, or to the pin it already runs under. */
   const pinned = <A, E, R>(by: PartitionKey, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -204,20 +224,20 @@ export const partitionRouter = (options: {
     const on = <A, E, R>(use: (store: ObjectStoreApi) => Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       Effect.flatMap(pinOf(by), (pin) =>
         pin !== undefined
-          ? use(atPin(pin, partition))
-          : Effect.acquireUseRelease(acquire(partition, by), (lease) => use(lease.store), release));
+          ? onLease(pin, partition, use)
+          : Effect.acquireUseRelease(acquire(partition, by), (lease) => onLease(lease, partition, use), release));
     const flowing = <A, E, R>(use: (store: ObjectStoreApi) => Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
       Stream.unwrap(Effect.flatMap(pinOf(by), (pin) =>
         pin !== undefined
-          ? Effect.succeed(use(atPin(pin, partition)))
-          : Effect.map(Effect.acquireRelease(acquire(partition, by), release), (lease) => use(lease.store))));
+          ? Effect.succeed(flowingOnLease(pin, partition, use))
+          : Effect.map(Effect.acquireRelease(acquire(partition, by), release), (lease) => flowingOnLease(lease, partition, use))));
 
     return {
       partition,
       // Stamped on events a caller applies; the store it lands in records its
       // own writer when it commits them.
       get generation() {
-        const holder = shards.get(shardOf(by));
+        const holder = shards.get(route(by).shard);
         return holder === undefined ? 0 : holder.generation;
       },
       stats: on((store) => store.stats),
@@ -263,14 +283,19 @@ export const partitionRouter = (options: {
     Effect.flatMap(
       Effect.sync(() => {
         const holder = shards.get(shard);
-        return holder === undefined || shardOf(partition) !== shard
+        const placedBy = route(partition);
+        return holder === undefined || placedBy.shard !== shard
           ? undefined
-          : take(shard, partition, holder.partition(partition));
+          : take(shard, partition, holder.partition(partition), placedBy.version);
       }),
       (lease) =>
         lease === undefined
           ? Effect.succeed(Option.none())
-          : Effect.acquireUseRelease(Effect.succeed(lease), (taken) => Effect.map(use(taken.store), Option.some), release),
+          : Effect.acquireUseRelease(
+              Effect.succeed(lease),
+              (taken) => Effect.map(onLease(taken, partition, use), Option.some),
+              release,
+            ),
     );
 
   const drained: PartitionRouter["drained"] = (shard, partition, timeout) =>

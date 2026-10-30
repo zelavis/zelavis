@@ -1241,7 +1241,7 @@ Key rules:
   family, LMDB's read transaction, a RocksDB transaction, an array the memory
   engine never mutates). Document, KV, event, time-series reads and a backup
   export each run in one. Writes, upkeep and the beliefs a partition handle
-  keeps (its revision, lens state and fence) never read a snapshot: a stale
+  keeps (its revision, lens state, fence and relocation) never read a snapshot: a stale
   fence kept as current would let a write through that the partition refuses.
   So everything under the writer's permit reads the engine as it is, and so do
   the reads that fill a belief; a snapshot is taken at its first read, never
@@ -1331,6 +1331,16 @@ Key rules:
   intact and fenced, for a resume — until no lease on the source is held, then
   drops the source partition whole, fence included: nothing can arrive there
   any more. Leases are in-process because the writer is; a restart holds none.
+  What the source keeps is the map version that moved the tenant
+  (`ShardStoreApi.relocate`), one of the shard's own records outside the
+  partition's range and written in a batch before the first removal. Every
+  routed call carries the map version it was routed by (`RoutedBy`, set by the
+  router in the same step as the shard), and a partition refuses a call routed
+  by an older map with `TenantRelocated` rather than answer it empty: an empty
+  answer from a shard a tenant left reads as an empty tenant. The version only
+  rises, and a call nobody routed is not checked. The in-process router is
+  never behind its own moves, so there it is a defect; it exists for routers
+  that hold a map of their own.
 - A shard's tenants are the partitions holding any key, the reserved
   `zv.`-prefixed ones aside (`tenantsOn`), never a marker some layer has to
   remember to write. A tenant whose collections are gone still holds its log,

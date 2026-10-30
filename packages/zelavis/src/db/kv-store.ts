@@ -1,13 +1,14 @@
 import { Context, Effect, Option, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
-  PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, WriterFenced,
+  PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, TenantRelocated, WriterFenced,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import {
   compareKeys, compareOrderedValues, inPrefixRange, MAX_SEQ, partitionKeys, partitionOf, partitionPrefix,
   partitionSpace, prefixEnd, readSeqAt, readU64At, sameOrderedKind, SEQ_BYTES, seqBytes, seqOf, shardMetaKey,
+  shardRelocationKey,
   Tag, u64Bytes, type OrderedValue,
 } from "./keys.js";
 import { equalBytes, type KvEngine, type KvReader, type KvScanOptions, type KvWrite } from "./kv.js";
@@ -21,6 +22,7 @@ import {
   type StoredEvent, type StoredFence, type StoredRecord,
 } from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
+import { RoutedBy } from "./store.js";
 import type {
   EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
   PartitionStats, RecordState, SeedResult, ShardStoreApi, Txn,
@@ -347,6 +349,7 @@ const openPartition = (
 ): {
   readonly api: ObjectStoreApi;
   readonly drop: Effect.Effect<number, StoreError | WriterFenced>;
+  readonly relocate: (mapVersion: number) => Effect.Effect<number, StoreError | WriterFenced>;
 } => {
   const { engine: raw, origin, probeCap } = context;
   /**
@@ -416,12 +419,14 @@ const openPartition = (
   let revisionKnown = false;
   let lenses: number | undefined;
   let fence: StoredFence | null | undefined;
+  let relocatedAt: number | null | undefined;
 
   const forget = () => {
     epoch += 1;
     revisionKnown = false;
     lenses = undefined;
     fence = undefined;
+    relocatedAt = undefined;
   };
 
   const assertCurrent = Effect.gen(function* () {
@@ -473,6 +478,31 @@ const openPartition = (
     if (fence === undefined && epoch === seen) fence = stored;
     return fence === undefined ? stored : fence;
   });
+
+  const relocationKey = shardRelocationKey(partition);
+
+  /** The map version that moved the partition off this shard, if a move has. */
+  const relocationHeld = Effect.gen(function* () {
+    if (relocatedAt !== undefined) return relocatedAt;
+    const seen = epoch;
+    const bytes = yield* raw.get(relocationKey);
+    const stored = bytes === undefined ? null : yield* decodeOrDie("relocation.read", () => counterOf(bytes));
+    if (relocatedAt === undefined && epoch === seen) relocatedAt = stored;
+    return relocatedAt === undefined ? stored : relocatedAt;
+  });
+
+  /**
+   * Refused when a router sent the call here by a map older than the move that
+   * took the partition away: see `ShardStoreApi.relocate`. A call no router
+   * sent is not checked.
+   */
+  const routable = Effect.flatMap(Effect.service(RoutedBy), (routedBy) =>
+    routedBy === undefined
+      ? Effect.void
+      : Effect.flatMap(relocationHeld, (at) =>
+          at === null || at <= routedBy
+            ? Effect.void
+            : Effect.fail(new TenantRelocated({ partition, shard: context.shard, mapVersion: at, routedBy }))));
 
   /** Refused once a move has fenced the partition: see `ObjectStoreApi.fence`. */
   const unfenced = Effect.flatMap(fenceHeld, (held) =>
@@ -2078,7 +2108,7 @@ const openPartition = (
    * The revision goes last: every batch before it is checked against it, so
    * an owner fenced halfway stops there rather than deleting under a new one.
    */
-  const drop = exclusive(Effect.gen(function* () {
+  const removeAll = Effect.gen(function* () {
     const records = yield* readMeta(META_RECORDS);
     const kept = keyId(revisionKey);
     // One more than a batch per scan, so a scan that returns only the revision
@@ -2104,6 +2134,29 @@ const openPartition = (
     revision = undefined;
     fence = null;
     return records;
+  });
+
+  const drop = exclusive(removeAll);
+
+  /**
+   * Record the map version that moved the partition away, then remove it.
+   *
+   * The version goes first, in a batch of its own checked like any other, so
+   * there is no moment when the partition is partly removed and a call routed
+   * by an older map would still be answered from it. It only ever rises: a
+   * version no higher than the one held is already covered by it.
+   */
+  const relocate = (mapVersion: number) => exclusive(Effect.gen(function* () {
+    if (!Number.isSafeInteger(mapVersion) || mapVersion < 1) {
+      return yield* new StoreError({ op: "relocate", cause: `Map version ${mapVersion} is not a positive integer` });
+    }
+    const bytes = yield* raw.get(relocationKey);
+    const stored = yield* decodeOrDie("relocation.read", () => counterOf(bytes));
+    if (mapVersion > stored) {
+      yield* write([{ op: "put", key: relocationKey, value: u64Bytes(mapVersion) }]);
+    }
+    relocatedAt = Math.max(mapVersion, stored);
+    return yield* removeAll;
   }));
 
   const stats: Effect.Effect<PartitionStats, StoreError> = Effect.all({
@@ -2713,7 +2766,27 @@ const openPartition = (
       }),
   };
 
-  return { api, drop };
+  return { api: routedOnly(api, routable), drop, relocate };
+};
+
+/**
+ * `api` with `check` run before every operation it offers — each effect,
+ * stream, and function returning one, through nested objects — so a call a
+ * router sent by a stale map is refused whichever door it came through.
+ */
+const routedOnly = (api: ObjectStoreApi, check: Effect.Effect<void, DbError>): ObjectStoreApi => {
+  const wrap = (value: unknown): unknown => {
+    if (Stream.isStream(value)) return Stream.unwrap(Effect.as(check, value));
+    if (Effect.isEffect(value)) return Effect.andThen(check, value);
+    if (typeof value === "function") {
+      return (...args: ReadonlyArray<unknown>) => wrap((value as (...input: ReadonlyArray<unknown>) => unknown)(...args));
+    }
+    if (typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype) {
+      return Object.fromEntries(Object.entries(value).map(([name, member]) => [name, wrap(member)]));
+    }
+    return value;
+  };
+  return wrap(api) as ObjectStoreApi;
 };
 
 /**
@@ -2772,6 +2845,8 @@ export const shardOverKv = (
     }),
 
     drop: (partition) => handleOf(partition).drop,
+
+    relocate: (partition, mapVersion) => handleOf(partition).relocate(mapVersion),
   };
 };
 

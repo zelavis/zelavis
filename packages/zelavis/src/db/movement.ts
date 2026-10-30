@@ -44,10 +44,12 @@ import { shardFor, type PartitionMap, type ShardId, type TenantId } from "./topo
  *   4. Move the routing. Reads and writes go to the target from here on. This
  *      is the only moment that is not reversible by doing nothing, and it is a
  *      single record.
- *   5. Drop the tenant from the source, all but its fence. Cleanup: the
- *      records being removed are ones nothing routes to any more. The fence is
- *      the source's alone and is never copied, so the target takes writes as
- *      soon as routing points at it.
+ *   5. Drop the tenant from the source, fence included, leaving only the map
+ *      version that moved it (`ShardStoreApi.relocate`). Cleanup: the records
+ *      being removed are ones nothing routes to any more, and a router whose
+ *      map is older than the move is refused there rather than answered empty.
+ *      The fence is the source's alone and is never copied, so the target
+ *      takes writes as soon as routing points at it.
  *
  * The window in which the tenant cannot be written is step 3 to step 4 — the
  * last catch-up, which is proportional to what was written during the round
@@ -333,11 +335,16 @@ export const movementOver = (options: {
    * log, lenses, occupancy marker and fence — so the shard holds and claims
    * nothing of it. On the shard a tenant left, only once nothing is using it:
    * every call reaches the shard routing names as it starts and leases it, so
-   * when the leases taken there before routing moved are gone, nothing can
-   * arrive there again and the fence has nothing left to refuse.
+   * when the leases taken there before routing moved are gone, nothing in this
+   * process can arrive there again and the fence has nothing left to refuse.
+   *
+   * What the shard keeps is the version of the map that moved the tenant, so a
+   * router holding an older map — one outside this process, or one restarted
+   * from a stale copy — is told the tenant moved rather than shown an empty
+   * one (`TenantRelocated`).
    */
-  const clear = (tenant: TenantId, from: ShardId) =>
-    Effect.flatMap(shardNamed(from), (shard) => shard.drop(tenant));
+  const clear = (tenant: TenantId, from: ShardId, mapVersion: number) =>
+    Effect.flatMap(shardNamed(from), (shard) => shard.relocate(tenant, mapVersion));
 
   /**
    * Carry one move from wherever it is to the end.
@@ -439,7 +446,7 @@ export const movementOver = (options: {
         // the source goes only once all of them are done. A deadline passed
         // leaves the move routed, for a resume to clear.
         yield* drained(move.from, move.tenant);
-        const removed = yield* clear(move.tenant, move.from);
+        const removed = yield* clear(move.tenant, move.from, move.map.version);
         yield* drop(topologyStore, MOVE_NAMESPACE, move.tenant);
         const stats = state.get(move.tenant);
         results.push({

@@ -371,6 +371,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
         PartitionUnavailable: Effect.die,
         PartitionExhausted: Effect.die,
         LensesRebuilding: Effect.die,
+        TenantRelocated: Effect.die,
       }),
     ),
   };
