@@ -491,8 +491,8 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
       fuzor:
-        specifier: 0.5.1
-        version: 0.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+        specifier: 0.5.2
+        version: 0.5.2(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       lexical:
         specifier: ^0.52.0
         version: 0.52.0(typescript@6.0.3)
@@ -6124,8 +6124,8 @@ packages:
   functions-have-names@1.2.3:
     resolution: {integrity: sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ==}
 
-  fuzor@0.5.1:
-    resolution: {integrity: sha512-cl4d6vLTzyjJrYChtj8jWKNAuv/asM9iJzwtHyUaAWRSaPH0gKGtS3uKnMTnDo4b00Ws4aedLgbtd3Tz8EcEuQ==}
+  fuzor@0.5.2:
+    resolution: {integrity: sha512-iFosM3FP1S7Mkr0JIpOOxt7yhGIHcZ0D/k1kSVd2rS8vQF+nXoSXRaBEI5bKo1Dcli5Ui+g1xP83EHzfTrfDcg==}
     engines: {node: ^22.15.0 || >=24.0.0}
     hasBin: true
     peerDependencies:
@@ -14851,7 +14851,7 @@ snapshots:
 
   functions-have-names@1.2.3: {}
 
-  fuzor@0.5.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
+  fuzor@0.5.2(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)(vite@6.4.4(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)):
     dependencies:
       '@babel/parser': 7.29.9
       '@clack/prompts': 1.8.1
