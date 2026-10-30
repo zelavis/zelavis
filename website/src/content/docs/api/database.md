@@ -282,6 +282,38 @@ Global data is not the Tenant's and stays.
 The dashboard's Database → Tenants page is a client of these routes. It offers Delete only for Tenants the operator made:
 the App's own Tenant and a plugin's `service:` Tenant are not deleted from there.
 
+### Branching a Tenant
+
+A branch is a new Tenant holding a copy of another as of one position of its log, the way copying a database file
+gives you a second database to try something on. It needs `database.restore`, carried by `project.runtime.manage`.
+
+| Form | Branch |
+|---|---|
+| HTTP | `POST …/database/tenants/:tenantId/branch` with `{ into }` |
+| SDK | `client.projects.branchTenant(projectId, { tenantId, into })` |
+| CLI | `zelavis projects branch-tenant <id> --tenant T --to NEW` |
+| JS | `db.branchTenant(tenant, into)` |
+
+- **What it copies.** Everything the Tenant holds: records, history, collections and their indexes, schemas,
+  projection checkpoints and time-series state, outbox messages and idempotency receipts. Projection and time-series
+  definitions carry functions, so a process registers them on the branch as on any Tenant, and they carry on from where
+  the source had got to rather than starting over.
+- **As of one moment.** The source keeps taking writes while it is copied. The branch is the source as of the last
+  position it read once its records were copied, and nothing written after that reaches it. The answer reports the
+  records and events copied and `cursor`, where the branch's log ends.
+- **Its own Tenant from then on.** Writes to the branch never reach the source, and writes to the source never reach
+  the branch. There is no merging back.
+- **History carries on.** The branch keeps the source's identifiers, versions and log positions. A cursor the source
+  handed out up to the branch point names the same place in the branch, so a consumer or checkpoint carries on; one
+  from after it is refused (`ForeignCursor`). A branch of a branch accepts cursors of both ancestors, each up to its
+  own branch point.
+- **Cut off part way.** Until the copy is whole, every read and write of the branch fails with `TenantBranching` (409).
+  A branch that was cut off stays that way until the same request is repeated, which starts it over, or the Tenant is
+  removed.
+- **Refusals.** It is refused (400) for a reserved Tenant, the App's own Tenant, a plugin's `service:` Tenant or a
+  divided one on either side, the same name twice, a source holding nothing, a target that already holds data, and
+  while a relocation is pending.
+
 ## Cross-Tenant indexes
 
 A Tenant is the unit of locality, so a question about every Tenant at once (every listing priced under 10 000, say) has

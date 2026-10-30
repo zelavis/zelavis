@@ -457,6 +457,14 @@ before editing.
   Tenant partition's log by a per-partition cursor committed with its entries,
   trusted only in the same partition `incarnation`; otherwise that partition is
   derived again from its records. `service:` partitions are never read.
+- A branch (`db.branchTenant`, `seed(source, { branch: true })`) copies a
+  Tenant as of one source position: records, then the source's log up to the
+  position read after them, under the target's writer. It records its lineage,
+  the only way a partition accepts another's cursor (up to the branch point),
+  which keeps copied checkpoints valid without rewriting them. An unfinished
+  branch refuses reads and writes (`TenantBranching`) until run again. No merge
+  back. JS, HTTP (`POST database/tenants/:id/branch`), SDK
+  (`client.projects.branchTenant`) and CLI (`zelavis projects branch-tenant`).
 - The transactional outbox is `documents.write({ emit })` plus
   `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
   the batch, read in log order, at least once, deduplicated by id. JS, HTTP,

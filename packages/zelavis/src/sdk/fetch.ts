@@ -1198,6 +1198,16 @@ export interface ZelavisProjectsClient {
    */
   deleteTenant(projectId: string, input: { readonly tenantId: string; readonly confirm: string }): Promise<ZelavisTenantRemoval>;
   /**
+   * Make `into` a new Tenant holding a copy of `tenantId` as of one position of its log: records, history,
+   * definitions and derived state. The source keeps taking writes; the branch is the source at the branch
+   * point and goes its own way from there, with no merging back. Refused for a reserved, plugin, divided or
+   * App Tenant on either side, an empty source, an occupied target and while a relocation is pending; a 409
+   * means a branch into `into` was cut off, and repeating the call finishes it. Needs
+   * `project.runtime.manage`, which carries `database.restore`. Same contract as
+   * `zelavis projects branch-tenant`.
+   */
+  branchTenant(projectId: string, input: { readonly tenantId: string; readonly into: string }): Promise<ZelavisTenantBranch>;
+  /**
    * Restore a backup into the Tenant it was taken from. `into` says what to do
    * about data already there: `empty` (the default) refuses unless there is
    * none, `purge` discards it first, and `merge` restores over it record by
@@ -1209,6 +1219,20 @@ export interface ZelavisProjectsClient {
     backup: ZelavisTenantBackup,
     options?: { readonly into?: ZelavisTenantRestoreMode; readonly tenantId?: string },
   ): Promise<ZelavisTenantRestoreResult>;
+}
+
+/** What branching a Tenant made. */
+export interface ZelavisTenantBranch {
+  readonly tenant: string;
+  readonly into: string;
+  /** The shard the branch lives on. */
+  readonly shard: string;
+  /** Records copied, retired ones included. */
+  readonly records: number;
+  /** Events of the source's log copied after its records. */
+  readonly events: number;
+  /** Where the branch's log ends: the source's log at the branch point. */
+  readonly cursor?: string;
 }
 
 /** What removing a Tenant did. */
@@ -2306,6 +2330,11 @@ function createProjectsClient(
       json<ZelavisTenantRemoval>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}`), {
         method: "DELETE",
         body: { confirm: input.confirm },
+      }),
+    branchTenant: (projectId, input) =>
+      json<ZelavisTenantBranch>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/branch`), {
+        method: "POST",
+        body: { into: input.into },
       }),
     restoreTenant: (projectId, backup, options) =>
       json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {

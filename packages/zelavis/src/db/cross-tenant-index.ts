@@ -387,9 +387,11 @@ export const crossTenantIndexesOver = (options: {
   ) => Effect.gen(function* () {
     const store = routed(partition);
     const namespace = documentNamespace(definition.collection);
-    const { incarnation, compactedTo } = yield* store.stats;
+    const { incarnation, compactedTo, seeding, lineage } = yield* store.stats;
     let applied = 0;
     let rederived = false;
+    // An unfinished branch refuses every read; its entries come once it is whole.
+    if (seeding && lineage !== undefined) return { applied, rederived };
 
     /** The cursor record's own version, to check in the transaction that replaces it. */
     type Held = { readonly record: number } | undefined;

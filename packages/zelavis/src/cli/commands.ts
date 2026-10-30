@@ -206,8 +206,8 @@ Commands:
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
                             logs of Projects; recipes lists Project recipes;
-                            tenants, create-tenant and delete-tenant list, add and remove
-                            the Tenants of an App Project's database; export-tenant and restore-tenant
+                            tenants, create-tenant, delete-tenant and branch-tenant list, add, remove
+                            and copy the Tenants of an App Project's database; export-tenant and restore-tenant
                             back up and restore one of them.
   cross-tenant-indexes      Define, list, refresh, query and drop an App Project's
                             cross-Tenant indexes: one collection from every Tenant.

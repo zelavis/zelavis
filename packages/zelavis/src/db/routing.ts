@@ -243,7 +243,7 @@ export const partitionRouter = (options: {
       stats: on((store) => store.stats),
       records: flowing((store) => store.records),
       scanRecords: (input) => on((store) => store.scanRecords(input)),
-      seed: (source) => on((store) => store.seed(source)),
+      seed: (source, seedOptions) => on((store) => store.seed(source, seedOptions)),
       reading: (effect) => on((store) => store.reading(effect)),
       events: {
         read: (readOptions) => flowing((store) => store.events.read(readOptions)),

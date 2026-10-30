@@ -51,6 +51,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/tenants",
       "/api/database/tenants/overview",
       "/api/database/tenants/:tenantId",
+      "/api/database/tenants/:tenantId/branch",
       "/api/database/cross-tenant-indexes",
       "/api/database/cross-tenant-indexes",
       "/api/database/cross-tenant-indexes/:name",

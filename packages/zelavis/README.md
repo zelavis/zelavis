@@ -677,6 +677,18 @@ database is open (`crossTenantRefresh`), and a query reports `refreshedAt`. The
 same operations are HTTP routes under `database/cross-tenant-indexes`,
 `client.crossTenantIndexes(projectId)` and `zelavis cross-tenant-indexes`.
 
+`db.branchTenant(tenant, into)` makes `into` a new Tenant holding a copy of
+`tenant` as of one position of its log: records, history, collections,
+schemas, projection and time-series state, outbox messages and idempotency
+receipts. The source keeps taking writes while it is copied; the branch is the
+source at the branch point and goes its own way from there (there is no
+merging back). It keeps the source's identifiers, versions and log positions
+and records its lineage, so a cursor or checkpoint from the source up to the
+branch point carries on in it. Until the copy is whole the branch answers
+`TenantBranching`, and running the same branch again finishes one that was cut
+off. The same operation is `POST database/tenants/:tenantId/branch`,
+`client.projects.branchTenant` and `zelavis projects branch-tenant`.
+
 A read of several steps answers from one snapshot of its shard, so a query sees
 one moment however many writes land while it runs; writes still see the shard
 as it is. `documents.write({ emit })` records messages in the Tenant's outbox in

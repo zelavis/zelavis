@@ -5,7 +5,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -57,6 +57,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let output: string | undefined;
   let file: string | undefined;
   let into: string | undefined;
+  let to: string | undefined;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -73,7 +74,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -97,6 +98,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--output") output = value;
     if (flag === "--file") file = value;
     if (flag === "--into") into = value;
+    if (flag === "--to") to = value;
   }
 
   const [action, target, ...rest] = positional;
@@ -110,7 +112,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
-  if (tenant && !["create-tenant", "delete-tenant", "export-tenant", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, export-tenant, restore-tenant and system-views.");
+  if (tenant && !["create-tenant", "delete-tenant", "branch-tenant", "export-tenant", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, branch-tenant, export-tenant, restore-tenant and system-views.");
+  if (to !== undefined && action !== "branch-tenant") throw new Error("--to is only supported by projects branch-tenant.");
   if ((view !== undefined || limit !== undefined || after !== undefined) && action !== "system-views") throw new Error("--view, --limit and --after are only supported by projects system-views.");
   if ((limit !== undefined || after !== undefined) && view === undefined) throw new Error("--limit and --after page one view; name it with --view.");
   if (confirm !== undefined && action !== "delete-tenant") throw new Error("--confirm is only supported by projects delete-tenant.");
@@ -253,6 +256,12 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
       if (confirm !== tenant) throw new Error(`projects delete-tenant removes Tenant ${tenant} and its history for good; repeat it with --confirm ${tenant}.`);
       const removed = yield* integration(() => client.projects.deleteTenant(requireTarget("id"), { tenantId: tenant, confirm }));
       print(removed, () => `Removed Tenant ${removed.tenant} (${removed.records} records) from ${removed.shard}.`);
+      return;
+    }
+    case "branch-tenant": {
+      if (!tenant || !to) throw new Error("projects branch-tenant requires --tenant <id> and --to <new id>.");
+      const branched = yield* integration(() => client.projects.branchTenant(requireTarget("id"), { tenantId: tenant, into: to }));
+      print(branched, () => `Branched Tenant ${branched.tenant} into ${branched.into} on ${branched.shard}: ${branched.records} records, ${branched.events} events.`);
       return;
     }
     case "export-tenant": {

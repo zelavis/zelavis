@@ -154,6 +154,28 @@ export interface SeedResult {
   readonly records: number;
   /** The position the copied log continues from: the source's compaction point. */
   readonly head: number;
+  /**
+   * For a branch, the source position the copy is as of: its log was followed
+   * up to here and no further, so the branch is the source at that moment.
+   */
+  readonly through?: number;
+  /** For a branch, the source's events applied after the records were copied. */
+  readonly applied?: number;
+}
+
+/** How `seed` fills its partition. */
+export interface SeedOptions {
+  /**
+   * Make this partition a new Tenant branched from the source rather than a
+   * copy of the same one. The copy is taken as of one source position, its
+   * whole log up to there included, and it is a new life of its own (a new
+   * `incarnation`). It records its lineage, so a cursor the source handed out
+   * up to that position, and one a checkpoint copied with it holds, names the
+   * same place in this log. Until the copy is whole every read and write here
+   * fails with `TenantBranching`; a partition left that way by an interrupted
+   * branch is started over by seeding it as a branch again.
+   */
+  readonly branch?: boolean;
 }
 
 /** What a partition holds, kept as it changes rather than counted when asked. */
@@ -176,6 +198,11 @@ export interface PartitionStats {
    * written. A cursor is only meaningful with the incarnation it was read in.
    */
   readonly incarnation?: string;
+  /**
+   * For a branched partition: each partition whose log positions it shares,
+   * nearest first, and the last position it shares with that one.
+   */
+  readonly lineage?: ReadonlyArray<{ readonly partition: PartitionKey; readonly upTo: number }>;
 }
 
 export interface ObjectStoreApi {
@@ -212,8 +239,9 @@ export interface ObjectStoreApi {
   }) => Effect.Effect<ReadonlyArray<{ readonly seq: Seq; readonly record: RecordState }>, DbError>;
 
   /**
-   * Fill this partition, which must hold nothing, from another partition of
-   * the same name, keeping its identifiers.
+   * Fill this partition, which must hold nothing, from another partition —
+   * the same one on another shard, or, with `branch`, a Tenant this one is
+   * branched from — keeping its identifiers.
    *
    * Copies every record while the source carries on taking writes, then sets
    * this partition's log at the source's compaction point, so the source's
@@ -221,7 +249,7 @@ export interface ObjectStoreApi {
    * hold on the source: the copy then has the source's state, history and
    * cursors. Refused with `TenantNotEmpty` when this partition holds anything.
    */
-  readonly seed: (source: ObjectStoreApi) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
+  readonly seed: (source: ObjectStoreApi, options?: SeedOptions) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
 
   /**
    * Run `effect` with every read of this shard answered from one snapshot,

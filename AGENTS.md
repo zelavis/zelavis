@@ -1364,6 +1364,20 @@ Key rules:
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
+- A branch (`db.branchTenant`) is a new Tenant copied from another as of one
+  position of its log, by `seed` with `{ branch: true }`: the records, then the
+  source's log up to the position read once they were copied and no further,
+  so the branch is the source at exactly that position however the source was
+  written meanwhile. It keeps the source's identifiers, versions and positions,
+  takes a new `incarnation`, and records its lineage (the partitions whose log
+  it shares and up to where), which is the one way a partition accepts a cursor
+  another issued: only up to that branch point, where both logs are the same.
+  That is what keeps copied checkpoints and time-series cursors valid; never
+  rewrite them instead. The lineage is written with the first batch and the
+  seeding mark cleared with the last, all under the target's writer, and while
+  the mark stands the partition refuses every read and write
+  (`TenantBranching`); running the branch again starts it over. There is no
+  merging back.
 - A restore says what to do about data already there — refuse, purge, or merge
   — and never guesses. Its label must name the tenant it is restored into, and
   it writes only into that tenant's own partition, so nothing in a backup can

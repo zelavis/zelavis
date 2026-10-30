@@ -456,6 +456,8 @@ const CONFLICT_TAGS = new Set([
   "TenantMoving",
   // Fenced and not yet removed: the same request succeeds once the calls using the Tenant finish.
   "PlacementInUse",
+  // A branch into the Tenant was cut off; running the same branch again finishes it.
+  "TenantBranching",
 ]);
 
 const NOT_FOUND_TAGS = new Set([
@@ -491,6 +493,7 @@ const BAD_REQUEST_TAGS = new Set([
   "SchemaViolation",
   "TenantNotEmpty",
   "TenantNotDroppable",
+  "TenantNotBranchable",
   "InvalidRestoreMode",
   "InvalidMessage",
   "InvalidKeyValueExpiration",
@@ -601,6 +604,10 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Cross-Tenant index "${failure.name}": ${failure.reason}.`;
     case "TenantNotDroppable":
       return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
+    case "TenantNotBranchable":
+      return `Tenant "${failure.tenant}" cannot be branched into "${failure.into}": ${failure.reason}.`;
+    case "TenantBranching":
+      return `Tenant "${failure.tenant}" is an unfinished branch of "${failure.from}"; run the same branch again to finish it, or remove the Tenant.`;
     case "PlacementInUse":
       return `Tenant "${failure.partition}" is still in use by ${failure.calls} calls; it refuses changes and removal can be repeated.`;
     default:
@@ -748,6 +755,46 @@ function defineDatabaseRootService(
               return { status: 400, body: { error: `Tenant "${tenantId}" belongs to a plugin and cannot be removed; uninstall the plugin or drop its tables instead.` } };
             }
             return { body: yield* integration(() => service.dropTenant(tenantId)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.tenants.branch",
+          spec: {
+            operationId: "branchDatabaseTenant",
+            summary: "Branch a Tenant into a new Tenant",
+            description:
+              "Makes `into` a new Tenant holding a copy of the Tenant as of one position of its log: its records, history, collections, schemas, projections and time-series state, outbox messages and idempotency receipts. The source keeps taking writes while it is copied; nothing written after the branch point reaches the branch, and nothing written to the branch reaches the source. There is no merging back. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant or one divided into parts on either side, a source holding nothing, a target already holding data, and while a relocation is pending. A branch that was cut off answers 409 on every use of the target until the same request is repeated.",
+            tags: ["database"],
+            pathParams: { tenantId: { type: "string", required: true, description: "The Tenant to branch" } },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["into"],
+                properties: { into: { type: "string", description: "The new Tenant's ID" } },
+              },
+            },
+            responses: {
+              200: { description: "The branch: its shard, how many records and events it copied, and the cursor its log ends at" },
+              400: { description: "The Tenant cannot be branched there" },
+              409: { description: "The target is an unfinished branch; repeat the request" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["database.restore"] },
+          path: "/tenants/:tenantId/branch",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const tenantId = params.tenantId;
+            const into = readString(input.into);
+            if (into === undefined || into.length === 0) {
+              return { status: 400, body: { error: `Branching a Tenant needs { "into": "<new Tenant ID>" }.` } };
+            }
+            // The App's own Tenant holds the Project's accounts, which are never copied into another Tenant.
+            if (tenantId === APP_TENANT_ID || into === APP_TENANT_ID) {
+              return { status: 400, body: { error: `Tenant "${APP_TENANT_ID}" is the App's own Tenant; it is neither branched nor branched into.` } };
+            }
+            return { body: yield* integration(() => service.branchTenant(tenantId, into)) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {

@@ -1,6 +1,6 @@
 import { type Duration, Effect, Option, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { InvalidConstraint, TenantDivided, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
+import { InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -27,8 +27,9 @@ import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
 import { partitionRouter } from "./routing.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
+import type { EventCursor } from "./events.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
-import { isReservedTenantId, isValidCollectionName } from "./naming.js";
+import { isReservedTenantId, isValidCollectionName, SERVICE_TENANT_PREFIX } from "./naming.js";
 import {
   GLOBAL_SHARD,
   GLOBAL_TENANT,
@@ -242,6 +243,26 @@ export interface DatabaseApi {
   ) => Effect.Effect<{ readonly tenant: TenantId; readonly shard: ShardId; readonly records: number }, DbError | TenantNotDroppable | PlacementInUse>;
 
   /**
+   * Make `into` a new Tenant holding a copy of `tenant`: its records, its log up to one position, and
+   * everything defined in it — collections, schemas, projections, time series, outbox messages and
+   * idempotency receipts — as of that position. `tenant` keeps taking writes while it is copied; the
+   * branch is the source as of the position it read when its records were copied (`through`), and
+   * nothing written after that reaches it.
+   *
+   * The branch keeps the source's identifiers, versions and log positions, so its edges hold, and a
+   * cursor or checkpoint from the source up to the branch point carries on in it. It is a Tenant of its
+   * own from then on: writes to either never reach the other, and there is no merging back. Until the
+   * copy is whole every read and write of `into` fails with `TenantBranching`; if the branch is cut off
+   * the same call starts it over. Refused for a reserved, plugin or divided Tenant on either side, a
+   * source holding nothing, a target already holding data, the same name twice, and while any
+   * relocation is pending.
+   */
+  readonly branchTenant: (
+    tenant: TenantId,
+    into: TenantId,
+  ) => Effect.Effect<TenantBranch, DbError | TenantNotBranchable>;
+
+  /**
    * The map in force now, not the one this database opened with.
    *
    * A relocation changes where tenants live, so a snapshot taken at open would
@@ -291,6 +312,20 @@ export interface DatabaseApi {
    * `cross-tenant-index.ts`.
    */
   readonly crossTenantIndexes: CrossTenantIndexesApi;
+}
+
+/** What `branchTenant` made. */
+export interface TenantBranch {
+  readonly tenant: TenantId;
+  readonly into: TenantId;
+  /** The shard the branch lives on. */
+  readonly shard: ShardId;
+  /** Records copied, retired ones included. */
+  readonly records: number;
+  /** Events of the source's log copied after its records. */
+  readonly events: number;
+  /** The end of the branch's log: the source's log as of the branch point, as a cursor of the branch. */
+  readonly cursor?: EventCursor;
 }
 
 export interface MakeDatabaseOptions {
@@ -679,6 +714,37 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       }
       return [...found].sort();
     }),
+    branchTenant: (tenant, into) =>
+      Effect.gen(function* () {
+        const refuse = (reason: string) => new TenantNotBranchable({ tenant, into, reason });
+        for (const name of [tenant, into]) {
+          if (isReservedTenantId(name) || name === GLOBAL_TENANT) return yield* refuse(`"${name}" is reserved`);
+          if (name.startsWith(SERVICE_TENANT_PREFIX)) return yield* refuse(`"${name}" belongs to a plugin`);
+          if (topology.subdivision.partsOf(name) !== undefined) return yield* refuse(`"${name}" is divided into parts`);
+        }
+        if (tenant === into) return yield* refuse("a Tenant cannot be branched into itself");
+        if ((yield* movement.pending).length > 0) return yield* refuse("a relocation is pending");
+        const source = shards.get(shardOf(tenant));
+        if (source === undefined || !(yield* tenantsOn(source)).includes(tenant)) return yield* refuse(`"${tenant}" holds nothing`);
+        // Each side under a lease on its placement for the whole copy, so neither can be moved and
+        // cleared from under it.
+        const leased = <A, E>(partition: TenantId, effect: Effect.Effect<A, E>) =>
+          router.operations({ run: () => effect }, partition).run();
+        const target = storeFor(into);
+        const seeded = yield* leased(tenant, leased(into, target.seed(storeFor(tenant), { branch: true }))).pipe(
+          Effect.catchTag("TenantNotEmpty", () => Effect.fail(refuse(`"${into}" already holds data`))),
+        );
+        yield* crossTenant.touched(into);
+        const cursor = yield* target.events.head;
+        return {
+          tenant,
+          into,
+          shard: shardOf(into),
+          records: seeded.records,
+          events: seeded.applied ?? 0,
+          ...(cursor === undefined ? {} : { cursor }),
+        };
+      }),
     dropTenant: (tenant) =>
       Effect.gen(function* () {
         if (isReservedTenantId(tenant) || tenant === GLOBAL_TENANT) return yield* new TenantNotDroppable({ tenant, reason: "it is reserved" });

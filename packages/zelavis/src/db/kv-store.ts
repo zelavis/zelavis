@@ -1,7 +1,8 @@
 import { Context, Effect, Option, Semaphore, Stream } from "effect";
 import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
-  PartitionExhausted, ReplicaDiverged, StoreError, TenantMoving, TenantNotEmpty, TenantRelocated, WriterFenced,
+  PartitionExhausted, ReplicaDiverged, StoreError, TenantBranching, TenantMoving, TenantNotEmpty, TenantRelocated,
+  WriterFenced,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
@@ -18,14 +19,14 @@ import {
   containerOf, decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
 } from "./segments.js";
 import {
-  decodeEvent, decodeFence, decodeRecord, encodeEvent, encodeFence, encodeRecord,
-  type StoredEvent, type StoredFence, type StoredRecord,
+  decodeEvent, decodeFence, decodeLineage, decodeRecord, encodeEvent, encodeFence, encodeLineage, encodeRecord,
+  LINEAGE_LIMIT, type StoredEvent, type StoredFence, type StoredLineage, type StoredRecord,
 } from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
 import { RoutedBy } from "./store.js";
 import type {
   EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
-  PartitionStats, RecordState, SeedResult, ShardStoreApi, Txn,
+  PartitionStats, RecordState, SeedOptions, SeedResult, ShardStoreApi, Txn,
 } from "./store.js";
 import type { ShardId } from "./topology.js";
 
@@ -131,6 +132,15 @@ const META_FENCE = "fence";
 const META_SEEDING = "seeding";
 
 /**
+ * Written by a branch's first batch: the partitions whose log positions this
+ * one shares, nearest first, and how far (`StoredLineage`). While the seeding
+ * mark is set beside it the partition is an unfinished branch and refuses
+ * reads and writes; once the mark is cleared it is what lets a cursor from the
+ * source, up to the branch point, carry on here.
+ */
+const META_LINEAGE = "lineage";
+
+/**
  * Random bytes naming this life of the partition: written with the first
  * batch that ever reaches it, copied by a seed, and gone when the partition
  * is removed. A partition removed and written again starts a new log whose
@@ -208,17 +218,23 @@ const encodeCursor = (partition: PartitionKey, position: number): EventCursor =>
 const cursorPosition = (
   partition: PartitionKey,
   cursor: EventCursor,
+  lineage: StoredLineage = [],
 ): Effect.Effect<number, ForeignCursor | StoreError> => {
   const raw = Buffer.from(cursor, "base64url").toString("utf8");
   const at = raw.lastIndexOf(SEPARATOR);
   const owner = raw.slice(0, at);
-  if (at < 0 || owner !== partition) {
-    return Effect.fail(new ForeignCursor({ expected: partition, received: at < 0 ? raw : owner }));
-  }
+  if (at < 0) return Effect.fail(new ForeignCursor({ expected: partition, received: raw }));
   const position = Number(raw.slice(at + 1));
-  return Number.isSafeInteger(position) && position >= 0
+  if (!Number.isSafeInteger(position) || position < 0) {
+    return Effect.fail(new StoreError({ op: "cursor.decode", cause: "the cursor names no position" }));
+  }
+  if (owner === partition) return Effect.succeed(position);
+  // A branch shares its source's log up to the branch point, position for
+  // position, so a cursor the source issued up to there names the same place
+  // here. Past it the two logs are different histories.
+  return lineage.some((entry) => entry.partition === owner && position <= entry.upTo)
     ? Effect.succeed(position)
-    : Effect.fail(new StoreError({ op: "cursor.decode", cause: "the cursor names no position" }));
+    : Effect.fail(new ForeignCursor({ expected: partition, received: owner }));
 };
 
 /**
@@ -433,6 +449,8 @@ const openPartition = (
   let lenses: number | undefined;
   let fence: StoredFence | null | undefined;
   let relocatedAt: number | null | undefined;
+  /** The partition's lineage, and whether a branch into it is still unfinished. */
+  let branch: { readonly lineage: StoredLineage; readonly unfinished: boolean } | undefined;
 
   const forget = () => {
     epoch += 1;
@@ -440,6 +458,7 @@ const openPartition = (
     lenses = undefined;
     fence = undefined;
     relocatedAt = undefined;
+    branch = undefined;
   };
 
   const assertCurrent = Effect.gen(function* () {
@@ -460,11 +479,32 @@ const openPartition = (
     })),
   );
 
+  /** The partition's lineage and whether a branch into it is unfinished; kept like the other beliefs. */
+  const branchHeld = Effect.gen(function* () {
+    if (branch !== undefined) return branch;
+    const seen = epoch;
+    const bytes = yield* raw.get(keys.meta(META_LINEAGE));
+    const lineage = bytes === undefined ? [] : yield* decodeOrDie("lineage.read", () => decodeLineage(bytes));
+    const unfinished = bytes !== undefined && (yield* readMetaLive(META_SEEDING)) > 0;
+    const stored = { lineage, unfinished };
+    if (branch === undefined && epoch === seen) branch = stored;
+    return branch ?? stored;
+  });
+
+  /** Where an event cursor points in this log, a cursor of an ancestor's up to its branch point included. */
+  const positionOf = (cursor: EventCursor) =>
+    Effect.flatMap(branchHeld, (held) => cursorPosition(partition, cursor, held.lineage));
+
   /**
    * Whether this partition's lenses can be read and written: not while a
-   * rebuild or reindex is under way, nor after one was interrupted.
+   * rebuild or reindex is under way, nor after one was interrupted, nor while
+   * a branch into it is unfinished.
    */
   const lensesReady = Effect.gen(function* () {
+    const held = yield* branchHeld;
+    if (held.unfinished) {
+      return yield* new TenantBranching({ tenant: partition, from: held.lineage[0]?.partition ?? "" });
+    }
     let state = lenses;
     if (state === undefined) {
       const seen = epoch;
@@ -746,8 +786,9 @@ const openPartition = (
     readonly append: (event: StoredEvent) => Effect.Effect<number, PartitionExhausted>;
   }
 
-  const commit = <A, E, R>(f: (into: Commit) => Effect.Effect<A, E, R>) =>
-    exclusiveWrite(Effect.gen(function* () {
+  /** One transaction's batch, for a caller already holding the permit. */
+  const commitHeld = <A, E, R>(f: (into: Commit) => Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
       const start = yield* readMeta(META_HEAD);
@@ -776,7 +817,9 @@ const openPartition = (
       // that changed nothing is not written at all.
       if (pending.size > 0) yield* write([...pending.values()]);
       return result;
-    }));
+    });
+
+  const commit = <A, E, R>(f: (into: Commit) => Effect.Effect<A, E, R>) => exclusiveWrite(commitHeld(f));
 
   const nextVersion = (current: StoredRecord | undefined) => {
     const version = (current?.version ?? 0) + 1;
@@ -1557,7 +1600,7 @@ const openPartition = (
     query: Query,
     after: number | undefined,
     within: Query | undefined,
-  ): Stream.Stream<Seq, StoreError | LensesRebuilding> =>
+  ): Stream.Stream<Seq, StoreError | LensesRebuilding | TenantBranching> =>
     Stream.unwrap(Effect.gen(function* () {
       yield* lensesReady;
       const start = after === undefined ? 0 : after + 1;
@@ -1722,7 +1765,7 @@ const openPartition = (
         return yield* Effect.die(new TypeError("an event read takes `after` or `from`, not both"));
       }
       const cursor = options?.from ?? options?.after;
-      const named = cursor === undefined ? 0 : yield* cursorPosition(partition, cursor);
+      const named = cursor === undefined ? 0 : yield* positionOf(cursor);
       // Read from a position by reading after the one before it.
       const after = options?.from !== undefined ? Math.max(named - 1, 0) : named;
       const compactedTo = yield* readMeta(META_COMPACTED_TO);
@@ -1758,11 +1801,14 @@ const openPartition = (
    * write accepted here later — after a move, or by a promoted follower —
    * cannot be handed one of them again.
    */
-  const followMany = (batch: ReadonlyArray<DbEvent>) =>
+  const followMany = (
+    batch: ReadonlyArray<DbEvent>,
+    through: typeof commit = commit,
+  ) =>
     Effect.gen(function* () {
       const positioned = yield* Effect.forEach(batch, (event) =>
-        Effect.map(cursorPosition(partition, event.cursor), (position) => ({ position, stored: storedOf(event) })));
-      yield* commit((into) =>
+        Effect.map(positionOf(event.cursor), (position) => ({ position, stored: storedOf(event) })));
+      yield* through((into) =>
         Effect.gen(function* () {
           let highest = 0;
           for (const { position, stored } of positioned) {
@@ -2153,6 +2199,7 @@ const openPartition = (
     }
     revision = undefined;
     fence = null;
+    branch = { lineage: [], unfinished: false };
     return records;
   });
 
@@ -2187,7 +2234,13 @@ const openPartition = (
     nextSeq: readMeta(META_NEXT_SEQ),
     seeding: Effect.map(readMeta(META_SEEDING), (state) => state > 0),
     incarnation: Effect.map(engine.get(incarnationKey), (bytes) => bytes === undefined ? undefined : toHex(bytes)),
-  }), ({ incarnation, ...counted }) => incarnation === undefined ? counted : { ...counted, incarnation });
+    lineage: Effect.flatMap(engine.get(keys.meta(META_LINEAGE)), (bytes) =>
+      bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("lineage.read", () => decodeLineage(bytes))),
+  }), ({ incarnation, lineage, ...counted }) => ({
+    ...counted,
+    ...(incarnation === undefined ? {} : { incarnation }),
+    ...(lineage === undefined ? {} : { lineage }),
+  }));
 
   const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
     // Copied first: an engine may hand back a view of a buffer it reuses, and
@@ -2221,8 +2274,22 @@ const openPartition = (
    * batch that clears the mark; a seed cut off before then is copied again
    * whole, snapshot included.
    */
-  const seed = (source: ObjectStoreApi): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
-    exclusiveWrite(Effect.gen(function* () {
+  const seed = (source: ObjectStoreApi, options?: SeedOptions): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+    options?.branch === true
+      ? exclusive(Effect.gen(function* () {
+          // An unfinished branch holds part of a copy and nothing else: no
+          // read or write was ever answered from it, so it is started over.
+          if ((yield* branchHeld).unfinished) yield* removeAll;
+          return yield* Effect.flatMap(unfenced, () => copyInto(source, true));
+        }))
+      : exclusiveWrite(copyInto(source, false));
+
+  /** Log entries read from the source and applied per batch while a branch follows it. */
+  const BRANCH_FOLLOW_BATCH = 512;
+
+  /** `seed`'s work, under the permit. */
+  const copyInto = (source: ObjectStoreApi, branching: boolean): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+    Effect.gen(function* () {
       const held = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: 2 })))]
         .filter((entry) => compareKeys(entry.key, revisionKey) !== 0);
       if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
@@ -2233,8 +2300,18 @@ const openPartition = (
       let pending = new Map<string, KvWrite>();
       let into: Projection = { view: pendingView(pending), sealed: false, counters };
       into.view.put(keys.meta(META_SEEDING), u64Bytes(1));
-      // A copy is the same life of the partition, so it keeps the source's name for it.
-      if (start.incarnation !== undefined) into.view.put(incarnationKey, fromHex(start.incarnation));
+      // A copy is the same life of the partition, so it keeps the source's
+      // name for it; a branch is a new one, named by its first batch.
+      if (!branching && start.incarnation !== undefined) into.view.put(incarnationKey, fromHex(start.incarnation));
+      // The lineage goes in the first batch, so from the first commit on the
+      // partition is known to be an unfinished branch and refuses everything.
+      const inherited = (upTo: number): StoredLineage =>
+        [{ partition: source.partition, upTo }, ...(start.lineage ?? []).map((entry) =>
+          ({ partition: entry.partition, upTo: Math.min(entry.upTo, upTo) }))].slice(0, LINEAGE_LIMIT);
+      if (branching) {
+        into.view.put(keys.meta(META_LINEAGE), encodeLineage(inherited(0)));
+        branch = { lineage: inherited(0), unfinished: true };
+      }
       let copied = 0;
       let highest = 0;
       const flush = Effect.gen(function* () {
@@ -2256,6 +2333,9 @@ const openPartition = (
           if (pending.size >= SEAL_BATCH) yield* flush;
         }));
 
+      // Every record was read before this, so each copied version was written
+      // at or before `end.head`: following the log up to there and no further
+      // brings every record to the source as of that one position.
       const end = yield* source.stats;
       into.view.put(keys.meta(META_HEAD), u64Bytes(start.compactedTo));
       into.view.put(keys.meta(META_COMPACTED_TO), u64Bytes(start.compactedTo));
@@ -2264,10 +2344,44 @@ const openPartition = (
         into.view.put(keys.meta(META_SNAPSHOT_ID), u64Bytes(SEED_SNAPSHOT_ID));
         into.view.put(keys.meta(META_SNAPSHOT_AT), u64Bytes(start.compactedTo));
       }
-      into.view.del(keys.meta(META_SEEDING));
+      if (!branching) {
+        into.view.del(keys.meta(META_SEEDING));
+        yield* flush;
+        return { records: copied, head: start.compactedTo };
+      }
+
+      into.view.put(keys.meta(META_LINEAGE), encodeLineage(inherited(end.head)));
       yield* flush;
-      return { records: copied, head: start.compactedTo };
-    }));
+      branch = { lineage: inherited(end.head), unfinished: true };
+
+      // The source's log from its compaction point to the branch point, at the
+      // positions it holds there: the lineage now names them as this log's own.
+      let applied = 0;
+      let at = start.compactedTo;
+      while (at < end.head) {
+        const batch = [...(yield* Stream.runCollect(source.events.read({
+          ...(at === 0 ? {} : { after: encodeCursor(source.partition, at) }),
+          limit: BRANCH_FOLLOW_BATCH,
+        })))];
+        const positioned = yield* Effect.forEach(batch, (event) =>
+          Effect.map(cursorPosition(source.partition, event.cursor), (position) => ({ position, event })));
+        const wanted = positioned.filter((entry) => entry.position <= end.head);
+        if (wanted.length === 0) {
+          return yield* new StoreError({ op: "branch.follow", cause: `the source's log ends at ${at}, before the branch point ${end.head}` });
+        }
+        // Positions come from the source in order and nothing else writes here
+        // under the permit, so a gap or a different event is a broken invariant.
+        yield* followMany(wanted.map((entry) => entry.event), commitHeld).pipe(
+          Effect.catchTags({ EventGap: Effect.die, ReplicaDiverged: Effect.die }),
+        );
+        applied += wanted.length;
+        at = wanted[wanted.length - 1]!.position;
+      }
+
+      yield* write([{ op: "delete", key: keys.meta(META_SEEDING) }]);
+      branch = { lineage: inherited(end.head), unfinished: false };
+      return { records: copied, head: start.compactedTo, through: end.head, applied };
+    });
 
   const api: ObjectStoreApi = {
     partition,
@@ -2288,7 +2402,7 @@ const openPartition = (
           Effect.map(decodeOrDie("record.read", () => decodeRecord(new Uint8Array(entry.value))), (record) =>
             ({ seq: asSeq(seqOf(entry.key)), record: record as RecordState })))))];
       })),
-    seed: (source) => live(seed(source)),
+    seed: (source, options) => live(seed(source, options)),
     events,
 
     reading: (effect) =>

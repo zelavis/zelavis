@@ -451,6 +451,16 @@ export class TenantNotDroppable extends Schema.TaggedError<TenantNotDroppable>()
   reason: Schema.String,
 }) {}
 
+/**
+ * A Tenant cannot be branched: one of the two is reserved or a plugin's, divided into parts, the source
+ * holds nothing, the target already holds data, or a relocation is pending.
+ */
+export class TenantNotBranchable extends Schema.TaggedError<TenantNotBranchable>()("TenantNotBranchable", {
+  tenant: Schema.String,
+  into: Schema.String,
+  reason: Schema.String,
+}) {}
+
 /** Restoring over live data would orphan whatever the tenant already holds. */
 export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("TenantNotEmpty", {
   tenant: Schema.String,
@@ -597,6 +607,17 @@ export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("Le
   operation: Schema.Literals(["rebuild", "reindex"]),
 }) {}
 
+/**
+ * A branch into this Tenant began and has not finished: it holds part of a
+ * copy, so reads and writes are refused rather than answered from it. Running
+ * the same branch again starts it over and finishes it; dropping the Tenant
+ * removes what was copied.
+ */
+export class TenantBranching extends Schema.TaggedError<TenantBranching>()("TenantBranching", {
+  tenant: Schema.String,
+  from: Schema.String,
+}) {}
+
 /** Every failure the store contract can raise. */
 export type DbError =
   | StoreError
@@ -607,6 +628,7 @@ export type DbError =
   | PartitionUnavailable
   | PartitionExhausted
   | LensesRebuilding
+  | TenantBranching
   | TenantRelocated
   | TenantMoving;
 
@@ -624,6 +646,7 @@ const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]:
   PartitionUnavailable: true,
   PartitionExhausted: true,
   LensesRebuilding: true,
+  TenantBranching: true,
   // The in-process router routes every call by the map in force, which is never
   // older than a move it made, so reaching a relocated partition here is a
   // broken invariant. A caller routing by a map of its own sees it typed, at

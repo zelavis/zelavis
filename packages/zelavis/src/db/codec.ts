@@ -401,3 +401,33 @@ export const decodeFence = (bytes: Uint8Array): StoredFence => {
   input.end();
   return { from, to };
 };
+
+/**
+ * Where a branched partition's log came from: each partition whose log
+ * positions it shares, and the last position it shares with that one. Nearest
+ * first, so a branch of a branch lists its own source, then that source's.
+ */
+export type StoredLineage = ReadonlyArray<{ readonly partition: string; readonly upTo: number }>;
+
+/** At most this many ancestors are kept: a branch of a branch of… stops there. */
+export const LINEAGE_LIMIT = 16;
+
+export const encodeLineage = (lineage: StoredLineage): Uint8Array => {
+  const out = new Writer();
+  out.u32(lineage.length);
+  for (const entry of lineage) {
+    out.string(entry.partition);
+    out.u64(entry.upTo);
+  }
+  return out.finish();
+};
+
+export const decodeLineage = (bytes: Uint8Array): StoredLineage => {
+  const input = new Reader(bytes, "lineage");
+  const count = input.u32();
+  if (count > LINEAGE_LIMIT) throw new RangeError(`lineage lists ${count} ancestors, more than ${LINEAGE_LIMIT}`);
+  const out: Array<{ partition: string; upTo: number }> = [];
+  for (let at = 0; at < count; at++) out.push({ partition: input.string(), upTo: input.u64() });
+  input.end();
+  return out;
+};
