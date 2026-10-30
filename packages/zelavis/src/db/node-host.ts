@@ -8,6 +8,7 @@ import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
 import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 import { makeRocksdbJsStore } from "./engines/rocksdb-js.js";
+import { imagesHost } from "./node-images.js";
 import { runtimeApiFor, type DatabaseRuntimeApi } from "./runtime-api.js";
 import type { ShardStoreApi } from "./store.js";
 import {
@@ -138,6 +139,8 @@ export const openNodeDatabase = (
     database,
     api: runtimeApiFor(database, {
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
+      // Beside the shards, so a database moved with its directory takes its images along.
+      images: imagesHost(database, { directory: join(options.directory, "..", "images"), engine }),
     }),
     partitionMap: database.partitionMap,
     engine,

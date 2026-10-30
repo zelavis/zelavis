@@ -31,6 +31,7 @@ export * from "./schemas.js";
 export * from "./time-series.js";
 export * from "./tenancy.js";
 export * from "./backup.js";
+export * from "./export-stream.js";
 export * from "./outbox.js";
 export * from "./topology-store.js";
 export * from "./system-views.js";

@@ -455,3 +455,14 @@ test("a branch cut off by a crash is finished when the database next opens, leav
   }));
 });
 
+
+test("a divided Tenant is one Tenant in db.tenants, and its parts are partitions", () =>
+  withDatabase((db) => Effect.gen(function* () {
+    yield* db.topology.subdivision.subdivide("whale", ["a", "b"]);
+    yield* seedPosts(db.forPart("whale", "a"), ["a1"]);
+    yield* seedPosts(db.forPart("whale", "b"), ["b1"]);
+    yield* seedPosts(db.forTenant("plain"), ["p1"]);
+    const own = (names) => names.filter((name) => !name.startsWith("zv.")).sort();
+    assert.deepEqual(own(yield* db.tenants), ["plain", "whale"]);
+    assert.deepEqual(own(yield* db.partitions), ["plain", "whale#a", "whale#b"]);
+  })));

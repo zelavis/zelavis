@@ -466,10 +466,27 @@ before editing.
   database reopens. Only the target is leased; the source is read a page per
   routed call so it can move meanwhile. The outbox is left behind by default
   (copied, then retracted in the branch's own log before it finishes);
-  receipts are kept. A divided Tenant branches part by part. No merge back.
+  receipts are kept. A divided Tenant branches part by part, each part as of its own position
+  (per-part consistency only; cross-part writes are sagas, so one cut would not
+  make them atomic). `db.tenants` and `tenants/overview` list Tenants, a divided
+  one as one entry with its `parts`; `db.partitions` lists partition keys. No merge back.
   JS, HTTP (`POST database/tenants/:id/branch`), SDK
   (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
   the dashboard's Database → Tenants Branch action.
+- Long readers (copy, branch, follower, export) hold the source's log
+  (`holdLog`, raise-only, time-limited, in-process, at most 64) so compaction stops
+  at the lowest hold and reports `heldAt`; it only prevents starvation, the readers'
+  own `CursorCompacted`/`LogCompacted` detection stays the correctness. The export
+  stream (`db.exportPage`, `POST database/tenants/:id/export`,
+  `client.projects.exportTenantPage`, `zelavis projects export-stream`) is the one
+  online read-out of a Tenant: records + log pages, applied by version, `consistent`
+  once the log was read to its end after the records and true from then on, opaque
+  validated cursor, hold only until consistent, a divided Tenant one export with a
+  cursor per part (consistent per part). `exportTenant` is built on it. Database
+  images (`db.maintenance.image`, `POST database/maintenance/images`,
+  `client.projects.createDatabaseImage`, `zelavis projects create-image|images`)
+  are engine-agnostic physical backups through the key-value interface only; restore
+  is the operator's with the Project stopped, never a route. No native OLAP in the core.
 - The transactional outbox is `documents.write({ emit })` plus
   `outbox.read/emit/remove`: messages are `zv.outbox` records committed with
   the batch, read in log order, at least once, deduplicated by id. JS, HTTP,

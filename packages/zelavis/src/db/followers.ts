@@ -1,5 +1,6 @@
 import { type Duration, Effect, Stream } from "effect";
 import { type DbError, ReplicaDiverged } from "./errors.js";
+import { holdingLog } from "./log-hold.js";
 import type { PartitionKey } from "./model.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 
@@ -58,6 +59,8 @@ export interface FollowerOptions {
 
 /** Log entries read from the leader and applied per batch. */
 const FOLLOW_BATCH = 512;
+/** How long a follower's copy holds its leader's log without a pass ending. */
+const FOLLOW_HOLD_TTL_MILLIS = 5 * 60_000;
 
 /** Batches per pass unless the caller says otherwise. */
 const MAX_BATCHES = 64;
@@ -125,15 +128,19 @@ export const levelFollower = (
     const copy = (seed: FollowerSeed) =>
       Effect.gen(function* () {
         yield* follower.shard.drop(follower.partition);
-        // Just dropped, so an occupied partition here is a broken invariant.
-        const seeded = yield* store.seed(leader).pipe(Effect.catchTag("TenantNotEmpty", Effect.die));
-        const tail = yield* catchUpFollower(leader, store, limit).pipe(
-          // A seed reads from the leader's compaction point, and the positions
-          // after it continue the copy; failing here means the leader changed
-          // underneath the copy in a way the next pass has to start over from.
-          Effect.catchTags({ EventGap: Effect.die, ReplicaDiverged: Effect.die }),
-        );
-        return { seeded: seeded.records, ...tail, seed };
+        // The leader's log is held from the seed through the first catch-up, so upkeep on it cannot cut the
+        // events between the two; the seed holds it too while it reads, and that hold ends with the seed.
+        return yield* holdingLog(leader, `follow:${follower.partition}`, FOLLOW_HOLD_TTL_MILLIS, Effect.gen(function* () {
+          // Just dropped, so an occupied partition here is a broken invariant.
+          const seeded = yield* store.seed(leader).pipe(Effect.catchTag("TenantNotEmpty", Effect.die));
+          const tail = yield* catchUpFollower(leader, store, limit).pipe(
+            // A seed reads from the leader's compaction point, and the positions
+            // after it continue the copy; failing here means the leader changed
+            // underneath the copy in a way the next pass has to start over from.
+            Effect.catchTags({ EventGap: Effect.die, ReplicaDiverged: Effect.die }),
+          );
+          return { seeded: seeded.records, ...tail, seed };
+        }));
       });
 
     if (options?.fresh === true) return yield* copy("fresh");

@@ -1,6 +1,7 @@
 import { Context, Effect, Stream } from "effect";
 import type { CursorMismatch, DbError, EventGap, ReplicaDiverged, StoreError, TenantNotEmpty } from "./errors.js";
 import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
+import type { KvEngine } from "./kv.js";
 import type { ShardId } from "./topology.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import type { OrderedValue } from "./keys.js";
@@ -339,7 +340,29 @@ export interface ObjectStoreApi {
    */
   readonly compact: (options?: {
     readonly keep?: number;
-  }) => Effect.Effect<{ readonly removed: number; readonly compactedTo: number }, DbError>;
+  }) => Effect.Effect<{ readonly removed: number; readonly compactedTo: number; readonly heldAt?: number }, DbError>;
+
+  /**
+   * Keep the log from being compacted past `position` for `ttlMillis`, so a reader that copies
+   * records and then follows the log from there is not cut off by an upkeep pass it never saw.
+   *
+   * A hold is a named claim (`id`), renewed by asking again and only ever raised, never lowered;
+   * it ends when released or when its time is up, so a reader that vanished cannot pin the log
+   * for ever. `compact` goes as far as the lowest live hold and no further, and says where it
+   * was held (`heldAt`) rather than refusing. A hold below the compaction point is refused
+   * (`LogCompacted`): the events it was to keep are already gone. Holds are in-process like the
+   * writer, at most 64 per partition and at most 10 minutes each; a hold taken on a placement a
+   * move has since left protects nothing there, and the reader's own detection (`CursorCompacted`,
+   * `LogCompacted`) stays what keeps it correct — a hold only keeps a long read from starving.
+   */
+  readonly holdLog: (input: {
+    readonly id: string;
+    readonly position: number;
+    readonly ttlMillis: number;
+  }) => Effect.Effect<{ readonly position: number }, DbError>;
+
+  /** End a hold early. Releasing one that is not held, or has expired, changes nothing. */
+  readonly releaseLog: (id: string) => Effect.Effect<void, DbError>;
 
   /** The position everything at or below has been compacted away. */
   readonly compactedTo: Effect.Effect<number, DbError>;
@@ -546,6 +569,18 @@ export interface ShardStoreApi {
    * lower one never replaces it.
    */
   readonly relocate: (partition: PartitionKey, mapVersion: number) => Effect.Effect<number, DbError>;
+
+  /**
+   * Copy every key this shard holds — every partition, the layout marker, the writer claim — into
+   * `destination`, which must hold nothing, as it stood at one moment.
+   *
+   * The copy is made through the ordered key-value interface alone, from one snapshot of this engine
+   * into another engine of any kind, so what comes out is an ordinary shard that engine can open: a
+   * physical backup, not an export. Writers carry on meanwhile; the snapshot is held for the length of
+   * the copy, which is raw bytes and quick, and nothing above the engine is decoded or re-derived.
+   * A copy cut off leaves the destination partly filled: discard it and copy again.
+   */
+  readonly image: (destination: KvEngine) => Effect.Effect<{ readonly keys: number; readonly bytes: number }, DbError>;
 }
 
 /**

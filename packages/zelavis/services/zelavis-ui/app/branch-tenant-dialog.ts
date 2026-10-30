@@ -52,10 +52,10 @@ export function mountBranchTenant(host: HTMLElement, options: { api: string; tak
     ), { signal: lifetime.signal });
   });
   return {
-    open(tenantId: string) {
+    open(tenantId: string, divided = false) {
       source = tenantId; into.value = ""; copyOutbox.checked = false; errors.replaceChildren(); branch.removeAttribute("disabled");
       title.textContent = `Branch tenant ${tenantId}`;
-      description.textContent = `Makes a new Tenant holding a copy of ${tenantId} as it is now: its tables, records and history. ${tenantId} keeps taking writes; nothing written to either afterwards reaches the other, and the branch is not merged back.`;
+      description.textContent = `Makes a new Tenant holding a copy of ${tenantId} as it is now: its tables, records and history. ${tenantId} keeps taking writes; nothing written to either afterwards reaches the other, and the branch is not merged back.${divided ? ` ${tenantId} is divided into parts: each part is copied as of its own moment, so the parts of the branch are consistent within themselves but not with one another.` : ""}`;
       dialog.setOpen(true);
       setTimeout(() => into.focus(), 0);
     },

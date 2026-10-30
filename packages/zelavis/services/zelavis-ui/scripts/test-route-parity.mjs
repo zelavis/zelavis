@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 import { packageRoot } from "./fuzor-source.mjs";
 import { dashboardRoutes } from "../app/dashboard-routes.ts";
@@ -266,6 +267,59 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const branchedOrder = yield* request(proxy + "/database/documents/orders/order-a?tenantId=parity-acme-branch");
   assert.equal(branchedOrder.data.total, 3, "The branch holds the source's records");
   console.log("Action: a Tenant is branched from Database → Tenants and the copy holds its records.");
+
+  // A divided Tenant: no route divides one (that is a topology decision made by the database's owner), so a stopped Project's
+  // database is opened directly, `whale` divided into two parts and written to, and the Project started again.
+  yield* request("/runtime/projects", "POST", { id: "whale-lab", name: "Whale laboratory", recipeName: "@zelavis/app", start: true });
+  const whaleProxy = "/runtime/projects/whale-lab/proxy/zelavis/api/v1";
+  const waitWhale = Effect.gen(function*() {
+    for (let count = 0; count < 150; count++) {
+      const response = yield* io(() => context.request.get(api + whaleProxy + "/runtime/config"));
+      if (response.ok()) return;
+      yield* Effect.sleep("200 millis");
+    }
+    throw new Error("The whale Project failed to start: " + logs);
+  });
+  yield* waitWhale;
+  yield* request("/runtime/projects/whale-lab/stop", "POST", {});
+  yield* Effect.gen(function*() {
+    for (let count = 0; count < 100; count++) {
+      const response = yield* io(() => context.request.get(api + whaleProxy + "/runtime/config"));
+      if (!response.ok()) return;
+      yield* Effect.sleep("200 millis");
+    }
+    throw new Error("The whale Project did not stop: " + logs);
+  });
+  yield* io(async () => {
+    const { openNodeDatabase } = await import(pathToFileURL(join(packageRoot, "..", "..", "dist", "db", "node-host.js")).href);
+    const opened = await openNodeDatabase({ directory: join(data, "projects", "whale-lab", ".zelavis", "data", "primary", "shards") });
+    try {
+      await Effect.runPromise(opened.database.topology.subdivision.subdivide("whale", ["a", "b"]));
+      for (const [part, ids] of [["a", ["1"]], ["b", ["1", "2"]]]) {
+        const handle = opened.api.forPart("whale", part);
+        await handle.documents.createCollection({ name: "orders" });
+        for (const id of ids) await handle.documents.insert({ collection: "orders", id, data: { total: Number(id) } });
+      }
+    } finally { await opened.close(); }
+  });
+  yield* request("/runtime/projects/whale-lab/start", "POST", {});
+  yield* waitWhale;
+  yield* visit("/projects/whale-lab/database/tenants");
+  yield* io(() => page.getByRole("button", { name: "Branch Tenant whale", exact: true }).waitFor());
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Delete Tenant whale", exact: true }).count()), 0, "A divided Tenant offers no Delete");
+  assert.equal(yield* io(() => page.getByRole("button", { name: /Branch Tenant whale#/ }).count()), 0, "A part is not branched on its own");
+  assert.equal(yield* io(() => page.getByText("divided into 2 parts", { exact: false }).count()), 1, "The Tenant's row says it is divided, once");
+  for (const key of ["whale#a", "whale#b"]) assert.equal(yield* io(() => page.getByText(key, { exact: true }).count()), 1, key + " is listed under its Tenant");
+  yield* io(() => page.getByRole("button", { name: "Branch Tenant whale", exact: true }).click());
+  yield* io(() => page.getByRole("dialog").getByLabel("New Tenant ID").fill("whale-copy"));
+  yield* io(() => page.getByRole("dialog").getByRole("button", { name: "Branch tenant", exact: true }).click());
+  yield* io(() => page.getByText("Branched Tenant whale into whale-copy.", { exact: true }).waitFor());
+  const whaleOverview = (yield* request(whaleProxy + "/database/tenants/overview")).tenants;
+  const copy = whaleOverview.find(entry => entry.tenantId === "whale-copy");
+  assert.deepEqual(copy?.parts.map(part => [part.part, part.documents]), [["a", 1], ["b", 2]], "The branch is divided the same way and holds each part's documents");
+  assert.equal(whaleOverview.filter(entry => entry.tenantId.includes("#")).length, 0, "No part is listed as a Tenant");
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Branch Tenant whale-copy", exact: true }).count()), 1, "The branch of a divided Tenant is listed as one Tenant");
+  console.log("Action: a divided Tenant is one row with its parts, offers Branch and no Delete, and its branch is divided the same way.");
 
   yield* visit("/projects/parity-lab/content/new");
   yield* io(() => page.getByLabel("Content type label").fill("UI Notes"));

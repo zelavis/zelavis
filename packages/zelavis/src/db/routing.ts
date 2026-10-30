@@ -258,6 +258,8 @@ export const partitionRouter = (options: {
       sealPostings: on((store) => store.sealPostings),
       compact: (compactOptions) => on((store) => store.compact(compactOptions)),
       compactedTo: on((store) => store.compactedTo),
+      holdLog: (input) => on((store) => store.holdLog(input)),
+      releaseLog: (id) => on((store) => store.releaseLog(id)),
       snapshot: on((store) => store.snapshot),
       snapshotAt: on((store) => store.snapshotAt),
       liveRecords: on((store) => store.liveRecords),

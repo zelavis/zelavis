@@ -461,6 +461,20 @@ export class TenantNotBranchable extends Schema.TaggedError<TenantNotBranchable>
   reason: Schema.String,
 }) {}
 
+/** An export was asked for with a cursor that is not the Tenant's, or a limit it does not allow. */
+export class InvalidExport extends Schema.TaggedError<InvalidExport>()("InvalidExport", {
+  reason: Schema.String,
+}) {}
+
+/** A database image was asked for with a name or engine it does not take, or under a name already taken. */
+export class InvalidImage extends Schema.TaggedError<InvalidImage>()("InvalidImage", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
 /** Restoring over live data would orphan whatever the tenant already holds. */
 export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("TenantNotEmpty", {
   tenant: Schema.String,

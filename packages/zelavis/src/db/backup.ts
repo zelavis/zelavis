@@ -1,16 +1,19 @@
 import { Effect, Stream } from "effect";
 import { equals } from "./query.js";
 import {
+  type DbError,
+  type InvalidExport,
   BackupFormatUnsupported,
   BackupTenantMismatch,
   InvalidRestoreMode,
   type TenantMoving,
   TenantNotEmpty,
 } from "./errors.js";
+import { carried, checkedLimit, EXPORT_MAX_LIMIT, exportPartitionPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { MAX_SEQ } from "./keys.js";
 import { asSeq, emptyManifest, type IndexManifest, type ObjectIdentity, type Seq } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
-import { COLLECTION_NAMESPACE, isDerivedNamespace } from "./tenancy.js";
+import { COLLECTION_NAMESPACE } from "./tenancy.js";
 import type { TenantId } from "./topology.js";
 
 export const ZELAVIS_DB_BACKUP_V1 = "zelavis.db-backup.v1" as const;
@@ -99,6 +102,12 @@ export interface BackupsApi {
    */
   readonly exportTenant: Effect.Effect<TenantBackupV1>;
   /**
+   * One page of this tenant as a stream: its records, then every change since, from the cursor the
+   * last page gave. See `ExportPage`. Refused with `CursorCompacted` or `LogCompacted` when the log
+   * the export was following was cut, and with `StoreError` for a cursor that is not this tenant's.
+   */
+  readonly exportPage: (input?: ExportPageInput) => Effect.Effect<ExportPage, DbError | InvalidExport>;
+  /**
    * Replay a backup into this tenant.
    *
    * Restores under the tenant the backup was taken from — checked rather than
@@ -125,14 +134,9 @@ export interface BackupsApi {
 /** Records a purge retracts per transaction. */
 const PURGE_BATCH = 256;
 
-const toBase64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => new Uint8Array(Buffer.from(value, "base64"));
 
 export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => {
-  /** A record a backup carries: named, and not state that is rebuilt rather than restored. */
-  const carried = (identity: ObjectIdentity | undefined): identity is ObjectIdentity =>
-    identity !== undefined && !isDerivedNamespace(identity.namespace);
-
   /**
    * Retract every record a backup would carry.
    *
@@ -165,63 +169,38 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
      * Every record the tenant holds, then every event logged since the records
      * began to be read.
      *
-     * The records are read while writes carry on, so on their own they are not
-     * one moment. The events after them are: a restore applies everything by
-     * version, so an event older than the record already exported changes
-     * nothing and a newer one brings it forward, and the restored tenant is
-     * the tenant as of the last of them. Reading the records rather than the
-     * whole log keeps an export the size of what the tenant holds, not of
-     * everything it was ever written.
+     * Built from the export stream (`exportPage`): pages of records read while writes carry
+     * on, each with a page of the log, until the entries received are one position's state. A
+     * restore applies everything by version, so an event older than the record already exported
+     * changes nothing and a newer one brings it forward, and the restored tenant is the tenant as
+     * of the last of them. Nothing is held open between pages but the log (`holdLog`), so a large
+     * tenant does not pin a read snapshot for the length of the export, and a compaction running
+     * meanwhile cannot cut it off. Reading the records rather than the whole log keeps an export
+     * the size of what the tenant holds, not of everything it was ever written.
      */
-    exportTenant: store.reading(Effect.gen(function* () {
-      const mark = yield* store.events.head;
-      const events: BackupEvent[] = [];
-      yield* Stream.runForEach(store.records, ({ seq, record }) =>
-        Effect.sync(() => {
-          if (!record.live || !carried(record.identity)) return;
-          events.push({
-            kind: "put",
-            seq,
-            version: record.version,
-            at: Date.now(),
-            body: toBase64(record.body),
-            manifest: record.manifest,
-            identity: record.identity,
-          });
-        }));
-
-      let after = mark;
+    exportTenant: Effect.gen(function* () {
+      const entries: BackupEvent[] = [];
+      let cursor: string | undefined;
       for (;;) {
-        const tail = [...(yield* Stream.runCollect(
-          store.events.read({ ...(after === undefined ? {} : { after }), limit: 1024 }),
-        ))];
-        for (const event of tail) {
-          if (event._tag === "ObjectPut") {
-            if (!carried(event.identity)) continue;
-            events.push({
-              kind: "put",
-              seq: event.seq,
-              version: event.version,
-              at: event.at,
-              body: toBase64(event.bytes),
-              manifest: event.manifest,
-              identity: event.identity,
-            });
-          } else if (carried(event.identity)) {
-            events.push({ kind: "retract", seq: event.seq, version: event.version, at: event.at });
-          }
-        }
-        if (tail.length < 1024) break;
-        after = tail.at(-1)!.cursor;
+        const page = yield* exportPartitionPage(store, { ...(cursor === undefined ? {} : { cursor }), limit: EXPORT_MAX_LIMIT });
+        entries.push(...page.entries);
+        if (page.consistent) break;
+        cursor = page.cursor;
       }
-
       return {
         format: ZELAVIS_DB_BACKUP_V1,
         exportedAt: new Date().toISOString(),
         tenantId: tenant,
-        events,
+        events: entries,
       };
-    })).pipe(Effect.orDie),
+    }).pipe(Effect.orDie),
+
+    exportPage: (input) =>
+      Effect.gen(function* () {
+        const limit = yield* checkedLimit(input?.limit);
+        const page = yield* exportPartitionPage(store, { ...(input?.cursor === undefined ? {} : { cursor: input.cursor }), limit });
+        return { tenantId: tenant, entries: page.entries, cursor: page.cursor, consistent: page.consistent } satisfies ExportPage;
+      }),
 
   restoreTenant: (backup, options) =>
     Effect.gen(function* () {

@@ -10,6 +10,7 @@ import {
 import { RESTORE_MODES } from "./backup.js";
 import { APP_TENANT_ID, SERVICE_TENANT_PREFIX } from "./naming.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
+import { partitionKeyFor } from "./topology.js";
 import type {
   CollectionSurface,
   DocumentCursor,
@@ -458,6 +459,9 @@ const CONFLICT_TAGS = new Set([
   "PlacementInUse",
   // A branch into the Tenant was cut off; running the same branch again finishes it.
   "TenantBranching",
+  // An export or event read the log was compacted under: start again from a new export.
+  "CursorCompacted",
+  "LogCompacted",
 ]);
 
 const NOT_FOUND_TAGS = new Set([
@@ -503,6 +507,8 @@ const BAD_REQUEST_TAGS = new Set([
   "UnknownPart",
   "UnindexedField",
   "InvalidCrossTenantIndex",
+  "InvalidExport",
+  "InvalidImage",
 ]);
 
 /**
@@ -602,6 +608,12 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `A cross-Tenant index named "${failure.name}" already exists; drop it to define it differently.`;
     case "InvalidCrossTenantIndex":
       return `Cross-Tenant index "${failure.name}": ${failure.reason}.`;
+    case "InvalidExport":
+    case "InvalidImage":
+      return String(failure.reason);
+    case "CursorCompacted":
+    case "LogCompacted":
+      return `The log this export was following was compacted past ${String(failure.compactedTo)}; start the export again.`;
     case "TenantNotDroppable":
       return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
     case "TenantNotBranchable":
@@ -690,7 +702,7 @@ function defineDatabaseRootService(
             operationId: "overviewDatabaseTenants",
             summary: "List every Tenant with what it holds",
             description:
-              "Each Tenant's shard, number of tables, documents, stored records and the bytes of their bodies. Documents are counted from each collection's identifiers in the index (linear in the collection, no document is read). Stored records are what the partition keeps, so a table's own definition counts beside its documents; they and the bytes are kept by the database as it writes. A Tenant whose tables were all dropped is still listed: it keeps its history.",
+              "Each Tenant's shard, number of tables, documents, stored records and the bytes of their bodies. A divided Tenant is one entry with no shard of its own: its `parts` list each part's shard, tables, documents, records and bytes, and the Tenant's counts are their sums (a part holding nothing is not listed). Documents are counted from each collection's identifiers in the index (linear in the collection, no document is read). Stored records are what the partition keeps, so a table's own definition counts beside its documents; they and the bytes are kept by the database as it writes. A Tenant whose tables were all dropped is still listed: it keeps its history.",
             tags: ["database"],
             responses: { 200: { description: "Tenants with shard, tables, records and bytes" } },
           },
@@ -700,14 +712,29 @@ function defineDatabaseRootService(
           handler: ({ service }) => present(Effect.gen(function* () {
             const names = yield* integrationValue(service.tenants());
             const usage = new Map((yield* integrationValue(service.tenantUsage())).map((row) => [row.tenant, row]));
-            const tenants = [];
-            for (const tenantId of names) {
-              const documents = service.forTenant(tenantId).documents;
+            const measure = (partition: string, tenantApi: ReturnType<typeof service.forTenant>) => Effect.gen(function* () {
+              const documents = tenantApi.documents;
               const collections = yield* integration(() => documents.listCollections());
               let documentCount = 0;
               for (const collection of collections) documentCount += yield* integration(() => documents.count(collection.name));
-              const held = usage.get(tenantId);
-              tenants.push({ tenantId, shard: held?.shard ?? service.shardOf(tenantId), tables: collections.length, documents: documentCount, records: held?.records ?? 0, bytes: held?.bytes ?? 0 });
+              const held = usage.get(partition);
+              return { shard: held?.shard ?? service.shardOf(partition), tables: collections.length, documents: documentCount, records: held?.records ?? 0, bytes: held?.bytes ?? 0 };
+            });
+            const tenants = [];
+            for (const tenantId of names) {
+              const parts = service.partsOf(tenantId);
+              if (parts === undefined) {
+                tenants.push({ tenantId, ...(yield* measure(tenantId, service.forTenant(tenantId))) });
+                continue;
+              }
+              // A divided Tenant is one entry carrying its parts; its counts are theirs added up.
+              const held: Array<{ part: string; shard: string; tables: number; documents: number; records: number; bytes: number }> = [];
+              for (const part of parts) {
+                const key = partitionKeyFor(tenantId, part);
+                if (usage.has(key)) held.push({ part, ...(yield* measure(key, service.forPart(tenantId, part))) });
+              }
+              const sum = (field: "tables" | "documents" | "records" | "bytes") => held.reduce((total, entry) => total + entry[field], 0);
+              tenants.push({ tenantId, tables: sum("tables"), documents: sum("documents"), records: sum("records"), bytes: sum("bytes"), parts: held });
             }
             return { body: { tenants } };
           })),
@@ -802,6 +829,99 @@ function defineDatabaseRootService(
               return { status: 400, body: { error: `"outbox" is "leave" or "copy".` } };
             }
             return { body: yield* integration(() => service.branchTenant(tenantId, into, outbox === undefined ? undefined : { outbox })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.tenants.export",
+          spec: {
+            operationId: "exportDatabaseTenantPage",
+            summary: "Read a Tenant out as a stream, a page at a time",
+            description:
+              "Its records, then every change since, from the `cursor` the last page gave (none starts an export). Apply the entries by version: once a page says `consistent` they are the Tenant as of one log position, and it stays true while the cursor is followed, so the same route copies a Tenant, backs it up and tails it. A divided Tenant is one export whose entries name their `part`, consistent once every part is, each as of its own position. Nothing is held open between pages but the Tenant's log, until the export is consistent; a cursor that falls behind compaction is refused (`CursorCompacted`) and the export starts over. `limit` (1 to 1024, default 256) bounds each phase of each part, so a page holds up to twice that per part.",
+            tags: ["database"],
+            pathParams: { tenantId: { type: "string", required: true, description: "The Tenant to export" } },
+            requestBody: {
+              required: false,
+              schema: {
+                type: "object",
+                properties: {
+                  cursor: { type: "string", description: "The cursor the last page gave; omit to start" },
+                  limit: { type: "integer", description: "Entries per phase per part, 1 to 1024" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "{ tenantId, entries, cursor, consistent, parts? }" },
+              400: { description: "The Tenant cannot be exported, or the cursor is not its own" },
+              409: { description: "The log the export was following was compacted; start again" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/tenants/:tenantId/export",
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const tenantId = yield* evaluate(() => readTenantId(params.tenantId, principal));
+            const cursor = input.cursor;
+            const limit = input.limit;
+            if (cursor !== undefined && typeof cursor !== "string") return { status: 400, body: { error: `"cursor" is the string the last page gave.` } };
+            if (limit !== undefined && typeof limit !== "number") return { status: 400, body: { error: `"limit" is a number from 1 to 1024.` } };
+            return { body: yield* integration(() => service.exportPage(tenantId, {
+              ...(cursor === undefined ? {} : { cursor }),
+              ...(limit === undefined ? {} : { limit }),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.images.create",
+          spec: {
+            operationId: "createDatabaseImage",
+            summary: "Make a physical backup of the whole database",
+            description:
+              "Copies every shard, byte for byte through the ordered key-value interface and from one snapshot per shard, into a new image `name` on the host: an ordinary shard directory of a local engine (`sqlite`, `lmdb`, `rocksdb` or `libsql`; the database's own when `engine` is omitted, so any engine images into any other). It is quick because nothing is decoded and holds a read snapshot only for the copy; writers carry on, and each partition in the image is as of one moment. The image is opened by pointing a database at its directory with the engine it was written in; restoring one replaces the live database, which the operator does with the Project stopped, so there is no route for it. For a Tenant as of one log position without any snapshot, or for a portable backup, use the export stream.",
+            tags: ["database"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: {
+                  name: { type: "string", description: "The image's name: 1 to 64 letters, digits, dots, dashes or underscores" },
+                  engine: { type: "string", enum: ["sqlite", "lmdb", "rocksdb", "libsql"], description: "The engine to write it in" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The image: its name, engine, keys, bytes and each shard's share" },
+              400: { description: "The name or engine is not allowed, the name is taken, or this host cannot write images" },
+            },
+          },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/images",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const name = readString(input.name);
+            const engine = input.engine === undefined ? undefined : readString(input.engine);
+            if (name === undefined || name.length === 0) return { status: 400, body: { error: `Making an image needs { "name": "<image name>" }.` } };
+            if (input.engine !== undefined && engine === undefined) return { status: 400, body: { error: `"engine" is a string.` } };
+            return { body: yield* integration(() => service.images.create(name, engine === undefined ? undefined : { engine })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.images.list",
+          spec: {
+            operationId: "listDatabaseImages",
+            summary: "List the database's physical backups",
+            description: "The images this host holds, oldest name first, each with its engine, keys, bytes and per-shard shares. Only finished images are listed.",
+            tags: ["database"],
+            responses: { 200: { description: "{ images }" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/images",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            return { body: { images: yield* integrationValue(service.images.list()) } };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
@@ -985,7 +1105,7 @@ function defineDatabaseRootService(
             const requested = query.get("tenantId");
             const tenantIds = requested
               ? [yield* evaluate(() => readTenantId(requested, principal))]
-              : yield* integration(() => service.tenants());
+              : yield* integration(() => service.partitions());
             const several = tenantIds.length > 1;
 
             const items = [];

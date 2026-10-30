@@ -5,7 +5,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|export-tenant|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|export-tenant|export-stream|images|create-image|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--until-consistent] [--storage sqlite|lmdb|rocksdb|libsql] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -59,6 +59,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let into: string | undefined;
   let to: string | undefined;
   let outbox: string | undefined;
+  let storage: string | undefined;
+  let untilConsistent = false;
   let json = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -68,6 +70,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (arg === "--no-start") { start = false; continue; }
     if (arg === "--restart") { restart = true; continue; }
     if (arg === "--reveal") { reveal = true; continue; }
+    if (arg === "--until-consistent") { untilConsistent = true; continue; }
     if (arg === "--help" || arg === "-h") {
       console.log(usage);
       return;
@@ -75,7 +78,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox", "--storage"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -101,6 +104,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--into") into = value;
     if (flag === "--to") to = value;
     if (flag === "--outbox") outbox = value;
+    if (flag === "--storage") storage = value;
   }
 
   const [action, target, ...rest] = positional;
@@ -108,21 +112,27 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     console.log(usage);
     return;
   }
-  if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
+  const extra = action === "rename" || action === "create-image" ? 1 : 0;
+  if (rest.length > extra) throw new Error(`Unexpected argument "${rest[extra]}". ${usage}`);
+  if (storage !== undefined && action !== "create-image") throw new Error("--storage is only supported by projects create-image.");
   if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
   if (restart && action !== "upgrade") throw new Error("--restart is only supported by projects upgrade.");
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
-  if (tenant && !["create-tenant", "delete-tenant", "branch-tenant", "export-tenant", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, branch-tenant, export-tenant, restore-tenant and system-views.");
+  if (tenant && !["create-tenant", "delete-tenant", "branch-tenant", "export-tenant", "export-stream", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, branch-tenant, export-tenant, export-stream, restore-tenant and system-views.");
+  if (untilConsistent && action !== "export-stream") throw new Error("--until-consistent is only supported by projects export-stream.");
+  if (action === "export-stream" && !tenant) throw new Error("projects export-stream requires --tenant <id>.");
   if (to !== undefined && action !== "branch-tenant") throw new Error("--to is only supported by projects branch-tenant.");
   if (outbox !== undefined && action !== "branch-tenant") throw new Error("--outbox is only supported by projects branch-tenant.");
   if (outbox !== undefined && outbox !== "leave" && outbox !== "copy") throw new Error("--outbox is leave or copy.");
-  if ((view !== undefined || limit !== undefined || after !== undefined) && action !== "system-views") throw new Error("--view, --limit and --after are only supported by projects system-views.");
-  if ((limit !== undefined || after !== undefined) && view === undefined) throw new Error("--limit and --after page one view; name it with --view.");
+  if (view !== undefined && action !== "system-views") throw new Error("--view is only supported by projects system-views.");
+  if ((limit !== undefined || after !== undefined) && !["system-views", "export-stream"].includes(action)) throw new Error("--limit and --after are only supported by projects system-views and export-stream.");
+  if ((limit !== undefined || after !== undefined) && action === "system-views" && view === undefined) throw new Error("--limit and --after page one view; name it with --view.");
+  if (after !== undefined && untilConsistent) throw new Error("--until-consistent starts an export; it takes no --after.");
   if (confirm !== undefined && action !== "delete-tenant") throw new Error("--confirm is only supported by projects delete-tenant.");
   if (table && action !== "create-tenant") throw new Error("--table is only supported by projects create-tenant.");
-  if (output && action !== "export-tenant") throw new Error("--output is only supported by projects export-tenant.");
+  if (output && !["export-tenant", "export-stream"].includes(action)) throw new Error("--output is only supported by projects export-tenant and export-stream.");
   if ((file || into) && action !== "restore-tenant") throw new Error("--file and --into are only supported by projects restore-tenant.");
   const base = new URL(url);
   const client = createZelavisClient({
@@ -234,7 +244,14 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     }
     case "tenants": {
       const tenants = yield* integration(() => client.projects.tenants(requireTarget("id")));
-      print({ tenants }, () => tenants.length === 0 ? "No Tenants hold data." : tenants.map((entry) => `${entry.tenantId}\t${entry.shard}\t${entry.tables} tables\t${entry.documents} documents\t${entry.records} stored records\t${entry.bytes} bytes`).join("\n"));
+      const counts = (entry: { readonly tables: number; readonly documents: number; readonly records: number; readonly bytes: number }) =>
+        `${entry.tables} tables\t${entry.documents} documents\t${entry.records} stored records\t${entry.bytes} bytes`;
+      // A divided Tenant is one line of totals, then one indented line per part with its own shard and counts.
+      const lines = (entry: (typeof tenants)[number]) => [
+        `${entry.tenantId}\t${entry.shard ?? `divided into ${entry.parts?.length ?? 0} parts`}\t${counts(entry)}`,
+        ...(entry.parts ?? []).map((part) => `  ${entry.tenantId}#${part.part}\t${part.shard}\t${counts(part)}`),
+      ];
+      print({ tenants }, () => tenants.length === 0 ? "No Tenants hold data." : tenants.flatMap(lines).join("\n"));
       return;
     }
     case "system-views": {
@@ -288,6 +305,47 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
         { tenantId: backup.tenantId, events: backup.events.length, file: destination },
         () => `Exported ${backup.events.length} events of Tenant ${backup.tenantId} to ${destination}.`,
       );
+      return;
+    }
+    case "images": {
+      const images = yield* integration(() => client.projects.databaseImages(requireTarget("id")));
+      print({ images }, () => images.length === 0 ? "No database images." : images.map((entry) => `${entry.name}\t${entry.engine}\t${entry.createdAt}\t${entry.shards.length} shards\t${entry.keys} keys\t${entry.bytes} bytes`).join("\n"));
+      return;
+    }
+    case "create-image": {
+      const name = rest[0];
+      if (!name) throw new Error("projects create-image requires an image name.");
+      const engine = storage as "sqlite" | "lmdb" | "rocksdb" | "libsql" | undefined;
+      const image = yield* integration(() => client.projects.createDatabaseImage(requireTarget("id"), { name, ...(engine === undefined ? {} : { engine }) }));
+      print({ image }, () => `Imaged ${image.shards.length} shards (${image.keys} keys, ${image.bytes} bytes) as "${image.name}" in ${image.engine}.`);
+      return;
+    }
+    case "export-stream": {
+      // One page, or with --until-consistent every page up to the first consistent one, whose entries applied by
+      // version are the Tenant as of one position per part (the same entries `export-tenant` carries).
+      const projectId = requireTarget("id");
+      const tenantId = tenant!;
+      let page = yield* integration(() => client.projects.exportTenantPage(projectId, { tenantId, ...(after === undefined ? {} : { cursor: after }), ...(limit === undefined ? {} : { limit }) }));
+      let result = page;
+      let pages = 1;
+      if (untilConsistent) {
+        const entries = [...page.entries];
+        while (!page.consistent) {
+          const cursor = page.cursor;
+          page = yield* integration(() => client.projects.exportTenantPage(projectId, { tenantId, cursor, ...(limit === undefined ? {} : { limit }) }));
+          entries.push(...page.entries);
+          pages += 1;
+        }
+        result = { ...page, entries };
+      }
+      if (output) {
+        const destination = output;
+        yield* integration(() => writeFile(destination, `${JSON.stringify(result)}\n`, { mode: 0o600 }));
+        print({ tenantId, entries: result.entries.length, consistent: result.consistent, cursor: result.cursor, pages, file: destination },
+          () => `Wrote ${result.entries.length} entries of Tenant ${tenantId} to ${destination} (${result.consistent ? "consistent" : "not yet consistent"}; continue with --after ${result.cursor}).`);
+        return;
+      }
+      console.log(JSON.stringify(result, null, 2));
       return;
     }
     case "restore-tenant": {

@@ -1,5 +1,6 @@
 import { type Duration, Effect, Option, type Scope } from "effect";
-import type { DbError } from "./errors.js";
+import type { DbError, InvalidExport, StoreError } from "./errors.js";
+import type { KvEngine } from "./kv.js";
 import { InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
@@ -28,6 +29,7 @@ import { replicationOver, type ReplicationApi } from "./replication.js";
 import { partitionRouter } from "./routing.js";
 import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
+import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isReservedTenantId, isValidCollectionName, SERVICE_TENANT_PREFIX } from "./naming.js";
 import { OUTBOX_NAMESPACE } from "./tenancy.js";
@@ -36,6 +38,7 @@ import {
   GLOBAL_TENANT,
   PART_SEPARATOR,
   partitionKeyFor,
+  tenantOfPartition,
   shardFor,
   shardsOf,
   TOPOLOGY_SHARD,
@@ -120,6 +123,19 @@ export interface MaintenanceApi {
   readonly snapshot: Effect.Effect<ReadonlyArray<ShardSnapshot>, DbError>;
 
   /**
+   * Copy every shard — the topology and global shards with the rest — as it stands, into an empty engine each of `destination` opens: a physical
+   * backup through the ordered key-value interface alone, so any engine images into any other and
+   * the result is an ordinary shard directory that engine opens as a database. Each shard is copied
+   * from one snapshot, so each partition in it is as of one moment; partitions are independent
+   * writers, so there is no one moment across them (use the export stream for a Tenant as of one
+   * log position per part without holding a snapshot). The snapshot is held for the copy, which is
+   * raw bytes and quick; writers carry on. `destination` opens a shard's engine, closed when its copy ends.
+   */
+  readonly image: (
+    destination: (shard: ShardId) => Effect.Effect<KvEngine, StoreError, Scope.Scope>,
+  ) => Effect.Effect<ReadonlyArray<ShardImage>, DbError>;
+
+  /**
    * Fold every shard's postings into immutable blobs.
    *
    * The read-side counterpart to compaction: compaction stops storage growing
@@ -141,11 +157,20 @@ export interface ShardMaintenance {
   readonly compactedTo: number;
 }
 
+export interface ShardImage {
+  readonly shard: ShardId;
+  /** Keys copied, and the bytes of their keys and values. */
+  readonly keys: number;
+  readonly bytes: number;
+}
+
 export interface ShardCompaction {
   readonly shard: ShardId;
   readonly partition: PartitionKey;
   readonly removed: number;
   readonly compactedTo: number;
+  /** Set when a reader's hold kept the pass from going as far as it was asked: where it was held. */
+  readonly heldAt?: number;
 }
 
 export interface ShardReindex {
@@ -224,9 +249,17 @@ export interface DatabaseApi {
    * has an account would name tenants that hold nothing and miss tenants whose
    * account is gone, because holding data and having a credential are
    * different facts. Each shard already records its own occupants; this is
-   * that reading, deduplicated, for an operator looking at the whole database.
+   * that reading, deduplicated, for an operator looking at the whole database. A divided Tenant is
+   * one entry, named once however many of its parts hold data (see `partitions` for the parts' keys,
+   * and `topology.subdivision.partsOf` for the parts it is divided into).
    */
   readonly tenants: Effect.Effect<ReadonlyArray<TenantId>, DbError>;
+
+  /**
+   * Every partition holding data: a Tenant, or one part of a divided Tenant under its part key
+   * (`whale#a`). `tenants` is these with the parts folded back into the Tenant they belong to.
+   */
+  readonly partitions: Effect.Effect<ReadonlyArray<TenantId>, DbError>;
 
   /**
    * Remove a Tenant: its records, event log, lenses and meta, in bounded batches, and with them its
@@ -273,6 +306,17 @@ export interface DatabaseApi {
     into: TenantId,
     options?: BranchTenantOptions,
   ) => Effect.Effect<TenantBranch, DbError | TenantNotBranchable>;
+
+  /**
+   * One page of a Tenant read out as a stream: its records, then every change since, from the cursor
+   * the last page gave (none starts an export). See `ExportPage`: pages are applied by version, and
+   * `consistent` says when what has been received is one position's state. A divided Tenant is one
+   * export whose pages advance every part and tag each entry with its part; it is consistent once every
+   * part is, each as of its own position. Needs no snapshot held between calls, only the log held until
+   * the export is consistent. Refused for a reserved name; a cursor from another Tenant, or from before
+   * the Tenant was removed and written again, is a `StoreError`.
+   */
+  readonly exportPage: (tenant: TenantId, input?: ExportPageInput) => Effect.Effect<ExportPage, DbError | InvalidExport>;
 
   /**
    * The map in force now, not the one this database opened with.
@@ -576,6 +620,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       acrossPartitions((store) => store.snapshot),
       (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
     ),
+    image: (destination) =>
+      Effect.forEach(everyShard(), ([shard, store]) =>
+        Effect.scoped(Effect.flatMap(destination(shard), (engine) =>
+          Effect.map(store.image(engine), (copied) => ({ shard, ...copied }) satisfies ShardImage)))),
     seal: Effect.map(
       acrossPartitions((store) => store.sealPostings),
       (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
@@ -777,6 +825,18 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     yield* Effect.forkScoped(crossTenant.background(options.crossTenantRefresh));
   }
 
+  /** A partition's handle, routed like any operation: the Tenant itself, or one part under its part key. */
+  const handleOf = (key: TenantId) =>
+    router.operations(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key);
+
+  const partitions = Effect.gen(function* () {
+    const found = new Set<TenantId>();
+    for (const store of shards.values()) {
+      for (const partition of yield* tenantsOn(store)) found.add(partition);
+    }
+    return [...found].sort();
+  });
+
   return {
     get partitionMap() {
       return topology.current();
@@ -788,13 +848,15 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     movement,
     topology,
     shardOf,
-    tenants: Effect.gen(function* () {
-      const found = new Set<TenantId>();
-      for (const store of shards.values()) {
-        for (const tenant of yield* tenantsOn(store)) found.add(tenant);
-      }
-      return [...found].sort();
-    }),
+    partitions,
+    tenants: Effect.map(partitions, (keys) => [...new Set(keys.map(tenantOfPartition))].sort()),
+    exportPage: (tenant, input) =>
+      Effect.suspend(() => {
+        const parts = topology.subdivision.partsOf(tenant);
+        if (parts === undefined) return handleOf(tenant).backups.exportPage(input);
+        return exportDividedPage(tenant, parts, input ?? {}, (part, cursor, limit) =>
+          Effect.suspend(() => handleOf(partitionKeyFor(tenant, part)).backups.exportPage({ ...(cursor === undefined ? {} : { cursor }), limit })));
+      }),
     branchTenant: (tenant, into, branchOptions) =>
       Effect.gen(function* () {
         const refuse = (reason: string) => new TenantNotBranchable({ tenant, into, reason });

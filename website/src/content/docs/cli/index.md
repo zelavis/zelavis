@@ -143,7 +143,8 @@ command tree.
   database's maintenance views (needs `database.inspect`); the rest of the database's
   operations are `data` actions, listed in [App data](../api/app-data/).
   `projects tenants <id>` lists every Tenant of an App Project's database with its
-  shard, tables, stored records and bytes; `projects create-tenant <id> --tenant T --table N`
+  shard, tables, stored records and bytes (a divided Tenant is one line of totals followed by one
+  indented line per part, and `--json` gives each Tenant's `parts`); `projects create-tenant <id> --tenant T --table N`
   adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`
   removes one with its history for good (needs `database.drop`);
   `projects branch-tenant <id> --tenant T --to NEW [--outbox leave|copy]` makes `NEW` a copy of `T` as of one
@@ -152,6 +153,13 @@ command tree.
   `client.projects.tenants|createTenant|deleteTenant|branchTenant` and the database's `tenants/overview` and
   `documents/collections` routes through the Project proxy (`project.view` and
   `database.write`); the dashboard's Database → Tenants page uses the same routes.
+  `projects export-stream <id> --tenant T [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`
+  reads a Tenant out as a stream, a page at a time: its records, then every change since, with `consistent` set once the
+  entries received (applied by version) are the Tenant as of one log position; a divided Tenant is one export whose entries
+  name their `part` (needs `database.backup`); `projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb|libsql]`
+  copies every shard, byte for byte through the ordered key-value interface, into a physical backup `name` on the host in
+  any local engine, and `projects images <id>` lists them (needs `database.backup`); there is no restore command, because
+  replacing the live database is done with the Project stopped.
   `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of
   an App Project's database (the caller's own unless `--tenant` names another) and
   prints the backup, or writes it owner-only to `FILE`.

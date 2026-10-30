@@ -1173,6 +1173,25 @@ export interface ZelavisProjectsClient {
    */
   exportTenant(projectId: string, options?: { readonly tenantId?: string }): Promise<ZelavisTenantBackup>;
   /**
+   * One page of a Tenant as a stream: its records, then every change since, from the `cursor` the last page gave
+   * (none starts an export). Apply the entries by version; once a page says `consistent` they are the Tenant as of
+   * one log position, and it stays true while you keep following. A divided Tenant is one export whose entries name
+   * their `part`, consistent once every part is, each as of its own position. Nothing is held open between pages but
+   * the Tenant's log, until the export is consistent. Needs `database.backup`. Same contract as
+   * `zelavis projects export-stream`.
+   */
+  /**
+   * A physical backup of the whole database: every shard copied byte for byte through the ordered key-value
+   * interface into an image `name` on the host, an ordinary shard directory of a local engine (`engine`, the
+   * database's own when omitted). Quick, and holds a read snapshot only for the copy. Restoring replaces the live
+   * database, which the operator does with the Project stopped, so there is no SDK operation for it. Needs
+   * `database.backup`. Same contract as `zelavis projects create-image`.
+   */
+  createDatabaseImage(projectId: string, input: { readonly name: string; readonly engine?: "sqlite" | "lmdb" | "rocksdb" | "libsql" }): Promise<ZelavisDatabaseImage>;
+  /** The images the host holds. Needs `database.backup`. Same contract as `zelavis projects images`. */
+  databaseImages(projectId: string): Promise<readonly ZelavisDatabaseImage[]>;
+  exportTenantPage(projectId: string, input: { readonly tenantId: string; readonly cursor?: string; readonly limit?: number }): Promise<ZelavisTenantExportPage>;
+  /**
    * Every Tenant of an App Project's database with what it holds. Needs `database.inspect`
    * (carried by `project.view`). Same contract as `zelavis projects tenants`.
    */
@@ -1259,9 +1278,8 @@ export interface ZelavisTenantRemoval {
   readonly records: number;
 }
 
-/** One Tenant as the database reports it. */
-export interface ZelavisTenantSummary {
-  readonly tenantId: string;
+/** What one partition holds: an undivided Tenant, or one part of a divided one. */
+export interface ZelavisTenantUsage {
   /** The shard that holds it. */
   readonly shard: string;
   readonly tables: number;
@@ -1271,6 +1289,18 @@ export interface ZelavisTenantSummary {
   readonly records: number;
   /** Bytes of the records' bodies. */
   readonly bytes: number;
+}
+
+/**
+ * One Tenant as the database reports it. An undivided Tenant carries its shard; a divided one has no shard
+ * of its own and lists its `parts` (those holding data), and its counts are their sums.
+ */
+export interface ZelavisTenantSummary extends Omit<ZelavisTenantUsage, "shard"> {
+  readonly tenantId: string;
+  /** The shard that holds it; absent for a divided Tenant, whose parts are placed separately. */
+  readonly shard?: string;
+  /** A divided Tenant's parts that hold data, each with its own shard and counts. */
+  readonly parts?: readonly (ZelavisTenantUsage & { readonly part: string })[];
 }
 
 /**
@@ -1284,6 +1314,30 @@ export interface ZelavisTenantBackup {
   readonly exportedAt: string;
   readonly tenantId: string;
   readonly events: ReadonlyArray<Readonly<Record<string, unknown>>>;
+}
+
+/** A physical backup of the whole database, as the host reports it. */
+export interface ZelavisDatabaseImage {
+  readonly name: string;
+  readonly createdAt: string;
+  /** The engine it is written in, which opens it. */
+  readonly engine: string;
+  readonly keys: number;
+  readonly bytes: number;
+  readonly shards: readonly { readonly shard: string; readonly keys: number; readonly bytes: number }[];
+}
+
+/** One page of a Tenant's export stream. */
+export interface ZelavisTenantExportPage {
+  readonly tenantId: string;
+  /** Records first, then log events; a divided Tenant's entries each carry their `part`. */
+  readonly entries: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  /** Opaque: pass it back to read what follows. */
+  readonly cursor: string;
+  /** True once the entries received so far, applied by version, are one position's state; it stays true. */
+  readonly consistent: boolean;
+  /** A divided Tenant's parts; absent for an undivided Tenant. */
+  readonly parts?: readonly string[];
 }
 
 /** What a restore does about data the Tenant already holds. */
@@ -2326,6 +2380,22 @@ function createProjectsClient(
       json<ZelavisTenantBackup>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/export`), {
         method: "POST",
         body: options?.tenantId === undefined ? {} : { tenantId: options.tenantId },
+      }),
+    createDatabaseImage: (projectId, input) =>
+      json<ZelavisDatabaseImage>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images`), {
+        method: "POST",
+        body: { name: input.name, ...(input.engine === undefined ? {} : { engine: input.engine }) },
+      }),
+    databaseImages: (projectId) =>
+      present(Effect.gen(function* () {
+        return (yield* integrationValue(json<{ images: readonly ZelavisDatabaseImage[] }>(
+          projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images`),
+        ))).images;
+      })),
+    exportTenantPage: (projectId, input) =>
+      json<ZelavisTenantExportPage>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/export`), {
+        method: "POST",
+        body: { ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(input.limit === undefined ? {} : { limit: input.limit }) },
       }),
     tenants: (projectId) =>
       present(Effect.gen(function* () {

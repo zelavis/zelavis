@@ -1384,7 +1384,39 @@ Key rules:
   retracted in the branch's own log while the mark stands, never skipped in
   the copy, which would break the shared log; the namespaces are recorded
   beside the mark so a resume leaves the same ones. A divided Tenant branches
-  part by part into a Tenant divided the same way. There is no merging back.
+  part by part into a Tenant divided the same way, each part as of its own position:
+  per-part consistency only, with no one moment across the parts. That is a
+  decision, not a gap: cross-part writes are sagas, so a single cut could still
+  catch one half done, and it would cost a primitive that holds several writers.
+  `db.tenants` and `tenants/overview` report Tenants, a divided one as a single
+  entry carrying its `parts` (`db.partitions` lists the keys). There is no
+  merging back.
+- A reader that copies records and then follows the log (a copy, a branch, a
+  follower, an export) takes a hold on the source's log (`holdLog`: a named,
+  renewable, raise-only claim with a time limit, at most 64 a partition, taken under
+  the permit `compact` takes) so compaction goes only as far as the lowest live
+  hold and reports `heldAt` instead of refusing. A hold only prevents starvation:
+  holds are in-process like the writer, a hold on a placement a move left protects
+  nothing, and correctness stays with the readers' own detection (`CursorCompacted`,
+  `LogCompacted`). Never hold a source for a whole long read through a snapshot
+  instead; a pinned read transaction is the failure this replaces.
+- The export stream (`exportPage`, `db/export-stream.ts`) is the one way a
+  Tenant is read out online: a page of records and a page of the log per call,
+  entries applied by version, `consistent` once the log has been read to its end
+  after the last record was, and true from then on. Its cursor is opaque, bound to
+  the partition and its life, validated, and bounded; the hold lasts only until it is
+  consistent; a divided Tenant is one export with a cursor per part, consistent per
+  part. `exportTenant` is built on it, and so should any consumer (OLAP feed, replica,
+  backup): do not reintroduce a snapshot-pinned export.
+- A database image (`maintenance.image`) is a physical backup made through the
+  ordered key-value interface alone: every key of every shard (topology and global
+  included) from one snapshot per shard into an empty engine of any kind. It must
+  stay engine-agnostic: no SQLite-specific, file-copy or engine-native path as the
+  contract, and no raw-key import that bypasses the documents API. An image opens as an
+  ordinary database; restoring one is an operator act with the Project stopped, never a
+  route, because the database being replaced cannot authorize its own replacement.
+  A native OLAP engine is never part of the core runtime (no native dependency): an
+  analytics store is an external consumer of the export stream.
 - A restore says what to do about data already there — refuse, purge, or merge
   — and never guesses. Its label must name the tenant it is restored into, and
   it writes only into that tenant's own partition, so nothing in a backup can

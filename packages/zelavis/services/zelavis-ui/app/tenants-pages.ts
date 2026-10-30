@@ -39,20 +39,33 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     branched: (from, into) => { setFlash(`Branched Tenant ${from} into ${into}.`); context.refresh(); },
   });
 
-  const rows = tenants.map(entry => {
+  const size = (entry: Record<string, unknown>) => {
+    const tables = Number(entry.tables) || 0, documents = Number(entry.documents) || 0;
+    return `${tables} ${tables === 1 ? "table" : "tables"} · ${documents} ${documents === 1 ? "document" : "documents"} · ${formatBytes(Number(entry.bytes) || 0)}`;
+  };
+  const rows = tenants.flatMap(entry => {
     const id = label(entry.tenantId, "");
     const tables = Number(entry.tables) || 0;
     const kind = tenantKind(id);
-    const documents = Number(entry.documents) || 0;
-    const detail = `${tables} ${tables === 1 ? "table" : "tables"} · ${documents} ${documents === 1 ? "document" : "documents"} · ${formatBytes(Number(entry.bytes) || 0)} · shard ${label(entry.shard, "?")}`;
+    const parts = array(entry.parts).map(object);
+    const divided = entry.parts !== undefined;
+    const detail = `${size(entry)} · ${divided ? `divided into ${parts.length} ${parts.length === 1 ? "part" : "parts"}` : `shard ${label(entry.shard, "?")}`}`;
     const actions = node("div", { class: "actions" }, badge(kind === "App" ? "active" : kind === "Plugin" ? "planned" : "ready"), node("span", { class: "muted" }, kind),
-      tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
-      button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }),
+      ...(divided ? [] : [tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
+        button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` })]),
       // The App's own Tenant and a plugin's are not for the operator to branch or delete from here: the app and the plugin stand on
-      // them, and the App's holds its accounts. A part of a divided Tenant is branched with the whole Tenant, never on its own.
-      ...(kind === "Tenant" && !id.includes("#") ? [button("Branch", () => branchDialog.open(id), { "aria-label": `Branch Tenant ${id}` })] : []),
-      ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
-    return dataRow(id, detail, actions);
+      // them, and the App's holds its accounts. A divided Tenant is branched whole (each part into its counterpart) and is deleted
+      // part by part through the database, never here.
+      ...(kind === "Tenant" ? [button("Branch", () => branchDialog.open(id, divided), { "aria-label": `Branch Tenant ${id}` })] : []),
+      ...(kind === "Tenant" && !divided ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents: Number(entry.documents) || 0, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
+    // A part is a partition of its own: its tables are opened and backed up under its part key.
+    const partRows = parts.map(part => {
+      const key = `${id}#${label(part.part, "")}`;
+      return dataRow(key, `${size(part)} · shard ${label(part.shard, "?")}`, node("div", { class: "actions" },
+        (Number(part.tables) || 0) > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(key)}`) : node("span", { class: "muted" }, "No tables"),
+        button("Back up", () => download(key), { "aria-label": `Download a backup of ${key}` })));
+    });
+    return [dataRow(id, detail, actions), ...partRows];
   });
 
   const tenantInput = node("input", { name: "tenantId", placeholder: "acme", "aria-label": "Tenant ID", autocomplete: "off", required: "", maxlength: "128" });

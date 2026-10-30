@@ -263,7 +263,9 @@ A Tenant exists once it holds something, so there is no create-Tenant operation:
 a Tenant's tables leaves its history, so an emptied Tenant stays listed until it is deleted. The overview lists each
 Tenant with its shard, tables, documents (counted from each collection's identifiers in the index, so linear in the
 collection and no document is read), stored records (what the partition keeps, so a table's own definition counts beside
-its documents) and the bytes of their bodies, which the database keeps as it writes. It needs `database.inspect`, carried by `project.view`.
+its documents) and the bytes of their bodies, which the database keeps as it writes. A divided Tenant is one entry with
+no shard of its own: its `parts` list each part that holds data with its own shard, tables, documents, records and bytes,
+and the Tenant's counts are their sums. Parts are never listed as Tenants. It needs `database.inspect`, carried by `project.view`.
 
 | Form | List | Add | Delete |
 |---|---|---|---|
@@ -316,8 +318,13 @@ gives you a second database to try something on. It needs `database.restore`, ca
   from after it is refused (`ForeignCursor`). A branch of a branch accepts cursors of both ancestors, each up to its
   own branch point.
 - **Divided Tenants.** A Tenant divided into parts branches into one divided into the same parts, each part copied
-  from its counterpart as of a position of its own (parts are separate partitions, so there is no one moment across
-  them). The answer lists the parts it copied in `parts`, each with its shard, counts and cursor.
+  from its counterpart as of a position of its own. The guarantee is per part: each part of the branch is the source
+  part as of one position, but the parts are as of different moments, so a write that landed on two parts (a saga) can
+  appear in one part of the branch and not yet in the other. This is deliberate. Parts are separate partitions and
+  nothing writes across them atomically, so even one shared cut would only show a saga in some in-between step; a
+  workflow that spans parts is reconciled by its own steps and compensations, not by the branch. The answer lists the
+  parts it copied in `parts`, each with its shard, counts and cursor. The dashboard offers **Branch** on a divided
+  Tenant's row (and no Delete, which is refused for one).
 - **Cut off part way.** Until a copy is whole, every read and write of its target fails with `TenantBranching` (409).
   A branch that was cut off is started over when the same request is repeated, or when the database next opens, which
   finishes it from the source its lineage names, leaving behind what it was leaving. One the database cannot finish
@@ -363,7 +370,8 @@ lives on the database's global shard), and vector, geometry or composite indexes
 
 A backup is one Tenant: its records and the events logged while the export ran,
 which a restore applies by version, so an export taken during writes restores
-to one moment. A restore writes only into the Tenant the backup was taken from
+to one moment. It is built from the export stream below, so a large Tenant does
+not pin a read snapshot for the length of the export. A restore writes only into the Tenant the backup was taken from
 (`BackupTenantMismatch` otherwise), and `into` says what to do about data that
 Tenant already holds:
 
@@ -403,3 +411,82 @@ and `TenantMoving` is 409 while the Tenant is being moved. App Data clients
 Project's runtime management. A backup carries no time-series state or
 projection checkpoints, which are positions in the old log; they are rebuilt
 from the restored log.
+
+### Exporting a Tenant as a stream
+
+A backup file is the whole Tenant in one response. The export stream is the same data a page at a time, from a
+cursor, and it does not stop at the end: it goes on delivering changes, so one operation copies a Tenant, backs it up
+and keeps another store current. Each call returns a page of records and a page of the log after them. Apply the entries
+**by version** (an entry older than what is held changes nothing, a newer one brings the record forward, a retraction
+leaves its version behind so a repeat cannot bring the record back) and, once a page says `consistent: true`, what you
+hold is the Tenant as of one log position. It stays true, because from there every page continues the log in order.
+
+| Form | Read a page |
+|---|---|
+| HTTP | `POST …/database/tenants/:tenantId/export` with `{ cursor?, limit? }` |
+| SDK | `client.projects.exportTenantPage(projectId, { tenantId, cursor?, limit? })` |
+| CLI | `zelavis projects export-stream <id> --tenant T [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]` |
+| JS | `db.exportPage(tenant, { cursor?, limit? })`, or `tenant.backups.exportPage` on one handle |
+
+It needs `database.backup` (carried by `project.runtime.manage`), and naming a Tenant other than the caller's own also
+needs `database.inspect`. The answer is `{ tenantId, entries, cursor, consistent, parts? }`; pass `cursor` back to read
+what follows. `limit` (1 to 1024, default 256) bounds each phase of each part, so a page holds at most twice that.
+
+- **Nothing is pinned between calls but the log.** From the first call until the export is consistent, the Tenant's log is
+  held at the position the export began (see Compaction holds below), renewed by every call and ended by its time (five
+  minutes), so compaction cannot cut the events the export has still to follow. Once consistent the hold is released and
+  the cursor is an ordinary event cursor: a consumer that falls behind compaction is refused (409, `CursorCompacted`) and
+  starts again from a new export, as with any event read.
+- **A cursor is the Tenant's own.** It is bound to the Tenant and to its life: another Tenant's cursor, a malformed one, or
+  one from before the Tenant was removed and written again is refused (400, `InvalidExport`).
+- **A divided Tenant is one export.** Every call advances every part by one page, each entry names its `part`, the answer
+  lists `parts`, and the cursor carries one cursor per part. It is consistent once every part is, each as of its own
+  position: parts are separate partitions with no common log, the same guarantee a divided branch gives.
+- **What it carries.** The same entries a backup carries, with `at` and `body` as the database stores them; state that is
+  rebuilt rather than restored (projection checkpoints, time-series state) is not in it. A backup file of a divided Tenant,
+  and restoring one, are not part of it yet: a divided Tenant is backed up part by part.
+
+`zelavis projects export-stream` prints one page as JSON; `--until-consistent` collects every page up to the first
+consistent one into a single result, and `--output` writes it to an owner-only file. A runnable consumer that keeps
+an analytics copy current from the stream is in [Streaming a Tenant to an analytics store](../../guides/stream-to-analytics/).
+
+### Compaction holds
+
+Compaction truncates a partition's log, and a reader that copies records and then follows the log from where it began
+must not have that log cut under it. A reader takes a **hold** on the log at a position (`store.holdLog({ id, position,
+ttlMillis })`); compaction then goes as far as the lowest live hold and no further, and says where it was held (`heldAt` in
+the compaction result) instead of refusing. A hold is a named claim: asking again renews it, a position is only ever
+raised, it ends when released or when its time is up (at most ten minutes), and a partition keeps at most 64. A hold below
+the compaction point is refused (`LogCompacted`), because the events it was to keep are already gone.
+
+Branching a Tenant, copying a follower or a moved Tenant, and the export stream hold their source this way, so a long copy
+of a busy Tenant is not started over by every compaction pass. Holds are in-process like the writer, and a hold taken on a
+placement a move has since left protects nothing there; the readers' own detection (`CursorCompacted`, `LogCompacted`) is
+what keeps them correct, and a hold only keeps a long read from starving.
+
+### Database images
+
+A **database image** is a physical backup of the whole database: every shard, the topology and global shards included,
+copied key by key through the ordered key-value interface that every storage engine implements. Because nothing above
+that interface is involved, **any engine images into any other** (a SQLite database into an LMDB or RocksDB image, or the
+reverse), and the result is an ordinary shard directory that engine opens as a database, with its indexes, log and topology
+exactly as they were. It is quick because nothing is decoded or re-derived, and it holds one read snapshot per shard only
+for the copy while writers carry on. Each partition in an image is as of one moment; partitions are independent writers, so
+there is no one moment across them (the export stream gives a Tenant as of one log position per part without any snapshot,
+and is the portable form).
+
+| Form | Create | List |
+|---|---|---|
+| HTTP | `POST …/database/maintenance/images` with `{ name, engine? }` | `GET …/database/maintenance/images` |
+| SDK | `client.projects.createDatabaseImage(projectId, { name, engine? })` | `client.projects.databaseImages(projectId)` |
+| CLI | `zelavis projects create-image <id> <name> [--storage sqlite\|lmdb\|rocksdb\|libsql]` | `zelavis projects images <id>` |
+| JS | `db.maintenance.image((shard) => engine)` | |
+
+It needs `database.backup`. On a Node host the image is written beside the shards, under `<data>/primary/images/<name>/`,
+in `engine` (the database's own when omitted; `libsql-remote` cannot be an image's engine), under a name nothing lists and
+renamed into place only once whole, with an `image.json` beside the shards. A name is 1 to 64 letters, digits, dots, dashes
+or underscores; a taken name is refused, and a host that cannot write images says so (400).
+
+There is deliberately no route that restores an image. Replacing the live database is something the operator does with the
+Project stopped (point the database at the image's directory with the engine it was written in, or copy the directory over
+the shard directory), not something the database being replaced can authorize. Deleting an image is deleting its directory.

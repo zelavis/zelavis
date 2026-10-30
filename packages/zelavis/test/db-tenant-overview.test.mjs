@@ -3,6 +3,7 @@
 // Tenants with the same counts, create a Tenant the same way, and be refused the same way for a repeat.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Effect } from "effect";
 import { defineDatabaseService } from "../dist/db/index.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 import { runProjectsCommand } from "../dist/cli/projects.js";
@@ -98,4 +99,36 @@ test("tenants: listing and creating come out the same through HTTP, the SDK and 
 test("tenants: an unknown flag combination is refused by the CLI", async () => {
   await assert.rejects(() => runProjectsCommand(["tenants", "p1", "--table", "x", "--url", BASE]), /--table is only supported by projects create-tenant/);
   await assert.rejects(() => runProjectsCommand(["create-tenant", "p1", "--tenant", "x", "--url", BASE]), /requires --tenant <id> and --table <name>/);
+});
+
+test("tenants: a divided Tenant is one entry with its parts, the same through HTTP, the SDK and the CLI", async (t) => {
+  const results = {};
+  for (const [name, bind] of Object.entries(surfaces)) {
+    const db = await openTemporaryDatabase(t);
+    const api = db.api;
+    const surface = bind(api);
+    await Effect.runPromise(db.database.topology.subdivision.subdivide("whale", ["a", "b", "c"]));
+    for (const [part, ids] of [["a", ["1"]], ["b", ["1", "2"]]]) {
+      const handle = api.forPart("whale", part);
+      await handle.documents.createCollection({ name: "posts" });
+      for (const id of ids) await handle.documents.insert({ collection: "posts", id, data: { title: id } });
+    }
+    await api.forTenant("plain").documents.createCollection({ name: "posts" });
+    const listed = await surface.list();
+    const whale = listed.find((entry) => entry.tenantId === "whale");
+    results[name] = {
+      tenants: listed.map((entry) => entry.tenantId).sort(),
+      whale: { shard: whale.shard, tables: whale.tables, documents: whale.documents, records: whale.records, parts: whale.parts.map(({ part, tables, documents, records, shard }) => ({ part, tables, documents, records, shard: typeof shard })) },
+      sums: { documents: whale.parts.reduce((sum, part) => sum + part.documents, 0), records: whale.parts.reduce((sum, part) => sum + part.records, 0) },
+    };
+    assert.equal(whale.shard, undefined, "a divided Tenant has no shard of its own");
+  }
+  const http = results.http;
+  assert.deepEqual(http.tenants, ["plain", "whale"], "parts are not listed as Tenants");
+  assert.deepEqual(http.whale.parts.map((part) => [part.part, part.documents]), [["a", 1], ["b", 2]], "a part holding nothing is not listed");
+  assert.equal(http.whale.documents, 3);
+  assert.equal(http.whale.tables, 2);
+  assert.equal(http.whale.records, http.sums.records);
+  assert.deepEqual(results.sdk, http);
+  assert.deepEqual(results.cli, http);
 });

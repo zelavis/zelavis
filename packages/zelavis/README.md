@@ -687,11 +687,26 @@ branch point and goes its own way from there (there is no merging back). It
 keeps the source's identifiers, versions and log positions and records its
 lineage, so a cursor or checkpoint from the source up to the branch point
 carries on in it. A divided Tenant branches into one divided the same way, part
-by part. Until a copy is whole its target answers `TenantBranching`; running
+by part, each part as of its own position: consistent within a part, not across
+parts. `db.tenants` lists Tenants (a divided one once, `db.partitions` lists the
+partition keys), and the Tenants overview shows a divided Tenant as one entry
+with its `parts`. Until a copy is whole its target answers `TenantBranching`; running
 the same branch again, or opening the database again, finishes one that was cut
 off. The same operation is `POST database/tenants/:tenantId/branch`,
 `client.projects.branchTenant`, `zelavis projects branch-tenant` and the
 dashboard's **Branch** action on Database → Tenants.
+
+A Tenant can be read out as a stream, a page at a time: `db.exportPage(tenant, { cursor, limit })` (also `POST
+database/tenants/:tenantId/export`, `client.projects.exportTenantPage` and `zelavis projects export-stream`) gives its
+records and then every change since. Apply the entries by version; once a page says `consistent` they are the Tenant as of
+one log position, and the same cursor keeps delivering changes. Nothing is pinned between calls but the Tenant's log, which
+the export holds (`store.holdLog`, compaction goes only as far as the lowest live hold) until it is consistent. A divided
+Tenant is one export whose entries name their part, consistent once every part is, each as of its own position. The backup
+(`backups.exportTenant`) is built on it. `db.maintenance.image(destination)` (also `POST database/maintenance/images`,
+`client.projects.createDatabaseImage` and `zelavis projects create-image`) is a physical backup of the whole database
+through the ordered key-value interface alone, so any engine images into any other and the copy opens as an ordinary
+database; restoring one is the operator's, with the Project stopped. `examples/analytics-feed` is a dependency-free
+consumer that keeps an analytics copy of a Tenant current from the stream.
 
 A read of several steps answers from one snapshot of its shard, so a query sees
 one moment however many writes land while it runs; writes still see the shard

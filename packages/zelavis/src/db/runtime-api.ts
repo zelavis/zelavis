@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { ExportPage, ExportPageInput } from "./export-stream.js";
 import type { BranchTenantOptions, DatabaseApi, TenantApi, TenantBranch } from "./database.js";
 import type { KvChangePage, KvCursor, KeyValueEntry, KeyValueWrite } from "./key-value.js";
 import type {
@@ -270,6 +271,8 @@ export interface TenantRuntimeApi {
   };
   readonly backups: {
     readonly exportTenant: () => Promise<TenantBackupV1>;
+    /** One page of this Tenant as a stream; see `BackupsApi.exportPage`. */
+    readonly exportPage: (input?: ExportPageInput) => Promise<ExportPage>;
     readonly restoreTenant: (backup: TenantBackupV1, options?: RestoreOptions) => Promise<RestoreResult>;
   };
   readonly systemViews: {
@@ -283,7 +286,17 @@ export interface DatabaseRuntimeApi {
   readonly shardOf: (tenant: TenantId) => string;
   /** Every tenant holding data. What an operator surface needs to offer a choice. */
   readonly tenants: () => Promise<ReadonlyArray<TenantId>>;
+  /** Every partition holding data: Tenants, and a divided Tenant's parts under their part keys (`whale#a`). */
+  readonly partitions: () => Promise<ReadonlyArray<TenantId>>;
+  /** The parts a Tenant is divided into, or `undefined` when it is not divided. */
+  readonly partsOf: (tenant: TenantId) => ReadonlyArray<string> | undefined;
+  /** One part of a divided Tenant; see `Database.forPart`. */
+  readonly forPart: (tenant: TenantId, part: string) => TenantRuntimeApi;
   /** What each Tenant's partition holds, as the database keeps it rather than counts it: records, their bytes and the shard. */
+  /** Physical backups of the whole database, where the host writes them; see `DatabaseImagesHost`. */
+  readonly images: DatabaseImagesHost;
+  /** One page of a Tenant, or of a divided Tenant as a whole, as a stream; see `Database.exportPage`. */
+  readonly exportPage: (tenant: TenantId, input?: ExportPageInput) => Promise<ExportPage>;
   /** Remove a Tenant and everything it holds, history included; see `Database.dropTenant`. */
   readonly dropTenant: (tenant: TenantId) => Promise<{ readonly tenant: TenantId; readonly shard: string; readonly records: number }>;
   /** Make `into` a new Tenant holding a copy of `tenant` as of one position of its log; see `Database.branchTenant`. */
@@ -392,6 +405,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   },
   backups: {
     exportTenant: () => run(tenant.backups.exportTenant),
+    exportPage: (input) => run(tenant.backups.exportPage(input)),
     restoreTenant: (backup, options) => run(tenant.backups.restoreTenant(backup, options)),
   },
   systemViews: {
@@ -400,13 +414,45 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   },
 });
 
+/** A database image a host wrote: every shard copied byte for byte into an ordinary shard directory. */
+export interface DatabaseImage {
+  readonly name: string;
+  readonly createdAt: string;
+  /** The engine the image is written in: the one to open it with. */
+  readonly engine: string;
+  readonly keys: number;
+  readonly bytes: number;
+  readonly shards: ReadonlyArray<{ readonly shard: string; readonly keys: number; readonly bytes: number }>;
+}
+
+/**
+ * What a host that can write database images offers. A physical backup of the whole database
+ * through the ordered key-value interface; see `MaintenanceApi.image`. Restoring one replaces the live
+ * database, which the operator does with the Project stopped, so there is no operation for it.
+ */
+export interface DatabaseImagesHost {
+  /** Copy every shard into a new image `name`, in `engine` (the database's own when omitted). */
+  readonly create: (name: string, options?: { readonly engine?: string }) => Promise<DatabaseImage>;
+  readonly list: () => Promise<ReadonlyArray<DatabaseImage>>;
+}
+
+const noImages: DatabaseImagesHost = {
+  create: () => Promise.reject(new TypeError("This host cannot write database images.")),
+  list: () => Promise.resolve([]),
+};
+
 export const runtimeApiFor = (
   database: DatabaseApi,
-  options?: { readonly nodeId?: string },
+  options?: { readonly nodeId?: string; readonly images?: DatabaseImagesHost },
 ): DatabaseRuntimeApi => ({
+  images: options?.images ?? noImages,
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
   tenants: () => run(database.tenants),
+  partitions: () => run(database.partitions),
+  partsOf: (tenant) => database.topology.subdivision.partsOf(tenant),
+  forPart: (tenant, part) => tenantRuntime(database.forPart(tenant, part)),
+  exportPage: (tenant, input) => run(database.exportPage(tenant, input)),
   dropTenant: (tenant) => run(database.dropTenant(tenant)),
   branchTenant: (tenant, into, options) => run(database.branchTenant(tenant, into, options)),
   tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),

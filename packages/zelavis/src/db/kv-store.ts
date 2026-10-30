@@ -23,6 +23,7 @@ import {
   encodeNames, encodeRecord, LEAVE_LIMIT, LINEAGE_LIMIT, type StoredEvent, type StoredFence, type StoredLineage, type StoredRecord,
 } from "./codec.js";
 import type { Query, RangeBound, RangeQuery } from "./query.js";
+import { holdingLog } from "./log-hold.js";
 import { RoutedBy } from "./store.js";
 import type {
   EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
@@ -69,6 +70,10 @@ const META_RECORDS = "records";
 const META_BYTES = "bytes";
 /** The position everything at or below has been compacted away. */
 const META_COMPACTED_TO = "compacted_to";
+/** Holds on the log a partition keeps at once, how long one may last and how long its id may be. */
+const LOG_HOLD_LIMIT = 64;
+const LOG_HOLD_MAX_TTL_MILLIS = 10 * 60_000;
+const LOG_HOLD_ID_LIMIT = 128;
 
 /**
  * The log position the stored snapshot covers, and which snapshot it is.
@@ -485,6 +490,19 @@ const openPartition = (
       return yield* effect;
     })),
   );
+
+  /** Claims that the log is not compacted past a position, until released or their time is up. */
+  const logHolds = new Map<string, { position: number; expires: number }>();
+  /** The lowest live hold's position, dropping the ones whose time is up. */
+  const lowestHold = (): number | undefined => {
+    const now = Date.now();
+    let lowest: number | undefined;
+    for (const [id, hold] of logHolds) {
+      if (hold.expires <= now) logHolds.delete(id);
+      else if (lowest === undefined || hold.position < lowest) lowest = hold.position;
+    }
+    return lowest;
+  };
 
   /** The partition's lineage and whether a branch into it is unfinished; kept like the other beliefs. */
   const branchHeld = Effect.gen(function* () {
@@ -2299,8 +2317,18 @@ const openPartition = (
   /** Records a branch retracts per batch when it leaves a namespace behind. */
   const LEAVE_BATCH = 512;
 
-  /** `seed`'s work, under the permit. */
+  /** How long a copy's hold on its source's log lasts without a page renewing it. */
+  const SEED_HOLD_TTL_MILLIS = 2 * 60_000;
+  /** `seed`'s work, under the permit, with the source's log held. */
   const copyInto = (
+    source: ObjectStoreApi,
+    branching: boolean,
+    leave: ReadonlyArray<string>,
+  ): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+    holdingLog(source, `seed:${partition}`, SEED_HOLD_TTL_MILLIS, copyHeld(source, branching, leave));
+
+  /** `seed`'s copy itself. */
+  const copyHeld = (
     source: ObjectStoreApi,
     branching: boolean,
     leave: ReadonlyArray<string>,
@@ -2350,6 +2378,11 @@ const openPartition = (
       let after: Seq | undefined;
       for (;;) {
         const page = yield* source.scanRecords({ ...(after === undefined ? {} : { after }), limit: SEAL_BATCH });
+        // Renewed per page, so a copy that is slow keeps its hold and one that stops loses it. A hold already
+        // lost to a pass that cut the log is not an error here: the copy notices a cut log where it follows.
+        yield* source.holdLog({ id: `seed:${partition}`, position: start.compactedTo, ttlMillis: SEED_HOLD_TTL_MILLIS }).pipe(
+          Effect.catchTag("LogCompacted", () => Effect.void),
+        );
         for (const { seq, record } of page) {
           if (record.live) yield* project(into, seq, undefined, record);
           else yield* retire(into, seq, undefined, record.version, record.retiredAt);
@@ -2717,8 +2750,12 @@ const openPartition = (
         }
         const head = yield* readMeta(META_HEAD);
         const compactedTo = yield* readMeta(META_COMPACTED_TO);
-        const cut = head - keep;
-        if (cut <= compactedTo) return { removed: 0, compactedTo };
+        // Never past the lowest hold: a reader copying records is to follow the log from there.
+        const heldAt = lowestHold();
+        const wanted = head - keep;
+        const cut = heldAt === undefined ? wanted : Math.min(wanted, heldAt);
+        const clamped = heldAt !== undefined && heldAt < wanted ? { heldAt } : {};
+        if (cut <= compactedTo) return { removed: 0, compactedTo, ...clamped };
         yield* write([{ op: "put", key: keys.meta(META_COMPACTED_TO), value: u64Bytes(cut) }]);
 
         let removed = 0;
@@ -2747,8 +2784,35 @@ const openPartition = (
           }
           yield* write(writes);
         }
-        return { removed, compactedTo: cut };
+        return { removed, compactedTo: cut, ...clamped };
       })),
+
+    holdLog: ({ id, position, ttlMillis }) =>
+      exclusiveReady(Effect.gen(function* () {
+        if (id.length === 0 || id.length > LOG_HOLD_ID_LIMIT) {
+          return yield* new StoreError({ op: "holdLog", cause: `a hold's id is 1 to ${LOG_HOLD_ID_LIMIT} characters` });
+        }
+        if (!Number.isSafeInteger(position) || position < 0) {
+          return yield* new StoreError({ op: "holdLog", cause: `position must be a non-negative integer, not ${String(position)}` });
+        }
+        if (!Number.isSafeInteger(ttlMillis) || ttlMillis < 1 || ttlMillis > LOG_HOLD_MAX_TTL_MILLIS) {
+          return yield* new StoreError({ op: "holdLog", cause: `ttlMillis is 1 to ${LOG_HOLD_MAX_TTL_MILLIS}, not ${String(ttlMillis)}` });
+        }
+        // Under the permit `compact` also takes, so a hold lands either before a pass reads the
+        // holds or after the pass has finished: never between its reading them and its cut.
+        const compactedTo = yield* readMeta(META_COMPACTED_TO);
+        if (position < compactedTo) return yield* new LogCompacted({ partition, compactedTo });
+        lowestHold();
+        const held = logHolds.get(id);
+        if (held === undefined && logHolds.size >= LOG_HOLD_LIMIT) {
+          return yield* new StoreError({ op: "holdLog", cause: `${LOG_HOLD_LIMIT} holds are already held on this partition` });
+        }
+        const raised = held === undefined ? position : Math.max(held.position, position);
+        logHolds.set(id, { position: raised, expires: Date.now() + ttlMillis });
+        return { position: raised };
+      })),
+
+    releaseLog: (id) => Effect.sync(() => { logHolds.delete(id); }),
 
     compactedTo: readMeta(META_COMPACTED_TO),
 
@@ -3035,8 +3099,48 @@ export const shardOverKv = (
     drop: (partition) => handleOf(partition).drop,
 
     relocate: (partition, mapVersion) => handleOf(partition).relocate(mapVersion),
+
+    image: (destination) => imageOf(context.engine, destination),
   };
 };
+
+/** Entries and bytes an image writes per batch. */
+const IMAGE_BATCH_ENTRIES = 512;
+const IMAGE_BATCH_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Every key of `source`, as one snapshot has it, into an empty `destination`, in bounded batches.
+ * Only the ordered key-value interface is used, so any engine copies into any other.
+ */
+const imageOf = (source: KvEngine, destination: KvEngine): Effect.Effect<{ readonly keys: number; readonly bytes: number }, StoreError> =>
+  Effect.scoped(Effect.gen(function* () {
+    const held = [...(yield* Stream.runCollect(destination.scan(new Uint8Array(0), { limit: 1 })))];
+    if (held.length > 0) {
+      return yield* new StoreError({ op: "image", cause: "the destination already holds data; an image goes into an empty engine" });
+    }
+    const reader = yield* source.snapshot;
+    let batch: KvWrite[] = [];
+    let batchBytes = 0;
+    let keys = 0;
+    let bytes = 0;
+    const flush = Effect.gen(function* () {
+      if (batch.length === 0) return;
+      yield* destination.write(batch);
+      batch = [];
+      batchBytes = 0;
+    });
+    yield* Stream.runForEach(reader.scan(new Uint8Array(0)), (entry) =>
+      Effect.gen(function* () {
+        batch.push({ op: "put", key: new Uint8Array(entry.key), value: new Uint8Array(entry.value) });
+        const size = entry.key.length + entry.value.length;
+        keys += 1;
+        bytes += size;
+        batchBytes += size;
+        if (batch.length >= IMAGE_BATCH_ENTRIES || batchBytes >= IMAGE_BATCH_BYTES) yield* flush;
+      }));
+    yield* flush;
+    return { keys, bytes };
+  }));
 
 export interface OpenShardOptions {
   /** The node recorded as the writer of every event this shard accepts. */
