@@ -275,6 +275,7 @@ export const partitionRouter = (options: {
       // A cursor names the partition and a position, wherever the partition lives.
       cursorAt: (position) => shards.get(route(by).shard)!.partition(partition).cursorAt(position),
       writable: on((store) => store.writable),
+      guard: (gate) => on((store) => store.guard(gate)),
       read: (seq) => on((store) => store.read(seq)),
       manifestOf: (seq) => on((store) => store.manifestOf(seq)),
       lookup: (namespace, key) => on((store) => store.lookup(namespace, key)),

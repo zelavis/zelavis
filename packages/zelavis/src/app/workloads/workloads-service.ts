@@ -3,7 +3,7 @@ import { isValidTenantId } from "../../db/naming.js";
 import type { DatabaseRuntimeApi } from "../../db/runtime-api.js";
 import {
   createModuleDataUrl, DEFAULT_SIGNATURE_HEADER, eventIdOf, isCronExpression, JOB_ENTITY, keptHeaders,
-  RESERVED_ENTITY_TYPES, verifySignature, WEBHOOK_ENTITY,
+  RESERVED_ENTITY_TYPES, TIMESTAMPED_SIGNATURE_HEADER, verifySignature, verifyTimestampedSignature, WEBHOOK_ENTITY,
 } from "./durable.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
@@ -36,8 +36,13 @@ export interface WorkloadDefinition {
    */
   secret?: string;
   secretSet?: boolean;
-  /** The header an inbound webhook carries the signature in; `x-hub-signature-256` unless given. */
+  /** The header an inbound webhook carries the signature in; `x-hub-signature-256` (`stripe-signature` when timestamped) unless given. */
   signatureHeader?: string;
+  /**
+   * How an inbound body is signed: `hmac` (default), a `sha256=<hex>` HMAC of the body, or `timestamped`, a
+   * `t=<unix seconds>,v1=<hex>` header whose HMAC covers `<t>.<body>` and whose time must be within five minutes.
+   */
+  signatureScheme?: "hmac" | "timestamped";
   /** The header an inbound webhook carries the provider's event id in; the body's `id` when absent. */
   eventIdHeader?: string;
   enabled: boolean;
@@ -84,6 +89,8 @@ export interface WorkloadsServiceOptions {
 export interface WorkloadsApi {
   store: WorkloadsStore;
   database?: WorkloadsDatabase;
+  /** Be told when a workload is created or replaced through this service; returns how to stop. */
+  subscribe: (listener: () => void) => () => void;
 }
 
 const workloadTypes = ["function", "job", "schedule", "webhook", "entity"] as const;
@@ -227,9 +234,14 @@ function readDurableFields(body: Record<string, unknown>, type: WorkloadType, ex
   const url = readOptional(body, "url", existing?.url);
   const secret = readOptional(body, "secret", existing?.secret);
   const signatureHeader = readOptional(body, "signatureHeader", existing?.signatureHeader)?.toLowerCase();
+  const schemeGiven = readOptional(body, "signatureScheme", existing?.signatureScheme);
+  if (schemeGiven !== undefined && schemeGiven !== "hmac" && schemeGiven !== "timestamped") {
+    throw new TypeError('signatureScheme is "hmac" or "timestamped".');
+  }
+  const signatureScheme: "hmac" | "timestamped" | undefined = schemeGiven;
   const eventIdHeader = readOptional(body, "eventIdHeader", existing?.eventIdHeader)?.toLowerCase();
-  if ((url !== undefined || secret !== undefined || signatureHeader !== undefined || eventIdHeader !== undefined) && type !== "webhook") {
-    throw new TypeError("url, secret, signatureHeader and eventIdHeader apply to webhook workloads.");
+  if ((url !== undefined || secret !== undefined || signatureHeader !== undefined || signatureScheme !== undefined || eventIdHeader !== undefined) && type !== "webhook") {
+    throw new TypeError("url, secret, signatureHeader, signatureScheme and eventIdHeader apply to webhook workloads.");
   }
   if (url !== undefined) {
     let parsed: URL;
@@ -247,6 +259,7 @@ function readDurableFields(body: Record<string, unknown>, type: WorkloadType, ex
     ...(url === undefined ? {} : { url }),
     ...(secret === undefined ? {} : { secret }),
     ...(signatureHeader === undefined ? {} : { signatureHeader }),
+    ...(signatureScheme === undefined ? {} : { signatureScheme }),
     ...(eventIdHeader === undefined ? {} : { eventIdHeader }),
   };
 }
@@ -503,7 +516,7 @@ function updateWorkload(
   const name = slugifyName(readString(input, "name", existing.name) ?? existing.name);
   if (existing.type === "entity") checkEntityName(name);
   // Cleared fields are dropped, not kept as they were: start from the definition without the ones that can clear.
-  const { tenant: _tenant, schedule: _schedule, url: _url, secret: _secret, signatureHeader: _signature, eventIdHeader: _eventId, secretSet: _set, ...kept } = existing;
+  const { tenant: _tenant, schedule: _schedule, url: _url, secret: _secret, signatureHeader: _signature, signatureScheme: _scheme, eventIdHeader: _eventId, secretSet: _set, ...kept } = existing;
   const next: WorkloadDefinition = {
     ...kept,
     name,
@@ -587,9 +600,14 @@ function receiveWebhook(database: WorkloadsDatabase | undefined, store: Workload
     if (Number.isFinite(length) && length > BODY_LIMIT) return { status: 413, body: { error: `A webhook body is at most ${BODY_LIMIT} bytes.` } };
     const text = yield* integration(() => request.text());
     if (text.length > BODY_LIMIT) return { status: 413, body: { error: `A webhook body is at most ${BODY_LIMIT} bytes.` } };
-    const signatureHeader = workload.signatureHeader ?? DEFAULT_SIGNATURE_HEADER;
-    if (workload.secret !== undefined && !(yield* verifySignature(workload.secret, text, request.headers.get(signatureHeader)))) {
-      return { status: 401, body: { error: "The signature does not match." } };
+    const timestamped = workload.signatureScheme === "timestamped";
+    const signatureHeader = workload.signatureHeader ?? (timestamped ? TIMESTAMPED_SIGNATURE_HEADER : DEFAULT_SIGNATURE_HEADER);
+    if (workload.secret !== undefined) {
+      const given = request.headers.get(signatureHeader);
+      const genuine = timestamped
+        ? yield* verifyTimestampedSignature(workload.secret, text, given, Date.now())
+        : yield* verifySignature(workload.secret, text, given);
+      if (!genuine) return { status: 401, body: { error: "The signature does not match." } };
     }
     let parsed: unknown;
     try { parsed = text === "" ? {} : JSON.parse(text); } catch { parsed = undefined; }
@@ -754,7 +772,13 @@ export function workloadsEndpointGroup(
   options: WorkloadsServiceOptions = {},
 ): ZelavisEndpointGroup<WorkloadsApi> {
   const store = options.store ?? createMemoryWorkloadsStore();
-  const service: WorkloadsApi = { store, ...(options.database === undefined ? {} : { database: options.database }) };
+  const listeners = new Set<() => void>();
+  const changed = () => { for (const listener of listeners) listener(); };
+  const service: WorkloadsApi = {
+    store,
+    ...(options.database === undefined ? {} : { database: options.database }),
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
 
   return {
     id: "workloads",
@@ -841,6 +865,7 @@ export function workloadsEndpointGroup(
           access: { permissions: ["workloads.manage"] },
           handler: ({ body }) => present(
             integration(() => createWorkload(store, body)).pipe(
+              Effect.tap(() => Effect.sync(changed)),
               Effect.map((created) => ({
                 status: 201,
                 body: created,
@@ -886,7 +911,7 @@ export function workloadsEndpointGroup(
           path: "/:id",
           access: { permissions: ["workloads.manage"] },
           handler: route(({ params, body }) =>
-            present(integration(() => updateWorkload(store, params.id, body))),
+            present(integration(() => updateWorkload(store, params.id, body)).pipe(Effect.tap(() => Effect.sync(changed)))),
           ),
         },
         {

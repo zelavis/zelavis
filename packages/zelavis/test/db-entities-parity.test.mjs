@@ -81,7 +81,7 @@ const scenario = async (api, entities) => {
   const store = createMemoryWorkloadsStore([]);
   await store.save({ id: "entity_order", projectId: "p1", type: "entity", name: "order", enabled: true, createdAt: "", updatedAt: "v1",
     code: "export default async function handle(message, { state }) { const total = (state?.total ?? 0) + (message.payload.total ?? message.payload.amount ?? 0); return { state: { total }, reply: { total } }; }" });
-  const serving = serveDurableWorkloads(api, store);
+  const serving = serveDurableWorkloads(api, { store, subscribe: () => () => {} });
   try {
     for (let tries = 0; ((await api.forTenant("acme").entities.state({ type: "order", id: "o-1" })).pending) > 0; tries++) {
       assert.ok(tries < 300, "the entity workload processes the mailbox");

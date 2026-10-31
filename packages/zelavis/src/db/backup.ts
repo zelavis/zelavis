@@ -343,6 +343,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
     }).pipe(
       Effect.catchTags({
         StoreError: Effect.die,
+        PartitionLeased: Effect.die,
         WriterFenced: Effect.die,
         ForeignCursor: Effect.die,
         CursorCompacted: Effect.die,

@@ -1,4 +1,5 @@
-import { Effect, Fiber, Stream } from "effect";
+import { Clock, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { promoteFollower, type LeaseStore, type Promotion, type WriterHandle, type WriterLease } from "./writer-lease.js";
 import type { DatabaseBackupsHost } from "./node-backups.js";
 import type { WorkflowExecutionSummary } from "./workflow-engine.js";
 import type { BranchMerge, MergeOptions } from "./branch-merge.js";
@@ -387,8 +388,10 @@ export interface DatabaseRuntimeApi {
     readonly serve: (
       handlers: (type: string) => RuntimeEntityHandler | undefined,
       options?: Omit<EntityServeOptions, "handlers">,
-    ) => { readonly stop: () => Promise<void> };
+    ) => { readonly stop: () => Promise<void>; readonly handlersChanged: () => Promise<void> };
   };
+  /** Be told when a Tenant commits outbox messages in this process (see `Database.outbox.watch`); returns how to stop. */
+  readonly outboxWatch: (listener: (tenant: TenantId) => void) => () => void;
   /**
    * The leader's side of following a partition from another host, answering the wire forms `remoteLeader`
    * reads: it is itself a `LeaderTransport`. See `leader.ts`.
@@ -398,6 +401,16 @@ export interface DatabaseRuntimeApi {
     readonly changes: (input: Parameters<LeaderTransport["changes"]>[0]) => Promise<LeaderChanges>;
     /** How far each follower has said it holds `partition`. */
     readonly acknowledgments: (partition: string) => Promise<{ readonly partition: string; readonly followers: ReadonlyArray<{ readonly name: string; readonly position: number }> }>;
+    /** The partition's writer lease, and whether this database holds it. Refused when no lease store is configured. */
+    readonly lease: (partition: string) => Promise<WriterLeaseStatus>;
+    /**
+     * Take over the partition's writer lease for this database, which holds the follower copy (see `promoteFollower`):
+     * the lease must have expired or been released, and this copy must hold what the writer's followers acknowledged
+     * unless `allowDataLoss`. The database then guards the partition with the lease until `demote`.
+     */
+    readonly promote: (partition: string, input: { readonly owner: string; readonly ttlMillis: number; readonly allowDataLoss?: boolean }) => Promise<Promotion>;
+    /** Give up the lease this database holds for the partition, so a follower can be promoted at once. */
+    readonly demote: (partition: string) => Promise<{ readonly released: boolean }>;
   };
   /** One collection's documents from every Tenant, queried from one partition; see `DatabaseApi.crossTenantIndexes`. */
   readonly crossTenantIndexes: {
@@ -607,10 +620,66 @@ const pageLimit = (partition: string, limit: unknown, most: number) =>
     ? Effect.fail(refuse(partition, `"limit" is a whole number from 1 to ${most}`))
     : Effect.succeed(limit);
 
+/** A partition's writer lease as clients read it. */
+export interface WriterLeaseStatus {
+  readonly partition: string;
+  /** Absent when the partition has never had a writer lease. */
+  readonly lease?: WriterLease;
+  /** The lease's time to live has run out (or it was released). */
+  readonly expired?: boolean;
+  /** This database holds the lease and may write the partition. */
+  readonly held: boolean;
+}
+
 /** The follower routes' answers, in the wire forms `remoteLeader` checks. */
-const followersRuntime = (database: DatabaseApi): DatabaseRuntimeApi["followers"] => {
+const followersRuntime = (database: DatabaseApi, leases: LeaseStore | undefined): DatabaseRuntimeApi["followers"] => {
   const source = (partition: string) => database.followers.source(partition);
+  /** The leases this database holds, each in a scope of its own that `demote` (or closing the database) ends. */
+  const holding = new Map<string, { readonly scope: Scope.Closeable; readonly handle: WriterHandle }>();
+  const store = (partition: string) =>
+    leases === undefined ? refuse(partition, "no lease store is configured for this database") : Effect.succeed(leases);
   return {
+    lease: (partition) => run(Effect.gen(function* () {
+      const authority = yield* store(partition);
+      const read = yield* authority.read(partition);
+      const now = yield* Clock.currentTimeMillis;
+      const mine = holding.get(partition);
+      const held = mine !== undefined && read !== undefined && (yield* mine.handle.lease).epoch === read.lease.epoch && (yield* mine.handle.writable);
+      return {
+        partition, held,
+        ...(read === undefined ? {} : { lease: read.lease, expired: read.lease.expiresAt <= now }),
+      };
+    })),
+    promote: (partition, input) => run(Effect.gen(function* () {
+      const authority = yield* store(partition);
+      if (holding.has(partition)) return yield* refuse(partition, "this database already holds the partition's lease");
+      if (typeof input.owner !== "string" || input.owner.length === 0 || input.owner.length > 128) return yield* refuse(partition, `"owner" names the new writer in 1 to 128 characters`);
+      const leader = yield* source(partition);
+      const head = (yield* leader.stats).head;
+      const promotion = yield* promoteFollower(authority, {
+        partition, owner: input.owner, ttlMillis: input.ttlMillis, followerHead: head,
+        ...(input.allowDataLoss === undefined ? {} : { allowDataLoss: input.allowDataLoss }),
+      });
+      const scope = yield* Scope.make();
+      const acknowledged = Effect.gen(function* () {
+        const record = yield* database.followers.acknowledgments(partition).pipe(Effect.orDie);
+        return Math.max(0, ...(yield* record.positions).values());
+      });
+      const handle = yield* database.writerLeases.hold({ partition, leases: authority, owner: input.owner, ttlMillis: input.ttlMillis, lease: promotion.lease, acknowledged }).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.onError(() => Scope.close(scope, Exit.void)),
+      );
+      holding.set(partition, { scope, handle });
+      return promotion;
+    })),
+    demote: (partition) => run(Effect.gen(function* () {
+      yield* store(partition);
+      const mine = holding.get(partition);
+      if (mine === undefined) return { released: false };
+      holding.delete(partition);
+      yield* Scope.close(mine.scope, Exit.void);
+      return { released: true };
+    })),
     stats: (partition) => run(Effect.flatMap(source(partition), (leader) => leader.stats)),
     records: (partition, input) => run(Effect.gen(function* () {
       const limit = yield* pageLimit(partition, input.limit, LEADER_RECORDS_LIMIT);
@@ -652,7 +721,7 @@ const followersRuntime = (database: DatabaseApi): DatabaseRuntimeApi["followers"
 
 export const runtimeApiFor = (
   database: DatabaseApi,
-  options?: { readonly nodeId?: string; readonly images?: DatabaseImagesHost; readonly backups?: DatabaseBackupsHost; readonly storageChoice?: StorageChoiceHost; readonly storage?: { readonly engine: string; readonly durability: KvDurability } },
+  options?: { readonly nodeId?: string; readonly leases?: LeaseStore; readonly images?: DatabaseImagesHost; readonly backups?: DatabaseBackupsHost; readonly storageChoice?: StorageChoiceHost; readonly storage?: { readonly engine: string; readonly durability: KvDurability } },
 ): DatabaseRuntimeApi => ({
   scatter: (input) => run(database.scatter.findMany(input)),
   images: options?.images ?? noImages,
@@ -675,7 +744,7 @@ export const runtimeApiFor = (
   workflowExecutions: (limit) => run(database.workflowExecutions(limit)),
   tenantUsage: () => run(Effect.map(database.maintenance.status, rows => rows.map(row => ({ tenant: row.partition, shard: row.shard, records: row.records, bytes: row.bytes })))),
   context: { nodeId: options?.nodeId ?? "local", ...(options?.storage === undefined ? {} : { storage: options.storage }) },
-  followers: followersRuntime(database),
+  followers: followersRuntime(database, options?.leases),
   entities: {
     serve: (handlers, options) => {
       // A part key names one part of a divided Tenant; anything else is the Tenant itself.
@@ -691,9 +760,13 @@ export const runtimeApiFor = (
             integration(() => handler(message, { tenant: context.tenant, state: context.state, documents: tenantRuntime(handleOf(context.tenant)).documents }));
         },
       })));
-      return { stop: () => Effect.runPromise(Effect.asVoid(Fiber.interrupt(fiber))) };
+      return {
+        stop: () => Effect.runPromise(Effect.asVoid(Fiber.interrupt(fiber))),
+        handlersChanged: () => Effect.runPromise(database.entities.handlersChanged),
+      };
     },
   },
+  outboxWatch: (listener) => database.outbox.watch(listener),
   crossTenantIndexes: {
     define: (definition) => run(database.crossTenantIndexes.define(definition)),
     list: () => run(database.crossTenantIndexes.list),

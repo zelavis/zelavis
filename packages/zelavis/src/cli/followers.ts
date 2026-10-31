@@ -1,7 +1,7 @@
 import { bodyFlag, integerFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|changes> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|changes> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url URL] [--token TOKEN] [--json]";
 
 const followers = (input: CliInput) =>
   input.client.followers(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "followers commands need --project"));
@@ -15,7 +15,8 @@ const needed = (input: CliInput, flag: string) => {
 const table: CliTable = {
   name: "followers",
   usage,
-  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--heads", "--partitions", "--timeout-millis"],
+  switches: ["--allow-data-loss"],
+  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--heads", "--partitions", "--timeout-millis"],
   actions: {
     stats: {
       run: (input) => followers(input).stats(partition(input)),
@@ -58,6 +59,26 @@ const table: CliTable = {
       run: (input) => followers(input).acknowledgments(partition(input)),
       text: (result: { followers: ReadonlyArray<{ name: string; position: number }> }) =>
         result.followers.map((follower) => `${follower.name}\t${follower.position}`).join("\n") || "No follower has reported.",
+    },
+    lease: {
+      run: (input) => followers(input).lease(partition(input)),
+      text: (status: { partition: string; held: boolean; expired?: boolean; lease?: { owner: string; epoch: number; expiresAt: number; acknowledgedHead: number } }) =>
+        status.lease === undefined
+          ? `${status.partition} has never had a writer lease.`
+          : `${status.partition}: ${status.lease.owner} at epoch ${status.lease.epoch}, ${status.expired ? "expired" : `until ${new Date(status.lease.expiresAt).toISOString()}`}, acknowledged through ${status.lease.acknowledgedHead}${status.held ? " (held here)" : ""}`,
+    },
+    promote: {
+      run: (input) => followers(input).promote(partition(input), {
+        owner: required({ ...input, positional: [input.flags.get("--owner") ?? ""] }, 0, "--owner"),
+        ttlMillis: needed(input, "--ttl-millis"),
+        ...(input.switches.has("--allow-data-loss") ? { allowDataLoss: true } : {}),
+      }),
+      text: (result: { lease: { owner: string; epoch: number }; lostPositions: number }) =>
+        `Promoted: ${result.lease.owner} is the writer at epoch ${result.lease.epoch}${result.lostPositions > 0 ? `; up to ${result.lostPositions} acknowledged positions may be lost` : ""}.`,
+    },
+    demote: {
+      run: (input) => followers(input).demote(partition(input)),
+      text: (result: { released: boolean }) => (result.released ? "Released." : "This database held no lease for the partition."),
     },
     changes: {
       run: (input) => {

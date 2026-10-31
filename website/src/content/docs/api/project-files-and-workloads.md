@@ -75,8 +75,8 @@ export default async function handle(message, { state, tenant, documents }) {
 }
 ```
 
-The Project runtime serves its durable entities with the enabled entity workloads, rereading them every two seconds, so
-a handler added, changed or disabled takes effect without a restart. Messages are sent through the database
+The Project runtime serves its durable entities with the enabled entity workloads, so a handler added, changed or
+disabled takes effect without a restart, and messages that waited for a handler are looked at again when one appears. Messages are sent through the database
 (`client.data(projectId).entities.send`, `zelavis entities send`), not `run`. The dashboard shows an entity workload's
 entities, their state and mailboxes, and sends messages from its page.
 
@@ -85,17 +85,18 @@ entities, their state and mailboxes, and sends messages from its page.
 Jobs, schedules and webhooks run on the same durable entities. Their code has an entity handler's shape (a message and
 the context in, a step out whose writes, outbox messages, state and reply commit with the message's processed mark), so
 their database effects land once however often a message is delivered; delivery to the code is at least once. All of
-it is served by the Project runtime where the database's writer is, from the enabled workloads, reread every two
-seconds. Each has a row in [Delivery guarantees](../../architecture/delivery-guarantees/).
+it is served by the Project runtime where the database's writer is, from the enabled workloads, reread when one is
+created or replaced (and in full once a minute as a safety net). Nothing polls: outbound webhooks are read when outbox
+messages are committed in the process, schedules are armed for their fire time, and a failed delivery waits for its retry
+time. Each has a row in [Delivery guarantees](../../architecture/delivery-guarantees/).
 
 | Kind | What is durable | Entity | Notes |
 |---|---|---|---|
 | Job | A run is a message in its Tenant's mailbox until the code has handled it | `job` / the job's name | `run` enqueues it: `tenantId` (or the job's `tenant`), `input` (the message payload), `primaryKey` (a resend is the same run), `deliverAt`. Runs of one job go one at a time, in order; a failure is retried with doubling pauses, then marked failed. |
 | Schedule | The next wake is a pending message, keyed by its fire time, with `deliverAt` | `schedule` / the schedule's name | `schedule` is a cron expression (five fields, or six with seconds first), in UTC. The wake is armed only where the writer runs. A wake that waited out downtime fires once on return, however many fires were missed. Disabling withdraws the wake. |
-| Inbound webhook | The event is saved before it is answered | `webhook` / the webhook's name | `POST workloads/webhooks/:projectId/:name`. With a `secret`, the body must carry a `sha256=<hex>` HMAC in `signatureHeader` (`x-hub-signature-256`). The event id is the `eventIdHeader` header, else the body's `id`, and is the message's `primaryKey`, so a provider's retry answers `202` with `duplicate: true`. A full mailbox answers `503` with `retry-after`. Credentials and the signature are not kept. |
+| Inbound webhook | The event is saved before it is answered | `webhook` / the webhook's name | `POST workloads/webhooks/:projectId/:name`. With a `secret`, the body must carry a `sha256=<hex>` HMAC in `signatureHeader` (`x-hub-signature-256`); with `signatureScheme: "timestamped"` the header is `t=<unix seconds>,v1=<hex>` (`stripe-signature`), signed over `<t>.<body>`, and a time more than five minutes away is refused. The event id is the `eventIdHeader` header, else the body's `id`, and is the message's `primaryKey`, so a provider's retry answers `202` with `duplicate: true`. A full mailbox answers `503` with `retry-after`. Credentials and the signature are not kept. |
 | Outbound webhook | An outbox message with topic `webhook.<name>` in the webhook's `tenant` | none | Delivered to `url` as JSON `{ id, topic, payload, emittedAt }` with an `Idempotency-Key` header equal to the message id and, with a `secret`, an `x-zelavis-signature` header. A 2xx removes the message; anything else is retried with doubling pauses, eight attempts, then it stays in the outbox until the runtime next starts. Redirects are not followed. |
 
 The `secret` is write-only: reads answer `secretSet`. `job`, `schedule` and `webhook` are the entity types of those
-workloads, so an `entity` workload cannot take those names. Provider schemes other than an HMAC over the raw body (a
-signed timestamp, for example) are not verified by Zelavis; a webhook without a `secret` accepts any caller, so give
-every inbound webhook a secret.
+workloads, so an `entity` workload cannot take those names. Schemes other than those two HMACs are not verified by
+Zelavis, and a webhook without a `secret` accepts any caller, so give every inbound webhook a secret.

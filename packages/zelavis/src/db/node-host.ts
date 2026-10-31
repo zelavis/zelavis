@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import type { LeaseStore } from "./writer-lease.js";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,6 +55,8 @@ export interface OpenNodeDatabaseOptions {
   readonly nodeId?: string;
   /** What scheduled backups capture besides the database: the host adds a Project's runtime store and media. */
   readonly backupComponents?: ReadonlyArray<BackupComponent>;
+  /** Where writer leases are kept, so the runtime API can show, take over and give up a partition's lease (`followers.lease|promote|demote`). */
+  readonly leases?: LeaseStore;
   /** How cross-Tenant indexes are kept current; see `MakeDatabaseOptions.crossTenantRefresh`. */
   readonly crossTenantRefresh?: MakeDatabaseOptions["crossTenantRefresh"];
 }
@@ -139,6 +142,7 @@ export const openNodeDatabase = (
     database,
     api: runtimeApiFor(database, {
       backups,
+      ...(options.leases === undefined ? {} : { leases: options.leases }),
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       storage: { engine, durability: effectiveDurability },
       storageChoice: storageChoiceFor(options.directory, engine, effectiveDurability),

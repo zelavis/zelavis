@@ -47,6 +47,7 @@ export * from "./scatter.js";
 export * from "./cross-tenant-index.js";
 export * from "./movement.js";
 export * from "./followers.js";
+export * from "./writer-lease.js";
 export * from "./leader.js";
 export * from "./entities.js";
 export * from "./replication.js";

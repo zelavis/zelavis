@@ -201,6 +201,40 @@ export class WriterFenced extends Schema.TaggedError<WriterFenced>()("WriterFenc
   partition: Schema.String,
   claimed: Schema.Finite,
   current: Schema.Finite,
+  /** For a writer lease: `superseded` (another epoch holds it) or `lease-expired` (this writer cannot prove it still holds it). */
+  reason: Schema.optional(Schema.String),
+}) {}
+
+/** A partition's writer lease is held, unexpired, by its owner: it changes hands when it expires or is released. */
+export class LeaseStillHeld extends Schema.TaggedError<LeaseStillHeld>()("LeaseStillHeld", {
+  partition: Schema.String,
+  owner: Schema.String,
+  epoch: Schema.Finite,
+  expiresAt: Schema.Finite,
+}) {}
+
+/** The follower has not reached the highest position the lost writer's followers acknowledged; promoting it would lose them. */
+export class FollowerBehind extends Schema.TaggedError<FollowerBehind>()("FollowerBehind", {
+  partition: Schema.String,
+  head: Schema.Finite,
+  required: Schema.Finite,
+}) {}
+
+/** Another owner holds the partition's lease; it changes hands only by promoting a follower that has caught up. */
+export class LeaseOwnedByAnother extends Schema.TaggedError<LeaseOwnedByAnother>()("LeaseOwnedByAnother", {
+  partition: Schema.String,
+  owner: Schema.String,
+  epoch: Schema.Finite,
+}) {}
+
+/** The partition has never had a writer lease, so there is no writer to take over from. */
+export class NoWriterLease extends Schema.TaggedError<NoWriterLease>()("NoWriterLease", {
+  partition: Schema.String,
+}) {}
+
+/** The partition is held by a writer lease; it cannot be moved or removed until the lease is released. */
+export class PartitionLeased extends Schema.TaggedError<PartitionLeased>()("PartitionLeased", {
+  partition: Schema.String,
 }) {}
 
 /** A cursor was issued by a different partition than the one being read. */
@@ -748,7 +782,8 @@ export type DbError =
   | LensesRebuilding
   | TenantBranching
   | TenantRelocated
-  | TenantMoving;
+  | TenantMoving
+  | PartitionLeased;
 
 /**
  * Every store failure but a move's fence, which is the one a caller above the
@@ -757,6 +792,7 @@ export type DbError =
  */
 const STORE_DEFECTS: { readonly [Tag in Exclude<DbError, TenantMoving>["_tag"]]: true } = {
   StoreError: true,
+  PartitionLeased: true,
   WriterFenced: true,
   ForeignCursor: true,
   CursorCompacted: true,

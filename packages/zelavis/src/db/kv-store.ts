@@ -3,6 +3,7 @@ import {
   CursorCompacted, CursorMismatch, EventGap, ForeignCursor, LensesRebuilding, LogCompacted,
   PartitionExhausted, ReplicaDiverged, StoreError, TenantBranching, TenantMoving, TenantNotEmpty, TenantRelocated,
   WriterFenced,
+  PartitionLeased,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
@@ -462,6 +463,8 @@ const openPartition = (
   let revisionKnown = false;
   let lenses: number | undefined;
   let fence: StoredFence | null | undefined;
+  /** The writer lease's gate, while a lease holder guards this partition: see `ObjectStoreApi.guard`. */
+  let leaseGate: Effect.Effect<void, DbError> | undefined;
   let relocatedAt: number | null | undefined;
   /** The partition's lineage, and whether a branch into it is still unfinished. */
   let branch: { readonly lineage: StoredLineage; readonly unfinished: boolean } | undefined;
@@ -594,7 +597,7 @@ const openPartition = (
    * changes of that kind and take only `exclusive`.
    */
   const exclusiveWrite = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    exclusiveReady(Effect.flatMap(unfenced, () => effect));
+    exclusiveReady(Effect.flatMap(unfenced, () => Effect.flatMap(Effect.suspend(() => leaseGate ?? Effect.void), () => effect)));
 
   const conditions = () => [
     { key: shardMetaKey(SHARD_GENERATION), value: u64Bytes(generation) },
@@ -3059,8 +3062,11 @@ const openPartition = (
 
     transact: (f) => commit((into) => f(txnFor(into))),
 
+    guard: (gate) => Effect.sync(() => { leaseGate = gate; }),
+
     fence: (move) =>
       exclusive(Effect.gen(function* () {
+        if (leaseGate !== undefined) return yield* new PartitionLeased({ partition });
         yield* write([{ op: "put", key: keys.meta(META_FENCE), value: encodeFence(move) }]);
         fence = { from: move.from, to: move.to };
       })),

@@ -1,5 +1,6 @@
 import { neededHostPackages, provisionableRequirements } from "./project-host-packages.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
+import { systemStoreLeaseStore } from "./platform/writer-lease-store.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
@@ -1555,6 +1556,7 @@ interface ResolvedDatabaseSubsystem {
  */
 function resolveDatabaseCoreService(
   option: ZelavisDatabaseOptions | undefined,
+  systemStore?: ZelavisSystemStore,
 ): Promise<ResolvedDatabaseSubsystem | undefined> {
     return present(Effect.gen(function* (): Effect.fn.Return<ResolvedDatabaseSubsystem | undefined, IntegrationFailure> {
   if (option === undefined || option === false) {
@@ -1567,7 +1569,9 @@ function resolveDatabaseCoreService(
   }
 
   const { openNodeDatabase } = (yield* integrationValue(import("./db/node-host.js")));
-  const opened = (yield* integrationValue(openNodeDatabase(resolved)));
+  // Writer leases are kept in this runtime's System Store unless the host brought its own authority.
+  const leases = resolved.leases ?? (systemStore === undefined ? undefined : systemStoreLeaseStore(systemStore));
+  const opened = (yield* integrationValue(openNodeDatabase({ ...resolved, ...(leases === undefined ? {} : { leases }) })));
   return { api: opened.api, close: opened.close };
 }));
   }
@@ -6784,7 +6788,7 @@ export function zelavis(
         // home of its identity data differs: its own database, not the System Store.
         const projectRole = options.role === "project";
         const databaseSubsystem = yield* integration(() =>
-          resolveDatabaseCoreService(options.subsystems?.database),
+          resolveDatabaseCoreService(options.subsystems?.database, systemStore),
         );
         yield* Effect.addFinalizer(() =>
           ready
@@ -6883,7 +6887,7 @@ export function zelavis(
         );
         // Durable entities are served where the database's writer is, with the `entity` workloads as handlers.
         const entityWorkloads = resolvedDatabaseApi && workloadsCoreService
-          ? serveDurableWorkloads(resolvedDatabaseApi, workloadsCoreService.context.store)
+          ? serveDurableWorkloads(resolvedDatabaseApi, workloadsCoreService.context)
           : undefined;
         yield* Effect.addFinalizer(() =>
           ready ? Effect.void : integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),

@@ -1,5 +1,5 @@
 import { type Duration, Effect, Option, PubSub, type Scope, Stream, SubscriptionRef } from "effect";
-import type { DbError, InvalidExport, StoreError } from "./errors.js";
+import type { DbError, InvalidExport, LeaseOwnedByAnother, LeaseStillHeld, StoreError } from "./errors.js";
 import type { KvEngine } from "./kv.js";
 import { BranchNotMergeable, InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
@@ -28,10 +28,13 @@ import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
 import { partitionRouter } from "./routing.js";
-import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
+import type { LeaderSource, ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
 import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { followersOver, type FollowersApi } from "./leader.js";
+import {
+  holdWriter, standby as standbyFor, type HoldWriterInput, type Promotion, type StandbyInput, type WriterHandle,
+} from "./writer-lease.js";
 import { entitiesFor, serveEntities, type EntitiesApi, type EntityServeOptions, type EntityWake } from "./entities.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isReservedTenantId, isValidCollectionName, SERVICE_TENANT_PREFIX } from "./naming.js";
@@ -412,8 +415,45 @@ export interface DatabaseApi {
    * Process durable entities' messages with handlers by type until interrupted, in every partition (see
    * `serveEntities`). Run it where this database's writer is, once.
    */
-  readonly entities: { readonly serve: (options: EntityServeOptions) => Effect.Effect<never, never, Scope.Scope> };
+  /**
+   * Writer leases: hold one for a partition this database writes, or stand by as a follower until the writer's
+   * lease expires and take over (see `writer-lease.ts`). Both guard the partition with the lease while held, and
+   * both carry the highest position followers acknowledged in every renewal unless `acknowledged` is given.
+   */
+  readonly writerLeases: {
+    readonly hold: (input: WriterLeaseHold) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld, Scope.Scope>;
+    readonly standby: (input: WriterLeaseStandby) => Effect.Effect<WriterHandle & { readonly promotion: Promotion }, DbError, Scope.Scope>;
+  };
+  readonly entities: {
+    readonly serve: (options: EntityServeOptions) => Effect.Effect<never, never, Scope.Scope>;
+    /** The handlers `serve` was given changed: messages that waited for a handler are looked at again. */
+    readonly handlersChanged: Effect.Effect<void>;
+  };
+  /**
+   * Be told, in this process, when a Tenant commits outbox messages (a write with `emit`, or `outbox.emit`). A hint to
+   * read the outbox now: a consumer still reads from its own cursor and keeps a rare full read as a safety net.
+   * Returns how to stop listening.
+   */
+  readonly outbox: { readonly watch: (listener: (tenant: TenantId) => void) => () => void };
 }
+
+export interface WriterLeaseHold extends Omit<HoldWriterInput, "store"> {
+  readonly partition: PartitionKey;
+}
+export interface WriterLeaseStandby extends Omit<StandbyInput, "store" | "follow"> {
+  readonly partition: PartitionKey;
+  /** The writer being followed. */
+  readonly leader: LeaderSource;
+  /** How often the follower reads the writer when it has heard nothing. */
+  readonly interval: Duration.Input;
+}
+
+/** The highest position any follower has acknowledged for `partition`: what a writer's renewals carry. */
+const highestAcknowledged = (followers: FollowersApi, partition: PartitionKey): Effect.Effect<number> =>
+  Effect.gen(function* () {
+    const acknowledgments = yield* followers.acknowledgments(partition).pipe(Effect.orDie);
+    return Math.max(0, ...(yield* acknowledgments.positions).values());
+  });
 
 /** What `dropTenant` removed: an undivided Tenant's shard, or each part of a divided one. */
 export interface TenantRemoval {
@@ -731,12 +771,23 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
 
   /** Partitions a durable entity was sent a message in, in this process: the entity runner looks at them at once. */
   const entityWakes = yield* PubSub.sliding<EntityWake>(1024);
+  /** Listeners told, in this process, that a Tenant committed outbox messages: a delivery duty reads at once. */
+  const outboxListeners = new Set<(tenant: TenantId) => void>();
+  const outboxCommitted = (tenant: TenantId) => {
+    for (const listener of outboxListeners) listener(tenant);
+  };
+  /** A write that emits is followed by a notice; the notice is a hint, never the only way to find a message. */
+  const announcing = (documents: DocumentsApi, tenant: TenantId): DocumentsApi => ({
+    ...documents,
+    write: (input) => Effect.tap(documents.write(input), () =>
+      Effect.sync(() => { if ((input.emit?.length ?? 0) > 0) outboxCommitted(tenant); })),
+  });
 
   const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId, sharedStore: ObjectStoreApi): TenantApi => {
     const events = domainEventsFor(store, tenant);
     const records = schemasFor(store, tenant);
     const projections = projectionsFor(store, events, tenant);
-    const documents = documentsFor(store, tenant, records);
+    const documents = announcing(documentsFor(store, tenant, records), tenant);
     const schemas = activationFor(store, tenant, records, documents);
     const aggregates = aggregatesFor(store, documents, tenant);
     const timeSeries = timeSeriesFor(store, events, tenant);
@@ -988,8 +1039,28 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     },
     maintenance,
     followers,
+    writerLeases: {
+      hold: (input) => Effect.gen(function* () {
+        const acknowledged = input.acknowledged ?? highestAcknowledged(followers, input.partition);
+        return yield* holdWriter({ ...input, store: storeFor(input.partition), acknowledged });
+      }),
+      standby: (input) => Effect.gen(function* () {
+        const acknowledged = input.acknowledged ?? highestAcknowledged(followers, input.partition);
+        return yield* standbyFor({
+          ...input, store: storeFor(input.partition), acknowledged,
+          follow: followers.follow(input.leader, { partition: input.partition, interval: input.interval }).pipe(Effect.orDie),
+        });
+      }),
+    },
     entities: {
       serve: (options) => serveEntities({ partitions, entities: (partition) => handleOf(partition).entities, wakes: entityWakes, options }),
+      handlersChanged: Effect.asVoid(PubSub.publish(entityWakes, { all: true })),
+    },
+    outbox: {
+      watch: (listener) => {
+        outboxListeners.add(listener);
+        return () => { outboxListeners.delete(listener); };
+      },
     },
     replication,
     scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),

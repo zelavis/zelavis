@@ -550,11 +550,13 @@ export interface EntityServeOptions {
   readonly handlerTimeout?: Duration.Input;
 }
 
-/** Something became due in a partition, in this process: a send (at its `deliverAt`, or 0), or a cancel (0). */
-export interface EntityWake {
-  readonly partition: PartitionKey;
-  readonly at: number;
-}
+/**
+ * Something became due in a partition, in this process: a send (at its `deliverAt`, or 0), or a cancel (0). `all` says
+ * the handlers changed, so every partition holding messages no handler could take is looked at again.
+ */
+export type EntityWake =
+  | { readonly partition: PartitionKey; readonly at: number }
+  | { readonly all: true };
 
 /**
  * A wait that never keeps the host alive on its own: the runner lives as long as its scope, and a process that ends
@@ -569,8 +571,6 @@ export const unrefSleep = (millis: number): Effect.Effect<void> =>
 
 /** Messages one entity is given in a row before others get a turn. */
 const TURN = 32;
-/** A partition holding messages for a type with no handler is looked at again this often, in case one appeared. */
-const UNHANDLED_RECHECK_MILLIS = 5000;
 /** A partition that could not be read is tried again this long after. */
 const READ_RETRY_MILLIS = 1000;
 /** The longest one wait is: a timer far in the future adds nothing, and the safety net bounds it anyway. */
@@ -581,7 +581,8 @@ const LONGEST_WAIT_MILLIS = 60 * 60_000;
  * memory, partition to the earliest time anything in it is due: one scan at the start builds it, a send, a retry and
  * a cancel keep it current, and the runner sleeps until the earliest entry or the next wake, so an idle database
  * costs nothing and a partition is read only when something in it is due. A full scan remains only as a rare safety
- * net (`sweepInterval`), for what another process sent and for wakes dropped under load. Runs where the database's
+ * net (`sweepInterval`), for what another process sent and for wakes dropped under load. A message whose type has no
+ * handler waits without being polled; `handlersChanged` (a wake for all) looks at those partitions again. Runs where the database's
  * writer is: the commit of every step checks its message is still owed, so two of these over one database never
  * finish a message twice, but one per writer is the design.
  */
@@ -604,6 +605,8 @@ export const serveEntities = (input: {
 
     /** Partition to the earliest time a message in it may be due. Only this loop reads or changes it. */
     const dueIndex = new Map<PartitionKey, number>();
+    /** Partitions that held messages for a type with no handler: looked at again when the handlers change. */
+    const unhandled = new Set<PartitionKey>();
     const noteDue = (partition: PartitionKey, at: number) => {
       const known = dueIndex.get(partition);
       if (known === undefined || at < known) dueIndex.set(partition, at);
@@ -623,10 +626,11 @@ export const serveEntities = (input: {
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         let earliest: number | undefined;
+        let unserved = false;
         const sooner = (at: number) => { earliest = earliest === undefined ? at : Math.min(earliest, at); };
         for (const head of yield* input.entities(partition).due()) {
           const handler = options.handlers(head.type);
-          if (handler === undefined) { sooner(now + UNHANDLED_RECHECK_MILLIS); continue; }
+          if (handler === undefined) { unserved = true; continue; }
           if (head.notBefore > now) { sooner(head.notBefore); continue; }
           const name = `${partition}\u0000${head.type}\u0000${head.id}`;
           // A busy entity looks at its partition again when it is free, and so settles its own next time.
@@ -638,6 +642,7 @@ export const serveEntities = (input: {
             Effect.ensuring(Effect.andThen(Effect.sync(() => busy.delete(name)), PubSub.publish(input.wakes, { partition, at: 0 }))),
           ));
         }
+        if (unserved) unhandled.add(partition); else unhandled.delete(partition);
         if (earliest === undefined) dueIndex.delete(partition);
         else dueIndex.set(partition, earliest);
       }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
@@ -669,7 +674,10 @@ export const serveEntities = (input: {
         PubSub.takeAll(wakes),
         Effect.as(unrefSleep(Math.min(Math.max(0, wait), LONGEST_WAIT_MILLIS)), undefined),
       );
-      for (const wake of woke ?? []) noteDue(wake.partition, wake.at);
+      for (const wake of woke ?? []) {
+        if ("all" in wake) for (const partition of unhandled) noteDue(partition, 0);
+        else noteDue(wake.partition, wake.at);
+      }
       const at = yield* Clock.currentTimeMillis;
       if (at - lastScan >= safetyMillis) {
         lastScan = at;

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createMemoryWorkloadsStore, workloadsEndpointGroup } from "../dist/app/workloads/workloads-service.js";
-import { serveDurableWorkloads, signBody } from "../dist/app/workloads/durable.js";
+import { serveDurableWorkloads, signBody, verifyTimestampedSignature } from "../dist/app/workloads/durable.js";
 import { Effect } from "effect";
 import { openTemporaryDatabase } from "./_database.mjs";
 
@@ -15,7 +15,6 @@ const until = async (condition, what, millis = 8000) => {
   for (const started = Date.now(); !(await condition()); await wait(20)) assert.ok(Date.now() - started < millis, what);
 };
 const route = (group, id) => group.api.v1.find((entry) => entry.id === id).handler;
-const FAST = { refreshMillis: 30, deliveryMillis: 30 };
 
 const open = async (t) => {
   const { api } = await openTemporaryDatabase(t, { crossTenantRefresh: false });
@@ -53,7 +52,7 @@ test("a job run is kept in its Tenant's mailbox and handled once; a primary key 
   assert.equal((await run({ tenantId: "globex", input: {} })).body.message.status, "pending", "a run may name another Tenant");
   assert.equal((await run({ input: "not an object" })).status, 400);
 
-  const serving = serveDurableWorkloads(api, group.context.store, FAST);
+  const serving = serveDurableWorkloads(api, group.context);
   t.after(() => serving.stop());
   await until(async () => (await recorded(api)).length === 1, "the run is handled");
   await until(async () => (await api.forTenant("globex").entities.state({ type: "job", id: "resize" }))?.processed === 1, "the other Tenant's run is handled in its own mailbox");
@@ -69,7 +68,7 @@ test("a job that fails is retried with a pause, and entity workloads cannot take
   const flaky = await create({ type: "job", name: "flaky", tenant: "acme", code: `let calls = 0;
 export default async function handle(message) { if (++calls === 1) throw new Error("first attempt fails"); return { reply: { calls } }; }` });
   await route(group, "workloads.run")({ params: { id: flaky.id }, body: { primaryKey: "k" } });
-  const serving = serveDurableWorkloads(api, group.context.store, FAST);
+  const serving = serveDurableWorkloads(api, group.context);
   t.after(() => serving.stop());
   await until(async () => (await api.forTenant("acme").entities.message({ type: "job", id: "flaky", messageKey: "k" }))?.attempts === 1, "the first attempt fails");
   const message = await api.forTenant("acme").entities.message({ type: "job", id: "flaky", messageKey: "k" });
@@ -85,7 +84,7 @@ test("a schedule's next wake is saved before it is due, survives a stop, and a m
   const schedule = await create({ type: "schedule", name: "tick", schedule: "* * * * * *", tenant: "acme", code: recording });
   assert.equal(schedule.type, "schedule");
 
-  let serving = serveDurableWorkloads(api, group.context.store, FAST);
+  let serving = serveDurableWorkloads(api, group.context);
   const entities = api.forTenant("acme").entities;
   await until(async () => ((await entities.state({ type: "schedule", id: "tick" }))?.processed ?? 0) >= 2, "it fires on its schedule", 10_000);
   const fires = (await recorded(api)).map((document) => document.data.payload.fireAt);
@@ -101,7 +100,7 @@ test("a schedule's next wake is saved before it is due, survives a stop, and a m
   assert.ok(pending[0].deliverAt, "with the time it is due");
   const before = (await entities.state({ type: "schedule", id: "tick" })).processed;
   await wait(3200); // three fires missed
-  serving = serveDurableWorkloads(api, group.context.store, FAST);
+  serving = serveDurableWorkloads(api, group.context);
   t.after(() => serving.stop());
   await until(async () => (await entities.state({ type: "schedule", id: "tick" })).processed > before, "the missed wake fires on return");
   await wait(300);
@@ -148,7 +147,7 @@ test("an inbound webhook is verified, saved before it is answered, and keyed by 
   assert.equal(retry.body.duplicate, true, "the provider's retry is the same event");
   await post({ action: "closed" }, { delivery: "d-2" });
 
-  const serving = serveDurableWorkloads(api, group.context.store, FAST);
+  const serving = serveDurableWorkloads(api, group.context);
   t.after(() => serving.stop());
   await until(async () => (await recorded(api)).length === 2, "both events are handled");
   await wait(150);
@@ -180,7 +179,7 @@ test("an outbound webhook delivers outbox messages at least once with a stable I
 
   const emitted = await api.forTenant("acme").outbox.emit({ topic: "webhook.orders", payload: { order: 7 } });
   await api.forTenant("acme").outbox.emit({ topic: "other.topic", payload: {} });
-  const serving = serveDurableWorkloads(api, group.context.store, FAST);
+  const serving = serveDurableWorkloads(api, group.context);
   t.after(() => serving.stop());
   await until(() => received.length >= 2, "a failed delivery is tried again", 10_000);
   assert.equal(received[0].headers["idempotency-key"], emitted.id);
@@ -193,4 +192,52 @@ test("an outbound webhook delivers outbox messages at least once with a stable I
   assert.equal((await api.forTenant("acme").outbox.read({ topic: "other.topic" })).messages.length, 1, "other topics are not touched");
   const logs = (await route(group, "workloads.logs")({ query: new URLSearchParams({ projectId: "default" }) })).body.logs;
   assert.deepEqual(logs.map((log) => log.status).sort(), ["completed", "failed"]);
+});
+
+test("a timestamped signature covers its time and the body, and a stale or altered one is refused", async (t) => {
+  const { api, group, create } = await open(t);
+  const secret = "whsec_timestamped_0123456789";
+  await create({ type: "webhook", name: "pay", tenant: "acme", secret, signatureScheme: "timestamped" });
+  await assert.rejects(Promise.resolve(create({ type: "webhook", name: "bad", signatureScheme: "nope" })), /hmac/);
+  const webhook = route(group, "workloads.webhooks.receive");
+  const sign = async (body, seconds) => `t=${seconds},v1=${(await Effect.runPromise(signBody(secret, `${seconds}.${body}`))).slice("sha256=".length)}`;
+  const post = async (body, header) => webhook({ params: { projectId: "default", name: "pay" },
+    request: new Request("http://zelavis.local/pay", { method: "POST", headers: header === undefined ? {} : { "stripe-signature": header }, body }) });
+  const body = JSON.stringify({ id: "evt_1", type: "charge.succeeded" });
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  assert.equal((await post(body, await sign(body, nowSeconds))).status, 202);
+  assert.equal((await post(body, await sign(body, nowSeconds))).body.duplicate, true);
+  assert.equal((await post(body, undefined)).status, 401, "no signature");
+  assert.equal((await post(body.replace("evt_1", "evt_2"), await sign(body, nowSeconds))).status, 401, "an altered body");
+  const stale = await sign(body, nowSeconds - 3600);
+  assert.equal((await post(body, stale)).status, 401, "a replayed request, an hour old, is refused");
+  assert.equal((await post(body, `t=${nowSeconds},v1=${"0".repeat(64)},v1=${(await sign(body, nowSeconds)).split("v1=")[1]}`)).body.duplicate, true,
+    "any one of several v1 values may match, as when a provider rotates its secret");
+  assert.equal(await Effect.runPromise(verifyTimestampedSignature(secret, body, "t=abc,v1=00", Date.now())), false);
+});
+
+test("nothing polls: an outbox emit delivers at once, a new definition takes effect at once, and waiting messages find their handler", async (t) => {
+  const { api, group, create } = await open(t);
+  const received = [];
+  const server = createServer((request, response) => { request.resume(); received.push(request.headers["idempotency-key"]); response.end("{}"); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  // A safety net of an hour: whatever happens below happens because something was told, not because something looked.
+  const serving = serveDurableWorkloads(api, group.context, { safetyMillis: 3_600_000 });
+  t.after(() => serving.stop());
+  await wait(100);
+
+  await create({ type: "webhook", name: "orders", tenant: "acme", url: `http://127.0.0.1:${server.address().port}/in` });
+  const emitted = await api.forTenant("acme").outbox.emit({ topic: "webhook.orders", payload: { n: 1 } });
+  await until(() => received.includes(emitted.id), "the message is delivered when it is committed", 3000);
+  const withWrite = await api.forTenant("acme").documents.write({ operations: [], emit: [{ topic: "webhook.orders", payload: { n: 2 } }] });
+  assert.ok(withWrite);
+  await until(() => received.length === 2, "so is one emitted with a write", 3000);
+
+  await api.forTenant("acme").documents.createCollection({ name: "done" });
+  await api.forTenant("acme").entities.send({ type: "late", id: "x", tag: "said", payload: {} });
+  await wait(150);
+  assert.equal((await api.forTenant("acme").entities.state({ type: "late", id: "x" })).pending, 1, "no handler yet, so it waits");
+  await create({ type: "entity", name: "late", code: recording });
+  await until(async () => (await api.forTenant("acme").entities.state({ type: "late", id: "x" })).processed === 1, "the new handler takes it without anyone polling", 3000);
 });

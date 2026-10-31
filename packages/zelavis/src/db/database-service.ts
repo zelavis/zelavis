@@ -1154,6 +1154,66 @@ function defineDatabaseRootService(
           }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
         },
         {
+          id: "database.followers.lease",
+          spec: {
+            operationId: "databaseFollowerWriterLease",
+            summary: "A partition's writer lease",
+            description: "Who holds the partition's writer lease, at which epoch, until when, and the highest log position its followers had acknowledged; `held` says whether this database holds it. 400 when no lease store is configured.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key" } },
+            responses: { 200: { description: "{ partition, lease?, expired?, held }" }, 400: { description: "No lease store, or a reserved partition" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/lease",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.lease(params.partition)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.promote",
+          spec: {
+            operationId: "databaseFollowerPromote",
+            summary: "Take over a partition's writer lease with this follower copy",
+            description: "Promotes this database's copy of the partition to its writer: the lease must have expired or been released (409 `LeaseStillHeld`), and the copy must hold the highest position the old writer's followers acknowledged (409 `FollowerBehind`) unless `allowDataLoss`. One compare-and-set raises the epoch, so of two followers promoting at once one wins. The database then guards the partition with the lease, refusing a stale writer's changes, until `demote`. Stop following the partition before promoting it.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key" } },
+            requestBody: { required: true, schema: { type: "object", required: ["owner", "ttlMillis"], properties: {
+              owner: { type: "string", description: "Names the new writer" },
+              ttlMillis: { type: "integer", description: "The lease's time to live, 100 to 600000; renewed every third of it" },
+              allowDataLoss: { type: "boolean", description: "Promote although acknowledged positions are missing; the answer says how many" },
+            } } },
+            responses: { 200: { description: "{ lease, lostPositions }" }, 409: { description: "LeaseStillHeld, FollowerBehind, NoWriterLease or LeaseOwnedByAnother" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/lease/promote",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => service.followers.promote(params.partition, {
+              owner: input.owner as string, ttlMillis: input.ttlMillis as number,
+              ...(input.allowDataLoss === undefined ? {} : { allowDataLoss: input.allowDataLoss as boolean }),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.demote",
+          spec: {
+            operationId: "databaseFollowerDemote",
+            summary: "Give up the writer lease this database holds",
+            description: "Removes the lease guard and releases the lease, so a follower can be promoted at once instead of after the time to live. `released: false` when this database held no lease for the partition.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key" } },
+            responses: { 200: { description: "{ released }" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/lease/demote",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.demote(params.partition)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
           id: "database.followers.acknowledge",
           spec: {
             operationId: "databaseFollowerAcknowledge",

@@ -479,6 +479,14 @@ export interface ObjectStoreApi {
    */
   readonly writable: Effect.Effect<void, DbError>;
 
+  /**
+   * Install (or, with `undefined`, remove) the writer-lease gate: checked under the partition's writer before every
+   * change, after the move fence, so a writer that cannot prove it still holds its lease is refused (`WriterFenced`)
+   * and nothing lands. At most one gate; installing a second replaces the first. While one is installed the
+   * partition cannot be fenced for a move or removal (`PartitionLeased`): release the lease first.
+   */
+  readonly guard: (gate: Effect.Effect<void, DbError> | undefined) => Effect.Effect<void>;
+
   readonly read: (seq: Seq) => Effect.Effect<DbObject | undefined, DbError>;
 
   /**

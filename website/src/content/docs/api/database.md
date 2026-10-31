@@ -133,6 +133,48 @@ yield* writeAcknowledged(yield* leaderDb.followers.source('acme'), yield* leader
   the leader's writes as they arrive. Writing a followed partition any other way diverges it, and the next pass copies
   it again from the leader.
 
+### Writer leases and follower failover
+
+Replicas do not imply two writers. A partition's **writer lease** says who may write it: one record
+`{ owner, epoch, expiresAt, acknowledgedHead }` kept in an authority both hosts reach and changed only by
+compare-and-set (`LeaseStore`; the runtime keeps them in its System Store, `systemStoreLeaseStore`).
+
+```ts
+// The writer holds the lease; every change to the partition passes its gate first.
+yield* db.writerLeases.hold({ partition: 'acme', leases, owner: 'east', ttlMillis: 15_000 });
+// A follower follows the writer, and when the lease lapses takes over, keeping the writer's positions.
+const handle = yield* db.writerLeases.standby({ partition: 'acme', leases, owner: 'west', ttlMillis: 15_000, leader, interval: '1 second' });
+handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
+```
+
+- **The writer fences itself.** It renews every third of the lease's life, carrying the highest position its followers
+  acknowledged. The gate runs under the partition's writer before every change and refuses (`WriterFenced`) once the
+  lease is known superseded, and once the writer cannot prove it still holds it: its last renewal is older than the
+  time to live less a fifth. A writer that was paused and wakes up after losing the lease is refused at its first
+  write, and it is refused before any follower may be promoted, so there is no moment with two writers.
+- **Promotion is one compare-and-set.** A follower is promoted only when the lease has expired or been released
+  (`LeaseStillHeld`), and when its own head has reached the highest acknowledged position (`FollowerBehind`): it holds
+  every write that was promised under `writeAcknowledged`. The epoch rises with the change, so two followers racing
+  get one winner. `allowDataLoss` promotes a copy that is behind and reports `lostPositions`.
+- **What can be lost.** Writes the old writer committed past what its followers had acknowledged were never promised
+  to anyone beyond the writer's own disk. They survive on the old host and are lost to the new writer; when the old
+  writer returns it is refused, and it is made a follower of the new one (`db.followers.follow`), which copies the
+  partition again where its log diverged.
+- **A graceful stop hands over at once.** Closing the holder releases the lease, and a standby promotes within a third
+  of the time to live instead of waiting for it to lapse.
+- **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
+  released.
+- **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`
+  (`database.replicate`), `client.followers(projectId).lease|promote|demote`, `zelavis followers lease|promote|demote`.
+  Stop following the partition before promoting it.
+
+What this is not yet: the leases of two hosts are only as shared as the store they are both given, and no deployment
+composes a store shared across hosts, so cross-host failover has not been qualified by kill and partition drills on
+disposable machines. Nothing promotes automatically in a Project runtime; the Platform Fabric (or an operator) decides
+and calls `promote`. The tests run two databases in one process, cut the writer off from its lease store, and hold the
+gate, the promotion and the old writer's fencing to the behaviour above.
+
+
 Every route needs `database.replicate`, which the Platform grants with `project.runtime.manage`.
 
 | Form | Operations |

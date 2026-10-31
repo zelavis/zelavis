@@ -1,7 +1,7 @@
 # What Zelavis takes from Effect Cluster
 
-Status: **decided 2026-10-31** (delegated decision). Phases 1 (durable entities, `src/db/entities.ts`) and 2 (durable Workloads, `src/app/workloads/durable.ts`) are
-implemented; the later phases are ordered work, tracked in `pnotes/TODO.md`.
+Status: **decided 2026-10-31** (delegated decision). Phases 1 (durable entities, `src/db/entities.ts`), 2 (durable Workloads, `src/app/workloads/durable.ts`) and 3 (writer
+leases, `src/db/writer-lease.ts`, with the open items below) are implemented; the later phases are ordered work, tracked in `pnotes/TODO.md`.
 
 Sources: the four Effect "Module of the Week" posts on Cluster (actors, messaging, delivery, idempotency) and
 the Effect v4 source in `repos/effect/packages/effect/src/cluster` (`Entity`, `Sharding`, `ShardingConfig`,
@@ -129,9 +129,16 @@ shards.
 2. **Durable Workloads** (done 2026-10-31): jobs, schedules (durable wakes, run where the writer is), inbound
    webhooks with provider keys, outbound webhooks through the outbox with `Idempotency-Key`, and the entity runner's
    in-memory due index (partition to earliest due time; one scan at start; a safety-net scan every five minutes).
-   Outbound delivery and schedule arming still poll the workload definitions and the outbox on a timer (one to two
-   seconds); an outbox emit does not wake the runner.
-3. **Follower failover** (decision 5), qualified by kill and partition drills on disposable machines.
+   Nothing polls: definitions are reread on change (with a one-minute safety read), outbound delivery is woken by
+   outbox commits in the process (`database.outboxWatch`), schedules sleep until their fire time, and messages waiting
+   for a handler are looked at again when handlers change. Inbound webhooks verify an HMAC of the body or a timestamped
+   one. A runtime that holds a database is never planned more than one replica (decision 4 as a checked rule in the
+   Fabric planner).
+3. **Follower failover** (decision 5): implemented 2026-10-31 in `src/db/writer-lease.ts` (lease protocol, gate in
+   the store's write path, `standby`/`hold`, `followers lease|promote|demote` over JS, HTTP, SDK and CLI), tested with
+   two databases in one process, a cut-off writer and a seeded protocol model. **Open:** kill and partition drills on
+   disposable machines, a lease authority shared across hosts (the System Store is one host's), and automatic
+   promotion by the Platform Fabric.
 4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
 5. **Delivery-guarantee table** in the public docs (decision 7), written alongside phase 1 and kept current.
 

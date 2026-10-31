@@ -19,6 +19,7 @@ happened commit together.
 | Outbound webhooks | At least once to the receiver | Every request carries the outbox message id as `Idempotency-Key`, unchanged across retries; the receiver deduplicates by it. The message is removed only after a `2xx` |
 | Workflows (`db.workflowEngine`) | Activities at least once | A recorded activity never runs again; `tenantWriteActivity` keys each Tenant write by execution and step |
 | Leader transport (followers on other hosts) | At least once | Entries carry the leader's positions; a repeated position is compared and skipped, a gap or a different entry is refused |
+| Writer lease renewal and promotion | Compare-and-set; at most one writer per epoch | Every change is conditional on the observed lease; a stale writer's renewal fails and its gate refuses its writes; a promotion raises the epoch and requires the follower to hold the highest acknowledged position |
 | Follower acknowledgments | At least once | Positions only rise, so a late or repeated acknowledgment changes nothing |
 | Cross-Tenant index refresh | At least once per log entry | Entries and the partition's cursor commit together |
 | Gateway envelopes (Platform to Project) | At most once | A nonce per envelope; a replay is refused |

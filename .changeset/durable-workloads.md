@@ -11,3 +11,14 @@ delivers outbox messages with topic `webhook.<name>` to its `url` at least once 
 Webhook secrets are write-only. The entity runner now keeps an in-memory due index and sleeps until the earliest
 due time instead of reading every partition each second; its `sweepInterval` is a five-minute safety net. The
 delivery-guarantees page lists each channel.
+
+Writer leases and follower failover. A partition's writer lease (`{ owner, epoch, expiresAt, acknowledgedHead }`,
+changed only by compare-and-set) gates every change to the partition, so a writer that was paused past its lease is
+refused at its first write, before any follower may be promoted. A follower is promoted only when the lease has
+expired or been released and its copy holds the highest acknowledged position (`allowDataLoss` reports what may be
+lost); one compare-and-set raises the epoch. `db.writerLeases.hold|standby`, `GET followers/:partition/lease`,
+`POST followers/:partition/lease/promote|demote`, `client.followers(projectId).lease|promote|demote` and
+`zelavis followers lease|promote|demote`. A leased partition cannot be moved or removed until released. The Fabric
+planner never plans more than one replica of a runtime that holds a database. Inbound webhooks accept timestamped
+signatures (`signatureScheme: "timestamped"`), and the workload runner no longer polls: it is woken by definition
+changes, outbox commits and due times.

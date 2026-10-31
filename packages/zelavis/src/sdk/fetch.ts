@@ -885,8 +885,32 @@ export interface ZelavisFollowersClient {
   acknowledge(partition: string, input: { readonly follower: string; readonly position: number }): Promise<{ readonly follower: string; readonly position: number }>;
   /** How far each follower has reported holding the partition. */
   acknowledgments(partition: string): Promise<{ readonly partition: string; readonly followers: ReadonlyArray<{ readonly name: string; readonly position: number }> }>;
+  /** The partition's writer lease: holder, epoch, expiry, acknowledged head, and whether this database holds it. */
+  lease(partition: string): Promise<ZelavisWriterLeaseStatus>;
+  /**
+   * Take over the partition's writer lease with this database's follower copy: refused (409) while the lease is live
+   * (`LeaseStillHeld`) or the copy lacks acknowledged positions (`FollowerBehind`) unless `allowDataLoss`.
+   */
+  promote(partition: string, input: { readonly owner: string; readonly ttlMillis: number; readonly allowDataLoss?: boolean }): Promise<{ readonly lease: ZelavisWriterLease; readonly lostPositions: number }>;
+  /** Give up the lease this database holds, so a follower can be promoted at once. */
+  demote(partition: string): Promise<{ readonly released: boolean }>;
   /** Partitions whose heads moved past `heads`, waiting up to `timeoutMillis` for a write when none has. */
   changes(input?: { readonly heads?: Readonly<Record<string, number>>; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }): Promise<{ readonly heads: Readonly<Record<string, number>>; readonly more: boolean }>;
+}
+
+export interface ZelavisWriterLease {
+  readonly partition: string;
+  readonly owner: string;
+  readonly epoch: number;
+  /** Epoch milliseconds; 0 once released. */
+  readonly expiresAt: number;
+  readonly acknowledgedHead: number;
+}
+export interface ZelavisWriterLeaseStatus {
+  readonly partition: string;
+  readonly lease?: ZelavisWriterLease;
+  readonly expired?: boolean;
+  readonly held: boolean;
 }
 
 export interface ZelavisStorageClient {
@@ -942,6 +966,8 @@ export interface ZelavisWorkloadInput {
   /** A webhook's shared secret, write-only: verifies an inbound body's HMAC and signs an outbound one. An empty string clears it. */
   readonly secret?: string;
   readonly signatureHeader?: string;
+  /** `hmac` (a `sha256=<hex>` HMAC of the body, the default) or `timestamped` (`t=<unix>,v1=<hex>` over `<t>.<body>`, within five minutes). */
+  readonly signatureScheme?: "hmac" | "timestamped";
   /** The header an inbound webhook carries the provider's event id in; the body's `id` when absent. */
   readonly eventIdHeader?: string;
 }
@@ -2669,6 +2695,9 @@ function createFollowersClient(
     release: (partition, id) => json(at(partition, `holds/${encodeURIComponent(id)}`), { method: "DELETE" }),
     acknowledge: (partition, input) => json(at(partition, "acknowledgments"), { method: "POST", body: input }),
     acknowledgments: (partition) => json(at(partition, "acknowledgments")),
+    lease: (partition) => json(at(partition, "lease")),
+    promote: (partition, input) => json(at(partition, "lease/promote"), { method: "POST", body: input }),
+    demote: (partition) => json(at(partition, "lease/demote"), { method: "POST", body: {} }),
     changes: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/changes`), { method: "POST", body: input ?? {} }),
   };
 }

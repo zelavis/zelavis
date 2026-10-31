@@ -114,7 +114,8 @@ export interface FabricProjectPlacementRequest {
   readonly capabilities: Pick<
     ZelavisProjectWorkloadCapabilities,
     "statelessRuntimeReplicas"
-  >;
+  > &
+    Partial<Pick<ZelavisProjectWorkloadCapabilities, "managedDatabase">>;
   readonly replicaPolicy?: FabricProjectReplicaPolicy;
   readonly scaleSignal?: FabricProjectScaleSignal;
   readonly resources?: FabricProjectReplicaResources;
@@ -323,6 +324,12 @@ function normalizedPressure(value: number | undefined): number | undefined {
 function desiredReplicaCount(request: FabricProjectPlacementRequest): number {
   const policy = request.replicaPolicy ?? { mode: "single" };
   if (!request.capabilities.statelessRuntimeReplicas || policy.mode === "single") {
+    return 1;
+  }
+  // A runtime that holds a database has one writer, and its singleton duties (index refresh, schedules, workflow
+  // resumption, job and webhook delivery) run only where that writer is. Until those duties follow a lease that
+  // moves between replicas, a second replica would either repeat them or never run them, so it is never planned.
+  if (request.capabilities.managedDatabase === true) {
     return 1;
   }
 
@@ -787,7 +794,8 @@ function isPlacementRequest(
     !isBoundedIdentifier(identity.workloadId) ||
     !isBoundedIdentifier(request.projectKind) ||
     !capabilities ||
-    typeof capabilities.statelessRuntimeReplicas !== "boolean"
+    typeof capabilities.statelessRuntimeReplicas !== "boolean" ||
+    (capabilities.managedDatabase !== undefined && typeof capabilities.managedDatabase !== "boolean")
   ) {
     return false;
   }

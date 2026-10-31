@@ -1,7 +1,7 @@
 import { Duration, Effect, Option, Schedule, Schema, Stream, SubscriptionRef } from "effect";
 import { integration } from "../core/runtime/effect-boundary.js";
 import {
-  CursorCompacted, type DbError, EventGap, InvalidFollowerRequest, LensesRebuilding, LogCompacted, ReplicaDiverged,
+  CursorCompacted, type DbError, EventGap, FollowerBehind, InvalidFollowerRequest, LeaseOwnedByAnother, LeaseStillHeld, LensesRebuilding, LogCompacted, NoWriterLease, ReplicaDiverged,
   StoreError, TenantBranching, TenantMoving, TenantRelocated,
 } from "./errors.js";
 import type { DbEvent, EventCursor } from "./events.js";
@@ -171,6 +171,7 @@ const eventOfWire = (wire: typeof EventWire.Type): DbEvent =>
  */
 const CARRIED = {
   CursorCompacted, LogCompacted, EventGap, ReplicaDiverged, TenantMoving, TenantRelocated, LensesRebuilding, TenantBranching,
+  LeaseStillHeld, FollowerBehind, LeaseOwnedByAnother, NoWriterLease,
 } as const;
 type CarriedTag = keyof typeof CARRIED;
 const isCarried = (tag: string): tag is CarriedTag => Object.hasOwn(CARRIED, tag);

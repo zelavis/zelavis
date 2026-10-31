@@ -94,7 +94,7 @@ export const documentCore = (
 
   /** The store's own failures: a caller cannot act on them, so they become defects. */
   const STORE_FAILURES: ReadonlySet<string> = new Set([
-    "StoreError", "WriterFenced", "ForeignCursor", "CursorCompacted", "LogCompacted", "PartitionUnavailable",
+    "StoreError", "PartitionLeased", "WriterFenced", "ForeignCursor", "CursorCompacted", "LogCompacted", "PartitionUnavailable",
   ]);
 
   /**

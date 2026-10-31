@@ -1,9 +1,9 @@
-import { Clock, Cron, Effect, Fiber, Result } from "effect";
+import { Clock, Cron, Effect, Fiber, Queue, Result } from "effect";
 import { unrefSleep, type EntityStep } from "../../db/entities.js";
 import type { DeliveredMessage } from "../../db/outbox.js";
 import type { DatabaseRuntimeApi, RuntimeEntityHandler } from "../../db/runtime-api.js";
 import { integration, present } from "../../core/runtime/effect-boundary.js";
-import type { WorkloadDefinition, WorkloadsStore } from "./workloads-service.js";
+import type { WorkloadDefinition, WorkloadsApi } from "./workloads-service.js";
 
 /**
  * Durable Workloads: jobs, schedules and webhooks on durable entities and the outbox.
@@ -65,6 +65,28 @@ export const verifySignature = (secret: string, body: string, header: string | n
     return yield* integration(() => crypto.subtle.verify("HMAC", key, signature, enc.encode(body)));
   });
 
+/** How far a timestamped signature's time may be from ours, either way. */
+const TIMESTAMP_TOLERANCE_SECONDS = 300;
+
+/**
+ * A timestamped signature, the scheme of providers like Stripe: a header `t=<unix seconds>,v1=<hex>[,v1=<hex>]` whose
+ * `v1` is the HMAC-SHA256 of `<t>.<body>`. The time is part of what is signed and must be recent, so a captured
+ * request cannot be replayed later. Any one of the `v1` values may match (a provider rotating its secret sends two).
+ */
+export const verifyTimestampedSignature = (secret: string, body: string, header: string | null, nowMillis: number) =>
+  Effect.gen(function* () {
+    const parts = (header ?? "").split(",").map((part) => part.trim().split("="));
+    const timestamp = parts.find(([name]) => name === "t")?.[1];
+    const signatures = parts.filter(([name, value]) => name === "v1" && value !== undefined).map(([, value]) => value!);
+    const seconds = timestamp === undefined || !/^\d{1,12}$/.test(timestamp) ? undefined : Number(timestamp);
+    if (seconds === undefined || signatures.length === 0) return false;
+    if (Math.abs(nowMillis / 1000 - seconds) > TIMESTAMP_TOLERANCE_SECONDS) return false;
+    for (const signature of signatures) {
+      if (yield* verifySignature(secret, `${seconds}.${body}`, `sha256=${signature}`)) return true;
+    }
+    return false;
+  });
+
 const HEADER_DENYLIST = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"]);
 const HEADERS_KEPT = 64;
 const HEADER_VALUE_LIMIT = 1024;
@@ -81,6 +103,7 @@ export const keptHeaders = (headers: Headers, signatureHeader: string): Record<s
 };
 
 export const DEFAULT_SIGNATURE_HEADER = "x-hub-signature-256";
+export const TIMESTAMPED_SIGNATURE_HEADER = "stripe-signature";
 
 /** A provider's event id: the configured header, else the body's `id`. */
 export const eventIdOf = (workload: Pick<WorkloadDefinition, "eventIdHeader">, headers: Headers, body: unknown): string | undefined => {
@@ -110,13 +133,11 @@ const loadHandler = (workload: WorkloadDefinition, cache: Map<string, Handler>):
 };
 
 /** The pieces of the database a durable workload uses: `DatabaseRuntimeApi`. */
-export type DurableServing = Pick<DatabaseRuntimeApi, "entities" | "forTenant">;
+export type DurableServing = Pick<DatabaseRuntimeApi, "entities" | "forTenant" | "outboxWatch">;
 
 export interface DurableWorkloadOptions {
-  /** How often workload definitions are read, so an added, changed or disabled one takes effect; two seconds. */
-  readonly refreshMillis?: number;
-  /** How often outbound webhooks look for new outbox messages; one second. */
-  readonly deliveryMillis?: number;
+  /** How often the definitions and every outbox are read in full as a safety net; a minute. */
+  readonly safetyMillis?: number;
   /** Fetch, for outbound webhooks; global `fetch` unless given. */
   readonly fetch?: typeof fetch;
 }
@@ -129,8 +150,13 @@ const DELIVERY_BACKOFF_CAP = 5 * 60_000;
 const DELIVERY_TIMEOUT = 10_000;
 /** Messages awaiting a retry; past this, no new ones are read until some are delivered. */
 const DELIVERY_BACKLOG = 1000;
+/** While a schedule's fire is still being handled, its next wake is looked at again this often. */
+const IN_FLIGHT_RECHECK_MILLIS = 500;
 
 const now = () => new Date().toISOString();
+
+/** What wakes the runner: definitions changed, or a Tenant committed outbox messages. */
+type Signal = { readonly definitions: true } | { readonly outbox: string };
 
 /**
  * Serve durable Workloads until `stop`: the entity runner with the `entity`, `job`, `schedule` and `webhook`
@@ -138,16 +164,19 @@ const now = () => new Date().toISOString();
  * writer is, once; the wakes it arms and the commits it makes are conditional, so a second one cannot do harm, but
  * it would repeat work.
  *
- * Definitions are read every `refreshMillis`, so a workload added, changed or disabled takes effect without a
- * restart; a type with no enabled workload keeps its messages until one exists.
+ * Nothing here polls. The runner sleeps until the earliest of: a change to the workload definitions
+ * (`workloads.subscribe`), outbox messages committed in this process (`database.outboxWatch`), a schedule's next fire
+ * time, a failed delivery's retry time, or `safetyMillis` (a minute), the rare full read for what another writer of
+ * the definitions or the outbox did. While a schedule's fire is still being handled, its next wake is looked at again
+ * every half second, and no longer.
  */
 export function serveDurableWorkloads(
   database: DurableServing,
-  store: WorkloadsStore,
+  workloads: Pick<WorkloadsApi, "store" | "subscribe">,
   options: DurableWorkloadOptions = {},
 ): { readonly stop: () => Promise<void> } {
-  const refreshMillis = options.refreshMillis ?? 2000;
-  const deliveryMillis = options.deliveryMillis ?? 1000;
+  const store = workloads.store;
+  const safetyMillis = options.safetyMillis ?? 60_000;
   const send = options.fetch ?? fetch;
   const cache = new Map<string, Handler>();
   let entityHandlers = new Map<string, Handler>();
@@ -173,8 +202,8 @@ export function serveDurableWorkloads(
   const handlerFor = (type: string): Handler | undefined =>
     type === JOB_ENTITY ? jobs : type === SCHEDULE_ENTITY ? schedules : type === WEBHOOK_ENTITY ? webhooks : entityHandlers.get(type);
 
-  /** Armed schedules: the definition version and fire time a wake was last sent for. */
-  const armed = new Map<string, { readonly version: string; readonly fireAt: number }>();
+  /** Armed schedules: the definition version, the fire time a wake was last sent for, and when to look again. */
+  const armed = new Map<string, { readonly version: string; readonly fireAt: number; readonly check: number }>();
 
   const arm = (workload: WorkloadDefinition) => Effect.gen(function* () {
     const expression = workload.schedule;
@@ -183,12 +212,17 @@ export function serveDurableWorkloads(
     const version = `${workload.id}:${workload.updatedAt}`;
     const known = armed.get(workload.id);
     const current = yield* Clock.currentTimeMillis;
-    if (known !== undefined && known.version === version && known.fireAt > current) return;
+    if (known !== undefined && known.version === version && known.check > current) return;
     const entities = database.forTenant(tenant).entities;
     const state = yield* integration(() => entities.state({ type: SCHEDULE_ENTITY, id: workload.name }));
     const lastFire = typeof state?.state?.lastFire === "number" ? state.state.lastFire : current;
     const fireAt = nextFire(expression, lastFire);
     if (fireAt === undefined) return;
+    // The wake already armed is still being handled: look again soon, never send a second one behind it.
+    if (known !== undefined && known.version === version && known.fireAt === fireAt) {
+      armed.set(workload.id, { version, fireAt, check: current + IN_FLIGHT_RECHECK_MILLIS });
+      return;
+    }
     const key = `${workload.name}@${new Date(fireAt).toISOString()}`;
     if (known === undefined || known.version !== version) {
       // First sight of this definition in this process: wakes armed for another expression or by a former
@@ -202,7 +236,7 @@ export function serveDurableWorkloads(
       type: SCHEDULE_ENTITY, id: workload.name, tag: "fire", payload: { schedule: workload.name, fireAt: new Date(fireAt).toISOString() },
       primaryKey: key, deliverAt: new Date(fireAt).toISOString(),
     }));
-    armed.set(workload.id, { version, fireAt });
+    armed.set(workload.id, { version, fireAt, check: fireAt });
   });
 
   /** A schedule no longer enabled has no wake left to fire. */
@@ -218,6 +252,15 @@ export function serveDurableWorkloads(
     }
   });
 
+  const armAll = Effect.gen(function* () {
+    const schedulesNow = [...byKind.schedule.values()];
+    // Wakes are armed per schedule, and one that cannot be reached does not stop the others.
+    yield* Effect.forEach(schedulesNow, (workload) => arm(workload).pipe(
+      Effect.catchCause((cause) => Effect.logWarning(`The schedule "${workload.name}" could not be armed; the next pass tries again`, cause)),
+    ), { concurrency: 4, discard: true });
+    yield* disarm(new Set(schedulesNow.map((workload) => workload.id)));
+  });
+
   const refresh = Effect.gen(function* () {
     all = yield* integration(() => store.list());
     const enabled = all.filter((workload) => workload.enabled);
@@ -230,12 +273,6 @@ export function serveDurableWorkloads(
     // Versions no workload names any more are let go.
     const current = new Set(all.map((workload) => `${workload.id}:${workload.updatedAt}`));
     for (const version of cache.keys()) if (!current.has(version)) cache.delete(version);
-    // Wakes are armed per schedule, and one that cannot be reached does not stop the others.
-    const schedulesNow = enabled.filter((workload) => workload.type === "schedule");
-    yield* Effect.forEach(schedulesNow, (workload) => arm(workload).pipe(
-      Effect.catchCause((cause) => Effect.logWarning(`The schedule "${workload.name}" could not be armed; the next refresh tries again`, cause)),
-    ), { concurrency: 4, discard: true });
-    yield* disarm(new Set(schedulesNow.map((workload) => workload.id)));
   }).pipe(Effect.catchCause((cause) => Effect.logWarning("Workloads could not be read; the runner keeps the handlers it had", cause)));
 
   // ---- outbound webhooks ----
@@ -266,13 +303,14 @@ export function serveDurableWorkloads(
       ...(responseStatus === undefined ? {} : { responseStatus }),
     })).pipe(Effect.catchCause(() => Effect.void));
 
-  const deliverFor = (workload: WorkloadDefinition) => Effect.gen(function* () {
+  /** Read a webhook's outbox when `reason` says there may be something new, and deliver what is owed a retry. */
+  const deliverFor = (workload: WorkloadDefinition, read: boolean) => Effect.gen(function* () {
     const tenant = workload.tenant;
     if (tenant === undefined || workload.url === undefined) return;
     const outbox = database.forTenant(tenant).outbox;
     const topic = outboundTopic(workload.name);
     let state = outbound.get(workload.id);
-    if (state === undefined) { state = { retry: new Map() }; outbound.set(workload.id, state); }
+    if (state === undefined) { state = { retry: new Map() }; outbound.set(workload.id, state); read = true; }
     const queue = state;
     const attempt = (message: DeliveredMessage, attempts: number) => Effect.gen(function* () {
       const result = yield* Effect.exit(deliver(workload, message));
@@ -289,8 +327,8 @@ export function serveDurableWorkloads(
       queue.retry.set(message.id, { attempts: next, message, at: next >= DELIVERY_ATTEMPTS ? Number.POSITIVE_INFINITY : (yield* Clock.currentTimeMillis) + Math.min(DELIVERY_BACKOFF_BASE * 2 ** (next - 1), DELIVERY_BACKOFF_CAP) });
     });
     const at = yield* Clock.currentTimeMillis;
-    for (const [, owed] of queue.retry) if (owed.at <= at) yield* attempt(owed.message, owed.attempts);
-    if (queue.retry.size >= DELIVERY_BACKLOG) return;
+    for (const [, owed] of [...queue.retry]) if (owed.at <= at) yield* attempt(owed.message, owed.attempts);
+    if (!read || queue.retry.size >= DELIVERY_BACKLOG) return;
     for (let pages = 0; pages < 4; pages++) {
       const page = yield* integration(() => outbox.read({ topic, limit: DELIVERY_PAGE, ...(queue.cursor === undefined ? {} : { after: queue.cursor as never }) }));
       for (const message of page.messages) if (!queue.retry.has(message.id)) yield* attempt(message, 0);
@@ -299,22 +337,56 @@ export function serveDurableWorkloads(
     }
   });
 
-  const deliverAll = Effect.gen(function* () {
+  const deliverAll = (tenants: ReadonlySet<string>, everything: boolean) => Effect.gen(function* () {
     const targets = [...byKind.webhook.values()].filter((workload) => workload.url !== undefined && workload.tenant !== undefined);
     const live = new Set(targets.map((workload) => workload.id));
     for (const id of outbound.keys()) if (!live.has(id)) outbound.delete(id);
-    yield* Effect.forEach(targets, (workload) => deliverFor(workload).pipe(
+    yield* Effect.forEach(targets, (workload) => deliverFor(workload, everything || tenants.has(workload.tenant!)).pipe(
       Effect.catchCause((cause) => Effect.logWarning(`Outbound webhook "${workload.name}" could not be delivered; the next pass tries again`, cause)),
     ), { concurrency: 4, discard: true });
   });
 
-  const refreshing = Effect.runFork(Effect.andThen(refresh, Effect.forever(Effect.andThen(unrefSleep(refreshMillis), refresh))));
-  const delivering = Effect.runFork(Effect.forever(Effect.andThen(unrefSleep(deliveryMillis), deliverAll)));
+  // ---- the loop ----
+
+  const signals = Effect.runSync(Queue.sliding<Signal>(256));
+  const unsubscribe = [
+    workloads.subscribe(() => { Queue.offerUnsafe(signals, { definitions: true }); }),
+    database.outboxWatch((tenant) => { Queue.offerUnsafe(signals, { outbox: tenant }); }),
+  ];
+
+  /** When the loop next has something to do on its own: a schedule to arm, or a delivery to retry. */
+  const nextTimer = () => {
+    let at = Number.POSITIVE_INFINITY;
+    for (const entry of armed.values()) at = Math.min(at, entry.check);
+    for (const state of outbound.values()) for (const owed of state.retry.values()) at = Math.min(at, owed.at);
+    return at;
+  };
+
+  const running = Effect.runFork(Effect.gen(function* () {
+    let safetyAt = 0;
+    let pending: ReadonlyArray<Signal> = [{ definitions: true }];
+    for (;;) {
+      const at = yield* Clock.currentTimeMillis;
+      const definitions = pending.some((signal) => "definitions" in signal);
+      const tenants = new Set(pending.flatMap((signal) => "outbox" in signal ? [signal.outbox] : []));
+      const safety = at >= safetyAt;
+      if (definitions || safety) {
+        yield* refresh;
+        // Messages that waited for a handler are looked at again; nothing else polls for them.
+        yield* integration(() => serving.handlersChanged());
+      }
+      yield* armAll;
+      yield* deliverAll(tenants, definitions || safety);
+      if (safety) safetyAt = at + safetyMillis;
+      const wait = Math.max(0, Math.min(safetyAt, nextTimer()) - (yield* Clock.currentTimeMillis));
+      pending = yield* Effect.raceFirst(Queue.takeAll(signals), Effect.as(unrefSleep(Math.min(wait, 3_600_000)), [] as ReadonlyArray<Signal>));
+    }
+  }).pipe(Effect.catchCause((cause) => Effect.logError("The durable workload loop stopped", cause))));
   const serving = database.entities.serve(handlerFor);
   return {
     stop: () => present(Effect.gen(function* () {
-      yield* Fiber.interrupt(refreshing);
-      yield* Fiber.interrupt(delivering);
+      for (const stop of unsubscribe) stop();
+      yield* Fiber.interrupt(running);
       yield* integration(() => serving.stop());
     })),
   };
