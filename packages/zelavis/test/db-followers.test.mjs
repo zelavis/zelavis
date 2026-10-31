@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect, Fiber, Stream } from "effect";
-import { followLeader, levelFollower } from "../dist/db/index.js";
+import { followLeader, levelFollower, makeFollowerAcknowledgments, writeAcknowledged } from "../dist/db/index.js";
 import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
 import { StoreError } from "../dist/db/errors.js";
 
@@ -139,4 +139,37 @@ test("a read from a cursor includes the event it names; a read after it does not
   const from = [...(yield* Stream.runCollect(leader.events.read({ from: head })))];
   assert.deepEqual(from.map((event) => event.cursor), [head]);
   assert.deepEqual([...(yield* Stream.runCollect(leader.events.read({ after: head })))], []);
+})));
+
+test("a write waits for the followers its policy names, and says when they do not arrive", () => run(Effect.gen(function* () {
+  const leader = (yield* makeMemoryStore("one")).partition("acme");
+  const shards = { east: yield* makeMemoryStore("two"), west: yield* makeMemoryStore("three") };
+  const acknowledgments = yield* makeFollowerAcknowledgments;
+  const loops = {};
+  for (const [name, shard] of Object.entries(shards)) {
+    loops[name] = yield* Effect.forkChild(followLeader(leader, { shard, partition: "acme" }, {
+      interval: "2 millis", acknowledgments: { name, to: acknowledgments },
+    }));
+  }
+  const both = yield* writeAcknowledged(leader, acknowledgments, put(leader, 1, "one"), { followers: 2, timeout: "5 seconds" });
+  assert.deepEqual(both.acknowledgedBy, ["east", "west"]);
+  for (const shard of Object.values(shards)) assert.ok((yield* shard.partition("acme").stats).head >= both.position, "an acknowledgment is never ahead of what the follower holds");
+
+  // West stops: a policy of one is still met, a policy of two runs out of time.
+  yield* Fiber.interrupt(loops.west);
+  const one = yield* writeAcknowledged(leader, acknowledgments, put(leader, 2, "two"), { followers: 1, timeout: "5 seconds" });
+  assert.deepEqual(one.acknowledgedBy, ["east"]);
+  const refused = yield* Effect.flip(writeAcknowledged(leader, acknowledgments, put(leader, 3, "three"), { followers: 2, timeout: "50 millis" }));
+  assert.equal(refused._tag, "FollowersNotAcknowledged");
+  assert.equal(refused.required, 2);
+  assert.ok(!refused.acknowledged.includes("west"));
+  // Refused is not undone: the leader keeps the write.
+  assert.equal(dec.decode((yield* leader.read(3)).bytes), "three");
+
+  // Positions only rise; a policy of none waits for nothing.
+  const before = (yield* acknowledgments.positions).get("east");
+  yield* acknowledgments.acknowledge("east", 0);
+  assert.equal((yield* acknowledgments.positions).get("east"), before);
+  assert.deepEqual((yield* writeAcknowledged(leader, acknowledgments, put(leader, 4, "four"), { followers: 0, timeout: "1 millis" })).acknowledgedBy.length >= 0, true);
+  yield* Fiber.interrupt(loops.east);
 })));

@@ -72,7 +72,7 @@ test("every documents operation is reachable through a route", async (t) => {
         principal: operator,
         // Enough of a body that a handler reaches its call rather than
         // stopping at a missing tenant; the call itself is expected to fail.
-        body: {
+        body: { with: "x",
           tenantId: "acme",
           name: "items",
           measure: "m",
@@ -88,6 +88,7 @@ test("every documents operation is reachable through a route", async (t) => {
           fields: [{ path: "a" }],
           path: "a",
           collection: "items",
+          search: "word",
           data: {},
         },
         headers: {},

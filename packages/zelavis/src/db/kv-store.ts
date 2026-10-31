@@ -26,7 +26,7 @@ import type { Query, RangeBound, RangeQuery } from "./query.js";
 import { holdingLog } from "./log-hold.js";
 import { RoutedBy } from "./store.js";
 import type {
-  EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
+  EventsApi, LeaderSource, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow,
   PartitionStats, RecordState, SeedOptions, SeedResult, ShardStoreApi, Txn,
 } from "./store.js";
 import type { ShardId } from "./topology.js";
@@ -60,7 +60,7 @@ const SHARD_FORMAT = "format";
  * The layout this code writes. A shard carries it so a layout change is caught
  * on open instead of misread.
  */
-const CURRENT_FORMAT = 3;
+const CURRENT_FORMAT = 4;
 
 /** One partition's own counters and marks. */
 const META_NEXT_SEQ = "next_seq";
@@ -151,6 +151,7 @@ const META_LINEAGE = "lineage";
  * finished. Cleared with the seeding mark.
  */
 const META_LEAVING = "leaving";
+const META_AS_OF = "as-of";
 
 /**
  * Random bytes naming this life of the partition: written with the first
@@ -187,6 +188,7 @@ const PROBE_CAP = 4096;
  * way back to a working index.
  */
 const DERIVED_TAGS = [
+  Tag.NamespaceCount,
   Tag.Term, Tag.Measure, Tag.Edge, Tag.EdgeReverse, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
 ] as const;
 
@@ -654,6 +656,18 @@ const openPartition = (
 
   type View = ReturnType<typeof pendingView>;
 
+  /** Uses the staged value, so repeated changes within a batch accumulate. */
+  const adjustNamespaceCount = (view: View, namespace: string, delta: number) =>
+    Effect.gen(function* () {
+      const key = keys.namespaceCount(namespace);
+      const bytes = yield* view.get(key);
+      const current = yield* decodeOrDie("namespace.count", () => counterOf(bytes));
+      const next = current + delta;
+      if (!Number.isSafeInteger(next) || next < 0) return yield* new StoreError({ op: "namespace.count", cause: "namespace count is outside its valid range" });
+      if (next === 0) view.del(key);
+      else view.put(key, u64Bytes(next));
+    });
+
   /** What a projection writes into, and what it needs to know about the tiers. */
   interface Projection {
     readonly view: View;
@@ -750,6 +764,10 @@ const openPartition = (
       }
 
       const held = current?.live === true ? current.identity : undefined;
+      if (held?.namespace !== next.identity?.namespace) {
+        if (held !== undefined) yield* adjustNamespaceCount(view, held.namespace, -1);
+        if (next.identity !== undefined) yield* adjustNamespaceCount(view, next.identity.namespace, 1);
+      }
       if (held !== undefined && !sameIdentity(held, next.identity)) yield* releaseIdentity(view, held, seq);
       if (next.identity !== undefined && !sameIdentity(held, next.identity)) {
         view.put(keys.identity(next.identity.namespace, next.identity.key), seqBytes(seq));
@@ -784,7 +802,10 @@ const openPartition = (
       if (current?.live === true) {
         for (const key of postingsOf(current.manifest, seq).values()) dropPosting(view, key, sealed);
         for (const [column] of measuresOf(current.manifest)) view.del(keys.measure(column, seq));
-        if (current.identity !== undefined) yield* releaseIdentity(view, current.identity, seq);
+        if (current.identity !== undefined) {
+          yield* releaseIdentity(view, current.identity, seq);
+          yield* adjustNamespaceCount(view, current.identity.namespace, -1);
+        }
         counters.records -= 1;
         counters.bytes -= current.body.length;
       }
@@ -2006,6 +2027,7 @@ const openPartition = (
         const seq = seqOf(entry.key);
         for (const key of postingsOf(record.manifest, seq).values()) out.view().put(key, EMPTY);
         for (const [column, value] of measuresOf(record.manifest)) out.view().put(keys.measure(column, seq), f64(value));
+        if (record.identity !== undefined) yield* adjustNamespaceCount(out.view(), record.identity.namespace, 1);
         count += 1;
         if (out.size() >= SEAL_BATCH) yield* out.flush;
       }));
@@ -2263,11 +2285,14 @@ const openPartition = (
       bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("lineage.read", () => decodeLineage(bytes))),
     leaving: Effect.flatMap(engine.get(keys.meta(META_LEAVING)), (bytes) =>
       bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("leaving.read", () => decodeNames(bytes))),
-  }), ({ incarnation, lineage, leaving, ...counted }) => ({
+    asOf: Effect.flatMap(engine.get(keys.meta(META_AS_OF)), (bytes) =>
+      bytes === undefined ? Effect.succeed(undefined) : decodeOrDie("as-of.read", () => counterOf(bytes))),
+  }), ({ incarnation, lineage, leaving, asOf, ...counted }) => ({
     ...counted,
     ...(incarnation === undefined ? {} : { incarnation }),
     ...(lineage === undefined ? {} : { lineage }),
     ...(leaving === undefined ? {} : { leaving }),
+    ...(asOf === undefined ? {} : { asOf }),
   }));
 
   const records = Stream.mapEffect(engine.scan(keys.tag(Tag.Record)), (entry) =>
@@ -2302,13 +2327,13 @@ const openPartition = (
    * batch that clears the mark; a seed cut off before then is copied again
    * whole, snapshot included.
    */
-  const seed = (source: ObjectStoreApi, options?: SeedOptions): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+  const seed = (source: LeaderSource, options?: SeedOptions): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
     options?.branch === true
       ? exclusive(Effect.gen(function* () {
           // An unfinished branch holds part of a copy and nothing else: no
           // read or write was ever answered from it, so it is started over.
           if ((yield* branchHeld).unfinished) yield* removeAll;
-          return yield* Effect.flatMap(unfenced, () => copyInto(source, true, options.leave ?? []));
+          return yield* Effect.flatMap(unfenced, () => copyInto(source, true, options.leave ?? [], options.asOf));
         }))
       : exclusiveWrite(copyInto(source, false, []));
 
@@ -2321,15 +2346,144 @@ const openPartition = (
   const SEED_HOLD_TTL_MILLIS = 2 * 60_000;
   /** `seed`'s work, under the permit, with the source's log held. */
   const copyInto = (
-    source: ObjectStoreApi,
+    source: LeaderSource,
     branching: boolean,
     leave: ReadonlyArray<string>,
+    asOf?: number,
   ): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
-    holdingLog(source, `seed:${partition}`, SEED_HOLD_TTL_MILLIS, copyHeld(source, branching, leave));
+    holdingLog(source, `seed:${partition}`, SEED_HOLD_TTL_MILLIS,
+      asOf === undefined ? copyHeld(source, branching, leave) : replayHeld(source, leave, asOf));
+
+  /**
+   * A branch as of a past position: the source's whole log, replayed from
+   * empty up to `asOf`. Records are the present, so they are never read; the
+   * log from position 1 is the history, which is why a compacted source is
+   * refused. Everything else is a branch's: lineage first, the seeding mark
+   * until the last batch, what it leaves retracted in its own log.
+   */
+  const replayHeld = (
+    source: LeaderSource,
+    leave: ReadonlyArray<string>,
+    asOf: number,
+  ): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
+    Effect.gen(function* () {
+      if (leave.length > LEAVE_LIMIT || leave.some((name) => name.length === 0)) {
+        return yield* Effect.die(new RangeError(`a branch leaves 0 to ${LEAVE_LIMIT} named namespaces behind`));
+      }
+      const held = [...(yield* Stream.runCollect(engine.scan(keys.prefix, { limit: 2 })))]
+        .filter((entry) => compareKeys(entry.key, revisionKey) !== 0);
+      if (held.length > 0) return yield* new TenantNotEmpty({ tenant: partition });
+      const start = yield* source.stats;
+      // From empty while the whole log is held; once compacted, from the source's snapshot, which compaction
+      // never cuts past: its state at `snapshotAt`, and the log from there.
+      const snapshotAt = start.compactedTo === 0 ? 0 : yield* source.snapshotAt;
+      if (start.compactedTo > 0 && (snapshotAt < start.compactedTo || asOf < snapshotAt)) {
+        return yield* new LogCompacted({ partition: source.partition, compactedTo: start.compactedTo });
+      }
+      if (!Number.isSafeInteger(asOf) || asOf < 0 || asOf > start.head) {
+        return yield* new StoreError({ op: "branch.asOf", cause: `position ${asOf} is outside the source's log, 0 to ${start.head}` });
+      }
+      const lineage: StoredLineage = [{ partition: source.partition, upTo: asOf }, ...(start.lineage ?? []).map((entry) =>
+        ({ partition: entry.partition, upTo: Math.min(entry.upTo, asOf) }))].slice(0, LINEAGE_LIMIT);
+      // Identifiers the source handed out after `asOf` are never handed out here: the next one is past them all.
+      yield* write([
+        { op: "put", key: keys.meta(META_SEEDING), value: u64Bytes(1) },
+        { op: "put", key: keys.meta(META_LINEAGE), value: encodeLineage(lineage) },
+        { op: "put", key: keys.meta(META_AS_OF), value: u64Bytes(asOf) },
+        { op: "put", key: keys.meta(META_NEXT_SEQ), value: u64Bytes(start.nextSeq) },
+        ...(leave.length > 0 ? [{ op: "put" as const, key: keys.meta(META_LEAVING), value: encodeNames(leave) }] : []),
+      ]);
+      branch = { lineage, unfinished: true };
+      let copied = 0;
+      if (snapshotAt > 0) {
+        const counters: Counters = { records: 0, bytes: 0 };
+        let pending = new Map<string, KvWrite>();
+        let into: Projection = { view: pendingView(pending), sealed: false, counters };
+        const flush = Effect.gen(function* () {
+          if (pending.size === 0) return;
+          into.view.put(keys.meta(META_RECORDS), u64Bytes(counters.records));
+          into.view.put(keys.meta(META_BYTES), u64Bytes(counters.bytes));
+          yield* write([...pending.values()]);
+          pending = new Map<string, KvWrite>();
+          into = { view: pendingView(pending), sealed: false, counters };
+        });
+        let after: Seq | undefined;
+        for (;;) {
+          const page = yield* source.scanSnapshot({ ...(after === undefined ? {} : { after }), limit: SEAL_BATCH });
+          for (const { seq, record } of page) {
+            // A snapshot holds live records only.
+            if (!record.live) continue;
+            yield* project(into, seq, undefined, record);
+            // The copy's own snapshot at the same position, so it can rebuild its lenses as the source can.
+            into.view.put(keys.snapshot(SEED_SNAPSHOT_ID, seq), encodeRecord(record));
+            copied += 1;
+            if (pending.size >= SEAL_BATCH) yield* flush;
+          }
+          if (page.length < SEAL_BATCH) break;
+          after = page[page.length - 1]!.seq;
+        }
+        into.view.put(keys.meta(META_HEAD), u64Bytes(snapshotAt));
+        into.view.put(keys.meta(META_COMPACTED_TO), u64Bytes(snapshotAt));
+        into.view.put(keys.meta(META_SNAPSHOT_ID), u64Bytes(SEED_SNAPSHOT_ID));
+        into.view.put(keys.meta(META_SNAPSHOT_AT), u64Bytes(snapshotAt));
+        yield* flush;
+      }
+      let applied = 0;
+      let at = snapshotAt;
+      while (at < asOf) {
+        const batch = [...(yield* Stream.runCollect(source.events.read({
+          ...(at === 0 ? {} : { after: encodeCursor(source.partition, at) }),
+          limit: BRANCH_FOLLOW_BATCH,
+        })))];
+        const positioned = yield* Effect.forEach(batch, (event) =>
+          Effect.map(cursorPosition(source.partition, event.cursor), (position) => ({ position, event })));
+        const wanted = positioned.filter((entry) => entry.position <= asOf);
+        if (wanted.length === 0) {
+          return yield* new StoreError({ op: "branch.replay", cause: `the source's log ends at ${at}, before ${asOf}` });
+        }
+        yield* followMany(wanted.map((entry) => entry.event), commitHeld).pipe(
+          Effect.catchTags({ EventGap: Effect.die, ReplicaDiverged: Effect.die }),
+        );
+        applied += wanted.length;
+        at = wanted[wanted.length - 1]!.position;
+      }
+      yield* leaveBehind(leave);
+      yield* write([
+        { op: "delete", key: keys.meta(META_SEEDING) },
+        { op: "delete", key: keys.meta(META_AS_OF) },
+        ...(leave.length > 0 ? [{ op: "delete" as const, key: keys.meta(META_LEAVING) }] : []),
+      ]);
+      branch = { lineage, unfinished: false };
+      return { records: copied, head: snapshotAt, through: asOf, applied };
+    });
+
+  /**
+   * What a branch leaves behind, retracted in its own log past the branch
+   * point while it still refuses every read: the log up to there stays the
+   * source's, and nothing reads the records in between.
+   */
+  const leaveBehind = (leave: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      for (const namespace of leave) {
+        let previous: number | undefined;
+        for (;;) {
+          const held = [...(yield* Stream.runCollect(engine.scan(keys.identityPrefix(namespace), { limit: LEAVE_BATCH })))]
+            .map((entry) => asSeq(readSeqAt(new Uint8Array(entry.value), 0)));
+          if (held.length === 0) break;
+          // A retraction releases the identity, so each pass finds the next
+          // ones; finding the same first one again means it names nothing live.
+          if (held[0] === previous) {
+            return yield* new StoreError({ op: "branch.leave", cause: `an identity of "${namespace}" names no live record` });
+          }
+          previous = held[0];
+          yield* commitHeld((batch) => Effect.forEach(held, (seq) => txnFor(batch).retract(seq), { discard: true }));
+        }
+      }
+    });
 
   /** `seed`'s copy itself. */
   const copyHeld = (
-    source: ObjectStoreApi,
+    source: LeaderSource,
     branching: boolean,
     leave: ReadonlyArray<string>,
   ): Effect.Effect<SeedResult, DbError | TenantNotEmpty> =>
@@ -2440,24 +2594,7 @@ const openPartition = (
         at = wanted[wanted.length - 1]!.position;
       }
 
-      // What the branch leaves behind is retracted in its own log, past the
-      // branch point, while it still refuses every read: the log up to there
-      // stays the source's, and nothing reads the records in between.
-      for (const namespace of leave) {
-        let previous: number | undefined;
-        for (;;) {
-          const held = [...(yield* Stream.runCollect(engine.scan(keys.identityPrefix(namespace), { limit: LEAVE_BATCH })))]
-            .map((entry) => asSeq(readSeqAt(new Uint8Array(entry.value), 0)));
-          if (held.length === 0) break;
-          // A retraction releases the identity, so each pass finds the next
-          // ones; finding the same first one again means it names nothing live.
-          if (held[0] === previous) {
-            return yield* new StoreError({ op: "branch.leave", cause: `an identity of "${namespace}" names no live record` });
-          }
-          previous = held[0];
-          yield* commitHeld((batch) => Effect.forEach(held, (seq) => txnFor(batch).retract(seq), { discard: true }));
-        }
-      }
+      yield* leaveBehind(leave);
 
       yield* write([
         { op: "delete", key: keys.meta(META_SEEDING) },
@@ -2471,6 +2608,8 @@ const openPartition = (
     partition,
     generation,
     stats,
+    namespaceSize: (namespace) => ready(Effect.flatMap(engine.get(keys.namespaceCount(namespace)), bytes =>
+      decodeOrDie("namespace.count", () => counterOf(bytes)))),
     records: Stream.unwrap(Effect.as(lensesReady, records)),
     scanRecords: ({ after, limit }) =>
       ready(Effect.gen(function* () {
@@ -2501,6 +2640,23 @@ const openPartition = (
     snapshot: live(snapshot),
 
     snapshotAt: readMeta(META_SNAPSHOT_AT),
+
+    scanSnapshot: ({ after, limit }) =>
+      ready(Effect.gen(function* () {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > SEAL_BATCH) {
+          return yield* Effect.die(new RangeError(`a snapshot page holds 1 to ${SEAL_BATCH} records`));
+        }
+        const id = yield* readMeta(META_SNAPSHOT_ID);
+        if (id === 0) return [];
+        const prefix = keys.snapshotPrefix(id);
+        const entries = [...(yield* Stream.runCollect(engine.scan(prefix, {
+          ...(after === undefined ? {} : { from: keys.snapshot(id, after + 1) }),
+          limit,
+        })))];
+        return yield* Effect.forEach(entries, (entry) =>
+          Effect.map(decodeOrDie("snapshot.read", () => decodeRecord(new Uint8Array(entry.value))), (record) =>
+            ({ seq: asSeq(seqOf(entry.key)), record: record as RecordState })));
+      })),
 
     reindexLenses: live(reindexLenses),
 
@@ -2752,9 +2908,16 @@ const openPartition = (
         const compactedTo = yield* readMeta(META_COMPACTED_TO);
         // Never past the lowest hold: a reader copying records is to follow the log from there.
         const heldAt = lowestHold();
+        // Never past the stored snapshot either: it and the log after it are the recovery horizon, so a
+        // Tenant can still be recovered as of any position from the snapshot on. A newer snapshot moves it.
+        const snapshotAt = yield* readMeta(META_SNAPSHOT_AT);
         const wanted = head - keep;
-        const cut = heldAt === undefined ? wanted : Math.min(wanted, heldAt);
-        const clamped = heldAt !== undefined && heldAt < wanted ? { heldAt } : {};
+        const horizon = snapshotAt > compactedTo ? snapshotAt : undefined;
+        const cut = Math.min(wanted, heldAt ?? wanted, horizon ?? wanted);
+        const clamped = {
+          ...(heldAt !== undefined && heldAt < wanted ? { heldAt } : {}),
+          ...(horizon !== undefined && horizon < wanted ? { snapshotAt: horizon } : {}),
+        };
         if (cut <= compactedTo) return { removed: 0, compactedTo, ...clamped };
         yield* write([{ op: "put", key: keys.meta(META_COMPACTED_TO), value: u64Bytes(cut) }]);
 
@@ -2813,6 +2976,12 @@ const openPartition = (
       })),
 
     releaseLog: (id) => Effect.sync(() => { logHolds.delete(id); }),
+
+    heldLogs: Effect.sync(() => {
+      lowestHold();
+      const now = Date.now();
+      return [...logHolds].map(([id, hold]) => ({ id, position: hold.position, ttlMillis: Math.max(1, hold.expires - now) }));
+    }),
 
     compactedTo: readMeta(META_COMPACTED_TO),
 
@@ -2894,6 +3063,33 @@ const openPartition = (
       exclusive(Effect.gen(function* () {
         yield* write([{ op: "put", key: keys.meta(META_FENCE), value: encodeFence(move) }]);
         fence = { from: move.from, to: move.to };
+      })),
+
+    cursorAt: (position) => encodeCursor(partition, position),
+
+    recoveryPoint: (at) =>
+      "cursor" in at
+        ? cursorPosition(partition, at.cursor)
+        : Effect.gen(function* () {
+            let position = 0;
+            let after: EventCursor | undefined;
+            for (;;) {
+              const batch = [...(yield* Stream.runCollect(events.read({ ...(after === undefined ? {} : { after }), limit: BRANCH_FOLLOW_BATCH })))];
+              for (const event of batch) {
+                if (event.at > at.time) return position;
+                position = yield* cursorPosition(partition, event.cursor);
+              }
+              if (batch.length < BRANCH_FOLLOW_BATCH) return position;
+              after = batch[batch.length - 1]!.cursor;
+            }
+          }),
+
+    liftFence: (move) =>
+      exclusive(Effect.gen(function* () {
+        const held = yield* fenceHeld;
+        if (held === null || held.from !== move.from || held.to !== move.to) return;
+        yield* write([{ op: "delete", key: keys.meta(META_FENCE) }]);
+        fence = null;
       })),
 
     writable: unfenced,

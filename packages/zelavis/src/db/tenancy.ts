@@ -29,6 +29,16 @@ export const IDEMPOTENCY_NAMESPACE = "zv.idempotency";
 /** The tenant's outbox: one record per message, keyed by the message's id. */
 export const OUTBOX_NAMESPACE = "zv.outbox";
 
+/**
+ * Durable entities (`entities.ts`): each message sent to one, keyed by entity and message key; the messages still
+ * owed, in arrival order per entity; each entity's own state and counts; and the finished messages in the order
+ * they finished, which is what retention removes them by.
+ */
+export const ENTITY_MESSAGE_NAMESPACE = "zv.entity.message";
+export const ENTITY_PENDING_NAMESPACE = "zv.entity.pending";
+export const ENTITY_STATE_NAMESPACE = "zv.entity.state";
+export const ENTITY_DONE_NAMESPACE = "zv.entity.done";
+
 
 /** The collection a record's name belongs to, for collections and their documents alike. */
 export const collectionOfIdentity = (namespace: string, key: string): string | undefined =>

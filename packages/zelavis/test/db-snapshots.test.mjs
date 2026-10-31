@@ -91,21 +91,24 @@ for (const [engine, open] of engines) {
       assert.deepEqual(yield* answers(docs), before);
     })));
 
-  test(`${engine}: a snapshot older than the cut is refused rather than trusted`, (t) =>
+  test(`${engine}: compaction stops at the snapshot, so a rebuild always has the log it needs`, (t) =>
     setup(t, ({ store, docs }) => Effect.gen(function* () {
-      yield* store.snapshot;
+      const taken = yield* store.snapshot;
       yield* docs.insert({ collection: "items", id: "late", data: { price: 9, kind: "odd" } });
       const before = yield* answers(docs);
 
-      // The cut reaches past what the snapshot covers, so the events between
-      // them are gone and the rebuild would be missing that insert.
-      yield* store.compact();
-      const refused = yield* Effect.flip(store.rebuildLenses);
-      assert.equal(refused._tag, "LogCompacted");
+      // Asked to keep nothing, compaction still keeps the log from the snapshot on: the snapshot and the
+      // events after it are the recovery horizon, and a rebuild needs exactly those.
+      const compaction = yield* store.compact();
+      assert.equal(compaction.compactedTo, taken.position);
+      assert.equal(compaction.snapshotAt, taken.position);
+      yield* store.rebuildLenses;
+      assert.deepEqual(yield* answers(docs), before);
 
-      // A fresh snapshot covers the cut, and the rebuild works again.
-      const taken = yield* store.snapshot;
-      assert.ok(taken.position >= (yield* store.compactedTo));
+      // A newer snapshot moves the horizon, and compaction follows it.
+      const newer = yield* store.snapshot;
+      assert.ok(newer.position > taken.position);
+      assert.equal((yield* store.compact()).compactedTo, newer.position);
       yield* store.rebuildLenses;
       assert.deepEqual(yield* answers(docs), before);
     })));

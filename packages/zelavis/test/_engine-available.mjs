@@ -16,5 +16,5 @@ export const engineAvailable = (specifier) =>
   spawnSync(
     process.execPath,
     ["-e", `import(${JSON.stringify(specifier)}).then(() => process.exit(0), () => process.exit(1))`],
-    { stdio: "ignore", timeout: 30_000 },
+    { cwd: new URL("../", import.meta.url), stdio: "ignore", timeout: 30_000 },
   ).status === 0;

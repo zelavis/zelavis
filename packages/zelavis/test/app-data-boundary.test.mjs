@@ -201,7 +201,7 @@ test("App data authority carries no Platform authority into the Project", () => 
   };
   assert.deepEqual(
     [...projectDataPermissions(operatorPrincipal, "app-1")].sort(),
-    ["database.read", "database.write"],
+    ["database.define", "database.read", "database.write"],
   );
   assert.ok(
     projectRuntimePermissions(operatorPrincipal, "app-1").includes("workloads.manage"),
@@ -241,4 +241,19 @@ test("the Tenant travels in the signed envelope, not the request", async () => {
     }),
     undefined,
   );
+});
+
+test("schema authority is separate from document writes and stays scoped to its Project", async (t) => {
+  const writer = { id: "writer", type: "service", grants: [{ permission: "project.data.write", scope: { type: "project", projectId: "p1" } }] };
+  const designer = { id: "designer", type: "service", grants: [{ permission: "project.data.define", scope: { type: "project", projectId: "p1" } }] };
+  assert.deepEqual(projectDataPermissions(writer, "p1"), ["database.read", "database.write"]);
+  assert.deepEqual(projectDataPermissions(designer, "p1"), ["database.define"]);
+  assert.deepEqual(projectDataPermissions(designer, "p2"), []);
+  const { api } = await openTemporaryDatabase(t);
+  const routes = defineDatabaseService(api).api.v1;
+  for (const id of ["database.collections.create", "database.collections.drop", "database.schemas.save", "database.schemas.activate", "database.schemas.activations.resume", "database.documents.columns", "database.documents.analyzer", "database.documents.geometry", "database.documents.embedding", "database.indexes.create", "database.indexes.drop", "database.checks.add", "database.checks.drop", "database.references.add", "database.references.drop"]) {
+    assert.deepEqual(routeOf({ api: { v1: routes } }, id).access.permissions, ["database.define"], id);
+  }
+  assert.deepEqual(routeOf({ api: { v1: routes } }, "database.documents.insert").access.permissions, ["database.write"]);
+  assert.deepEqual(routeOf({ api: { v1: routes } }, "database.events.read").access.permissions, ["database.read"]);
 });

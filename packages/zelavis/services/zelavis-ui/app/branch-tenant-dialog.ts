@@ -19,13 +19,20 @@ export function mountBranchTenant(host: HTMLElement, options: { api: string; tak
   const title = doc.createElement("zv-dialog-title");
   const description = doc.createElement("zv-dialog-description");
   const into = node("input", { name: "into", "aria-label": "New Tenant ID", autocomplete: "off", spellcheck: "false", required: "", maxlength: "128" });
-  const copyOutbox = node("input", { type: "checkbox", name: "copyOutbox" });
+  // The two outbox choices the API offers, each stated: who delivers the messages the source has not yet delivered.
+  const leaveOutbox = node("input", { type: "radio", name: "outbox", value: "leave", checked: "" });
+  const copyOutbox = node("input", { type: "radio", name: "outbox", value: "copy" });
+  // Empty means the source as it is now; a time recovers it as it was then, while its log reaches back that far.
+  const asOf = node("input", { type: "datetime-local", name: "asOfTime", step: "1", "aria-label": "As of (optional)" });
   const errors = node("div", { "aria-live": "polite" });
   const branch = node("button", { type: "submit", class: "primary" }, "Branch tenant");
   const cancel = node("button", { type: "button" }, "Cancel");
   const form = node("form", { class: "form" },
     node("label", {}, node("span", {}, "New Tenant ID"), into),
-    node("label", {}, copyOutbox, node("span", {}, "Also copy its undelivered outbox messages")),
+    node("fieldset", { class: "choices" }, node("legend", {}, "Undelivered outbox messages"),
+      node("label", {}, leaveOutbox, node("span", {}, "Leave them with the source, which delivers them (default)")),
+      node("label", {}, copyOutbox, node("span", {}, "Copy them too, for a consumer of the branch to deliver again"))),
+    node("label", {}, node("span", {}, "As of (optional: the source as it was at this time)"), asOf),
     errors, node("div", { class: "actions" }, branch, cancel));
   const content = doc.createElement("zv-dialog-content");
   content.setAttribute("aria-label", "Branch tenant");
@@ -44,7 +51,8 @@ export function mountBranchTenant(host: HTMLElement, options: { api: string; tak
     if (!validTenantId(target)) { errors.replaceChildren(message("A Tenant ID uses letters, digits, _ . and -, starts with a letter or digit, and is not a zv name.", true)); return; }
     if (target === from || options.taken(target)) { errors.replaceChildren(message(`Tenant ${target} already exists; a branch needs a new one.`, true)); return; }
     busy = true; branch.setAttribute("disabled", ""); errors.replaceChildren();
-    Effect.runFork(request(`${options.api}/database/tenants/${encodeURIComponent(from)}/branch`, "POST", { into: target, outbox: copyOutbox.checked ? "copy" : "leave" }).pipe(
+    const asOfTime = asOf.value === "" ? undefined : new Date(asOf.value).toISOString();
+    Effect.runFork(request(`${options.api}/database/tenants/${encodeURIComponent(from)}/branch`, "POST", { into: target, outbox: copyOutbox.checked ? "copy" : "leave", ...(asOfTime === undefined ? {} : { asOfTime }) }).pipe(
       Effect.matchCauseEffect({
         onSuccess: () => Effect.sync(() => { busy = false; branch.removeAttribute("disabled"); dialog.setOpen(false); options.branched(from, target); }),
         onFailure: cause => Effect.sync(() => { busy = false; branch.removeAttribute("disabled"); const error = Cause.squash(cause); errors.replaceChildren(message(error instanceof Error ? error.message : String(error), true)); }),
@@ -53,7 +61,7 @@ export function mountBranchTenant(host: HTMLElement, options: { api: string; tak
   });
   return {
     open(tenantId: string, divided = false) {
-      source = tenantId; into.value = ""; copyOutbox.checked = false; errors.replaceChildren(); branch.removeAttribute("disabled");
+      source = tenantId; into.value = ""; asOf.value = ""; leaveOutbox.checked = true; copyOutbox.checked = false; errors.replaceChildren(); branch.removeAttribute("disabled");
       title.textContent = `Branch tenant ${tenantId}`;
       description.textContent = `Makes a new Tenant holding a copy of ${tenantId} as it is now: its tables, records and history. ${tenantId} keeps taking writes; nothing written to either afterwards reaches the other, and the branch is not merged back.${divided ? ` ${tenantId} is divided into parts: each part is copied as of its own moment, so the parts of the branch are consistent within themselves but not with one another.` : ""}`;
       dialog.setOpen(true);

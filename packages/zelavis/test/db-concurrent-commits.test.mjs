@@ -24,8 +24,6 @@ const COUNT = 64;
 const engines = [
   ["sqlite", true,
     async (dir) => (await import("../dist/db/engines/node-sqlite.js")).makeNodeSqliteStore("acme", dir)],
-  ["libsql", engineAvailable("libsql"),
-    async (dir) => (await import("../dist/db/engines/libsql.js")).makeLibsqlStore("acme", { directory: dir })],
   ["lmdb", engineAvailable("lmdb"),
     async (dir) => (await import("../dist/db/engines/lmdb.js")).makeLmdbStore("acme", dir)],
   ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js"),

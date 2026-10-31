@@ -8,7 +8,11 @@ import {
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import { RESTORE_MODES } from "./backup.js";
+import { followerFailureBody } from "./leader.js";
 import { APP_TENANT_ID, SERVICE_TENANT_PREFIX } from "./naming.js";
+import type { AggregateDefinition } from "./aggregates.js";
+import type { ImportSource } from "./imports.js";
+import type { MergeResolution } from "./branch-merge.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
 import { partitionKeyFor } from "./topology.js";
 import type {
@@ -46,6 +50,7 @@ import type {
 } from "./time-series.js";
 import type { KeyValueWrite, KvCursor } from "./key-value.js";
 import type { CrossTenantIndexDefinition } from "./cross-tenant-index.js";
+import { readHybridSearch, readSearchStatistics } from "./search-options.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -104,6 +109,18 @@ function mayChooseTenant(principal: ZelavisPrincipal | undefined): boolean {
 }
 
 /** Reads the Tenant a write-shaped schema request addresses. */
+/** An import's source from a request body; the import itself validates every field. */
+function importSourceOf(collection: string, input: Record<string, unknown>): ImportSource {
+  return {
+    collection,
+    format: (readString(input.format) ?? "") as ImportSource["format"],
+    text: typeof input.text === "string" ? input.text : "",
+    ...(typeof input.idField === "string" ? { idField: input.idField } : {}),
+    ...(input.types !== null && typeof input.types === "object" && !Array.isArray(input.types) ? { types: input.types as ImportSource["types"] } : {}),
+    ...(typeof input.mode === "string" ? { mode: input.mode as ImportSource["mode"] } : {}),
+  };
+}
+
 function tenantOf(
   service: DatabaseRuntimeApi,
   input: Record<string, unknown>,
@@ -188,6 +205,8 @@ function readQueryClauses(input: Record<string, unknown>) {
       ? { related: input.related as ReadonlyArray<RelatedFilter> }
       : {}),
     ...(typeof input.search === "string" ? { search: input.search } : {}),
+    ...(input.hybrid === undefined ? {} : { hybrid: readHybridSearch(input.hybrid) }),
+    ...(input.statistics === undefined ? {} : { statistics: readSearchStatistics(input.statistics) }),
     ...(typeof input.fuzzy === "boolean" || typeof input.fuzzy === "number" ? { fuzzy: input.fuzzy } : {}),
     ...(typeof input.prefix === "boolean" ? { prefix: input.prefix } : {}),
     ...(typeof input.highlight === "boolean" || (input.highlight && typeof input.highlight === "object")
@@ -222,26 +241,19 @@ function readCrossTenantIndexDefinition(input: Record<string, unknown>): CrossTe
   if (typeof input.name !== "string") throw new TypeError("name must be a string.");
   if (typeof input.collection !== "string") throw new TypeError("collection must be a string.");
   const columns = input.columns === undefined ? undefined : readStrings(input.columns, "columns");
-  let analyzer: Analyzer | undefined;
-  if (input.analyzer !== undefined) {
-    const raw = input.analyzer;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new TypeError("analyzer must be an object.");
-    const given = raw as Record<string, unknown>;
-    if (typeof given.version !== "number" || !Number.isFinite(given.version)) throw new TypeError("analyzer.version must be a number.");
-    analyzer = {
-      fields: readStrings(given.fields, "analyzer.fields"),
-      version: given.version,
-      ...(typeof given.fold === "boolean" ? { fold: given.fold } : {}),
-      ...(given.stopWords === undefined ? {} : { stopWords: readStrings(given.stopWords, "analyzer.stopWords") }),
-      ...(typeof given.minLength === "number" ? { minLength: given.minLength } : {}),
-      ...(typeof given.language === "string" ? { language: given.language } : {}),
-    };
+  for (const name of ["analyzer", "spatial", "embedding"]) {
+    const value = input[name];
+    if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) throw new TypeError(`${name} must be an object.`);
   }
+  if (input.indexes !== undefined && !Array.isArray(input.indexes)) throw new TypeError("indexes must be an array.");
   return {
-    name: input.name,
-    collection: input.collection,
+    name: input.name, collection: input.collection,
     ...(columns === undefined ? {} : { columns }),
-    ...(analyzer === undefined ? {} : { analyzer }),
+    ...(input.shards === undefined ? {} : { shards: readStrings(input.shards, "shards") }),
+    ...(input.analyzer === undefined ? {} : { analyzer: input.analyzer as Analyzer }),
+    ...(input.spatial === undefined ? {} : { spatial: input.spatial as SpatialIndex }),
+    ...(input.embedding === undefined ? {} : { embedding: input.embedding as EmbeddingIndex }),
+    ...(input.indexes === undefined ? {} : { indexes: input.indexes as ReadonlyArray<IndexDefinition> }),
   };
 }
 
@@ -443,6 +455,7 @@ function taggedFailureOf(error: unknown, depth = 0): TaggedFailure | undefined {
 }
 
 const CONFLICT_TAGS = new Set([
+  "MailboxFull",
   "CollectionExists",
   "ConstraintExists",
   "IndexExists",
@@ -450,6 +463,8 @@ const CONFLICT_TAGS = new Set([
   "UniqueViolation",
   "DocumentConflict",
   "SchemaVersionExists",
+  "CrossTenantIndexRefreshing",
+  "AggregateChanged",
   "MessageExists",
   "CrossTenantIndexExists",
   // Refused only while a move is fenced; the same request succeeds once
@@ -465,6 +480,7 @@ const CONFLICT_TAGS = new Set([
 ]);
 
 const NOT_FOUND_TAGS = new Set([
+  "AggregateNotFound",
   "CollectionNotFound",
   "UnknownEdge",
   "UnknownMeasure",
@@ -478,6 +494,8 @@ const NOT_FOUND_TAGS = new Set([
 ]);
 
 const BAD_REQUEST_TAGS = new Set([
+  "InvalidEntityMessage",
+  "InvalidFollowerRequest",
   "InvalidDocumentValue",
   "BackupFormatUnsupported",
   "CursorMismatch",
@@ -498,6 +516,7 @@ const BAD_REQUEST_TAGS = new Set([
   "TenantNotEmpty",
   "TenantNotDroppable",
   "TenantNotBranchable",
+  "BranchNotMergeable",
   "InvalidRestoreMode",
   "InvalidMessage",
   "InvalidKeyValueExpiration",
@@ -508,7 +527,13 @@ const BAD_REQUEST_TAGS = new Set([
   "UnindexedField",
   "InvalidCrossTenantIndex",
   "InvalidExport",
+  "InvalidImport",
+  "InvalidBackup",
   "InvalidImage",
+  "SchemaActivationRefused",
+  "SchemaTransferRefused",
+  "InvalidMeasureQuery",
+  "AggregateRefused",
 ]);
 
 /**
@@ -538,6 +563,19 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Schema version ${failure.version} for collection "${failure.collection}" already exists.`;
     case "SchemaNotFound":
       return `Schema version ${failure.version} for collection "${failure.collection}" does not exist.`;
+    case "SchemaActivationRefused":
+      return `Schema version ${failure.version} of collection "${failure.collection}" was not activated: ${failure.reason}.`;
+    case "AggregateNotFound":
+      return `Aggregate "${failure.name}" is not defined.`;
+    case "AggregateRefused":
+    case "AggregateChanged":
+      return `Aggregate "${failure.name}": ${failure.reason}.`;
+    case "InvalidMeasureQuery":
+      return `Invalid measure query: ${failure.reason}.`;
+    case "SchemaTransferRefused":
+      return `Schema transfer refused: ${failure.reason}.`;
+    case "CrossTenantIndexRefreshing":
+      return `Cross-Tenant index "${failure.name}" is rebuilding partition "${failure.partition}"; refresh it before querying.`;
     case "SchemaViolation": {
       const issues = Array.isArray(failure.issues)
         ? (failure.issues as ReadonlyArray<{ path: string; message: string }>)
@@ -609,6 +647,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     case "InvalidCrossTenantIndex":
       return `Cross-Tenant index "${failure.name}": ${failure.reason}.`;
     case "InvalidExport":
+    case "InvalidImport":
+    case "InvalidBackup":
     case "InvalidImage":
       return String(failure.reason);
     case "CursorCompacted":
@@ -618,6 +658,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Tenant "${failure.tenant}" cannot be removed: ${failure.reason}.`;
     case "TenantNotBranchable":
       return `Tenant "${failure.tenant}" cannot be branched into "${failure.into}": ${failure.reason}.`;
+    case "BranchNotMergeable":
+      return `Tenant "${failure.branch}" cannot be merged${failure.into ? ` into "${failure.into}"` : ""}: ${failure.reason}.`;
     case "TenantBranching":
       return `Tenant "${failure.tenant}" is an unfinished branch of "${failure.from}"; run the same branch again to finish it, or remove the Tenant.`;
     case "PlacementInUse":
@@ -655,6 +697,16 @@ const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
     status: 422,
   },
 ];
+
+/**
+ * A follower route's failure: a failure a follower acts on is a 409 carrying its name and fields
+ * (`followerFailureBody`), so a follower on another host gets the same tagged error back.
+ */
+function followerErrorResponse(cause: Cause.Cause<unknown>) {
+  const error = unwrapFailure(Cause.squash(cause));
+  const body = followerFailureBody(taggedFailureOf(error) ?? error);
+  return body.code === undefined ? databaseErrorResponse(error, 400) : { status: 409, body };
+}
 
 function databaseErrorResponse(error: unknown, fallback = 500) {
   const failure = taggedFailureOf(error);
@@ -723,8 +775,11 @@ function defineDatabaseRootService(
             const tenants = [];
             for (const tenantId of names) {
               const parts = service.partsOf(tenantId);
+              // A branch says where it came from, so it can be merged back.
+              const origin = yield* integrationValue(service.branchedFrom(tenantId));
+              const branchedFrom = origin === undefined ? {} : { branchedFrom: origin };
               if (parts === undefined) {
-                tenants.push({ tenantId, ...(yield* measure(tenantId, service.forTenant(tenantId))) });
+                tenants.push({ tenantId, ...(yield* measure(tenantId, service.forTenant(tenantId))), ...branchedFrom });
                 continue;
               }
               // A divided Tenant is one entry carrying its parts; its counts are theirs added up.
@@ -734,7 +789,7 @@ function defineDatabaseRootService(
                 if (usage.has(key)) held.push({ part, ...(yield* measure(key, service.forPart(tenantId, part))) });
               }
               const sum = (field: "tables" | "documents" | "records" | "bytes") => held.reduce((total, entry) => total + entry[field], 0);
-              tenants.push({ tenantId, tables: sum("tables"), documents: sum("documents"), records: sum("records"), bytes: sum("bytes"), parts: held });
+              tenants.push({ tenantId, tables: sum("tables"), documents: sum("documents"), records: sum("records"), bytes: sum("bytes"), parts: held, ...branchedFrom });
             }
             return { body: { tenants } };
           })),
@@ -745,7 +800,7 @@ function defineDatabaseRootService(
             operationId: "dropDatabaseTenant",
             summary: "Remove a Tenant and everything it holds",
             description:
-              "Irreversible: the Tenant's records, event log and history are removed, not archived. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant, one divided into parts, one holding nothing, the caller's own Tenant, and while a relocation is pending. The body must repeat the Tenant ID as `confirm`. From the start every change to the Tenant is refused; if calls still use it the answer is 409 and the same request can be repeated.",
+              "Irreversible: the Tenant's records, event log and history are removed, not archived. Refused for a reserved Tenant, the App's own Tenant (zelavis-app), a plugin's service: Tenant, one holding nothing, the caller's own Tenant, and while a relocation is pending. The body must repeat the Tenant ID as `confirm`. A divided Tenant is removed with all its parts and stays divided. From the start every change to the Tenant is refused; if calls still use it past the drain timeout the answer is 409, nothing was removed, and the Tenant takes changes again. A removal cut off by a crash is finished when the database next opens.",
             tags: ["database"],
             pathParams: { tenantId: { type: "string", required: true, description: "Tenant ID" } },
             requestBody: {
@@ -757,7 +812,7 @@ function defineDatabaseRootService(
               },
             },
             responses: {
-              200: { description: "The Tenant, its shard and how many records it held" },
+              200: { description: "The Tenant, how many records it held, and its shard or each part's" },
               400: { description: "Not confirmed, or the Tenant cannot be removed" },
               409: { description: "Calls still use the Tenant; repeat the request" },
             },
@@ -801,6 +856,8 @@ function defineDatabaseRootService(
                 properties: {
                   into: { type: "string", description: "The new Tenant's ID" },
                   outbox: { type: "string", enum: ["leave", "copy"], description: "Leave the source's undelivered outbox messages with it (default), or copy them" },
+                  asOf: { type: "string", description: "Branch the source as of this cursor of its change feed instead of its present (undivided Tenants)" },
+                  asOfTime: { type: "string", description: "Branch the source as of this ISO 8601 time: the last change written at or before it, in every part" },
                 },
               },
             },
@@ -828,7 +885,84 @@ function defineDatabaseRootService(
             if (outbox !== undefined && outbox !== "leave" && outbox !== "copy") {
               return { status: 400, body: { error: `"outbox" is "leave" or "copy".` } };
             }
-            return { body: yield* integration(() => service.branchTenant(tenantId, into, outbox === undefined ? undefined : { outbox })) };
+            for (const key of ["asOf", "asOfTime"] as const) {
+              if (input[key] !== undefined && typeof input[key] !== "string") return { status: 400, body: { error: `"${key}" is a string.` } };
+            }
+            return { body: yield* integration(() => service.branchTenant(tenantId, into, {
+              ...(outbox === undefined ? {} : { outbox }),
+              ...(typeof input.asOf === "string" ? { asOf: input.asOf as import("./events.js").EventCursor } : {}),
+              ...(typeof input.asOfTime === "string" ? { asOfTime: input.asOfTime } : {}),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.tenants.merge",
+          spec: {
+            operationId: "mergeDatabaseBranch",
+            summary: "Merge a branch back into the Tenant it was branched from",
+            description: "Compares what the branch and its source each changed after the branch point, per document. What only the branch changed is applied to the source through its own writes, checked against the versions read; what both changed differently is a conflict, settled only by `resolve` naming the side to keep per document (or `{ collection, keep: \"source\" }` for a collection definition). With any conflict unsettled, or with `dryRun`, nothing is written and the answer is the plan. Collections the branch created are created in the source. Key-value entries, outbox messages, schema versions and series are not merged; their namespaces are listed in `unmerged`. A merge cut off part way is repeated: what already carries the branch's state is left. A divided branch is planned part by part before any part is written.",
+            tags: ["database"],
+            pathParams: { tenantId: { type: "string", required: true, description: "The branch" } },
+            requestBody: { required: false, schema: { type: "object", properties: {
+              into: { type: "string", description: "The source; refused when it is not the one the branch came from" },
+              dryRun: { type: "boolean" },
+              resolve: { type: "array", items: { type: "object", required: ["collection", "keep"], properties: { collection: { type: "string" }, id: { type: "string" }, keep: { type: "string", enum: ["source", "branch"] } } } },
+            } } },
+            responses: { 200: { description: "{ branch, into, dryRun, merged, writes, deletes, conflictCount, partitions }" }, 400: { description: "Not a branch, or the merge is refused" }, 409: { description: "The source was written meanwhile; repeat the merge" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.restore"] },
+          path: "/tenants/:tenantId/merge",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            if (input.resolve !== undefined && !Array.isArray(input.resolve)) return { status: 400, body: { error: `"resolve" is a list of { collection, id?, keep: "source" | "branch" }.` } };
+            const resolve: MergeResolution[] = [];
+            for (const entry of (input.resolve ?? []) as unknown[]) {
+              const value = entry !== null && typeof entry === "object" ? entry as Record<string, unknown> : {};
+              if (typeof value.collection !== "string" || (value.keep !== "source" && value.keep !== "branch") || (value.id !== undefined && typeof value.id !== "string")) {
+                return { status: 400, body: { error: `Each "resolve" entry is { collection, id?, keep: "source" | "branch" }.` } };
+              }
+              resolve.push({ collection: value.collection, keep: value.keep, ...(typeof value.id === "string" ? { id: value.id } : {}) });
+            }
+            return { body: yield* integration(() => service.mergeBranch(params.tenantId, {
+              ...(typeof input.into === "string" ? { into: input.into } : {}),
+              ...(input.dryRun === true ? { dryRun: true } : {}),
+              resolve,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.workflows.executions",
+          spec: {
+            operationId: "listWorkflowExecutions",
+            summary: "Recorded workflow executions",
+            description: "The executions the database's durable workflow engine has recorded (sagas across Tenants): workflow, execution id, parent, whether its result is recorded, and how many activities completed. Workflows themselves are code registered by the Project; this is their state. At most `limit` (1 to 1000).",
+            tags: ["database"],
+            responses: { 200: { description: "{ executions }" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/workflows/executions",
+          handler: ({ service, query }) => present(Effect.gen(function* () {
+            const limit = Number(query.get("limit") ?? 100);
+            return { body: { executions: yield* integrationValue(service.workflowExecutions(Number.isSafeInteger(limit) ? limit : 100)) } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.tenants.recovery",
+          spec: {
+            operationId: "databaseTenantRecoveryWindow",
+            summary: "How far back a Tenant can be branched",
+            description: "Per partition (each part of a divided Tenant): the earliest and latest log positions a branch can be as of, and when those changes were written. While a log was never compacted it reaches back to its start; once compacted, only the present.",
+            tags: ["database"],
+            pathParams: { tenantId: { type: "string", required: true, description: "Tenant ID" } },
+            responses: { 200: { description: "{ tenant, partitions: [{ part?, earliest, latest, compactedTo, earliestAt?, latestAt? }] }" }, 400: { description: "A reserved Tenant" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.restore"] },
+          path: "/tenants/:tenantId/recovery",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.recoveryWindow(params.tenantId)) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
@@ -837,7 +971,7 @@ function defineDatabaseRootService(
             operationId: "exportDatabaseTenantPage",
             summary: "Read a Tenant out as a stream, a page at a time",
             description:
-              "Its records, then every change since, from the `cursor` the last page gave (none starts an export). Apply the entries by version: once a page says `consistent` they are the Tenant as of one log position, and it stays true while the cursor is followed, so the same route copies a Tenant, backs it up and tails it. A divided Tenant is one export whose entries name their `part`, consistent once every part is, each as of its own position. Nothing is held open between pages but the Tenant's log, until the export is consistent; a cursor that falls behind compaction is refused (`CursorCompacted`) and the export starts over. `limit` (1 to 1024, default 256) bounds each phase of each part, so a page holds up to twice that per part.",
+              "Its records, then every change since, from the `cursor` the last page gave (none starts an export). Apply the entries by version: once a page says `consistent` they are the Tenant as of one log position, and it stays true while the cursor is followed, so the same route copies a Tenant, backs it up and tails it. A divided Tenant is one export whose entries name their `part`, consistent once every part is, each as of its own position. Nothing is held open between pages but the Tenant's log, until the export is consistent; a cursor that falls behind compaction is refused (`CursorCompacted`) and the export starts over. `limit` (1 to 1024, default 256) is the most entries a page holds; a divided Tenant's parts share it, each advancing in turn.",
             tags: ["database"],
             pathParams: { tenantId: { type: "string", required: true, description: "The Tenant to export" } },
             requestBody: {
@@ -846,7 +980,7 @@ function defineDatabaseRootService(
                 type: "object",
                 properties: {
                   cursor: { type: "string", description: "The cursor the last page gave; omit to start" },
-                  limit: { type: "integer", description: "Entries per phase per part, 1 to 1024" },
+                  limit: { type: "integer", description: "The most entries a page holds, 1 to 1024" },
                 },
               },
             },
@@ -873,12 +1007,325 @@ function defineDatabaseRootService(
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
+          id: "database.followers.changes",
+          spec: {
+            operationId: "databaseFollowerChanges",
+            summary: "Which partitions moved past the heads a follower knows",
+            description: "The leader's change feed for followers on other hosts. Answers each partition (every Tenant partition, or the ones `partitions` names) whose log head is past what `heads` says the caller knows, a partition it does not name counting as at 0; when none is, it waits up to `timeoutMillis` (0 to 60000, default 25000) for a write. At most 1000 partitions an answer, with `more` to ask again at once. The heads are the durable log heads, so a request lost or a follower restarted misses nothing: the next answer names everything that moved meanwhile.",
+            tags: ["database"],
+            requestBody: { required: false, schema: { type: "object", properties: {
+              heads: { type: "object", additionalProperties: { type: "integer" }, description: "Partition to the head the caller knows" },
+              partitions: { type: "array", items: { type: "string" }, description: "Only these partitions" },
+              timeoutMillis: { type: "integer", description: "How long to wait for a write, 0 to 60000" },
+            } } },
+            responses: { 200: { description: "{ heads, more }" }, 400: { description: "A reserved partition or a bound exceeded" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/changes",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const heads = input.heads;
+            const partitions = input.partitions;
+            const timeoutMillis = input.timeoutMillis;
+            if (heads !== undefined && (heads === null || typeof heads !== "object" || Array.isArray(heads) || Object.values(heads).some((head) => typeof head !== "number"))) {
+              return { status: 400, body: { error: `"heads" maps each partition to the head the caller knows.` } };
+            }
+            if (partitions !== undefined && (!Array.isArray(partitions) || partitions.some((partition) => typeof partition !== "string"))) {
+              return { status: 400, body: { error: `"partitions" is a list of partition names.` } };
+            }
+            if (timeoutMillis !== undefined && typeof timeoutMillis !== "number") return { status: 400, body: { error: `"timeoutMillis" is a number from 0 to 60000.` } };
+            return { body: yield* integration(() => service.followers.changes({
+              ...(heads === undefined ? {} : { heads: heads as Record<string, number> }),
+              ...(partitions === undefined ? {} : { partitions: partitions as string[] }),
+              ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
+            }), { interruptible: true }) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.stats",
+          spec: {
+            operationId: "databaseFollowerLeaderStats",
+            summary: "What the leader's partition holds",
+            description: "Records, bytes, log head, compaction point, last identifier, whether a seed is unfinished, and the partition's incarnation and lineage: what a follower compares its own copy against.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            responses: { 200: { description: "Partition stats" }, 400: { description: "A reserved partition" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/stats",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.stats(params.partition)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.records",
+          spec: {
+            operationId: "databaseFollowerLeaderRecords",
+            summary: "A page of the leader's records",
+            description: "The partition's records in identifier order after `after`, at most `limit` (1 to 512), retired ones included, bodies as base64: what a follower's seed copies, a page per call, while the leader keeps taking writes.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            requestBody: { required: true, schema: { type: "object", properties: {
+              after: { type: "integer", description: "The identifier the last page ended at" },
+              limit: { type: "integer", description: "1 to 512" },
+            }, required: ["limit"] } },
+            responses: { 200: { description: "{ records }" }, 400: { description: "A reserved partition or a bound exceeded" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/records",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            if (input.after !== undefined && typeof input.after !== "number") return { status: 400, body: { error: `"after" is the identifier the last page ended at.` } };
+            return { body: yield* integration(() => service.followers.records(params.partition, {
+              ...(input.after === undefined ? {} : { after: input.after as number }),
+              limit: input.limit as number,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.log",
+          spec: {
+            operationId: "databaseFollowerLeaderLog",
+            summary: "A page of the leader's log",
+            description: "Events after the cursor `after`, or from the cursor `from` with that event included (how a follower compares the last event it holds), at most `limit` (1 to 512), with the leader's own cursors and positions. A cursor the leader compacted past is refused with `code: CursorCompacted`, and the follower copies again.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            requestBody: { required: true, schema: { type: "object", properties: {
+              after: { type: "string" }, from: { type: "string" }, limit: { type: "integer", description: "1 to 512" },
+            }, required: ["limit"] } },
+            responses: { 200: { description: "{ events }" }, 400: { description: "A reserved partition, a cursor not its own, or a bound exceeded" }, 409: { description: "The cursor was compacted past" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/log",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            if (input.after !== undefined && typeof input.after !== "string") return { status: 400, body: { error: `"after" is a cursor the log gave.` } };
+            if (input.from !== undefined && typeof input.from !== "string") return { status: 400, body: { error: `"from" is a cursor the log gave.` } };
+            return { body: yield* integration(() => service.followers.log(params.partition, {
+              ...(input.after === undefined ? {} : { after: input.after as string }),
+              ...(input.from === undefined ? {} : { from: input.from as string }),
+              limit: input.limit as number,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.holds.take",
+          spec: {
+            operationId: "databaseFollowerHoldLog",
+            summary: "Hold the leader's log while a follower copies",
+            description: "Keep the partition's log from being compacted past `position` for `ttlMillis` (at most ten minutes) under the hold `id`, renewed by asking again and only ever raised. Taken on the leader's own placement, and carried to the target if the partition moves. A position already compacted past is refused with `code: LogCompacted`.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            requestBody: { required: true, schema: { type: "object", properties: {
+              id: { type: "string" }, position: { type: "integer" }, ttlMillis: { type: "integer" },
+            }, required: ["id", "position", "ttlMillis"] } },
+            responses: { 200: { description: "{ position }" }, 400: { description: "A reserved partition or a bound exceeded" }, 409: { description: "Already compacted past" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/holds",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            if (typeof input.id !== "string" || typeof input.position !== "number" || typeof input.ttlMillis !== "number") {
+              return { status: 400, body: { error: `A hold is an "id", a "position" and a "ttlMillis".` } };
+            }
+            return { body: yield* integration(() => service.followers.hold(params.partition, { id: input.id as string, position: input.position as number, ttlMillis: input.ttlMillis as number })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.holds.release",
+          spec: {
+            operationId: "databaseFollowerReleaseLog",
+            summary: "End a follower's hold on the leader's log",
+            description: "Releasing a hold that is not held, or has expired, changes nothing.",
+            tags: ["database"],
+            pathParams: { ...{ partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } }, holdId: { type: "string", required: true, description: "The hold's id" } },
+            responses: { 200: { description: "{ released }" }, 400: { description: "A reserved partition" } },
+          },
+          method: "DELETE",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/holds/:holdId",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.release(params.partition, params.holdId)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.acknowledge",
+          spec: {
+            operationId: "databaseFollowerAcknowledge",
+            summary: "Report how far a follower holds the leader's log",
+            description: "Sent by a follower after its own commit: `follower` holds the partition's log through `position`. Positions only rise, so a late or repeated report changes nothing. A write the leader runs with an acknowledgment policy (`writeAcknowledged`) waits on these reports.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            requestBody: { required: true, schema: { type: "object", properties: {
+              follower: { type: "string", description: "The follower's name, 1 to 128 characters" }, position: { type: "integer" },
+            }, required: ["follower", "position"] } },
+            responses: { 200: { description: "{ follower, position }" }, 400: { description: "A reserved partition or a malformed report" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/acknowledgments",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => service.followers.acknowledge(params.partition, { follower: input.follower as string, position: input.position as number })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.acknowledgments",
+          spec: {
+            operationId: "databaseFollowerAcknowledgments",
+            summary: "How far each follower holds the leader's log",
+            description: "Each follower that reported for the partition since the leader opened, with the highest position it reported.",
+            tags: ["database"],
+            pathParams: { partition: { type: "string", required: true, description: "The Tenant, or a divided Tenant's part key, being followed" } },
+            responses: { 200: { description: "{ partition, followers: [{ name, position }] }" }, 400: { description: "A reserved partition" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/:partition/acknowledgments",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.acknowledgments(params.partition)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.entities.send",
+          method: "POST",
+          path: "/entities/:type/:id/messages",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "sendEntityMessage",
+            summary: "Send a message to a durable entity",
+            description: "Keeps the message in the entity's mailbox, in its Tenant's partition, until a handler for its type has processed it: one at a time per entity, in the order they arrived, its writes, state and reply committed with its processed mark. A `primaryKey` names the message: sending the same key again answers the message already kept (`duplicate: true`) for as long as finished messages are kept. `deliverAt` holds it until then. A mailbox takes at most 4096 unfinished messages (409 `MailboxFull`).",
+            tags: ["entities"],
+            pathParams: { type: { type: "string", required: true, description: "The entity type" }, id: { type: "string", required: true, description: "The entity id" } },
+            requestBody: { required: true, schema: { type: "object", required: ["tag", "payload"], properties: {
+              tenantId: { type: "string", description: "Tenant ID; the caller's own when omitted" },
+              tag: { type: "string", description: "What the message asks for" },
+              payload: { type: "object", description: "The message's JSON body" },
+              primaryKey: { type: "string", description: "Names the message, so a resend is recognised" },
+              deliverAt: { type: "string", description: "Not processed before this time (ISO 8601)" },
+            } } },
+            responses: { 201: { description: "{ message, duplicate: false }" }, 200: { description: "{ message, duplicate: true }" }, 400: { description: "Not a message" }, 409: { description: "The mailbox is full" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const primaryKey = readString(input.primaryKey);
+            const deliverAt = readString(input.deliverAt);
+            const sent = yield* integration(() => tenantOf(service, input, principal).entities.send({
+              type: params.type, id: params.id, tag: input.tag as string, payload: input.payload as JsonObject,
+              ...(primaryKey === undefined ? {} : { primaryKey }), ...(deliverAt === undefined ? {} : { deliverAt }),
+            }));
+            return { status: sent.duplicate ? 200 : 201, body: sent };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.entities.message",
+          method: "GET",
+          path: "/entities/:type/:id/messages/:messageKey",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "getEntityMessage",
+            summary: "Read one message of a durable entity",
+            description: "Its status (`pending`, `processed`, `failed`, `cancelled`), attempts, last error and, once processed, the handler's reply.",
+            tags: ["entities"],
+            pathParams: { ...{ type: { type: "string", required: true, description: "The entity type" }, id: { type: "string", required: true, description: "The entity id" } }, messageKey: { type: "string", required: true, description: "The message's key" } },
+            queryParams: { tenantId: { type: "string", required: false, description: "Tenant ID; the caller's own when omitted" } },
+            responses: { 200: { description: "The message" }, 404: { description: "No such message" } },
+          },
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+            const message = yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).entities.message({ type: params.type, id: params.id, messageKey: params.messageKey }));
+            return message === undefined ? { status: 404, body: { error: "No such message." } } : { body: message };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.entities.cancel",
+          method: "POST",
+          path: "/entities/:type/:id/messages/:messageKey/cancel",
+          access: { permissions: ["database.write"] },
+          spec: {
+            operationId: "cancelEntityMessage",
+            summary: "Cancel a message a durable entity has not processed yet",
+            description: "A message already finished stays as it is and answers `cancelled: false`. A handler still running for it cannot finish it afterwards.",
+            tags: ["entities"],
+            pathParams: { ...{ type: { type: "string", required: true, description: "The entity type" }, id: { type: "string", required: true, description: "The entity id" } }, messageKey: { type: "string", required: true, description: "The message's key" } },
+            requestBody: { required: false, schema: { type: "object", properties: { tenantId: { type: "string", description: "Tenant ID; the caller's own when omitted" } } } },
+            responses: { 200: { description: "{ cancelled, message? }" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => tenantOf(service, readBodyObject(body), principal).entities.cancel({ type: params.type, id: params.id, messageKey: params.messageKey })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.entities.state",
+          method: "GET",
+          path: "/entities/:type/:id/state",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "getEntityState",
+            summary: "Read a durable entity's state and counts",
+            tags: ["entities"],
+            pathParams: { type: { type: "string", required: true, description: "The entity type" }, id: { type: "string", required: true, description: "The entity id" } },
+            queryParams: { tenantId: { type: "string", required: false, description: "Tenant ID; the caller's own when omitted" } },
+            responses: { 200: { description: "{ type, id, state, pending, processed, failed, updatedAt }" }, 404: { description: "The entity was never sent a message" } },
+          },
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+            const state = yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).entities.state({ type: params.type, id: params.id }));
+            return state === undefined ? { status: 404, body: { error: "No such entity." } } : { body: state };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.entities.mailbox",
+          method: "GET",
+          path: "/entities/:type/:id/mailbox",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "readEntityMailbox",
+            summary: "The messages a durable entity still owes, oldest first",
+            tags: ["entities"],
+            pathParams: { type: { type: "string", required: true, description: "The entity type" }, id: { type: "string", required: true, description: "The entity id" } },
+            queryParams: { ...{ tenantId: { type: "string", required: false, description: "Tenant ID; the caller's own when omitted" } }, after: { type: "string", required: false, description: "The `next` the last page gave" }, limit: { type: "integer", required: false, description: "1 to 1000, default 100" } },
+            responses: { 200: { description: "{ messages, next? }" } },
+          },
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+            const after = query.get("after") ?? undefined;
+            const limit = query.get("limit");
+            return { body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).entities.mailbox({
+              type: params.type, id: params.id, ...(after === undefined ? {} : { after }), ...(limit === null ? {} : { limit: Number(limit) }),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.entities.list",
+          method: "GET",
+          path: "/entities/:type/list",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "listEntities",
+            summary: "The durable entities of a type, by id",
+            tags: ["entities"],
+            pathParams: { type: { type: "string", required: true, description: "The entity type" } },
+            queryParams: { ...{ tenantId: { type: "string", required: false, description: "Tenant ID; the caller's own when omitted" } }, after: { type: "string", required: false, description: "The `next` the last page gave" }, limit: { type: "integer", required: false, description: "1 to 1000, default 100" } },
+            responses: { 200: { description: "{ entities, next? }" } },
+          },
+          handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+            const after = query.get("after") ?? undefined;
+            const limit = query.get("limit");
+            return { body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).entities.list({
+              type: params.type, ...(after === undefined ? {} : { after }), ...(limit === null ? {} : { limit: Number(limit) }),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
           id: "database.images.create",
           spec: {
             operationId: "createDatabaseImage",
             summary: "Make a physical backup of the whole database",
             description:
-              "Copies every shard, byte for byte through the ordered key-value interface and from one snapshot per shard, into a new image `name` on the host: an ordinary shard directory of a local engine (`sqlite`, `lmdb`, `rocksdb` or `libsql`; the database's own when `engine` is omitted, so any engine images into any other). It is quick because nothing is decoded and holds a read snapshot only for the copy; writers carry on, and each partition in the image is as of one moment. The image is opened by pointing a database at its directory with the engine it was written in; restoring one replaces the live database, which the operator does with the Project stopped, so there is no route for it. For a Tenant as of one log position without any snapshot, or for a portable backup, use the export stream.",
+              "Copies every shard, byte for byte through the ordered key-value interface and from one snapshot per shard, into a new image `name` on the host: an ordinary shard directory of a local engine (`sqlite`, `lmdb`, `rocksdb`; the database's own when `engine` is omitted, so any engine images into any other). It is quick because nothing is decoded and holds a read snapshot only for the copy; writers carry on, and each partition in the image is as of one moment. The image is opened by pointing a database at its directory with the engine it was written in; restoring one replaces the live database, which the operator does with the Project stopped, so there is no route for it. For a Tenant as of one log position without any snapshot, or for a portable backup, use the export stream.",
             tags: ["database"],
             requestBody: {
               required: true,
@@ -887,7 +1334,7 @@ function defineDatabaseRootService(
                 required: ["name"],
                 properties: {
                   name: { type: "string", description: "The image's name: 1 to 64 letters, digits, dots, dashes or underscores" },
-                  engine: { type: "string", enum: ["sqlite", "lmdb", "rocksdb", "libsql"], description: "The engine to write it in" },
+                  engine: { type: "string", enum: ["sqlite", "lmdb", "rocksdb"], description: "The engine to write it in" },
                 },
               },
             },
@@ -925,12 +1372,174 @@ function defineDatabaseRootService(
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
+          id: "database.backups.schedules.list",
+          spec: { operationId: "backups_schedules_list", summary: "List backup schedules", description: "Each schedule with its cron, retention, target kind and location (never its credentials), key fingerprint and next run.", tags: ["database"], responses: { 200: { description: "List backup schedules" }, 400: { description: "Refused, with the reason" } } },
+          method: "GET",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-schedules",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            return { body: { schedules: yield* integrationValue(service.backups.schedules()) } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.schedules.create",
+          spec: { operationId: "backups_schedules_create", summary: "Create a backup schedule", description: "Probes the target for conditional writes, generates the schedule's 256-bit key and answers it once as recoveryKey: keep it off this host. Runs then follow the cron expression.", tags: ["database"], responses: { 200: { description: "Create a backup schedule" }, 400: { description: "Refused, with the reason" } } },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-schedules",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.backups.createSchedule(readBodyObject(body) as never)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.schedules.delete",
+          spec: { operationId: "backups_schedules_delete", summary: "Delete a backup schedule", description: "Stops the schedule; runs already at the target stay there. The body repeats its name as confirm.", tags: ["database"], responses: { 200: { description: "Delete a backup schedule" }, 400: { description: "Refused, with the reason" } } },
+          method: "DELETE",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-schedules/:name",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            if (readBodyObject(body).confirm !== params.name) return { status: 400, body: { error: `Deleting a schedule needs { "confirm": "${params.name}" }.` } };
+            return { body: yield* integration(() => service.backups.deleteSchedule(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.schedules.run",
+          spec: { operationId: "backups_schedules_run", summary: "Run a backup schedule now", description: "Makes, encrypts and uploads a run now, outside the schedule's times, and prunes older runs past its retention. Answers the run's record.", tags: ["database"], responses: { 200: { description: "Run a backup schedule now" }, 400: { description: "Refused, with the reason" } } },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-schedules/:name/run",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.backups.runNow(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.runs.list",
+          spec: { operationId: "backups_runs_list", summary: "List backup runs", description: "Recorded runs, newest first, with status, size, verification and restore outcomes; ?schedule= narrows to one.", tags: ["database"], responses: { 200: { description: "List backup runs" }, 400: { description: "Refused, with the reason" } } },
+          method: "GET",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-runs",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            const schedule = query.get("schedule") ?? undefined;
+            return { body: { runs: yield* integrationValue(service.backups.runs(schedule)) } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.runs.verify",
+          spec: { operationId: "backups_runs_verify", summary: "Verify a backup run", description: "Downloads and decrypts every part of the run and checks its digest against the manifest; records verified and verifiedAt.", tags: ["database"], responses: { 200: { description: "Verify a backup run" }, 400: { description: "Refused, with the reason" } } },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/backup-schedules/:name/runs/:runId/verify",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.backups.verify(params.name, params.runId)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.runs.drill",
+          spec: { operationId: "backups_runs_drill", summary: "Drill a backup schedule's restore", description: "Restores the schedule's newest finished run (or ?runId=) into a fresh directory, opens it as a database, records what it held, how long recovery took (rtoMs) and how old its data was (rpoMs), and removes the copy.", tags: ["database"], responses: { 200: { description: "The run, with its drill" }, 400: { description: "Refused, with the reason" } } },
+          method: "POST",
+          access: { permissions: ["database.restore"] },
+          path: "/maintenance/backup-schedules/:name/drill",
+          handler: ({ service, params, query }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.backups.drill(params.name, query.get("runId") ?? undefined)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.backups.runs.restore",
+          spec: { operationId: "backups_runs_restore", summary: "Restore a backup run to an image", description: "Decrypts the run into an image directory on this host (restoredTo), which opens as a database with its engine; swapping it in is done with the Project stopped. recoveryKey is needed only when the host's copy of the key is gone.", tags: ["database"], responses: { 200: { description: "Restore a backup run to an image" }, 400: { description: "Refused, with the reason" } } },
+          method: "POST",
+          access: { permissions: ["database.restore"] },
+          path: "/maintenance/backup-schedules/:name/runs/:runId/restore",
+          handler: ({ service, params, body, query }) => present(Effect.gen(function* () {
+            const key = readBodyObject(body).recoveryKey;
+            return { body: yield* integration(() => service.backups.restore(params.name, params.runId, typeof key === "string" ? { recoveryKey: key } : undefined)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.storage.get",
+          spec: { operationId: "getDatabaseStorage", summary: "The database's storage durability", description: "The engine and the durability the database runs with (crash: a returned commit survives the process being killed; power: it survives a power cut too), and `pending` when a different one is recorded for its next start.", tags: ["database"], responses: { 200: { description: "{ engine, durability, pending? }" }, 400: { description: "This host does not record a choice" } } },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/maintenance/storage",
+          handler: ({ service }) => service.storageChoice === undefined
+            ? { status: 400, body: { error: "This database's host does not record a storage choice." } }
+            : { body: service.storageChoice.get() },
+        },
+        {
+          id: "database.storage.set",
+          spec: { operationId: "setDatabaseStorage", summary: "Choose the database's storage durability", description: "Records `durability` (crash or power) for the database's next start: a Project uses it from its next start. Refused for an engine that cannot keep it (rocksdb and power).", tags: ["database"], requestBody: { required: true, schema: { type: "object", required: ["durability"], properties: { durability: { type: "string", enum: ["crash", "power"] } } } }, responses: { 200: { description: "{ engine, durability, pending? }" }, 400: { description: "Refused, with the reason" } } },
+          method: "PUT",
+          access: { permissions: ["database.define"] },
+          path: "/maintenance/storage",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            if (service.storageChoice === undefined) return { status: 400, body: { error: "This database's host does not record a storage choice." } };
+            const choice = service.storageChoice;
+            return { body: yield* evaluate(() => choice.set(readBodyObject(body).durability as never)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.images.prune",
+          spec: {
+            operationId: "pruneDatabaseImages",
+            summary: "Keep only the newest database images",
+            description: "Removes every image but the newest `keep` (1 to 1000), oldest first. Retention never removes every image.",
+            tags: ["database"],
+            requestBody: { required: true, schema: { type: "object", required: ["keep"], properties: { keep: { type: "integer", minimum: 1, maximum: 1000 } } } },
+            responses: { 200: { description: "{ removed, kept }: image names" }, 400: { description: "keep is out of range, or this host cannot write images" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/images/prune",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const keep = readBodyObject(body).keep;
+            if (typeof keep !== "number") return { status: 400, body: { error: `Pruning images needs { "keep": <newest images to keep> }.` } };
+            return { body: yield* integration(() => service.images.prune(keep)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.images.verify",
+          spec: {
+            operationId: "verifyDatabaseImage",
+            summary: "Check a database image against what was written",
+            description: "Reads every shard of the image back and compares its keys and the SHA-256 of its keys and values with what was recorded when it was written. `ok` is false when any shard differs or cannot be opened, each such shard naming its problem.",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Image name" } },
+            responses: { 200: { description: "{ name, ok, verifiedAt, shards }" }, 400: { description: "No such image, or this host cannot write images" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/images/:name/verify",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.images.verify(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.images.remove",
+          spec: {
+            operationId: "removeDatabaseImage",
+            summary: "Remove a database image",
+            description: "Removes the image for good. The body must repeat its name as `confirm`.",
+            tags: ["database"],
+            pathParams: { name: { type: "string", required: true, description: "Image name" } },
+            requestBody: { required: true, schema: { type: "object", required: ["confirm"], properties: { confirm: { type: "string" } } } },
+            responses: { 200: { description: "{ name, bytes }" }, 400: { description: "Not confirmed, no such image, or this host cannot write images" } },
+          },
+          method: "DELETE",
+          access: { permissions: ["database.backup"] },
+          path: "/maintenance/images/:name",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            if (readBodyObject(body).confirm !== params.name) {
+              return { status: 400, body: { error: `Removing an image needs { "confirm": "${params.name}" }: its name repeated.` } };
+            }
+            return { body: yield* integration(() => service.images.remove(params.name)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
           id: "database.crossTenantIndexes.list",
           spec: {
             operationId: "listCrossTenantIndexes",
             summary: "List cross-Tenant indexes",
             description:
-              "Each index's definition, how many Tenant partitions it follows, when it was last refreshed from every Tenant in this runtime, and what the last refresh could not read.",
+              "Each index's definition, how many Tenant partitions it follows, its durable last full-refresh time, and persisted refresh failures.",
             tags: ["database"],
             responses: { 200: { description: "{ indexes }" } },
           },
@@ -947,7 +1556,7 @@ function defineDatabaseRootService(
             operationId: "defineCrossTenantIndex",
             summary: "Define a cross-Tenant index",
             description:
-              "One collection's documents from every Tenant (plugins' service: Tenants excluded), kept current from each Tenant's log in the background, so a query across Tenants reads one partition. The definition is fixed: drop the index and define it again to change it.",
+              "One collection's documents from every Tenant (plugins' service: Tenants excluded), kept current from each Tenant's log in the background, so a query reads a bounded set of derived placements, independent of Tenant count. The definition is fixed: drop the index and define it again to change it.",
             tags: ["database"],
             requestBody: {
               required: true,
@@ -958,7 +1567,11 @@ function defineDatabaseRootService(
                   name: { type: "string", description: "Letters, numbers, underscores and hyphens, like a collection name" },
                   collection: { type: "string", description: "The collection every Tenant contributes" },
                   columns: { type: "array", items: { type: "string" }, description: "Fields a query may filter, range over and order by; every scalar field when omitted" },
-                  analyzer: { type: "object", description: "Fields made searchable as text: { fields, version, fold?, stopWords?, minLength?, language? }" },
+                  analyzer: { type: "object", description: "Fields made searchable as text: { fields, version, fold?, stopWords?, minLength?, language?, phrases?, synonyms? }" },
+                  shards: { type: "array", items: { type: "string" }, description: "1 to 32 fixed derived placements; current data shards by default" },
+                  spatial: { type: "object", description: "Geometry declaration over source paths" },
+                  embedding: { type: "object", description: "Vector declaration over a source path" },
+                  indexes: { type: "array", description: "At most 16 non-unique composite indexes over source paths" },
                 },
               },
             },
@@ -1047,6 +1660,8 @@ function defineDatabaseRootService(
                   fuzzy: { description: "When true or edit distance (1 or 2), terms match fuzzily" },
                   prefix: { type: "boolean", description: "When true, terms match as prefixes" },
                   orderBy: { type: "array", description: "Declared columns to order by" },
+                  geometry: { type: "object", description: "Spatial filter on a declared source field" },
+                  similar: { type: "object", description: "Similarity query on the declared source vector" },
                   limit: { type: "number", description: "Matches per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
                 },
@@ -1056,6 +1671,7 @@ function defineDatabaseRootService(
               200: { description: "{ matches: [{ tenant, part?, id, version, data, updatedAt }], next?, refreshedAt? }" },
               400: { description: "An undeclared field, a bad cursor or limit" },
               404: { description: "No such index" },
+              409: { description: "Interrupted re-derivation: refresh before querying" },
             },
           },
           method: "POST",
@@ -1077,6 +1693,8 @@ function defineDatabaseRootService(
                 orderBy: readSort(input.orderBy),
                 limit,
                 ...(tenants === undefined ? {} : { tenants }),
+                ...(input.geometry === undefined ? {} : { geometry: input.geometry as SpatialFilter }),
+                ...(input.similar === undefined ? {} : { similar: input.similar as SimilarFilter }),
                 ...(input.search === undefined ? {} : { search: input.search as string }),
                 ...(input.fuzzy === undefined ? {} : { fuzzy: input.fuzzy as boolean | number }),
                 ...(input.prefix === undefined ? {} : { prefix: input.prefix as boolean }),
@@ -1138,6 +1756,38 @@ function defineDatabaseRootService(
           })),
         },
         {
+          id: "database.events.read",
+          method: "POST",
+          path: "/events/read",
+          access: { permissions: ["database.read"] },
+          spec: {
+            operationId: "readDataChanges",
+            summary: "Read one bounded page of the caller's Tenant change feed",
+            tags: ["database"],
+            requestBody: { required: false, schema: { type: "object", properties: {
+              tenantId: { type: "string" }, collection: { type: "string" }, documentId: { type: "string" },
+              after: { type: "string" }, limit: { type: "number" },
+            } } },
+            responses: { 200: { description: "{ events, cursor?, more }; continue from cursor even when events is empty" }, 400: { description: "Invalid limit or cursor" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            for (const key of ["collection", "documentId", "after"] as const) {
+              if (input[key] !== undefined && typeof input[key] !== "string") throw new TypeError(`${key} must be a string.`);
+            }
+            const limit = input.limit ?? 100;
+            if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
+              throw new TypeError("limit must be an integer from 1 to 1000.");
+            }
+            return { body: yield* integration(() => tenantOf(service, input, principal).events.read({
+              ...(typeof input.collection === "string" ? { collection: input.collection } : {}),
+              ...(typeof input.documentId === "string" ? { documentId: input.documentId } : {}),
+              ...(typeof input.after === "string" ? { after: input.after as import("./events.js").EventCursor } : {}),
+              limit,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
           id: "database.health",
           method: "GET",
           access: { permissions: ["database.read"] },
@@ -1160,6 +1810,8 @@ function defineDatabaseRootService(
               shards: service.topology.shards.length,
               virtualRanges: service.topology.virtualRanges,
               partitionMapVersion: service.topology.partitionMapVersion,
+              ...(service.storageChoice !== undefined ? { storage: service.storageChoice.get() }
+                : service.context.storage === undefined ? {} : { storage: service.context.storage }),
             },
           }),
         },
@@ -1184,6 +1836,7 @@ export function defineDatabaseService(
     defineDatabaseKeyValueService(database),
     defineDatabaseOutboxService(database),
     defineDatabaseSchemasService(database),
+    defineDatabaseAggregatesService(database),
     defineDatabaseTimeSeriesService(database),
     defineDatabaseMaintenanceService(database),
   ];
@@ -1216,6 +1869,7 @@ export function defineDatabaseEndpointGroups(
     defineDatabaseKeyValueService(database),
     defineDatabaseOutboxService(database),
     defineDatabaseSchemasService(database),
+    defineDatabaseAggregatesService(database),
     defineDatabaseTimeSeriesService(database),
     defineDatabaseMaintenanceService(database),
   ];
@@ -1746,8 +2400,9 @@ export function defineDatabaseMaintenanceService(
           access: { permissions: ["database.backup"] },
           handler: ({ service, body, principal })  => present(Effect.gen(function* () {
               const input = readBodyObject(body);
+              // A divided Tenant comes out whole: one backup per part, in one file.
               return {
-                body: yield* integration(() => tenantOf(service, input, principal).backups.exportTenant()),
+                body: yield* integration(() => service.backupTenant(readTenantId(input.tenantId, principal))),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
@@ -1794,9 +2449,10 @@ export function defineDatabaseMaintenanceService(
               // The mode is passed as sent: the restore refuses one it does not
               // have, so a transport cannot read it differently.
               return {
-                body: yield* integration(() => service
-                  .forTenant(readTenantId(input.tenantId ?? backup.tenantId, principal))
-                  .backups.restoreTenant(backup as never, input.into === undefined ? undefined : { into: input.into as never })),
+                body: yield* integration(() => service.restoreTenantBackup(
+                  readTenantId(input.tenantId ?? backup.tenantId, principal),
+                  backup as never,
+                  input.into === undefined ? undefined : { into: input.into as never })),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
@@ -1865,7 +2521,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.collections.create",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/collections",
           spec: {
             operationId: "createCollection",
@@ -1963,7 +2619,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.collections.drop",
           method: "DELETE",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/collections/:collection",
           spec: {
             operationId: "dropCollection",
@@ -2141,6 +2797,71 @@ export function defineDatabaseDocumentsService(
           })),
         },
         {
+          id: "database.documents.searchStatistics",
+          method: "POST",
+          access: { permissions: ["database.read"] },
+          path: "/:collection/search-statistics",
+          spec: {
+            operationId: "searchStatistics",
+            summary: "Read the matching text corpus statistics for global BM25 ranking",
+            tags: ["documents"],
+            requestBody: { required: true, schema: { type: "object", required: ["search"], properties: {
+              tenantId: { type: "string" }, search: { type: "string" }, where: { type: "array" },
+              related: { type: "array" }, fuzzy: {}, prefix: { type: "boolean" },
+              geometry: { type: "object" }, linked: { type: "object" },
+            } } },
+            responses: { 200: { description: "Corpus size, analyzed length and document frequencies" }, 400: { description: "Invalid query" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            if (typeof input.search !== "string") throw new TypeError("search must be a string.");
+            return { body: yield* integration(() => tenantOf(service, input, principal).documents.searchStatistics({
+              collection: params.collection, ...readQueryClauses(input), search: input.search as string,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.documents.scatter",
+          method: "POST",
+          access: { permissions: ["database.inspect"] },
+          path: "/:collection/scatter",
+          spec: {
+            operationId: "scatterDocuments",
+            summary: "Query across Tenants with global text ranking and per-leg costs",
+            tags: ["documents"],
+            requestBody: { required: true, schema: { type: "object", properties: {
+              tenants: { type: "array" }, search: { type: "string" }, where: { type: "array" },
+              related: { type: "array" }, orderBy: { type: "array" }, fuzzy: {}, prefix: { type: "boolean" },
+              limit: { type: "number" }, perTenantLimit: { type: "number" },
+            } } },
+            responses: { 200: { description: "Rows with Tenant/shard identity, costs and truncation" }, 400: { description: "Invalid scatter" } },
+          },
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const tenants = input.tenants === undefined ? undefined : readStrings(input.tenants, "tenants");
+            if (tenants !== undefined && (tenants.length > 1024 || tenants.some((tenant) => tenant.length === 0))) {
+              throw new TypeError("tenants must contain at most 1024 non-empty Tenant IDs.");
+            }
+            if (input.search !== undefined && typeof input.search !== "string") throw new TypeError("search must be a string.");
+            const limit = input.limit ?? 100, perTenantLimit = input.perTenantLimit ?? limit;
+            for (const [name, value] of [["limit", limit], ["perTenantLimit", perTenantLimit]] as const) {
+              if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1000) {
+                throw new TypeError(`${name} must be an integer from 1 to 1000.`);
+              }
+            }
+            return { body: yield* integration(() => service.scatter({
+              collection: params.collection,
+              ...(tenants === undefined ? {} : { tenants }),
+              where: readFilters(input.where), orderBy: readSort(input.orderBy),
+              ...(Array.isArray(input.related) ? { related: input.related as ReadonlyArray<RelatedFilter> } : {}),
+              ...(typeof input.search === "string" ? { search: input.search } : {}),
+              ...(typeof input.fuzzy === "boolean" || typeof input.fuzzy === "number" ? { fuzzy: input.fuzzy } : {}),
+              ...(typeof input.prefix === "boolean" ? { prefix: input.prefix } : {}),
+              limit: limit as number, perTenantLimit: perTenantLimit as number,
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
           id: "database.documents.query",
           method: "POST",
           access: { permissions: ["database.read"] },
@@ -2168,6 +2889,8 @@ export function defineDatabaseDocumentsService(
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
                   linked: { type: "object", description: "Only what a document links to or what links to it: { collection, id, edge, direction? }" },
                   similar: { type: "object", description: "Closest first by embedding: { field, vector, k }" },
+                  hybrid: { type: "object", description: "Text/vector reciprocal-rank fusion: { text?, vector?, k?, depth? }" },
+                  statistics: { type: "object", description: "Global BM25 corpus: { documents, length, frequencies }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -2316,6 +3039,92 @@ export function defineDatabaseDocumentsService(
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 404))));
 })),
+        },
+        {
+          id: "database.documents.covariance", method: "POST", access: { permissions: ["database.read"] }, path: "/:collection/covariance",
+          spec: {
+            operationId: "covarianceMeasures", summary: "Covariance over declared measures", tags: ["documents"],
+            requestBody: { required: true, schema: { type: "object", required: ["measure"], properties: { measure: { type: "string" } } } },
+            responses: { 200: { description: "Measure result" }, 400: { description: "Invalid measure or aggregate options" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            return yield* Effect.gen(function* () {
+              const input = readBodyObject(body);
+              return { body: yield* integration(() => tenantOf(service, input, principal).documents.covariance({
+                collection: params.collection, measure: readMeasureName(input.measure), ...readQueryClauses(input), with: readMeasureName(input.with), ...(input.sample === undefined ? {} : { sample: input.sample as boolean }),
+              })) };
+            }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+          })),
+        },
+        {
+          id: "database.documents.histogram", method: "POST", access: { permissions: ["database.read"] }, path: "/:collection/histogram",
+          spec: {
+            operationId: "histogramMeasures", summary: "Histogram over declared measures", tags: ["documents"],
+            requestBody: { required: true, schema: { type: "object", required: ["measure"], properties: { measure: { type: "string" } } } },
+            responses: { 200: { description: "Measure result" }, 400: { description: "Invalid measure or aggregate options" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            return yield* Effect.gen(function* () {
+              const input = readBodyObject(body);
+              return { body: yield* integration(() => tenantOf(service, input, principal).documents.histogram({
+                collection: params.collection, measure: readMeasureName(input.measure), ...readQueryClauses(input), ...(input.bins === undefined ? {} : { bins: input.bins as number }), ...(input.boundaries === undefined ? {} : { boundaries: input.boundaries as ReadonlyArray<number> }), ...(input.min === undefined ? {} : { min: input.min as number }), ...(input.max === undefined ? {} : { max: input.max as number }),
+              })) };
+            }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+          })),
+        },
+        {
+          id: "database.documents.imports.plan", method: "POST", access: { permissions: ["database.read"] }, path: "/:collection/imports/plan",
+          spec: {
+            operationId: "planImport", summary: "Dry-run an import", tags: ["documents"],
+            description: "Parses every row, maps CSV text to the declared types, checks ids, the collection's active schema and (for insert) ids already held, and answers the problems and a SHA-256 checksum of the rows. Writes nothing.",
+            requestBody: { required: true, schema: { type: "object", required: ["format", "text"], properties: {
+              format: { type: "string", enum: ["csv", "ndjson", "json"] }, text: { type: "string", description: "The export, at most 8 MiB" },
+              idField: { type: "string" }, types: { type: "object" }, mode: { type: "string", enum: ["insert", "upsert"] },
+            } } },
+            responses: { 200: { description: "Import plan result" }, 400: { description: "The source, its options or its plan were refused" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => tenantOf(service, input, principal).imports.plan(importSourceOf(params.collection, input))) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.documents.imports.run", method: "POST", access: { permissions: ["database.write"] }, path: "/:collection/imports/run",
+          spec: {
+            operationId: "runImport", summary: "Write an import's rows", tags: ["documents"],
+            description: "Writes rows from offset, at most limit (1 to 5000) per call, in idempotent atomic batches named by importId and the source checksum: repeating a run writes nothing twice. Answers next while rows remain. The first call (offset 0) refuses a source whose plan has problems.",
+            requestBody: { required: true, schema: { type: "object", required: ["format", "text", "importId"], properties: {
+              format: { type: "string", enum: ["csv", "ndjson", "json"] }, text: { type: "string", description: "The export, at most 8 MiB" },
+              idField: { type: "string" }, types: { type: "object" }, mode: { type: "string", enum: ["insert", "upsert"] },
+              importId: { type: "string" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 5000 },
+            } } },
+            responses: { 200: { description: "Import run result" }, 400: { description: "The source, its options or its plan were refused" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => tenantOf(service, input, principal).imports.run({
+              ...importSourceOf(params.collection, input),
+              importId: readString(input.importId) ?? "",
+              ...(typeof input.offset === "number" ? { offset: input.offset } : {}),
+              ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+            })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.documents.imports.verify", method: "POST", access: { permissions: ["database.read"] }, path: "/:collection/imports/verify",
+          spec: {
+            operationId: "verifyImport", summary: "Compare an import with what is stored", tags: ["documents"],
+            description: "Reads every row's document back and answers what is missing or different, the source and stored checksums, and ok when they all match.",
+            requestBody: { required: true, schema: { type: "object", required: ["format", "text"], properties: {
+              format: { type: "string", enum: ["csv", "ndjson", "json"] }, text: { type: "string", description: "The export, at most 8 MiB" },
+              idField: { type: "string" }, types: { type: "object" }, mode: { type: "string", enum: ["insert", "upsert"] },
+            } } },
+            responses: { 200: { description: "Import verify result" }, 400: { description: "The source, its options or its plan were refused" } },
+          },
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return { body: yield* integration(() => tenantOf(service, input, principal).imports.verify(importSourceOf(params.collection, input))) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "database.documents.summarize",
@@ -2535,7 +3344,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.analyzer",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/analyzer",
           spec: {
             operationId: "analyzeCollection",
@@ -2580,7 +3389,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.columns",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/columns",
           spec: {
             operationId: "setCollectionColumns",
@@ -2627,7 +3436,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.geometry",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/geometry",
           spec: {
             operationId: "locateCollection",
@@ -2672,7 +3481,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.embedding",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/embedding",
           spec: {
             operationId: "embedCollection",
@@ -2717,7 +3526,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.indexes.create",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/indexes",
           spec: {
             operationId: "createIndex",
@@ -2763,7 +3572,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.indexes.drop",
           method: "DELETE",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/indexes/:name",
           spec: {
             operationId: "dropIndex",
@@ -2797,7 +3606,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.checks.add",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/checks",
           spec: {
             operationId: "addCheck",
@@ -2843,7 +3652,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.checks.drop",
           method: "DELETE",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/checks/:name",
           spec: {
             operationId: "dropCheck",
@@ -2877,7 +3686,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.references.add",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/references",
           spec: {
             operationId: "addReference",
@@ -2929,7 +3738,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.references.drop",
           method: "DELETE",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/references/:name",
           spec: {
             operationId: "dropReference",
@@ -3068,6 +3877,60 @@ export function defineDatabaseSchemasService(
     api: {
       v1: [
         {
+          id: "database.schemas.export",
+          method: "POST",
+          access: { permissions: ["database.read"] },
+          path: "/collections/export",
+          spec: {
+            operationId: "exportLogicalSchemas", summary: "Export portable logical schema versions", tags: ["schemas"],
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Logical schema result" }, 400: { description: "Invalid or conflicting schema" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            return yield* Effect.gen(function* () {
+              const input = readBodyObject(body);
+              const tenant = tenantOf(service, input, principal);
+              return { body: yield* integration(() => tenant.schemas.export({ collections: input.collections as ReadonlyArray<string> | undefined })) };
+            }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+          })),
+        },
+        {
+          id: "database.schemas.import",
+          method: "POST",
+          access: { permissions: ["database.define"] },
+          path: "/collections/import",
+          spec: {
+            operationId: "importLogicalSchemas", summary: "Preflight or import logical schema versions", tags: ["schemas"],
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Logical schema result" }, 400: { description: "Invalid or conflicting schema" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            return yield* Effect.gen(function* () {
+              const input = readBodyObject(body);
+              const tenant = tenantOf(service, input, principal);
+              return { body: yield* integration(() => tenant.schemas.import(input as unknown as Parameters<typeof tenant.schemas.import>[0])) };
+            }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+          })),
+        },
+        {
+          id: "database.schemas.types",
+          method: "POST",
+          access: { permissions: ["database.read"] },
+          path: "/collections/types",
+          spec: {
+            operationId: "typesLogicalSchemas", summary: "Generate standalone TypeScript from logical schemas", tags: ["schemas"],
+            requestBody: { required: true, schema: { type: "object" } },
+            responses: { 200: { description: "Logical schema result" }, 400: { description: "Invalid or conflicting schema" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            return yield* Effect.gen(function* () {
+              const input = readBodyObject(body);
+              const tenant = tenantOf(service, input, principal);
+              return { body: yield* integration(() => tenant.schemas.types({ collections: input.collections as ReadonlyArray<string> | undefined })) };
+            }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+          })),
+        },
+        {
           id: "database.schemas.list",
           method: "GET",
           access: { permissions: ["database.read"] },
@@ -3089,6 +3952,45 @@ export function defineDatabaseSchemasService(
             },
           };
   })),
+        },
+        {
+          id: "database.schemas.activations.list",
+          method: "GET",
+          access: { permissions: ["database.read"] },
+          path: "/collections/activations",
+          spec: {
+            operationId: "listSchemaActivations",
+            summary: "List schema activations recorded and not yet published",
+            tags: ["schemas"],
+            responses: { 200: { description: "Pending activations" } },
+          },
+          handler: ({ service, query, principal }) => present(Effect.gen(function* () {
+            return {
+              body: {
+                activations: yield* integrationValue(service
+                  .forTenant(readTenantId(query.get("tenantId"), principal))
+                  .schemas.pendingActivations()),
+              },
+            };
+          })),
+        },
+        {
+          id: "database.schemas.activations.resume",
+          method: "POST",
+          access: { permissions: ["database.define"] },
+          path: "/collections/activations/resume",
+          spec: {
+            operationId: "resumeSchemaActivations",
+            summary: "Run every pending schema activation again",
+            tags: ["schemas"],
+            responses: { 200: { description: "How many were published" } },
+          },
+          handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            return {
+              body: { published: yield* integration(() => tenantOf(service, input, principal).schemas.resumeActivations()) },
+            };
+          })),
         },
         {
           id: "database.schemas.versions.list",
@@ -3120,7 +4022,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.save",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection",
           spec: {
             operationId: "saveSchema",
@@ -3171,7 +4073,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.activate",
           method: "POST",
-          access: { permissions: ["database.write"] },
+          access: { permissions: ["database.define"] },
           path: "/:collection/activate",
           spec: {
             operationId: "activateSchema",
@@ -3191,7 +4093,8 @@ export function defineDatabaseSchemasService(
               },
             },
             responses: {
-              200: { description: "Schema activated" },
+              200: { description: "Schema activated, with what its activation declared" },
+              400: { description: "The declarations it implies do not hold for stored documents" },
               404: { description: "Not found" },
             },
           },
@@ -3249,6 +4152,62 @@ export function defineDatabaseSchemasService(
       ],
     },
   };
+}
+
+/** Stored aggregate definitions and cached measure results in one Tenant partition. */
+export function defineDatabaseAggregatesService(database: DatabaseRuntimeApi): ZelavisRuntimeService<DatabaseRuntimeApi> {
+  return { name: "aggregates", basePath: "aggregates", service: database, api: { v1: [
+    {
+      id: "database.aggregates.list", method: "GET", path: "/", access: { permissions: ["database.read"] },
+      spec: { operationId: "listAggregate", summary: "List materialized aggregates", tags: ["aggregates"], responses: { 200: { description: "Aggregate result" }, 400: { description: "Invalid definition or measure query" }, 404: { description: "No such aggregate" }, 409: { description: "Source changed; retry refresh" } } },
+      handler: ({ service, query, principal }) => present(Effect.gen(function* () {
+        return yield* Effect.gen(function* () {
+
+          return { body: { aggregates: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).aggregates.list()) } };
+        }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+      })),
+    },
+    {
+      id: "database.aggregates.define", method: "POST", path: "/", access: { permissions: ["database.define"] },
+      spec: { operationId: "defineAggregate", summary: "Define materialized aggregates", tags: ["aggregates"], responses: { 200: { description: "Aggregate result" }, 400: { description: "Invalid definition or measure query" }, 404: { description: "No such aggregate" }, 409: { description: "Source changed; retry refresh" } } },
+      handler: ({ service, body, principal }) => present(Effect.gen(function* () {
+        return yield* Effect.gen(function* () {
+          const input = readBodyObject(body);
+          return { body: yield* integration(() => tenantOf(service, input, principal).aggregates.define(input as unknown as AggregateDefinition)) };
+        }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+      })),
+    },
+    {
+      id: "database.aggregates.get", method: "GET", path: "/:name", access: { permissions: ["database.read"] },
+      spec: { operationId: "getAggregate", summary: "Get materialized aggregates", tags: ["aggregates"], responses: { 200: { description: "Aggregate result" }, 400: { description: "Invalid definition or measure query" }, 404: { description: "No such aggregate" }, 409: { description: "Source changed; retry refresh" } } },
+      handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+        return yield* Effect.gen(function* () {
+
+          return { body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).aggregates.get(params.name)) };
+        }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+      })),
+    },
+    {
+      id: "database.aggregates.refresh", method: "POST", path: "/:name/refresh", access: { permissions: ["database.define"] },
+      spec: { operationId: "refreshAggregate", summary: "Refresh materialized aggregates", tags: ["aggregates"], responses: { 200: { description: "Aggregate result" }, 400: { description: "Invalid definition or measure query" }, 404: { description: "No such aggregate" }, 409: { description: "Source changed; retry refresh" } } },
+      handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
+        return yield* Effect.gen(function* () {
+          const input = readBodyObject(body);
+          return { body: yield* integration(() => tenantOf(service, input, principal).aggregates.refresh(params.name)) };
+        }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+      })),
+    },
+    {
+      id: "database.aggregates.drop", method: "DELETE", path: "/:name", access: { permissions: ["database.define"] },
+      spec: { operationId: "dropAggregate", summary: "Drop materialized aggregates", tags: ["aggregates"], responses: { 200: { description: "Aggregate result" }, 400: { description: "Invalid definition or measure query" }, 404: { description: "No such aggregate" }, 409: { description: "Source changed; retry refresh" } } },
+      handler: ({ service, params, query, principal }) => present(Effect.gen(function* () {
+        return yield* Effect.gen(function* () {
+
+          return { body: yield* integration(() => service.forTenant(readTenantId(query.get("tenantId"), principal)).aggregates.drop(params.name)) };
+        }).pipe(Effect.catchCause(cause => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))));
+      })),
+    },
+  ] } };
 }
 
 export function defineDatabaseTimeSeriesService(

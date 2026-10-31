@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { chmod, chown, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, chown, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { Deferred, Duration, Effect, Fiber, PubSub } from "effect";
@@ -189,6 +189,131 @@ export const recipeCommands = (method: { readonly id: string; readonly requires:
 });
 
 /**
+ * Where a Project's recipe files are and what a phase is handed, for every Project below `projectsDirectory`: the
+ * driver and a backup taken from the Project's own integration runtime build both from here, so they cannot differ.
+ */
+const recipeLayout = (projectsDirectory: string) => {
+  const paths = (id: string) => {
+    const project = join(projectsDirectory, id);
+    return {
+      project, app: join(project, "app"), zelavis: join(project, ".zelavis"),
+      secrets: join(project, ".zelavis", "secrets"), state: join(project, ".zelavis", "recipe-state.json"),
+      planState: join(project, ".zelavis", "plan-state.json"), descriptor: join(project, "project.json"),
+    };
+  };
+  /** The recipe's root for a Project, by the contract of the recipe that runs there; see the layout above. */
+  const rootOf = (id: string, parsed: Pick<RecipeManifest, "contract">) =>
+    parsed.contract === 2 ? join(paths(id).zelavis, "server") : paths(id).app;
+  /** The directories a recipe may write by absolute path besides its root. */
+  const areasOf = (id: string, parsed: Pick<RecipeManifest, "contract">) => parsed.contract === 2 ? [paths(id).app] : [];
+  /** Short and shared by every unit: separate systemd units have separate private temp directories. */
+  const socketDirectory = (state: Pick<RecipeState, "socketId">) =>
+    join(process.platform === "linux" ? resolve(projectsDirectory, "..", "runtime-sockets") : "/tmp", `zv-${state.socketId}`);
+  /** The manifest's named directories where the Project has them now. */
+  const namedDirectories = (id: string, state: RecipeState, parsed: RecipeManifest) =>
+    Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).app, state.layout?.[directory.name] ?? directory.path)]));
+  const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
+    projectId: project.id,
+    hostname: "localhost",
+    software, method, config: {}, ports: state.ports,
+    directories: { root: rootOf(project.id, parsed), sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
+    account: {
+      user: owner.user, group: owner.group, switchUser: owner.switchUser,
+      ...(accountId(owner.uid, process.getuid?.()) === undefined ? {} : { uid: accountId(owner.uid, process.getuid?.()) }),
+      ...(accountId(owner.gid, process.getgid?.()) === undefined ? {} : { gid: accountId(owner.gid, process.getgid?.()) }),
+    },
+  });
+  const allowedNames = (id: string, state: RecipeState, parsed: RecipeManifest) =>
+    ({ commands: Object.keys(state.commands), ports: parsed.ports.map((port) => port.name), directories: [...new Set([rootOf(id, parsed), paths(id).app, socketDirectory(state)])] });
+  return { paths, rootOf, areasOf, socketDirectory, namedDirectories, context, allowedNames };
+};
+
+/** What a managed app's backup captured, written beside it as `recipe.json`. */
+export interface RecipeBackupSummary {
+  readonly format: "zelavis.recipe-backup.v1";
+  readonly recipe: string;
+  readonly software: string;
+  readonly method: string;
+  /** Each named directory, how the manifest says it is backed up, and where its copy is in the component. */
+  readonly directories: ReadonlyArray<{ readonly name: string; readonly backup?: "files" | "recipe"; readonly captured: string | null }>;
+  readonly createdAt: string;
+}
+
+/** How long the recipe's backup phase (a database dump) may take. */
+const BACKUP_PHASE_TIMEOUT_MS = 6 * 60 * 60_000;
+
+/**
+ * Stage a managed app's own data for a backup into `into`: each named directory the manifest marks `files`, copied
+ * as it is (`files/<name>/`), and what the recipe's `backup` phase makes of the directories it marks `recipe`
+ * (`recipe/`, a database dump), run exactly as the driver runs any phase — the frozen recipe, the Project's
+ * resolved programs and secrets, its account — while the app keeps serving. A directory the manifest does not mark
+ * is not captured, and `recipe.json` says so. Reads the Project's files only: nothing in `app/` is written.
+ */
+export const stageRecipeBackup = (input: { readonly projectDirectory: string; readonly into: string; readonly user?: string }) =>
+  Effect.gen(function* () {
+    const projectDirectory = resolve(input.projectDirectory);
+    const id = basename(projectDirectory);
+    const layout = recipeLayout(dirname(projectDirectory));
+    const where = layout.paths(id);
+    const packageDirectory = join(where.zelavis, "recipe", "package");
+    const text = yield* integration(() => readFile(join(packageDirectory, "package.json"), "utf8")).pipe(
+      Effect.mapError(() => failure("The Project has no frozen recipe to back up with.")));
+    const identity = yield* evaluate(() => parseJson(text, objectFields<{ name?: unknown; version?: unknown }>({ name: isUnknown, version: isUnknown }))).pipe(
+      Effect.mapError(() => failure("The frozen recipe's package.json is not valid JSON.")));
+    const install = yield* evaluate(() => parseJson(text, packageRecord).zelavis?.project?.install).pipe(
+      Effect.mapError(() => failure("The frozen recipe's package.json is not valid JSON.")));
+    if (install === undefined) return yield* Effect.fail(failure("The frozen recipe declares no zelavis.project.install."));
+    const parsed = yield* evaluate(() => parseRecipeManifest(install)).pipe(Effect.mapError(asRuntimeError));
+    const state = yield* integration(() => readFile(where.state, "utf8")).pipe(
+      Effect.flatMap((stateText) => evaluate(() => parseJson(stateText, stateRecord))),
+      Effect.mapError(() => failure(`Project "${id}" has no recipe state.`)),
+    );
+    if (!state.installed) return yield* Effect.fail(failure(`Project "${id}" is not installed yet, so it has nothing to back up.`));
+    const named = layout.namedDirectories(id, state, parsed);
+    const directories = parsed.directories ?? [];
+    const captured = new Map<string, string>();
+    if (directories.some((directory) => directory.backup === "recipe")) {
+      const method = parsed.methods.find((candidate) => candidate.id === state.method && candidate.driver === "js");
+      const software = parsed.software.find((candidate) => candidate.version === state.software);
+      if (!method || method.driver !== "js" || !software) return yield* Effect.fail(failure("The recipe no longer offers this Project's install method and software version."));
+      const owner = yield* resolveAccount(input.user);
+      const root = layout.rootOf(id, parsed);
+      const result = yield* runRecipePhase({
+        phase: "backup", module: resolve(packageDirectory, method.entry), root, secretsDirectory: where.secrets,
+        ...(layout.areasOf(id, parsed).length > 0 ? { areas: layout.areasOf(id, parsed) } : {}),
+        commands: state.commands, context: layout.context({ id }, state, parsed, software, method, owner),
+        allowed: layout.allowedNames(id, state, parsed), timeoutMs: BACKUP_PHASE_TIMEOUT_MS, progress: () => Effect.void,
+        ...(owner.uid !== undefined && owner.gid !== undefined ? { uid: owner.uid, gid: owner.gid } : {}),
+      }).pipe(Effect.mapError(asRuntimeError));
+      if (result.phase !== "backup") return yield* Effect.fail(failure("The recipe's backup phase answered something else."));
+      const staged = resolve(root, result.path);
+      if (!staged.startsWith(`${resolve(root)}/`)) return yield* Effect.fail(failure("The recipe's backup lies outside its root."));
+      yield* integration(() => cp(staged, join(input.into, "recipe"), { recursive: true, verbatimSymlinks: true })).pipe(Effect.mapError(asRuntimeError));
+      yield* integration(() => rm(staged, { recursive: true, force: true })).pipe(Effect.mapError(asRuntimeError));
+      for (const directory of directories) if (directory.backup === "recipe") captured.set(directory.name, "recipe");
+    }
+    for (const directory of directories) {
+      if (directory.backup !== "files") continue;
+      const source = named[directory.name];
+      if (source === undefined) continue;
+      yield* integration(() => cp(source, join(input.into, "files", directory.name), { recursive: true, verbatimSymlinks: true, errorOnExist: false, force: true }))
+        .pipe(Effect.mapError(asRuntimeError));
+      captured.set(directory.name, `files/${directory.name}`);
+    }
+    const summary: RecipeBackupSummary = {
+      format: "zelavis.recipe-backup.v1",
+      recipe: typeof identity.name === "string" && typeof identity.version === "string" ? `${identity.name}@${identity.version}` : "unknown",
+      software: state.software, method: state.method,
+      directories: directories.map((directory) => ({
+        name: directory.name, ...(directory.backup === undefined ? {} : { backup: directory.backup }), captured: captured.get(directory.name) ?? null,
+      })),
+      createdAt: new Date().toISOString(),
+    };
+    yield* integration(() => writeFile(join(input.into, "recipe.json"), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 })).pipe(Effect.mapError(asRuntimeError));
+    return summary;
+  });
+
+/**
  * Plan controllers by Agent. Whoever has the Agent sees the Project's running processes, which is
  * what lets an upgraded recipe's driver (a new instance, made from the new package) carry on with
  * processes the old instance started.
@@ -219,22 +344,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     return accountOnce;
   });
 
-  const paths = (id: string) => {
-    const project = join(projectsDirectory, id);
-    return {
-      project, app: join(project, "app"), zelavis: join(project, ".zelavis"),
-      secrets: join(project, ".zelavis", "secrets"), state: join(project, ".zelavis", "recipe-state.json"),
-      planState: join(project, ".zelavis", "plan-state.json"), descriptor: join(project, "project.json"),
-    };
-  };
-  /** The recipe's root for a Project, by the contract of the recipe that runs there; see the layout above. */
-  const rootOf = (id: string, parsed: Pick<RecipeManifest, "contract">) =>
-    parsed.contract === 2 ? join(paths(id).zelavis, "server") : paths(id).app;
-  /** The directories a recipe may write by absolute path besides its root. */
-  const areasOf = (id: string, parsed: Pick<RecipeManifest, "contract">) => parsed.contract === 2 ? [paths(id).app] : [];
-  /** Short and shared by every unit: separate systemd units have separate private temp directories. */
-  const socketDirectory = (state: Pick<RecipeState, "socketId">) =>
-    join(process.platform === "linux" ? resolve(projectsDirectory, "..", "runtime-sockets") : "/tmp", `zv-${state.socketId}`);
+  const { paths, rootOf, areasOf, socketDirectory, namedDirectories, context, allowedNames } = recipeLayout(projectsDirectory);
 
   const readState = (id: string) => integration(() => readFile(paths(id).state, "utf8")).pipe(
     Effect.flatMap((text) => evaluate(() => parseJson(text, stateRecord))),
@@ -273,9 +383,6 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
     }
   });
 
-  /** The manifest's named directories where the Project has them now. */
-  const namedDirectories = (id: string, state: RecipeState, parsed: RecipeManifest) =>
-    Object.fromEntries((parsed.directories ?? []).map((directory) => [directory.name, join(paths(id).app, state.layout?.[directory.name] ?? directory.path)]));
 
   /**
    * After a Project first runs a contract 2 recipe: what contract 1 kept in `app/` beside the application
@@ -322,20 +429,6 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
   /** Where each running Project's processes launch: its recipe's root, which an upgrade to another layout moves. */
   const liveRoots = new Map<string, string>();
 
-  const context = (project: { id: string }, state: RecipeState, parsed: RecipeManifest, software: RecipeContext["software"], method: RecipeContext["method"], owner: Account): RecipeContext => ({
-    projectId: project.id,
-    hostname: "localhost",
-    software, method, config: {}, ports: state.ports,
-    directories: { root: rootOf(project.id, parsed), sockets: socketDirectory(state), named: namedDirectories(project.id, state, parsed) },
-    account: {
-      user: owner.user, group: owner.group, switchUser: owner.switchUser,
-      ...(accountId(owner.uid, process.getuid?.()) === undefined ? {} : { uid: accountId(owner.uid, process.getuid?.()) }),
-      ...(accountId(owner.gid, process.getgid?.()) === undefined ? {} : { gid: accountId(owner.gid, process.getgid?.()) }),
-    },
-  });
-
-  const allowedNames = (id: string, state: RecipeState, parsed: RecipeManifest) =>
-    ({ commands: Object.keys(state.commands), ports: parsed.ports.map((port) => port.name), directories: [...new Set([rootOf(id, parsed), paths(id).app, socketDirectory(state)])] });
 
   /** Runs one phase of a recipe package: the Project's own, or a candidate being staged for an upgrade. */
   const phase = Effect.fn("RecipeRuntime.phase")(function* (

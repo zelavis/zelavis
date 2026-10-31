@@ -128,19 +128,25 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
   // authority over the Project it happens to live in.
   "project.data.read": Object.freeze(["database.read"]),
   "project.data.write": Object.freeze(["database.read", "database.write"]),
+  "project.data.define": Object.freeze(["database.define"]),
   "project.logs.read": Object.freeze(["workloads.logs.read"]),
   "project.runtime.manage": Object.freeze([
     "workloads.manage",
     "workloads.logs.read",
     "storage.write",
+    "storage.manage",
     "database.read",
     "database.write",
+    "database.define",
     "database.backup",
     "database.restore",
     "database.drop",
     // Cross-Tenant indexes read every Tenant, so defining one is the
     // Project's infrastructure authority, not an App client's data authority.
     "database.indexes.manage",
+    // A follower on another host reads every record and log entry of the
+    // partitions it follows, holds their logs and reports what it holds.
+    "database.replicate",
   ]),
 });
 
@@ -154,6 +160,7 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
 const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
   "project.data.read",
   "project.data.write",
+  "project.data.define",
   "project.delete",
   "project.logs.read",
   "project.runtime.manage",
@@ -186,7 +193,7 @@ export function projectDataPermissions(
 ): readonly string[] {
   const held = new Set(
     projectRuntimePermissions(principal, projectId).filter((permission) =>
-      permission === "database.read" || permission === "database.write"
+      permission === "database.read" || permission === "database.write" || permission === "database.define"
     ),
   );
   return [...held];
@@ -684,7 +691,7 @@ export function createProjectGatewayRoutes(
       operationId: `projectData${method[0]}${method.slice(1).toLowerCase()}`,
       summary: "Read or write a Project's App data",
       description:
-        "Forwards to the Project's database service as the caller's own App Tenant. Reads require `project.data.read` and writes `project.data.write`; neither grants any Platform authority over the Project.",
+        "Forwards only the caller's Project data grants. The database operation enforces read, write or define authority independently of its HTTP method; POST queries are reads. No Platform authority travels with it.",
       tags: ["data"],
       pathParams: {
         projectId: {
@@ -709,8 +716,7 @@ export function createProjectGatewayRoutes(
     method,
     path: "/projects/:projectId/data/*path",
     access: {
-      permissions:
-        method === "GET" ? ["project.data.read"] : ["project.data.write"],
+      authenticated: true,
       scope: { type: "project" as const, projectIdParam: "projectId" },
     },
     handler: ({
@@ -731,6 +737,8 @@ export function createProjectGatewayRoutes(
           body: { error: "A database path is required." },
         };
       }
+      const permissions = projectDataPermissions(principal, params.projectId ?? "");
+      if (permissions.length === 0) return { status: 403, body: { error: "No App data authority for this Project." } };
       return yield* integration(() => forwardToProject({
         projectId: params.projectId ?? "",
         wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/${path}`,
@@ -741,14 +749,45 @@ export function createProjectGatewayRoutes(
         // caller's other Project authority, if it happens to hold any, is
         // not this request's business and must not ride along into the
         // child where it would widen what the request can reach.
-        permissions: projectDataPermissions(
-          principal,
-          params.projectId ?? "",
-        ),
+        permissions,
         allowFrontend: false,
       }));
     }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   }));
 
-  return [...proxyRoutes, ...dataRoutes];
+  /**
+   * A signed upload's bytes, from a browser holding only the link. The token is the authority: no principal and no
+   * permission travel with it, and only the upload-receive route of the Project's storage is reachable here.
+   */
+  const uploadRoute = {
+    id: "runtime.projects.uploads.receive",
+    spec: {
+      operationId: "receiveProjectUpload",
+      summary: "Send a signed upload's bytes to a Project",
+      description: "Needs no credentials: the token minted by `storage/uploads` binds the path, size, type and expiry, and is single use. Forwards nothing else.",
+      tags: ["storage"],
+      pathParams: {
+        projectId: { type: "string" as const, required: true, description: "The Project." },
+        token: { type: "string" as const, required: true, description: "The upload token." },
+      },
+      responses: { 200: { description: "{ id, size, sha256 }" }, 400: { description: "Refused, with the reason" }, 404: { description: "No such Project" } },
+    },
+    method: "PUT" as const,
+    path: "/projects/:projectId/uploads/:token",
+    handler: ({ params, query, request }: { params: Record<string, string>; query: URLSearchParams; request: Request }) => present(Effect.gen(function* () {
+      const token = params.token ?? "";
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return { status: 400, body: { error: "This upload link is not valid." } };
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `zelavis/api/v1/storage/uploads/${token}`,
+        query,
+        request,
+        principal: undefined,
+        permissions: [],
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  };
+
+  return [...proxyRoutes, ...dataRoutes, uploadRoute];
 }

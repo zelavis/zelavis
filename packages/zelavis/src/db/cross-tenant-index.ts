@@ -1,16 +1,19 @@
-import { Duration, Effect, Queue, Semaphore, Stream } from "effect";
+import { Cause, Duration, Effect, Queue, Semaphore, Stream } from "effect";
 import {
-  arrayOf, isBoolean, isFiniteNumber, isString, isTimestamp, objectFields, optional, parseJson, type JsonValidator,
+  arrayOf, isNonNegativeInteger, isString, isTimestamp, objectFields, optional, parseJson, type JsonValidator,
 } from "../core/json-validation.js";
 import { documentsFor, type DocumentsApi } from "./documents.js";
 import type {
   Analyzer, Document, DocumentCursor, DocumentFilter, DocumentSort, DocumentWrite,
+  EmbeddingIndex, SpatialIndex, IndexDefinition, SpatialFilter, SimilarFilter,
 } from "./document-model.js";
-import { documentRecord } from "./document-records.js";
+import { analyzerRecord, documentRecord, fingerprintOf, spatialRecord, embeddingRecord } from "./document-records.js";
 import { covers } from "./document-indexing.js";
+import { normalizeAnalyzer, normalizeEmbedding, normalizeIndex, normalizeSpatial } from "./document-definitions.js";
+import { crossTenantPage } from "./cross-tenant-page.js";
 import {
-  CrossTenantIndexExists, CrossTenantIndexNotFound, InvalidCrossTenantIndex, StoreError, UnindexedField,
-  type CursorMismatch, type DbError, type InvalidVectorQuery, type UnanalyzedCollection, type UnembeddedCollection,
+  CrossTenantIndexExists, CrossTenantIndexNotFound, CrossTenantIndexRefreshing, InvalidCrossTenantIndex, StoreError, UnindexedField,
+  type CursorMismatch, type InvalidVectorQuery, type UnanalyzedCollection, type UnembeddedCollection,
   type UnindexedGeometry, type UnknownEdge, type UnknownReference, type UnsupportedOrdering,
 } from "./errors.js";
 import type { DbEvent, EventCursor } from "./events.js";
@@ -29,9 +32,9 @@ import { PART_SEPARATOR, type ShardId, type TenantId } from "./topology.js";
  * once — every listing priced under 10 000 — has no such shard, and `scatter`
  * answers it by asking all of them, which is right for an operator and wrong
  * for a page a visitor is waiting on. A cross-Tenant index is the other answer:
- * one collection's documents from every Tenant, copied into one partition of
- * its own and kept current from each Tenant's log, so a live query reads one
- * partition however many Tenants there are.
+ * one collection's documents from every Tenant, copied into a bounded set of
+ * derived placements and kept current from each Tenant's log. A live query
+ * reads those placements, however many Tenants there are.
  *
  * What it holds is derived, never authoritative. Each Tenant partition's log is
  * read from a cursor kept per partition, and every batch of entries is written
@@ -43,14 +46,15 @@ import { PART_SEPARATOR, type ShardId, type TenantId } from "./topology.js";
  * entries are derived again from its records rather than from its history.
  *
  * It is eventually consistent: a query answers as of the last refresh, which
- * runs shortly after a write in this process and on a sweep otherwise, and says
- * when that was. A Tenant whose entries are being derived again may show
- * stale entries until that finishes.
+ * runs shortly after a write in this process or one a notification names (a
+ * writer's change feed, a follow loop), on a sweep otherwise, and says when
+ * that was. A durable re-derivation marker refuses queries until the
+ * complete replacement and its log tail are published.
  *
- * The entries are documents of the index's own partition on the global shard,
- * so filters, ranges, ordering, text search and paging behave exactly as they
- * do on a Tenant's collection. That partition is not a Tenant: nothing routes
- * to it, `tenants` does not list it, and it never moves.
+ * Each placement is the index's own partition on a declared shard. A source
+ * partition hashes to one placement, so entries and cursor still commit together.
+ * Query pages merge only these derived partitions. They are not Tenants and
+ * their immutable placement list does not follow source Tenant movement.
  *
  * Plugins' `service:` Tenants are never read: what a plugin keeps privately is
  * not the App's to search.
@@ -68,11 +72,17 @@ export interface CrossTenantIndexDefinition {
   readonly columns?: ReadonlyArray<string>;
   /** Fields made searchable as text; see `Analyzer`. */
   readonly analyzer?: Analyzer;
+  /** Derived placements, fixed at definition; defaults to the current data shards (at most 32). */
+  readonly shards?: ReadonlyArray<ShardId>;
+  readonly spatial?: SpatialIndex;
+  readonly embedding?: EmbeddingIndex;
+  /** Non-unique composite indexes over source paths. */
+  readonly indexes?: ReadonlyArray<IndexDefinition>;
 }
 
 export interface CrossTenantIndexSummary extends CrossTenantIndexDefinition {
   readonly createdAt: string;
-  /** When the last refresh of every Tenant finished, in this process. Absent until one has. */
+  /** Durably recorded when the last successful refresh of every Tenant finished. */
   readonly refreshedAt?: string;
   /** Tenant partitions the index is following. */
   readonly partitions: number;
@@ -90,6 +100,7 @@ export interface CrossTenantMatch {
   readonly data: JsonObject;
   readonly updatedAt: string;
   readonly score?: number;
+  readonly distance?: number;
   readonly highlights?: Record<string, ReadonlyArray<string>>;
 }
 
@@ -102,6 +113,8 @@ export interface CrossTenantQueryInput {
   readonly search?: string;
   readonly fuzzy?: boolean | number;
   readonly prefix?: boolean;
+  readonly geometry?: SpatialFilter;
+  readonly similar?: SimilarFilter;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Matches per page: 50 unless given, and at most 1000. */
   readonly limit?: number;
@@ -146,10 +159,10 @@ export interface CrossTenantIndexesApi {
    * than waiting for the background refresh.
    */
   readonly refresh: (name?: string) => Effect.Effect<ReadonlyArray<CrossTenantRefreshResult>, CrossTenantIndexNotFound>;
-  /** One page of matches from one partition, however many Tenants contributed them. */
+  /** One page merged from the bounded derived placements, regardless of Tenant count. */
   readonly query: (input: CrossTenantQueryInput) => Effect.Effect<
     CrossTenantQueryResult,
-    | CrossTenantIndexNotFound | UnindexedField | CursorMismatch | UnsupportedOrdering | UnknownReference
+    | CrossTenantIndexNotFound | CrossTenantIndexRefreshing | UnindexedField | CursorMismatch | UnsupportedOrdering | UnknownReference
     | UnanalyzedCollection | UnindexedGeometry | UnknownEdge | UnembeddedCollection | InvalidVectorQuery
   >;
 }
@@ -163,16 +176,25 @@ export interface CrossTenantRefreshOptions {
    * One minute unless given.
    */
   readonly sweepInterval?: Duration.Input;
+  /**
+   * Partitions written somewhere this process does not see: each one named is refreshed as soon as the
+   * debounce allows, as a write here would be. A writer on another host is reached through its change
+   * feed (`remoteChanges` in `leader.ts`), and a partition this database follows from a leader is named by
+   * its own follow loop. Only a hint, like a write here: the sweep still finds whatever it misses.
+   */
+  readonly notifications?: Stream.Stream<PartitionKey>;
 }
 
 /** The partition, on the global shard, holding every index's definition. */
 const REGISTRY_PARTITION = "zv.cti";
-/** Each index's own partition, on the global shard. */
+/** Each index's own partition, on each shard its immutable definition names. */
 const indexPartition = (name: string) => `zv.cti.${name}`;
 
 const DEFINITIONS = "definitions";
 const ENTRIES = "entries";
 const CURSORS = "cursors";
+const STATUSES = "statuses";
+const BUILDING = "building";
 
 /** Log entries read, and so entries written, per transaction. */
 const BATCH = 256;
@@ -211,15 +233,13 @@ const cursorOf = (data: JsonObject): StoredCursor => ({
   ...(typeof data.incarnation === "string" ? { incarnation: data.incarnation } : {}),
 });
 
-type StoredDefinition = CrossTenantIndexDefinition & { readonly createdAt: string };
+type StoredDefinition = CrossTenantIndexDefinition & { readonly createdAt: string; readonly incarnation: string };
 
-const analyzerRecord = objectFields<Analyzer>({
-  fields: arrayOf(isString), version: isFiniteNumber, fold: optional(isBoolean),
-  stopWords: optional(arrayOf(isString)), minLength: optional(isFiniteNumber), language: optional(isString),
-});
 const isStoredDefinition: JsonValidator<StoredDefinition> = objectFields<StoredDefinition>({
   name: isString, collection: isString, columns: optional(arrayOf(isString)),
-  analyzer: optional(analyzerRecord), createdAt: isTimestamp,
+  analyzer: optional(analyzerRecord), createdAt: isTimestamp, incarnation: isString,
+  shards: optional(arrayOf(isString)), spatial: optional(spatialRecord), embedding: optional(embeddingRecord),
+  indexes: optional(arrayOf((value): value is IndexDefinition => typeof value === "object" && value !== null && "name" in value && typeof value.name === "string" && "fields" in value && Array.isArray(value.fields))),
 });
 
 /** A stored definition, checked rather than trusted: it was written by an earlier process. */
@@ -247,6 +267,10 @@ const normalized = (definition: CrossTenantIndexDefinition): CrossTenantIndexDef
   collection: definition.collection,
   ...(definition.columns === undefined ? {} : { columns: [...definition.columns] }),
   ...(definition.analyzer === undefined ? {} : { analyzer: definition.analyzer }),
+  ...(definition.shards === undefined ? {} : { shards: [...definition.shards] }),
+  ...(definition.spatial === undefined ? {} : { spatial: definition.spatial }),
+  ...(definition.embedding === undefined ? {} : { embedding: definition.embedding }),
+  ...(definition.indexes === undefined ? {} : { indexes: definition.indexes }),
 });
 
 export const crossTenantIndexesOver = (options: {
@@ -258,8 +282,19 @@ export const crossTenantIndexesOver = (options: {
 }) => Effect.gen(function* () {
   const { globalShard, shards, tenantsOn, routed } = options;
 
-  const internal = (partition: string): DocumentsApi =>
-    documentsFor(globalShard.partition(partition), partition);
+  const derivedShards = new Map([[globalShard.shard, globalShard], ...shards]);
+  const placementIds = (definition: CrossTenantIndexDefinition) => definition.shards ?? [globalShard.shard];
+  const shardFor = (definition: CrossTenantIndexDefinition, partition: string) => {
+    let hash = 2166136261;
+    for (const byte of new TextEncoder().encode(partition)) hash = Math.imul(hash ^ byte, 16777619) >>> 0;
+    const placements = placementIds(definition);
+    return placements[hash % placements.length];
+  };
+  const internal = (partition: string, shard = globalShard.shard): DocumentsApi => {
+    const store = derivedShards.get(shard);
+    if (store === undefined) throw new Error(`Derived index shard "${shard}" is unavailable`);
+    return documentsFor(store.partition(partition), partition);
+  };
 
   const registry = internal(REGISTRY_PARTITION);
   const ensure = (documents: DocumentsApi, name: string, input: Parameters<DocumentsApi["createCollection"]>[0]) =>
@@ -302,6 +337,22 @@ export const crossTenantIndexesOver = (options: {
     failures: ReadonlyArray<{ readonly partition: PartitionKey; readonly error: string }>;
   }
   const status = new Map<string, Status>();
+  const statusRecord = objectFields<Status>({
+    refreshedAt: optional(isTimestamp), partitions: isNonNegativeInteger,
+    failures: arrayOf(objectFields<{ partition: string; error: string }>({ partition: isString, error: isString })),
+  });
+  if (yield* registry.collectionExists(STATUSES)) {
+    for (const document of yield* everyDocument(registry, STATUSES)) {
+      if (!statusRecord(document.data)) return yield* Effect.die(new Error(`The stored status of cross-Tenant index "${document.id}" is malformed`));
+      status.set(document.id, document.data);
+    }
+  }
+  if (definitions.size > 0) yield* ensure(registry, STATUSES, { name: STATUSES, columns: [] });
+  const persistStatus = (name: string, next: Status) => Effect.gen(function* () {
+    yield* ensure(registry, STATUSES, { name: STATUSES, columns: [] });
+    yield* Effect.orDie(registry.write({ operations: [{ _tag: "Upsert", collection: STATUSES, id: name, data: next as unknown as JsonObject }] }));
+    status.set(name, next);
+  });
   /** One refresh, define or drop of an index at a time. */
   const locks = new Map<string, Semaphore.Semaphore>();
   const lockOf = (name: string) => {
@@ -315,9 +366,9 @@ export const crossTenantIndexesOver = (options: {
   const registryLock = Semaphore.makeUnsafe(1);
 
   /** The index's own documents, its collections created if a crash came between define and the first refresh. */
-  const indexDocuments = (definition: CrossTenantIndexDefinition) =>
+  const indexDocuments = (definition: CrossTenantIndexDefinition, shard: ShardId) =>
     Effect.gen(function* () {
-      const documents = internal(indexPartition(definition.name));
+      const documents = internal(indexPartition(definition.name), shard);
       yield* ensure(documents, ENTRIES, {
         name: ENTRIES,
         ...(definition.columns === undefined
@@ -326,8 +377,12 @@ export const crossTenantIndexesOver = (options: {
         ...(definition.analyzer === undefined
           ? {}
           : { analyzer: { ...definition.analyzer, fields: definition.analyzer.fields.map(sourcePath) } }),
+        ...(definition.spatial === undefined ? {} : { spatial: { ...definition.spatial, fields: definition.spatial.fields.map(sourcePath) } }),
+        ...(definition.embedding === undefined ? {} : { embedding: { ...definition.embedding, field: sourcePath(definition.embedding.field) } }),
+        ...(definition.indexes === undefined ? {} : { indexes: definition.indexes.map(index => ({ ...index, fields: index.fields.map(field => ({ ...field, path: sourcePath(field.path) })) })) }),
       });
       yield* ensure(documents, CURSORS, { name: CURSORS, columns: [] });
+      yield* ensure(documents, BUILDING, { name: BUILDING, columns: [] });
       return documents;
     });
 
@@ -454,11 +509,10 @@ export const crossTenantIndexesOver = (options: {
     const rederive = (current: Held) =>
       Effect.gen(function* () {
         rederived = true;
-        if (current !== undefined) {
-          yield* Effect.orDie(documents.write({
-            operations: [{ _tag: "Delete", collection: CURSORS, id: partition, expectedVersion: current.record }],
-          }));
-        }
+        yield* Effect.orDie(documents.write({ operations: [
+          { _tag: "Upsert", collection: BUILDING, id: partition, data: { partition } },
+          ...(current === undefined ? [] : [{ _tag: "Delete" as const, collection: CURSORS, id: partition, expectedVersion: current.record }]),
+        ] }));
         const head = yield* store.events.head;
         const pass = crypto.randomUUID();
 
@@ -499,13 +553,17 @@ export const crossTenantIndexesOver = (options: {
         const start: StoredCursor = head === undefined ? {} : { cursor: head };
         const held = heldAfter(yield* Effect.orDie(documents.write({ operations: [cursorWrite(start, undefined)] })), undefined);
         yield* replay(start, held);
+        yield* Effect.orDie(documents.write({ operations: [{ _tag: "Delete", collection: BUILDING, id: partition }] }));
       });
 
     const stored = yield* Effect.map(
       Effect.orDie(documents.findById({ collection: CURSORS, id: partition })),
       (document) => document === undefined ? undefined : { record: document.version, ...cursorOf(document.data) },
     );
-    if (stored !== undefined && stored.incarnation === incarnation) {
+    const interrupted = yield* Effect.orDie(documents.findById({ collection: BUILDING, id: partition }));
+    if (interrupted !== undefined) {
+      yield* rederive(stored === undefined ? undefined : { record: stored.record });
+    } else if (stored !== undefined && stored.incarnation === incarnation) {
       // Compacted past the cursor: the history it would read is gone.
       yield* replay(stored, { record: stored.record }).pipe(
         Effect.catchTag("CursorCompacted", () => Effect.flatMap(
@@ -547,6 +605,9 @@ export const crossTenantIndexesOver = (options: {
           operations: page.documents.map((entry): DocumentWrite => ({ _tag: "Delete", collection: ENTRIES, id: entry.id })),
         });
       }
+      if ((yield* documents.findById({ collection: BUILDING, id: partition })) !== undefined) {
+        yield* documents.write({ operations: [{ _tag: "Delete", collection: BUILDING, id: partition }] });
+      }
       if ((yield* documents.findById({ collection: CURSORS, id: partition })) !== undefined) {
         yield* documents.write({ operations: [{ _tag: "Delete", collection: CURSORS, id: partition }] });
       }
@@ -563,7 +624,8 @@ export const crossTenantIndexesOver = (options: {
     lockOf(name).withPermit(Effect.gen(function* () {
       const definition = definitions.get(name);
       if (definition === undefined) return undefined;
-      const documents = yield* indexDocuments(definition);
+      const placements = new Map<ShardId, DocumentsApi>();
+      for (const shard of placementIds(definition)) placements.set(shard, yield* indexDocuments(definition, shard));
       // A pass after writes visits only what was written, without listing
       // every shard; a partition written and then removed is found empty and
       // its entries go.
@@ -572,48 +634,47 @@ export const crossTenantIndexesOver = (options: {
       let applied = 0;
       let rederived = 0;
       yield* Effect.forEach(visit, (partition) =>
-        syncPartition(definition, documents, partition).pipe(
+        syncPartition(definition, placements.get(shardFor(definition, partition))!, partition).pipe(
           Effect.map((result) => {
             applied += result.applied;
             if (result.rederived) rederived += 1;
           }),
           // A Tenant that cannot be read now — being moved, or its lenses
           // being rebuilt — is said, and the others carry on.
-          Effect.catch((error: DbError) => Effect.sync(() => {
-            failures.push({ partition, error: describe(error) });
+          Effect.catchCause(cause => Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.sync(() => {
+            failures.push({ partition, error: describe(Cause.squash(cause)) });
           })),
         ), { concurrency: PARTITION_CONCURRENCY, discard: true });
 
       let removed = 0;
       let followed = 0;
       if (only === undefined) {
-        const live = new Set(visit);
-        // A page of cursors at a time, so a sweep holds a page in memory
-        // rather than one record per Tenant.
-        let after: DocumentCursor | undefined;
-        for (;;) {
-          const page = yield* Effect.orDie(documents.findPage({
-            collection: CURSORS, limit: ENTRY_PAGE, ...(after === undefined ? {} : { after }),
-          }));
-          for (const cursor of page.documents) {
-            followed += 1;
-            if (live.has(cursor.id)) continue;
-            // Not listed may mean mid-move between two listings; only a
-            // partition routing finds empty is gone.
-            if ((yield* Effect.orDie(routed(cursor.id).events.head)) !== undefined) continue;
-            yield* removePartition(documents, cursor.id);
-            removed += 1;
-            followed -= 1;
+        const live = new Set(visit), removedPartitions = new Set<string>();
+        for (const documents of placements.values()) {
+          // A cut-off re-derivation may have a marker but no cursor. Sweep both.
+          for (const collection of [CURSORS, BUILDING]) {
+            let after: DocumentCursor | undefined;
+            for (;;) {
+              const page = yield* Effect.orDie(documents.findPage({ collection, limit: ENTRY_PAGE, ...(after === undefined ? {} : { after }) }));
+              for (const cursor of page.documents) {
+                if (collection === CURSORS) followed += 1;
+                if (live.has(cursor.id)) continue;
+                if ((yield* Effect.orDie(routed(cursor.id).events.head)) !== undefined) continue;
+                yield* removePartition(documents, cursor.id);
+                if (!removedPartitions.has(cursor.id)) { removedPartitions.add(cursor.id); removed += 1; }
+                if (collection === CURSORS) followed -= 1;
+              }
+              if (page.next === undefined) break;
+              after = page.next;
+            }
           }
-          if (page.next === undefined) break;
-          after = page.next;
         }
       }
 
       const previous = status.get(name);
-      status.set(name, {
+      yield* persistStatus(name, {
         ...(only === undefined
-          ? (failures.length === 0 ? { refreshedAt: new Date().toISOString() } : {})
+          ? (failures.length === 0 ? { refreshedAt: new Date().toISOString() } : (previous?.refreshedAt === undefined ? {} : { refreshedAt: previous.refreshedAt }))
           : (previous?.refreshedAt === undefined ? {} : { refreshedAt: previous.refreshedAt })),
         partitions: only === undefined ? followed : previous?.partitions ?? 0,
         failures,
@@ -628,20 +689,40 @@ export const crossTenantIndexesOver = (options: {
 
   const api: CrossTenantIndexesApi = {
     define: (input) =>
-      registryLock.withPermit(Effect.gen(function* () {
+      registryLock.withPermit(lockOf(input.name).withPermit(Effect.gen(function* () {
         yield* validate(input);
         if (definitions.has(input.name)) return yield* new CrossTenantIndexExists({ name: input.name });
-        const stored: StoredDefinition = { ...normalized(input), createdAt: new Date().toISOString() };
+        const requested = input.shards ?? [...shards.keys()].filter(id => !id.startsWith("zv.")).sort().slice(0, 32);
+        if (!Array.isArray(requested) || requested.length < 1 || requested.length > 32 || new Set(requested).size !== requested.length || requested.some(id => !derivedShards.has(id))) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "shards must name 1 to 32 distinct available shards" });
+        const checked = yield* Effect.gen(function* () {
+          const indexes: IndexDefinition[] = [];
+          if (input.indexes !== undefined && (!Array.isArray(input.indexes) || input.indexes.length > 16)) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "at most 16 composite indexes are allowed" });
+          if (new Set((input.indexes ?? []).map(index => index.name)).size !== (input.indexes?.length ?? 0)) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "composite index names must be distinct" });
+          for (const index of input.indexes ?? []) {
+            if (index.unique === true) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "a derived cross-Tenant index cannot enforce source uniqueness" });
+            indexes.push(yield* normalizeIndex(input.name, index));
+          }
+          return {
+            ...(input.analyzer === undefined ? {} : { analyzer: yield* normalizeAnalyzer(input.name, input.analyzer) }),
+            ...(input.spatial === undefined ? {} : { spatial: yield* normalizeSpatial(input.name, input.spatial) }),
+            ...(input.embedding === undefined ? {} : { embedding: yield* normalizeEmbedding(input.name, input.embedding) }),
+            ...(input.indexes === undefined ? {} : { indexes }),
+          };
+        }).pipe(Effect.catchTags({ InvalidConstraint: error => Effect.fail(new InvalidCrossTenantIndex({ name: input.name, reason: error.reason })), InvalidIndex: error => Effect.fail(new InvalidCrossTenantIndex({ name: input.name, reason: error.reason })) }));
+        const stored: StoredDefinition = { ...normalized(input), ...checked, shards: [...requested], createdAt: new Date().toISOString(), incarnation: crypto.randomUUID() };
         yield* ensure(registry, DEFINITIONS, { name: DEFINITIONS });
-        yield* indexDocuments(stored);
+        yield* ensure(registry, STATUSES, { name: STATUSES, columns: [] });
         yield* Effect.orDie(registry.write({
           operations: [{ _tag: "Insert", collection: DEFINITIONS, id: stored.name, data: stored as unknown as JsonObject }],
         }));
         definitions.set(stored.name, stored);
+        // Persist the immutable definition first. A cut-off creation resumes
+        // these exact declarations on refresh, never an orphan's different ones.
+        for (const shard of placementIds(stored)) yield* indexDocuments(stored, shard);
         fullDue = true;
         yield* Queue.offer(wake, undefined);
         return summaryOf(stored);
-      })),
+      }))),
 
     list: Effect.sync(() => [...definitions.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map(summaryOf)),
 
@@ -654,8 +735,14 @@ export const crossTenantIndexesOver = (options: {
           // The entries go first and the definition last, so a drop cut off
           // part way leaves an index that is still listed and can be dropped
           // again, never entries nothing names.
-          const entries = yield* Effect.orDie(globalShard.drop(indexPartition(name)));
-          yield* Effect.orDie(registry.write({ operations: [{ _tag: "Delete", collection: DEFINITIONS, id: name }] }));
+          const definition = yield* require_(name);
+          let entries = 0;
+          for (const shard of placementIds(definition)) entries += yield* Effect.orDie(derivedShards.get(shard)!.drop(indexPartition(name)));
+          const hasStatus = yield* registry.collectionExists(STATUSES);
+          yield* Effect.orDie(registry.write({ operations: [
+            { _tag: "Delete", collection: DEFINITIONS, id: name },
+            ...(hasStatus ? [{ _tag: "Delete" as const, collection: STATUSES, id: name }] : []),
+          ] }));
           definitions.delete(name);
           status.delete(name);
           return { name, entries };
@@ -674,26 +761,34 @@ export const crossTenantIndexesOver = (options: {
       }),
 
     query: (input) =>
-      Effect.gen(function* () {
+      lockOf(input.index).withPermit(Effect.gen(function* () {
         const definition = yield* require_(input.index);
         for (const path of [...(input.where ?? []).map((filter) => filter.path), ...(input.orderBy ?? []).map((sort) => sort.path)]) {
           const op = (input.where ?? []).find((filter) => filter.path === path)?.op;
           if (op === "search" || op === "phrase") continue;
-          if (!covers(definition.columns, path)) return yield* new UnindexedField({ collection: definition.name, path });
+          if (!covers(definition.columns, path) && !definition.indexes?.some(index => index.fields.some(field => field.path === path))) return yield* new UnindexedField({ collection: definition.name, path });
         }
-        const documents = yield* indexDocuments(definition);
+        const placements: DocumentsApi[] = [];
+        for (const shard of placementIds(definition)) {
+          const documents = yield* indexDocuments(definition, shard);
+          const building = yield* Effect.orDie(documents.findPage({ collection: BUILDING, limit: 1 }));
+          if (building.documents.length > 0) return yield* new CrossTenantIndexRefreshing({ name: definition.name, partition: building.documents[0].id });
+          placements.push(documents);
+        }
         const where: DocumentFilter[] = (input.where ?? []).map((filter) => ({ ...filter, path: sourcePath(filter.path) }));
         if (input.tenants !== undefined) where.push({ path: "tenant", op: "in", value: [...input.tenants] });
-        const page = yield* documents.findPage({
+        const query = {
           collection: ENTRIES,
           ...(where.length === 0 ? {} : { where }),
           ...(input.search === undefined ? {} : { search: input.search }),
           ...(input.fuzzy === undefined ? {} : { fuzzy: input.fuzzy }),
           ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
           ...(input.orderBy === undefined ? {} : { orderBy: input.orderBy.map((sort) => ({ ...sort, path: sourcePath(sort.path) })) }),
-          ...(input.limit === undefined ? {} : { limit: input.limit }),
-          ...(input.after === undefined ? {} : { after: input.after }),
-        });
+          ...(input.geometry === undefined ? {} : { geometry: { ...input.geometry, field: sourcePath(input.geometry.field) } }),
+          ...(input.similar === undefined ? {} : { similar: { ...input.similar, field: sourcePath(input.similar.field) } }),
+        };
+        const { after: _after, limit: _limit, ...shape } = input;
+        const page = yield* crossTenantPage(placements, query, fingerprintOf({ incarnation: definition.incarnation, shards: placementIds(definition), shape }), input);
         const refreshedAt = status.get(definition.name)?.refreshedAt;
         return {
           matches: page.documents.map((entry): CrossTenantMatch => ({
@@ -704,6 +799,7 @@ export const crossTenantIndexesOver = (options: {
             data: entry.data.doc as JsonObject,
             updatedAt: entry.data.updatedAt as string,
             ...(entry.score === undefined ? {} : { score: entry.score }),
+            ...(entry.distance === undefined ? {} : { distance: entry.distance }),
             ...(entry.highlights === undefined
               ? {}
               : { highlights: Object.fromEntries(Object.entries(entry.highlights).map(([path, snippets]) => [path.startsWith("doc.") ? path.slice(4) : path, snippets])) }),
@@ -712,7 +808,7 @@ export const crossTenantIndexesOver = (options: {
           ...(refreshedAt === undefined ? {} : { refreshedAt }),
         };
       }).pipe(Effect.catchTag("UnindexedField", (error) =>
-        Effect.fail(new UnindexedField({ collection: input.index, path: error.path.startsWith("doc.") ? error.path.slice(4) : error.path })))),
+        Effect.fail(new UnindexedField({ collection: input.index, path: error.path.startsWith("doc.") ? error.path.slice(4) : error.path }))))),
   };
 
   /** Note a write to a Tenant partition, so the background refresh reads it soon. */
@@ -747,16 +843,22 @@ export const crossTenantIndexesOver = (options: {
         refreshOne(name, only).pipe(
           // A defect in one pass is recorded against that index and the loop
           // goes on; the next pass tries again.
-          Effect.catchCause((cause) => Effect.sync(() => {
+          Effect.catchCause((cause) => Effect.gen(function* () {
             const previous = status.get(name);
-            status.set(name, {
+            const next = {
               ...(previous?.refreshedAt === undefined ? {} : { refreshedAt: previous.refreshedAt }),
               partitions: previous?.partitions ?? 0,
               failures: [{ partition: "*", error: String(cause) }],
-            });
+            };
+            status.set(name, next);
+            yield* persistStatus(name, next).pipe(Effect.catchCause((failure) =>
+              Effect.logError("Could not persist cross-Tenant index refresh failure; the next pass will retry", name, failure)));
           })),
         ), { discard: true });
     return Effect.gen(function* () {
+      if (refresh.notifications !== undefined) {
+        yield* Effect.forkScoped(Stream.runForEach(refresh.notifications, touched));
+      }
       yield* pass();
       for (;;) {
         const woke = yield* Effect.race(Effect.as(Queue.take(wake), true), Effect.as(idle(sweepInterval), false));

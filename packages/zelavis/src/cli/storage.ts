@@ -4,7 +4,7 @@ import { evaluate, integration, present } from "../core/runtime/effect-boundary.
 import { bodyFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis storage <list|metadata|get|put|delete> --project ID [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type TYPE] [--cache-control VALUE] [--content-disposition VALUE] [--metadata JSON] [--url URL] [--token TOKEN] [--json]";
+  "zelavis storage <list|metadata|get|put|delete|import|quota|set-quota|create-upload|upload|confirm-upload|cleanup-uploads> --project ID [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type TYPE] [--cache-control VALUE] [--content-disposition VALUE] [--metadata JSON] [--url URL] [--token TOKEN] [--json]";
 
 const files = (input: CliInput) => input.client.storage(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "storage commands need --project"));
 const path = (input: CliInput) => required(input, 0, "A file path");
@@ -12,8 +12,28 @@ const path = (input: CliInput) => required(input, 0, "A file path");
 const table: CliTable = {
   name: "storage",
   usage,
-  valued: ["--project", "--file", "--text", "--output", "--content-type", "--cache-control", "--content-disposition", "--metadata"],
+  valued: ["--project", "--file", "--text", "--output", "--content-type", "--cache-control", "--content-disposition", "--metadata", "--data"],
   actions: {
+    quota: { run: (input) => files(input).quota() },
+    "set-quota": { run: (input) => files(input).setQuota(bodyFlag(input, "--data", "storage set-quota")) },
+    "create-upload": { run: (input) => files(input).createUpload(bodyFlag(input, "--data", "storage create-upload")) },
+    upload: {
+      run: (input) => present(Effect.gen(function* () {
+        const token = yield* evaluate(() => required(input, 0, "An upload token"));
+        const file = input.flags.get("--file");
+        if (file === undefined) throw new Error("storage upload needs --file FILE.");
+        const bytes = yield* integration(() => readFile(file));
+        const contentType = input.flags.get("--content-type");
+        return yield* integration(() => files(input).upload(token, new Uint8Array(bytes), contentType === undefined ? undefined : { contentType }));
+      })),
+    },
+    "confirm-upload": { run: (input) => files(input).confirmUpload(required(input, 0, "An upload id"), input.flags.has("--data") ? bodyFlag(input, "--data", "storage confirm-upload") : undefined) },
+    "cleanup-uploads": { run: (input) => files(input).cleanupUploads() },
+    import: {
+      run: (input) => files(input).import(bodyFlag(input, "--data", "storage import")),
+      text: (result: { copied: number; skipped: number; bytes: number; next?: string }) =>
+        `Copied ${result.copied} files (${result.bytes} bytes), skipped ${result.skipped} already here.${result.next ? ` More remain: repeat with "after": ${JSON.stringify(result.next)}.` : ""}`,
+    },
     list: {
       run: (input) => files(input).list(input.positional[0]),
       text: (result: { files: readonly { path: string; size?: number; contentType?: string }[] }) =>

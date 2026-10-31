@@ -535,17 +535,50 @@ export const parseSearchQuery = (
  * which names the tenant and collection: a clause on the bare path would read
  * every collection's postings for it.
  */
+export interface SearchLenses {
+  /** The field a path's terms are posted under. */
+  readonly fieldFor: (path: string) => string;
+  /** The field a path's adjacent word pairs are posted under (`Analyzer.phrases`). */
+  readonly pairFieldFor: (path: string) => string;
+  /** Every term a query term stands for: itself and its synonyms. */
+  readonly expand: (token: string) => ReadonlyArray<string>;
+  readonly termsOf: (field: string) => Effect.Effect<ReadonlyArray<string>, StoreError>;
+}
+
+/**
+ * Whether the postings `toPlanQuery` reads decide the clause exactly, so no
+ * document has to be read to check it: a word, a prefix, a fuzzy word (each
+ * expanded over the stored terms), and a phrase of two words whose pairs are
+ * posted. A longer phrase is narrowed by its pairs but needs its order checked,
+ * and a negation is not a set the postings hold at all.
+ */
+export const answeredByPostings = (clause: SearchClause, analyzer: Analyzer): boolean => {
+  switch (clause.kind) {
+    case "term":
+    case "prefix":
+    case "fuzzy":
+      return true;
+    case "phrase":
+      return clause.tokens.length <= 1 || (analyzer.phrases === true && clause.tokens.length === 2);
+    case "and":
+    case "or":
+      return clause.clauses.every((c) => answeredByPostings(c, analyzer));
+    case "not":
+      return false;
+  }
+};
+
 export const toPlanQuery = (
   clause: SearchClause,
   analyzer: Analyzer,
-  fieldFor: (path: string) => string,
-  termsOf: (field: string) => Effect.Effect<ReadonlyArray<string>, StoreError>,
+  lenses: SearchLenses,
 ): Effect.Effect<Query | undefined, StoreError> =>
   Effect.gen(function* () {
+    const { fieldFor, pairFieldFor, expand, termsOf } = lenses;
     switch (clause.kind) {
       case "term": {
         const fields = clause.field ? [clause.field] : analyzer.fields;
-        const sub = fields.map((f) => term(fieldFor(f), clause.token));
+        const sub = fields.flatMap((f) => expand(clause.token).map((token) => term(fieldFor(f), token)));
         return sub.length === 1 ? sub[0] : or(...sub);
       }
       case "prefix": {
@@ -564,14 +597,20 @@ export const toPlanQuery = (
             subClauses.push(fieldSubs.length === 1 ? fieldSubs[0]! : or(...fieldSubs));
           }
         }
-        if (subClauses.length === 0) return undefined;
+        // No matching dictionary word is an empty set. `undefined` means the
+        // postings cannot decide, so dropping the residual would match all.
+        if (subClauses.length === 0) return or();
         return subClauses.length === 1 ? subClauses[0] : or(...subClauses);
       }
       case "phrase": {
         const fields = clause.field ? [clause.field] : analyzer.fields;
         const subClauses: Query[] = [];
         for (const f of fields) {
-          const fieldTerms = clause.tokens.map((t) => term(fieldFor(f), t));
+          // With pairs posted, a phrase is the pairs it is made of: adjacent by
+          // construction, where its words alone are only present.
+          const fieldTerms = analyzer.phrases === true && clause.tokens.length > 1
+            ? clause.tokens.slice(1).map((t, at) => term(pairFieldFor(f), `${clause.tokens[at]!} ${t}`))
+            : clause.tokens.map((t) => term(fieldFor(f), t));
           subClauses.push(fieldTerms.length === 1 ? fieldTerms[0]! : and(...fieldTerms));
         }
         if (subClauses.length === 0) return undefined;
@@ -581,7 +620,7 @@ export const toPlanQuery = (
         const queries: Query[] = [];
         for (const c of clause.clauses) {
           if (c.kind === "not") continue;
-          const q = yield* toPlanQuery(c, analyzer, fieldFor, termsOf);
+          const q = yield* toPlanQuery(c, analyzer, lenses);
           if (q !== undefined) queries.push(q);
         }
         if (queries.length === 0) return undefined;
@@ -591,7 +630,7 @@ export const toPlanQuery = (
         const queries: Query[] = [];
         for (const c of clause.clauses) {
           if (c.kind === "not") return undefined;
-          const q = yield* toPlanQuery(c, analyzer, fieldFor, termsOf);
+          const q = yield* toPlanQuery(c, analyzer, lenses);
           if (q === undefined) return undefined;
           queries.push(q);
         }
@@ -609,15 +648,17 @@ export const matchesSearchClause = (
   analyzer: Analyzer,
   tokenize: (text: string, analyzer: Analyzer) => Array<string>,
   readPath: (data: JsonObject, path: string) => unknown,
+  expand: (token: string) => ReadonlyArray<string> = (token) => [token],
 ): boolean => {
   switch (clause.kind) {
     case "term": {
       const fields = clause.field ? [clause.field] : analyzer.fields;
+      const wanted = expand(clause.token);
       for (const f of fields) {
         const val = readPath(data, f);
         if (typeof val !== "string") continue;
         const tokens = tokenize(val, analyzer);
-        if (tokens.includes(clause.token)) return true;
+        if (wanted.some((token) => tokens.includes(token))) return true;
       }
       return false;
     }
@@ -654,10 +695,10 @@ export const matchesSearchClause = (
       return false;
     }
     case "and":
-      return clause.clauses.every((c) => matchesSearchClause(data, c, analyzer, tokenize, readPath));
+      return clause.clauses.every((c) => matchesSearchClause(data, c, analyzer, tokenize, readPath, expand));
     case "or":
-      return clause.clauses.some((c) => matchesSearchClause(data, c, analyzer, tokenize, readPath));
+      return clause.clauses.some((c) => matchesSearchClause(data, c, analyzer, tokenize, readPath, expand));
     case "not":
-      return !matchesSearchClause(data, clause.clause, analyzer, tokenize, readPath);
+      return !matchesSearchClause(data, clause.clause, analyzer, tokenize, readPath, expand);
   }
 };

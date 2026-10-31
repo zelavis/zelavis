@@ -77,7 +77,7 @@ test("a table URL opens the Database slide and a system view URL the System Tabl
   const runtime = { capabilities: { database: { available: true } }, services: [] };
   const menu = projectMenu({ control: { services: [] }, project, runtime, content: [], tables, workloads: {} });
   const database = menu.find(item => item.title === "Backend").items.find(item => item.title === "Database");
-  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "Tenants", "orders", "Plugin Tables", "System Tables"]);
+  assert.deepEqual(database.items.map(item => item.title), ["Create Table", "Tenants", "Cross-Tenant Indexes", "Images", "orders", "Plugin Tables", "System Tables"]);
   assert.deepEqual(database.items[0], { title: "Create Table", path: `/projects/${encodeURIComponent(project.id)}/database`, search: { databaseDialog: "create-table" } });
   const plugin = database.items.find(item => item.title === "Plugin Tables");
   assert.deepEqual(plugin.items.map(item => item.title), ["auth · settings"]);
@@ -112,6 +112,7 @@ test("only the slide a page belongs to is active, not every item sharing its pat
   };
   // The Tenants page belongs to the Database slide alone: neither of the slides beside its tables lights up.
   assert.deepEqual(active("/tenants"), [["Plugin Tables", false], ["System Tables", false]]);
+  assert.deepEqual(active("/cross-tenant-indexes"), [["Plugin Tables", false], ["System Tables", false]]);
   assert.deepEqual(active("", "?databaseTenant=zelavis-app&databaseTable=orders"), [["Plugin Tables", false], ["System Tables", false]]);
   assert.deepEqual(active("", "?databaseSystemView=events"), [["Plugin Tables", false], ["System Tables", true]]);
   assert.deepEqual(active("", "?databaseTenant=service%3Aauth&databaseTable=settings"), [["Plugin Tables", true], ["System Tables", false]]);

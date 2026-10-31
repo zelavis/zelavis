@@ -67,7 +67,7 @@ test("system views: every view is listed and queryable", async (t) => {
       const events = yield* views.query({ name: "events" });
       assert.deepEqual(
         events.rows.map((r) => r.data.type),
-        ["collection.created", "document.upserted"],
+        ["collection.created", "collection.updated", "document.upserted"],
       );
 
       const unknown = yield* views.query({ name: "zv_events" }).pipe(

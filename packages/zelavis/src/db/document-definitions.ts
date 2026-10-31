@@ -5,7 +5,7 @@ import { COLLECTION_NAME_PATTERN } from "./naming.js";
 import { InvalidIndex, InvalidConstraint } from "./errors.js";
 import { isUsableVector } from "./vectors.js";
 
-import { covers } from "./document-indexing.js";
+import { covers, tokenize } from "./document-indexing.js";
 import { type Analyzer, type CheckConstraint, type DocumentFilter, type EdgeDefinition, type EmbeddingIndex, type IndexDefinition, type IndexField, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
 import { matches, orderable } from "./document-planner.js";
 import { readPath } from "./document-records.js";
@@ -167,6 +167,23 @@ export const normalizeAnalyzer = (
     (!Array.isArray(analyzer.stopWords) || analyzer.stopWords.some((word) => typeof word !== "string"))) {
     return invalid("stopWords is a list of words");
   }
+  if (analyzer.phrases !== undefined && typeof analyzer.phrases !== "boolean") {
+    return invalid("phrases is true or false");
+  }
+  if (analyzer.synonyms !== undefined) {
+    if (!Array.isArray(analyzer.synonyms)) return invalid("synonyms is a list of groups of words");
+    for (const group of analyzer.synonyms as ReadonlyArray<unknown>) {
+      if (!Array.isArray(group) || group.length < 2 || group.some((word) => typeof word !== "string")) {
+        return invalid("each synonym group is a list of at least two words");
+      }
+      for (const word of group as ReadonlyArray<string>) {
+        // A synonym stands in for one query term, so it must be one term.
+        if (tokenize(word, analyzer).length !== 1) {
+          return invalid(`synonym ${JSON.stringify(word)} is not one word under this analyzer`);
+        }
+      }
+    }
+  }
   return Effect.succeed({
     fields: [...analyzer.fields],
     version: analyzer.version,
@@ -174,6 +191,8 @@ export const normalizeAnalyzer = (
     ...(analyzer.stopWords === undefined ? {} : { stopWords: [...analyzer.stopWords] }),
     ...(analyzer.minLength === undefined ? {} : { minLength: analyzer.minLength }),
     ...(analyzer.language === undefined ? {} : { language: analyzer.language }),
+    ...(analyzer.phrases === undefined ? {} : { phrases: analyzer.phrases }),
+    ...(analyzer.synonyms === undefined ? {} : { synonyms: analyzer.synonyms.map((group) => [...group]) }),
   });
 };
 

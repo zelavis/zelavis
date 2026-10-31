@@ -1,7 +1,7 @@
 import { CollectionFieldEntrySchema } from "./schema/field-types.js";
 import { isPositiveInteger, isString, isBoolean, objectFields, parseJson } from "../core/json-validation.js";
 import { Effect, Stream, Schema } from "effect";
-import { SchemaVersionExists, SchemaNotFound } from "./errors.js";
+import { dieUnlessMoving, SchemaVersionExists, type TenantMoving } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import { equals } from "./query.js";
 import type { ObjectStoreApi } from "./store.js";
@@ -24,8 +24,8 @@ import {
  */
 const SCHEMA_NS = "zv.schema";
 const schemaKey = (collection: string, version: number) => `${collection}/${version}`;
-const ACTIVE_NS = "zv.schema.active";
-const activeKey = (collection: string) => collection;
+export const ACTIVE_NS = "zv.schema.active";
+export const activeKey = (collection: string) => collection;
 
 /**
  * Indexes every stored schema for a tenant.
@@ -39,11 +39,17 @@ const SCHEMA_COLUMN = "zv.schema";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-export interface SchemasApi {
-  /** Store a version. Versions are immutable once written. */
+/**
+ * A tenant's stored schema versions and which one is active.
+ *
+ * Storage only: a saved version is never active until the activation workflow
+ * (`schema-activation.ts`) has applied what it implies and published it.
+ */
+export interface SchemaRecords {
+  /** Store a version, inactive. Versions are immutable once written. */
   readonly save: (
     schema: CollectionSchema,
-  ) => Effect.Effect<StoredCollectionSchema, SchemaVersionExists>;
+  ) => Effect.Effect<StoredCollectionSchema, SchemaVersionExists | TenantMoving>;
   readonly listCollections: Effect.Effect<ReadonlyArray<CollectionSchemaSummary>>;
   readonly listVersions: (
     collection: string,
@@ -53,10 +59,6 @@ export interface SchemasApi {
     version: number,
   ) => Effect.Effect<StoredCollectionSchema | undefined>;
   readonly getActive: (collection: string) => Effect.Effect<StoredCollectionSchema | undefined>;
-  readonly activate: (
-    collection: string,
-    version: number,
-  ) => Effect.Effect<StoredCollectionSchema, SchemaNotFound>;
   /** Validate against the active schema. A collection with none accepts anything. */
   readonly validate: (
     collection: string,
@@ -67,27 +69,13 @@ export interface SchemasApi {
 const schemaRecord = objectFields<StoredCollectionSchema>({ collection: isString, version: isPositiveInteger,
   active: isBoolean, fields: (value): value is StoredCollectionSchema["fields"] => Array.isArray(value) && value.every(Schema.is(CollectionFieldEntrySchema)) });
 
-export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi => {
+export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemaRecords => {
   const readAt = (namespace: string, key: string) =>
     Effect.gen(function* () {
       const seq = yield* store.lookup(namespace, key);
       if (seq === undefined) return undefined;
       const object = yield* store.read(seq);
       return object === undefined ? undefined : dec.decode(object.bytes);
-    }).pipe(Effect.orDie);
-
-  const put = (namespace: string, key: string, value: unknown, columns: Array<readonly [string, string]>) =>
-    Effect.gen(function* () {
-      const existing = yield* store.lookup(namespace, key);
-      const seq = existing ?? (yield* store.nextSeq);
-      yield* store.transact((txn) =>
-        txn.put(seq, enc.encode(JSON.stringify(value)), {
-          terms: [],
-          columns,
-          measures: [],
-          edges: [],
-        }, { namespace, key }),
-      );
     }).pipe(Effect.orDie);
 
   const getVersion = (collection: string, version: number) =>
@@ -129,30 +117,20 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
 
   return {
     save: (schema) =>
-      Effect.gen(function* () {
+      store.transact((txn) => Effect.gen(function* () {
+        // Read and allocate under the partition writer, so two concurrent
+        // imports cannot both claim an immutable version and overwrite it.
         const existing = yield* getVersion(schema.collection, schema.version);
-        if (existing !== undefined) {
-          // A stored version is what documents were validated against, so
-          // rewriting one would retroactively change what was already accepted.
-          return yield* new SchemaVersionExists({
-            collection: schema.collection,
-            version: schema.version,
-          });
-        }
+        if (existing !== undefined) return yield* new SchemaVersionExists({ collection: schema.collection, version: schema.version });
+        const seq = yield* txn.allocate;
         const stored: StoredCollectionSchema = {
-          collection: schema.collection,
-          version: schema.version,
-          active: schema.activate !== false,
-          fields: schema.fields,
+          collection: schema.collection, version: schema.version, active: false, fields: schema.fields,
         };
-        yield* put(SCHEMA_NS, schemaKey(schema.collection, schema.version), stored, [
-          [SCHEMA_COLUMN, tenant],
-        ]);
-        if (stored.active) {
-          yield* put(ACTIVE_NS, activeKey(schema.collection), { version: schema.version }, []);
-        }
+        yield* txn.put(seq, enc.encode(JSON.stringify(stored)), {
+          terms: [], columns: [[SCHEMA_COLUMN, tenant]], measures: [], edges: [],
+        }, { namespace: SCHEMA_NS, key: schemaKey(schema.collection, schema.version) });
         return stored;
-      }),
+      })).pipe(dieUnlessMoving),
 
     listVersions,
     getVersion,
@@ -178,16 +156,6 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
       return summaries.sort((a, b) => a.collection.localeCompare(b.collection));
     }),
 
-    activate: (collection, version) =>
-      Effect.gen(function* () {
-        const stored = yield* getVersion(collection, version);
-        if (stored === undefined) {
-          return yield* new SchemaNotFound({ collection, version });
-        }
-        yield* put(ACTIVE_NS, activeKey(collection), { version }, []);
-        return { ...stored, active: true };
-      }),
-
     validate: (collection, data) =>
       Effect.gen(function* () {
         const active = yield* getActive(collection);
@@ -199,5 +167,5 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
         const result = validateDocumentData(active.fields, data);
         return { schemaVersion: active.version, valid: result.valid, issues: result.issues };
       }),
-  } satisfies SchemasApi;
+  } satisfies SchemaRecords;
 };

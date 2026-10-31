@@ -101,13 +101,30 @@ export const storageScreen = Effect.fn("ui.storageScreen")(function*(context: Sc
       node("h3", {}, "Metadata"), node("pre", {}, JSON.stringify(file.metadata ?? {}, null, 2)));
   } else detail.push(resourceNotice("Select a file", "Choose a file from the list to inspect checksum, metadata, and its ready-to-use Zelavis file reference."));
 
+  // The storage's quota and what it holds: every write, import and confirmed upload is held to it.
+  const quotaState = enabled ? object(yield* request(`${api}/storage/quota`).pipe(Effect.catch(() => Effect.succeed({})))) : {};
+  const limits = object(quotaState.quota), held = object(quotaState.usage);
+  const maxBytes = node("input", { type: "number", min: "1", name: "maxBytes", placeholder: "No limit", value: limits.maxBytes === undefined ? "" : String(limits.maxBytes), "aria-label": "Storage limit in bytes" });
+  const maxFileBytes = node("input", { type: "number", min: "1", name: "maxFileBytes", placeholder: "No limit", value: limits.maxFileBytes === undefined ? "" : String(limits.maxFileBytes), "aria-label": "File size limit in bytes" });
+  const quotaForm = node("form", { class: "form" },
+    node("p", { class: "muted" }, `Holds ${formatBytes(Number(held.bytes) || 0)} in ${label(held.files, "0")} files${limits.maxBytes === undefined ? "" : ` of ${formatBytes(Number(limits.maxBytes))}`}.`),
+    node("label", {}, node("span", {}, "Storage limit (bytes)"), maxBytes),
+    node("label", {}, node("span", {}, "Largest file (bytes)"), maxFileBytes),
+    node("button", { type: "submit" }, "Save quota"));
+  quotaForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const body = { ...(maxBytes.value ? { maxBytes: Number(maxBytes.value) } : {}), ...(maxFileBytes.value ? { maxFileBytes: Number(maxFileBytes.value) } : {}) };
+    context.run(request(`${api}/storage/quota`, "PUT", body), () => { setFlash("Quota saved."); context.refresh(); });
+  });
+
   return page(
     flashNotice("Done"),
     ...(enabled ? [] : [resourceNotice("Storage service is not mounted", "Add platform file storage or enable a storage core service to use this panel.")]),
     columns(3, statCard("Files", String(files.length), "Currently visible under this prefix"), statCard("Total size", formatBytes(total), "Sum of the visible files"), statCard("Metadata", selected ? "Ready" : "Select file", "Checksums and file references are available per file")),
     columns(2,
       card("Upload and browse", filter, upload, node("div", { class: "k-card flush" }, ...(rows.length ? rows : [resourceNotice("No files yet", "Upload a file or clear the prefix filter to see more results.")]))),
-      card("File details", ...detail)));
+      card("File details", ...detail)),
+    ...(enabled ? [card("Quota", quotaForm)] : []));
 });
 
 /** A sample document that carries the file's reference, so the file can be used from the Project's data. */

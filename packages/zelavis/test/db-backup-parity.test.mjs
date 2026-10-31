@@ -278,3 +278,60 @@ test("backups: the CLI prints a backup, writes one owner-only, and checks its fl
   writeFileSync(notBackup, "{");
   await assert.rejects(cli("restore-tenant", "p1", "--file", notBackup), /not-a-backup\.json is not JSON/);
 });
+
+test("backups: a divided Tenant is backed up whole and restored part by part, the same through JS, HTTP, the SDK and the CLI", async (t) => {
+  const { Effect } = await import("effect");
+  const divide = async (opened, rows) => {
+    await Effect.runPromise(opened.database.topology.subdivision.subdivide("whale", ["a", "b"]));
+    for (const [part, ids] of Object.entries(rows)) {
+      const handle = opened.api.forPart("whale", part);
+      await handle.documents.createCollection({ name: "posts" });
+      for (const id of ids) await handle.documents.insert({ collection: "posts", id, data: { part } });
+    }
+  };
+  const partsOf = async (api) => Object.fromEntries(await Promise.all(["a", "b"].map(async (part) =>
+    [part, (await api.forPart("whale", part).documents.findMany({ collection: "posts" }).catch(() => [])).map((d) => d.id).sort()])));
+  const whole = {
+    js: (opened) => ({
+      export: () => opened.api.backupTenant("whale"),
+      restore: (backup, options = {}) => opened.api.restoreTenantBackup(options.tenantId ?? backup.tenantId, backup, options.into === undefined ? undefined : { into: options.into }),
+    }),
+    http: (opened, t) => surfaces.http(opened.api, t),
+    sdk: (opened, t) => surfaces.sdk(opened.api, t),
+    cli: (opened, t) => surfaces.cli(opened.api, t),
+  };
+  const results = {};
+  for (const [name, bind] of Object.entries(whole)) {
+    const source = await openTemporaryDatabase(t);
+    await divide(source, { a: ["a1"], b: ["b1", "b2"] });
+    const backup = await bind(source, t).export("whale");
+    const target = await openTemporaryDatabase(t);
+    await Effect.runPromise(target.database.topology.subdivision.subdivide("whale", ["a", "b"]));
+    const surface = bind(target, t);
+    const outcome = async (run) => run().then((value) => ({ parts: value.parts?.map((entry) => entry.part), events: value.events }), (error) => ({ refused: error?._tag ?? String(error.message) }));
+    const undivided = await openTemporaryDatabase(t);
+    results[name] = {
+      format: backup.format,
+      parts: backup.parts.map((entry) => [entry.part, entry.backup.tenantId]),
+      restored: await outcome(() => surface.restore(backup)),
+      data: await partsOf(target.api),
+      again: await outcome(() => surface.restore(backup)),
+      purged: await outcome(() => surface.restore(backup, { into: "purge" })),
+      notDivided: await outcome(() => bind(undivided, t).restore(backup)),
+    };
+  }
+  const js = results.js;
+  assert.equal(js.format, "zelavis.db-backup.divided.v1");
+  assert.deepEqual(js.parts, [["a", "whale#a"], ["b", "whale#b"]]);
+  assert.deepEqual(js.restored.parts, ["a", "b"]);
+  assert.deepEqual(js.data, { a: ["a1"], b: ["b1", "b2"] });
+  assert.equal(js.again.refused, "TenantNotEmpty", "an empty restore checks every part before writing any");
+  assert.deepEqual(js.purged.parts, ["a", "b"]);
+  assert.equal(js.notDivided.refused, "InvalidExport");
+  for (const name of ["http", "sdk", "cli"]) {
+    const other = results[name];
+    assert.deepEqual({ ...other, again: undefined, notDivided: undefined }, { ...js, again: undefined, notDivided: undefined }, name);
+    assert.match(other.again.refused, /already holds data/, `${name}: refused the same`);
+    assert.match(other.notDivided.refused, /divided the same way/, `${name}: refused the same`);
+  }
+});

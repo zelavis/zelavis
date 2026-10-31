@@ -4,7 +4,8 @@ import test from "node:test";
 import { defineDatabaseService } from "../dist/db/index.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 import { runProjectsCommand } from "../dist/cli/projects.js";
-import { openTemporaryDatabase } from "./_database.mjs";
+import { openTemporaryDatabase, temporaryDatabaseDirectory } from "./_database.mjs";
+import { openNodeDatabase } from "../dist/db/node-host.js";
 
 const operator = { id: "operator", type: "user", permissions: ["database.inspect", "database.read", "database.write", "database.drop"] };
 const BASE = "http://zv.test/zelavis";
@@ -114,4 +115,48 @@ test("a caller cannot remove its own Tenant", async (t) => {
   assert.equal(answer.status, 400);
   assert.match(answer.body.error, /own Tenant/);
   assert.equal((await api.forTenant("acme").documents.findMany({ collection: "posts" })).length, 3);
+});
+
+test("a divided Tenant is removed with every part and stays divided, empty", async (t) => {
+  const opened = await openTemporaryDatabase(t);
+  const { api, database } = opened;
+  const { Effect } = await import("effect");
+  await Effect.runPromise(database.topology.subdivision.subdivide("whale", ["a", "b", "c"]));
+  for (const [part, count] of [["a", 2], ["b", 3]]) {
+    const handle = api.forPart("whale", part);
+    await handle.documents.createCollection({ name: "posts" });
+    for (let n = 0; n < count; n++) await handle.documents.insert({ collection: "posts", id: `p${n}`, data: { n } });
+  }
+  await seed(api);
+  const removed = await api.dropTenant("whale");
+  assert.equal(removed.tenant, "whale");
+  assert.equal(removed.shard, undefined);
+  assert.deepEqual(removed.parts.map((entry) => entry.part), ["a", "b"], "only the parts that held anything are named");
+  assert.equal(removed.records, removed.parts.reduce((sum, entry) => sum + entry.records, 0));
+  assert.ok(!(await api.partitions()).some((key) => key.startsWith("whale")), "no part holds anything");
+  assert.deepEqual(api.partsOf("whale"), ["a", "b", "c"], "the division is routing and stays");
+  assert.equal((await api.forTenant("acme").documents.findMany({ collection: "posts" })).length, 3, "another Tenant is untouched");
+  await assert.rejects(() => api.dropTenant("whale"), (error) => error._tag === "TenantNotDroppable" && /holds nothing/.test(error.reason));
+});
+
+test("a removal cut off after it began removing is finished when the database next opens", async (t) => {
+  const directory = temporaryDatabaseDirectory(t);
+  const { Effect } = await import("effect");
+  const first = await openNodeDatabase({ directory, shards: ["shard-0", "shard-1"] });
+  await seed(first.api);
+  // What a crash between the fence and the last removal batch leaves: the partition fenced for removal, records still there.
+  const shard = first.database.shardOf("acme");
+  await first.close();
+  const { makeNodeSqliteStore } = await import("../dist/db/engines/node-sqlite.js");
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = yield* makeNodeSqliteStore(shard, directory);
+    yield* store.partition("acme").fence({ from: shard, to: "removed" });
+  })));
+  const second = await openNodeDatabase({ directory, shards: ["shard-0", "shard-1"] });
+  try {
+    assert.ok(!(await second.api.tenants()).includes("acme"), "the removal was finished at open");
+    assert.equal((await second.api.forTenant("globex").documents.findMany({ collection: "posts" })).length, 3, "another Tenant is untouched");
+    await second.api.forTenant("acme").documents.createCollection({ name: "posts" });
+    assert.equal((await second.api.forTenant("acme").documents.insert({ collection: "posts", id: "a", data: {} })).version, 1, "and the Tenant starts again from nothing");
+  } finally { await second.close(); }
 });

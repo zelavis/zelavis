@@ -432,6 +432,7 @@ export const movementOver = (options: {
       // One record, once, now that every tenant is on its target.
       for (const move of moves) {
         if (move.phase === "routed") continue;
+        yield* carryHolds(move.tenant, move.from, move.to);
         yield* applyRoute(move);
       }
       for (const move of moves) {
@@ -446,6 +447,8 @@ export const movementOver = (options: {
         // the source goes only once all of them are done. A deadline passed
         // leaves the move routed, for a resume to clear.
         yield* drained(move.from, move.tenant);
+        // Again, for holds a call renewed on the source while it drained.
+        yield* carryHolds(move.tenant, move.from, move.to);
         const removed = yield* clear(move.tenant, move.from, move.map.version);
         yield* drop(topologyStore, MOVE_NAMESPACE, move.tenant);
         const stats = state.get(move.tenant);
@@ -484,6 +487,21 @@ export const movementOver = (options: {
         reason: `with writes fenced, the copy holds ${there.records} records at position ${there.head} ` +
           `where the source holds ${here.records} at ${here.head}`,
       });
+    });
+
+  /**
+   * Take the source's live log holds on the target too, at the same positions and for the time each
+   * has left, so a reader holding the tenant's log keeps its hold where routing is about to point. A
+   * hold the target has already compacted past was protecting nothing there; it is left to the
+   * reader's own detection, as any hold is.
+   */
+  const carryHolds = (tenant: TenantId, from: ShardId, to: ShardId) =>
+    Effect.gen(function* () {
+      const source = yield* storeFor(from, tenant);
+      const target = yield* storeFor(to, tenant);
+      for (const hold of yield* source.heldLogs) {
+        yield* target.holdLog(hold).pipe(Effect.catchTag("LogCompacted", () => Effect.void));
+      }
     });
 
   /** Stop writes to the tenant on the shard it is leaving. */

@@ -1,4 +1,6 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Fiber } from "effect";
+import { unrefSleep, type EntityStep } from "../../db/entities.js";
+import type { RuntimeEntityHandler } from "../../db/runtime-api.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
 import type {
@@ -6,7 +8,7 @@ import type {
   ZelavisRouteContext,
 } from "../../core/index.js";
 
-export type WorkloadType = "function" | "job" | "schedule" | "webhook";
+export type WorkloadType = "function" | "job" | "schedule" | "webhook" | "entity";
 
 export interface WorkloadDefinition {
   id: string;
@@ -56,19 +58,33 @@ export interface WorkloadsApi {
   store: WorkloadsStore;
 }
 
-const workloadTypes = ["function", "job", "schedule", "webhook"] as const;
+const workloadTypes = ["function", "job", "schedule", "webhook", "entity"] as const;
 
 const workloadPluralByType = {
   function: "functions",
   job: "jobs",
   schedule: "schedules",
   webhook: "webhooks",
+  entity: "entities",
 } as const satisfies Record<WorkloadType, string>;
 
 const defaultFunctionCode = `export default async function handler(ctx) {
   return new Response("Hello from Zelavis Workloads");
 }
 `;
+
+/**
+ * An entity workload's code is the handler of the durable entity type it is named after: one message and the
+ * entity's state in, a step out. The step's writes, outbox messages, new state and reply commit with the message.
+ */
+const defaultEntityCode = `export default async function handle(message, { state, tenant, documents }) {
+  const count = (state?.count ?? 0) + 1;
+  return { state: { count }, reply: { count } };
+}
+`;
+
+/** An entity workload's name is the entity type it handles. */
+const ENTITY_TYPE = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export interface WorkloadExecutionResult {
   headers?: Record<string, string>;
@@ -151,7 +167,7 @@ function readWorkloadType(value: unknown): WorkloadType {
     return value as WorkloadType;
   }
 
-  throw new TypeError("type must be function, job, schedule, or webhook.");
+  throw new TypeError("type must be function, job, schedule, webhook, or entity.");
 }
 
 function jsonError(error: unknown, status = 400) {
@@ -359,6 +375,9 @@ function createWorkload(
   if (!name) {
     throw new TypeError("name is required.");
   }
+  if (type === "entity" && !ENTITY_TYPE.test(name)) {
+    throw new TypeError("An entity workload is named after its entity type: a letter, then up to 63 letters, digits, `_` or `-`.");
+  }
 
   const timestamp = now();
   const workload: WorkloadDefinition = {
@@ -366,7 +385,7 @@ function createWorkload(
     projectId: slugifyName(readString(input, "projectId", "default") ?? "default"),
     type,
     name,
-    code: readString(input, "code", defaultFunctionCode) ?? defaultFunctionCode,
+    code: readString(input, "code", type === "entity" ? defaultEntityCode : defaultFunctionCode) ?? defaultFunctionCode,
     route: readString(input, "route"),
     schedule: readString(input, "schedule"),
     enabled: readBoolean(input, "enabled", true),
@@ -390,9 +409,13 @@ function updateWorkload(
   }
 
   const input = readBodyObject(body);
+  const name = slugifyName(readString(input, "name", existing.name) ?? existing.name);
+  if (existing.type === "entity" && !ENTITY_TYPE.test(name)) {
+    throw new TypeError("An entity workload is named after its entity type: a letter, then up to 63 letters, digits, `_` or `-`.");
+  }
   const next: WorkloadDefinition = {
     ...existing,
-    name: slugifyName(readString(input, "name", existing.name) ?? existing.name),
+    name,
     code: readString(input, "code", existing.code) ?? existing.code,
     route: readString(input, "route", existing.route),
     schedule: readString(input, "schedule", existing.schedule),
@@ -769,5 +792,52 @@ export function workloadsEndpointGroup(
         },
       ],
     },
+  };
+}
+
+/** What the entity runner needs from the database: `DatabaseRuntimeApi.entities`. */
+interface EntityServing {
+  readonly entities: {
+    readonly serve: (handlers: (type: string) => RuntimeEntityHandler | undefined) => { readonly stop: () => Promise<void> };
+  };
+}
+
+/** How often the runner rereads the entity workloads, so a new or changed handler is used within this long. */
+const ENTITY_WORKLOAD_REFRESH_MILLIS = 2000;
+
+/**
+ * Serve durable entities with the enabled `entity` workloads as their handlers, by name, until `stop`. The workloads
+ * are reread every two seconds, so a handler added, changed or disabled takes effect without a restart; a type with
+ * no enabled workload keeps its messages until one exists. A handler's module is loaded once per version of its code.
+ */
+export function serveEntityWorkloads(database: EntityServing, store: WorkloadsStore): { readonly stop: () => Promise<void> } {
+  let handlers = new Map<string, RuntimeEntityHandler>();
+  const loaded = new Map<string, RuntimeEntityHandler>();
+  const handlerOf = (workload: WorkloadDefinition): RuntimeEntityHandler => {
+    const version = `${workload.id}:${workload.updatedAt}`;
+    const known = loaded.get(version);
+    if (known !== undefined) return known;
+    const handler: RuntimeEntityHandler = (message, context) => present(Effect.gen(function* () {
+      const module = (yield* integrationValue(import(createModuleDataUrl(workload)))) as { default?: unknown; handle?: unknown };
+      const handle = module.default ?? module.handle;
+      if (typeof handle !== "function") {
+        throw new TypeError(`Entity workload "${workload.name}" must export a default function or a named handle function.`);
+      }
+      return (yield* integrationValue(handle(message, context))) as EntityStep;
+    }));
+    loaded.set(version, handler);
+    return handler;
+  };
+  const refresh = Effect.gen(function* () {
+    const workloads = yield* integration(() => store.list({ type: "entity" }));
+    handlers = new Map(workloads.filter((workload) => workload.enabled).map((workload) => [workload.name, handlerOf(workload)]));
+    // Versions no workload names any more are let go.
+    const current = new Set(workloads.map((workload) => `${workload.id}:${workload.updatedAt}`));
+    for (const version of loaded.keys()) if (!current.has(version)) loaded.delete(version);
+  }).pipe(Effect.catchCause((cause) => Effect.logWarning("Entity workloads could not be read; the runner keeps the handlers it had", cause)));
+  const refreshing = Effect.runFork(Effect.andThen(refresh, Effect.forever(Effect.andThen(unrefSleep(ENTITY_WORKLOAD_REFRESH_MILLIS), refresh))));
+  const serving = database.entities.serve((type) => handlers.get(type));
+  return {
+    stop: () => present(Effect.andThen(Fiber.interrupt(refreshing), integration(() => serving.stop()))),
   };
 }

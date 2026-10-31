@@ -102,17 +102,28 @@ test("the SDK signs in and manages revocable Platform service accounts", async (
     "projects.list",
     "--project",
     "project-fluxgent",
+    "--project-permission",
+    "project.runtime.manage",
     "--expires-days",
     "30",
   ]);
   assert.equal(cliCreated.exitCode, 0);
   assert.match(cliCreated.stdout.token, /^zvs_/u);
-  assert.equal(cliCreated.stdout.serviceAccount.permissions[0], "projects.list");
-  assert.equal(cliCreated.stdout.serviceAccount.grants[0].scope.projectId, "project-fluxgent");
+  assert.deepEqual(cliCreated.stdout.serviceAccount.permissions, ["projects.list"]);
+  assert.deepEqual(cliCreated.stdout.serviceAccount.grants, [{ permission: "project.runtime.manage", scope: { type: "project", projectId: "project-fluxgent" } }]);
+
+  const reader = await cli(runtime, signedIn.session.token, ["create", "--name", "Read-only App", "--project", "project-fluxgent", "--project-permission", "project.data.read"]);
+  assert.equal(reader.exitCode, 0);
+  assert.deepEqual(reader.stdout.serviceAccount.permissions, []);
+  assert.deepEqual(reader.stdout.serviceAccount.grants, [{ permission: "project.data.read", scope: { type: "project", projectId: "project-fluxgent" } }]);
+  for (const flags of [["--project", "project-fluxgent"], ["--project-permission", "project.data.read"]]) {
+    const refused = await cli(runtime, signedIn.session.token, ["create", "--name", "Ambiguous", ...flags]);
+    assert.notEqual(refused.exitCode, 0, "scoped permissions require both explicit identity and authority");
+  }
 
   const cliListed = await cli(runtime, signedIn.session.token, ["list"]);
   assert.equal(cliListed.exitCode, 0);
-  assert.equal(cliListed.stdout.serviceAccounts.length, 2);
+  assert.equal(cliListed.stdout.serviceAccounts.length, 3);
 
   const cliRotated = await cli(runtime, signedIn.session.token, [
     "rotate",

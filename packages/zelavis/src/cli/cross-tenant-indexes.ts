@@ -1,8 +1,8 @@
-import type { CrossTenantIndexDefinition, CrossTenantIndexSummary, CrossTenantQueryResult, CrossTenantRefreshResult } from "../db/cross-tenant-index.js";
+import type { CrossTenantIndexDefinition, CrossTenantIndexSummary, CrossTenantQueryResult, CrossTenantQueryInput, CrossTenantRefreshResult } from "../db/cross-tenant-index.js";
 import { bodyFlag, integerFlag, jsonFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project ID [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url URL] [--token TOKEN] [--json]";
+  "zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project ID [name] [--definition JSON] [--data JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url URL] [--token TOKEN] [--json]";
 
 const indexes = (input: CliInput) =>
   input.client.crossTenantIndexes(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "cross-tenant-indexes commands need --project"));
@@ -22,7 +22,7 @@ const arrayFlag = (input: CliInput, flag: string) => {
 const table: CliTable = {
   name: "cross-tenant-indexes",
   usage,
-  valued: ["--project", "--definition", "--where", "--order-by", "--tenants", "--search", "--limit", "--after"],
+  valued: ["--project", "--definition", "--data", "--where", "--order-by", "--tenants", "--search", "--limit", "--after"],
   actions: {
     list: {
       run: (input) => indexes(input).list(),
@@ -48,6 +48,7 @@ const table: CliTable = {
         const tenants = input.flags.get("--tenants");
         const limit = integerFlag(input, "--limit");
         return indexes(input).query(name(input), {
+          ...(input.flags.has("--data") ? bodyFlag<Omit<CrossTenantQueryInput, "index">>(input, "--data", "cross-tenant-indexes query") : {}),
           ...(input.flags.has("--where") ? { where: arrayFlag(input, "--where") } : {}),
           ...(input.flags.has("--order-by") ? { orderBy: arrayFlag(input, "--order-by") } : {}),
           ...(tenants === undefined ? {} : { tenants: tenants.split(",").filter((tenant) => tenant.length > 0) }),

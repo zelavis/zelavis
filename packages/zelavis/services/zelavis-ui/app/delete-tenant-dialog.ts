@@ -9,6 +9,8 @@ export interface DeleteTenant {
   tables: number;
   documents: number;
   size: string;
+  /** How many parts a divided Tenant has; every one is removed with it. */
+  parts?: number;
 }
 
 /**
@@ -57,7 +59,8 @@ export function mountDeleteTenant(host: HTMLElement, options: { api: string; rem
     open(next: DeleteTenant) {
       target = next; confirm.value = ""; errors.replaceChildren(); remove.setAttribute("disabled", "");
       title.textContent = `Delete tenant ${next.tenantId}`;
-      description.textContent = `This removes ${next.tables} ${next.tables === 1 ? "table" : "tables"}, ${next.documents} ${next.documents === 1 ? "document" : "documents"} (${next.size}) and the Tenant's whole history. It cannot be undone. Download a backup first if you may need it.`;
+      const parts = next.parts === undefined ? "" : ` across all ${next.parts} ${next.parts === 1 ? "part" : "parts"} (the Tenant stays divided, empty)`;
+      description.textContent = `This removes ${next.tables} ${next.tables === 1 ? "table" : "tables"}, ${next.documents} ${next.documents === 1 ? "document" : "documents"} (${next.size})${parts} and the Tenant's whole history. It cannot be undone. Download a backup first if you may need it. If calls are still using the Tenant, nothing is removed and you can try again.`;
       prompt.textContent = `Type ${next.tenantId} to confirm`;
       dialog.setOpen(true);
       setTimeout(() => confirm.focus(), 0);

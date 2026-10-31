@@ -9,6 +9,8 @@ import type { TenantId } from "./topology.js";
 
 export type DomainEventType =
   | "collection.created"
+  | "collection.updated"
+  | "collection.deleted"
   | "document.upserted"
   | "document.deleted";
 
@@ -127,7 +129,7 @@ export const toDomainEvent = (
     tenantId: tenant,
     collection: origin.collection,
     ...(origin.documentId === undefined ? {} : { documentId: origin.documentId }),
-    type: collectionEvent ? "collection.created" : "document.upserted",
+    type: collectionEvent ? (event.version === 1 ? "collection.created" : "collection.updated") : "document.upserted",
     revision: event.version,
     timestamp: new Date(event.at).toISOString(),
     payload: collectionEvent
@@ -147,6 +149,9 @@ export const domainEventsFor = (
       const origins = new Map<number, Origin>();
       const out: DomainEvent[] = [];
       const limit = input?.limit ?? 100;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        return yield* Effect.die(new TypeError("limit must be an integer from 1 to 1000."));
+      }
 
       /** The domain event one log entry is for this read, if it is one. */
       const domainEventOf = (event: DbEvent): DomainEvent | undefined => {
@@ -170,7 +175,7 @@ export const domainEventsFor = (
           tenantId: tenant,
           collection: origin.collection,
           ...(origin.documentId === undefined ? {} : { documentId: origin.documentId }),
-          type: "document.deleted",
+          type: origin.documentId === undefined ? "collection.deleted" : "document.deleted",
           revision: event.version,
           timestamp: new Date(event.at).toISOString(),
           payload: { deleted: true },

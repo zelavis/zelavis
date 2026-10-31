@@ -16,7 +16,7 @@ test("the manifest pins one DokuWiki release and declares the two things this re
   assert.deepEqual(install.methods.map((method) => [method.id, method.driver, [...method.requires]]), [["native", "js", []]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
   assert.deepEqual(install.ports.map((port) => port.name), ["web"], "no database port");
-  assert.deepEqual(install.directories, [{ name: "site", path: "site" }]);
+  assert.deepEqual(install.directories, [{ name: "site", path: "site", backup: "files" }], "the wiki is files, copied as they are by a backup");
   for (const software of install.software) {
     assert.match(software.sha256, /^[0-9a-f]{64}$/);
     assert.match(software.archive, /^https:\/\/download\.dokuwiki\.org\/src\/dokuwiki\/dokuwiki-[\d-]+[a-z]?\.tgz$/);

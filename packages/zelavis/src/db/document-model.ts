@@ -31,6 +31,7 @@ import {
   VectorShapeMismatch,
   InvalidVectorQuery,
   UnknownReference,
+  InvalidMeasureQuery,
 } from "./errors.js";
 import { type BoundingBox, type Geometry, type Position as GeoPosition } from "./spatial.js";
 import { type DistanceMetric, type VectorQuantization, type VectorProjectionIndex } from "./vectors.js";
@@ -70,8 +71,24 @@ export interface Collection {
   readonly columns?: ReadonlyArray<string>;
   /** Numeric fields kept in the measure lens; see `MeasureDefinition`. */
   readonly measures?: ReadonlyArray<MeasureDefinition>;
+  /**
+   * The declarations the active schema implied and its activation applied; see
+   * `DocumentsApi.declareFromSchema`. Each is also present among the ones above,
+   * and is replaced by the next activation unless it was redeclared by hand.
+   */
+  readonly derived?: DerivedDeclarationSet;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
+}
+
+/** Lens declarations derived from a schema version; see `deriveDeclarations`. */
+export interface DerivedDeclarationSet {
+  readonly schemaVersion: number;
+  readonly analyzer?: Analyzer;
+  readonly measures: ReadonlyArray<MeasureDefinition>;
+  readonly edges: ReadonlyArray<EdgeDefinition>;
+  readonly spatial?: SpatialIndex;
+  readonly embedding?: EmbeddingIndex;
 }
 
 export interface CollectionModalities {
@@ -239,14 +256,24 @@ export interface Analyzer {
   /** Shortest term kept, in code points. Two by default. */
   readonly minLength?: number;
   /**
-   * The language this text is in, recorded rather than acted on.
-   *
-   * Nothing here stems or expands synonyms yet, and pretending otherwise
-   * would be worse than saying so: this travels with the terms so a later
-   * stemmer knows what it is reading, and so a change of language is a
+   * The language this text is in: its terms are stemmed by that language's
+   * rules, in the text and in the query alike. A change of language is a
    * version change like any other.
    */
   readonly language?: string;
+  /**
+   * Post every pair of adjacent words too, so a quoted phrase is answered
+   * from postings: a two-word phrase exactly, a longer one by the pairs it is
+   * made of and then checked on each candidate. One more posting per distinct
+   * adjacent pair. Changing it rewrites the documents, as any analyzer change does.
+   */
+  readonly phrases?: boolean;
+  /**
+   * Groups of words that mean the same, each word one term under this
+   * analyzer: a query for any of them finds every one. Applied to the query,
+   * never to what is stored, so changing them needs no rewrite.
+   */
+  readonly synonyms?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 /**
@@ -395,6 +422,24 @@ export interface CollectionIndex {
  * Ties break by identifier, so the same query over the same documents answers
  * in the same order every time.
  */
+export interface HybridSearch {
+  readonly text?: number;
+  readonly vector?: number;
+  readonly k?: number;
+  readonly depth?: number;
+}
+
+/**
+ * What BM25 scores against: how many documents matched, their analyzed length
+ * together, and how many held each query term (synonyms, prefixes and fuzzy
+ * matches counted as the term). Sums of these are the statistics of the union.
+ */
+export interface SearchStatistics {
+  readonly documents: number;
+  readonly length: number;
+  readonly frequencies: Readonly<Record<string, number>>;
+}
+
 export interface SimilarFilter {
   /** The field to compare, which the collection's `EmbeddingIndex` must name. */
   readonly field: string;
@@ -490,6 +535,33 @@ export interface Summary {
   readonly documents: number;
 }
 
+export interface CovarianceInput extends Omit<SummarizeInput, "op"> {
+  /** The other declared measure; only documents carrying both values contribute. */
+  readonly with: string;
+  /** Sample covariance divides by n-1; population (the default) divides by n. */
+  readonly sample?: boolean;
+}
+
+export interface MeasureHistogramInput extends Omit<SummarizeInput, "op"> {
+  readonly bins?: number;
+  readonly boundaries?: ReadonlyArray<number>;
+  readonly min?: number;
+  readonly max?: number;
+}
+
+export interface MeasureHistogram {
+  readonly buckets: ReadonlyArray<{ readonly lower: number; readonly upper: number; readonly count: number }>;
+  readonly documents: number;
+  readonly underflow: number;
+  readonly overflow: number;
+  readonly min: number | null;
+  readonly max: number | null;
+  readonly sum: number;
+  readonly avg: number | null;
+}
+
+export type MeasureQueryError = UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge | UnindexedField | InvalidMeasureQuery;
+
 export interface GroupedSummary extends Summary {
   /** The value at the grouped field, as the ordered lens holds it. */
   readonly key: OrderedScalar;
@@ -514,8 +586,23 @@ export interface FindDocumentsInput {
   readonly linked?: LinkFilter;
   /**
    * Order by closeness to a vector instead of by a field; see `SimilarFilter`.
+   * Given with `search`, the two rankings are fused; see `hybrid`.
    */
   readonly similar?: SimilarFilter;
+  /**
+   * How `search` and `similar` given together are fused: reciprocal rank
+   * fusion, each document scoring `text / (k + its text rank) + vector / (k +
+   * its vector rank)` over the first `depth` of each ranking, both drawn from
+   * the documents `where` admits — the vector ranking is not narrowed by the
+   * words. Weights are 1, `k` is 60 and `depth` is 100 (at most 1000) unless given.
+   */
+  readonly hybrid?: HybridSearch;
+  /**
+   * Score `search` against these corpus statistics instead of the matching
+   * documents' own: what makes scores from several partitions comparable. A
+   * scatter supplies the sum of each partition's `searchStatistics`.
+   */
+  readonly statistics?: SearchStatistics;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
@@ -794,6 +881,18 @@ export interface DocumentsApi {
     | InvalidVectorQuery | UnknownEdge | UnindexedField
   >;
   /**
+   * The corpus statistics a `search` would score against here: summed across
+   * partitions and passed back as `statistics`, they rank every partition's
+   * matches on one scale.
+   */
+  readonly searchStatistics: (
+    input: FindDocumentsInput & { readonly search: string },
+  ) => Effect.Effect<
+    SearchStatistics,
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
+    | InvalidVectorQuery | UnknownEdge | UnindexedField
+  >;
+  /**
    * One page of matching documents, and a cursor for the next.
    *
    * Ordered by one field from its ordered lens, or by several from a composite
@@ -974,6 +1073,30 @@ export interface DocumentsApi {
   >;
 
   /**
+   * Apply the declarations a schema version implies (`deriveDeclarations`) and
+   * re-derive every document's postings under them.
+   *
+   * What the previous activation derived is replaced; what was declared by
+   * hand is kept, and a derived declaration that would take its place is
+   * skipped with the reason. Recorded first, so writes from here on use them;
+   * then the documents are written back, and a vector a document holds that
+   * the derived embedding does not admit takes the whole set back off again
+   * (`VectorShapeMismatch`). Running it again with the same declarations
+   * changes nothing, which is what lets an interrupted activation resume.
+   */
+  readonly declareFromSchema: (input: {
+    readonly collection: string;
+    readonly declarations: DerivedDeclarationSet;
+  }) => Effect.Effect<
+    {
+      readonly applied: DerivedDeclarationSet;
+      readonly skipped: ReadonlyArray<{ readonly path: string; readonly reason: string }>;
+      readonly documents: number;
+    },
+    CollectionNotFound | InvalidConstraint | TenantMoving | VectorShapeMismatch
+  >;
+
+  /**
    * Drops and rebuilds the vector projection index for a collection from its documents.
    */
   readonly rebuildVectorIndex: (input: {
@@ -1012,6 +1135,9 @@ export interface DocumentsApi {
     UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
     | UnindexedField
   >;
+
+  readonly covariance: (input: CovarianceInput) => Effect.Effect<Summary, MeasureQueryError>;
+  readonly histogram: (input: MeasureHistogramInput) => Effect.Effect<MeasureHistogram, MeasureQueryError>;
 
   /**
    * The same, one answer per value at a field.

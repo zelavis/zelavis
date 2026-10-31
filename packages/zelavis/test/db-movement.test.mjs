@@ -872,7 +872,7 @@ test("a Tenant removed while a read is in flight refuses writes at once, waits f
     assert.equal((yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "p1", data: { title: "fresh" } })).version, 1);
   })));
 
-test("a removal whose Tenant is still in use past the deadline leaves it fenced and whole, and repeating it removes it", () =>
+test("a removal whose Tenant is still in use past the deadline gives it back whole and writable, and repeating it removes it", () =>
   withGatedDatabase((db, stores, gate) => Effect.gen(function* () {
     const tenants = ["acme", "bravo", "cosmo", "delta"];
     yield* seed(db, tenants);
@@ -887,7 +887,7 @@ test("a removal whose Tenant is still in use past the deadline leaves it fenced 
     assert.equal(stopped._tag, "PlacementInUse");
     assert.equal(stopped.calls, 1);
     assert.ok((yield* stores.get(shard).partition(tenant).liveRecords).length > 0, "nothing was removed");
-    assert.equal((yield* Effect.flip(db.forTenant(tenant).documents.insert({ collection: "posts", id: "late", data: { title: "late" } })))._tag, "TenantMoving", "it stays fenced");
+    assert.equal((yield* db.forTenant(tenant).documents.insert({ collection: "posts", id: "late", data: { title: "late" } })).version, 1, "its fence is lifted: it takes writes again");
 
     yield* Deferred.succeed(gate.release, undefined);
     assert.equal((yield* Fiber.join(reader))?.data.title, "held");

@@ -194,6 +194,22 @@
             "methods": [
               "native"
             ]
+          },
+          {
+            "command": "mariadb-dump",
+            "version": "11.4.9",
+            "hostRequirement": "mariadb",
+            "downloads": {
+              "linux-x86_64": {
+                "archive": "https://archive.mariadb.org/mariadb-11.4.9/bintar-linux-systemd-x86_64/mariadb-11.4.9-linux-systemd-x86_64.tar.gz",
+                "sha256": "c079403239fa74900c18ae0f2d99806625b3ae936c8983dd39a96c8b237072da",
+                "maxBytes": 400000000,
+                "executable": "mariadb-11.4.9-linux-systemd-x86_64/bin/mariadb-dump"
+              }
+            },
+            "methods": [
+              "native"
+            ]
           }
         ],
         "ports": [
@@ -248,11 +264,13 @@
         "directories": [
           {
             "name": "site",
-            "path": "site"
+            "path": "site",
+            "backup": "files"
           },
           {
             "name": "db",
-            "path": "db"
+            "path": "db",
+            "backup": "recipe"
           }
         ]
       }
@@ -304,7 +322,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.42"
+    "zelavis": ">=2.0.0-alpha.43"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

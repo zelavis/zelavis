@@ -1,0 +1,6 @@
+---
+"zelavis": minor
+"@zelavis/ui": minor
+---
+
+Activating a schema version now declares what it implies, safely: prose fields become searchable, numeric fields measures, a single reference an edge, and the new `GeometryField` (`coordinates: "wgs84"`, `resolution`) and `VectorField` (`model`, `modelVersion`, `dimension`, `metric`) the spatial index and the embedding. Nothing is inferred from a field that does not state it, hand-made declarations are kept, and the next activation replaces only what the previous one derived. Activation is a durable workflow: intent, apply and re-derive postings, publish in one transaction; one whose declarations stored documents break is refused (`SchemaActivationRefused`, 400) and leaves the collection as it was, and one cut off by a crash finishes when the database opens. The answer carries `activation: { applied, skipped, documents }`. Pending activations are listed and resumed through `tenant.schemas.pendingActivations`/`resumeActivations`, `GET|POST data/schemas/collections/activations[/resume]`, `client.data(p).schemas.activations()`/`resumeActivations()` and `zelavis data schema-activations`/`resume-schema-activations`. The dashboard's content-type builder and schema editor offer Geometry and Vector fields and report what an activation declared.

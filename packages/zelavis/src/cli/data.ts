@@ -1,9 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|exists|modalities|count|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json] | set-analyzer|set-spatial|set-embedding|rewrite|traverse|summarize|summarize-by|related|create-index|drop-index|add-check|drop-check|add-reference|drop-reference|schemas|schema-versions|save-schema|activate-schema|validate-schema|series|series-range|series-aggregate|series-windows|series-moving|series-histogram|series-interpolate|series-ingest|health (bodies are the database's own JSON, given with --data)";
+  "zelavis data <collections|exists|modalities|count|create-collection|set-columns|drop-collection|get|insert|update|delete|query|page|write|kv-get|kv-has|kv-set|kv-delete|kv-scan|kv-changes|kv-write|kv-size|kv-clear|outbox|outbox-emit|outbox-remove|changes> --project ID [collection-namespace-or-topic] [id-or-key] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--emit JSON] [--ids ID,ID] [--prefix PREFIX] [--lower KEY] [--upper KEY] [--direction asc|desc] [--ttl-ms N|--expires-at ISO] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--columns FIELD,FIELD|all] [--url URL] [--token TOKEN] [--json] | set-analyzer|set-spatial|set-embedding|rewrite|traverse|search-statistics|scatter|summarize|summarize-by|covariance|histogram|related|create-index|drop-index|add-check|drop-check|add-reference|drop-reference|aggregates|get-aggregate|define-aggregate|refresh-aggregate|drop-aggregate|import-plan|import-run|import-verify|schemas|export-schema|import-schema|schema-types|schema-versions|save-schema|activate-schema|validate-schema|schema-activations|resume-schema-activations|series|series-range|series-aggregate|series-windows|series-moving|series-histogram|series-interpolate|series-ingest|health (bodies are the database's own JSON, given with --data; an import's export with --file)";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so
@@ -38,6 +39,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   let ttlMs: number | undefined;
   /** `null` is "all": every field indexed. */
   let columns: ReadonlyArray<string> | null | undefined;
+  /** An import's export file, read as its `text`. */
+  let file: string | undefined;
   let json = false;
 
   const parseJson = (flag: string, value: string): unknown => {
@@ -59,7 +62,7 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
       "--url", "--token", "--project", "--data", "--where", "--order",
       "--operations", "--limit", "--after", "--mode", "--expected-version",
       "--idempotency-key", "--prefix", "--lower", "--upper", "--direction",
-      "--expires-at", "--ttl-ms", "--columns", "--emit", "--ids",
+      "--expires-at", "--ttl-ms", "--columns", "--emit", "--ids", "--file",
     ];
     if (!known.includes(flag)) throw new Error(`Unknown data option "${arg}".`);
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -67,6 +70,7 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     if (flag === "--url") url = value;
     if (flag === "--token") token = value;
     if (flag === "--project") projectId = value;
+    if (flag === "--file") file = value;
     if (flag === "--after") after = value;
     if (flag === "--idempotency-key") idempotencyKey = value;
     if (flag === "--prefix") prefix = value;
@@ -158,12 +162,21 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   // `--data` is handed to the route as typed JSON; the route validates it, so the CLI claims only the shape each call site expects.
   const body = <Shape>() => requireData() as unknown as Shape;
   const named = () => requireDocumentId();
+  if (file !== undefined && !["import-plan", "import-run", "import-verify"].includes(action)) throw new Error("--file is only supported by data import-plan, import-run and import-verify.");
+  // An import's options come with --data and its export with --file, read here once.
+  const fileText = file === undefined ? undefined : yield* integrationValue(readFile(file, "utf8"));
+  const importBody = <Shape>() => ({ ...(data === undefined ? {} : requireData()), ...(fileText === undefined ? {} : { text: fileText }) }) as unknown as Shape;
   const bodied: Record<string, () => Promise<unknown>> = {
     "set-analyzer": () => api.collections.setAnalyzer(requireCollection(), body()),
     "set-spatial": () => api.collections.setSpatial(requireCollection(), body()),
     "set-embedding": () => api.collections.setEmbedding(requireCollection(), body()),
     rewrite: () => api.collections.rewrite(collection),
     traverse: () => api.documents.traverse(requireCollection(), body()),
+    "search-statistics": () => api.documents.searchStatistics(requireCollection(), body()),
+    changes: () => api.events.read({ ...(data === undefined ? {} : requireData()), ...(after === undefined ? {} : { after }), ...(limit === undefined ? {} : { limit }) }),
+    scatter: () => api.documents.scatter(requireCollection(), data === undefined ? {} : body()),
+    covariance: () => api.documents.covariance(requireCollection(), body()),
+    histogram: () => api.documents.histogram(requireCollection(), body()),
     summarize: () => api.documents.summarize(requireCollection(), body()),
     "summarize-by": () => api.documents.summarizeBy(requireCollection(), body()),
     related: () => api.documents.related(requireCollection(), body()),
@@ -173,7 +186,18 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     "drop-check": () => api.checks.drop(requireCollection(), named()),
     "add-reference": () => api.references.add(requireCollection(), body()),
     "drop-reference": () => api.references.drop(requireCollection(), named()),
+    aggregates: () => api.aggregates.list(),
+    "get-aggregate": () => api.aggregates.get(requireCollection()),
+    "define-aggregate": () => api.aggregates.define(body()),
+    "import-plan": () => api.imports.plan(requireCollection(), importBody()),
+    "import-run": () => api.imports.run(requireCollection(), importBody()),
+    "import-verify": () => api.imports.verify(requireCollection(), importBody()),
+    "refresh-aggregate": () => api.aggregates.refresh(requireCollection()),
+    "drop-aggregate": () => api.aggregates.drop(requireCollection()),
     schemas: () => api.schemas.list(),
+    "export-schema": () => api.schemas.export(data === undefined ? {} : body()),
+    "import-schema": () => api.schemas.import(body() as unknown as Parameters<typeof api.schemas.import>[0]),
+    "schema-types": () => api.schemas.types(data === undefined ? {} : body()),
     "schema-versions": () => api.schemas.versions(requireCollection()),
     "save-schema": () => api.schemas.save(requireCollection(), body()),
     "activate-schema": () => {
@@ -182,6 +206,8 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
       return api.schemas.activate(requireCollection(), version);
     },
     "validate-schema": () => api.schemas.validate(requireCollection(), body()),
+    "schema-activations": () => api.schemas.activations(),
+    "resume-schema-activations": () => api.schemas.resumeActivations(),
     series: () => api.timeseries.list(),
     "series-range": () => api.timeseries.range(requireCollection(), data === undefined ? {} : body()),
     "series-aggregate": () => api.timeseries.aggregate(requireCollection(), body()),
@@ -266,7 +292,9 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
     return;
   }
   if (action === "query") {
-    const documents = (yield* integrationValue(api.documents.query(requireCollection(), clauses)));
+    const documents = (yield* integrationValue(api.documents.query(requireCollection(), {
+      ...(data === undefined ? {} : requireData()), ...clauses,
+    })));
     print({ documents }, () =>
       documents.map((document) => `${describe(document)}\t${JSON.stringify(document.data)}`).join("\n")
       || "No matching documents.");
@@ -274,6 +302,7 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
   }
   if (action === "page") {
     const page = (yield* integrationValue(api.documents.page(requireCollection(), {
+      ...(data === undefined ? {} : requireData()),
       ...clauses,
       ...(after ? { after } : {}),
     })));
@@ -338,6 +367,11 @@ export function runDataCommand(args: readonly string[]): Promise<void> {
           ? `Deleted\t${entry.collection}\t${entry.id}`
           : `${entry._tag}\t${entry.document.collection}\t${describe(entry.document)}`,
       ).join("\n") || "Nothing written.");
+    return;
+  }
+  if (action === "kv-has") {
+    const has = (yield* integrationValue(api.kv.has(requireCollection(), requireDocumentId())));
+    print({ has }, () => `${has}`);
     return;
   }
   if (action === "kv-get") {

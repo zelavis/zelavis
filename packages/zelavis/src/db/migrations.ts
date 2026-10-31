@@ -1,10 +1,9 @@
 import { Effect } from "effect";
 import type { DocumentsApi } from "./documents.js";
 import {
-  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnindexedGeometry, UnknownReference,
-} from "./errors.js";
+  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnindexedGeometry, UnknownReference, SchemaActivationRefused, TenantMoving } from "./errors.js";
 import type { Json, JsonObject } from "./json.js";
-import type { SchemasApi } from "./schemas.js";
+import type { SchemasApi } from "./schema-activation.js";
 import {
   validateDocumentData,
   type CollectionFieldEntry,
@@ -147,7 +146,7 @@ export interface MigrationsApi {
   ) => Effect.Effect<
     MigrationResult,
     | SchemaNotFound | SchemaMigrationBlocked | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry
+    | UnindexedGeometry | SchemaActivationRefused | TenantMoving
   >;
 }
 

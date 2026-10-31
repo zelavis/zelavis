@@ -5,7 +5,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|export-tenant|export-stream|images|create-image|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--until-consistent] [--storage sqlite|lmdb|rocksdb|libsql] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -20,9 +20,9 @@ const readBackup = (text: string, file: string): ZelavisTenantBackup => {
   } catch (error) {
     throw new Error(`${file} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const candidate = parsed as { readonly tenantId?: unknown; readonly events?: unknown } | null;
+  const candidate = parsed as { readonly tenantId?: unknown; readonly events?: unknown; readonly parts?: unknown } | null;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)
-    || typeof candidate.tenantId !== "string" || !Array.isArray(candidate.events)) {
+    || typeof candidate.tenantId !== "string" || (!Array.isArray(candidate.events) && !Array.isArray(candidate.parts))) {
     throw new Error(`${file} is not a Tenant backup.`);
   }
   return candidate as ZelavisTenantBackup;
@@ -60,6 +60,15 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   let to: string | undefined;
   let outbox: string | undefined;
   let storage: string | undefined;
+  let keep: number | undefined;
+  let asOf: string | undefined;
+  let dryRun = false;
+  let durability: string | undefined;
+  let data: string | undefined;
+  let recoveryKey: string | undefined;
+  let scheduleFilter: string | undefined;
+  let resolve: string | undefined;
+  let asOfTime: string | undefined;
   let untilConsistent = false;
   let json = false;
 
@@ -71,6 +80,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (arg === "--restart") { restart = true; continue; }
     if (arg === "--reveal") { reveal = true; continue; }
     if (arg === "--until-consistent") { untilConsistent = true; continue; }
+    if (arg === "--dry-run") { dryRun = true; continue; }
     if (arg === "--help" || arg === "-h") {
       console.log(usage);
       return;
@@ -78,7 +88,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox", "--storage"].includes(flag)) {
+    if (!["--url", "--token", "--id", "--recipe", "--engine-version", "--method", "--software-version", "--tenant", "--table", "--confirm", "--view", "--limit", "--after", "--output", "--file", "--into", "--to", "--outbox", "--storage", "--keep", "--as-of", "--as-of-time", "--resolve", "--data", "--recovery-key", "--schedule", "--durability"].includes(flag)) {
       throw new Error(`Unknown projects option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -105,6 +115,17 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     if (flag === "--to") to = value;
     if (flag === "--outbox") outbox = value;
     if (flag === "--storage") storage = value;
+    if (flag === "--as-of") asOf = value;
+    if (flag === "--resolve") resolve = value;
+    if (flag === "--data") data = value;
+    if (flag === "--durability") durability = value;
+    if (flag === "--recovery-key") recoveryKey = value;
+    if (flag === "--schedule") scheduleFilter = value;
+    if (flag === "--as-of-time") asOfTime = value;
+    if (flag === "--keep") {
+      keep = Number(value);
+      if (!Number.isSafeInteger(keep) || keep < 1) throw new Error("--keep requires a positive integer.");
+    }
   }
 
   const [action, target, ...rest] = positional;
@@ -112,7 +133,8 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     console.log(usage);
     return;
   }
-  const extra = action === "rename" || action === "create-image" ? 1 : 0;
+  const extra = ["verify-backup", "restore-backup", "drill-backup"].includes(action) ? 2
+    : ["rename", "create-image", "delete-image", "verify-image", "delete-backup-schedule", "run-backup"].includes(action) ? 1 : 0;
   if (rest.length > extra) throw new Error(`Unexpected argument "${rest[extra]}". ${usage}`);
   if (storage !== undefined && action !== "create-image") throw new Error("--storage is only supported by projects create-image.");
   if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
@@ -120,17 +142,24 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
   if (installHostPackages && action !== "create") throw new Error("--install-host-packages is only supported by projects create.");
   if ((method || softwareVersion) && action !== "create") throw new Error("--method and --software-version are only supported by projects create.");
   if (engineVersion && !["create", "upgrade", "switch-version"].includes(action)) throw new Error("--engine-version is only supported by create, upgrade and switch-version.");
-  if (tenant && !["create-tenant", "delete-tenant", "branch-tenant", "export-tenant", "export-stream", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, branch-tenant, export-tenant, export-stream, restore-tenant and system-views.");
+  if (tenant && !["create-tenant", "delete-tenant", "branch-tenant", "merge-branch", "recovery-window", "export-tenant", "export-stream", "restore-tenant", "system-views"].includes(action)) throw new Error("--tenant is only supported by projects create-tenant, delete-tenant, branch-tenant, merge-branch, recovery-window, export-tenant, export-stream, restore-tenant and system-views.");
   if (untilConsistent && action !== "export-stream") throw new Error("--until-consistent is only supported by projects export-stream.");
   if (action === "export-stream" && !tenant) throw new Error("projects export-stream requires --tenant <id>.");
-  if (to !== undefined && action !== "branch-tenant") throw new Error("--to is only supported by projects branch-tenant.");
+  if (to !== undefined && action !== "branch-tenant" && action !== "merge-branch") throw new Error("--to is only supported by projects branch-tenant and merge-branch.");
   if (outbox !== undefined && action !== "branch-tenant") throw new Error("--outbox is only supported by projects branch-tenant.");
   if (outbox !== undefined && outbox !== "leave" && outbox !== "copy") throw new Error("--outbox is leave or copy.");
   if (view !== undefined && action !== "system-views") throw new Error("--view is only supported by projects system-views.");
-  if ((limit !== undefined || after !== undefined) && !["system-views", "export-stream"].includes(action)) throw new Error("--limit and --after are only supported by projects system-views and export-stream.");
+  if ((limit !== undefined || after !== undefined) && !["system-views", "export-stream", "workflows"].includes(action)) throw new Error("--limit and --after are only supported by projects system-views, export-stream and workflows.");
   if ((limit !== undefined || after !== undefined) && action === "system-views" && view === undefined) throw new Error("--limit and --after page one view; name it with --view.");
   if (after !== undefined && untilConsistent) throw new Error("--until-consistent starts an export; it takes no --after.");
-  if (confirm !== undefined && action !== "delete-tenant") throw new Error("--confirm is only supported by projects delete-tenant.");
+  if (confirm !== undefined && !["delete-tenant", "delete-image", "delete-backup-schedule"].includes(action)) throw new Error("--confirm is only supported by projects delete-tenant, delete-image and delete-backup-schedule.");
+  if (durability !== undefined && action !== "storage") throw new Error("--durability is only supported by projects storage.");
+  if (data !== undefined && action !== "create-backup-schedule") throw new Error("--data is only supported by projects create-backup-schedule.");
+  if (recoveryKey !== undefined && action !== "restore-backup") throw new Error("--recovery-key is only supported by projects restore-backup.");
+  if (scheduleFilter !== undefined && action !== "backup-runs") throw new Error("--schedule is only supported by projects backup-runs.");
+  if (keep !== undefined && action !== "prune-images") throw new Error("--keep is only supported by projects prune-images.");
+  if ((dryRun || resolve !== undefined) && action !== "merge-branch") throw new Error("--dry-run and --resolve are only supported by projects merge-branch.");
+  if ((asOf !== undefined || asOfTime !== undefined) && action !== "branch-tenant") throw new Error("--as-of and --as-of-time are only supported by projects branch-tenant.");
   if (table && action !== "create-tenant") throw new Error("--table is only supported by projects create-tenant.");
   if (output && !["export-tenant", "export-stream"].includes(action)) throw new Error("--output is only supported by projects export-tenant and export-stream.");
   if ((file || into) && action !== "restore-tenant") throw new Error("--file and --into are only supported by projects restore-tenant.");
@@ -283,11 +312,109 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
       if (!tenant || !to) throw new Error("projects branch-tenant requires --tenant <id> and --to <new id>.");
       const branched = yield* integration(() => client.projects.branchTenant(requireTarget("id"), {
         tenantId: tenant, into: to, ...(outbox === undefined ? {} : { outbox: outbox as "leave" | "copy" }),
+        ...(asOf === undefined ? {} : { asOf }), ...(asOfTime === undefined ? {} : { asOfTime }),
       }));
       const where = branched.parts === undefined
         ? `on ${branched.shard}`
         : `in ${branched.parts.length} ${branched.parts.length === 1 ? "part" : "parts"} (${branched.parts.map((entry) => `${entry.part} on ${entry.shard}`).join(", ")})`;
       print(branched, () => `Branched Tenant ${branched.tenant} into ${branched.into} ${where}: ${branched.records} records, ${branched.events} events.`);
+      return;
+    }
+    case "merge-branch": {
+      if (!tenant) throw new Error("projects merge-branch requires --tenant <branch id>.");
+      let resolutions: unknown;
+      if (resolve !== undefined) {
+        try { resolutions = JSON.parse(resolve); } catch { throw new Error("--resolve requires JSON: [{ \"collection\": …, \"id\": …, \"keep\": \"source\" | \"branch\" }]."); }
+      }
+      const merge = yield* integration(() => client.projects.mergeTenantBranch(requireTarget("id"), {
+        tenantId: tenant, ...(to === undefined ? {} : { into: to }), ...(dryRun ? { dryRun } : {}),
+        ...(resolutions === undefined ? {} : { resolve: resolutions as never }),
+      }));
+      print(merge, () => [
+        `${merge.merged ? "Merged" : merge.dryRun ? "Would merge" : "Did not merge"} ${merge.branch} into ${merge.into}: ${merge.writes} writes, ${merge.deletes} deletes, ${merge.conflictCount} conflicts.`,
+        ...merge.partitions.flatMap((entry) => entry.conflicts.map((conflict) => `conflict\t${entry.part ?? ""}\t${conflict.kind}\t${conflict.collection}${conflict.id === undefined ? "" : `/${conflict.id}`}`)),
+        ...merge.partitions.flatMap((entry) => entry.unmerged.length === 0 ? [] : [`not merged${entry.part === undefined ? "" : ` (${entry.part})`}: ${entry.unmerged.join(", ")}`]),
+      ].join("\n"));
+      return;
+    }
+    case "backup-schedules": {
+      const schedules = yield* integration(() => client.projects.backupSchedules(requireTarget("id")));
+      print({ schedules }, () => schedules.length === 0 ? "No backup schedules." : schedules.map((entry) => `${entry.name}\t${entry.cron}\tkeep ${entry.keep}\t${entry.target.kind} ${entry.target.location}\tkey ${entry.keyFingerprint}${entry.nextRunAt === undefined ? "" : `\tnext ${entry.nextRunAt}`}`).join("\n"));
+      return;
+    }
+    case "create-backup-schedule": {
+      if (data === undefined) throw new Error("projects create-backup-schedule requires --data '{ \"name\": …, \"cron\": …, \"keep\": …, \"target\": … }'.");
+      let input: unknown;
+      try { input = JSON.parse(data); } catch { throw new Error("--data requires JSON."); }
+      const schedule = yield* integration(() => client.projects.createBackupSchedule(requireTarget("id"), input as never));
+      print({ schedule }, () => `Created backup schedule ${schedule.name}. Recovery key (shown once; keep it off this host): ${schedule.recoveryKey}`);
+      return;
+    }
+    case "delete-backup-schedule": {
+      const name = rest[0];
+      if (!name) throw new Error("projects delete-backup-schedule requires a schedule name.");
+      if (confirm !== name) throw new Error(`projects delete-backup-schedule stops schedule ${name}; repeat it with --confirm ${name}.`);
+      const removed = yield* integration(() => client.projects.deleteBackupSchedule(requireTarget("id"), { name, confirm }));
+      print({ removed }, () => `Deleted backup schedule ${removed.name}; its runs stay at the target.`);
+      return;
+    }
+    case "run-backup": {
+      const name = rest[0];
+      if (!name) throw new Error("projects run-backup requires a schedule name.");
+      const run = yield* integration(() => client.projects.runBackup(requireTarget("id"), name));
+      print({ run }, () => run.status === "ok" ? `Backed up ${run.bytes} bytes in ${run.parts} parts as run ${run.runId}.` : `Backup run ${run.runId} failed: ${run.error}`);
+      if (run.status !== "ok") process.exitCode = 1;
+      return;
+    }
+    case "backup-runs": {
+      const runs = yield* integration(() => client.projects.backupRuns(requireTarget("id"), scheduleFilter === undefined ? undefined : { schedule: scheduleFilter }));
+      print({ runs }, () => runs.length === 0 ? "No backup runs." : runs.map((entry) => `${entry.schedule}\t${entry.runId}\t${entry.status}${entry.bytes === undefined ? "" : `\t${entry.bytes} bytes`}${entry.verified === undefined ? "" : `\tverified ${entry.verified}`}${entry.restoredTo === undefined ? "" : `\trestored to ${entry.restoredTo}`}`).join("\n"));
+      return;
+    }
+    case "verify-backup": {
+      const [schedule, runId] = rest;
+      if (!schedule || !runId) throw new Error("projects verify-backup requires a schedule name and a run id.");
+      const run = yield* integration(() => client.projects.verifyBackup(requireTarget("id"), { schedule, runId }));
+      print({ run }, () => `Run ${runId} of ${schedule} ${run.verified ? "decrypts and matches its manifest" : "does NOT verify"}.`);
+      if (!run.verified) process.exitCode = 1;
+      return;
+    }
+    case "restore-backup": {
+      const [schedule, runId] = rest;
+      if (!schedule || !runId) throw new Error("projects restore-backup requires a schedule name and a run id.");
+      const run = yield* integration(() => client.projects.restoreBackup(requireTarget("id"), { schedule, runId, ...(recoveryKey === undefined ? {} : { recoveryKey }) }));
+      print({ run }, () => `Restored run ${runId} of ${schedule} to ${run.restoredTo}; open it as a database, or swap it in with the Project stopped.`);
+      return;
+    }
+    case "storage": {
+      const projectId = requireTarget("id");
+      const choice = durability === undefined
+        ? yield* integration(() => client.projects.databaseStorage(projectId))
+        : yield* integration(() => client.projects.setDatabaseStorage(projectId, { durability: durability as "crash" | "power" }));
+      print({ storage: choice }, () => `${choice.engine}, durability ${choice.durability}${choice.pending ? ` (${choice.pending} from the Project's next start)` : ""}.`);
+      return;
+    }
+    case "drill-backup": {
+      const [schedule, runId] = rest;
+      if (!schedule) throw new Error("projects drill-backup requires a schedule name.");
+      const run = yield* integration(() => client.projects.drillBackup(requireTarget("id"), { schedule, ...(runId === undefined ? {} : { runId }) }));
+      const drill = run.drill;
+      print({ run }, () => drill?.ok
+        ? `Drill of run ${run.runId}: restored and opened in ${drill.rtoMs} ms (RTO); its data was ${Math.round(drill.rpoMs / 1000)} s old (RPO); ${drill.tenants ?? 0} Tenants, ${drill.records ?? 0} records.`
+        : `Drill of run ${run.runId} failed: ${drill?.error}`);
+      if (!drill?.ok) process.exitCode = 1;
+      return;
+    }
+    case "workflows": {
+      const executions = yield* integration(() => client.projects.workflowExecutions(requireTarget("id"), limit === undefined ? undefined : { limit }));
+      print({ executions }, () => executions.length === 0 ? "No workflow executions." : executions.map((entry) =>
+        `${entry.workflow}\t${entry.executionId}\t${entry.complete ? "complete" : "unfinished"}\t${entry.activities} activities${entry.parent === undefined ? "" : `\tparent ${entry.parent}`}`).join("\n"));
+      return;
+    }
+    case "recovery-window": {
+      if (!tenant) throw new Error("projects recovery-window requires --tenant <id>.");
+      const window = yield* integration(() => client.projects.tenantRecoveryWindow(requireTarget("id"), tenant));
+      print({ window }, () => window.partitions.map((entry) => `${entry.part ?? window.tenant}\tpositions ${entry.earliest}–${entry.latest}${entry.earliestAt === undefined ? "" : `\t${new Date(entry.earliestAt).toISOString()} – ${new Date(entry.latestAt ?? entry.earliestAt).toISOString()}`}${entry.compactedTo > 0 ? `\tcompacted to ${entry.compactedTo}` : ""}`).join("\n"));
       return;
     }
     case "export-tenant": {
@@ -301,9 +428,11 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
       // Created owner-only: a backup holds every record of the Tenant.
       const destination = output;
       yield* integration(() => writeFile(destination, `${JSON.stringify(backup)}\n`, { mode: 0o600 }));
+      const events = "parts" in backup ? backup.parts.reduce((sum, entry) => sum + entry.backup.events.length, 0) : backup.events.length;
+      const parts = "parts" in backup ? ` across ${backup.parts.length} parts` : "";
       print(
-        { tenantId: backup.tenantId, events: backup.events.length, file: destination },
-        () => `Exported ${backup.events.length} events of Tenant ${backup.tenantId} to ${destination}.`,
+        { tenantId: backup.tenantId, events, ...("parts" in backup ? { parts: backup.parts.map((entry) => entry.part) } : {}), file: destination },
+        () => `Exported ${events} events of Tenant ${backup.tenantId}${parts} to ${destination}.`,
       );
       return;
     }
@@ -315,9 +444,32 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "create-image": {
       const name = rest[0];
       if (!name) throw new Error("projects create-image requires an image name.");
-      const engine = storage as "sqlite" | "lmdb" | "rocksdb" | "libsql" | undefined;
+      const engine = storage as "sqlite" | "lmdb" | "rocksdb" | undefined;
       const image = yield* integration(() => client.projects.createDatabaseImage(requireTarget("id"), { name, ...(engine === undefined ? {} : { engine }) }));
       print({ image }, () => `Imaged ${image.shards.length} shards (${image.keys} keys, ${image.bytes} bytes) as "${image.name}" in ${image.engine}.`);
+      return;
+    }
+    case "delete-image": {
+      const name = rest[0];
+      if (!name) throw new Error("projects delete-image requires an image name.");
+      if (confirm !== name) throw new Error(`projects delete-image removes image ${name} for good; repeat it with --confirm ${name}.`);
+      const removed = yield* integration(() => client.projects.deleteDatabaseImage(requireTarget("id"), { name, confirm }));
+      print({ removed }, () => `Removed image "${removed.name}" (${removed.bytes} bytes).`);
+      return;
+    }
+    case "verify-image": {
+      const name = rest[0];
+      if (!name) throw new Error("projects verify-image requires an image name.");
+      const verification = yield* integration(() => client.projects.verifyDatabaseImage(requireTarget("id"), name));
+      print({ verification }, () => [`Image "${verification.name}" ${verification.ok ? "holds exactly what was written" : "does NOT hold what was written"}.`,
+        ...verification.shards.map((shard) => `${shard.shard}\t${shard.ok ? "ok" : `failed: ${shard.problem}`}\t${shard.keys} keys`)].join("\n"));
+      if (!verification.ok) process.exitCode = 1;
+      return;
+    }
+    case "prune-images": {
+      if (keep === undefined) throw new Error("projects prune-images requires --keep <N>, the newest images to keep.");
+      const pruned = yield* integration(() => client.projects.pruneDatabaseImages(requireTarget("id"), { keep }));
+      print({ pruned }, () => pruned.removed.length === 0 ? `Nothing removed; kept ${pruned.kept.length}.` : `Removed ${pruned.removed.join(", ")}; kept ${pruned.kept.length}.`);
       return;
     }
     case "export-stream": {
@@ -358,7 +510,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
         ...(tenant ? { tenantId: tenant } : {}),
       }));
       print(result, () =>
-        `Restored ${result.events} events into Tenant ${result.tenantId}` +
+        `Restored ${result.events} events into Tenant ${result.tenantId}${result.parts ? ` across ${result.parts.length} parts` : ""}` +
         (result.removed > 0 ? `, removing ${result.removed} records first` : "") +
         (result.superseded > 0 ? `, writing over ${result.superseded}` : "") + ".");
       return;

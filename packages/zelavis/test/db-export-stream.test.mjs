@@ -194,3 +194,28 @@ test("a divided Tenant is one export: entries name their parts, and it is consis
     const wrong = yield* Effect.exit(db.exportPage("whale", { cursor: Buffer.from(JSON.stringify({ v: 1, parts: ["a"], c: {} })).toString("base64url") }));
     assert.ok(Exit.isFailure(wrong));
   })));
+
+test("a divided Tenant's page holds at most `limit` entries however many parts it has, and every part advances", () =>
+  withDatabase((db, shards) => Effect.gen(function* () {
+    const parts = Array.from({ length: 24 }, (_, at) => `p${at}`);
+    yield* db.topology.subdivision.subdivide("swarm", parts);
+    for (const part of parts) yield* seedPosts(db.forPart("swarm", part), [`${part}-1`, `${part}-2`, `${part}-3`]);
+    const held = new Map();
+    let cursor;
+    let calls = 0;
+    for (; calls < 400; calls++) {
+      const page = yield* db.exportPage("swarm", { ...(cursor === undefined ? {} : { cursor }), limit: 5 });
+      assert.ok(page.entries.length <= 5, `a page of ${page.entries.length} entries is over the limit`);
+      applyAll(held, page.entries);
+      cursor = page.cursor;
+      if (page.consistent) break;
+      // Writes to the first part carry on throughout; they must not keep the other parts waiting.
+      if (calls % 10 === 0) yield* db.forPart("swarm", "p0").documents.insert({ collection: "posts", id: `hot${calls}`, data: { title: "h", rank: calls } });
+    }
+    assert.ok(calls < 400, "the export became consistent");
+    const tail = yield* db.exportPage("swarm", { cursor, limit: 1000 });
+    applyAll(held, tail.entries);
+    const really = [];
+    for (const part of parts) really.push(...(yield* actual(shards.get(db.shardOf(`swarm#${part}`)).partition(`swarm#${part}`), part)));
+    assert.deepEqual(liveOf(held), really.sort());
+  })));

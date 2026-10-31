@@ -156,7 +156,7 @@ command tree.
   `projects export-stream <id> --tenant T [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`
   reads a Tenant out as a stream, a page at a time: its records, then every change since, with `consistent` set once the
   entries received (applied by version) are the Tenant as of one log position; a divided Tenant is one export whose entries
-  name their `part` (needs `database.backup`); `projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb|libsql]`
+  name their `part` (needs `database.backup`); `projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb]`
   copies every shard, byte for byte through the ordered key-value interface, into a physical backup `name` on the host in
   any local engine, and `projects images <id>` lists them (needs `database.backup`); there is no restore command, because
   replacing the live database is done with the Project stopped.

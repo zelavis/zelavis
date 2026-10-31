@@ -132,7 +132,6 @@ const assertCoherent = (store) =>
 
 const engines = [
   ["sqlite", true],
-  ["libsql", engineAvailable("libsql")],
   ["lmdb", engineAvailable("lmdb")],
   ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js")],
 ];
@@ -152,7 +151,6 @@ for (const [engine, available] of engines) {
         `../dist/db/engines/${engine === "sqlite" ? "node-sqlite" : engine}.js`);
       const reopen =
         engine === "sqlite" ? make.makeNodeSqliteStore("acme", dir)
-        : engine === "libsql" ? make.makeLibsqlStore("acme", { directory: dir })
         : engine === "rocksdb-js" ? make.makeRocksdbJsStore("acme", dir)
         : make.makeLmdbStore("acme", dir);
 

@@ -35,7 +35,9 @@ export const FIELD_TYPES: readonly { value: ContentFieldBuilderKind; label: stri
   { value: "file", label: "File", description: "Generic file reference." },
   { value: "json", label: "JSON", description: "Arbitrary structured value." },
   { value: "slug", label: "Slug", description: "URL-safe identifier." },
-  { value: "url", label: "URL", description: "Web address." }
+  { value: "url", label: "URL", description: "Web address." },
+  { value: "geometry", label: "Geometry", description: "WGS84 point or shape, searchable by place." },
+  { value: "vector", label: "Vector", description: "Embedding from a named model, searchable by similarity." }
 ];
 
 const DEFAULT_INPUT: ContentFieldBuilderInput = { name: "", label: "", description: "", kind: "text", required: false, group: "Content", placeholder: "", helpText: "", rows: 5, options: [], relationCollection: "", relationMultiple: false };
@@ -51,6 +53,8 @@ export function validateBuilderInput(input: ContentFieldBuilderInput): string | 
   if (nameIssue) return nameIssue;
   if ((input.kind === "select" || input.kind === "multi-select" || input.kind === "status") && (!input.options || input.options.length === 0)) return "Select fields need at least one option.";
   if (input.kind === "relation" && !input.relationCollection?.trim()) return "Reference fields need a related collection.";
+  if (input.kind === "geometry" && (input.resolution === undefined || !Number.isInteger(input.resolution) || input.resolution < 0 || input.resolution > 15)) return "Geometry fields need a resolution from 0 to 15.";
+  if (input.kind === "vector" && (!input.model?.trim() || !input.modelVersion?.trim() || input.dimension === undefined || !Number.isInteger(input.dimension) || input.dimension < 1)) return "Vector fields need a model, a model version and a whole-number dimension.";
   if (input.kind === "repeater") {
     const names = new Set<string>();
     for (const nested of input.nestedFields ?? []) {
@@ -190,6 +194,8 @@ export function mount(host: HTMLElement, props: Record<string, unknown>) {
       kind === "slug" ? text("from", "Slug source field", input.from ?? "", "Generate from field, for example title", value => set({ from: value })) : undefined,
       FILE_KINDS.has(kind) ? numeric("Max size in bytes", input.maxSize, value => set({ maxSize: value })) : undefined,
       kind === "repeater" ? nestedEditor() : undefined,
+      kind === "geometry" ? numeric("Resolution (0–15)", input.resolution, value => set({ resolution: value })) : undefined,
+      kind === "vector" ? node("div", { class: "k-grid cols-2" }, text("model", "Model", input.model ?? "", "text-embedding-3-small", value => set({ model: value })), text("modelVersion", "Model version", input.modelVersion ?? "", "1", value => set({ modelVersion: value })), numeric("Dimension", input.dimension, value => set({ dimension: value })), text("metric", "Metric (cosine, dot or euclidean)", input.metric ?? "cosine", "cosine", value => set({ metric: value === "dot" || value === "euclidean" ? value : "cosine" }))) : undefined,
       node("div", { class: "actions" }, button(state.mode === "edit" ? "Update Field" : "Add Field", saveBuilder, { class: "primary" }), ...(state.mode === "edit" ? [button("Cancel", () => { startCreate(); render(); })] : []))
     ];
     return node("div", { class: "k-card" }, ...parts.filter((part): part is Node => part !== undefined));

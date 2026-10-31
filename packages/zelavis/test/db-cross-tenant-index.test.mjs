@@ -14,6 +14,8 @@ import { makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { openShardOverKv } from "../dist/db/kv-store.js";
+import { crossTenantIndexesOver } from "../dist/db/cross-tenant-index.js";
+import { StoreError } from "../dist/db/errors.js";
 
 const map = partitionMapFor(["s0", "s1"]);
 const allOn = (shard, version) => ({ version, virtualRanges: 256, placements: [{ from: 0, to: 256, shard }] });
@@ -21,17 +23,17 @@ const allOn = (shard, version) => ({ version, virtualRanges: 256, placements: [{
 /** A database over memory engines; `engines` lets a test reach one, `wrap` lets it stand in front of one. */
 const withMemoryDatabase = (body, { wrap, refresh = false } = {}) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const engines = new Map();
+    const engines = new Map(), stores = new Map();
     const db = yield* makeDatabase({
       partitionMap: map,
       crossTenantRefresh: refresh,
       openShard: (shard) => {
         const engine = memoryKvEngine();
         engines.set(shard, engine);
-        return openShardOverKv(shard, wrap === undefined ? engine : wrap(shard, engine));
+        return Effect.tap(openShardOverKv(shard, wrap === undefined ? engine : wrap(shard, engine)), store => Effect.sync(() => stores.set(shard, store)));
       },
     });
-    return yield* body(db, engines);
+    return yield* body(db, engines, stores);
   })));
 
 const cars = (db, tenant, rows) =>
@@ -169,7 +171,7 @@ test("a refresh cut off between batches repeats nothing and skips nothing", asyn
     assert.equal(resumed[0].applied, 700 - partial.length, "exactly what the cut-off pass had not applied");
     assert.deepEqual(yield* indexed(db), yield* truth(db, ["acme"]));
   }), {
-    wrap: (shard, engine) => shard !== "zv.global" ? engine : {
+    wrap: (shard, engine) => !["s0", "s1"].includes(shard) ? engine : {
       ...engine,
       conditionalWrite: (batch, conditions) => Effect.suspend(() => {
         if (batch.length > 4) writes += 1;
@@ -279,6 +281,9 @@ test("an index outlives a restart, and dropping it removes everything it held", 
   }));
   await open((db, stores) => Effect.gen(function* () {
     assert.deepEqual((yield* db.crossTenantIndexes.list).map((index) => index.name), ["cars"]);
+    const persisted = yield* db.crossTenantIndexes.get("cars");
+    assert.ok(persisted.refreshedAt, "successful refresh status survives reopening without a new pass");
+    assert.equal(persisted.partitions, 1);
     assert.deepEqual(yield* indexed(db), ["acme/a1:red:1"], "entries are kept, before any refresh");
     yield* cars(db, "acme", [["a2", { color: "blue", price: 2 }]]);
     const [result] = yield* db.crossTenantIndexes.refresh();
@@ -287,7 +292,7 @@ test("an index outlives a restart, and dropping it removes everything it held", 
     const dropped = yield* db.crossTenantIndexes.drop("cars");
     assert.equal(dropped.name, "cars");
     assert.ok(dropped.entries > 0);
-    assert.ok(!(yield* stores.get("zv.global").partitions).includes("zv.cti.cars"), "the index's partition is gone");
+    for (const store of stores.values()) assert.ok(!(yield* store.partitions).includes("zv.cti.cars"), "every index placement is gone");
     assert.equal((yield* Effect.flip(db.crossTenantIndexes.drop("cars")))._tag, "CrossTenantIndexNotFound");
   }));
 });
@@ -299,6 +304,44 @@ test("a database with no index holds nothing of them", () =>
     const global = yield* openShardOverKv("zv.global", engines.get("zv.global"));
     assert.ok(!(yield* global.partitions).some((partition) => partition.startsWith("zv.cti")));
   })));
+
+test("refresh failures survive reopening and retain the last successful full-refresh time", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "zv-cti-status-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  let lastSuccess;
+  const open = body => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const stores = new Map();
+    const db = yield* makeDatabase({ partitionMap: map, crossTenantRefresh: false,
+      openShard: shard => Effect.tap(makeNodeSqliteStore(shard, directory), store => Effect.sync(() => stores.set(shard, store))),
+    });
+    return yield* body(db, stores);
+  })));
+  await open((db, stores) => Effect.gen(function* () {
+    yield* cars(db, "acme", [["a", { color: "red", price: 1 }]]);
+    let fail = false;
+    const index = yield* crossTenantIndexesOver({ globalShard: stores.get("zv.global"), shards: stores,
+      tenantsOn: shard => shard.partitions,
+      routed: partition => {
+        const store = stores.get(db.shardOf(partition)).partition(partition);
+        return { ...store, stats: fail ? Effect.fail(new StoreError({ op: "test.read", cause: "source unavailable" })) : store.stats };
+      },
+    });
+    yield* index.api.define({ name: "cars", collection: "cars" });
+    yield* index.api.refresh();
+    lastSuccess = (yield* index.api.get("cars")).refreshedAt;
+    fail = true;
+    const [refused] = yield* index.api.refresh();
+    assert.deepEqual(refused.failures, [{ partition: "acme", error: "StoreError" }]);
+    assert.equal((yield* index.api.get("cars")).refreshedAt, lastSuccess);
+  }));
+  await open(db => Effect.gen(function* () {
+    const status = yield* db.crossTenantIndexes.get("cars");
+    assert.equal(status.refreshedAt, lastSuccess);
+    assert.deepEqual(status.failures, [{ partition: "acme", error: "StoreError" }]);
+    yield* db.crossTenantIndexes.refresh();
+    assert.deepEqual((yield* db.crossTenantIndexes.get("cars")).failures, []);
+  }));
+});
 
 test("the background refresh never keeps a process alive that left its database open", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "zv-cti-exit-"));
@@ -322,3 +365,94 @@ test("the background refresh never keeps a process alive that left its database 
   });
   assert.equal(exit, 0, stderr);
 });
+
+
+test("derived index placements are spread across shards, bounded pages merge their order and bind cursor identity", () =>
+  withMemoryDatabase((db, _engines, stores) => Effect.gen(function* () {
+    for (let tenant = 0; tenant < 8; tenant++) {
+      yield* cars(db, `tenant${tenant}`, Array.from({ length: 50 }, (_, row) => [`r${row}`, { color: row % 2 ? "blue" : "red", price: (row * 7 + tenant) % 17 }]));
+    }
+    const definition = yield* define(db);
+    assert.deepEqual(definition.shards, ["s0", "s1"]);
+    yield* db.crossTenantIndexes.refresh();
+    const counts = [];
+    for (const shard of definition.shards) counts.push(yield* stores.get(shard).partition("zv.cti.cars").namespaceSize("doc/entries"));
+    assert.ok(counts.every(count => count > 0), `both placements hold entries: ${counts}`);
+    assert.equal(counts.reduce((sum, count) => sum + count), 400);
+    const found = [], keys = new Set();
+    let after, firstCursor;
+    do {
+      const page = yield* db.crossTenantIndexes.query({ index: "cars", orderBy: [{ path: "price" }], limit: after ? 37 : 151, ...(after ? { after } : {}) });
+      found.push(...page.matches);
+      for (const match of page.matches) keys.add(`${match.tenant}/${match.id}`);
+      after = page.next;
+      firstCursor ??= after;
+    } while (after);
+    assert.equal(found.length, 400);
+    assert.equal(keys.size, 400);
+    assert.deepEqual(found.map(match => match.data.price), found.map(match => match.data.price).sort((a, b) => a - b));
+    assert.equal((yield* Effect.flip(db.crossTenantIndexes.query({ index: "cars", where: [{ path: "color", value: "red" }], after: firstCursor })))._tag, "CursorMismatch");
+    yield* db.crossTenantIndexes.drop("cars");
+    yield* define(db);
+    yield* db.crossTenantIndexes.refresh();
+    assert.equal((yield* Effect.flip(db.crossTenantIndexes.query({ index: "cars", orderBy: [{ path: "price" }], after: firstCursor })))._tag, "CursorMismatch");
+    assert.equal((yield* Effect.flip(db.crossTenantIndexes.define({ name: "bad", collection: "cars", shards: ["missing"] })))._tag, "InvalidCrossTenantIndex");
+  })));
+
+test("derived placements support composite, geometry and exact vector queries", () =>
+  withMemoryDatabase((db) => Effect.gen(function* () {
+    for (const [tenant, price, color, lon, vector] of [["acme", 3, "red", 13.4, [1, 0]], ["bravo", 2, "blue", 13.41, [0, 1]], ["cosmo", 1, "red", 14.0, [0.9, 0.1]]]) {
+      yield* cars(db, tenant, [["a", { price, color, location: { type: "Point", coordinates: [lon, 52.5] }, vector }]]);
+    }
+    yield* define(db, {
+      spatial: { fields: ["location"], resolution: 7, version: 1 },
+      embedding: { field: "vector", dimension: 2, metric: "cosine", version: 1 },
+      indexes: [{ name: "color_price", fields: [{ path: "color" }, { path: "price", direction: "desc" }] }],
+    });
+    yield* db.crossTenantIndexes.refresh();
+    const composite = yield* db.crossTenantIndexes.query({ index: "cars", orderBy: [{ path: "color" }, { path: "price", direction: "desc" }] });
+    assert.deepEqual(composite.matches.map(match => match.tenant), ["bravo", "acme", "cosmo"]);
+    const geometry = yield* db.crossTenantIndexes.query({ index: "cars", geometry: { field: "location", near: [13.4, 52.5], radius: 2000 }, limit: 1 });
+    assert.deepEqual(geometry.matches.map(match => match.tenant), ["acme"]);
+    assert.equal(geometry.matches[0].distance, 0);
+    const nearby = yield* db.crossTenantIndexes.query({ index: "cars", geometry: { field: "location", near: [13.4, 52.5], radius: 2000 }, limit: 1, after: geometry.next });
+    assert.deepEqual(nearby.matches.map(match => match.tenant), ["bravo"]);
+    const similar = yield* db.crossTenantIndexes.query({ index: "cars", similar: { field: "vector", vector: [1, 0] }, limit: 1 });
+    assert.deepEqual(similar.matches.map(match => match.tenant), ["acme"]);
+    const second = yield* db.crossTenantIndexes.query({ index: "cars", similar: { field: "vector", vector: [1, 0] }, limit: 1, after: similar.next });
+    assert.deepEqual(second.matches.map(match => match.tenant), ["cosmo"]);
+    assert.equal((yield* Effect.flip(db.crossTenantIndexes.define({ name: "unique", collection: "cars", indexes: [{ name: "unique_price", fields: [{ path: "price" }], unique: true }] })))._tag, "InvalidCrossTenantIndex");
+  })));
+
+for (const recover of ["resume", "remove"]) test(`a cut-off derivation refuses queries durably and recovers by ${recover}`, () =>
+  withMemoryDatabase((db, _engines, stores) => Effect.gen(function* () {
+    yield* cars(db, "acme", Array.from({ length: 700 }, (_, n) => [`r${n}`, { price: n, color: "red" }]));
+    let fail = false, scans = 0;
+    const open = () => crossTenantIndexesOver({ globalShard: stores.get("zv.global"), shards: stores,
+      tenantsOn: shard => shard.partitions,
+      routed: partition => {
+        const store = stores.get(db.shardOf(partition)).partition(partition);
+        return { ...store, scanIdentities: input => Effect.suspend(() => {
+          if (fail && ++scans > 1) return Effect.fail(new StoreError({ op: "injected.scan", cause: "interrupted" }));
+          return store.scanIdentities(input);
+        }) };
+      },
+    });
+    let index = yield* open();
+    yield* index.api.define({ name: "cars", collection: "cars" });
+    yield* index.api.refresh();
+    yield* db.forTenant("acme").documents.delete({ collection: "cars", id: "r0" });
+    yield* db.maintenance.compact();
+    fail = true;
+    const [failed] = yield* index.api.refresh();
+    assert.equal(failed.failures.length, 1);
+    assert.equal((yield* Effect.flip(index.api.query({ index: "cars" })))._tag, "CrossTenantIndexRefreshing");
+    index = yield* open(); // Reads the durable marker, without retaining any process state.
+    assert.equal((yield* Effect.flip(index.api.query({ index: "cars" })))._tag, "CrossTenantIndexRefreshing");
+    fail = false;
+    if (recover === "remove") yield* db.dropTenant("acme");
+    yield* index.api.refresh();
+    const page = yield* index.api.query({ index: "cars", limit: 1000 });
+    assert.equal(page.matches.length, recover === "resume" ? 699 : 0);
+    assert.ok(!page.matches.some(match => match.id === "r0"));
+  })));

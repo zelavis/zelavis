@@ -178,7 +178,7 @@ test("the package loads from the tarball in a bare consumer", async () => {
 
 test("runtime-neutral subpaths load without the optional engines", async () => {
   // These must not drag in a peer dependency. The DB engine subpaths
-  // deliberately are not listed: `libsql`, `lmdb`, `rocksdb` and friends are
+  // deliberately are not listed: `lmdb`, `rocksdb` and friends are
   // peer dependencies, so a consumer that has not installed them should fail
   // to import those, and that is correct behaviour rather than a defect.
   for (const subpath of ["zelavis/core", "zelavis/sdk", "zelavis/sdk/browser", "zelavis/service"]) {

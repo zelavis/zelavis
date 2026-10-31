@@ -9,6 +9,7 @@ import {
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
+import { directoryComponent, sqliteFileComponent } from "../db/node-backups.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
@@ -22,6 +23,11 @@ export interface BunAdapterDatabaseOptions {
   /** Adopted only the first time a Project opens; the stored map wins afterwards. */
   shards?: readonly string[];
   virtualRanges?: number;
+  /**
+   * What a returned commit survives: `crash` (default) or `power`, which
+   * flushes every commit to the device. Reported by the database's health.
+   */
+  durability?: "crash" | "power";
 }
 
 export interface BunAdapterFileStorageOptions {
@@ -122,6 +128,17 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           ...(databaseOptions.virtualRanges === undefined
             ? {}
             : { virtualRanges: databaseOptions.virtualRanges }),
+          ...(databaseOptions.durability === undefined
+            ? {}
+            : { engine: { durability: databaseOptions.durability } }),
+          // As on Node: a Project's backups capture its database, its runtime store and its media files. The
+          // runtime store is copied through `bun:sqlite` here.
+          ...(isProjectRuntime ? {
+            backupComponents: [
+              ...(systemStore === undefined ? [] : [sqliteFileComponent("runtime", systemStoreFilename)]),
+              ...(options.files === false ? [] : [directoryComponent("media", options.files?.rootDirectory ? resolve(options.files.rootDirectory) : join(dataDirectory, "files"))]),
+            ],
+          } : {}),
         };
       }
 

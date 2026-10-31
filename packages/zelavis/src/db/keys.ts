@@ -45,6 +45,8 @@ export const Tag = {
   EdgeReverse: 0x10,
   /** Retired records by the position that retired them, so compaction finds the ones it may drop. */
   Retired: 0x11,
+  /** Live records by identity namespace, maintained in each record's commit. */
+  NamespaceCount: 0x12,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
@@ -457,6 +459,7 @@ export interface PartitionKeys {
   readonly decodeIdentity: (key: Uint8Array) => { namespace: string; key: string };
 
   readonly meta: (name: string) => Uint8Array;
+  readonly namespaceCount: (namespace: string) => Uint8Array;
 
   /** `[Event][position]` — events are read in position order, so the position is the key. */
   readonly event: (position: number) => Uint8Array;
@@ -597,6 +600,7 @@ export const partitionKeys = (partition: string): PartitionKeys => {
     },
 
     meta: (name) => build(Tag.Meta, (out) => writeString(out, name)),
+    namespaceCount: (namespace) => build(Tag.NamespaceCount, (out) => writeString(out, namespace)),
 
     event: (position) => build(Tag.Event, (out) => writeU64(out, position)),
     positionOf: (key) => readU64(key, at + 1),

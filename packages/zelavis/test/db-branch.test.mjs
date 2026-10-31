@@ -466,3 +466,143 @@ test("a divided Tenant is one Tenant in db.tenants, and its parts are partitions
     assert.deepEqual(own(yield* db.tenants), ["plain", "whale"]);
     assert.deepEqual(own(yield* db.partitions), ["plain", "whale#a", "whale#b"]);
   })));
+
+test("a branch cut off whose source has since been removed is removed unfinished when the database next opens", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-branch-gone-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const armed = { target: undefined, writes: 0, failAt: 0 };
+  await onDisk(dir, (db, shards) => Effect.gen(function* () {
+    yield* seedPosts(db.forTenant(across.first), ["p1", "p2"]);
+    armed.target = db.shardOf(across.other);
+    armed.writes = 0;
+    armed.failAt = 2;
+    assert.ok(Exit.isFailure(yield* Effect.exit(db.branchTenant(across.first, across.other))));
+    armed.target = undefined;
+    assert.equal((yield* shards.get(db.shardOf(across.other)).partition(across.other).stats).seeding, true);
+    yield* db.dropTenant(across.first);
+  }), { wrap: cutting(armed) });
+
+  await onDisk(dir, (db, shards) => Effect.gen(function* () {
+    assert.ok(!(yield* db.tenants).includes(across.other), "the unfinished copy is gone, not left refusing for ever");
+    assert.ok(!(yield* shards.get(db.shardOf(across.other)).partitions).includes(across.other));
+    // The name is free again: a Tenant written to there starts from nothing.
+    yield* seedPosts(db.forTenant(across.other), ["fresh"]);
+    assert.deepEqual(yield* posts(db.forTenant(across.other)), { fresh: "fresh@1" });
+    assert.equal((yield* shards.get(db.shardOf(across.other)).partition(across.other).stats).seeding, false);
+  }));
+});
+
+test("a branch as of a past cursor or time is the source as it was then, and is refused once the log is compacted", () =>
+  withDatabase((db, shards) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    yield* seedPosts(source, ["p1", "p2"]);
+    const then = yield* posts(source);
+    const cursor = (yield* source.events.read({ limit: 1000 })).cursor;
+    yield* Effect.sleep("5 millis");
+    const time = new Date().toISOString();
+    yield* Effect.sleep("5 millis");
+    yield* source.documents.update({ collection: "posts", id: "p1", data: { title: "changed", rank: 9 } });
+    yield* source.documents.delete({ collection: "posts", id: "p2" });
+    yield* source.documents.insert({ collection: "posts", id: "p3", data: { title: "p3", rank: 3 } });
+    const now = yield* posts(source);
+
+    const window = yield* db.recoveryWindow(across.first);
+    assert.equal(window.partitions.length, 1);
+    assert.equal(window.partitions[0].earliest, 0, "a log never compacted reaches back to its start");
+    assert.ok(window.partitions[0].latest > 0 && window.partitions[0].earliestAt <= window.partitions[0].latestAt);
+
+    const byCursor = yield* db.branchTenant(across.first, "past-cursor", { asOf: cursor });
+    assert.equal(byCursor.records, 0, "made from the log, not the present records");
+    assert.deepEqual(yield* posts(db.forTenant("past-cursor")), then, "as of the cursor");
+    yield* db.branchTenant(across.first, "past-time", { asOfTime: time });
+    assert.deepEqual(yield* posts(db.forTenant("past-time")), then, "as of the time");
+    assert.deepEqual(yield* posts(source), now, "the source is untouched");
+    // The branch is a Tenant of its own, taking writes from its own point on.
+    yield* db.forTenant("past-cursor").documents.insert({ collection: "posts", id: "fork", data: { title: "fork", rank: 1 } });
+    assert.ok(!Object.keys(yield* posts(source)).includes("fork"));
+    // Its lineage accepts the source's cursor only up to the point it was made at.
+    assert.equal((yield* db.forTenant("past-cursor").events.read({ after: cursor, limit: 10 })).events.length, 1);
+
+    for (const [options, reason] of [
+      [{ asOf: cursor, asOfTime: time }, /not both/],
+      [{ asOfTime: "yesterday-ish" }, /not an ISO 8601 time/],
+    ]) {
+      const refused = yield* Effect.flip(db.branchTenant(across.first, "nope", options));
+      assert.equal(refused._tag, "TenantNotBranchable");
+      assert.match(refused.reason, reason);
+    }
+    const store = shards.get(db.shardOf(across.first)).partition(across.first);
+    yield* store.compact({ keep: 1 });
+    const compacted = yield* Effect.flip(db.branchTenant(across.first, "too-late", { asOf: cursor }));
+    assert.match(compacted.reason, /compacted its log/);
+    const after = yield* db.recoveryWindow(across.first);
+    assert.equal(after.partitions[0].earliest, after.partitions[0].latest, "once compacted, only the present is in reach");
+    assert.ok(!(yield* db.tenants).includes("too-late"), "a refused branch leaves nothing behind");
+  })));
+
+test("a divided Tenant branches as of a time part by part, and refuses a cursor", () =>
+  withDatabase((db) => Effect.gen(function* () {
+    yield* db.topology.subdivision.subdivide("whale", ["a", "b"]);
+    for (const part of ["a", "b"]) yield* seedPosts(db.forPart("whale", part), [`${part}1`]);
+    yield* Effect.sleep("5 millis");
+    const time = new Date().toISOString();
+    yield* Effect.sleep("5 millis");
+    for (const part of ["a", "b"]) yield* db.forPart("whale", part).documents.insert({ collection: "posts", id: `${part}2`, data: { title: "late", rank: 2 } });
+    const branched = yield* db.branchTenant("whale", "whale-then", { asOfTime: time });
+    assert.deepEqual(branched.parts.map((entry) => entry.part), ["a", "b"]);
+    for (const part of ["a", "b"]) assert.deepEqual(Object.keys(yield* posts(db.forPart("whale-then", part))), [`${part}1`]);
+    const cursor = (yield* db.forPart("whale", "a").events.read({ limit: 1 })).cursor;
+    assert.match((yield* Effect.flip(db.branchTenant("whale", "whale-x", { asOf: cursor }))).reason, /use asOfTime/);
+    assert.equal((yield* db.recoveryWindow("whale")).partitions.length, 2);
+  })));
+
+test("a branch as of a past position cut off by a crash is finished at open as of the same position", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-branch-asof-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const armed = { target: undefined, writes: 0, failAt: 0 };
+  let then;
+  await onDisk(dir, (db) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    yield* seedPosts(source, Array.from({ length: 30 }, (_, n) => `p${n}`));
+    then = yield* posts(source);
+    const cursor = (yield* source.events.read({ limit: 1000 })).cursor;
+    yield* source.documents.insert({ collection: "posts", id: "later", data: { title: "later", rank: 99 } });
+    armed.target = db.shardOf(across.other);
+    armed.writes = 0;
+    armed.failAt = 2;
+    assert.ok(Exit.isFailure(yield* Effect.exit(db.branchTenant(across.first, across.other, { asOf: cursor }))));
+    armed.target = undefined;
+  }), { wrap: cutting(armed) });
+  await onDisk(dir, (db, shards) => Effect.gen(function* () {
+    assert.deepEqual(yield* posts(db.forTenant(across.other)), then, "finished at open, as of the same position");
+    const stats = yield* shards.get(db.shardOf(across.other)).partition(across.other).stats;
+    assert.deepEqual([stats.seeding, stats.asOf], [false, undefined]);
+  }));
+});
+
+test("after compaction a Tenant is still recovered as of any position from its snapshot on", () =>
+  withDatabase((db, shards) => Effect.gen(function* () {
+    const source = db.forTenant(across.first);
+    const store = shards.get(db.shardOf(across.first)).partition(across.first);
+    yield* seedPosts(source, ["p1", "p2"]);
+    const beforeSnapshot = (yield* source.events.read({ limit: 1000 })).cursor;
+    yield* source.documents.update({ collection: "posts", id: "p1", data: { title: "at snapshot", rank: 5 } });
+    const { position: snapshotAt } = yield* store.snapshot;
+    yield* source.documents.insert({ collection: "posts", id: "p3", data: { title: "after", rank: 6 } });
+    const middle = yield* posts(source);
+    const middleCursor = (yield* source.events.read({ limit: 1000 })).cursor;
+    yield* source.documents.delete({ collection: "posts", id: "p2" });
+    const compaction = yield* store.compact({ keep: 0 });
+    assert.equal(compaction.compactedTo, snapshotAt, "compaction stops at the snapshot");
+    assert.equal(compaction.snapshotAt, snapshotAt);
+
+    const window = yield* db.recoveryWindow(across.first);
+    assert.equal(window.partitions[0].earliest, snapshotAt, "the recovery window starts at the snapshot");
+    const recovered = yield* db.branchTenant(across.first, "from-snapshot", { asOf: middleCursor });
+    assert.ok(recovered.records > 0, "made from the snapshot's records");
+    assert.deepEqual(yield* posts(db.forTenant("from-snapshot")), middle, "as of a position after the snapshot");
+    const copy = shards.get(db.shardOf("from-snapshot")).partition("from-snapshot");
+    yield* copy.rebuildLenses;
+    assert.deepEqual(yield* posts(db.forTenant("from-snapshot")), middle, "and it can rebuild its lenses from its own snapshot");
+    assert.match((yield* Effect.flip(db.branchTenant(across.first, "too-early", { asOf: beforeSnapshot }))).reason, /recovery window starts later/);
+  })));

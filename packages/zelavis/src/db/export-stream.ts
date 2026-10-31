@@ -46,7 +46,10 @@ export type ExportEntry = BackupEvent & { readonly part?: string };
 export interface ExportPageInput {
   /** The cursor the last page gave; none starts an export. */
   readonly cursor?: string;
-  /** Entries per phase per part, 1 to 1024; 256 when omitted. A page holds at most two phases' worth per part. */
+  /**
+   * The most entries a page holds, 1 to 1024; 256 when omitted. A divided Tenant's parts share it, a fair share
+   * each, starting each call where the last stopped, so every part advances however many parts there are.
+   */
   readonly limit?: number;
 }
 
@@ -105,8 +108,8 @@ const invalid = (reason: string) => new InvalidExport({ reason });
 
 const encode = (state: unknown): string => Buffer.from(JSON.stringify(state), "utf8").toString("base64url");
 
-const decode = (cursor: string): Effect.Effect<unknown, InvalidExport> => {
-  if (cursor.length === 0 || cursor.length > CURSOR_LIMIT) return Effect.fail(invalid("the cursor is not one an export gave"));
+const decode = (cursor: string, bound = CURSOR_LIMIT): Effect.Effect<unknown, InvalidExport> => {
+  if (cursor.length === 0 || cursor.length > bound) return Effect.fail(invalid("the cursor is not one an export gave"));
   try {
     return Effect.succeed(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown);
   } catch {
@@ -183,8 +186,11 @@ export const exportPartitionStep = (
     }
 
     const entries: BackupEvent[] = [];
+    // `limit` bounds the whole call: what the records phase reads is not left to the log.
+    let budget = limit;
     if (!state.d) {
       const page = yield* store.scanRecords({ ...(state.a === undefined ? {} : { after: state.a as Seq }), limit });
+      budget -= page.length;
       for (const { seq, record } of page) {
         const entry = entryOfRecord(seq, record);
         if (entry !== undefined) entries.push(entry);
@@ -198,8 +204,9 @@ export const exportPartitionStep = (
       }
     }
 
-    const events = [...(yield* Stream.runCollect(
-      store.events.read({ ...(state.f === undefined ? {} : { after: state.f as EventCursor }), limit }),
+    // A full page of records leaves nothing for the log this call; the hold keeps it until the next.
+    const events = budget === 0 ? [] : [...(yield* Stream.runCollect(
+      store.events.read({ ...(state.f === undefined ? {} : { after: state.f as EventCursor }), limit: budget }),
     ))];
     for (const event of events) {
       const entry = entryOfEvent(event);
@@ -210,7 +217,7 @@ export const exportPartitionStep = (
 
     // Every record was read before the log was read to its end in this call, so the log has been followed
     // past the head the records were read at: from here the entries received are one position's state.
-    if (!state.c && state.d && events.length < limit) {
+    if (!state.c && state.d && budget > 0 && events.length < budget) {
       state = { ...state, c: true };
       if (state.h !== undefined) {
         yield* store.releaseLog(state.h);
@@ -222,10 +229,14 @@ export const exportPartitionStep = (
   });
 
 /**
- * One call of an export of a divided Tenant: every part advances by one page of its own, and the
- * cursor carries each part's cursor under the part's name. The Tenant is consistent once every
- * part is, each as of its own position: parts are separate partitions with no common log, so there
- * is no one moment across them (see `Database.branchTenant`, which gives the same guarantee).
+ * One call of an export of a divided Tenant. The parts share the page's `limit`: starting where the last
+ * call stopped, each part in turn advances by a fair share of what is left, so a page never holds more than
+ * `limit` entries however many parts there are, and no part waits behind the others for more than one round.
+ * The cursor carries each started part's state under the part's name (flat, so it grows by a part's state per
+ * part, and its bound with it) and where the next call starts. The
+ * Tenant is consistent once every part is, each as of its own position: parts are separate partitions with no
+ * common log, so there is no one moment across them (see `Database.branchTenant`, which gives the same
+ * guarantee).
  */
 export const exportDividedPage = (
   tenant: TenantId,
@@ -238,28 +249,42 @@ export const exportDividedPage = (
 ): Effect.Effect<ExportPage, DbError | InvalidExport> =>
   Effect.gen(function* () {
     const limit = yield* checkedLimit(input.limit);
-    let carriedOver: Record<string, string> = {};
+    const carriedOver: Record<string, PartitionExport> = {};
+    let start = 0;
     if (input.cursor !== undefined) {
-      const value = yield* decode(input.cursor);
+      const value = yield* decode(input.cursor, CURSOR_LIMIT * (parts.length + 1));
       const names = isRecord(value) && Array.isArray(value.parts) ? value.parts : undefined;
-      const cursors = isRecord(value) && isRecord(value.c) ? value.c : undefined;
-      if (names === undefined || cursors === undefined || names.length !== parts.length || names.some((name, at) => name !== parts[at])) {
+      const states = isRecord(value) && isRecord(value.c) ? value.c : undefined;
+      if (names === undefined || states === undefined || names.length !== parts.length || names.some((name, at) => name !== parts[at])) {
         return yield* invalid(`the cursor is not one an export of "${tenant}" gave, or the Tenant is divided differently now; start the export again`);
       }
-      for (const part of parts) {
-        const given = cursors[part];
-        if (typeof given !== "string") return yield* invalid("the cursor is missing a part");
-        carriedOver[part] = given;
+      const at = isRecord(value) ? value.o : undefined;
+      if (at !== undefined && !(typeof at === "number" && Number.isSafeInteger(at) && at >= 0 && at < parts.length)) return yield* invalid("the cursor's next part is not one of the parts");
+      start = at ?? 0;
+      for (const [part, given] of Object.entries(states)) {
+        if (!parts.includes(part)) return yield* invalid("the cursor names a part the Tenant does not have");
+        carriedOver[part] = yield* partitionState(given);
       }
     }
     const entries: ExportEntry[] = [];
-    const next: Record<string, string> = {};
+    const next: Record<string, PartitionExport> = { ...carriedOver };
+    const reached: Record<string, boolean> = {};
+    let remaining = limit;
+    let visited = 0;
+    for (; visited < parts.length && remaining > 0; visited += 1) {
+      const part = parts[(start + visited) % parts.length]!;
+      const share = Math.max(1, Math.ceil(remaining / (parts.length - visited)));
+      const held = carriedOver[part];
+      const page = yield* pageOf(part, held === undefined ? undefined : encode(held), share);
+      for (const entry of page.entries) entries.push({ ...entry, part });
+      next[part] = yield* Effect.flatMap(decode(page.cursor), partitionState);
+      reached[part] = page.consistent;
+      remaining -= share;
+    }
     let consistent = true;
     for (const part of parts) {
-      const page = yield* pageOf(part, input.cursor === undefined ? undefined : carriedOver[part], limit);
-      for (const entry of page.entries) entries.push({ ...entry, part });
-      next[part] = page.cursor;
-      consistent = consistent && page.consistent;
+      if (reached[part] !== undefined) consistent = consistent && reached[part];
+      else consistent = consistent && next[part]?.c === true;
     }
-    return { tenantId: tenant, entries, cursor: encode({ v: 1, parts, c: next }), consistent, parts };
+    return { tenantId: tenant, entries, cursor: encode({ v: 1, parts, c: next, o: (start + visited) % parts.length }), consistent, parts };
   });

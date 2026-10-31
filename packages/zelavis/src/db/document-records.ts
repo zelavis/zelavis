@@ -12,7 +12,7 @@ import { COLLECTION_NAMESPACE, documentNamespace, IDEMPOTENCY_NAMESPACE } from "
 import { InvalidCollectionName } from "./errors.js";
 import { type Seq } from "./model.js";
 
-import { type Analyzer, type CheckConstraint, type Collection, type CollectionIndex, type Document, type DocumentFilter, type EdgeDefinition, type EmbeddingIndex, type IndexField, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
+import { type Analyzer, type CheckConstraint, type Collection, type CollectionIndex, type DerivedDeclarationSet, type Document, type DocumentFilter, type EdgeDefinition, type EmbeddingIndex, type IndexField, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
 
 /** Marks a stored collection record, distinct from any collection name. */
 export const COLLECTION_MARKER = "\u0000collection";
@@ -85,6 +85,15 @@ export const columnFor = (collection: string, path: string) => `${collection}.${
 export const textFieldFor = (collection: string, path: string) => `${collection}.${path}`;
 
 /**
+ * The term-lens field one analyzed path posts its adjacent word pairs under
+ * (`Analyzer.phrases`). `^` separates it: no collection name holds one.
+ */
+export const pairFieldFor = (collection: string, path: string) => `${collection}^${path}`;
+
+/** How two adjacent words are named in the pair field: words never hold a space. */
+export const wordPair = (first: string, second: string) => `${first} ${second}`;
+
+/**
  * The term-lens field one spatial path posts its cells under. A collection name
  * holds no `@`, so this never meets a text field, whatever the paths are.
  */
@@ -120,21 +129,30 @@ export const filterRecord = objectFields<DocumentFilter>({ path: isString,
 export const storedIndexRecord = objectFields<StoredIndex>({ name: isString, column: isString,
   unique: isBoolean, state: literal("building", "ready"), fields: arrayOf(objectFields<Required<IndexField>>({
     path: isString, direction: literal("asc", "desc"), nulls: literal("first", "last") })) });
+export const analyzerRecord = objectFields<Analyzer>({ fields: arrayOf(isString), version: isNonNegativeInteger,
+  fold: optional(isBoolean), stopWords: optional(arrayOf(isString)), minLength: optional(isNonNegativeInteger), language: optional(isString),
+  phrases: optional(isBoolean), synonyms: optional(arrayOf(arrayOf(isString))) });
+export const spatialRecord = objectFields<SpatialIndex>({ fields: arrayOf(isString), resolution: isNonNegativeInteger, version: isNonNegativeInteger });
+export const embeddingRecord = objectFields<EmbeddingIndex>({ field: isString, dimension: isPositiveInteger,
+  metric: literal("cosine", "dot", "euclidean"), quantization: optional(literal("f32", "f16", "i8", "b1")),
+  normalize: optional(isBoolean), model: optional(isString), modelVersion: optional((value): value is string | number => isString(value) || isFiniteNumber(value)), version: isNonNegativeInteger });
+const edgeRecord = objectFields<EdgeDefinition>({ name: isString, path: isString, collection: isString });
+const measureRecord = objectFields<MeasureDefinition>({ name: isString, path: isString });
 export const collectionRecord = objectFields<StoredCollection>({ name: isString, createdAt: isTimestamp,
   surface: literal("content-studio", "database"), metadata: optional(recordOf(isUnknown)),
   indexes: optional(arrayOf(storedIndexRecord)),
   checks: optional(arrayOf(objectFields<CheckConstraint>({ name: isString, where: arrayOf(filterRecord) }))),
   references: optional(arrayOf(objectFields<Required<ReferenceConstraint>>({ name: isString, path: isString,
     collection: isString, onDelete: literal("restrict", "cascade", "set-null") }))),
-  analyzer: optional(objectFields<Analyzer>({ fields: arrayOf(isString), version: isNonNegativeInteger,
-    fold: optional(isBoolean), stopWords: optional(arrayOf(isString)), minLength: optional(isNonNegativeInteger), language: optional(isString) })),
-  spatial: optional(objectFields<SpatialIndex>({ fields: arrayOf(isString), resolution: isNonNegativeInteger, version: isNonNegativeInteger })),
-  embedding: optional(objectFields<EmbeddingIndex>({ field: isString, dimension: isPositiveInteger,
-    metric: literal("cosine", "dot", "euclidean"), quantization: optional(literal("f32", "f16", "i8", "b1")),
-    normalize: optional(isBoolean), model: optional(isString), modelVersion: optional((value): value is string | number => isString(value) || isFiniteNumber(value)), version: isNonNegativeInteger })),
-  edges: optional(arrayOf(objectFields<EdgeDefinition>({ name: isString, path: isString, collection: isString }))),
-  measures: optional(arrayOf(objectFields<MeasureDefinition>({ name: isString, path: isString }))),
+  analyzer: optional(analyzerRecord),
+  spatial: optional(spatialRecord),
+  embedding: optional(embeddingRecord),
+  edges: optional(arrayOf(edgeRecord)),
+  measures: optional(arrayOf(measureRecord)),
   columns: optional(arrayOf(isString)),
+  derived: optional(objectFields<DerivedDeclarationSet>({ schemaVersion: isPositiveInteger,
+    analyzer: optional(analyzerRecord), measures: arrayOf(measureRecord), edges: arrayOf(edgeRecord),
+    spatial: optional(spatialRecord), embedding: optional(embeddingRecord) })),
   referencedBy: optional(arrayOf(objectFields<{ collection: string; reference: string }>({ collection: isString, reference: isString }))),
 });
 export const receiptRecord = objectFields<Receipt>({ key: isString, fingerprint: isString, request: isString, result: isUnknown, at: isTimestamp });

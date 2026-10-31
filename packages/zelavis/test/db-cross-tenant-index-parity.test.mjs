@@ -64,13 +64,7 @@ const surfaces = {
       list: () => cli(["list"]),
       get: (name) => cli(["get", name]),
       refresh: (name) => cli(["refresh", name]),
-      query: (name, input) => cli([
-        "query", name,
-        ...(input.where ? ["--where", JSON.stringify(input.where)] : []),
-        ...(input.orderBy ? ["--order-by", JSON.stringify(input.orderBy)] : []),
-        ...(input.tenants ? ["--tenants", input.tenants.join(",")] : []),
-        ...(input.limit ? ["--limit", String(input.limit)] : []),
-      ]),
+      query: (name, input) => cli(["query", name, "--data", JSON.stringify(input ?? {})]),
       drop: (name) => cli(["drop", name]),
     };
   },
@@ -88,24 +82,34 @@ test("cross-Tenant indexes: define, refresh, query, refuse and drop come out the
     const api = opened.api;
     for (const [tenant, rows] of [["acme", [["a1", "red", 9], ["a2", "blue", 5]]], ["bravo", [["b1", "red", 7]]]]) {
       await api.forTenant(tenant).documents.createCollection({ name: "cars" });
-      for (const [id, color, price] of rows) await api.forTenant(tenant).documents.insert({ collection: "cars", id, data: { color, price } });
+      for (const [id, color, price] of rows) await api.forTenant(tenant).documents.insert({ collection: "cars", id, data: { color, price, location: { type: "Point", coordinates: [13.4 + price * 0.001, 52.5] }, vector: [price, 1] } });
     }
     const surface = bind(api);
-    const defined = await surface.define({ name: "cars", collection: "cars", columns: ["color", "price"] });
+    const defined = await surface.define({ name: "cars", collection: "cars", columns: ["color", "price"], shards: ["shard-0", "shard-1"],
+      spatial: { fields: ["location"], resolution: 7, version: 1 },
+      embedding: { field: "vector", dimension: 2, metric: "euclidean", version: 1 },
+      indexes: [{ name: "color_price", fields: [{ path: "color" }, { path: "price", direction: "desc" }] }],
+    });
     const refreshed = await surface.refresh("cars");
     const red = await surface.query("cars", { where: [{ path: "color", value: "red" }], orderBy: [{ path: "price" }] });
     const onlyBravo = await surface.query("cars", { tenants: ["bravo"] });
+    const composite = await surface.query("cars", { orderBy: [{ path: "color" }, { path: "price", direction: "desc" }] });
+    const geometry = await surface.query("cars", { geometry: { field: "location", near: [13.4, 52.5], radius: 2000 } });
+    const similar = await surface.query("cars", { similar: { field: "vector", vector: [7, 1] }, limit: 1 });
     const listed = await surface.list();
     const got = await surface.get("cars");
     const undeclared = await surface.query("cars", { where: [{ path: "model", value: "x" }] }).then(() => "accepted", (error) => String(error.message));
     const twice = await surface.define({ name: "cars", collection: "cars" }).then(() => "accepted", (error) => String(error.message));
     const dropped = await surface.drop("cars");
     const missing = await surface.get("cars").then(() => "found", (error) => String(error.message));
-    results[name] = timeless({ defined, refreshed, red, onlyBravo, listed, got, undeclared, twice, dropped, missing });
+    results[name] = timeless({ defined, refreshed, red, onlyBravo, composite, geometry, similar: { matches: similar.matches }, listed, got, undeclared, twice, dropped, missing });
   }
   const http = results.http;
   assert.deepEqual(http.red.matches.map((match) => [match.tenant, match.id, match.data.price]), [["bravo", "b1", 7], ["acme", "a1", 9]]);
   assert.deepEqual(http.onlyBravo.matches.map((match) => match.id), ["b1"]);
+  assert.deepEqual(http.composite.matches.map(match => match.data.price), [5, 9, 7]);
+  assert.deepEqual(http.geometry.matches.map(match => match.data.price), [5, 7, 9]);
+  assert.deepEqual(http.similar.matches.map(match => match.tenant), ["bravo"]);
   assert.equal(http.refreshed.applied, 3);
   assert.equal(http.listed.indexes.length, 1);
   assert.match(http.undeclared, /does not index "model"/);

@@ -6,8 +6,8 @@ export PATH
 [ "$#" -eq 2 ] && [ "$1" = --set ] || { echo 'Unknown package set.' >&2; exit 2; }
 # The sets are fixed here, never supplied by a caller or a recipe.
 case "$2" in
-  wordpress-stack) set_name=wordpress-stack; packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core' ;;
-  mariadb-server) set_name=mariadb-server; packages='mariadb-server-core mariadb-client-core' ;;
+  wordpress-stack) set_name=wordpress-stack; packages='nginx php-fpm php-cli php-mysql php-curl php-gd php-intl php-mbstring php-xml php-zip mariadb-server-core mariadb-client-core mariadb-client' ;;
+  mariadb-server) set_name=mariadb-server; packages='mariadb-server-core mariadb-client-core mariadb-client' ;;
   terminal) set_name=terminal; packages='tmux' ;;
   *) echo 'Unknown package set.' >&2; exit 2 ;;
 esac

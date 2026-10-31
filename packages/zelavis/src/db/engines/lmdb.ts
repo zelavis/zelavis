@@ -2,7 +2,7 @@ import { present, integrationValue } from "../../core/runtime/effect-boundary.js
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
-import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ShardStoreApi } from "../store.js";
@@ -67,6 +67,7 @@ const loadLmdb = Effect.tryPromise({
 export const makeLmdbEngine = (
   partition: PartitionKey,
   directory: string,
+  durability: KvDurability = "crash",
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.flatMap(loadLmdb, (open) =>
@@ -80,7 +81,8 @@ export const makeLmdbEngine = (
             // stricter than the others: SQLite runs at synchronous=NORMAL and
             // RocksDB does not fsync per write. Matching them makes this a
             // comparison of engines rather than of durability settings.
-            overlappingSync: true,
+            // `power` keeps LMDB's own default: the commit returns once flushed.
+            overlappingSync: durability === "crash",
             // `useWritemap` is deliberately not set. It writes directly into
             // the mapped region and is the obvious throughput knob, but it
             // tripped an assertion inside LMDB's own free-list handling
@@ -195,9 +197,9 @@ export const makeLmdbEngine = (
 export const makeLmdbStore = (
   shard: ShardId,
   directory: string,
-  options?: OpenShardOptions,
+  options?: OpenShardOptions & { readonly durability?: KvDurability },
 ): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeLmdbEngine(shard, directory);
+    const engine = yield* makeLmdbEngine(shard, directory, options?.durability);
     return yield* openShardOverKv(shard, engine, options);
   });

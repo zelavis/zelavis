@@ -1,7 +1,7 @@
 import { Effect, Stream } from "effect";
 import { StoreError } from "../errors.js";
 import {
-  equalBytes, scanRange, type KvCondition, type KvEngine, type KvEntry, type KvReader, type KvScanOptions, type KvWrite,
+  equalBytes, scanRange, type KvCondition, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvScanOptions, type KvWrite,
 } from "../kv.js";
 
 /**
@@ -19,20 +19,6 @@ export interface SqliteHandle {
   exec(sql: string): void;
   close(): void;
 }
-
-/**
- * How keys reach the binding.
- *
- * `blob` is the natural choice and what the default engine uses. `hex` exists
- * because libsql 0.5.29 panics in its native layer when a Buffer is bound as a
- * query parameter, so its keys travel as text. Hex preserves order — every byte
- * becomes exactly two digits from an ordered alphabet — so range scans behave
- * identically under SQLite's default BINARY collation.
- *
- * A rowid table either way: the primary key still gets the unique index that
- * range scans read, while payload bytes stay out of the pages they walk.
- */
-export type KeyEncoding = "blob" | "hex";
 
 /**
  * SQLite ships conservative defaults for a shared machine, not for a database
@@ -53,7 +39,7 @@ export type KeyEncoding = "blob" | "hex";
  * `wal_autocheckpoint` is raised because the default checkpoints every thousand
  * pages, which interrupts bulk ingest to fold the log back into the file.
  */
-const kvSchema = (encoding: KeyEncoding) => `
+const kvSchema = `
   PRAGMA page_size = 8192;
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
@@ -63,7 +49,7 @@ const kvSchema = (encoding: KeyEncoding) => `
   PRAGMA wal_autocheckpoint = 4000;
   PRAGMA busy_timeout = 5000;
   CREATE TABLE IF NOT EXISTS kv (
-    key ${encoding === "hex" ? "TEXT" : "BLOB"} PRIMARY KEY,
+    key BLOB PRIMARY KEY,
     value BLOB NOT NULL
   );
 `;
@@ -86,7 +72,7 @@ const IDLE_READERS = 4;
 const toBytes = (value: unknown): Uint8Array => {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  return new Uint8Array(0);
+  throw new TypeError("A stored key or value is not binary data.");
 };
 
 /**
@@ -103,16 +89,27 @@ const toBytes = (value: unknown): Uint8Array => {
  */
 export const sqliteKvEngineOver = (
   db: SqliteHandle,
-  options: { readonly encoding?: KeyEncoding; readonly openReader: () => SqliteHandle },
+  options: { readonly openReader: () => SqliteHandle; readonly durability?: KvDurability },
 ): KvEngine => {
-  const encoding = options.encoding ?? "blob";
-  db.exec(kvSchema(encoding));
+  try {
+    db.exec(kvSchema);
+    // WAL with synchronous=NORMAL survives a crash; FULL also syncs the log at every commit.
+    if (options.durability === "power") db.exec("PRAGMA synchronous = FULL;");
+    const columns = [...db.prepare("PRAGMA table_info(kv)").iterate()];
+    const key = columns.find(column => typeof column === "object" && column !== null && "name" in column && column.name === "key");
+    if (typeof key !== "object" || key === null || !("type" in key) || key.type !== "BLOB") {
+      throw new TypeError("The database uses an incompatible key encoding; recreate the pre-release development database. No data was converted.");
+    }
+  } catch (cause) {
+    try { db.close(); } catch (cleanup) { throw new AggregateError([cause, cleanup], "Database initialization and cleanup failed."); }
+    throw cause;
+  }
 
   const toKey = (bytes: Uint8Array): unknown =>
-    encoding === "hex" ? Buffer.from(bytes).toString("hex") : Buffer.from(bytes);
+    Buffer.from(bytes);
 
   const fromKey = (value: unknown): Uint8Array =>
-    typeof value === "string" ? new Uint8Array(Buffer.from(value, "hex")) : toBytes(value);
+    toBytes(value);
 
   const statements = {
     get: db.prepare("SELECT value FROM kv WHERE key = ?"),
@@ -149,7 +146,7 @@ export const sqliteKvEngineOver = (
             // becomes an array on its way into a bitmap.
             // A fresh statement per scan, not a cached one. A scan hands back a
             // lazy iterator, so two overlapping scans would share the cursor of
-            // one statement — which node:sqlite tolerates and libsql answers by
+            // one statement; bindings may otherwise answer by
             // panicking inside its native layer. Single-shot statements stay
             // cached; only the iterating ones are rebuilt.
             const reverse = scanOptions?.reverse === true;

@@ -383,6 +383,12 @@ export class CrossTenantIndexExists extends Schema.TaggedError<CrossTenantIndexE
   { name: Schema.String },
 ) {}
 
+/** A durable re-derivation has not published complete entries yet. */
+export class CrossTenantIndexRefreshing extends Schema.TaggedError<CrossTenantIndexRefreshing>()("CrossTenantIndexRefreshing", {
+  name: Schema.String,
+  partition: Schema.String,
+}) {}
+
 /** A cross-Tenant index definition that cannot be built as given. */
 export class InvalidCrossTenantIndex extends Schema.TaggedError<InvalidCrossTenantIndex>()(
   "InvalidCrossTenantIndex",
@@ -406,9 +412,36 @@ export class SchemaVersionExists extends Schema.TaggedError<SchemaVersionExists>
   { collection: Schema.String, version: Schema.Finite },
 ) {}
 
+export class SchemaTransferRefused extends Schema.TaggedError<SchemaTransferRefused>()("SchemaTransferRefused", {
+  reason: Schema.String,
+}) {}
+
+export class InvalidMeasureQuery extends Schema.TaggedError<InvalidMeasureQuery>()("InvalidMeasureQuery", {
+  reason: Schema.String,
+}) {}
+
+export class AggregateRefused extends Schema.TaggedError<AggregateRefused>()("AggregateRefused", {
+  name: Schema.String, reason: Schema.String,
+}) {}
+export class AggregateNotFound extends Schema.TaggedError<AggregateNotFound>()("AggregateNotFound", { name: Schema.String }) {}
+export class AggregateChanged extends Schema.TaggedError<AggregateChanged>()("AggregateChanged", {
+  name: Schema.String, reason: Schema.String,
+}) {}
+
 export class SchemaNotFound extends Schema.TaggedError<SchemaNotFound>()("SchemaNotFound", {
   collection: Schema.String,
   version: Schema.Finite,
+}) {}
+
+/**
+ * A schema version was not activated: the declarations it implies do not hold
+ * for the documents already stored, so it was left inactive and the collection
+ * declared as it was.
+ */
+export class SchemaActivationRefused extends Schema.TaggedError<SchemaActivationRefused>()("SchemaActivationRefused", {
+  collection: Schema.String,
+  version: Schema.Finite,
+  reason: Schema.String,
 }) {}
 
 /** A write did not satisfy the collection's active schema. */
@@ -455,6 +488,13 @@ export class TenantNotDroppable extends Schema.TaggedError<TenantNotDroppable>()
  * A Tenant cannot be branched: one of the two is reserved or a plugin's, divided into parts, the source
  * holds nothing, the target already holds data, or a relocation is pending.
  */
+/** A merge of a branch back into its source refused before anything was written; see `mergeBranch`. */
+export class BranchNotMergeable extends Schema.TaggedError<BranchNotMergeable>()("BranchNotMergeable", {
+  branch: Schema.String,
+  into: Schema.String,
+  reason: Schema.String,
+}) {}
+
 export class TenantNotBranchable extends Schema.TaggedError<TenantNotBranchable>()("TenantNotBranchable", {
   tenant: Schema.String,
   into: Schema.String,
@@ -465,6 +505,40 @@ export class TenantNotBranchable extends Schema.TaggedError<TenantNotBranchable>
 export class InvalidExport extends Schema.TaggedError<InvalidExport>()("InvalidExport", {
   reason: Schema.String,
 }) {}
+
+/** A backup schedule, run, verification or restore refused, with the reason; see `node-backups.ts`. */
+export class InvalidBackup extends Schema.TaggedError<InvalidBackup>()("InvalidBackup", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
+/** An import's source, options or plan refused before anything was written; see `ImportsApi`. */
+export class InvalidImport extends Schema.TaggedError<InvalidImport>()("InvalidImport", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return this.reason;
+  }
+}
+
+/**
+ * A divided Tenant's restore stopped at one part after earlier parts were restored. Parts are separate partitions,
+ * restored one after another, so nothing undoes the earlier ones; restoring the same backup again with
+ * `into: "purge"` replaces every part and completes it.
+ */
+export class DividedRestoreIncomplete extends Schema.TaggedError<DividedRestoreIncomplete>()("DividedRestoreIncomplete", {
+  tenant: Schema.String,
+  restored: Schema.Array(Schema.String),
+  failedPart: Schema.String,
+  reason: Schema.String,
+}) {
+  override get message() {
+    return `Restoring "${this.tenant}" stopped at part "${this.failedPart}" (${this.reason}) after ${this.restored.length === 0 ? "no parts" : `parts ${this.restored.join(", ")}`} were restored; restore the same backup again with into: "purge" to complete it.`;
+  }
+}
 
 /** A database image was asked for with a name or engine it does not take, or under a name already taken. */
 export class InvalidImage extends Schema.TaggedError<InvalidImage>()("InvalidImage", {
@@ -608,6 +682,18 @@ export class ReplicaDiverged extends Schema.TaggedError<ReplicaDiverged>()("Repl
 }) {}
 
 /**
+ * Fewer followers than a policy requires reported holding a position before
+ * its time limit. The write that reached that position is committed on the
+ * leader all the same: this reports that it is not yet held elsewhere, and
+ * undoes nothing.
+ */
+export class FollowersNotAcknowledged extends Schema.TaggedError<FollowersNotAcknowledged>()("FollowersNotAcknowledged", {
+  position: Schema.Finite,
+  required: Schema.Finite,
+  acknowledged: Schema.Array(Schema.String),
+}) {}
+
+/**
  * A partition's lenses are being rebuilt or reindexed, or a run that was doing
  * so was interrupted and has not been resumed.
  *
@@ -630,6 +716,24 @@ export class LensesRebuilding extends Schema.TaggedError<LensesRebuilding>()("Le
 export class TenantBranching extends Schema.TaggedError<TenantBranching>()("TenantBranching", {
   tenant: Schema.String,
   from: Schema.String,
+}) {}
+
+/** A message for a durable entity, or a step its handler answered, that cannot be taken as it is. */
+export class InvalidEntityMessage extends Schema.TaggedError<InvalidEntityMessage>()("InvalidEntityMessage", {
+  reason: Schema.String,
+}) {}
+
+/** An entity already holds as many unfinished messages as its mailbox takes; send again once it has caught up. */
+export class MailboxFull extends Schema.TaggedError<MailboxFull>()("MailboxFull", {
+  type: Schema.String,
+  id: Schema.String,
+  capacity: Schema.Finite,
+}) {}
+
+/** A follower route was asked for a partition it does not serve, or with a request it does not take. */
+export class InvalidFollowerRequest extends Schema.TaggedError<InvalidFollowerRequest>()("InvalidFollowerRequest", {
+  partition: Schema.String,
+  reason: Schema.String,
 }) {}
 
 /** Every failure the store contract can raise. */

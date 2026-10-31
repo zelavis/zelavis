@@ -20,10 +20,13 @@ import { runNodesCommand } from "./nodes.js";
 import { runCloudCommand } from "./cloud.js";
 import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
+import { runBackupsCommand } from "./backups.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runStorageCommand } from "./storage.js";
 import { runCrossTenantIndexesCommand } from "./cross-tenant-indexes.js";
+import { runFollowersCommand } from "./followers.js";
+import { runEntitiesCommand } from "./entities.js";
 import { runFabricCommand } from "./fabric.js";
 import { runRuntimeCommand } from "./runtime.js";
 import { runEnvironmentCommand } from "./environment.js";
@@ -137,6 +140,8 @@ function printHelp(): void {
 
 Usage:
   zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
+  zelavis system-store import RECORDS.jsonl --confirm import [--replace] [--data-dir DIR]
+  zelavis backups <schedules|create-schedule|delete-schedule|run|runs|verify|restore|drill|drill-from> [name] [run-id] [--data JSON] [--confirm NAME] [--schedule NAME] [--recovery-key KEY] [--target-dir PATH] [--target JSON] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>] [--enrollment-port <port> [--enrollment-address <ip-or-host>]...]
@@ -147,7 +152,7 @@ Usage:
   zelavis marketplace <allowlist|refresh|updates|update <name>> [--url <url>] [--token <token>] [--json]
   zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
   zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
-  zelavis nodes <list|platform|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
+  zelavis nodes <list|platform|trust|audit|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
   zelavis terminal <status|list|install|open|attach|close> [session-id] [--url <url>] [--token <token>] [--json]
   zelavis debug <processes|updates|project <id>> [--url <url>] [--token <token>] [--json]
@@ -164,6 +169,8 @@ Usage:
   zelavis agent <status|operations|operation> [operation-id] [--url <url>] [--token <token>] [--json]
   zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
   zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project <id> [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
+  zelavis entities <send|message|cancel|state|mailbox|list> --project <id> <type> [id] [message-key] [--tag TAG] [--data JSON] [--primary-key KEY] [--deliver-at ISO] [--tenant ID] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|changes> --project <id> [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url <url>] [--token <token>] [--json]
   zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
@@ -211,6 +218,11 @@ Commands:
                             back up and restore one of them.
   cross-tenant-indexes      Define, list, refresh, query and drop an App Project's
                             cross-Tenant indexes: one collection from every Tenant.
+  entities                  Send messages to an App Project's durable entities and read
+                            their state, mailboxes and replies.
+  followers                 The leader side of an App Project's database for followers
+                            on other hosts: stats, records, log, holds, acknowledgments
+                            and the change feed.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.
   services list             List runtime service registry entries.
@@ -642,6 +654,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       (yield* integration(() => runAuthCommand(args.slice(1))));
       return;
     }
+    if (args[0] === "backups") {
+      yield* integration(() => runBackupsCommand(args.slice(1)));
+      return;
+    }
     if (args[0] === "system-store") {
       yield* integration(() => runSystemStoreCommand(args.slice(1)));
       return;
@@ -681,6 +697,14 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "cross-tenant-indexes") {
       (yield* integration(() => runCrossTenantIndexesCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "entities") {
+      (yield* integration(() => runEntitiesCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "followers") {
+      (yield* integration(() => runFollowersCommand(args.slice(1))));
       return;
     }
     if (args[0] === "workloads") {

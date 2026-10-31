@@ -16,10 +16,6 @@ const enc = new TextEncoder();
 
 const open = async () => {
   switch (engine) {
-    case "libsql":
-      // libSQL takes an options object; the rest take a bare directory.
-      return (await import("../../dist/db/engines/libsql.js"))
-        .makeLibsqlStore("acme", { directory });
     case "lmdb":
       return (await import("../../dist/db/engines/lmdb.js")).makeLmdbStore("acme", directory);
     case "rocksdb-js":

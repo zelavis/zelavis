@@ -15,16 +15,20 @@ const PROXY = "/zelavis/api/v1/runtime/projects/p1/proxy/zelavis/api/v1/database
 const operator = { id: "operator", type: "user", permissions: ["database.backup", "database.inspect"] };
 
 const routeOf = (api, id) => defineDatabaseService(api).api.v1.find((entry) => entry.id === id);
-const call = async (api, id, body) => {
-  const response = await routeOf(api, id).handler({ service: api, params: {}, query: new URLSearchParams(), body, principal: operator, headers: {}, request: undefined });
+const call = async (api, id, body, params = {}) => {
+  const response = await routeOf(api, id).handler({ service: api, params, query: new URLSearchParams(), body, principal: operator, headers: {}, request: undefined });
   return { status: response.status ?? 200, body: response.body };
 };
 const platform = (api) => async (input, init) => {
   const url = new URL(String(input));
-  assert.equal(url.pathname, `${PROXY}/maintenance/images`, `unexpected request ${url.pathname}`);
-  const answer = init?.method === "POST"
-    ? await call(api, "database.images.create", JSON.parse(init.body))
-    : await call(api, "database.images.list");
+  const path = url.pathname.slice(`${PROXY}/maintenance/images`.length);
+  assert.ok(url.pathname.startsWith(`${PROXY}/maintenance/images`), `unexpected request ${url.pathname}`);
+  const body = init?.body === undefined ? undefined : JSON.parse(init.body);
+  const named = /^\/([^/]+)(\/verify)?$/.exec(path);
+  const answer = path === "" ? (init?.method === "POST" ? await call(api, "database.images.create", body) : await call(api, "database.images.list"))
+    : path === "/prune" ? await call(api, "database.images.prune", body)
+      : named?.[2] ? await call(api, "database.images.verify", body, { name: decodeURIComponent(named[1]) })
+        : await call(api, "database.images.remove", body, { name: decodeURIComponent(named[1]) });
   return new Response(JSON.stringify(answer.body), { status: answer.status, headers: { "content-type": "application/json" } });
 };
 
@@ -36,12 +40,30 @@ const surfaces = {
       return answer.body;
     },
     list: async () => (await call(api, "database.images.list")).body.images,
+    verify: async (name) => {
+      const answer = await call(api, "database.images.verify", {}, { name });
+      if (answer.status !== 200) throw new Error(answer.body.error);
+      return answer.body;
+    },
+    remove: async (name, confirm) => {
+      const answer = await call(api, "database.images.remove", { confirm }, { name });
+      if (answer.status !== 200) throw new Error(answer.body.error);
+      return answer.body;
+    },
+    prune: async (keep) => {
+      const answer = await call(api, "database.images.prune", { keep });
+      if (answer.status !== 200) throw new Error(answer.body.error);
+      return answer.body;
+    },
   }),
   sdk: (api) => {
     const client = createZelavisClient({ baseUrl: "http://zv.test", rootPath: "/zelavis", fetch: platform(api) });
     return {
       create: (name, engine) => client.projects.createDatabaseImage("p1", { name, ...(engine === undefined ? {} : { engine }) }),
       list: () => client.projects.databaseImages("p1"),
+      verify: (name) => client.projects.verifyDatabaseImage("p1", name),
+      remove: (name, confirm) => client.projects.deleteDatabaseImage("p1", { name, confirm }),
+      prune: (keep) => client.projects.pruneDatabaseImages("p1", { keep }),
     };
   },
   cli: (api) => {
@@ -55,6 +77,9 @@ const surfaces = {
     return {
       create: async (name, engine) => (await cli(["create-image", "p1", name, ...(engine === undefined ? [] : ["--storage", engine])])).image,
       list: async () => (await cli(["images", "p1"])).images,
+      verify: async (name) => (await cli(["verify-image", "p1", name])).verification,
+      remove: async (name, confirm) => (await cli(["delete-image", "p1", name, "--confirm", confirm])).removed,
+      prune: async (keep) => (await cli(["prune-images", "p1", "--keep", String(keep)])).pruned,
     };
   },
 };
@@ -77,6 +102,12 @@ test("database images come out the same through HTTP, the SDK and the CLI, refus
       taken: await refused("nightly"),
       badName: await refused(".hidden"),
       badEngine: await refused("other", "libsql-remote"),
+      verified: await surface.verify("nightly").then((v) => ({ ok: v.ok, shards: v.shards.map((s) => s.ok) })),
+      missing: await surface.verify("absent").then(() => "accepted", (error) => /No image is named/.test(String(error.message))),
+      pruned: await (async () => { await surface.create("later"); await surface.create("latest"); return surface.prune(2); })(),
+      removed: await surface.remove("latest", "latest").then((r) => r.name),
+      unconfirmed: await surface.remove("later", "nope").then(() => "accepted", () => "refused"),
+      left: (await surface.list()).map((entry) => entry.name),
     };
   }
   const http = results.http;
@@ -86,6 +117,12 @@ test("database images come out the same through HTTP, the SDK and the CLI, refus
   assert.match(http.taken.message, /already exists/);
   assert.match(http.badName.message, /image name is 1 to 64/);
   assert.match(http.badEngine.message, /local engine/);
+  assert.equal(http.verified.ok, true);
+  assert.equal(http.missing, true);
+  assert.deepEqual(http.pruned, { removed: ["nightly"], kept: ["later", "latest"] });
+  assert.equal(http.removed, "latest");
+  assert.equal(http.unconfirmed, "refused");
+  assert.deepEqual(http.left, ["later"]);
   assert.deepEqual(results.sdk, http);
   assert.deepEqual(results.cli, http);
 });

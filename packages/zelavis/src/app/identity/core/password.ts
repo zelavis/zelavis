@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { evaluate, integration, present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import { IdentityValidationError } from "./errors.js";
+import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
 
 const DEFAULT_ITERATIONS = 600_000;
 
@@ -51,6 +52,19 @@ export function hashPassword(
   if (password.length > 1024) {
     throw new IdentityValidationError("Passwords must not exceed 1024 characters.");
   }
+  return yield* integrationValue(rehashPassword(password, options));
+}));
+  }
+
+/**
+ * Zelavis's own hash of a password that was already accepted, with no length policy: used to replace an
+ * imported hash at its owner's first sign-in, when the password is the one they chose elsewhere.
+ */
+export function rehashPassword(
+  password: string,
+  options: { iterations?: number } = {},
+): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
   if (!Number.isSafeInteger(iterations) || iterations < 100_000 || iterations > 10_000_000) {
     throw new IdentityValidationError("PBKDF2 iterations must be between 100000 and 10000000.");
@@ -61,9 +75,13 @@ export function hashPassword(
 }));
   }
 
+/** Whether a stored hash should be replaced by Zelavis's own the next time its password is verified. */
+export const needsRehash = (encodedHash: string) => isLegacyPasswordHash(encodedHash);
+
 export function verifyPassword(password: string, encodedHash: string): Promise<boolean> {
   return present(Effect.gen(function* () {
     if (typeof password !== "string" || password.length > 1024) return false;
+    if (isLegacyPasswordHash(encodedHash)) return yield* verifyLegacyPassword(password, encodedHash);
     const [algorithm, iterationsText, saltText, expectedText, extra] = encodedHash.split("$");
     if (algorithm !== "pbkdf2-sha256" || extra !== undefined) return false;
     const iterations = Number(iterationsText);

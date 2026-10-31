@@ -624,7 +624,12 @@ inspectable. Document, KV, events and scalar columns are always ready. Search,
 measures, graph, spatial and vector report `requires-declaration` until the
 collection defines the semantics needed to interpret its fields; Zelavis does
 not pretend an arbitrary string is searchable text or an arbitrary numeric
-array is an embedding.
+array is an embedding. Activating a schema version declares what its field
+types state (prose → search, numbers → measures, a single reference → an
+edge, `GeometryField` → spatial, `VectorField` → embedding) and re-derives the
+stored documents' postings before publishing the version; a version whose
+declarations stored documents break is refused, and an activation cut off by a
+crash finishes when the database opens (`src/db/schema-activation.ts`).
 
 Database administration stays logical too. `zv.db.systemViews` exposes
 collections, events, schemas, projections, and time-series definitions without
@@ -862,10 +867,9 @@ overlay remain within that operation; transactions remain shard-local.
 | Engine | Conditional commit and coordination |
 | --- | --- |
 | Memory | Synchronous checks and batch within the same engine instance. |
-| Node SQLite / local libSQL | Checks and writes inside `BEGIN IMMEDIATE`; independent local connections and SQLite processes are tested on macOS. Embedded replica/server configurations need separate qualification. |
+| Node SQLite | Checks and writes inside `BEGIN IMMEDIATE`; independent local connections and SQLite processes are tested on macOS. |
 | LMDB | Checks and writes inside an abortable child transaction; local independent connections and process takeover are tested. Queued ordinary transaction callbacks alone do not guarantee rollback on callback failure. |
 | RocksDB bindings | Native exclusive process/file ownership plus a scoped permit around checks and batches. The evaluated binding shares permits across local handles for the same resolved directory. Concurrent process owners, shared filesystems, and remote takeover are unsupported. |
-| libSQL client | Dedicated write transaction with batched condition reads and mutations. Independent connections are tested using its local file transport; production network servers are not qualified by those tests. |
 
 Generations are eight bytes and remain safe integers; activation refuses
 exhaustion at `Number.MAX_SAFE_INTEGER` or malformed state. A store written by

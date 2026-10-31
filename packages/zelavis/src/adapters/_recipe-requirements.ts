@@ -71,6 +71,7 @@ export const REQUIREMENTS: Readonly<Record<string, Requirement>> = Object.freeze
       mariadbd: { candidates: ["mariadbd"], versionArgs: ["--version"], brewPath: "bin/mariadbd" },
       "mariadb-install-db": { candidates: ["mariadb-install-db"], versionArgs: ["--help"], acceptProbeFailure: true, brewPath: "bin/mariadb-install-db" },
       mariadb: { candidates: ["mariadb"], versionArgs: ["--version"], brewPath: "bin/mariadb" },
+      "mariadb-dump": { candidates: ["mariadb-dump"], versionArgs: ["--version"], brewPath: "bin/mariadb-dump" },
     },
   },
 });

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect, Exit } from "effect";
 import { documentsFor, schemasFor } from "../dist/db/index.js";
+import { activationFor } from "../dist/db/schema-activation.js";
 import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
@@ -328,7 +329,7 @@ for (const [engine, open] of engines) {
       const books = into(docs, "books");
       yield* authors.insert("a2", {});
       yield* books.insert("b1", { authorId: "a2" });
-      yield* schemasFor(store, "t1").save({
+      yield* activationFor(store, "t1", schemasFor(store, "t1"), docs).save({
         collection: "books", version: 1, activate: true,
         fields: [{ name: "authorId", field: { _tag: "TextField", label: "Author", required: true } }],
       });

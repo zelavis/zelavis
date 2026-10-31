@@ -1,9 +1,10 @@
 import { Effect } from "effect";
 import { array, label, object, request } from "./api.ts";
 import { button, empty, field, link, node } from "./dom.ts";
-import { badge, card, columns, dataRow, facts, page, resourceNotice, rowsCard, statCard } from "./page-kit.ts";
+import { badge, card, columns, dataRow, facts, flashNotice, page, resourceNotice, rowsCard, setFlash, statCard } from "./page-kit.ts";
 import { API_KEY_PRESETS } from "./api-key-presets.ts";
 import type { ScreenContext } from "./screens.ts";
+import { backupSchedulesPanel } from "./backup-schedules-panel.ts";
 import { dropdown } from "./dropdown.ts";
 
 type HostPath = "/server" | "/server/resources" | "/server/backups" | "/server/runtimes" | "/server/domains" | "/server/database" | "/server/security" | "/server/access" | "/server/access/users" | "/server/access/permissions";
@@ -36,10 +37,18 @@ export const serverHomeScreen = Effect.fn("ui.serverHomeScreen")(function*(_cont
     resourceNotice("Server layer placeholder", "These screens establish the cPanel/Plesk-style host boundary. Live domain, backup, and log providers can plug in here later without becoming project features."));
 });
 
-export const backupsScreen = Effect.fn("ui.backupsScreen")(function*(_context: ScreenContext) {
-  return page(
-    rowsCard("Backup policies", dataRow("Default retention", "No automatic backup provider is configured yet.", badge("draft"))),
-    resourceNotice("Restore first", "This area should model both scheduled backups and restore drills. A backup feature is not real until restore is first-class."));
+/**
+ * The Platform's own scheduled, encrypted, off-site backups of its System Store (`runtime/backups`). Restoring
+ * gives the records back as a file; applying them is done with the Platform stopped, on the host.
+ */
+export const backupsScreen = Effect.fn("ui.backupsScreen")(function*(context: ScreenContext) {
+  const api = `${context.config.api.basePath}/runtime/backups`;
+  const act = (effect: Effect.Effect<unknown, unknown>, done: (result: unknown) => string) =>
+    context.run(effect as Effect.Effect<unknown, never>, result => { setFlash(done(result)); context.refresh(); });
+  const panel = yield* backupSchedulesPanel(`${api}/schedules`, `${api}/runs`, act);
+  return page(flashNotice("Backups updated"),
+    resourceNotice("Platform backups", "Each run captures the System Store (Projects, placements, accounts, Edge routes and certificates, and the master secret) and encrypts it with the schedule's own key. Keep the recovery key shown at creation off this host. A restored run is applied with the Platform stopped: zelavis system-store import <restored>/system-store/records.jsonl --confirm import. Each Project's data is backed up from its own Database → Images page."),
+    ...panel);
 });
 
 type BackendAction = "detect" | "enable" | "disable" | "default";

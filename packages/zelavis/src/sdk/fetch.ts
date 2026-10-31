@@ -1,3 +1,4 @@
+import type { AccountImportInput, AccountImportResult } from "../app/identity/account-import.js";
 import {
   createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient,
   type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
@@ -11,16 +12,27 @@ import type {
 import type { ZelavisFileReference } from "../platform/storage-types.js";
 import type { WorkloadDefinition, WorkloadRunLog } from "../app/workloads/workloads-service.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "../db/schema/index.js";
+import type { AggregateDefinition, MaterializedAggregate } from "../db/aggregates.js";
+import type { ImportPlan, ImportRun, ImportSource, ImportVerification } from "../db/imports.js";
+import type { BranchMerge } from "../db/branch-merge.js";
+import type { WorkflowExecutionSummary } from "../db/workflow-engine.js";
+import type { EntityMessage, EntityState } from "../db/entities.js";
+import type { BackupRun, BackupSchedule, BackupScheduleInput, BackupTarget, ForeignDrill } from "../db/node-backups.js";
+import type { CovarianceInput, MeasureHistogramInput, MeasureHistogram } from "../db/document-model.js";
+import type { ActivatedSchema, PendingActivation } from "../db/schema-activation.js";
+import type { GeneratedSchemaTypes, LogicalSchemaBundle, SchemaExportOptions, SchemaImportOptions, SchemaImportResult } from "../db/schema-transfer.js";
 import type {
   Analyzer, CheckConstraint, DocumentsApi, EmbeddingIndex, GroupedSummary, IndexDefinition, ReferenceConstraint, RelatedDocuments,
-  SpatialIndex, SummarizeInput, Summary, TraverseInput, TraverseResult,
+  SpatialIndex, SummarizeInput, Summary, TraverseInput, TraverseResult, FindDocumentsInput, FindPageInput, SearchStatistics,
 } from "../db/document-model.js";
+import type { ScatterFindInput, ScatterResult, ScatteredDocument } from "../db/scatter.js";
+import type { DomainEventPage, ReadDomainEventsInput } from "../db/domain-events.js";
 import type {
   AggregateInput, HistogramInput, HistogramResult, IngestResult, InterpolateInput, MovingInput, RangeInput, TimeSeriesBucket,
   TimeSeriesPoint, TimeSeriesSummary, WindowsInput,
 } from "../db/time-series.js";
 import type { ZelavisProcessReport, ZelavisProjectDiagnostics } from "../diagnostics.js";
-import { Effect } from "effect";
+import { Data, Duration, Effect, Schedule } from "effect";
 import type { ZelavisTerminalOutput, ZelavisTerminalSession, ZelavisTerminalSize, ZelavisTerminalStatus } from "../terminal.js";
 import { present, integration, evaluate, integrationValue, unwrapFailure, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreNamespace, ZelavisSystemStorePage } from "../system-store.js";
@@ -107,6 +119,7 @@ export type {
   CollectionSchema,
   CollectionSchemaSummary,
 } from "../db/schema/index.js";
+export type { GeneratedSchemaTypes, LogicalSchemaBundle, SchemaExportOptions, SchemaImportOptions, SchemaImportResult } from "../db/schema-transfer.js";
 
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";
@@ -139,11 +152,80 @@ export interface ZelavisClientOptions {
   apiVersion?: string;
   fetch?: typeof fetch;
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
+  /** Every request's deadline, in milliseconds: past it the request is aborted with `ZelavisClientAbortError` (`reason: "timeout"`). */
+  timeoutMs?: number;
+  /** Aborting it cancels every request of this client in flight (`ZelavisClientAbortError`, `reason: "cancelled"`). */
+  signal?: AbortSignal;
+  /**
+   * Retry what is safe to repeat: a request that failed to reach the server, or answered 429, 502, 503 or 504,
+   * when its method is GET, HEAD, PUT or DELETE, or it is a write that carries an idempotency key (an
+   * `idempotencyKey` in its body or an `idempotency-key` header), so a repeat cannot apply twice. Exponential
+   * backoff with jitter from `baseDelayMs`, honouring `Retry-After`. Off unless set.
+   */
+  retry?: { readonly attempts: number; readonly baseDelayMs?: number };
 }
 
 export interface ZelavisClientRequestOptions extends Omit<RequestInit, "body"> {
   body?: BodyInit | object | null;
   headers?: HeadersInit;
+  /** This request's deadline, overriding the client's. */
+  timeoutMs?: number;
+}
+
+/** A request that was cancelled through a signal, or passed its deadline. */
+export class ZelavisClientAbortError extends Data.TaggedError("ZelavisClientAbortError")<{
+  readonly reason: "timeout" | "cancelled";
+  readonly operation: string;
+}> {
+  override get message() {
+    return this.reason === "timeout" ? `${this.operation} passed its deadline.` : `${this.operation} was cancelled.`;
+  }
+}
+
+/** A request that never reached an answer: the network, DNS, a refused connection. */
+export class ZelavisClientTransportError extends Data.TaggedError("ZelavisClientTransportError")<{
+  readonly operation: string;
+  readonly cause: unknown;
+}> {
+  override get message() {
+    return `${this.operation} could not reach the server: ${this.cause instanceof Error ? this.cause.message : String(this.cause)}`;
+  }
+}
+
+/** An answer a repeat may change (429, 502, 503, 504), held while retries run. */
+class RetryableResponse extends Data.TaggedError("RetryableResponse")<{ readonly response: Response }> {}
+
+/**
+ * Every page of a cursor-paged operation, in order: `page(after)` answers a page and the cursor of the next one
+ * (`next`, `cursor` with `more`, or `after`), and iteration stops when there is none. Use it with any listing that
+ * pages (`for await (const page of pages((after) => client.projects.systemView(id, view, { after })))`).
+ */
+export function pages<Page extends object>(
+  page: (after: string | undefined) => Promise<Page>,
+  options: { readonly maxPages?: number } = {},
+): AsyncIterable<Page> {
+  const limit = options.maxPages ?? 10_000;
+  return {
+    [Symbol.asyncIterator]() {
+      let after: string | undefined;
+      let done = false;
+      let count = 0;
+      return {
+        next: () => done || count >= limit
+          ? Promise.resolve({ done: true as const, value: undefined })
+          : page(after).then((value) => {
+            count += 1;
+            const record = value as { next?: unknown; cursor?: unknown; more?: unknown; after?: unknown };
+            const following = typeof record.next === "string" ? record.next
+              : typeof record.cursor === "string" && record.more === true ? record.cursor
+                : typeof record.after === "string" ? record.after : undefined;
+            if (following === undefined || following === after) done = true;
+            after = following;
+            return { done: false as const, value };
+          }),
+      };
+    },
+  };
 }
 
 export interface ZelavisRuntimeConfigResponse {
@@ -280,6 +362,8 @@ export interface ZelavisAuthClient {
   readonly admin: {
     accounts(): Promise<ZelavisIdentityResult<"accounts", "list">>;
     createAccount(input: Parameters<IdentityApi["accounts"]["create"]>[0]): Promise<ZelavisIdentityResult<"accounts", "create">>;
+    /** Import accounts from another system; see `AccountImportInput`. Same contract as `zelavis auth import-accounts`. */
+    importAccounts(input: AccountImportInput): Promise<AccountImportResult>;
     /** Credentials for an account: `{ accountId, provider, … }`, as the provider defines them. */
     createCredentials(input: Parameters<IdentityApi["credentials"]["create"]>[0]): Promise<Omit<ZelavisIdentityResult<"credentials", "create">, "secretHash">>;
     accountSessions(accountId: string): Promise<readonly ZelavisAuthSession[]>;
@@ -357,6 +441,13 @@ export interface ZelavisClient {
    * `zelavis cross-tenant-indexes`.
    */
   crossTenantIndexes(projectId: string): ZelavisCrossTenantIndexesClient;
+  /**
+   * The leader side of an App Project's database for followers on other hosts: its partitions' stats, records
+   * and log a page at a time, holds on the log, acknowledgments and the change feed. Every call needs
+   * `database.replicate` (carried by `project.runtime.manage`). Pass it to `remoteLeader` from `zelavis/db` to
+   * follow a partition from anywhere. Same contract as `zelavis followers`.
+   */
+  followers(projectId: string): ZelavisFollowersClient;
   /** The Fabric's nodes, Project placements and migrations. Same contract as `zelavis fabric`. */
   readonly fabric: ZelavisFabricClient;
   /** The Assistant's threads, replies, approvals, providers and audit. Same contract as `zelavis assistant`. */
@@ -384,6 +475,25 @@ export interface ZelavisClient {
       namespaces(): Promise<readonly ZelavisSystemStoreNamespace[]>;
       records(namespace: string, options?: { limit?: number; after?: string }): Promise<ZelavisSystemStorePage>;
     };
+    /**
+     * The Platform's own scheduled, encrypted, off-site backups of its System Store (`server.backups.manage`).
+     * Same contracts as `zelavis backups schedules|create-schedule|delete-schedule|run|runs|verify|restore`.
+     */
+    readonly backups: {
+      schedules(): Promise<ReadonlyArray<BackupSchedule>>;
+      createSchedule(input: BackupScheduleInput): Promise<BackupSchedule & { readonly recoveryKey: string }>;
+      deleteSchedule(input: { readonly name: string; readonly confirm: string }): Promise<{ readonly name: string }>;
+      run(name: string): Promise<BackupRun>;
+      runs(options?: { readonly schedule?: string }): Promise<ReadonlyArray<BackupRun>>;
+      verify(input: { readonly schedule: string; readonly runId: string }): Promise<BackupRun>;
+      restore(input: { readonly schedule: string; readonly runId: string; readonly recoveryKey?: string }): Promise<BackupRun>;
+      drill(input: { readonly schedule: string; readonly runId?: string }): Promise<BackupRun>;
+      /**
+       * Drill a run another host made — a Project's or another Platform's — from its target, schedule name and
+       * recovery key alone, as a machine that lost that host would. Records nothing and keeps nothing here.
+       */
+      drillFrom(input: { readonly target: BackupTarget; readonly schedule: string; readonly recoveryKey: string; readonly runId?: string }): Promise<ForeignDrill>;
+    };
     access(): Promise<ZelavisRuntimeAccessResponse>;
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
@@ -401,10 +511,12 @@ export interface ZelavisClient {
  * The Tenant is never a parameter here. It is resolved from the authenticated
  * principal and signed into the Gateway envelope, so a client can address only
  * its own records however it composes a request. Reaching this surface needs
- * `project.data.read`/`project.data.write` on the Project and no Platform
+ * `project.data.read`/`project.data.write`/`project.data.define` on the Project and no Platform
  * authority over it — the same contract as `zelavis data`.
  */
 export interface ZelavisDataClient {
+  /** Bounded Tenant change feed; continue with the returned cursor, including empty pages. */
+  readonly events: { read(input?: Omit<ReadDomainEventsInput, "after"> & { readonly after?: string }): Promise<DomainEventPage> };
   readonly collections: {
     list(): Promise<readonly ZelavisDataCollection[]>;
     modalities(collection: string): Promise<ZelavisDataCollectionModalities>;
@@ -444,6 +556,10 @@ export interface ZelavisDataClient {
     get(collection: string, id: string): Promise<ZelavisDataDocument | undefined>;
     /** Documents matching a query, up to `limit`. */
     query(collection: string, input?: ZelavisDataQueryInput): Promise<readonly ZelavisDataDocument[]>;
+    /** Matching-corpus statistics, summed across partitions for global BM25 scoring. */
+    searchStatistics(collection: string, input: ZelavisDataQueryInput & { readonly search: string }): Promise<SearchStatistics>;
+    /** Operator-only cross-Tenant read through the Project proxy; requires project.view. */
+    scatter(collection: string, input?: Omit<ScatterFindInput, "collection" | "concurrency">): Promise<ScatterResult<ScatteredDocument>>;
     /** One page plus the cursor that continues it. */
     page(collection: string, input?: ZelavisDataPageInput): Promise<ZelavisDataPage>;
     update(collection: string, id: string, input: ZelavisDataUpdateInput): Promise<ZelavisDataDocument>;
@@ -453,6 +569,8 @@ export interface ZelavisDataClient {
     /** Breadth-first traversal along a declared edge: `{ id, edge, edgeCollection?, direction?, maxDepth?, maxVisits?, where? }`. */
     traverse(collection: string, input: Omit<TraverseInput, "collection">): Promise<TraverseResult>;
     /** One aggregate over matching documents: `{ measure, op, where?, related?, search?, geometry?, linked? }`. */
+    covariance(collection: string, input: Omit<CovarianceInput, "collection">): Promise<Summary>;
+    histogram(collection: string, input: Omit<MeasureHistogramInput, "collection">): Promise<MeasureHistogram>;
     summarize(collection: string, input: Omit<SummarizeInput, "collection">): Promise<Summary>;
     /** An aggregate per group: `summarize`'s input plus `{ groupBy, groups? }`. */
     summarizeBy(collection: string, input: Omit<SummarizeInput, "collection"> & { readonly groupBy: string; readonly groups?: number }): Promise<{ readonly groups: readonly GroupedSummary[] }>;
@@ -474,14 +592,44 @@ export interface ZelavisDataClient {
     add(collection: string, input: Omit<ReferenceConstraint, "from">): Promise<ZelavisDataSuccess<"addReference">>;
     drop(collection: string, name: string): Promise<ZelavisDataDropped>;
   };
+  /** Stored answers to fixed measure questions, each published with the log position it was computed at. */
+  readonly aggregates: {
+    list(): Promise<{ readonly aggregates: ReadonlyArray<MaterializedAggregate> }>;
+    get(name: string): Promise<MaterializedAggregate>;
+    define(input: AggregateDefinition): Promise<MaterializedAggregate>;
+    refresh(name: string): Promise<MaterializedAggregate>;
+    drop(name: string): Promise<{ readonly name: string }>;
+  };
+  /**
+   * A collection's documents read in from another system's CSV, NDJSON or JSON export: `plan` (dry run),
+   * `run` (idempotent bounded batches, continued from `next`) and `verify` (counts and checksums).
+   * Same contract as `zelavis data import-plan|import-run|import-verify`.
+   */
+  readonly imports: {
+    plan(collection: string, source: Omit<ImportSource, "collection">): Promise<ImportPlan>;
+    run(collection: string, source: Omit<ImportSource, "collection"> & { readonly importId: string; readonly offset?: number; readonly limit?: number }): Promise<ImportRun>;
+    verify(collection: string, source: Omit<ImportSource, "collection">): Promise<ImportVerification>;
+  };
   /** Versioned schemas. A version governs what is accepted next, not what is already stored. */
   readonly schemas: {
+    export(options?: SchemaExportOptions): Promise<LogicalSchemaBundle>;
+    import(options: SchemaImportOptions): Promise<SchemaImportResult>;
+    types(options?: SchemaExportOptions): Promise<GeneratedSchemaTypes>;
     /** Every collection with a schema, and its active version. */
     list(): Promise<{ readonly collections: readonly CollectionSchemaSummary[] }>;
     versions(collection: string): Promise<{ readonly collection: string; readonly schemas: readonly StoredCollectionSchema[] }>;
     /** Save a version (`{ version, fields, activate? }`). */
-    save(collection: string, input: Omit<CollectionSchema, "collection">): Promise<StoredCollectionSchema>;
-    activate(collection: string, version: number): Promise<StoredCollectionSchema>;
+    save(collection: string, input: Omit<CollectionSchema, "collection">): Promise<StoredCollectionSchema | ActivatedSchema>;
+    /**
+     * Activate a version: apply the lens declarations it implies, re-derive
+     * stored documents under them, then publish it. `activation` reports what
+     * was declared and what was skipped, and why.
+     */
+    activate(collection: string, version: number): Promise<ActivatedSchema>;
+    /** Activations recorded and not yet published (interrupted or running). */
+    activations(): Promise<{ readonly activations: readonly PendingActivation[] }>;
+    /** Run every pending activation again. */
+    resumeActivations(): Promise<{ readonly published: number }>;
     /** Check a document's data against the active schema without writing it. */
     validate(collection: string, data: Readonly<Record<string, unknown>>): Promise<SchemaValidationResult>;
   };
@@ -553,6 +701,23 @@ export interface ZelavisDataClient {
     read(options?: { readonly after?: string; readonly limit?: number; readonly topic?: string }): Promise<ZelavisDataOutboxPage>;
     /** Remove handled messages, up to 1000 ids; ids not held are skipped. */
     remove(ids: readonly string[]): Promise<{ readonly removed: number }>;
+  };
+  /**
+   * Durable entities: send a message to an entity (`type`, `id`) and read what became of it. A handler for the type
+   * (an `entity` workload) processes its messages one at a time, in order, committing its writes with each
+   * message's processed mark. Sending and cancelling need `project.data.write`, reading `project.data.read`.
+   * `tenantId` names another Tenant, which needs `database.inspect`. Same contract as `zelavis data entity-*`.
+   */
+  readonly entities: {
+    send(input: {
+      readonly type: string; readonly id: string; readonly tag: string; readonly payload: Readonly<Record<string, unknown>>;
+      readonly primaryKey?: string; readonly deliverAt?: string; readonly tenantId?: string;
+    }): Promise<{ readonly message: EntityMessage; readonly duplicate: boolean }>;
+    message(input: { readonly type: string; readonly id: string; readonly messageKey: string; readonly tenantId?: string }): Promise<EntityMessage>;
+    cancel(input: { readonly type: string; readonly id: string; readonly messageKey: string; readonly tenantId?: string }): Promise<{ readonly cancelled: boolean; readonly message?: EntityMessage }>;
+    state(input: { readonly type: string; readonly id: string; readonly tenantId?: string }): Promise<EntityState>;
+    mailbox(input: { readonly type: string; readonly id: string; readonly after?: string; readonly limit?: number; readonly tenantId?: string }): Promise<{ readonly messages: readonly EntityMessage[]; readonly next?: string }>;
+    list(input: { readonly type: string; readonly after?: string; readonly limit?: number; readonly tenantId?: string }): Promise<{ readonly entities: readonly EntityState[]; readonly next?: string }>;
   };
 }
 
@@ -693,6 +858,37 @@ export interface ZelavisCrossTenantIndexesClient {
   query(name: string, input?: Omit<CrossTenantQueryInput, "index">): Promise<CrossTenantQueryResult>;
 }
 
+/** A partition's stats as the leader keeps them. */
+export interface ZelavisLeaderStats {
+  readonly records: number;
+  readonly bytes: number;
+  readonly head: number;
+  readonly compactedTo: number;
+  readonly nextSeq: number;
+  readonly seeding: boolean;
+  readonly incarnation?: string;
+  readonly lineage?: ReadonlyArray<{ readonly partition: string; readonly upTo: number }>;
+}
+
+export interface ZelavisFollowersClient {
+  /** What the leader's partition holds: what a follower compares its copy against. */
+  stats(partition: string): Promise<ZelavisLeaderStats>;
+  /** A page of the partition's records after `after`, at most `limit` (1 to 512), bodies as base64. */
+  records(partition: string, input: { readonly after?: number; readonly limit: number }): Promise<{ readonly records: ReadonlyArray<Record<string, unknown>> }>;
+  /** A page of the partition's log after (or `from`, including) a cursor, at most `limit` (1 to 512). */
+  log(partition: string, input: { readonly after?: string; readonly from?: string; readonly limit: number }): Promise<{ readonly events: ReadonlyArray<Record<string, unknown>> }>;
+  /** Hold the log at `position` for `ttlMillis` under `id`, on the leader's own placement. */
+  hold(partition: string, input: { readonly id: string; readonly position: number; readonly ttlMillis: number }): Promise<{ readonly position: number }>;
+  /** End a hold early. */
+  release(partition: string, id: string): Promise<{ readonly released: boolean }>;
+  /** Report that `follower` holds the partition's log through `position`, after its own commit. */
+  acknowledge(partition: string, input: { readonly follower: string; readonly position: number }): Promise<{ readonly follower: string; readonly position: number }>;
+  /** How far each follower has reported holding the partition. */
+  acknowledgments(partition: string): Promise<{ readonly partition: string; readonly followers: ReadonlyArray<{ readonly name: string; readonly position: number }> }>;
+  /** Partitions whose heads moved past `heads`, waiting up to `timeoutMillis` for a write when none has. */
+  changes(input?: { readonly heads?: Readonly<Record<string, number>>; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }): Promise<{ readonly heads: Readonly<Record<string, number>>; readonly more: boolean }>;
+}
+
 export interface ZelavisStorageClient {
   /** Files under `prefix` (all of them without one), with a ready-to-use reference to each. */
   list(prefix?: string): Promise<{ readonly files: readonly ZelavisStorageFile[]; readonly references: readonly ZelavisFileReference[] }>;
@@ -709,6 +905,29 @@ export interface ZelavisStorageClient {
   }): Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisFileReference }>;
   /** Remove a file. Refused when there is none. */
   delete(path: string): Promise<{ readonly deleted: boolean; readonly path: string }>;
+  /**
+   * Copy files in from another system's S3-compatible bucket, a page at a time (continue from `next`); files
+   * already here with the same SHA-256 are skipped. Same contract as `zelavis storage import`.
+   */
+  import(input: {
+    readonly source: { readonly kind: "s3"; readonly bucket: string; readonly region: string; readonly accessKeyId: string; readonly secretAccessKey: string; readonly endpoint?: string; readonly prefix?: string; readonly forcePathStyle?: boolean };
+    readonly into?: string; readonly after?: string; readonly limit?: number;
+  }): Promise<{ readonly copied: number; readonly skipped: number; readonly bytes: number; readonly next?: string }>;
+  /** The storage's quota (`maxBytes`, `maxFileBytes`) and what it holds. Same contract as `zelavis storage quota`. */
+  quota(): Promise<{ readonly quota: { readonly maxBytes?: number; readonly maxFileBytes?: number }; readonly usage: { readonly bytes: number; readonly files: number } }>;
+  /** Set the quota (`storage.manage`). Same contract as `zelavis storage set-quota`. */
+  setQuota(input: { readonly maxBytes?: number; readonly maxFileBytes?: number }): Promise<{ readonly quota: { readonly maxBytes?: number; readonly maxFileBytes?: number }; readonly usage: { readonly bytes: number; readonly files: number } }>;
+  /**
+   * A signed, single-use upload link: `url` is where a browser `PUT`s the bytes with no credentials. The upload
+   * waits in staging until `confirmUpload`. Same contract as `zelavis storage create-upload`.
+   */
+  createUpload(input: { readonly path: string; readonly maxBytes: number; readonly contentType?: string; readonly expiresInSeconds?: number }): Promise<{ readonly id: string; readonly path: string; readonly maxBytes: number; readonly contentType?: string; readonly expiresAt: string; readonly token: string; readonly url: string }>;
+  /** Send an upload's bytes to its link. Same contract as `zelavis storage upload`. */
+  upload(token: string, body: Uint8Array | string, options?: { readonly contentType?: string }): Promise<{ readonly id: string; readonly size: number; readonly sha256: string }>;
+  /** Make a received upload a file, checked against `sha256` and `size` when given. Same contract as `zelavis storage confirm-upload`. */
+  confirmUpload(id: string, expect?: { readonly sha256?: string; readonly size?: number }): Promise<{ readonly id: string; readonly path: string; readonly size: number; readonly sha256: string }>;
+  /** Remove expired, unconfirmed uploads (`storage.manage`). Same contract as `zelavis storage cleanup-uploads`. */
+  cleanupUploads(): Promise<{ readonly removed: number }>;
 }
 
 /** What a workload definition may carry; the Project is the client's. */
@@ -737,19 +956,17 @@ export type ZelavisDataSuccess<Operation extends keyof DocumentsApi> =
 export type ZelavisIdentityResult<Group extends keyof IdentityApi, Operation extends keyof IdentityApi[Group]> =
   IdentityApi[Group][Operation] extends (...args: never[]) => infer Result ? Awaited<Result> : never;
 /** What the Project's database reports about itself. */
-export interface ZelavisDataHealth { readonly status: "ok"; readonly nodeId: string; readonly shards: number; readonly virtualRanges: number; readonly partitionMapVersion: number }
+export interface ZelavisDataHealth {
+  readonly status: "ok"; readonly nodeId: string; readonly shards: number; readonly virtualRanges: number; readonly partitionMapVersion: number;
+  /** The engine and what a returned commit survives (`crash` or `power`). */
+  readonly storage?: { readonly engine: string; readonly durability: "crash" | "power" };
+}
 /** What dropping an index, check or reference answers. */
 export interface ZelavisDataDropped { readonly dropped: boolean }
 
-export interface ZelavisDataQueryInput {
-  readonly where?: readonly unknown[];
-  readonly orderBy?: readonly unknown[];
-  readonly search?: string;
-  readonly limit?: number;
-  readonly offset?: number;
-}
+export interface ZelavisDataQueryInput extends Omit<FindDocumentsInput, "collection"> {}
 
-export interface ZelavisDataPageInput extends Omit<ZelavisDataQueryInput, "offset"> {
+export interface ZelavisDataPageInput extends Omit<FindPageInput, "collection" | "after" | "cursors"> {
   /** The `next` cursor from the previous page. */
   readonly after?: string;
 }
@@ -1187,9 +1404,15 @@ export interface ZelavisProjectsClient {
    * database, which the operator does with the Project stopped, so there is no SDK operation for it. Needs
    * `database.backup`. Same contract as `zelavis projects create-image`.
    */
-  createDatabaseImage(projectId: string, input: { readonly name: string; readonly engine?: "sqlite" | "lmdb" | "rocksdb" | "libsql" }): Promise<ZelavisDatabaseImage>;
+  createDatabaseImage(projectId: string, input: { readonly name: string; readonly engine?: "sqlite" | "lmdb" | "rocksdb" }): Promise<ZelavisDatabaseImage>;
   /** The images the host holds. Needs `database.backup`. Same contract as `zelavis projects images`. */
   databaseImages(projectId: string): Promise<readonly ZelavisDatabaseImage[]>;
+  /** Remove an image for good; `confirm` repeats its name. Needs `database.backup`. Same contract as `zelavis projects delete-image`. */
+  deleteDatabaseImage(projectId: string, input: { readonly name: string; readonly confirm: string }): Promise<{ readonly name: string; readonly bytes: number }>;
+  /** Read every shard of an image back and compare it with what was written. Same contract as `zelavis projects verify-image`. */
+  verifyDatabaseImage(projectId: string, name: string): Promise<ZelavisDatabaseImageVerification>;
+  /** Keep the newest `keep` images and remove the rest. Same contract as `zelavis projects prune-images`. */
+  pruneDatabaseImages(projectId: string, input: { readonly keep: number }): Promise<{ readonly removed: readonly string[]; readonly kept: readonly string[] }>;
   exportTenantPage(projectId: string, input: { readonly tenantId: string; readonly cursor?: string; readonly limit?: number }): Promise<ZelavisTenantExportPage>;
   /**
    * Every Tenant of an App Project's database with what it holds. Needs `database.inspect`
@@ -1228,8 +1451,43 @@ export interface ZelavisProjectsClient {
    */
   branchTenant(
     projectId: string,
-    input: { readonly tenantId: string; readonly into: string; readonly outbox?: "leave" | "copy" },
+    input: {
+      readonly tenantId: string; readonly into: string; readonly outbox?: "leave" | "copy";
+      /** As of this cursor of the source's change feed (undivided Tenants), or as of this ISO 8601 time. */
+      readonly asOf?: string; readonly asOfTime?: string;
+    },
   ): Promise<ZelavisTenantBranch>;
+  /**
+   * Merge a branch back into the Tenant it was branched from. Only what the branch alone changed is applied;
+   * documents both sides changed differently are conflicts settled by `resolve`, and with any left nothing is
+   * written. `dryRun` returns the plan. Needs `database.restore`. Same contract as `zelavis projects merge-branch`.
+   */
+  mergeTenantBranch(projectId: string, input: {
+    readonly tenantId: string; readonly into?: string; readonly dryRun?: boolean;
+    readonly resolve?: ReadonlyArray<{ readonly collection: string; readonly id?: string; readonly keep: "source" | "branch" }>;
+  }): Promise<BranchMerge>;
+  /**
+   * Scheduled, encrypted, off-site backups of the Project's whole database. Creating a schedule probes its target
+   * and answers its `recoveryKey` once: keep it off the host. Same contracts as `zelavis projects backup-schedules`,
+   * `create-backup-schedule`, `delete-backup-schedule`, `run-backup`, `backup-runs`, `verify-backup` and `restore-backup`.
+   */
+  backupSchedules(projectId: string): Promise<ReadonlyArray<BackupSchedule>>;
+  createBackupSchedule(projectId: string, input: BackupScheduleInput): Promise<BackupSchedule & { readonly recoveryKey: string }>;
+  deleteBackupSchedule(projectId: string, input: { readonly name: string; readonly confirm: string }): Promise<{ readonly name: string }>;
+  runBackup(projectId: string, name: string): Promise<BackupRun>;
+  backupRuns(projectId: string, options?: { readonly schedule?: string }): Promise<ReadonlyArray<BackupRun>>;
+  verifyBackup(projectId: string, input: { readonly schedule: string; readonly runId: string }): Promise<BackupRun>;
+  restoreBackup(projectId: string, input: { readonly schedule: string; readonly runId: string; readonly recoveryKey?: string }): Promise<BackupRun>;
+  /** The Project database's storage durability, and the one recorded for its next start. Same contract as `zelavis projects storage`. */
+  databaseStorage(projectId: string): Promise<{ readonly engine: string; readonly durability: "crash" | "power"; readonly pending?: "crash" | "power" }>;
+  /** Record `crash` or `power` for the Project database's next start. Same contract as `zelavis projects storage --durability`. */
+  setDatabaseStorage(projectId: string, input: { readonly durability: "crash" | "power" }): Promise<{ readonly engine: string; readonly durability: "crash" | "power"; readonly pending?: "crash" | "power" }>;
+  /** Restore drill: newest finished run (or `runId`) restored into a fresh directory, opened, measured. Same contract as `zelavis projects drill-backup`. */
+  drillBackup(projectId: string, input: { readonly schedule: string; readonly runId?: string }): Promise<BackupRun>;
+  /** Workflow executions the Project's database has recorded. Same contract as `zelavis projects workflows`. */
+  workflowExecutions(projectId: string, options?: { readonly limit?: number }): Promise<ReadonlyArray<WorkflowExecutionSummary>>;
+  /** How far back a Tenant can be branched, per part. Same contract as `zelavis projects recovery-window`. */
+  tenantRecoveryWindow(projectId: string, tenantId: string): Promise<ZelavisTenantRecoveryWindow>;
   /**
    * Restore a backup into the Tenant it was taken from. `into` says what to do
    * about data already there: `empty` (the default) refuses unless there is
@@ -1242,6 +1500,15 @@ export interface ZelavisProjectsClient {
     backup: ZelavisTenantBackup,
     options?: { readonly into?: ZelavisTenantRestoreMode; readonly tenantId?: string },
   ): Promise<ZelavisTenantRestoreResult>;
+}
+
+/** How far back a Tenant can be branched (`asOf`, `asOfTime`), per partition. */
+export interface ZelavisTenantRecoveryWindow {
+  readonly tenant: string;
+  readonly partitions: ReadonlyArray<{
+    readonly part?: string; readonly earliest: number; readonly latest: number; readonly compactedTo: number;
+    readonly earliestAt?: number; readonly latestAt?: number;
+  }>;
 }
 
 /** One partition a branch copied: the whole Tenant, or one part of a divided one. */
@@ -1273,9 +1540,12 @@ export interface ZelavisTenantBranch {
 /** What removing a Tenant did. */
 export interface ZelavisTenantRemoval {
   readonly tenant: string;
-  readonly shard: string;
-  /** Records the Tenant held. */
+  /** Records the Tenant held, every part included. */
   readonly records: number;
+  /** An undivided Tenant's shard. */
+  readonly shard?: string;
+  /** A divided Tenant's parts, each with its shard and records. */
+  readonly parts?: ReadonlyArray<{ readonly part: string; readonly shard: string; readonly records: number }>;
 }
 
 /** What one partition holds: an undivided Tenant, or one part of a divided one. */
@@ -1309,12 +1579,24 @@ export interface ZelavisTenantSummary extends Omit<ZelavisTenantUsage, "shard"> 
  * Carried whole rather than read: the events are the database's own records,
  * and a restore checks the format, the Tenant and every identifier itself.
  */
-export interface ZelavisTenantBackup {
+/** One Tenant, or one part of a divided Tenant, as a backup. */
+export interface ZelavisPartitionBackup {
   readonly format: "zelavis.db-backup.v1";
   readonly exportedAt: string;
   readonly tenantId: string;
   readonly events: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
+
+/** A divided Tenant's backup: one per part, each as of a position of its own. */
+export interface ZelavisDividedTenantBackup {
+  readonly format: "zelavis.db-backup.divided.v1";
+  readonly exportedAt: string;
+  readonly tenantId: string;
+  readonly parts: ReadonlyArray<{ readonly part: string; readonly backup: ZelavisPartitionBackup }>;
+}
+
+/** A whole Tenant's backup file: an undivided Tenant's, or a divided one's with every part. */
+export type ZelavisTenantBackup = ZelavisPartitionBackup | ZelavisDividedTenantBackup;
 
 /** A physical backup of the whole database, as the host reports it. */
 export interface ZelavisDatabaseImage {
@@ -1324,7 +1606,16 @@ export interface ZelavisDatabaseImage {
   readonly engine: string;
   readonly keys: number;
   readonly bytes: number;
-  readonly shards: readonly { readonly shard: string; readonly keys: number; readonly bytes: number }[];
+  /** Each shard's share and the SHA-256 of what was written to it. */
+  readonly shards: readonly { readonly shard: string; readonly keys: number; readonly bytes: number; readonly digest?: string }[];
+}
+
+export interface ZelavisDatabaseImageVerification {
+  readonly name: string;
+  /** Every shard holds exactly what was written. */
+  readonly ok: boolean;
+  readonly verifiedAt: string;
+  readonly shards: readonly { readonly shard: string; readonly keys: number; readonly ok: boolean; readonly problem?: string }[];
 }
 
 /** One page of a Tenant's export stream. */
@@ -1350,6 +1641,8 @@ export interface ZelavisTenantRestoreResult {
   readonly removed: number;
   /** Records the backup wrote over rather than created; only `merge` does. */
   readonly superseded: number;
+  /** A divided Tenant's parts, each with what its restore did; the counts above are their sums. */
+  readonly parts?: ReadonlyArray<{ readonly part: string; readonly tenantId: string; readonly events: number; readonly removed: number; readonly superseded: number }>;
 }
 
 export interface ZelavisHostOperationsClient {
@@ -1560,8 +1853,52 @@ export function createZelavisClient(
       .join("")
       .replace(/\/+/g, "/");
     const fullPath = `${prefix}${normalizedPath}`.replace(/\/+/g, "/");
-    return (yield* integrationValue(resolvedFetch(new URL(fullPath, baseUrl), init)));
+    const method = (init.method ?? "GET").toUpperCase();
+    const operation = `${method} ${normalizedPath}`;
+    const timeoutMs = requestOptions.timeoutMs ?? options.timeoutMs;
+    const idempotent = ["GET", "HEAD", "PUT", "DELETE"].includes(method) || headers.has("idempotency-key")
+      || (typeof init.body === "string" && /"idempotencyKey"\s*:/.test(init.body));
+    // One attempt: the caller's and the client's signals, and the deadline, abort it; an abort says why.
+    const attempt = Effect.suspend(() => {
+      const signals = [options.signal, fetchOptions.signal ?? undefined, timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs)]
+        .filter((signal): signal is AbortSignal => signal !== undefined);
+      const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+      // Cancelled before it was sent: never sent.
+      if (signal?.aborted) {
+        return Effect.fail(new ZelavisClientAbortError({ reason: (signal.reason as { name?: string } | undefined)?.name === "TimeoutError" ? "timeout" : "cancelled", operation }));
+      }
+      return Effect.tryPromise({
+        // A fetch that answers synchronously (a test double, an in-process handler) is accepted as before.
+        try: () => Promise.resolve(resolvedFetch(new URL(fullPath, baseUrl), { ...init, ...(signal === undefined ? {} : { signal }) })),
+        catch: (cause): ZelavisClientAbortError | ZelavisClientTransportError => signal?.aborted
+          ? new ZelavisClientAbortError({ reason: (signal.reason as { name?: string } | undefined)?.name === "TimeoutError" ? "timeout" : "cancelled", operation })
+          : new ZelavisClientTransportError({ operation, cause }),
+      });
+    });
+    const retry = options.retry;
+    if (retry === undefined || retry.attempts <= 1 || !idempotent) return yield* integration(() => Effect.runPromise(attempt));
+    // Retried only while the failure is the kind a repeat can fix, and never past a cancellation or deadline.
+    const transient = attempt.pipe(Effect.flatMap((response) => [429, 502, 503, 504].includes(response.status)
+      ? Effect.fail(new RetryableResponse({ response }))
+      : Effect.succeed(response)));
+    const delay = Math.max(1, retry.baseDelayMs ?? 200);
+    const outcome = yield* integration(() => Effect.runPromise(transient.pipe(
+      Effect.retry({
+        schedule: Schedule.exponential(Duration.millis(delay)).pipe(Schedule.jittered),
+        times: retry.attempts - 1,
+        while: (error) => !(error instanceof ZelavisClientAbortError),
+      }),
+      // Out of attempts on an answer: the caller sees that answer, as for any other status.
+      Effect.catchTag("RetryableResponse", (error) => Effect.succeed(error.response)),
+    )));
+    return outcome;
   }));
+  }
+
+  /** The absolute URL of an API path: what a browser outside this client (an upload link) is handed. */
+  function absoluteUrl(path: string): string {
+    const prefix = [rootPath, apiPrefix, apiVersion ? `/${apiVersion}` : ""].join("").replace(/\/+/g, "/");
+    return new URL(`${prefix}${path.startsWith("/") ? path : `/${path}`}`.replace(/\/+/g, "/"), baseUrl).toString();
   }
 
   function json<T = unknown>(
@@ -1572,7 +1909,7 @@ export function createZelavisClient(
     const response = (yield* integrationValue(request(path, requestOptions)));
     if (!response.ok) {
       const body = (yield* integrationValue(response.clone().json().catch(() => undefined)));
-      throw new ZelavisClientHttpError(response, body);
+      throw new ZelavisClientHttpError(response, body, `${(requestOptions?.method ?? "GET").toUpperCase()} ${path.startsWith("/") ? path : `/${path}`}`);
     }
     if (response.status === 204) return undefined as T;
     return (yield* integrationValue(response.json() as Promise<T>));
@@ -1662,8 +1999,9 @@ export function createZelavisClient(
       remove: (nodeId) => json<{ removed: boolean }>(`/runtime/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
     data: (projectId) => createDataClient(json, projectId),
-    storage: (projectId) => createStorageClient(request, json, projectId),
+    storage: (projectId) => createStorageClient(request, json, projectId, absoluteUrl),
     crossTenantIndexes: (projectId) => createCrossTenantIndexesClient(json, projectId),
+    followers: (projectId) => createFollowersClient(json, projectId),
     fabric: createFabricClient(json),
     assistant: createAssistantClient(json, request),
     deploymentBackends: createDeploymentBackendsClient(json),
@@ -1721,6 +2059,7 @@ export function createZelavisClient(
       admin: {
         accounts: () => json("/auth/accounts"),
         createAccount: (input) => json("/auth/accounts", { method: "POST", body: input }),
+        importAccounts: (input) => json("/auth/accounts/import", { method: "POST", body: input }),
         createCredentials: (input) => json("/auth/credentials", { method: "POST", body: input }),
         accountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`),
         revokeAccountSessions: (accountId) => json(`/auth/accounts/${dataName(accountId, "account id")}/sessions`, { method: "DELETE" }),
@@ -1959,6 +2298,19 @@ export function createZelavisClient(
           return json<ZelavisSystemStorePage>(`/runtime/system-store/namespaces/${encodeURIComponent(namespace)}/records?${query}`);
         },
       },
+      backups: {
+        schedules: () => json<{ schedules: ReadonlyArray<BackupSchedule> }>("/runtime/backups/schedules").then((result) => result.schedules),
+        createSchedule: (input) => json("/runtime/backups/schedules", { method: "POST", body: input }),
+        deleteSchedule: (input) => json(`/runtime/backups/schedules/${encodeURIComponent(input.name)}`, { method: "DELETE", body: { confirm: input.confirm } }),
+        run: (name) => json(`/runtime/backups/schedules/${encodeURIComponent(name)}/run`, { method: "POST", body: {} }),
+        runs: (options) => json<{ runs: ReadonlyArray<BackupRun> }>(`/runtime/backups/runs${options?.schedule === undefined ? "" : `?schedule=${encodeURIComponent(options.schedule)}`}`).then((result) => result.runs),
+        verify: (input) => json(`/runtime/backups/schedules/${encodeURIComponent(input.schedule)}/runs/${encodeURIComponent(input.runId)}/verify`, { method: "POST", body: {} }),
+        restore: (input) => json(`/runtime/backups/schedules/${encodeURIComponent(input.schedule)}/runs/${encodeURIComponent(input.runId)}/restore`, {
+          method: "POST", body: input.recoveryKey === undefined ? {} : { recoveryKey: input.recoveryKey },
+        }),
+        drill: (input) => json(`/runtime/backups/schedules/${encodeURIComponent(input.schedule)}/drill${input.runId === undefined ? "" : `?runId=${encodeURIComponent(input.runId)}`}`, { method: "POST", body: {} }),
+        drillFrom: (input) => json("/runtime/backups/drills", { method: "POST", body: input }),
+      },
       access() {
         return json<ZelavisRuntimeAccessResponse>("/runtime/access");
       },
@@ -2017,6 +2369,7 @@ function createDataClient(
   const read = <T>(path: string) => json<T>(dataPath(projectId, path));
   const remove = <T>(path: string) => json<T>(dataPath(projectId, path), { method: "DELETE" });
   return {
+    events: { read: (input = {}) => post("events/read", input) },
     collections: {
       list: () =>
         present(Effect.gen(function* () {
@@ -2067,11 +2420,28 @@ function createDataClient(
       add: (collection, input) => post(`documents/${dataName(collection, "collection name")}/references`, input),
       drop: (collection, name) => remove(`documents/${dataName(collection, "collection name")}/references/${dataName(name, "reference name")}`),
     },
+    aggregates: {
+      list: () => read("aggregates"),
+      get: (name) => read(`aggregates/${dataName(name, "aggregate name")}`),
+      define: (input) => post("aggregates", input),
+      refresh: (name) => post(`aggregates/${dataName(name, "aggregate name")}/refresh`, {}),
+      drop: (name) => remove(`aggregates/${dataName(name, "aggregate name")}`),
+    },
+    imports: {
+      plan: (collection, source) => post(`documents/${dataName(collection, "collection name")}/imports/plan`, source),
+      run: (collection, source) => post(`documents/${dataName(collection, "collection name")}/imports/run`, source),
+      verify: (collection, source) => post(`documents/${dataName(collection, "collection name")}/imports/verify`, source),
+    },
     schemas: {
+      export: (options) => post("schemas/collections/export", options ?? {}),
+      import: (options) => post("schemas/collections/import", options),
+      types: (options) => post("schemas/collections/types", options ?? {}),
       list: () => read("schemas/collections"),
       versions: (collection) => read(`schemas/${dataName(collection, "collection name")}`),
       save: (collection, input) => post(`schemas/${dataName(collection, "collection name")}`, input),
       activate: (collection, version) => post(`schemas/${dataName(collection, "collection name")}/activate`, { version }),
+      activations: () => read("schemas/collections/activations"),
+      resumeActivations: () => post("schemas/collections/activations/resume", {}),
       validate: (collection, data) => post(`schemas/${dataName(collection, "collection name")}/validate`, { data }),
     },
     timeseries: {
@@ -2108,6 +2478,9 @@ function createDataClient(
   })),
       page: (collection, input = {}) =>
         post<ZelavisDataPage>(`documents/${dataName(collection, "collection name")}/page`, input),
+      searchStatistics: (collection, input) => post(`documents/${dataName(collection, "collection name")}/search-statistics`, input),
+      scatter: (collection, input = {}) => json(projectPath(projectId,
+        `${PROJECT_DATABASE_PROXY_PATH}/documents/${dataName(collection, "collection name")}/scatter`), { method: "POST", body: input }),
       update: (collection, id, input) =>
         json<ZelavisDataDocument>(
           dataPath(
@@ -2131,6 +2504,8 @@ function createDataClient(
     return ((yield* integrationValue(post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)))).written;
   })),
       traverse: (collection, input) => post(`documents/${dataName(collection, "collection name")}/traverse`, input),
+      covariance: (collection, input) => post(`documents/${dataName(collection, "collection name")}/covariance`, input),
+      histogram: (collection, input) => post(`documents/${dataName(collection, "collection name")}/histogram`, input),
       summarize: (collection, input) => post(`documents/${dataName(collection, "collection name")}/summarize`, input),
       summarizeBy: (collection, input) => post(`documents/${dataName(collection, "collection name")}/summarize-by`, input),
       related: (collection, input) => post(`documents/${dataName(collection, "collection name")}/related`, input),
@@ -2201,6 +2576,24 @@ function createDataClient(
       },
       remove: (ids) => post<{ removed: number }>("outbox/messages/remove", { ids }),
     },
+    entities: (() => {
+      const at = (type: string, id: string, rest: string) =>
+        `entities/${dataName(type, "entity type")}/${dataName(id, "entity id")}/${rest}`;
+      const search = (entries: Record<string, string | number | undefined>) => {
+        const query = new URLSearchParams();
+        for (const [key, value] of Object.entries(entries)) if (value !== undefined) query.set(key, String(value));
+        const text = query.toString();
+        return text === "" ? "" : `?${text}`;
+      };
+      return {
+        send: ({ type, id, ...body }) => post(at(type, id, "messages"), body),
+        message: ({ type, id, messageKey, tenantId }) => read(`${at(type, id, `messages/${encodeURIComponent(messageKey)}`)}${search({ tenantId })}`),
+        cancel: ({ type, id, messageKey, tenantId }) => post(at(type, id, `messages/${encodeURIComponent(messageKey)}/cancel`), tenantId === undefined ? {} : { tenantId }),
+        state: ({ type, id, tenantId }) => read(`${at(type, id, "state")}${search({ tenantId })}`),
+        mailbox: ({ type, id, after, limit, tenantId }) => read(`${at(type, id, "mailbox")}${search({ tenantId, after, limit })}`),
+        list: ({ type, after, limit, tenantId }) => read(`entities/${dataName(type, "entity type")}/list${search({ tenantId, after, limit })}`),
+      };
+    })(),
   };
 }
 
@@ -2236,12 +2629,32 @@ function createCrossTenantIndexesClient(
   };
 }
 
+function createFollowersClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisFollowersClient {
+  const at = (partition: string, action: string) =>
+    projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/${encodeURIComponent(partition)}/${action}`);
+  return {
+    stats: (partition) => json(at(partition, "stats")),
+    records: (partition, input) => json(at(partition, "records"), { method: "POST", body: input }),
+    log: (partition, input) => json(at(partition, "log"), { method: "POST", body: input }),
+    hold: (partition, input) => json(at(partition, "holds"), { method: "POST", body: input }),
+    release: (partition, id) => json(at(partition, `holds/${encodeURIComponent(id)}`), { method: "DELETE" }),
+    acknowledge: (partition, input) => json(at(partition, "acknowledgments"), { method: "POST", body: input }),
+    acknowledgments: (partition) => json(at(partition, "acknowledgments")),
+    changes: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/changes`), { method: "POST", body: input ?? {} }),
+  };
+}
+
 function createStorageClient(
   request: (path: string, options?: ZelavisClientRequestOptions) => Promise<Response>,
   json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
   projectId: string,
+  absoluteUrl: (path: string) => string,
 ): ZelavisStorageClient {
   const base = `${PROJECT_RUNTIME_PROXY_PATH}/storage/files`;
+  const uploadUrl = (token: string) => absoluteUrl(projectPath(projectId, `/uploads/${encodeURIComponent(token)}`));
   const at = (path: string) => projectPath(projectId, `${base}/${storageSegments(path)}`);
   return {
     list: (prefix) => json(projectPath(projectId, base) + (prefix === undefined || prefix === "" ? "" : `?prefix=${encodeURIComponent(prefix)}`)),
@@ -2273,6 +2686,22 @@ function createStorageClient(
       return yield* integration(() => response.json() as Promise<{ readonly file: ZelavisStorageFile; readonly reference: ZelavisFileReference }>);
     })),
     delete: (path) => json(at(path), { method: "DELETE" }),
+    import: (input) => json(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/import`), { method: "POST", body: input }),
+    quota: () => json(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/quota`)),
+    setQuota: (input) => json(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/quota`), { method: "PUT", body: input }),
+    createUpload: (input) => present(Effect.map(
+      integrationValue(json<{ readonly id: string; readonly path: string; readonly maxBytes: number; readonly contentType?: string; readonly expiresAt: string; readonly token: string }>(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/uploads`), { method: "POST", body: input })),
+      (upload) => ({ ...upload, url: uploadUrl(upload.token) }))),
+    upload: (token, body, options) => present(Effect.gen(function* () {
+      const headers = new Headers();
+      if (options?.contentType !== undefined) headers.set("content-type", options.contentType);
+      const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+      const response = yield* integration(() => request(projectPath(projectId, `/uploads/${encodeURIComponent(token)}`), { method: "PUT", headers, body: bytes as unknown as BodyInit }));
+      if (!response.ok) return yield* failureOf(response);
+      return yield* integration(() => response.json() as Promise<{ readonly id: string; readonly size: number; readonly sha256: string }>);
+    })),
+    confirmUpload: (id, expect) => json(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/uploads/${encodeURIComponent(id)}/confirm`), { method: "POST", body: expect ?? {} }),
+    cleanupUploads: () => json(projectPath(projectId, `${PROJECT_RUNTIME_PROXY_PATH}/storage/uploads/cleanup`), { method: "POST", body: {} }),
   };
 }
 
@@ -2392,6 +2821,21 @@ function createProjectsClient(
           projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images`),
         ))).images;
       })),
+    deleteDatabaseImage: (projectId, input) =>
+      json<{ readonly name: string; readonly bytes: number }>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images/${encodeURIComponent(input.name)}`), {
+        method: "DELETE",
+        body: { confirm: input.confirm },
+      }),
+    verifyDatabaseImage: (projectId, name) =>
+      json<ZelavisDatabaseImageVerification>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images/${encodeURIComponent(name)}/verify`), {
+        method: "POST",
+        body: {},
+      }),
+    pruneDatabaseImages: (projectId, input) =>
+      json<{ readonly removed: readonly string[]; readonly kept: readonly string[] }>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/images/prune`), {
+        method: "POST",
+        body: { keep: input.keep },
+      }),
     exportTenantPage: (projectId, input) =>
       json<ZelavisTenantExportPage>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/export`), {
         method: "POST",
@@ -2420,8 +2864,45 @@ function createProjectsClient(
     branchTenant: (projectId, input) =>
       json<ZelavisTenantBranch>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/branch`), {
         method: "POST",
-        body: { into: input.into, ...(input.outbox === undefined ? {} : { outbox: input.outbox }) },
+        body: {
+          into: input.into, ...(input.outbox === undefined ? {} : { outbox: input.outbox }),
+          ...(input.asOf === undefined ? {} : { asOf: input.asOf }), ...(input.asOfTime === undefined ? {} : { asOfTime: input.asOfTime }),
+        },
       }),
+    mergeTenantBranch: (projectId, input) =>
+      json<BranchMerge>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(input.tenantId)}/merge`), {
+        method: "POST",
+        body: {
+          ...(input.into === undefined ? {} : { into: input.into }), ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+          ...(input.resolve === undefined ? {} : { resolve: input.resolve }),
+        },
+      }),
+    backupSchedules: (projectId) =>
+      present(Effect.map(integrationValue(json<{ schedules: ReadonlyArray<BackupSchedule> }>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules`))), (body) => body.schedules)),
+    createBackupSchedule: (projectId, input) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules`), { method: "POST", body: input }),
+    deleteBackupSchedule: (projectId, input) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules/${encodeURIComponent(input.name)}`), { method: "DELETE", body: { confirm: input.confirm } }),
+    runBackup: (projectId, name) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules/${encodeURIComponent(name)}/run`), { method: "POST", body: {} }),
+    backupRuns: (projectId, options) =>
+      present(Effect.map(integrationValue(json<{ runs: ReadonlyArray<BackupRun> }>(projectPath(projectId,
+        `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-runs${options?.schedule === undefined ? "" : `?schedule=${encodeURIComponent(options.schedule)}`}`))), (body) => body.runs)),
+    verifyBackup: (projectId, input) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules/${encodeURIComponent(input.schedule)}/runs/${encodeURIComponent(input.runId)}/verify`), { method: "POST", body: {} }),
+    restoreBackup: (projectId, input) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules/${encodeURIComponent(input.schedule)}/runs/${encodeURIComponent(input.runId)}/restore`), {
+        method: "POST", body: input.recoveryKey === undefined ? {} : { recoveryKey: input.recoveryKey },
+      }),
+    databaseStorage: (projectId) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/storage`)),
+    setDatabaseStorage: (projectId, input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/storage`), { method: "PUT", body: { durability: input.durability } }),
+    drillBackup: (projectId, input) =>
+      json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backup-schedules/${encodeURIComponent(input.schedule)}/drill${input.runId === undefined ? "" : `?runId=${encodeURIComponent(input.runId)}`}`), { method: "POST", body: {} }),
+    workflowExecutions: (projectId, options) =>
+      present(Effect.map(integrationValue(json<{ executions: ReadonlyArray<WorkflowExecutionSummary> }>(projectPath(projectId,
+        `${PROJECT_DATABASE_PROXY_PATH}/workflows/executions${options?.limit === undefined ? "" : `?limit=${options.limit}`}`))), (body) => body.executions)),
+    tenantRecoveryWindow: (projectId, tenantId) =>
+      json<ZelavisTenantRecoveryWindow>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/tenants/${encodeURIComponent(tenantId)}/recovery`)),
     restoreTenant: (projectId, backup, options) =>
       json<ZelavisTenantRestoreResult>(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/maintenance/backups/restore`), {
         method: "POST",
@@ -2442,17 +2923,28 @@ const isNotFound = (failure: IntegrationFailure): boolean => {
 export class ZelavisClientHttpError extends Error {
   readonly response: Response;
   readonly body: unknown;
+  /** The server's machine-readable code, when it sent one (`body.code`). */
+  readonly code: string | undefined;
+  /** `METHOD path` of the request that failed. */
+  readonly operation: string;
 
-  constructor(response: Response, body?: unknown) {
+  constructor(response: Response, body?: unknown, operation = "") {
     super(body && typeof body === "object" && "error" in body && typeof body.error === "string"
       ? body.error : `Zelavis request failed with status ${response.status}.`);
     this.name = "ZelavisClientHttpError";
     this.response = response;
     this.body = body;
+    this.code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : undefined;
+    this.operation = operation;
   }
 
   get status(): number {
     return this.response.status;
+  }
+
+  /** Whether repeating the same request may succeed: the server was overloaded or briefly unavailable. */
+  get retryable(): boolean {
+    return [429, 502, 503, 504].includes(this.response.status);
   }
 }
 

@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { DbError } from "./errors.js";
-import type { ObjectStoreApi } from "./store.js";
+import type { LeaderSource } from "./store.js";
 
 /** Tries to hold a log while compaction keeps moving past the point read. */
 const HOLD_ATTEMPTS = 4;
@@ -11,7 +11,7 @@ const HOLD_ATTEMPTS = 4;
  * times; a reader that cannot be held anyway still detects a cut log (`CursorCompacted`,
  * `LogCompacted`) and starts over, so a hold only keeps a long read from starving.
  */
-export const holdLogAtCompaction = (source: ObjectStoreApi, id: string, ttlMillis: number): Effect.Effect<boolean, DbError> =>
+export const holdLogAtCompaction = (source: LeaderSource, id: string, ttlMillis: number): Effect.Effect<boolean, DbError> =>
   Effect.gen(function* () {
     for (let attempt = 0; attempt < HOLD_ATTEMPTS; attempt++) {
       const at = (yield* source.stats).compactedTo;
@@ -26,7 +26,7 @@ export const holdLogAtCompaction = (source: ObjectStoreApi, id: string, ttlMilli
 
 /** Run `use` with `source`'s log held under `id`, released however `use` ends. */
 export const holdingLog = <A, E, R>(
-  source: ObjectStoreApi,
+  source: LeaderSource,
   id: string,
   ttlMillis: number,
   use: Effect.Effect<A, E, R>,

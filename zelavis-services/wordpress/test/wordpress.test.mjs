@@ -22,7 +22,7 @@ test("recipe revisions are independent from the pinned WordPress releases", () =
 });
 
 test("PHP and the web server are the recipe's own: pinned builds for every platform, not the host's", () => {
-  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb"]);
+  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb", "mariadb-dump"]);
   for (const runtime of install.runtimes.filter((entry) => entry.hostRequirement === undefined)) {
     assert.match(runtime.version, runtime.command === "caddy" ? /^2\.\d+\.\d+$/ : /^8\.\d+\.\d+$/);
     assert.deepEqual(Object.keys(runtime.downloads).sort(), ["linux-aarch64", "linux-x86_64", "macos-aarch64", "macos-x86_64"]);
@@ -44,7 +44,7 @@ test("the manifest declares one JavaScript method whose module exists, and the p
 
 test("MariaDB is the recipe's own where the vendor builds it, and the host's elsewhere", () => {
   const database = install.runtimes.filter((runtime) => runtime.hostRequirement === "mariadb");
-  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb"]);
+  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb", "mariadb-dump"]);
   for (const runtime of database) {
     assert.deepEqual(Object.keys(runtime.downloads), ["linux-x86_64"]);
     assert.match(runtime.downloads["linux-x86_64"].archive, /^https:\/\/archive\.mariadb\.org\/mariadb-[\d.]+\/bintar-linux-systemd-x86_64\//);

@@ -11,9 +11,7 @@ import { partitionKeys, shardMetaKey } from "../dist/db/keys.js";
 import { StoreError } from "../dist/db/errors.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
-import { makeLibsqlEngine } from "../dist/db/engines/libsql.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
-import { makeLibsqlRemoteEngine } from "../dist/db/engines/libsql-remote.js";
 import { engineAvailable } from "./_engine-available.mjs";
 import { makeRocksdbJsEngine } from "../dist/db/engines/rocksdb-js.js";
 
@@ -34,9 +32,7 @@ const directory = body => {
 const makers = [
   ["memory", () => Effect.succeed(memoryKvEngine())],
   ["node-sqlite", dir => makeNodeSqliteEngine("acme", dir)],
-  ["libsql", dir => makeLibsqlEngine("acme", { directory: dir })],
   ["lmdb", dir => makeLmdbEngine("acme", dir)],
-  ["libsql-client local transport", dir => makeLibsqlRemoteEngine("acme", { url: `file:${join(dir, "remote.sqlite")}` })],
   ["rocksdb-js exclusive process", dir => makeRocksdbJsEngine("acme", dir)],
 ];
 

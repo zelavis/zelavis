@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import { AuthInvalidCredentialsError } from "../core/errors.js";
-import { hashPassword, verifyPassword } from "../core/password.js";
+import { hashPassword, needsRehash, rehashPassword, verifyPassword } from "../core/password.js";
 import type {
   AuthenticationInput,
   AuthenticationResult,
@@ -146,6 +146,14 @@ export function createPasswordProvider(
 
       const account = (yield* integrationValue(api.accounts.findById(credential.accountId)));
       if (!account) throw new AuthInvalidCredentialsError();
+      // An imported hash (bcrypt, scrypt, Firebase) is verified once and replaced by Zelavis's own.
+      if (needsRehash(credential.secretHash)) {
+        (yield* integrationValue(api.credentials.update({
+          ...credential,
+          secretHash: (yield* integrationValue(rehashPassword(password, hashOptions))),
+          updatedAt: new Date(),
+        })));
+      }
 
       return {
         account,

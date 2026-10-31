@@ -78,6 +78,8 @@ import { injectServiceUi, serviceUiRevision } from "./platform/service-page-ui.j
 import { readServicePageFile } from "./adapters/_service-page-file.js";
 import { PAGE_CAPABILITY_LIFETIME_MS, mintPageCapability, projectPageRequest, verifyPageCapability } from "./platform/page-capability.js";
 import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspection.js";
+import { platformBackupRoutes } from "./platform/platform-backups.js";
+import type { DatabaseBackupsHost } from "./db/node-backups.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
 import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
 import { createCloudRoutes } from "./platform/cloud-routes.js";
@@ -213,6 +215,7 @@ import {
   workloadsEndpointGroup,
   type WorkloadsServiceOptions,
 } from "./app/workloads/index.js";
+import { serveEntityWorkloads } from "./app/workloads/workloads-service.js";
 export { ZELAVIS_VERSION } from "./version.js";
 import {
   activateServiceRegistry,
@@ -535,6 +538,8 @@ export interface ZelavisServerOptions {
   marketplace?: ZelavisMarketplaceControl;
   updates?: ZelavisUpdateControl;
   terminal?: ZelavisTerminalControl;
+  /** The Platform's own scheduled, encrypted, off-site backups of its System Store. */
+  platformBackups?: DatabaseBackupsHost;
   diagnostics?: ZelavisDiagnosticsControl;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
@@ -784,6 +789,8 @@ export interface ZelavisPlatformResources {
   updates?: ZelavisUpdateControl;
   /** A shell on this server for its owner, inside tmux. */
   terminal?: ZelavisTerminalControl;
+  /** The Platform's own scheduled, encrypted, off-site backups of its System Store. */
+  platformBackups?: DatabaseBackupsHost;
   /** Read-only answers to the questions that otherwise need a shell: which processes run, and which are copies. */
   diagnostics?: ZelavisDiagnosticsControl;
   /** Cloud capacity: the provider connection and machines requested through it. */
@@ -1959,6 +1966,7 @@ function resolveRuntimeManagementCore(
     marketplace?: ZelavisMarketplaceControl;
     updates?: ZelavisUpdateControl;
     terminal?: ZelavisTerminalControl;
+    platformBackups?: DatabaseBackupsHost;
     diagnostics?: ZelavisDiagnosticsControl;
     /** Read by the Project diagnostic; the Project routes themselves are not part of the runtime management routes. */
     projects?: ZelavisProjectManager;
@@ -2714,6 +2722,7 @@ function resolveRuntimeManagementCore(
           })),
         },
         ...terminalRoutes(context),
+        ...platformBackupRoutes({ apiPrefix: context.apiPrefix, apiVersion: context.apiVersion, ...(context.platformBackups === undefined ? {} : { backups: context.platformBackups }) }),
         {
           id: "runtime.debug.processes",
           method: "GET",
@@ -6871,6 +6880,13 @@ export function zelavis(
                 },
           ),
         );
+        // Durable entities are served where the database's writer is, with the `entity` workloads as handlers.
+        const entityWorkloads = resolvedDatabaseApi && workloadsCoreService
+          ? serveEntityWorkloads(resolvedDatabaseApi, workloadsCoreService.context.store)
+          : undefined;
+        yield* Effect.addFinalizer(() =>
+          ready ? Effect.void : integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),
+        );
         const activatedServices = yield* integration(() =>
           activateServiceRegistry(
             serviceRegistry,
@@ -7377,6 +7393,7 @@ export function zelavis(
             marketplace: options.marketplace,
             updates: options.updates,
             terminal: options.terminal,
+            platformBackups: options.platformBackups,
             diagnostics: options.diagnostics,
             ...(projects ? { projects } : {}),
             platformLog,
@@ -7617,6 +7634,9 @@ export function zelavis(
               ),
               Effect.ensuring(
                 integration(() => projects?.close()).pipe(Effect.orDie),
+              ),
+              Effect.ensuring(
+                integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),
               ),
               Effect.ensuring(
                 integration(() => databaseSubsystem?.close?.()).pipe(
@@ -7906,6 +7926,7 @@ function mergeZelavisServerOptions(
     marketplace: override.marketplace ?? base.marketplace,
     updates: override.updates ?? base.updates,
     terminal: override.terminal ?? base.terminal,
+    platformBackups: override.platformBackups ?? base.platformBackups,
     diagnostics: override.diagnostics ?? base.diagnostics,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
@@ -8214,6 +8235,7 @@ export class Zelavis {
           marketplace: platformResources.marketplace,
           updates: platformResources.updates,
           terminal: platformResources.terminal,
+          platformBackups: platformResources.platformBackups,
           diagnostics: platformResources.diagnostics,
           serviceActivation: platformResources.services,
           bundleStore,

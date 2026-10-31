@@ -30,7 +30,7 @@ export function schemaRecordFields(fields: readonly CollectionFieldEntry[], text
       const input = node("input", { type: "number", step: tag === "IntegerField" ? "1" : "any" }); control = input;
       decode = () => { if (input.value === "") return undefined; const value = Number(input.value); if (!Number.isFinite(value) || tag === "IntegerField" && !Number.isSafeInteger(value)) throw new Error("Use a finite number or safe integer."); return value; };
       update = value => { input.value = value === undefined ? "" : String(value); };
-    } else if (["JsonField", "ReferenceField", "RepeaterField", "FileField", "ImageField", "AudioField", "VideoField"].includes(tag)) {
+    } else if (["JsonField", "ReferenceField", "RepeaterField", "FileField", "ImageField", "AudioField", "VideoField", "GeometryField", "VectorField"].includes(tag)) {
       const input = node("textarea", { rows: "4", maxlength: "1048576" }); control = input;
       decode = () => input.value.trim() ? JSON.parse(input.value) as unknown : undefined;
       update = value => { input.value = value === undefined ? "" : JSON.stringify(value, null, 2); };

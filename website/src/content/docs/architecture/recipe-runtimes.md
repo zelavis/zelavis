@@ -262,6 +262,18 @@ time the Project starts from a stop, the data is moved to the new place with one
 and keeps working), and the install phase runs again so configuration names the new place. A
 crash in between is finished by the next start, because the physical state decides.
 
+### Backing up the application's data
+
+Each named directory also says how a backup captures it (`backup`): `files` copies it as it is (code, uploads,
+configuration), and `recipe` leaves it to the recipe's `backup` phase, which writes a consistent copy below its root and
+returns where (`{ path }`). The MariaDB recipes use the shared `dumpMariaDb` from `zelavis/recipe`: one transaction
+(`--single-transaction`) while the site keeps serving, by the `mariadb-dump` of the same build that runs the database (the
+recipe pins it beside `mariadbd`), with the application's password in the program's environment, never its arguments; the
+container method runs the image's own dump and copies the file out. A Project's integration runtime runs the phase
+exactly as the driver runs any phase (the frozen recipe, the Project's resolved programs, secrets and account) as the
+`app` component of the Project's backup schedules, and copies the `files` directories beside it. A directory that says
+neither is not captured, and the backup's `recipe.json` says so. See [Backups and restore](../../api/database/#backups-and-restore).
+
 ### Programs a recipe brings with it
 
 A recipe is its own installer, so it does not borrow the host's PHP. Its manifest's `runtimes` pin the

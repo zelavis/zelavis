@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import type { KvEngine } from "../kv.js";
+import type { KvDurability, KvEngine } from "../kv.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ShardStoreApi } from "../store.js";
@@ -18,7 +18,7 @@ import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
  * is unchanged: only the handle differs. Loaded lazily, by specifier, because
  * a static import of the other host's module fails to resolve on load.
  */
-const loadSqliteOpener = (): Promise<(file: string, readOnly: boolean) => SqliteHandle> => present(Effect.gen(function* (): Effect.fn.Return<(file: string, readOnly: boolean) => SqliteHandle, IntegrationFailure> {
+export const loadSqliteOpener = (): Promise<(file: string, readOnly: boolean) => SqliteHandle> => present(Effect.gen(function* (): Effect.fn.Return<(file: string, readOnly: boolean) => SqliteHandle, IntegrationFailure> {
   if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
     const specifier = "bun:sqlite";
     const { Database } = ((yield* integrationValue(import(specifier)))) as {
@@ -62,6 +62,7 @@ const loadSqliteOpener = (): Promise<(file: string, readOnly: boolean) => Sqlite
 export const makeNodeSqliteEngine = (
   partition: PartitionKey,
   directory: string,
+  durability: KvDurability = "crash",
 ): Effect.Effect<KvEngine, StoreError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.tryPromise({
@@ -72,7 +73,7 @@ export const makeNodeSqliteEngine = (
         mkdirSync(directory, { recursive: true });
         const open = (yield* integrationValue(loadSqliteOpener()));
         const file = join(directory, `${partition}.sqlite`);
-        return sqliteKvEngineOver(open(file, false), { openReader: () => open(file, true) });
+        return sqliteKvEngineOver(open(file, false), { openReader: () => open(file, true), durability });
       })),
       catch: (cause) => new StoreError({ op: "node-sqlite.open", cause }),
     }),
@@ -82,9 +83,9 @@ export const makeNodeSqliteEngine = (
 export const makeNodeSqliteStore = (
   shard: ShardId,
   directory: string,
-  options?: OpenShardOptions,
+  options?: OpenShardOptions & { readonly durability?: KvDurability },
 ): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
-    const engine = yield* makeNodeSqliteEngine(shard, directory);
+    const engine = yield* makeNodeSqliteEngine(shard, directory, options?.durability);
     return yield* openShardOverKv(shard, engine, options);
   });

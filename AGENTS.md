@@ -23,11 +23,15 @@ a stronger ownership claim than self-hosting a database alone. No implementation
 describe either as available in docs, README, dashboard, or marketing copy until it ships;
 `pnotes/TODO.md` lists them as roadmap only.
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
 ## Product Positioning
+
+Supported storage engines follow [the owner decision](.agents/references/storage-engine-policy.md):
+SQLite by default, optional LMDB and RocksDB. Both libSQL targets are retired;
+do not restore aliases or silently replace them with Turso Database.
 
 The canonical public tagline is:
 
@@ -583,7 +587,11 @@ configuration, pid files, logs, `run/`, `tmp/`, `sessions/`) lives in `<project>
 recipe runtime's `root`, which Zelavis may rewrite freely. Recipe manifest contract 2 is this layout;
 contract 1 (application and plumbing together in `app/`) runs unchanged until its Project upgrades to a
 contract 2 recipe, which moves only the plumbing out. A new recipe declares every directory of
-application data as a named directory, and nothing else of the application lives under `root`.
+application data as a named directory, and nothing else of the application lives under `root`. Each
+named directory also says how a backup captures it (`backup`: `files` copied as it is, or `recipe`, made
+consistent by the recipe's own `backup` phase, such as a database dump with `dumpMariaDb`); a managed
+Project's integration runtime stages both as the `app` backup component (`stageRecipeBackup`), never
+writing inside `app/`. A directory that declares neither is not captured, and the backup says so.
 
 Managed third-party app recipe updates refresh Zelavis integration, not the app's
 software. When the recipe also supervises the app's processes (a recipe runtime such as
@@ -1100,10 +1108,35 @@ Key rules:
   where the at-most-once guard lives: a write may carry an `idempotencyKey`, and
   its receipt is written in the same transaction as the change, so there is no
   moment where the write has happened and the key has not been noted.
+- App data authority distinguishes `database.read`, `database.write` and
+  `database.define` (`project.data.read|write|define` on the Gateway). Collection,
+  schema, index, analyzer, spatial, embedding, check and reference definition
+  changes require define; record writers cannot disable their own constraints.
+  The data Gateway delegates only these concrete data permissions and the
+  child checks each operation, including POST reads. Operator scatter still
+  goes through the Project proxy and requires inspect. The App change feed
+  (`events.read`, HTTP `events/read`, CLI `data changes`) reads the same bounded
+  Tenant event log; keep its returned cursor even for empty filtered pages.
+  Service-account CLI grants are explicit: `--permission` is Platform-wide,
+  `--project` plus repeated `--project-permission` is Project-scoped. Never
+  infer operator permissions merely because a Project was named.
 - Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
   key with no value, and a transaction is one atomic batch with reads overlaying
   it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
-  knows which engine it is. SQLite (default), libSQL, RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
+  knows which engine it is. SQLite (default), RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
+- What a returned commit survives is an open-time choice, `durability`:
+  `crash` (default) or `power` (a device flush per commit), reported by
+  health. An engine that cannot keep `power` refuses it at open (RocksDB's
+  binding) rather than giving the weaker promise. Follower acknowledgments
+  (`writeAcknowledged`) are reported only after the follower commits, and a
+  missed policy fails with `FollowersNotAcknowledged` without undoing the write.
+  A follower on another host reads its leader through the leader transport
+  (`db/leader.ts`: `GET|POST …/database/followers/*`, `database.replicate`,
+  `client.followers`, `zelavis followers`) as a `LeaderSource` (`remoteLeader`),
+  so the same `levelFollower`/`followLeader` code runs on both sides; carried
+  failures (`CursorCompacted`, `LogCompacted`, …) cross it as themselves, and
+  acknowledgments are filed with the leader (`db.followers.acknowledgments`).
+  Never add a second follower algorithm for the remote case.
 - Append to the log before projecting into the lenses. A crash must leave an
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
@@ -1130,6 +1163,27 @@ Key rules:
   do not wait for each other; the engine applies each batch atomically. Reads
   take no permit. Nothing holding the permit may call another write to the same
   partition, or it waits on itself.
+- What Zelavis takes from Effect Cluster is decided in
+  [.agents/references/effect-cluster-decision.md](.agents/references/effect-cluster-decision.md):
+  its Entity model becomes native durable entities whose mailbox lives in the
+  Tenant's partition (handler writes and the processed mark in one batch), never
+  Cluster's lease-only `Sharding`/`RunnerStorage` as placement or writer authority.
+  Singleton duties (index refresh, backup schedules, workflow resumption,
+  schedules) run where the writer claim is held. Every channel states its
+  delivery guarantee; nothing claims exactly-once delivery.
+- Durable entities (`db/entities.ts`, `tenant.entities`, `db.entities.serve`) keep
+  an entity's messages, pending markers and state as records in its Tenant's
+  partition. A handler answers a step; its writes, outbox messages, state and
+  reply commit with the message's processed mark through `documents.write`'s
+  internal `WRITE_ALONG` hook, and that commit re-checks the pending marker's
+  version, so a message is never finished twice. Never run a handler inside the
+  transaction, and never mark a message processed in a batch of its own. In a
+  Project the enabled `entity` workloads are the handlers by name.
+- Offline editing and independent multi-writer replication are reviewed in
+  [.agents/references/offline-replication-decision.md](.agents/references/offline-replication-decision.md).
+  Keep fenced single-writer authority and adapter-neutral event replication.
+  Device-local proposals are not commits; CRDT/custom/LWW policies require a
+  separately approved operation and collection specification before runtime code.
 - A record is one value — version, identity, manifest and body — so one read
   is the whole record and no copy of one is torn. Retracting a record leaves
   its version and the log position that retracted it, and every application of
@@ -1204,7 +1258,13 @@ Key rules:
   tenants that share a shard never commit together, and nothing relies on a
   colocation a move would end. There is no cross-partition write, a scatter
   reads, and a write spanning tenants or parts is a workflow (an orchestrated
-  saga with idempotent steps and compensations) — never two-phase commit. For nearly every Tenant the partition is the Tenant. A Tenant
+  saga with idempotent steps and compensations) — never two-phase commit.
+  Sagas run on `effect/workflow` over `db.workflowEngine` (`workflow-engine.ts`,
+  the one file that touches that unstable API): executions, activity results,
+  deferreds and clocks are recorded in the global partition, a recorded step
+  never runs again, unfinished executions resume when their workflow registers,
+  Tenant writes go through `tenantWriteActivity` (idempotency key per step),
+  and `startFromOutbox` starts them from a Tenant's outbox. For nearly every Tenant the partition is the Tenant. A Tenant
   too large for one Shard may be divided into parts, and then the partition is
   the part: `db.forTenant` refuses a divided Tenant rather than answering for a
   fraction of it, `db.forPart` reaches one, and a question about the whole is a
@@ -1215,6 +1275,19 @@ Key rules:
   entries at a time, so a take of a few rows still reads thousands; the limit
   is what lets an engine stop at the source. Every engine honours it, and
   `test/db-kv-engines.test.mjs` holds each to the same answers.
+- One payload written through either door (documents or KV) answers the same
+  through every lens — id/key, equality, range and order, terms, measures,
+  edges, geometry, similarity — after a backfill, on a follower and after a
+  restore, on every engine: `test/db-multimodal-conformance.test.mjs` is that
+  matrix, checked against an exact model. A new lens or write path joins it.
+- Search phrase acceleration uses adjacent word-pair postings: two words are
+  exact, longer phrases verify candidate order. Synonyms expand single words at
+  query time. Ranked scatter sums matching-corpus statistics before scoring each
+  partition, never merges incomparable local BM25 scores. It provides no
+  cross-partition snapshot. Text plus vector uses bounded weighted reciprocal
+  rank fusion under the same structured filters; qualify it against exact
+  rankings (`test/db-search-ranking.test.mjs`). HTTP/SDK/CLI carry hybrid options,
+  corpus statistics and operator-only scatter together.
 - One transaction is one batch, and that is the whole durability story: a
   killed process loses no commit that returned, and a write-ahead log
   truncated by a power cut costs a suffix rather than leaving holes. Upkeep
@@ -1298,6 +1371,10 @@ Key rules:
   interrupted rebuild leaves the old series whole. A projection's `apply`
   writes outside the store, so it is at least once: it must be idempotent,
   keyed by `eventId`, and a rebuild clears the checkpoint before its reset.
+  A materialized aggregate (`aggregates.refresh`) computes from one snapshot
+  and publishes its results with that snapshot's log head as `checkpoint`, in
+  one transaction that refuses to publish if the head moved: never a result
+  newer or older than its checkpoint.
 - A partition map carries routing and no data, so changing where an occupied
   range points is a relocation, not a map edit. `db.movement` copies the
   tenant's partition as it is (`seed`, then the source's log by `followAll` at
@@ -1351,19 +1428,29 @@ Key rules:
   single-partition by construction; `db.scatter` is the only thing that fans
   out, and it reports what each leg cost. A live question across Tenants does
   not fan out at all: it reads a cross-Tenant index (`db.crossTenantIndexes`),
-  one collection's documents from every Tenant copied into one partition of
-  the global shard. The index is derived, never authoritative: it follows each
+  one collection's documents from every Tenant copied into a bounded set of
+  derived shard placements. The index is derived, never authoritative: it follows each
   Tenant partition's log from a cursor kept per partition and committed in the
   same transaction as the entries that batch produced, and it trusts a cursor
   only in the partition life it was read in (`PartitionStats.incarnation`,
   written with a partition's first batch, kept by a copy, new after a removal).
   A cursor compacted past or from another life derives that partition's
-  entries again from its records. Plugins' `service:` partitions are never
+  entries again from its records. Its refresh reads a partition soon after a
+  write in this process or one its `notifications` stream names (a writer's
+  change feed, `remoteChanges`; a follow loop); the sweep is the backstop. Plugins' `service:` partitions are never
   read. Defining one needs `database.indexes.manage`; querying needs
   `database.inspect`. A `Seq` names an object only together
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
+  Definitions freeze 1–32 derived shards; a source partition hashes to one so
+  its entries and cursor still commit together. Query pages merge bounded chunks
+  from those placements, with incarnation/query-bound continuation. Geometry,
+  vectors and non-unique composites use source paths. A durable re-derivation
+  marker refuses queries until complete; refresh resumes it after interruption.
+  Index refresh status (last successful full pass and failures) is persisted in
+  its registry. Database → Cross-Tenant Indexes consumes the public operations;
+  query, selected index and continuation belong in the URL.
 - A branch (`db.branchTenant`) is a new Tenant copied from another as of one
   position of its log, by `seed` with `{ branch: true }`: the records, then the
   source's log up to the position read once they were copied and no further,
@@ -1389,16 +1476,32 @@ Key rules:
   decision, not a gap: cross-part writes are sagas, so a single cut could still
   catch one half done, and it would cost a primitive that holds several writers.
   `db.tenants` and `tenants/overview` report Tenants, a divided one as a single
-  entry carrying its `parts` (`db.partitions` lists the keys). There is no
-  merging back.
+  entry carrying its `parts` (`db.partitions` lists the keys). Merging back
+  (`db.mergeBranch`) follows
+  [.agents/references/branch-merge-decision.md](.agents/references/branch-merge-decision.md):
+  per document from the branch point, no default winner, nothing written while
+  a conflict is unsettled, writes through the source's documents API checked
+  against the versions read, repeatable by state. A branch as of a past
+  position (`asOf`, `asOfTime`) is made from the source's log, replayed from
+  empty or from its stored snapshot; compaction never cuts past that snapshot,
+  so snapshot plus log is the recovery horizon, and a point before it is
+  refused (`LogCompacted`); `recoveryWindow`
+  reports the reach. Its position is recorded with the seeding mark
+  (`stats.asOf`) so a resume is as of the same point. A cut-off branch whose
+  source is gone is removed at open; one
+  waiting on a relocation finishes when the relocation does. A Tenant removal
+  fences, drains and then removes; one that cannot drain lifts its fence, and
+  one cut off after removing began is finished at open (its `removed` fence is
+  the tombstone). A divided Tenant is removed part by part and stays divided.
 - A reader that copies records and then follows the log (a copy, a branch, a
   follower, an export) takes a hold on the source's log (`holdLog`: a named,
   renewable, raise-only claim with a time limit, at most 64 a partition, taken under
   the permit `compact` takes) so compaction goes only as far as the lowest live
   hold and reports `heldAt` instead of refusing. A hold only prevents starvation:
-  holds are in-process like the writer, a hold on a placement a move left protects
-  nothing, and correctness stays with the readers' own detection (`CursorCompacted`,
-  `LogCompacted`). Never hold a source for a whole long read through a snapshot
+  holds live with the writer, a move carries the live holds to the target before
+  routing points there and again before the source is dropped, a remote reader
+  holds through the leader transport, and correctness stays with the readers' own
+  detection (`CursorCompacted`, `LogCompacted`). Never hold a source for a whole long read through a snapshot
   instead; a pinned read transaction is the failure this replaces.
 - The export stream (`exportPage`, `db/export-stream.ts`) is the one way a
   Tenant is read out online: a page of records and a page of the log per call,
@@ -1417,6 +1520,19 @@ Key rules:
   route, because the database being replaced cannot authorize its own replacement.
   A native OLAP engine is never part of the core runtime (no native dependency): an
   analytics store is an external consumer of the export stream.
+- Scheduled off-site backups (`node-backups.ts`) are images packed and sealed
+  with AES-256-GCM per part (run and position as additional data), written to
+  a target that passed `probeFileStorageGuarantees`, each object `ifAbsent`,
+  the manifest last as the commit point. Each schedule has its own key,
+  answered once as `recoveryKey`; credentials and keys are never answered back.
+  A run is named components (`BackupComponent`): a Project captures
+  `database`, `runtime` (`VACUUM INTO` of its runtime store) and `media`, and a
+  managed app's Project also `app` (its recipe's named directories, see the app
+  folder rule); the Platform captures `system-store` as records, applied only
+  host-locally with the Platform stopped (`zelavis system-store import`,
+  maintenance ownership). A drill opens what it restored; `drillFrom` drills a
+  run on a machine holding only the target and the recovery key, recording
+  nothing there.
 - A restore says what to do about data already there — refuse, purge, or merge
   — and never guesses. Its label must name the tenant it is restored into, and
   it writes only into that tenant's own partition, so nothing in a backup can
@@ -1431,7 +1547,15 @@ Key rules:
   on from where they were and end where a rebuild over the whole log ends. A
   purge works a page of records per transaction, never the whole tenant at once.
 - A schema version governs what is accepted next, never what is already
-  stored: activating one rewrites nothing. `tenant.migrations` is the separate,
+  stored: activating one rewrites no document. It does declare what the
+  version implies safely (`deriveDeclarations`: prose → analyzer, numbers →
+  measures, a single reference → edge, `GeometryField`/`VectorField` → spatial
+  and embedding only because they state the coordinate model or the model,
+  version, dimension and metric), and activation is a durable workflow
+  (`schema-activation.ts`): intent, apply and re-derive postings, publish in
+  one transaction that checks the intent and the collection's derived version.
+  Refused activations restore the previous declarations; interrupted ones
+  finish at open. Hand-made declarations are never replaced by derived ones. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions
   are data rather than functions — inspectable, and reviewable before they run.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
@@ -1579,8 +1703,13 @@ surfaces are implementation gaps, not precedent for another exception.
   all three forms together, and identify unimplemented forms as gaps rather
   than describing them as shipped.
 
-This is the required direction for public APIs, not a claim that the current
-SDK, HTTP routes, and CLI already have full parity. Internal implementation
+`test/capability-parity.test.mjs` enforces it: the operations are derived from a
+composed Platform's OpenAPI document and the Project database and storage
+services; SDK coverage is recorded by calling every client method against a
+recording fetch, CLI coverage from the SDK methods the CLI calls. Anything else
+must be declared there (checked against the client and the CLI usage) or
+exempted with its reason (assets, passthroughs, browser redirects). A new
+route without an SDK method and a CLI command fails it. Internal implementation
 helpers are not separate public capabilities.
 
 The dashboard is a client of Zelavis, not the source of truth for platform behavior. Any feature exposed in the dashboard must also be available to non-dashboard callers such as the CLI, AI agents, scripts, plugins, external admin tools, and future automation flows.
@@ -1881,6 +2010,10 @@ with real npm acquisition. Candidate Node pins are read from JSON before its cod
 runs. Live root commit refreshes the selected release's authored unit templates
 and daemon-reloads without restarting the host or Project Agent; rollback
 restores the previous templates.
+`pnpm release:qualify:backups` makes a WordPress Project on the packed candidate with
+this checkout's recipes, backs it up through its own schedule while it serves (zero
+failed requests), drills and restores it, then drills the same run on a second, fresh
+disposable machine from the shared target and the recovery key alone.
 
 New system installations always enable their separate Project Agent. No optional
 Agent flag remains. Never prune qualified engines needed for Project selection,

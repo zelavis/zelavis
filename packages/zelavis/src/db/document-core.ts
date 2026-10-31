@@ -18,7 +18,7 @@ import { cellsFor, loadH3 } from "./spatial.js";
 import { type VectorProjectionIndex } from "./vectors.js";
 import { type IndexManifest, type Seq } from "./model.js";
 import { type Query } from "./query.js";
-import type { SchemasApi } from "./schemas.js";
+import type { SchemaRecords } from "./schemas.js";
 import type { ObjectStoreApi, ResolveOptions, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
 
@@ -30,7 +30,7 @@ import { COLLECTION_MARKER, type Pending, RECEIPT_MARKER, type Receipt, type Sto
 export const documentCore = (
   store: ObjectStoreApi,
   tenant: TenantId,
-  schemas?: SchemasApi,
+  schemas?: SchemaRecords,
 ) => {
   /**
    * Reject the whole write when the data does not satisfy the active schema.
@@ -138,7 +138,6 @@ export const documentCore = (
       if (key === undefined) return yield* transactChecked(change);
       const seen = yield* receiptFor(key, fingerprint, request);
       if (seen !== undefined) return seen.result as A;
-      const receiptSeq = yield* nextSeq;
       return yield* transactChecked<A, E | IdempotencyKeyReused>((txn) =>
         Effect.gen(function* () {
           const raced = yield* receiptFor(key, fingerprint, request);
@@ -147,7 +146,7 @@ export const documentCore = (
           if (remember(result)) {
             yield* rememberKey(txn, {
               key, fingerprint, request, result, at: new Date().toISOString(),
-            }, receiptSeq);
+            }, yield* txn.allocate);
           }
           return result;
         }));

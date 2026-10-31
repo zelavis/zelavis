@@ -1,4 +1,7 @@
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
+import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
+import { InvalidBackup } from "../db/errors.js";
+import { systemStoreComponent } from "../platform/platform-backups.js";
 import { join, resolve } from "node:path";
 import { loadPlatformMasterSecret } from "../platform/master-secret.js";
 import { createZelavisEdgePreviews } from "../edge/previews.js";
@@ -12,7 +15,8 @@ import {
   type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
-import { Cause, Effect, Exit, Option } from "effect";
+import { writeFile } from "node:fs/promises";
+import { Cause, Effect, Exit, Option, Scope } from "effect";
 import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
 import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
@@ -101,6 +105,11 @@ export interface NodeAdapterDatabaseOptions {
    */
   shards?: readonly string[];
   virtualRanges?: number;
+  /**
+   * What a returned commit survives: `crash` (default) or `power`, which
+   * flushes every commit to the device. Reported by the database's health.
+   */
+  durability?: "crash" | "power";
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
@@ -194,6 +203,11 @@ export interface NodeAdapterOptions {
    * able to join it. Without both, connecting a provider answers 503.
    */
   cloud?: { bundlePath: string; policyFile: string };
+  /**
+   * More of what a Project's backups capture, beside its database, runtime store and media: a managed app's
+   * integration runtime adds the app's own data (`app`, see `stageRecipeBackup`).
+   */
+  backupComponents?: ReadonlyArray<BackupComponent>;
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -269,6 +283,23 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
       if (systemStore) stores.add(systemStore);
 
+      // The Platform's own backups: its System Store, on the schedules its owner makes. Their loops live in a
+      // scope that closes with the runtime.
+      let platformBackups: DatabaseBackupsHost | undefined;
+      if (!isProjectRuntime && systemStore) {
+        const backupScope = yield* integration(() => Effect.runPromise(Scope.make()));
+        stores.add({ close: () => Effect.runPromise(Scope.close(backupScope, Exit.void)) });
+        const writeLines = (path: string, lines: ReadonlyArray<string>) => Effect.tryPromise({
+          try: () => writeFile(path, lines.length === 0 ? "" : `${lines.join("\n")}\n`, { mode: 0o600 }),
+          catch: (cause) => new InvalidBackup({ reason: `system-store.write: ${String(cause)}` }),
+        });
+        platformBackups = yield* integration(() => Effect.runPromise(backupsHost({
+          directory: join(dataDirectory, "backups"),
+          components: [systemStoreComponent(systemStore, writeLines)],
+          scope: backupScope,
+        })));
+      }
+
       if (databaseOptions !== false) {
         // The topology is no longer resolved here: the partition map lives in
         // the database's own store, versioned and fenced like any other write,
@@ -282,6 +313,18 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(databaseOptions.virtualRanges === undefined
             ? {}
             : { virtualRanges: databaseOptions.virtualRanges }),
+          ...(databaseOptions.durability === undefined
+            ? {}
+            : { engine: { durability: databaseOptions.durability } }),
+          // A Project's backups capture all of it: its database, its runtime store (accounts' sessions, workload
+          // definitions and runs, Project metadata) and its media files.
+          ...(isProjectRuntime ? {
+            backupComponents: [
+              ...(systemStore === undefined ? [] : [sqliteFileComponent("runtime", systemStoreFilename)]),
+              ...(options.files === false ? [] : [directoryComponent("media", options.files?.rootDirectory ? resolve(options.files.rootDirectory) : join(dataDirectory, "files"))]),
+              ...(options.backupComponents ?? []),
+            ],
+          } : {}),
         };
       }
 
@@ -579,6 +622,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(!isProjectRuntime && systemStore ? { updates: createNodeUpdateControl({ dataDirectory }) } : {}),
           ...(!isProjectRuntime && systemStore ? { diagnostics: createNodeDiagnosticsControl({ dataDirectory }) } : {}),
           ...(!isProjectRuntime && systemStore && options.terminal !== false ? { terminal: options.terminal ?? createNodeTerminalControl({ dataDirectory }) } : {}),
+          ...(platformBackups === undefined ? {} : { platformBackups }),
         },
         metadata: {
           runtime: "node",

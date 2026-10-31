@@ -15,7 +15,7 @@ import {
   damerauLevenshtein,
 } from "./search-parser.js";
 
-import { covers, geometryAt, isScalar, tokenize } from "./document-indexing.js";
+import { covers, geometryAt, isScalar, synonymsOf, tokenize } from "./document-indexing.js";
 import { type Analyzer, type Document, type DocumentFilter, type DocumentSort, type HighlightOptions, type NullPlacement, type SpatialFilter } from "./document-model.js";
 import { type StoredCollection, type StoredIndex, collectionColumn, columnFor, readPath } from "./document-records.js";
 
@@ -269,7 +269,7 @@ export const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
       root: SearchClause;
       analyzer: Analyzer;
     };
-    return matchesSearchClause(data, root, analyzer, tokenize, readPath);
+    return matchesSearchClause(data, root, analyzer, tokenize, readPath, (token) => synonymsOf(token, analyzer));
   }
   if (op === "phrase") {
     const { phrases, analyzer } = filter.value as unknown as {

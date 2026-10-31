@@ -20,6 +20,23 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
   const tenants = array(object(yield* request(`${api}/database/tenants/overview`)).tenants).map(object);
   const databasePath = `${base}/database`;
 
+  const mergeBack = (branch: string, into: string) => context.run(request(`${api}/database/tenants/${encodeURIComponent(branch)}/merge`, "POST", { dryRun: true }).pipe(
+    Effect.flatMap(planned => {
+      const plan = object(planned);
+      const conflicts = array(plan.partitions).map(object).flatMap(entry => array(entry.conflicts).map(object));
+      const summary = `Merge ${branch} into ${into}: ${label(plan.writes, "0")} writes, ${label(plan.deletes, "0")} deletes.`;
+      let resolve: ReadonlyArray<Record<string, unknown>> = [];
+      if (conflicts.length > 0) {
+        const named = conflicts.slice(0, 10).map(conflict => `${label(conflict.collection)}${conflict.id === undefined ? " (definition)" : `/${label(conflict.id)}`}`).join(", ");
+        const side = window.prompt(`${summary} ${conflicts.length} changed on both sides (${named}${conflicts.length > 10 ? ", …" : ""}). Type "branch" to keep the branch's version of every conflicting document or "source" to keep ${into}'s.`);
+        if (side !== "branch" && side !== "source") return Effect.succeed(undefined);
+        resolve = conflicts.map(conflict => ({ collection: conflict.collection, ...(conflict.id === undefined ? {} : { id: conflict.id }), keep: conflict.id === undefined ? "source" : side }));
+      } else if (!window.confirm(`${summary} Nothing changed on both sides.`)) return Effect.succeed(undefined);
+      return request(`${api}/database/tenants/${encodeURIComponent(branch)}/merge`, "POST", { resolve });
+    }),
+    Effect.tap(result => Effect.sync(() => { if (result !== undefined) setFlash(`Merged ${branch} into ${into}.`); })),
+  ));
+
   const download = (tenantId: string) => context.run(request(`${api}/database/maintenance/backups/export`, "POST", { tenantId }).pipe(
     Effect.tap(backup => Effect.sync(() => {
       const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
@@ -51,13 +68,15 @@ export const tenantsScreen = Effect.fn("ui.tenantsScreen")(function*(context: Sc
     const divided = entry.parts !== undefined;
     const detail = `${size(entry)} · ${divided ? `divided into ${parts.length} ${parts.length === 1 ? "part" : "parts"}` : `shard ${label(entry.shard, "?")}`}`;
     const actions = node("div", { class: "actions" }, badge(kind === "App" ? "active" : kind === "Plugin" ? "planned" : "ready"), node("span", { class: "muted" }, kind),
-      ...(divided ? [] : [tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables"),
-        button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` })]),
+      ...(divided ? [] : [tables > 0 ? link("Open tables", `${databasePath}?databaseTenant=${encodeURIComponent(id)}`) : node("span", { class: "muted" }, "No tables")]),
+      // A divided Tenant's backup is one file holding every part.
+      button("Back up", () => download(id), { "aria-label": `Download a backup of ${id}` }),
       // The App's own Tenant and a plugin's are not for the operator to branch or delete from here: the app and the plugin stand on
-      // them, and the App's holds its accounts. A divided Tenant is branched whole (each part into its counterpart) and is deleted
-      // part by part through the database, never here.
+      // them, and the App's holds its accounts. A divided Tenant is branched and deleted whole, every part with it.
       ...(kind === "Tenant" ? [button("Branch", () => branchDialog.open(id, divided), { "aria-label": `Branch Tenant ${id}` })] : []),
-      ...(kind === "Tenant" && !divided ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents: Number(entry.documents) || 0, size: formatBytes(Number(entry.bytes) || 0) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
+      // A branch merges back into where it came from: planned first, conflicts settled by choosing a side for all of them.
+      ...(kind === "Tenant" && typeof entry.branchedFrom === "string" ? [button("Merge back", () => mergeBack(id, String(entry.branchedFrom)), { "aria-label": `Merge Tenant ${id} back` })] : []),
+      ...(kind === "Tenant" ? [button("Delete", () => confirmDelete.open({ tenantId: id, tables, documents: Number(entry.documents) || 0, size: formatBytes(Number(entry.bytes) || 0), ...(divided ? { parts: parts.length } : {}) }), { class: "danger", "aria-label": `Delete Tenant ${id}` })] : []));
     // A part is a partition of its own: its tables are opened and backed up under its part key.
     const partRows = parts.map(part => {
       const key = `${id}#${label(part.part, "")}`;

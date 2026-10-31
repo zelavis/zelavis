@@ -4,7 +4,7 @@ import type { DomainEventsApi } from "./domain-events.js";
 import { UnknownSystemView } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import type { ProjectionsApi } from "./projections.js";
-import type { SchemasApi } from "./schemas.js";
+import type { SchemasApi } from "./schema-activation.js";
 import type { TimeSeriesApi } from "./time-series.js";
 
 export type SystemViewName =

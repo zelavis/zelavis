@@ -2,6 +2,7 @@
 import { Effect } from "effect";
 import type { Json, JsonObject } from "./json.js";
 import { InvalidDocumentValue } from "./errors.js";
+import { geometryValue } from "./geometry-value.js";
 import { orderedTuple } from "./keys.js";
 import { cellsFor, coveringFor, COARSEST_RESOLUTION, type Geometry } from "./spatial.js";
 import { type OrderedScalar } from "./model.js";
@@ -10,7 +11,7 @@ import { stem } from "./stemmer.js";
 import { measureColumnFor } from "./document-definitions.js";
 import { type Analyzer, type MeasureDefinition, type SpatialIndex } from "./document-model.js";
 import { orderable } from "./document-planner.js";
-import { type StoredIndex, cellFieldFor, collectionColumn, columnFor, readPath, textFieldFor } from "./document-records.js";
+import { type StoredIndex, cellFieldFor, collectionColumn, columnFor, pairFieldFor, readPath, textFieldFor, wordPair } from "./document-records.js";
 
 /**
  * Whether a collection's declared columns cover a path: the path itself, or a
@@ -76,6 +77,20 @@ export const validateDocumentData = (collection: string, data: JsonObject): Effe
  * words together across scripts without a per-language rule. Normalized to NFC
  * first, so text that differs only in how an accent is encoded gives one term.
  */
+/**
+ * Every term a query term stands for under the analyzer's synonyms: itself,
+ * and each word of every group it belongs to, analyzed as the text is.
+ */
+export const synonymsOf = (token: string, analyzer: Analyzer): ReadonlyArray<string> => {
+  if (analyzer.synonyms === undefined || analyzer.synonyms.length === 0) return [token];
+  const out = new Set<string>([token]);
+  for (const group of analyzer.synonyms) {
+    const analyzed = group.flatMap((word) => tokenize(word, analyzer));
+    if (analyzed.includes(token)) for (const word of analyzed) out.add(word);
+  }
+  return [...out];
+};
+
 export const tokenize = (text: string, analyzer: Analyzer): Array<string> => {
   const normalized = text.normalize("NFC");
   const folded = analyzer.fold === false ? normalized : normalized.toLowerCase();
@@ -103,7 +118,15 @@ export const termsFor = (
     const value = readPath(data, path);
     if (typeof value !== "string") continue;
     const field = textFieldFor(collection, path);
-    for (const token of tokenize(value, analyzer)) out.set(`${path}\u0000${token}`, [field, token]);
+    const tokens = tokenize(value, analyzer);
+    for (const token of tokens) out.set(`${path}\u0000${token}`, [field, token]);
+    if (analyzer.phrases === true) {
+      const pairs = pairFieldFor(collection, path);
+      for (let at = 1; at < tokens.length; at++) {
+        const pair = wordPair(tokens[at - 1]!, tokens[at]!);
+        out.set(`${path}\u0001${pair}`, [pairs, pair]);
+      }
+    }
   }
   return [...out.values()];
 };
@@ -113,13 +136,7 @@ export const COARSE_SENTINEL = "*coarse";
 
 /** The geometry at a path, if it is one this understands. */
 export const geometryAt = (data: JsonObject, path: string): Geometry | undefined => {
-  const value = readPath(data, path);
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const shape = value as { type?: unknown; coordinates?: unknown };
-  if (typeof shape.type !== "string" || !Array.isArray(shape.coordinates)) return undefined;
-  return shape.type === "Point" || shape.type === "LineString" || shape.type === "MultiLineString" || shape.type === "Polygon" || shape.type === "MultiPolygon"
-    ? (value as unknown as Geometry)
-    : undefined;
+  return geometryValue(readPath(data, path));
 };
 
 /**

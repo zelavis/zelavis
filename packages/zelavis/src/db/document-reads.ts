@@ -1,5 +1,6 @@
 /** The documents API's reads for one tenant: queries planned, answered in order, and summarized. */
 import { Effect, Stream } from "effect";
+import { covarianceOf, histogramOf } from "./measure-statistics.js";
 import type { Json } from "./json.js";
 import {
   CollectionNotFound,
@@ -13,6 +14,7 @@ import {
   UnknownMeasure,
   InvalidVectorQuery,
   UnknownReference,
+  InvalidMeasureQuery,
 } from "./errors.js";
 import {
   boxGeometry,
@@ -28,11 +30,11 @@ import { isUsableVector, normalized, similarity, loadUsearch, createProjectionIn
 import { asSeq, type OrderedScalar, type Seq } from "./model.js";
 import { and, between, edge as edgeQuery, equals, type Query } from "./query.js";
 import type { ObjectStoreApi, OrderedCursor } from "./store.js";
-import { parseSearchQuery, toPlanQuery, type ParsedSearchQuery, damerauLevenshtein } from "./search-parser.js";
+import { answeredByPostings, parseSearchQuery, toPlanQuery, type ParsedSearchQuery, damerauLevenshtein } from "./search-parser.js";
 
 import { METRICS, describeFields, edgeTypeFor, measureColumnFor } from "./document-definitions.js";
-import { COARSE_SENTINEL, geometryAt, tokenize } from "./document-indexing.js";
-import { type Analyzer, type Collection, type Document, type DocumentCursor, type DocumentFilter, type EmbeddingIndex, type FindDocumentsInput, type GroupedSummary, type LinkFilter, type MeasureDefinition, type MeasureOperation, type RelatedDocuments, type RelatedFilter, type SimilarFilter, type SpatialFilter, type SpatialIndex, type TraverseStep, collectionModalities } from "./document-model.js";
+import { COARSE_SENTINEL, geometryAt, synonymsOf, tokenize } from "./document-indexing.js";
+import { type Analyzer, type Collection, type Document, type DocumentCursor, type DocumentFilter, type EmbeddingIndex, type FindDocumentsInput, type GroupedSummary, type LinkFilter, type MeasureDefinition, type MeasureOperation, type RelatedDocuments, type RelatedFilter, type SearchStatistics, type SimilarFilter, type SpatialFilter, type SpatialIndex, type TraverseStep, collectionModalities } from "./document-model.js";
 import {
   type IndexedOrder,
   type PageShape,
@@ -52,9 +54,80 @@ import {
   withCells,
   withSearch,
 } from "./document-planner.js";
-import { COLLECTION_MARKER, type StoredCollection, cellFieldFor, collectionColumn, collectionRecord, columnFor, decode, documentNs, publicCollection, readPath, textFieldFor } from "./document-records.js";
+import { COLLECTION_MARKER, type StoredCollection, cellFieldFor, collectionColumn, collectionRecord, columnFor, decode, documentNs, pairFieldFor, publicCollection, readPath, textFieldFor } from "./document-records.js";
 import type { DocumentCore } from "./document-core.js";
 import type { DocumentsApi } from "./document-model.js";
+import { readHybridSearch, readSearchStatistics } from "./search-options.js";
+
+/** What BM25 needs from one document: its analyzed length and the query terms it holds. */
+const textEvidence = (document: Document, parsed: ParsedSearchQuery, analyzer: Analyzer) => {
+  const { terms, scoredPhrases } = parsed;
+  const expansions = new Map(terms.map((qTerm) => [qTerm.token, synonymsOf(qTerm.token, analyzer)] as const));
+  let docLength = 0;
+  const termCounts = new Map<string, number>();
+  let phraseOccurrences = 0;
+  let adjacentPairs = 0;
+  for (const field of analyzer.fields) {
+    const val = readPath(document.data, field);
+    if (typeof val !== "string") continue;
+    const tokens = tokenize(val, analyzer);
+    docLength += tokens.length;
+    for (const token of tokens) {
+      for (const qTerm of terms) {
+        if (qTerm.field !== undefined && qTerm.field !== field) continue;
+        if (qTerm.kind === "exact" && expansions.get(qTerm.token)!.includes(token)) {
+          termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 1);
+        } else if (qTerm.kind === "prefix" && token.startsWith(qTerm.token)) {
+          termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 0.95);
+        } else if (qTerm.kind === "fuzzy") {
+          const dist = damerauLevenshtein(token, qTerm.token, qTerm.fuzzyDistance ?? 2);
+          if (dist <= (qTerm.fuzzyDistance ?? 2)) {
+            const weight = dist === 0 ? 1 : Math.max(0.4, 1 - dist * 0.2);
+            termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + weight);
+          }
+        }
+      }
+    }
+    for (const phrase of (scoredPhrases ?? [])) {
+      if (phrase.field !== undefined && phrase.field !== field) continue;
+      phraseOccurrences += countPhraseMatches(tokens, phrase.tokens);
+    }
+    if (terms.length > 1) {
+      const termTokens = terms.map((t) => t.token);
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const t1 = tokens[i]!;
+        const t2 = tokens[i + 1]!;
+        if (termTokens.includes(t1) && termTokens.includes(t2) && t1 !== t2) adjacentPairs += 1;
+      }
+    }
+  }
+  return { docLength, termCounts, phraseOccurrences, adjacentPairs };
+};
+
+/** The corpus statistics of a set of matches; see `SearchStatistics`. */
+const statisticsOf = (
+  evidence: ReadonlyArray<{ readonly docLength: number; readonly termCounts: ReadonlyMap<string, number> }>,
+  terms: ParsedSearchQuery["terms"],
+): SearchStatistics => {
+  const frequencies: Record<string, number> = {};
+  for (const qTerm of terms) {
+    frequencies[qTerm.token] = evidence.filter((c) => (c.termCounts.get(qTerm.token) ?? 0) > 0).length;
+  }
+  return { documents: evidence.length, length: evidence.reduce((total, c) => total + c.docLength, 0), frequencies };
+};
+
+/** The first `depth` of a ranking, by id, with each document's place in it from one. */
+const ranks = (documents: ReadonlyArray<Document>, depth: number): ReadonlyMap<string, { rank: number; document: Document }> =>
+  new Map(documents.slice(0, depth).map((document, at) => [document.id, { rank: at + 1, document }]));
+
+/** A pure calculation that refuses with `InvalidMeasureQuery`; anything else it throws is a defect. */
+const calculateMeasure = <A>(run: () => A): Effect.Effect<A, InvalidMeasureQuery> => Effect.suspend(() => {
+  try {
+    return Effect.succeed(run());
+  } catch (cause) {
+    return cause instanceof InvalidMeasureQuery ? Effect.fail(cause) : Effect.die(cause);
+  }
+});
 
 export const documentReads = (core: DocumentCore) => {
   const {
@@ -398,7 +471,7 @@ export const documentReads = (core: DocumentCore) => {
     text: string,
     options?: { fuzzy?: boolean | number; prefix?: boolean },
   ): Effect.Effect<
-    { readonly query: Query | undefined; readonly parsed: ParsedSearchQuery } | undefined,
+    { readonly query: Query | undefined; readonly parsed: ParsedSearchQuery; readonly exact: boolean } | undefined,
     UnanalyzedCollection
   > =>
     Effect.gen(function* () {
@@ -408,13 +481,13 @@ export const documentReads = (core: DocumentCore) => {
       const parsed = parseSearchQuery(text, analyzer, tokenize, options);
       if (parsed === undefined) return undefined;
 
-      const query = yield* Effect.orDie(toPlanQuery(
-        parsed.root,
-        analyzer,
-        (path) => textFieldFor(collection, path),
+      const query = yield* Effect.orDie(toPlanQuery(parsed.root, analyzer, {
+        fieldFor: (path) => textFieldFor(collection, path),
+        pairFieldFor: (path) => pairFieldFor(collection, path),
+        expand: (token) => synonymsOf(token, analyzer),
         termsOf,
-      ));
-      return { query, parsed };
+      }));
+      return { query, parsed, exact: answeredByPostings(parsed.root, analyzer) };
     });
 
   /**
@@ -745,7 +818,8 @@ export const documentReads = (core: DocumentCore) => {
           });
       if (input.search !== undefined && words === undefined) return undefined;
       let plan = withSearch(planQuery(input.collection, where), words?.query);
-      if (words !== undefined && collection?.analyzer !== undefined) {
+      // Checked on each document only when the postings cannot decide it.
+      if (words !== undefined && collection?.analyzer !== undefined && !words.exact) {
         plan = {
           ...plan,
           residual: [
@@ -797,6 +871,34 @@ export const documentReads = (core: DocumentCore) => {
       return out;
     });
 
+  /**
+   * Words and a vector together: each ranking drawn on its own from what
+   * `where` admits, then fused by reciprocal rank (see `HybridSearch`). Ranks,
+   * not scores, are fused, because a BM25 score and a similarity are on scales
+   * nothing relates.
+   */
+  const hybridSearch = (input: FindDocumentsInput, similar: SimilarFilter) =>
+    Effect.gen(function* () {
+      if (normalizeSorts(input.orderBy).length > 0) {
+        return yield* Effect.die(new RangeError("a hybrid read is ranked by fusion, so it cannot also be ordered by a field."));
+      }
+      const { text: textWeight = 1, vector: vectorWeight = 1, k = 60, depth = 100 } = readHybridSearch(input.hybrid ?? {});
+      const { hybrid: _hybrid, similar: _similar, limit, offset = 0, ...rest } = input;
+      const text = ranks(yield* findDocuments({ ...rest, limit: depth }), depth);
+      const { search: _search, fuzzy: _fuzzy, prefix: _prefix, highlight: _highlight, statistics: _statistics, ...structured } = rest;
+      const vector = ranks(yield* findDocuments({ ...structured, similar: { ...similar, k: depth } }), depth);
+      const fused = [...new Set([...text.keys(), ...vector.keys()])].map((id) => {
+        const t = text.get(id), v = vector.get(id);
+        const score = (t === undefined ? 0 : textWeight / (k + t.rank)) + (v === undefined ? 0 : vectorWeight / (k + v.rank));
+        return { id, score, t: t?.rank ?? Infinity, v: v?.rank ?? Infinity, document: (t ?? v)!.document };
+      });
+      // Equal fused scores go to the better text rank, then the better vector
+      // rank, then the id: an order that is the same on every host.
+      fused.sort((a, b) => b.score - a.score || a.t - b.t || a.v - b.v || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const window = limit === undefined ? fused.slice(offset) : fused.slice(offset, offset + limit);
+      return window.map((entry) => ({ ...entry.document, score: entry.score }));
+    });
+
   const findDocuments = (
     input: FindDocumentsInput,
   ): Effect.Effect<
@@ -805,6 +907,7 @@ export const documentReads = (core: DocumentCore) => {
     | InvalidVectorQuery | UnknownEdge | UnindexedField
   > =>
     Effect.gen(function* () {
+      if (input.similar !== undefined && input.search !== undefined) return yield* hybridSearch(input, input.similar);
       const collection = yield* loadCollection(input.collection);
       const planned = yield* planFor(collection, input);
       if (planned === undefined) return [];
@@ -938,80 +1041,24 @@ export const documentReads = (core: DocumentCore) => {
 
       if (planned.words !== undefined && collection?.analyzer !== undefined && planned.words.parsed.terms.length > 0) {
         const analyzer = collection.analyzer;
-        const { terms, scoredPhrases } = planned.words.parsed;
+        const { terms } = planned.words.parsed;
 
-        interface ScoredCandidate {
-          document: Document;
-          seq: number;
-          docLength: number;
-          termCounts: Map<string, number>;
-          phraseOccurrences: number;
-          adjacentPairs: number;
-        }
-
-        const scoredCandidates: ScoredCandidate[] = [];
-        for (const item of candidates) {
-          let docLength = 0;
-          const termCounts = new Map<string, number>();
-          let phraseOccurrences = 0;
-          let adjacentPairs = 0;
-
-          for (const field of analyzer.fields) {
-            const val = readPath(item.document.data, field);
-            if (typeof val !== "string") continue;
-            const tokens = tokenize(val, analyzer);
-            docLength += tokens.length;
-            for (const token of tokens) {
-              for (const qTerm of terms) {
-                if (qTerm.field !== undefined && qTerm.field !== field) continue;
-                if (qTerm.kind === "exact" && token === qTerm.token) {
-                  termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 1);
-                } else if (qTerm.kind === "prefix" && token.startsWith(qTerm.token)) {
-                  termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 0.95);
-                } else if (qTerm.kind === "fuzzy") {
-                  const dist = damerauLevenshtein(token, qTerm.token, qTerm.fuzzyDistance ?? 2);
-                  if (dist <= (qTerm.fuzzyDistance ?? 2)) {
-                    const weight = dist === 0 ? 1 : Math.max(0.4, 1 - dist * 0.2);
-                    termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + weight);
-                  }
-                }
-              }
-            }
-            for (const phrase of (scoredPhrases ?? [])) {
-              if (phrase.field !== undefined && phrase.field !== field) continue;
-              phraseOccurrences += countPhraseMatches(tokens, phrase.tokens);
-            }
-            if (terms.length > 1) {
-              const termTokens = terms.map((t) => t.token);
-              for (let i = 0; i < tokens.length - 1; i++) {
-                const t1 = tokens[i]!;
-                const t2 = tokens[i + 1]!;
-                if (termTokens.includes(t1) && termTokens.includes(t2) && t1 !== t2) {
-                  adjacentPairs += 1;
-                }
-              }
-            }
-          }
-
-          scoredCandidates.push({
-            document: item.document,
-            seq: item.seq,
-            docLength,
-            termCounts,
-            phraseOccurrences,
-            adjacentPairs,
-          });
-        }
-
-        const N = scoredCandidates.length;
-        const totalLength = scoredCandidates.reduce((acc, c) => acc + c.docLength, 0);
-        const avgdl = N > 0 ? totalLength / N : 1;
+        const scoredCandidates = candidates.map((item) => ({
+          ...textEvidence(item.document, planned.words!.parsed, analyzer), document: item.document, seq: item.seq,
+        }));
+        // The corpus a score is relative to: the matches here, unless the
+        // caller supplies a wider one so that scores from several partitions
+        // compare (`statistics`, summed from each one's `searchStatistics`).
+        const corpus = input.statistics === undefined
+          ? statisticsOf(scoredCandidates, terms) : readSearchStatistics(input.statistics);
+        const N = corpus.documents;
+        const avgdl = N > 0 ? corpus.length / N : 1;
         const k1 = 1.2;
         const b = 0.75;
 
         const idf = new Map<string, number>();
         for (const qTerm of terms) {
-          const docCount = scoredCandidates.filter((c) => (c.termCounts.get(qTerm.token) ?? 0) > 0).length;
+          const docCount = Object.hasOwn(corpus.frequencies, qTerm.token) ? corpus.frequencies[qTerm.token]! : 0;
           idf.set(qTerm.token, Math.log(1 + (N - docCount + 0.5) / (docCount + 0.5)));
         }
 
@@ -1074,7 +1121,7 @@ export const documentReads = (core: DocumentCore) => {
     count: (input) =>
       Effect.gen(function* () {
         yield* requireCollection(input.collection);
-        return yield* Stream.runCount(resolveQuery(equals(collectionColumn(), input.collection)));
+        return yield* Effect.orDie(store.namespaceSize(documentNs(input.collection)));
       }),
     modalities: (input) => Effect.map(requireCollection(input.collection), collectionModalities),
     listCollections: Effect.gen(function* () {
@@ -1098,6 +1145,19 @@ export const documentReads = (core: DocumentCore) => {
       }),
 
     findMany: (input) => findDocuments(input),
+
+    searchStatistics: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        const analyzer = collection?.analyzer;
+        if (analyzer === undefined) return yield* new UnanalyzedCollection({ collection: input.collection });
+        const { limit: _limit, offset: _offset, orderBy: _orderBy, similar: _similar, hybrid: _hybrid,
+          statistics: _statistics, highlight: _highlight, ...matching } = input;
+        const parsed = parseSearchQuery(input.search, analyzer, tokenize, { fuzzy: input.fuzzy, prefix: input.prefix });
+        if (parsed === undefined) return { documents: 0, length: 0, frequencies: {} } satisfies SearchStatistics;
+        const documents = yield* findDocuments(matching);
+        return statisticsOf(documents.map((document) => textEvidence(document, parsed, analyzer)), parsed.terms);
+      }),
 
     findPage: (input) =>
       Effect.gen(function* () {
@@ -1351,6 +1411,40 @@ export const documentReads = (core: DocumentCore) => {
         return { value: foldMeasure(input.op, values), documents: values.length };
       }),
 
+    covariance: (input) =>
+      Effect.gen(function* () {
+        if (input.sample !== undefined && typeof input.sample !== "boolean") return yield* new InvalidMeasureQuery({ reason: "sample must be a boolean" });
+        const collection = yield* loadCollection(input.collection);
+        const x = yield* declaredMeasure(collection, input.collection, input.measure);
+        const y = yield* declaredMeasure(collection, input.collection, input.with);
+        const planned = yield* planFor(collection, input);
+        const identifiers = planned === undefined ? [] : yield* identifiersFor(overMeasure(planned.plan, columnFor(input.collection, x.path)));
+        const xValues = yield* measureOf(measureColumnFor(input.collection, x.name));
+        const yValues = yield* measureOf(measureColumnFor(input.collection, y.name));
+        const pairs = function* () {
+          for (const seq of identifiers) {
+            const a = xValues.get(Number(seq)), b = yValues.get(Number(seq));
+            if (a !== undefined && b !== undefined) yield [a, b] as const;
+          }
+        };
+        return yield* calculateMeasure(() => covarianceOf(pairs(), input.sample === true));
+      }),
+
+    histogram: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        const measure = yield* declaredMeasure(collection, input.collection, input.measure);
+        const planned = yield* planFor(collection, input);
+        const identifiers = planned === undefined ? [] : yield* identifiersFor(overMeasure(planned.plan, columnFor(input.collection, measure.path)));
+        const measured = yield* measureOf(measureColumnFor(input.collection, measure.name));
+        const values: number[] = [];
+        for (const seq of identifiers) {
+          const value = measured.get(Number(seq));
+          if (value !== undefined) values.push(value);
+        }
+        return yield* calculateMeasure(() => histogramOf(values, input));
+      }),
+
     summarizeBy: (input) =>
       Effect.gen(function* () {
         const collection = yield* loadCollection(input.collection);
@@ -1410,7 +1504,7 @@ export const documentReads = (core: DocumentCore) => {
         return projectionIndexes.get(input.collection);
       }),
 
-  } satisfies Pick<DocumentsApi, "count" | "modalities" | "listCollections" | "collectionExists" | "findById" | "findMany" | "findPage" | "withRelated" | "traverse" | "summarize" | "summarizeBy" | "getVectorIndex">;
+  } satisfies Pick<DocumentsApi, "count" | "modalities" | "listCollections" | "collectionExists" | "findById" | "findMany" | "searchStatistics" | "findPage" | "withRelated" | "traverse" | "summarize" | "summarizeBy" | "covariance" | "histogram" | "getVectorIndex">;
   return {
     operations, orderedPage, rebuildIndex, findDocuments,
   };

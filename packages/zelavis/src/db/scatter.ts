@@ -13,6 +13,7 @@ import {
   type DocumentSort,
   type DocumentsApi,
 } from "./documents.js";
+import type { SearchStatistics } from "./document-model.js";
 import type { Query } from "./query.js";
 import type { ShardStoreApi } from "./store.js";
 import type { ShardId, TenantId } from "./topology.js";
@@ -99,6 +100,16 @@ export interface ScatterFindInput {
    * by tenant and then by document id.
    */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
+  /**
+   * Words to find, ranked by relevance across every tenant. A first pass asks
+   * each tenant for its `searchStatistics` and sums them, and each tenant then
+   * scores its matches against that sum, so a score means the same in every
+   * tenant and the merge is by score: the order a single partition holding all
+   * of them would give. Not with `orderBy`.
+   */
+  readonly search?: string;
+  readonly fuzzy?: boolean | number;
+  readonly prefix?: boolean;
   /** Documents to take from each tenant before merging; with an order and no per-tenant limit, `limit`. */
   readonly perTenantLimit?: number;
   readonly limit?: number;
@@ -197,6 +208,19 @@ export interface ScatterApi {
 
 /** How many legs run at once when a caller does not say. */
 const DEFAULT_CONCURRENCY = 8;
+
+/** The statistics of a union of partitions: each part summed. */
+const sumStatistics = (parts: ReadonlyArray<SearchStatistics>): SearchStatistics => {
+  const frequencies: Record<string, number> = Object.create(null);
+  for (const part of parts) {
+    for (const [term, count] of Object.entries(part.frequencies)) frequencies[term] = (frequencies[term] ?? 0) + count;
+  }
+  return {
+    documents: parts.reduce((total, part) => total + part.documents, 0),
+    length: parts.reduce((total, part) => total + part.length, 0),
+    frequencies,
+  };
+};
 
 /**
  * Refuse a query whose meaning does not survive the trip.
@@ -436,11 +460,36 @@ export const scatterOver = (options: {
     findMany: (input) =>
       Effect.gen(function* () {
         const reach = yield* targets(input.tenants);
-        const byValue = input.orderBy === undefined || input.orderBy.length === 0
-          ? undefined
-          : compareDocuments(input.orderBy);
+        const ranked = input.search !== undefined;
+        if (ranked && input.orderBy !== undefined && input.orderBy.length > 0) {
+          return yield* Effect.die(new RangeError("a ranked scatter is ordered by relevance, so it cannot also be ordered by a field."));
+        }
+        const byValue = ranked
+          ? (a: Document, b: Document) => (b.score ?? 0) - (a.score ?? 0)
+          : input.orderBy === undefined || input.orderBy.length === 0
+            ? undefined
+            : compareDocuments(input.orderBy);
         // Ordered, a tenant's first `limit` are all the merge can take from it.
         const legLimit = input.perTenantLimit ?? (byValue === undefined ? undefined : input.limit);
+        const words = ranked
+          ? {
+            search: input.search!,
+            ...(input.fuzzy === undefined ? {} : { fuzzy: input.fuzzy }),
+            ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
+          }
+          : {};
+        // Ranked, every tenant scores against the statistics of all of them.
+        const statistics = ranked
+          ? sumStatistics(yield* Effect.forEach(reach, ({ tenant }) =>
+            options.documentsFor(tenant).searchStatistics({
+              collection: input.collection,
+              search: input.search!,
+              ...words,
+              ...(input.where === undefined ? {} : { where: input.where }),
+              ...(input.related === undefined ? {} : { related: input.related }),
+            }).pipe(Effect.catchTags({ UnembeddedCollection: Effect.die, InvalidVectorQuery: Effect.die, UnknownEdge: Effect.die })),
+          { concurrency: input.concurrency ?? DEFAULT_CONCURRENCY }))
+          : undefined;
 
         const legs = yield* Effect.forEach(
           reach,
@@ -451,6 +500,8 @@ export const scatterOver = (options: {
                 ...(input.where === undefined ? {} : { where: input.where }),
                 ...(input.related === undefined ? {} : { related: input.related }),
                 ...(input.orderBy === undefined ? {} : { orderBy: input.orderBy }),
+                ...words,
+                ...(statistics === undefined ? {} : { statistics }),
                 // A per-tenant limit is asked for one row wider than the
                 // caller wants, so the leg can say whether anything was left
                 // behind rather than leaving the caller to guess from a count

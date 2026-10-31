@@ -50,6 +50,19 @@ export interface KvReader {
   readonly scan: (prefix: Uint8Array, options?: KvScanOptions) => Stream.Stream<KvEntry, StoreError>;
 }
 
+/**
+ * What a commit that returned survives.
+ *
+ * - `crash` (default): the process being killed. A power cut can lose a suffix
+ *   of the most recent commits, never leave holes or a torn one.
+ * - `power`: a power cut too. Every commit is flushed to the device before it
+ *   returns, which costs a device flush per write.
+ *
+ * Replication does not substitute for either: a follower holds what it has
+ * applied, which can be behind the leader (see `awaitFollowers`).
+ */
+export type KvDurability = "crash" | "power";
+
 export interface KvEngine {
   readonly get: (key: Uint8Array) => Effect.Effect<Uint8Array | undefined, StoreError>;
 
@@ -84,7 +97,7 @@ export interface KvEngine {
    * What makes a read that takes several steps — resolve a query, then read
    * the records it named — see one state rather than a state with a write
    * landing between its steps. Each engine uses what it natively has: a read
-   * transaction (SQLite, libSQL, LMDB), a snapshot-isolated transaction
+   * transaction (SQLite, LMDB), a snapshot-isolated transaction
    * (RocksDB), or an array writes never mutate (memory).
    */
   readonly snapshot: Effect.Effect<KvReader, StoreError, Scope.Scope>;

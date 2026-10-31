@@ -1,7 +1,7 @@
 import { bodyFlag, required, runTable, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url URL] [--token TOKEN] [--json]   (service accounts: zelavis auth service-accounts …)";
+  "zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|import-accounts|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url URL] [--token TOKEN] [--json]   (service accounts: zelavis auth service-accounts …)";
 
 const table: CliTable = {
   name: "auth",
@@ -22,6 +22,7 @@ const table: CliTable = {
     "complete-recovery": { run: (input) => input.client.auth.completeRecovery(required(input, 0, "A provider"), bodyFlag(input, "--data", "auth complete-recovery")).then(() => ({ recovered: true })) },
     accounts: { run: (input) => input.client.auth.admin.accounts() },
     "create-account": { run: (input) => input.client.auth.admin.createAccount(bodyFlag(input, "--data", "auth create-account")) },
+    "import-accounts": { run: (input) => input.client.auth.admin.importAccounts(bodyFlag(input, "--data", "auth import-accounts")) },
     "create-credentials": { run: (input) => input.client.auth.admin.createCredentials(bodyFlag(input, "--data", "auth create-credentials")) },
     "account-sessions": { run: (input) => input.client.auth.admin.accountSessions(required(input, 0, "An account id")) },
     "revoke-account-sessions": { run: (input) => input.client.auth.admin.revokeAccountSessions(required(input, 0, "An account id")) },

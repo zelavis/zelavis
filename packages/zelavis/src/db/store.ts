@@ -186,6 +186,17 @@ export interface SeedOptions {
    * the same ones behind.
    */
   readonly leave?: ReadonlyArray<string>;
+  /**
+   * For a branch: the source position it is to be as of, when that is not the
+   * source's present. Only a source whose log is whole from its start can
+   * answer this (its compaction point is 0): the branch is then made from the
+   * log alone, replayed from empty up to `asOf`, never from the records, which
+   * are the present. Refused with `LogCompacted` otherwise, and with a
+   * `StoreError` for a position past the source's head. Recorded with the
+   * unfinished branch (`stats.asOf`), so whatever starts it over is as of the
+   * same position.
+   */
+  readonly asOf?: number;
 }
 
 /** What a partition holds, kept as it changes rather than counted when asked. */
@@ -215,6 +226,8 @@ export interface PartitionStats {
   readonly lineage?: ReadonlyArray<{ readonly partition: PartitionKey; readonly upTo: number }>;
   /** For an unfinished branch: the identity namespaces it leaves behind (`SeedOptions.leave`). */
   readonly leaving?: ReadonlyArray<string>;
+  /** For an unfinished branch as of a past position: that position (`SeedOptions.asOf`). */
+  readonly asOf?: number;
 }
 
 export interface ObjectStoreApi {
@@ -227,6 +240,9 @@ export interface ObjectStoreApi {
 
   /** What this partition holds, without reading it. */
   readonly stats: Effect.Effect<PartitionStats, DbError>;
+
+  /** Live records in one identity namespace, in constant time. */
+  readonly namespaceSize: (namespace: string) => Effect.Effect<number, DbError>;
 
   /**
    * Every record, retired ones included, as stored, in identifier order.
@@ -263,7 +279,7 @@ export interface ObjectStoreApi {
    * hold on the source: the copy then has the source's state, history and
    * cursors. Refused with `TenantNotEmpty` when this partition holds anything.
    */
-  readonly seed: (source: ObjectStoreApi, options?: SeedOptions) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
+  readonly seed: (source: LeaderSource, options?: SeedOptions) => Effect.Effect<SeedResult, DbError | TenantNotEmpty>;
 
   /**
    * Run `effect` with every read of this shard answered from one snapshot,
@@ -340,7 +356,7 @@ export interface ObjectStoreApi {
    */
   readonly compact: (options?: {
     readonly keep?: number;
-  }) => Effect.Effect<{ readonly removed: number; readonly compactedTo: number; readonly heldAt?: number }, DbError>;
+  }) => Effect.Effect<{ readonly removed: number; readonly compactedTo: number; readonly heldAt?: number; readonly snapshotAt?: number }, DbError>;
 
   /**
    * Keep the log from being compacted past `position` for `ttlMillis`, so a reader that copies
@@ -351,9 +367,12 @@ export interface ObjectStoreApi {
    * for ever. `compact` goes as far as the lowest live hold and no further, and says where it
    * was held (`heldAt`) rather than refusing. A hold below the compaction point is refused
    * (`LogCompacted`): the events it was to keep are already gone. Holds are in-process like the
-   * writer, at most 64 per partition and at most 10 minutes each; a hold taken on a placement a
-   * move has since left protects nothing there, and the reader's own detection (`CursorCompacted`,
-   * `LogCompacted`) stays what keeps it correct — a hold only keeps a long read from starving.
+   * writer, at most 64 per partition and at most 10 minutes each. A move carries the live holds to
+   * the target before routing points there and again before the source is dropped, and a holder
+   * renewing through routing renews where the partition is now; the reader's own detection
+   * (`CursorCompacted`, `LogCompacted`) stays what keeps it correct — a hold only keeps a long read
+   * from starving. A reader on another host holds through the leader transport (`leader.ts`), so the
+   * hold is taken here, on the leader's own placement.
    */
   readonly holdLog: (input: {
     readonly id: string;
@@ -363,6 +382,9 @@ export interface ObjectStoreApi {
 
   /** End a hold early. Releasing one that is not held, or has expired, changes nothing. */
   readonly releaseLog: (id: string) => Effect.Effect<void, DbError>;
+
+  /** The live holds, each with the time it has left: what a move carries to the target. */
+  readonly heldLogs: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly position: number; readonly ttlMillis: number }>, DbError>;
 
   /** The position everything at or below has been compacted away. */
   readonly compactedTo: Effect.Effect<number, DbError>;
@@ -381,6 +403,13 @@ export interface ObjectStoreApi {
     { readonly records: number; readonly position: number },
     DbError
   >;
+
+  /**
+   * One page of the stored snapshot: at most `limit` (1 to 4096) of its records, the first after `after`,
+   * in identifier order. Empty when there is no snapshot.
+   */
+  readonly scanSnapshot: (input: { readonly after?: Seq; readonly limit: number }) =>
+    Effect.Effect<ReadonlyArray<{ readonly seq: Seq; readonly record: RecordState }>, DbError>;
 
   /** The position the stored snapshot covers, or 0 when there is none. */
   readonly snapshotAt: Effect.Effect<number, DbError>;
@@ -424,6 +453,24 @@ export interface ObjectStoreApi {
    * committed before the fence or is refused; none lands after it.
    */
   readonly fence: (move: { readonly from: string; readonly to: string }) => Effect.Effect<void, DbError>;
+
+  /**
+   * Remove the fence `move` set, and only that one: a fence another operation
+   * set since is left standing. For an operation that fenced and then gave up
+   * before changing anything, so the partition is left as it found it.
+   */
+  readonly liftFence: (move: { readonly from: string; readonly to: string }) => Effect.Effect<void, DbError>;
+
+  /**
+   * The log position a recovery is to be as of: the one a cursor this
+   * partition handed out names, or the last one written at or before `time`
+   * (epoch milliseconds; 0 when nothing was). A time is found by reading the
+   * log from its start, so its cost is the log's length.
+   */
+  readonly recoveryPoint: (at: { readonly cursor: EventCursor } | { readonly time: number }) => Effect.Effect<number, DbError>;
+
+  /** The cursor naming `position` in this partition's log: continuing from it reads what came after. */
+  readonly cursorAt: (position: number) => EventCursor;
 
   /**
    * Fails with `TenantMoving` when the partition is fenced. Free once the
@@ -532,6 +579,16 @@ export interface ObjectStoreApi {
  * so it can be listed, copied or removed as a range, and nothing written for
  * one partition can be read through another's handle.
  */
+/**
+ * What following a partition reads from its leader: the records page by page, the log, and holds on
+ * the log while it copies. Every `ObjectStoreApi` is one; so is a leader on another host reached
+ * through the leader transport (`remoteLeader` in `leader.ts`). A seed, a follower pass and an export
+ * need nothing else from the partition they copy.
+ */
+export type LeaderSource = Pick<ObjectStoreApi, "partition" | "stats" | "scanRecords" | "holdLog" | "releaseLog" | "snapshotAt" | "scanSnapshot"> & {
+  readonly events: Pick<EventsApi, "read">;
+};
+
 export interface ShardStoreApi {
   readonly shard: ShardId;
 

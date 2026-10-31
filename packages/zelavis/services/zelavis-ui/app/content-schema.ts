@@ -33,7 +33,9 @@ export type ContentFieldBuilderKind =
   | "document"
   | "json"
   | "slug"
-  | "url";
+  | "url"
+  | "geometry"
+  | "vector";
 
 export interface ContentSchemaUiDefinition {
   control?: ContentSchemaControl;
@@ -92,6 +94,13 @@ export interface ContentFieldBuilderInput {
   maxItems?: number;
   maxSize?: number;
   from?: string;
+  /** Geometry: the H3 resolution it is indexed at (its coordinates are always WGS84). */
+  resolution?: number;
+  /** Vector: what produced it and how it is compared. */
+  model?: string;
+  modelVersion?: string;
+  dimension?: number;
+  metric?: "cosine" | "dot" | "euclidean";
 }
 
 export const COLLECTION_FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -114,6 +123,8 @@ const VALID_COLLECTION_FIELD_TAGS = new Set([
   "JsonField",
   "SlugField",
   "UrlField",
+  "GeometryField",
+  "VectorField",
   "RepeaterField",
 ]);
 
@@ -247,6 +258,10 @@ function collectionFieldToDefinition(
       };
     case "UrlField":
       return { ...base, type: "string", format: "url", ui: { ...base.ui, control: "url" } };
+    case "GeometryField":
+      return { ...base, type: "object", ui: { ...base.ui, control: "json" } };
+    case "VectorField":
+      return { ...base, type: "array", items: { type: "number" }, ui: { ...base.ui, control: "json" } };
     case "RepeaterField": {
       const nestedFields = field.fields as CollectionFieldEntry[];
       const properties: Record<string, ContentSchemaDefinition> = {};
@@ -367,6 +382,8 @@ export function inferFieldKindFromEntry(
     case "JsonField": return "json";
     case "SlugField": return "slug";
     case "UrlField": return "url";
+    case "GeometryField": return "geometry";
+    case "VectorField": return "vector";
     case "RepeaterField": return "repeater";
     case "TextField":
     default: return "text";
@@ -551,6 +568,18 @@ export function contentBuilderInputToEntry(
     case "url":
       field = { _tag: "UrlField", ...base };
       break;
+    case "geometry":
+      field = { _tag: "GeometryField", ...base, coordinates: "wgs84", resolution: input.resolution ?? 9 };
+      break;
+    case "vector":
+      if (!input.model?.trim() || !input.modelVersion?.trim() || input.dimension === undefined) {
+        throw new Error("A vector field names its model, model version and dimension.");
+      }
+      field = {
+        _tag: "VectorField", ...base, model: input.model.trim(), modelVersion: input.modelVersion.trim(),
+        dimension: input.dimension, metric: input.metric ?? "cosine",
+      };
+      break;
     case "status":
       field = {
         _tag: "SelectField",
@@ -652,6 +681,10 @@ export function contentFieldEntryToBuilderInput(
       };
     case "JsonField":
       return { ...base, rows: field.rows as number | undefined };
+    case "GeometryField":
+      return { ...base, resolution: field.resolution };
+    case "VectorField":
+      return { ...base, model: field.model, modelVersion: field.modelVersion, dimension: field.dimension, metric: field.metric };
     case "SlugField":
       return {
         ...base,

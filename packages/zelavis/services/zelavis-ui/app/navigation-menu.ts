@@ -112,13 +112,14 @@ export function projectMenu(input: ProjectMenuInput): MenuItem[] {
   const workloadList = (kind: string) => (input.workloads[kind] ?? []).map(entry => ({ title: entry.name, path: at(`/workloads/${kind}/${encodeURIComponent(entry.id)}`) }));
   const native: MenuItem[] = [
     ...(available("identity") ? [{ title: "Auth", path: at("/auth") }] : []),
-    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, { title: "Tenants", path: at("/database/tenants") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
+    ...(available("database") ? [{ title: "Database", path: at("/database"), items: [{ title: "Create Table", path: at("/database"), search: { databaseDialog: "create-table" } }, { title: "Tenants", path: at("/database/tenants") }, { title: "Cross-Tenant Indexes", path: at("/database/cross-tenant-indexes") }, { title: "Images", path: at("/database/images") }, ...tableItems, ...(pluginItems.length ? [{ title: "Plugin Tables", path: at("/database"), search: pluginItems[0].search, items: pluginItems }] : []), ...(systemItems.length ? [{ title: "System Tables", path: at("/database"), search: systemItems[0].search, items: systemItems }] : [])] }] : []),
     ...(available("storage") ? [{ title: "Storage", path: at("/storage") }] : []),
     ...(available("workloads") ? [{ title: "Workloads", path: at("/workloads"), items: [
       { title: "Functions", path: at("/workloads/functions"), items: [{ title: "Add Function", path: at("/workloads/new") }, ...workloadList("functions")] },
       { title: "Jobs", path: at("/workloads/jobs"), ...(workloadList("jobs").length ? { items: workloadList("jobs") } : {}) },
       { title: "Schedules", path: at("/workloads/schedules"), ...(workloadList("schedules").length ? { items: workloadList("schedules") } : {}) },
       { title: "Webhooks", path: at("/workloads/webhooks"), ...(workloadList("webhooks").length ? { items: workloadList("webhooks") } : {}) },
+      { title: "Entities", path: at("/workloads/entities"), ...(workloadList("entities").length ? { items: workloadList("entities") } : {}) },
       { title: "Logs", path: at("/workloads/logs") }, { title: "Settings", path: at("/workloads/settings") }] }] : [])
   ];
   const contentItems: MenuItem[] = [{ title: "All Content Types", path: at("/content") }, { title: "Add Content Type", path: at("/content/new") },
@@ -166,8 +167,8 @@ export const loadProjectMenu = Effect.fn("ui.loadProjectMenu")(function*(control
     array(object(collections).collections).map(object).map(entry => ({ name: label(entry.name, ""), surface: typeof entry.surface === "string" ? entry.surface : undefined, documentCount: Number(entry.documentCount) || 0, tenantId: label(entry.tenantId, "zelavis-app") })),
     array(object(schemas).collections).map(object).map(entry => ({ collection: label(entry.collection, ""), activeVersion: typeof entry.activeVersion === "number" ? entry.activeVersion : null, versions: array(entry.versions).filter((value): value is number => typeof value === "number") })),
     { pinnedTypes: array(preferences.pinnedTypes).map(String), labels: Object.fromEntries(Object.entries(object(preferences.labels)).filter(([, value]) => typeof value === "string")) as Record<string, string> });
-  const grouped: Record<string, { id: string; name: string }[]> = { functions: [], jobs: [], schedules: [], webhooks: [] };
-  const plural: Record<string, string> = { function: "functions", job: "jobs", schedule: "schedules", webhook: "webhooks" };
+  const grouped: Record<string, { id: string; name: string }[]> = { functions: [], jobs: [], schedules: [], webhooks: [], entities: [] };
+  const plural: Record<string, string> = { function: "functions", job: "jobs", schedule: "schedules", webhook: "webhooks", entity: "entities" };
   for (const entry of array(object(workloads).workloads).map(object)) grouped[plural[label(entry.type, "")] ?? "functions"]?.push({ id: label(entry.id, ""), name: label(entry.name) });
   return projectMenu({ control, project, runtime, content, tables: array(object(tables).items).map(object), workloads: grouped });
 });

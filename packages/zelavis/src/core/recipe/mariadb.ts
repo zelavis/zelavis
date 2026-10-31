@@ -120,6 +120,50 @@ export const mariaDbProcess = (context: RecipeContext, spec: MariaDbSpec): Proce
   };
 };
 
+/** The most one command may take on a recipe host: an hour, so a dump that cannot finish in one fails rather than hangs. */
+const DUMP_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * A consistent copy of the application's database, for the recipe's `backup` phase: a logical dump taken in one
+ * transaction while the database keeps serving (`--single-transaction`, so the application is never paused), by
+ * the dump program of the same build that runs the database — the recipe's pinned `mariadb-dump`, the host's
+ * where the recipe falls back to it, or the container image's own. Written below the recipe's root at `into`
+ * (relative) as `database.sql`, replacing whatever an earlier run left there; a dump that does not finish is a
+ * failed phase, never a short file passed off as a backup. The application's account reads its own database,
+ * so no administrator credential is involved, and its password reaches the program through its environment.
+ */
+export const dumpMariaDb = (host: RecipeHostApi, context: RecipeContext, spec: MariaDbSpec, into: string) => Effect.gen(function* () {
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(into)) return yield* Effect.fail(refuse("backup", "A dump is written to a plain directory name below the recipe's root."));
+  const { root } = context.directories;
+  yield* host.files.remove(into);
+  yield* host.files.mkdir(into);
+  const options = ["--single-transaction", "--quick", "--skip-lock-tables", "--no-tablespaces", "--triggers", "--hex-blob",
+    "--default-character-set=utf8mb4", `--user=${spec.user}`];
+  const image = databaseContainer(context);
+  const failed = (step: string, result: { readonly stdout: string; readonly stderr: string }) =>
+    Effect.fail(refuse("backup", `${step}: ${(result.stderr || result.stdout).trim().split("\n").slice(-3).join(" ")}`));
+  if (image !== undefined) {
+    // Inside the container the server is at its own port; the dump is written there and copied out, so nothing
+    // is written into the application's data directory.
+    const inside = "/tmp/zelavis-dump.sql";
+    const dumped = yield* host.run({
+      command: "docker", timeoutMs: DUMP_TIMEOUT_MS, env: { MYSQL_PWD: { secret: "db-password" } },
+      args: ["exec", "--env", "MYSQL_PWD", containerName(context), "mariadb-dump", ...options, "--protocol=TCP", "--host=127.0.0.1", "--port=3306",
+        `--result-file=${inside}`, spec.name],
+    });
+    if (dumped.code !== 0) return yield* failed("The database could not be dumped", dumped);
+    const copied = yield* host.run({ command: "docker", timeoutMs: DUMP_TIMEOUT_MS, args: ["cp", `${containerName(context)}:${inside}`, `${root}/${into}/database.sql`] });
+    yield* host.run({ command: "docker", timeoutMs: 60_000, args: ["exec", containerName(context), "rm", "-f", inside] });
+    if (copied.code !== 0) return yield* failed("The database dump could not be copied out of its container", copied);
+    return;
+  }
+  const dumped = yield* host.run({
+    command: "mariadb-dump", timeoutMs: DUMP_TIMEOUT_MS, env: { MYSQL_PWD: { secret: "db-password" } },
+    args: [...options, "--protocol=TCP", "--host=127.0.0.1", `--port=${context.ports.db}`, `--result-file=${root}/${into}/database.sql`, spec.name],
+  });
+  if (dumped.code !== 0) return yield* failed("The database could not be dumped", dumped);
+});
+
 /**
  * After the Project's processes have been stopped (a stop, or its removal): a container whose client was
  * killed before it could stop it (a stop during the image's first initialization) is removed here, so the

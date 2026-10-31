@@ -5,7 +5,6 @@ import { join } from "node:path";
 
 const DEFINITIONS = [
   ["node-sqlite", new URL("../dist/db/engines/node-sqlite.js", import.meta.url).href, "makeNodeSqliteStore", (partition, dir) => [partition, dir]],
-  ["libsql", new URL("../dist/db/engines/libsql.js", import.meta.url).href, "makeLibsqlStore", (partition, dir) => [partition, { directory: dir }]],
   ["rocksdb-js", new URL("../dist/db/engines/rocksdb-js.js", import.meta.url).href, "makeRocksdbJsStore", (partition, dir) => [partition, dir]],
   ["rocksdb", new URL("../dist/db/engines/rocksdb.js", import.meta.url).href, "makeRocksdbStore", (partition, dir) => [partition, dir]],
   ["lmdb", new URL("../dist/db/engines/lmdb.js", import.meta.url).href, "makeLmdbStore", (partition, dir) => [partition, dir]],

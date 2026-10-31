@@ -57,8 +57,13 @@ const HttpsUrl = Schema.String.check(Schema.isMaxLength(2048), Schema.makeFilter
  * it is (its processes keep running untouched) and the move happens, journaled, the next time the
  * Project is started from a stop. Recipes read the current location from `context.directories.named`,
  * never by joining the path themselves.
+ *
+ * `backup` says how a backup captures it: `files` copies the directory as it is (the application's code,
+ * uploads and configuration), `recipe` leaves it to the recipe's own `backup` phase, which makes a
+ * consistent copy of what cannot be copied while it runs (a database's data directory, through the
+ * database's own dump). A directory that says neither is not captured, and a backup says so.
  */
-const Directory = Schema.Struct({ name: Name, path: RelativePath });
+const Directory = Schema.Struct({ name: Name, path: RelativePath, backup: Schema.optional(Schema.Literals(["files", "recipe"])) });
 
 /**
  * A value a person needs to finish the application's own setup in its own web installer, such as the

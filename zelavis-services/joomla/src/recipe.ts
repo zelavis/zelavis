@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { RecipeError, RecipeHost, defineRecipe, initializeMariaDb, mariaDbProcess, releaseMariaDb, requireMariaDb, type ProcessPlan, type RecipeContext, type RecipeHostApi } from "zelavis/recipe";
+import { RecipeError, RecipeHost, defineRecipe, dumpMariaDb, initializeMariaDb, mariaDbProcess, releaseMariaDb, requireMariaDb, type ProcessPlan, type RecipeContext, type RecipeHostApi } from "zelavis/recipe";
 
 /**
  * Joomla as a recipe: Nginx, PHP-FPM and a dedicated MariaDB, like Joomla in shape, with a different
@@ -167,6 +167,12 @@ export default defineRecipe({
   // A database container whose client was killed mid-initialization is removed once the processes are down.
   stop: (context) => Effect.gen(function* () { yield* releaseMariaDb(yield* RecipeHost, context); }),
   remove: (context) => Effect.gen(function* () { yield* releaseMariaDb(yield* RecipeHost, context); }),
+  // The database is the one directory a copy of its files cannot capture while it runs (`backup: "recipe"` in the
+  // manifest): a dump in one transaction, by the database's own build, while the site keeps serving.
+  backup: (context) => Effect.gen(function* () {
+    yield* dumpMariaDb(yield* RecipeHost, context, databaseSpec(context), "backup");
+    return { path: "backup" };
+  }),
 
   start: (context) => Effect.sync((): ProcessPlan => {
     const { root, sockets } = context.directories;

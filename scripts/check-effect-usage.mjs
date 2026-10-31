@@ -116,8 +116,6 @@ export const migratedFiles = new Set([
   "packages/zelavis/src/core/runtime/node-http.ts",
   "packages/zelavis/src/core/runtime/request-dispatcher.ts",
   "packages/zelavis/src/db/database-service.ts",
-  "packages/zelavis/src/db/engines/libsql-remote.ts",
-  "packages/zelavis/src/db/engines/libsql.ts",
   "packages/zelavis/src/db/engines/lmdb.ts",
   "packages/zelavis/src/db/engines/node-sqlite.ts",
   "packages/zelavis/src/db/engines/rocksdb-js.ts",

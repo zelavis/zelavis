@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Effect, Option, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
-import { scanRange, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
+import { scanRange, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvWrite } from "../kv.js";
 import { exclusiveKvEngine } from "./exclusive-kv.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
@@ -38,6 +38,8 @@ import type { ShardId } from "../topology.js";
  * loses nothing, because the log is in the operating system's page cache; a
  * machine that loses power can lose a suffix of recent commits, never leave a
  * hole. `db-durability.test.mjs` checks both, the second by cutting the log.
+ * The binding has no per-commit log sync, so `durability: "power"` is refused
+ * when the store opens rather than quietly given the weaker promise.
  *
  * One gap is known and not closable here. The binding ends a range scan quietly
  * when RocksDB's iterator fails — a checksum mismatch in a block reads as the end
@@ -335,9 +337,13 @@ export const makeRocksdbJsEngine = (
 export const makeRocksdbJsStore = (
   shard: ShardId,
   directory: string,
-  options?: OpenShardOptions,
+  options?: OpenShardOptions & { readonly durability?: KvDurability },
 ): Effect.Effect<ShardStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
+    if (options?.durability === "power") {
+      return yield* new StoreError({ op: "rocksdb-js.open", cause: new Error(
+        "rocksdb cannot flush every commit through this binding; open it with durability \"crash\" or choose sqlite or lmdb for \"power\"") });
+    }
     const engine = yield* makeRocksdbJsEngine(shard, directory);
     return yield* openShardOverKv(shard, engine, options);
   });

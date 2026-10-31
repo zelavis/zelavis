@@ -141,3 +141,39 @@ test("the Node host writes an image that finishes whole, lists, refuses a taken 
   assert.deepEqual(docs.map((doc) => doc.id).sort(), ["a", "b"]);
   assert.ok(existsSync(join(root, "primary", "images", "nightly", "image.json")));
 });
+
+test("an image verifies against the digest recorded when it was written, names a changed shard, and is removed or pruned", async (t) => {
+  const root = scratch(t);
+  const opened = await openNodeDatabase({ directory: join(root, "primary", "shards"), crossTenantRefresh: false });
+  t.after(() => opened.close());
+  await opened.api.forTenant("acme").documents.createCollection({ name: "posts" });
+  await opened.api.forTenant("acme").documents.insert({ collection: "posts", id: "a", data: { title: "a" } });
+
+  const image = await opened.api.images.create("first");
+  assert.ok(image.shards.every((shard) => /^[0-9a-f]{64}$/.test(shard.digest)), "each shard records its digest");
+  const clean = await opened.api.images.verify("first");
+  assert.equal(clean.ok, true);
+  assert.ok(clean.shards.every((shard) => shard.ok));
+
+  // One value changed on disk: the shard holding it fails, by name, and the others still pass.
+  const shard = opened.api.shardOf("acme");
+  const { DatabaseSync } = await import("node:sqlite");
+  const file = new DatabaseSync(join(root, "primary", "images", "first", `${shard}.sqlite`));
+  file.prepare("UPDATE kv SET value = X'00' WHERE rowid = (SELECT max(rowid) FROM kv)").run();
+  file.close();
+  const changed = await opened.api.images.verify("first");
+  assert.equal(changed.ok, false);
+  assert.deepEqual(changed.shards.filter((entry) => !entry.ok).map((entry) => [entry.shard, entry.problem]), [[shard, "its keys or values differ from what was written"]]);
+
+  await assert.rejects(() => opened.api.images.verify("missing"), /No image is named "missing"/);
+  for (const name of ["second", "third", "fourth"]) await opened.api.images.create(name);
+  await assert.rejects(() => opened.api.images.prune(0), /never removes every image/);
+  const pruned = await opened.api.images.prune(2);
+  assert.deepEqual(pruned, { removed: ["first", "second"], kept: ["third", "fourth"] });
+  assert.deepEqual((await opened.api.images.list()).map((entry) => entry.name).sort(), ["fourth", "third"]);
+  const third = (await opened.api.images.list()).find((entry) => entry.name === "third");
+  assert.deepEqual(await opened.api.images.remove("third"), { name: "third", bytes: third.bytes });
+  assert.deepEqual((await opened.api.images.list()).map((entry) => entry.name), ["fourth"]);
+  await assert.rejects(() => opened.api.images.remove("third"), /No image is named "third"/);
+  assert.deepEqual(readdirSync(join(root, "primary", "images")).filter((entry) => entry.startsWith(".")), [], "nothing half-removed is left behind");
+});

@@ -20,8 +20,6 @@ const enc = new TextEncoder();
 const engines = [
   ["memory", true, async () => makeMemoryStore("acme").pipe(Effect.map((shard) => shard.partition("acme")))],
   ["sqlite", true, async (dir) => (await import("../dist/db/engines/node-sqlite.js")).makeNodeSqliteStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],
-  ["libsql", engineAvailable("libsql"),
-    async (dir) => (await import("../dist/db/engines/libsql.js")).makeLibsqlStore("acme", { directory: dir }).pipe(Effect.map((shard) => shard.partition("acme")))],
   ["lmdb", engineAvailable("lmdb"), async (dir) => (await import("../dist/db/engines/lmdb.js")).makeLmdbStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],
   ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js"),
     async (dir) => (await import("../dist/db/engines/rocksdb-js.js")).makeRocksdbJsStore("acme", dir).pipe(Effect.map((shard) => shard.partition("acme")))],

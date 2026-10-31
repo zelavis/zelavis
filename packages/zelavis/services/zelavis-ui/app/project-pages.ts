@@ -10,6 +10,8 @@ import { mediaScreen, storageScreen } from "./storage-pages.ts";
 import { workloadsScreen } from "./workloads-pages.ts";
 import { contentScreen } from "./content-pages.ts";
 import { tenantsScreen } from "./tenants-pages.ts";
+import { crossTenantIndexesScreen } from "./cross-tenant-indexes-page.ts";
+import { databaseImagesScreen } from "./database-images-page.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -35,8 +37,8 @@ const usable = (scoped: Config, name: string, hosted: boolean) => { const entry 
 export const handlesProjectPath = (context: ScreenContext) => {
   if (!context.projectId) return false;
   const [, , , section, rest] = context.path.split("/");
-  // The Database table list, records and Create table dialog are the Fuzor database view; only Tenants is a page here.
-  if (section === "database") return rest === "tenants";
+  // Tables use the server view; operator pages are native screens here.
+  if (section === "database") return rest === "tenants" || rest === "cross-tenant-indexes" || rest === "images";
   return !section || !LEGACY_SECTIONS.has(section);
 };
 
@@ -48,7 +50,12 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
   const hosted = managed(project);
   const base = `/projects/${encodeURIComponent(project.id)}`;
   if (section === "") return yield* overviewScreen(context, project, scoped, hosted);
-  if (section === "database" && scoped) return yield* tenantsScreen(context, scoped, base, project.id);
+  if (section === "database" && scoped) {
+    const view = context.path.split("/")[4];
+    if (view === "cross-tenant-indexes") return yield* crossTenantIndexesScreen(context, scoped, base);
+    if (view === "images") return yield* databaseImagesScreen(context, scoped);
+    return yield* tenantsScreen(context, scoped, base, project.id);
+  }
   if (section === "workloads") return yield* workloadsScreen(context);
   if (section === "content" && scoped) return yield* contentScreen(context, project, scoped);
   if (section === "settings") return yield* settingsScreen(context, project);

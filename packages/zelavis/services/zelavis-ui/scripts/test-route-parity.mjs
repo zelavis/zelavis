@@ -267,6 +267,69 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const branchedOrder = yield* request(proxy + "/database/documents/orders/order-a?tenantId=parity-acme-branch");
   assert.equal(branchedOrder.data.total, 3, "The branch holds the source's records");
   console.log("Action: a Tenant is branched from Database → Tenants and the copy holds its records.");
+  yield* request(proxy + "/database/documents/orders/order-a", "PATCH", { tenantId: "parity-acme-branch", data: { total: 7 } });
+  yield* visit("/projects/parity-lab/database/tenants");
+  yield* io(() => page.evaluate(() => { window.confirm = () => true; }));
+  yield* io(() => page.getByRole("button", { name: "Merge Tenant parity-acme-branch back", exact: true }).click());
+  yield* io(() => page.getByText("Merged parity-acme-branch into parity-acme.", { exact: true }).waitFor());
+  assert.equal((yield* request(proxy + "/database/documents/orders/order-a?tenantId=parity-acme")).data.total, 7, "the branch's change is in the source");
+  console.log("Action: a branch is merged back into its source from Database → Tenants.");
+
+  yield* visit("/projects/parity-lab/database/cross-tenant-indexes");
+  yield* io(() => page.getByLabel("Index definition JSON").fill(JSON.stringify({ name: "parity_orders", collection: "orders", columns: ["total"] })));
+  yield* io(() => page.getByRole("button", { name: "Create index", exact: true }).click());
+  yield* io(() => page.getByText("Created index parity_orders.", { exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Refresh index parity_orders", exact: true }).click());
+  yield* io(() => page.getByText("Refreshed index parity_orders.", { exact: true }).waitFor());
+  yield* io(() => page.getByLabel("Index query JSON").fill(JSON.stringify({ where: [{ path: "total", op: "gt", value: 0 }], limit: 1 })));
+  yield* io(() => page.getByRole("button", { name: "Run query", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Next page", exact: true }).waitFor());
+  const firstIndexedTenant = yield* io(() => page.locator("table tbody tr td").first().innerText());
+  yield* io(() => page.getByRole("button", { name: "Next page", exact: true }).click());
+  yield* io(() => page.waitForURL(url => url.searchParams.has("after")));
+  yield* io(() => page.getByRole("button", { name: "First page", exact: true }).waitFor());
+  yield* io(() => page.reload({ waitUntil: "networkidle" }));
+  yield* io(() => page.getByRole("button", { name: "First page", exact: true }).waitFor());
+  const nextIndexedTenant = yield* io(() => page.locator("table tbody tr td").first().innerText());
+  assert.notEqual(firstIndexedTenant, nextIndexedTenant, "paged cross-Tenant results keep their cursor on reload");
+  assert.deepEqual([firstIndexedTenant, nextIndexedTenant].sort(), ["parity-acme", "parity-acme-branch"]);
+  yield* io(() => page.evaluate(() => { window.confirm = () => true; }));
+  yield* io(() => page.getByRole("button", { name: "Drop index parity_orders", exact: true }).click());
+  yield* io(() => page.getByText("Dropped index parity_orders.", { exact: true }).waitFor());
+  assert.equal((yield* request(proxy + "/database/cross-tenant-indexes")).indexes.some(index => index.name === "parity_orders"), false);
+  console.log("Action: cross-Tenant index creation, refresh, query, paginated reload and drop use the shared Project API.");
+
+  yield* visit("/projects/parity-lab/database/images");
+  yield* io(() => page.getByLabel("Image name").fill("parity-image"));
+  yield* io(() => page.getByRole("button", { name: "Create image", exact: true }).click());
+  yield* io(() => page.getByText("Created image parity-image.", { exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Verify image parity-image", exact: true }).click());
+  yield* io(() => page.getByText("Image parity-image holds exactly what was written.", { exact: true }).waitFor());
+  yield* io(() => page.evaluate(() => { window.prompt = () => "parity-image"; }));
+  yield* io(() => page.getByRole("button", { name: "Delete image parity-image", exact: true }).click());
+  yield* io(() => page.getByText("Deleted image parity-image.", { exact: true }).waitFor());
+  assert.deepEqual((yield* request(proxy + "/database/maintenance/images")).images, [], "the image is gone through the shared API");
+  console.log("Action: a database image is created, verified and deleted from Database → Images through the shared Project API.");
+  yield* io(() => page.evaluate(() => { window.prompt = () => null; }));
+  yield* io(() => page.getByLabel("Backup schedule JSON").fill(JSON.stringify({ name: "parity-offsite", cron: "0 3 * * *", keep: 2, target: { kind: "directory", path: join(data, "parity-offsite") } })));
+  yield* io(() => page.getByRole("button", { name: "Create schedule", exact: true }).click());
+  yield* io(() => page.getByText("Created schedule parity-offsite.", { exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Run backup parity-offsite now", exact: true }).click());
+  yield* io(() => page.getByText(/^Backed up \d+ bytes as run /).waitFor());
+  yield* io(() => page.getByRole("button", { name: /^Verify backup run / }).first().click());
+  yield* io(() => page.getByText(/decrypts and matches its manifest\.$/).waitFor());
+  const backupRuns = (yield* request(proxy + "/database/maintenance/backup-runs")).runs;
+  assert.equal(backupRuns[0].verified, true, "the run verified through the shared API");
+  console.log("Action: an encrypted off-site backup schedule is created, run and verified from Database → Images.");
+  yield* visit("/server/backups");
+  yield* io(() => page.evaluate(() => { window.prompt = () => null; }));
+  yield* io(() => page.getByLabel("Backup schedule JSON").fill(JSON.stringify({ name: "parity-platform", cron: "0 4 * * *", keep: 2, target: { kind: "directory", path: join(data, "parity-platform-offsite") } })));
+  yield* io(() => page.getByRole("button", { name: "Create schedule", exact: true }).click());
+  yield* io(() => page.getByText("Created schedule parity-platform.", { exact: true }).waitFor());
+  yield* io(() => page.getByRole("button", { name: "Run backup parity-platform now", exact: true }).click());
+  yield* io(() => page.getByText(/^Backed up \d+ bytes as run /).waitFor());
+  assert.equal((yield* request("/runtime/backups/runs")).runs[0].status, "ok", "the Platform's run is recorded through the shared API");
+  console.log("Action: the Platform's System Store is backed up from Server → Backups.");
 
   // A divided Tenant: no route divides one (that is a topology decision made by the database's owner), so a stopped Project's
   // database is opened directly, `whale` divided into two parts and written to, and the Project started again.
@@ -306,12 +369,14 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* waitWhale;
   yield* visit("/projects/whale-lab/database/tenants");
   yield* io(() => page.getByRole("button", { name: "Branch Tenant whale", exact: true }).waitFor());
-  assert.equal(yield* io(() => page.getByRole("button", { name: "Delete Tenant whale", exact: true }).count()), 0, "A divided Tenant offers no Delete");
+  assert.equal(yield* io(() => page.getByRole("button", { name: "Delete Tenant whale", exact: true }).count()), 1, "A divided Tenant is deleted whole");
   assert.equal(yield* io(() => page.getByRole("button", { name: /Branch Tenant whale#/ }).count()), 0, "A part is not branched on its own");
   assert.equal(yield* io(() => page.getByText("divided into 2 parts", { exact: false }).count()), 1, "The Tenant's row says it is divided, once");
   for (const key of ["whale#a", "whale#b"]) assert.equal(yield* io(() => page.getByText(key, { exact: true }).count()), 1, key + " is listed under its Tenant");
   yield* io(() => page.getByRole("button", { name: "Branch Tenant whale", exact: true }).click());
   yield* io(() => page.getByRole("dialog").getByLabel("New Tenant ID").fill("whale-copy"));
+  assert.equal(yield* io(() => page.getByRole("dialog").getByLabel(/Leave them with the source/).isChecked()), true, "Outbox messages stay with the source by default");
+  yield* io(() => page.getByRole("dialog").getByLabel(/Copy them too/).check());
   yield* io(() => page.getByRole("dialog").getByRole("button", { name: "Branch tenant", exact: true }).click());
   yield* io(() => page.getByText("Branched Tenant whale into whale-copy.", { exact: true }).waitFor());
   const whaleOverview = (yield* request(whaleProxy + "/database/tenants/overview")).tenants;
@@ -319,7 +384,15 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.deepEqual(copy?.parts.map(part => [part.part, part.documents]), [["a", 1], ["b", 2]], "The branch is divided the same way and holds each part's documents");
   assert.equal(whaleOverview.filter(entry => entry.tenantId.includes("#")).length, 0, "No part is listed as a Tenant");
   assert.equal(yield* io(() => page.getByRole("button", { name: "Branch Tenant whale-copy", exact: true }).count()), 1, "The branch of a divided Tenant is listed as one Tenant");
-  console.log("Action: a divided Tenant is one row with its parts, offers Branch and no Delete, and its branch is divided the same way.");
+  yield* io(() => page.getByRole("button", { name: "Delete Tenant whale-copy", exact: true }).click());
+  yield* io(() => page.getByRole("dialog").getByText("across all 2 parts", { exact: false }).waitFor());
+  yield* io(() => page.getByRole("dialog").getByLabel("Type the Tenant ID to confirm").fill("whale-copy"));
+  yield* io(() => page.getByRole("dialog").getByRole("button", { name: "Delete tenant", exact: true }).click());
+  yield* io(() => page.getByRole("button", { name: "Delete Tenant whale-copy", exact: true }).waitFor({ state: "detached" }));
+  const afterDelete = (yield* request(whaleProxy + "/database/tenants/overview")).tenants;
+  assert.equal(afterDelete.some(entry => entry.tenantId === "whale-copy"), false, "Every part of the deleted Tenant is gone");
+  assert.equal(afterDelete.find(entry => entry.tenantId === "whale")?.parts.length, 2, "The source is untouched");
+  console.log("Action: a divided Tenant is one row with its parts, branches with an outbox choice into a Tenant divided the same way, and is deleted whole.");
 
   yield* visit("/projects/parity-lab/content/new");
   yield* io(() => page.getByLabel("Content type label").fill("UI Notes"));
@@ -358,6 +431,17 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   assert.ok(relationRequests.length > 0 && relationRequests.every(url => url.includes(proxy + "/database/")), "Relation resource loader never uses the Platform database");
   page.off("request", relationObserver);
   console.log("Action: relation picker resource loading and saving retain exact Project scope.");
+  // Activating a schema from the dashboard applies what it implies: the editor says what was declared.
+  yield* request(proxy + "/database/schemas/tags", "POST", { tenantId: "zelavis-app", version: 2, activate: false, fields: [{ name: "title", field: { _tag: "TextField", label: "Tag title", required: true } }, { name: "weight", field: { _tag: "IntegerField", label: "Weight", required: false } }] });
+  yield* visit("/projects/parity-lab/database?databaseTenant=zelavis-app&databaseTable=tags&databasePanel=schema&schemaVersion=2");
+  page.once("dialog", dialog => dialog.accept());
+  yield* io(() => page.getByRole("button", { name: "Activate selected schema", exact: true }).click());
+  yield* io(() => page.getByText(/Activated; 1 records re-indexed\. Declared: search on title; measure weight\./).waitFor());
+  const tagsCollection = (yield* request(proxy + "/database/documents/collections?tenantId=zelavis-app")).collections.find(entry => entry.name === "tags");
+  assert.equal(tagsCollection.derived.schemaVersion, 2, "The activation is recorded on the collection");
+  assert.deepEqual(tagsCollection.measures, [{ name: "weight", path: "weight" }]);
+  console.log("Action: activating a schema in the dashboard declares search and measures and reports them.");
+
 
   yield* request(proxy + "/database/documents/ui-notes", "POST", { tenantId: "zelavis-app", id: "note-a", data: { title: "A note", slug: "a-note", excerpt: "Short", _content: "<p>Hello <strong>rich</strong> text</p>" } });
   yield* visit("/projects/parity-lab/content/ui-notes/note-a");
@@ -388,6 +472,26 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.waitForURL(/workloads\/functions\/[^/?]+/));
   assert.equal(yield* io(() => page.getByLabel("Name", { exact: true }).inputValue()), "ui-renamed-function");
   console.log("Actions: workload creation, run, update and browser Back passed.");
+
+  // An entity workload handles the durable entity type it is named after: a message sent from its page is processed
+  // by its code, and the entity's state and counts come back on the same page.
+  const entityWorkload = yield* request(proxy + "/workloads", "POST", { projectId: "parity-lab", type: "entity", name: "counter", enabled: true,
+    code: "export default async function handle(message, { state }) { const count = (state?.count ?? 0) + 1; return { state: { count }, reply: { count } }; }" });
+  yield* visit("/projects/parity-lab/workloads/entities/" + entityWorkload.id);
+  yield* io(() => page.getByText("No counter entities yet", { exact: true }).waitFor());
+  yield* io(() => page.getByLabel("Entity id", { exact: true }).fill("visits"));
+  yield* io(() => page.getByLabel("Payload JSON", { exact: true }).fill('{"from":"parity"}'));
+  yield* io(() => page.getByRole("button", { name: "Send message", exact: true }).click());
+  yield* io(() => page.waitForURL(url => url.searchParams.get("entity") === "visits"));
+  for (let count = 0; ; count++) {
+    const state = yield* request(proxy + "/database/entities/counter/visits/state");
+    if (state.processed === 1) { assert.deepEqual(state.state, { count: 1 }); break; }
+    if (count === 150) throw new Error("The entity workload did not process the message: " + JSON.stringify(state));
+    yield* Effect.sleep("100 millis");
+  }
+  yield* io(() => page.reload({ waitUntil: "networkidle" }));
+  yield* io(() => page.getByText("0 owed · 1 processed · 0 failed", { exact: true }).waitFor());
+  console.log("Action: an entity workload processes a message sent from its page.");
 
   yield* visit("/projects");
   yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).fill("Parity laboratory"));

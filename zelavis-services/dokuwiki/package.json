@@ -143,7 +143,8 @@
         "directories": [
           {
             "name": "site",
-            "path": "site"
+            "path": "site",
+            "backup": "files"
           }
         ]
       }
@@ -177,7 +178,7 @@
   },
   "peerDependencies": {
     "effect": "4.0.0",
-    "zelavis": ">=2.0.0-alpha.42"
+    "zelavis": ">=2.0.0-alpha.43"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

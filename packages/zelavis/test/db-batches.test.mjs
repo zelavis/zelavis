@@ -12,6 +12,36 @@ import { Effect, Exit } from "effect";
 import { documentsFor } from "../dist/db/index.js";
 import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
+import { openShardOverKv } from "../dist/db/kv-store.js";
+
+test("a bulk batch allocates identifiers and its receipt in the data commit, with no allocation left by refusal", () =>
+  Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const engine = memoryKvEngine();
+    let commits = 0;
+    const shard = yield* openShardOverKv("bulk", { ...engine, conditionalWrite: (batch, conditions) =>
+      Effect.andThen(Effect.sync(() => { commits += 1; }), engine.conditionalWrite(batch, conditions)) });
+    const store = shard.partition("acme"), docs = documentsFor(store, "acme");
+    yield* docs.createCollection({ name: "rows" });
+    const operations = Array.from({ length: 256 }, (_, i) => ({ _tag: "Upsert", collection: "rows", id: `r${i}`, data: { n: i } }));
+    const before = (yield* store.stats).nextSeq;
+    commits = 0;
+    const first = yield* docs.write({ operations, idempotencyKey: "bulk" });
+    assert.equal(commits, 1, "256 allocations, data and receipt commit together");
+    assert.equal((yield* store.stats).nextSeq, before + 257);
+    assert.deepEqual(yield* docs.write({ operations, idempotencyKey: "bulk" }), first);
+    assert.equal(commits, 1, "a receipt replay writes nothing");
+    yield* docs.write({ operations: operations.map(op => ({ ...op, data: { n: 0 } })) });
+    assert.equal((yield* store.stats).nextSeq, before + 257, "updating existing ids allocates nothing");
+    const refusedBefore = (yield* store.stats).nextSeq;
+    const refused = yield* Effect.exit(docs.write({ idempotencyKey: "refused", operations: [
+      { _tag: "Insert", collection: "rows", id: "fresh", data: {} },
+      { _tag: "Insert", collection: "rows", id: "r0", data: {} },
+    ] }));
+    assert.ok(Exit.isFailure(refused));
+    assert.equal((yield* store.stats).nextSeq, refusedBefore);
+    assert.equal(yield* docs.findById({ collection: "rows", id: "fresh" }), undefined);
+  }))));
 
 const engines = [
   ["memory", () => makeMemoryStore("acme")],

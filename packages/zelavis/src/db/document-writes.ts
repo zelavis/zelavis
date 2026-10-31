@@ -26,13 +26,126 @@ import type { OrderedCursor, Txn } from "./store.js";
 
 import { describeFields, describeFilter, describeVector, edgeTypeFor, hasValue, normalizeAnalyzer, normalizeCheck, normalizeColumns, normalizeEdge, normalizeEmbedding, normalizeIndex, normalizeMeasure, normalizeReference, normalizeSpatial, sameFields, satisfiesCheck } from "./document-definitions.js";
 import { covers, indexTuple, validateDocumentData } from "./document-indexing.js";
-import { type CheckConstraint, type Document, type DocumentFilter, type DocumentWritten, type EdgeDefinition, type MeasureDefinition, type ReferenceConstraint } from "./document-model.js";
+import { type Analyzer, type CheckConstraint, type DerivedDeclarationSet, type Document, type DocumentFilter, type DocumentWritten, type EdgeDefinition, type EmbeddingIndex, type MeasureDefinition, type ReferenceConstraint, type SpatialIndex } from "./document-model.js";
 import { matches } from "./document-planner.js";
 import { COLLECTION_MARKER, type Pending, RECEIPT_MARKER, type StoredCollection, type StoredIndex, claimOf, collectionColumn, collectionNs, collectionRecord, columnFor, decode, documentNs, documentRecord, encode, fingerprintOf, idempotencyColumn, indexColumnFor, nameOf, nothingPending, publicCollection, publicIndex, readPath, receiptRecord, setPath, validateName } from "./document-records.js";
 import type { DocumentCore } from "./document-core.js";
 import type { DocumentReads } from "./document-reads.js";
 import type { DocumentsApi } from "./document-model.js";
 import { recordMessages, settleMessages } from "./outbox.js";
+import { deriveDeclarations, type DerivedDeclarations } from "./schema/semantics.js";
+
+const withoutSkipped = ({ skipped: _skipped, ...declarations }: DerivedDeclarations): DerivedDeclarationSet => declarations;
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** A derived set checked by the same rules as a hand-made declaration. */
+const normalizeDerived = (collection: string, declarations: DerivedDeclarationSet) =>
+  Effect.gen(function* () {
+    const measures: Array<MeasureDefinition> = [];
+    for (const measure of declarations.measures) measures.push(yield* normalizeMeasure(collection, measure));
+    const edges: Array<EdgeDefinition> = [];
+    for (const edge of declarations.edges) edges.push(yield* normalizeEdge(collection, edge));
+    return {
+      schemaVersion: declarations.schemaVersion,
+      ...(declarations.analyzer === undefined ? {} : { analyzer: yield* normalizeAnalyzer(collection, declarations.analyzer) }),
+      measures,
+      edges,
+      ...(declarations.spatial === undefined ? {} : { spatial: yield* normalizeSpatial(collection, declarations.spatial) }),
+      ...(declarations.embedding === undefined ? {} : { embedding: yield* normalizeEmbedding(collection, declarations.embedding) }),
+    } satisfies DerivedDeclarationSet;
+  });
+
+/**
+ * A collection with its previous derivation replaced by the next one.
+ *
+ * A previously derived declaration is taken off only while it is still exactly
+ * what was derived: one redeclared by hand since is the caller's, and stays.
+ * The next derivation fills only what nothing declared by hand occupies. Pure,
+ * so applying the same set twice gives the same record.
+ */
+const mergeDerived = (current: StoredCollection, next: DerivedDeclarationSet | undefined) => {
+  const previous = current.derived;
+  const skipped: Array<{ readonly path: string; readonly reason: string }> = [];
+  const keepAnalyzer = previous?.analyzer !== undefined && sameJson(current.analyzer, previous.analyzer) ? undefined : current.analyzer;
+  const keepSpatial = previous?.spatial !== undefined && sameJson(current.spatial, previous.spatial) ? undefined : current.spatial;
+  const keepEmbedding = previous?.embedding !== undefined && sameJson(current.embedding, previous.embedding) ? undefined : current.embedding;
+  const keepMeasures = (current.measures ?? []).filter((measure) =>
+    !(previous?.measures ?? []).some((derived) => sameJson(derived, measure)));
+  const keepEdges = (current.edges ?? []).filter((edge) =>
+    !(previous?.edges ?? []).some((derived) => sameJson(derived, edge)));
+
+  const declaredByHand = (path: string, what: string) =>
+    skipped.push({ path, reason: `the collection declares its ${what} by hand` });
+  let analyzer = keepAnalyzer;
+  let derivedAnalyzer: Analyzer | undefined;
+  if (next?.analyzer !== undefined) {
+    if (analyzer === undefined) analyzer = derivedAnalyzer = next.analyzer;
+    else for (const path of next.analyzer.fields) declaredByHand(path, "analyzer");
+  }
+  let spatial = keepSpatial;
+  let derivedSpatial: SpatialIndex | undefined;
+  if (next?.spatial !== undefined) {
+    if (spatial === undefined) spatial = derivedSpatial = next.spatial;
+    else for (const path of next.spatial.fields) declaredByHand(path, "spatial index");
+  }
+  let embedding = keepEmbedding;
+  let derivedEmbedding: EmbeddingIndex | undefined;
+  if (next?.embedding !== undefined) {
+    if (embedding === undefined) embedding = derivedEmbedding = next.embedding;
+    else declaredByHand(next.embedding.field, "embedding");
+  }
+  const measures = [...keepMeasures];
+  const derivedMeasures: Array<MeasureDefinition> = [];
+  for (const measure of next?.measures ?? []) {
+    if (measures.some((other) => other.name === measure.name)) declaredByHand(measure.path, `measure "${measure.name}"`);
+    else { measures.push(measure); derivedMeasures.push(measure); }
+  }
+  const edges = [...keepEdges];
+  const derivedEdges: Array<EdgeDefinition> = [];
+  for (const edge of next?.edges ?? []) {
+    if (edges.some((other) => other.name === edge.name)) declaredByHand(edge.path, `edge "${edge.name}"`);
+    else { edges.push(edge); derivedEdges.push(edge); }
+  }
+  const applied: DerivedDeclarationSet | undefined = next === undefined ? undefined : {
+    schemaVersion: next.schemaVersion,
+    ...(derivedAnalyzer === undefined ? {} : { analyzer: derivedAnalyzer }),
+    measures: derivedMeasures,
+    edges: derivedEdges,
+    ...(derivedSpatial === undefined ? {} : { spatial: derivedSpatial }),
+    ...(derivedEmbedding === undefined ? {} : { embedding: derivedEmbedding }),
+  };
+  const {
+    analyzer: _analyzer, spatial: _spatial, embedding: _embedding, measures: _measures, edges: _edges,
+    derived: _derived, ...rest
+  } = current;
+  const collection: StoredCollection = {
+    ...rest,
+    ...(analyzer === undefined ? {} : { analyzer }),
+    ...(spatial === undefined ? {} : { spatial }),
+    ...(embedding === undefined ? {} : { embedding }),
+    ...(edges.length === 0 ? {} : { edges }),
+    ...(measures.length === 0 ? {} : { measures }),
+    ...(applied === undefined ? {} : { derived: applied }),
+  };
+  return {
+    collection,
+    applied: applied ?? { schemaVersion: previous?.schemaVersion ?? 1, measures: [], edges: [] },
+    skipped,
+  };
+};
+
+
+/**
+ * More of the same batch, for this package's own use: a durable entity's message is marked finished, its state
+ * written, in the transaction that commits what its handler wrote. Keyed by a symbol, so nothing that arrives as
+ * JSON can carry it. It runs after the batch's changes and messages, and a failure refuses the whole batch.
+ */
+export const WRITE_ALONG: unique symbol = Symbol("zelavis.db.writeAlong");
+export interface WriteAlongInput {
+  /** Its failures refuse the batch and reach the caller of `write` untyped: the caller names and catches them. */
+  readonly [WRITE_ALONG]?: (txn: Txn) => Effect.Effect<void, unknown>;
+}
 
 export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
   const {
@@ -575,6 +688,13 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           ...(measures.length === 0 ? {} : { measures }),
           ...(columns === undefined ? {} : { columns }),
         };
+        // A schema activated before its collection existed declares on it now,
+        // filling only what the input leaves undeclared, as an activation does.
+        const active = yield* (core.schemas?.getActive(input.name) ?? Effect.succeed(undefined));
+        const implied = active === undefined
+          ? undefined
+          : yield* normalizeDerived(input.name, withoutSkipped(deriveDeclarations(active.version, active.fields)));
+        const declared = implied === undefined ? collection : mergeDerived(collection, implied).collection;
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
         // a delete in a target finds what names it from its own record.
@@ -583,10 +703,10 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             const own = references
               .filter((reference) => reference.collection === input.name)
               .map((reference) => ({ collection: input.name, reference: reference.name }));
-            yield* collectionPut(txn, seq, own.length === 0 ? collection : { ...collection, referencedBy: own });
+            yield* collectionPut(txn, seq, own.length === 0 ? declared : { ...declared, referencedBy: own });
             yield* linkTargets(txn, input.name, references.filter((reference) => reference.collection !== input.name));
           }));
-        return publicCollection(collection);
+        return publicCollection(declared);
       }),
 
     insert: (input) =>
@@ -931,6 +1051,51 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         return { embedding, documents };
       }),
 
+    declareFromSchema: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const seq = yield* lookup(collectionNs(), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Normalized like a hand-made declaration, so a derived one is held to
+        // the same rules and stored in the same shape.
+        const wanted = yield* normalizeDerived(input.collection, input.declarations);
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return undefined;
+            const merged = mergeDerived(current, wanted);
+            yield* collectionPut(txn, seq, merged.collection);
+            return { before: current, ...merged };
+          }));
+        if (recorded === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        const documents = yield* rewriteDocuments(input.collection);
+        const embedding = recorded.applied.embedding;
+        if (embedding !== undefined) {
+          for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(), input.collection)))) {
+            const doc = yield* readDocument(held);
+            if (doc === undefined) continue;
+            const wrong = describeVector(embedding, readPath(doc.data, embedding.field));
+            if (wrong === undefined) continue;
+            // The whole set comes back off, and the previous derivation goes
+            // back on: an activation either applies everything it derived or
+            // leaves the collection declared as it was.
+            yield* transactOrDie((txn) =>
+              Effect.gen(function* () {
+                const current = yield* loadCollection(input.collection);
+                if (current === undefined) return;
+                const withdrawn = mergeDerived(current, recorded.before.derived);
+                yield* collectionPut(txn, seq, withdrawn.collection);
+              }));
+            yield* rewriteDocuments(input.collection);
+            return yield* new VectorShapeMismatch({
+              collection: input.collection, id: doc.id, field: embedding.field,
+              reason: `${wrong}, so the schema's declarations were not applied`,
+            });
+          }
+        }
+        return { applied: recorded.applied, skipped: recorded.skipped, documents };
+      }),
+
     rebuildVectorIndex: (input) =>
       Effect.gen(function* () {
         const collection = yield* loadCollection(input.collection);
@@ -1024,8 +1189,9 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
       Effect.gen(function* () {
         const operations = input.operations;
         const emit = input.emit ?? [];
+        const along = (input as WriteAlongInput)[WRITE_ALONG];
         if (!Array.isArray(operations) || !Array.isArray(emit)
-          || operations.length + emit.length === 0 || operations.length > MAX_BATCH) {
+          || (operations.length + emit.length === 0 && along === undefined) || operations.length > MAX_BATCH) {
           return yield* Effect.die(
             new RangeError(`A batch takes 1 to ${MAX_BATCH} changes or messages, not ${operations?.length}.`),
           );
@@ -1042,21 +1208,11 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
           const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
           if (seen !== undefined) return seen.result as ReadonlyArray<DocumentWritten>;
         }
-        // Ids and identifiers are settled before the transaction, which cannot
-        // take the writer a second time to allocate one.
+        // Public ids are settled once. Dense identifiers are allocated by the
+        // transaction itself, so a bulk insert is one commit rather than one
+        // allocation commit per entry followed by the data commit.
         const ids = operations.map((operation) =>
           operation._tag === "Insert" ? operation.id ?? crypto.randomUUID() : operation.id);
-        const seqs: Array<Seq | undefined> = [];
-        for (const operation of operations) {
-          // An upsert only consumes this allocation when the key is absent.
-          // Gaps are harmless; allocating outside the transaction avoids taking
-          // the serialized writer recursively.
-          seqs.push(
-            operation._tag === "Insert" || operation._tag === "Upsert"
-              ? yield* nextSeq
-              : undefined,
-          );
-        }
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             // One overlay for the batch: each change sees what the ones before
@@ -1069,7 +1225,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
                   collection: operation.collection, id: ids[at]!, data: operation.data,
                   ...(operation.expiresAt === undefined ? {} : { expiresAt: operation.expiresAt }),
                   ...(operation.ttlMs === undefined ? {} : { ttlMs: operation.ttlMs }),
-                }, seqs[at]!);
+                }, yield* txn.allocate);
                 written.push({ _tag: "Inserted", document });
                 continue;
               }
@@ -1087,7 +1243,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
                       reason: `expected version ${operation.expectedVersion}, but the document does not exist`,
                     });
                   }
-                  const document = yield* applyInsert(txn, pending, operation, seqs[at]!);
+                  const document = yield* applyInsert(txn, pending, operation, yield* txn.allocate);
                   written.push({ _tag: "Inserted", document });
                 } else {
                   const document = yield* applyUpdate(txn, pending, {
@@ -1106,6 +1262,8 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
             // In the same transaction as the changes: the outbox holds these
             // messages exactly when the store holds what they describe.
             yield* recordMessages(store, txn, messages);
+            // Its failures are the caller's own (it names them), so they pass through untyped here.
+            if (along !== undefined) yield* (along(txn) as Effect.Effect<void, never>);
             return written as ReadonlyArray<DocumentWritten>;
           }));
       }),
@@ -1147,6 +1305,6 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         }
         return forgotten;
       }),
-  } satisfies Pick<DocumentsApi, "createCollection" | "insert" | "update" | "delete" | "dropCollection" | "createIndex" | "dropIndex" | "addCheck" | "analyze" | "setColumns" | "locate" | "embed" | "rebuildVectorIndex" | "dropVectorIndex" | "addReference" | "dropReference" | "dropCheck" | "write" | "rewrite" | "forgetIdempotencyKeys">;
+  } satisfies Pick<DocumentsApi, "createCollection" | "insert" | "update" | "delete" | "dropCollection" | "createIndex" | "dropIndex" | "addCheck" | "analyze" | "setColumns" | "locate" | "embed" | "declareFromSchema" | "rebuildVectorIndex" | "dropVectorIndex" | "addReference" | "dropReference" | "dropCheck" | "write" | "rewrite" | "forgetIdempotencyKeys">;
   return { operations };
 };

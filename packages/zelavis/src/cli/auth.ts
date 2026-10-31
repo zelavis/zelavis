@@ -4,12 +4,12 @@ import { present, integrationValue, type IntegrationFailure } from "../core/runt
 import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
+  "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID --project-permission PERMISSION] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * Platform machine identities through the same typed client applications use.
- * A Project shortcut grants the narrow Project operator permissions needed by
- * deployment clients without turning the identity into a Platform owner.
+ * Platform permissions and Project-scoped grants are explicit; naming a
+ * Project never silently adds operator or data authority.
  */
 export function runAuthCommand(args: readonly string[]): Promise<void> {
   // Everything but service accounts is the table of operations beside them.
@@ -17,6 +17,7 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
     return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   const permissions: string[] = [];
+  const projectPermissions: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
   let name: string | undefined;
@@ -35,7 +36,7 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--name", "--permission", "--project", "--tenant", "--expires-days"].includes(flag)) {
+    if (!["--url", "--token", "--name", "--permission", "--project", "--project-permission", "--tenant", "--expires-days"].includes(flag)) {
       throw new Error(`Unknown auth option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -44,6 +45,7 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
     if (flag === "--token") token = value;
     if (flag === "--name") name = value;
     if (flag === "--permission") permissions.push(value);
+    if (flag === "--project-permission") projectPermissions.push(value);
     if (flag === "--project") projectId = value;
     if (flag === "--tenant") tenantId = value;
     if (flag === "--expires-days") {
@@ -87,23 +89,16 @@ export function runAuthCommand(args: readonly string[]): Promise<void> {
     }
     case "create": {
       if (!name?.trim()) throw new Error("auth service-accounts create requires --name.");
+      if (Boolean(projectId) !== (projectPermissions.length > 0)) {
+        throw new Error("Use --project with at least one explicit --project-permission; each requires the other.");
+      }
       const result = (yield* integrationValue(client.auth.admin.createServiceAccount({
         name: name.trim(),
         permissions,
         ...(tenantId ? { tenantId } : {}),
         ...(projectId
           ? {
-              grants: [
-                "project.view",
-                "project.runtime.manage",
-                "project.settings.manage",
-                "project.users.manage",
-                // A Project operator that cannot read or write the Project's
-                // records is not one: data is its own authority, so holding
-                // the rest does not confer it.
-                "project.data.read",
-                "project.data.write",
-              ].map((permission) => ({
+              grants: [...new Set(projectPermissions)].map((permission) => ({
                 permission,
                 scope: { type: "project" as const, projectId },
               })),

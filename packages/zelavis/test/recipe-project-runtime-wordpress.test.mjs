@@ -5,7 +5,7 @@
 // initialization, supervision, restart, removal) is the production path.
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { Agent, get as httpGet } from "node:http";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
 
-import { createRecipeProjectRuntime } from "../dist/adapters/_recipe-project-runtime.js";
+import { createRecipeProjectRuntime, stageRecipeBackup } from "../dist/adapters/_recipe-project-runtime.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 import { resolveRequirementCommands } from "../dist/adapters/_recipe-requirements.js";
 import { loopbackPortAccepts } from "../dist/adapters/_loopback-probe.js";
@@ -114,6 +114,45 @@ test("a WordPress Project installs, starts, serves PHP backed by its own databas
   await driver.destroy("wp1");
   assert.equal(existsSync(where), false);
   assert.equal(existsSync(join(directory, "..", "runtime-sockets")) && existsSync(join(directory, "..", "runtime-sockets", `zv-${state.socketId}`)), false);
+});
+
+test("a running WordPress Project is backed up by its recipe: the site as files, the database as a dump that restores", { skip, timeout: 240_000 }, async (t) => {
+  const { driver, directory, seedSite } = await setup(t);
+  await seedSite("wpb");
+  const project = record("wpb", "7.1.2");
+  await driver.prepare(project, project.recipe);
+  const where = join(directory, "wpb");
+  // The integration runtime backs up from the Project's frozen recipe, as a Project the Platform prepared has it.
+  await materializeRecipeArtifact(wordpress, join(where, ".zelavis"));
+  const started = await driver.start(project);
+  const { ports } = JSON.parse(readFileSync(join(where, ".zelavis", "recipe-state.json"), "utf8"));
+  const password = readFileSync(join(where, ".zelavis", "secrets", "db-password"), "utf8");
+  const tools = await Effect.runPromise(resolveRequirementCommands(["mariadb"]));
+  const sql = (statement) => execute(tools.mariadb, ["--protocol=tcp", "-h127.0.0.1", `-P${ports.db}`, "-uwordpress", `-p${password}`, "-N", "wordpress", "-e", statement]);
+  await sql("create table zv_backup_check (id int primary key, note varchar(64)); insert into zv_backup_check values (1, 'kept'), (2, 'also kept')");
+
+  const into = await mkdtemp(join(tmpdir(), "zv-wp-backup-"));
+  t.after(() => rm(into, { recursive: true, force: true }));
+  const summary = await Effect.runPromise(stageRecipeBackup({ projectDirectory: where, into }));
+  assert.deepEqual(summary.directories, [{ name: "site", backup: "files", captured: "files/site" }, { name: "db", backup: "recipe", captured: "recipe" }]);
+  assert.ok(existsSync(join(into, "files", "site", "wp-config.php")), "the site with its configuration");
+  const dump = readFileSync(join(into, "recipe", "database.sql"), "utf8");
+  assert.match(dump, /CREATE TABLE `zv_backup_check`/);
+  assert.match(dump, /-- Dump completed/, "a finished dump");
+  assert.ok(!dump.includes(password), "the dump holds no credential");
+  assert.match(await (await fetch(`${started.url}/index.php`)).text(), /database:1/, "the site served throughout");
+
+  // The dump is a backup only if it restores: the table is lost, and the dump brings it back.
+  await sql("drop table zv_backup_check");
+  await new Promise((resolve, reject) => {
+    const child = spawn(tools.mariadb, ["--protocol=tcp", "-h127.0.0.1", `-P${ports.db}`, "-uwordpress", `-p${password}`, "wordpress"], { stdio: ["pipe", "ignore", "inherit"] });
+    child.on("error", reject);
+    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`import exited ${code}`))));
+    child.stdin.end(dump);
+  });
+  assert.equal((await sql("select group_concat(note order by id) from zv_backup_check")).trim(), "kept,also kept");
+  await driver.stop("wpb");
+  await driver.destroy("wpb");
 });
 
 test("a start that finds a stale socket does not mistake it for a running PHP-FPM", { skip, timeout: 240_000 }, async (t) => {

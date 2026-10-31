@@ -6,6 +6,8 @@ import { toDefaultErrorResponse } from "../core/runtime/request-dispatcher.js";
 import { evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import { nodeAdapter } from "./node.js";
 import { loadRecipeArtifact } from "./_recipe-artifact.js";
+import { stageRecipeBackup } from "./_recipe-project-runtime.js";
+import { InvalidBackup } from "../db/errors.js";
 import { createGatewayNonceTracker, verifyGatewayAuthority, ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "../platform/gateway-authority.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
 
@@ -29,7 +31,15 @@ export const prepare = Effect.fn("ProjectEngine.prepare")(function* (configurati
       const gatewayNonces = createGatewayNonceTracker();
       // Managed applications use the ordinary App composition in their bound
       // private data root. The host changes placement, not the available APIs.
-      const adapter = nodeAdapter({ role: "project", dataDirectory, projects: false });
+      // A managed app's integration runtime backs up the app's own data too: its files and, through the recipe's
+      // own backup phase, its database. Its data root is `.zelavis/integration` inside the Project.
+      const projectDirectory = resolve(dataDirectory, "..", "..");
+      const adapter = nodeAdapter({ role: "project", dataDirectory, projects: false,
+        ...(configuration.integrationOnly === true ? { backupComponents: [{
+          name: "app",
+          stage: (into: string) => stageRecipeBackup({ projectDirectory, into }).pipe(
+            Effect.asVoid, Effect.mapError((error) => new InvalidBackup({ reason: `The app's own data could not be backed up: ${error.message}` }))),
+        }] } : {}) });
       const zv = new Zelavis({ adapter: defineAdapter({ name: "node-project",
         close: () => present(integration(() => adapter.close?.())),
         resolve: options => present(Effect.gen(function* () {

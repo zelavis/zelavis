@@ -15,7 +15,7 @@ test("the manifest pins one Drupal release, needs the web and database tiers, an
   assert.deepEqual(manifest.zelavis.project.hostPackages, ["mariadb-server"]);
   assert.deepEqual(install.methods.map((method) => [method.id, [...method.requires]]), [["native", []], ["container", ["docker"]]]);
   await access(new URL(`../${install.methods[0].entry}`, import.meta.url));
-  assert.deepEqual(install.directories, [{ name: "site", path: "site" }, { name: "db", path: "db" }]);
+  assert.deepEqual(install.directories, [{ name: "site", path: "site", backup: "files" }, { name: "db", path: "db", backup: "recipe" }], "the site is copied, the database dumped by the recipe");
   for (const software of install.software) {
     assert.match(software.sha256, /^[0-9a-f]{64}$/);
     assert.match(software.archive, /^https:\/\/ftp\.drupal\.org\/files\/projects\/drupal-[\d.]+\.tar\.gz$/);
@@ -24,7 +24,7 @@ test("the manifest pins one Drupal release, needs the web and database tiers, an
 });
 
 test("PHP and the web server are the recipe's own: pinned builds for every platform, not the host's", () => {
-  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb"]);
+  assert.deepEqual(install.runtimes.map((runtime) => runtime.command), ["php", "php-fpm", "caddy", "mariadbd", "mariadb-install-db", "mariadb", "mariadb-dump"]);
   for (const runtime of install.runtimes.filter((entry) => entry.hostRequirement === undefined)) {
     assert.match(runtime.version, runtime.command === "caddy" ? /^2\.\d+\.\d+$/ : /^8\.\d+\.\d+$/);
     assert.deepEqual(Object.keys(runtime.downloads).sort(), ["linux-aarch64", "linux-x86_64", "macos-aarch64", "macos-x86_64"]);
@@ -34,7 +34,7 @@ test("PHP and the web server are the recipe's own: pinned builds for every platf
 
 test("MariaDB is the recipe's own where the vendor builds it, and the host's elsewhere", () => {
   const database = install.runtimes.filter((runtime) => runtime.hostRequirement === "mariadb");
-  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb"]);
+  assert.deepEqual(database.map((runtime) => runtime.command), ["mariadbd", "mariadb-install-db", "mariadb", "mariadb-dump"]);
   for (const runtime of database) {
     assert.deepEqual(Object.keys(runtime.downloads), ["linux-x86_64"]);
     assert.match(runtime.downloads["linux-x86_64"].archive, /^https:\/\/archive\.mariadb\.org\/mariadb-[\d.]+\/bintar-linux-systemd-x86_64\//);

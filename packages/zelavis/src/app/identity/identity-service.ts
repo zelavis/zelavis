@@ -1,4 +1,5 @@
 import { Cause, Effect } from "effect";
+import { importAccounts, type AccountImportInput } from "./account-import.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import type { PasswordProviderOptions } from "./providers/password.js";
 import {
@@ -280,6 +281,23 @@ export function defineAuthEndpointGroup(
                 )),
               };
             }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "auth.accounts.import",
+          method: "POST",
+          path: "/accounts/import",
+          access: manageAccess,
+          spec: {
+            operationId: "importAccounts",
+            summary: "Import accounts from another system",
+            description: "Creates accounts from `{ accounts: [{ email?, username?, displayName?, verified?, metadata?, passwordHash? }], dryRun? }`. PBKDF2-SHA256 password hashes (Zelavis or Django format, at least 100000 iterations) carry over; any other hash leaves the account to recover its password (`needsReset`). Accounts whose email or username is held are skipped; with any problem, or `dryRun`, nothing is written.",
+            tags: ["auth"],
+            requestBody: { required: true, schema: { type: "object", required: ["accounts"], properties: { accounts: { type: "array" }, dryRun: { type: "boolean" } } } },
+            responses: { 200: { description: "{ dryRun, accounts, created, skipped, needsReset, problems }" }, 400: { description: "Validation error" } },
+          },
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            return { status: 200, body: yield* integration(() => importAccounts(service, body as AccountImportInput)) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(authErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
           id: "auth.credentials.create",

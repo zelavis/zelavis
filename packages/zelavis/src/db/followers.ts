@@ -1,8 +1,8 @@
-import { type Duration, Effect, Stream } from "effect";
-import { type DbError, ReplicaDiverged } from "./errors.js";
+import { type Duration, Effect, Option, Queue, Stream, SubscriptionRef } from "effect";
+import { type DbError, FollowersNotAcknowledged, ReplicaDiverged } from "./errors.js";
 import { holdingLog } from "./log-hold.js";
 import type { PartitionKey } from "./model.js";
-import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
+import type { LeaderSource, ObjectStoreApi, ShardStoreApi } from "./store.js";
 
 /**
  * Keeping a follower partition level with its leader.
@@ -78,7 +78,7 @@ const MAX_BATCHES = 64;
  * means carrying on cannot be exact.
  */
 export const catchUpFollower = (
-  leader: ObjectStoreApi,
+  leader: LeaderSource,
   follower: ObjectStoreApi,
   options?: { readonly maxBatches?: number },
 ) =>
@@ -117,7 +117,7 @@ export const catchUpFollower = (
  * where it cannot (see `FollowerSeed`).
  */
 export const levelFollower = (
-  leader: ObjectStoreApi,
+  leader: LeaderSource,
   follower: { readonly shard: ShardStoreApi; readonly partition: PartitionKey },
   options?: FollowerOptions,
 ): Effect.Effect<FollowerPass, DbError> =>
@@ -158,17 +158,134 @@ export const levelFollower = (
   });
 
 /**
+ * How many followers must hold a write before a caller treats it as kept, and
+ * how long to wait for them.
+ */
+export interface AcknowledgmentPolicy {
+  /** Distinct followers that must hold the position; 0 waits for none. */
+  readonly followers: number;
+  readonly timeout: Duration.Input;
+}
+
+/**
+ * The leader's view of how far each of its followers holds its log.
+ *
+ * A follower acknowledges a position once it has applied the leader's log
+ * through it, in its own committed batch (`followLeader` does this after every
+ * pass). An acknowledgment is as durable as the follower's own storage: a
+ * follower opened with `durability: "power"` holds an acknowledged position
+ * through a power cut, one opened with `crash` through a crash only.
+ *
+ * Positions only rise, so a late or repeated acknowledgment changes nothing.
+ * The record lives with the leader (`db.followers.acknowledgments`); a
+ * follower on another host reports to it through the leader transport
+ * (`remoteAcknowledgments` in `leader.ts`), after its own commit, so an
+ * acknowledgment never runs ahead of what the follower holds.
+ */
+export interface FollowerAcknowledgments {
+  readonly acknowledge: (follower: string, position: number) => Effect.Effect<void>;
+  /** Each follower's highest acknowledged position. */
+  readonly positions: Effect.Effect<ReadonlyMap<string, number>>;
+  /**
+   * Wait until `policy.followers` distinct followers hold `position`, and
+   * answer which do. Fails with `FollowersNotAcknowledged` at the time limit.
+   */
+  readonly awaitFollowers: (
+    position: number,
+    policy: AcknowledgmentPolicy,
+  ) => Effect.Effect<ReadonlyArray<string>, FollowersNotAcknowledged>;
+}
+
+export const makeFollowerAcknowledgments: Effect.Effect<FollowerAcknowledgments> = Effect.map(
+  SubscriptionRef.make<ReadonlyMap<string, number>>(new Map()),
+  (positions): FollowerAcknowledgments => {
+    const holding = (map: ReadonlyMap<string, number>, position: number) =>
+      [...map].filter(([, held]) => held >= position).map(([name]) => name).sort();
+    return {
+      acknowledge: (follower, position) => SubscriptionRef.update(positions, (map) => {
+        if ((map.get(follower) ?? -1) >= position) return map;
+        return new Map(map).set(follower, position);
+      }),
+      positions: SubscriptionRef.get(positions),
+      awaitFollowers: (position, policy) =>
+        SubscriptionRef.changes(positions).pipe(
+          Stream.map((map) => holding(map, position)),
+          Stream.filter((held) => held.length >= policy.followers),
+          Stream.runHead,
+          Effect.map(Option.getOrElse((): ReadonlyArray<string> => [])),
+          Effect.timeoutOption(policy.timeout),
+          Effect.flatMap(Option.match({
+            onSome: Effect.succeed,
+            onNone: () => Effect.flatMap(SubscriptionRef.get(positions), (map) => Effect.fail(new FollowersNotAcknowledged({
+              position, required: policy.followers, acknowledged: holding(map, position),
+            }))),
+          })),
+        ),
+    };
+  },
+);
+
+/**
+ * Run a write on the leader and wait for `policy.followers` followers to hold
+ * the leader's log through it. The position awaited is the leader's head once
+ * the write returned, so later writes by others can only make the wait
+ * stricter, never let it pass early.
+ */
+export const writeAcknowledged = <A, E, R>(
+  leader: ObjectStoreApi,
+  acknowledgments: FollowerAcknowledgments,
+  write: Effect.Effect<A, E, R>,
+  policy: AcknowledgmentPolicy,
+): Effect.Effect<{ readonly value: A; readonly position: number; readonly acknowledgedBy: ReadonlyArray<string> }, E | FollowersNotAcknowledged | DbError, R> =>
+  Effect.gen(function* () {
+    const value = yield* write;
+    const position = (yield* leader.stats).head;
+    const acknowledgedBy = yield* acknowledgments.awaitFollowers(position, policy);
+    return { value, position, acknowledgedBy };
+  });
+
+/** Where a follower reports what it holds: the leader's own record, or the leader transport to it. */
+export interface AcknowledgmentTarget {
+  readonly acknowledge: (follower: string, position: number) => Effect.Effect<void, DbError>;
+}
+
+/**
  * Keep a follower level for as long as this runs: a pass, then — once a pass
- * finds nothing more — a pause of `interval` before the next. Ends only by
- * interruption or a failure no pass can recover from.
+ * finds nothing more — a pause of `interval`, or until `wakeups` says the
+ * leader moved, before the next. Ends only by interruption or a failure no
+ * pass can recover from. With `acknowledgments`, each pass reports the
+ * follower's head under `name` once it has committed. With `applied`, each
+ * pass that changed the follower is reported, so whatever reads it (a
+ * cross-Tenant index) can look soon.
+ *
+ * A wakeup is only a hint: a missed or early one costs a pass or a pause,
+ * never a skipped event, because each pass reads from the follower's own head.
  */
 export const followLeader = (
-  leader: ObjectStoreApi,
+  leader: LeaderSource,
   follower: { readonly shard: ShardStoreApi; readonly partition: PartitionKey },
-  options: { readonly interval: Duration.Input; readonly maxBatches?: number },
+  options: {
+    readonly interval: Duration.Input;
+    readonly maxBatches?: number;
+    readonly acknowledgments?: { readonly name: string; readonly to: AcknowledgmentTarget };
+    readonly wakeups?: Stream.Stream<unknown, never>;
+    readonly applied?: (pass: FollowerPass) => Effect.Effect<void>;
+  },
 ): Effect.Effect<never, DbError> =>
-  Effect.forever(Effect.gen(function* () {
-    const pass = yield* levelFollower(leader, follower,
-      options.maxBatches === undefined ? undefined : { maxBatches: options.maxBatches });
-    if (!pass.more) yield* Effect.sleep(options.interval);
-  }));
+  Effect.gen(function* () {
+    const woken = yield* Queue.sliding<void>(1);
+    if (options.wakeups !== undefined) {
+      yield* Effect.forkScoped(Stream.runForEach(options.wakeups, () => Queue.offer(woken, undefined)));
+    }
+    const pause = Effect.raceFirst(Effect.sleep(options.interval), Queue.take(woken));
+    return yield* Effect.forever(Effect.gen(function* () {
+      const pass = yield* levelFollower(leader, follower,
+        options.maxBatches === undefined ? undefined : { maxBatches: options.maxBatches });
+      if (options.applied !== undefined && (pass.seeded > 0 || pass.applied > 0)) yield* options.applied(pass);
+      if (options.acknowledgments !== undefined) {
+        const { head } = yield* follower.shard.partition(follower.partition).stats;
+        yield* options.acknowledgments.to.acknowledge(options.acknowledgments.name, head);
+      }
+      if (!pass.more) yield* pause;
+    }));
+  }).pipe(Effect.scoped);

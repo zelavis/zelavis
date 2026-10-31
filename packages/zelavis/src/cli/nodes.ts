@@ -5,7 +5,7 @@ import { createZelavisClient } from "../sdk/fetch.js";
 import { ZELAVIS_VERSION } from "../version.js";
 
 const usage =
-  "zelavis nodes <list|platform|audit|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] " +
+  "zelavis nodes <list|platform|trust|audit|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] " +
   "[--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] " +
   "[--url URL] [--token API_TOKEN] [--json]";
 
@@ -109,6 +109,11 @@ export function runNodesCommand(args: readonly string[]): Promise<void> {
         print({ endpoint }, () => endpoint
           ? `${endpoint.url}\nsha256:${endpoint.fingerprint}`
           : "This installation serves no enrollment endpoint.");
+        return;
+      }
+      case "trust": {
+        const trust = yield* integration(() => client.nodes.trust());
+        print({ trust }, () => trust.keys.map((key) => `${key.keyId}\t${key.notBefore} – ${key.notAfter}`).join("\n") || "No keys.");
         return;
       }
       case "audit": {

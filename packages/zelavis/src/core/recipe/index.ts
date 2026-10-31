@@ -15,5 +15,5 @@ export type { Fingerprint, LiveProcess, WantedProcess, ReplaceReason } from "./p
 export { listSetupValues, setupSecrets, fillSetupValue } from "./setup.js";
 export type { ProjectSetupValue, SetupSource } from "./setup.js";
 
-export { databaseContainer, initializeMariaDb, mariaDbProcess, releaseMariaDb, requireMariaDb } from "./mariadb.js";
+export { databaseContainer, dumpMariaDb, initializeMariaDb, mariaDbProcess, releaseMariaDb, requireMariaDb } from "./mariadb.js";
 export type { MariaDbSpec } from "./mariadb.js";

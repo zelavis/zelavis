@@ -411,6 +411,22 @@ before editing.
   a read that stops early resolves by window (`resolve(query, { after, limit,
   within })`), a range alone driven by `within` under a check budget.
   There is no raw SQL surface, and `surface` is never buried in metadata.
+- Logical schemas transfer through `schemas.export/import/types`: bounded v1
+  bundles, immutable version conflicts preflighted, dry run by default, activation
+  explicit through the durable workflow. Generated standalone types describe
+  active and historical versions; runtime constraints remain authoritative.
+- Follow [the storage engine policy](../../references/storage-engine-policy.md):
+  SQLite is the default; LMDB and RocksDB are optional. Both libSQL targets
+  were removed by owner decision. Do not restore aliases or substitute Turso.
+- Follow [the offline replication decision](../../references/offline-replication-decision.md):
+  retain fenced single-writer authority and adapter-neutral event replication;
+  device proposals are not commits. Independent multi-writer semantics require
+  an approved operation/collection specification before implementation.
+- Merging a Tenant branch back follows [the branch merge decision](../../references/branch-merge-decision.md)
+  (decided and implemented): per document from the branch point, no default
+  winner, explicit per-document resolution, repeatable by state. Storage
+  `durability` (`crash`/`power`) is chosen at open; an engine that cannot keep
+  `power` refuses it.
 - Treat every component of a bundle storage key as an authority boundary.
   Validate Project/system ownership, service identity, bundle identity, prefix,
   and asset paths before composition; filesystem root containment is not enough.
@@ -439,6 +455,12 @@ before editing.
 - A consumer writing into its own partition (a time series) commits each batch
   with its cursor in one transaction and rebuilds by generation; a projection's
   `apply` is at least once and idempotent by `eventId`.
+- Search uses adjacent word-pair postings for phrase candidates (longer phrases
+  still verify order) and query-time single-word synonyms. Ranked scatter sums
+  matching-corpus statistics before scoring; there is no cross-partition
+  snapshot. Text/vector ranking uses bounded weighted reciprocal-rank fusion
+  under shared structured filters, qualified against exact rankings. Keep
+  hybrid/statistics and operator-only scatter in HTTP/SDK/CLI parity.
 - A multi-step read runs in one engine snapshot (`store.reading`); writes,
   upkeep and the handle's beliefs (revision, lens state, fence, relocation) always read the
   engine live. Every engine implements `snapshot`, taken at its first read.
@@ -453,10 +475,16 @@ before editing.
   be exact.
 - A live query across Tenants reads a cross-Tenant index
   (`db.crossTenantIndexes`, `cross-tenant-index.ts`), never a fan-out: one
-  collection from every Tenant in one global-shard partition, fed from each
+  collection from every Tenant in 1–32 fixed derived shard placements, fed from each
   Tenant partition's log by a per-partition cursor committed with its entries,
   trusted only in the same partition `incarnation`; otherwise that partition is
   derived again from its records. `service:` partitions are never read.
+  A source partition hashes to one placement, keeping entries and cursor atomic;
+  query pages merge bounded chunks with incarnation/query-bound cursors. Geometry,
+  vectors and non-unique composites use source paths. Durable re-derivation
+  markers refuse queries until refresh completes, including after interruption.
+  Persist full-refresh status and failures in its registry. The native Database
+  cross-Tenant index page uses those public operations and URL-backed query state.
 - A branch (`db.branchTenant`, `seed(source, { branch: true })`) copies a
   Tenant as of one source position: records, then the source's log up to the
   position read after them, under the target's writer. It records its lineage,
@@ -474,9 +502,23 @@ before editing.
   (`client.projects.branchTenant`), CLI (`zelavis projects branch-tenant`) and
   the dashboard's Database → Tenants Branch action.
 - Long readers (copy, branch, follower, export) hold the source's log
-  (`holdLog`, raise-only, time-limited, in-process, at most 64) so compaction stops
-  at the lowest hold and reports `heldAt`; it only prevents starvation, the readers'
-  own `CursorCompacted`/`LogCompacted` detection stays the correctness. The export
+  (`holdLog`, raise-only, time-limited, with the writer, at most 64) so compaction stops
+  at the lowest hold and reports `heldAt`; a move carries live holds to the target; it
+  only prevents starvation, the readers' own `CursorCompacted`/`LogCompacted` detection
+  stays the correctness.
+- Followers on other hosts use the leader transport (`db/leader.ts`): the leader serves
+  stats, record and log pages, holds, acknowledgments and a change feed
+  (`…/database/followers/*`, `database.replicate`, `client.followers(projectId)`,
+  `zelavis followers`); `remoteLeader`/`remoteAcknowledgments`/`remoteChanges` feed the
+  unchanged `levelFollower`/`followLeader`; `db.followers.follow` follows into a
+  database and tells its cross-Tenant indexes, which also take
+  `crossTenantRefresh.notifications`. No failover or remote shard movement yet.
+- Managed app backups: manifest `directories[].backup` (`files` | `recipe`), the recipe
+  `backup` phase (`dumpMariaDb` for MariaDB recipes, pinned `mariadb-dump`), staged by the
+  integration runtime as the `app` component (`stageRecipeBackup`). `drillFrom`
+  (`POST runtime/backups/drills`, `client.runtime.backups.drillFrom`, `zelavis backups
+  drill-from`) drills a run from the target and recovery key alone;
+  `pnpm release:qualify:backups` qualifies both on two disposable machines. The export
   stream (`db.exportPage`, `POST database/tenants/:id/export`,
   `client.projects.exportTenantPage`, `zelavis projects export-stream`) is the one
   online read-out of a Tenant: records + log pages, applied by version, `consistent`
@@ -525,6 +567,15 @@ before editing.
   verifies, and never snapshot a Project that already has local runtime data.
   Still unproven: multi-host partition drills and Bun as the Agent runtime;
   remote App shard movement is not operational.
+- App data delegates only `database.read|write|define`; definitions (collections,
+  schemas, indexes, analyzers, constraints and semantic lenses) require define
+  separately from record writes. The Project grants are `project.data.*`.
+  Child operations enforce permissions even for POST reads. Operator scatter
+  uses the proxy and inspect authority. The Tenant change feed is the existing
+  event log in HTTP/SDK/CLI; persist its returned cursor on empty pages too.
+  Service-account CLI permissions remain explicit: `--permission` is global;
+  pair `--project` with repeated `--project-permission` for scoped grants.
+  Naming a Project must never add implicit operator authority.
 - The public logical database boundary is `db.forTenant(tenantId)`. Documents,
   events, and time-series reads live on that Tenant handle; schema, projection,
   and time-series definitions remain logical database concerns. Do not restore
