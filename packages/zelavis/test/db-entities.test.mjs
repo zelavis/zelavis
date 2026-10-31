@@ -215,3 +215,67 @@ test("the runner serves every Tenant's entities with the handlers it is given, a
     assert.equal((yield* db.forTenant("acme").entities.state({ type: "unhandled", id: "u" })).pending, 1, "a type with no handler keeps its messages");
     yield* Fiber.interrupt(runner);
   })));
+
+test("the runner reads partitions from a due index: one scan at the start, then only what is due, never a poll", () =>
+  withDatabase((db) => Effect.gen(function* () {
+    const { serveEntities } = yield* Effect.promise(() => import("../dist/db/entities.js"));
+    const { PubSub } = yield* Effect.promise(() => import("effect"));
+    for (const name of ["acme", "globex"]) yield* db.forTenant(name).documents.createCollection({ name: "counters" });
+    // A message delayed ahead of the runner's start is found by the one scan and then waited for, not polled for.
+    yield* db.forTenant("acme").entities.send({
+      type: "chat", id: "late", tag: "said", payload: { n: 1 }, deliverAt: new Date(Date.now() + 600).toISOString(),
+    });
+    const reads = { listed: 0, due: new Map() };
+    const wakes = yield* PubSub.sliding(1024);
+    const runner = yield* Effect.forkScoped(serveEntities({
+      partitions: Effect.suspend(() => { reads.listed++; return Effect.succeed(["acme", "globex"]); }),
+      entities: (partition) => {
+        const entities = db.forTenant(partition).entities;
+        return { ...entities, due: (input) => { reads.due.set(partition, (reads.due.get(partition) ?? 0) + 1); return entities.due(input); } };
+      },
+      wakes,
+      options: { handlers: (type) => type === "chat" ? (message, context) => counting(db.forTenant(context.tenant).documents)(message, context) : undefined, sweepInterval: "1 hour" },
+    }));
+    yield* Effect.sleep("300 millis");
+    assert.equal(reads.listed, 1, "the partitions are listed once, at the start");
+    assert.deepEqual([...reads.due], [["acme", 1], ["globex", 1]], "each partition is read once while nothing is due");
+
+    for (let tries = 0; (yield* db.forTenant("acme").documents.findById({ collection: "counters", id: "late" })) === undefined; tries++) {
+      assert.ok(tries < 200, "the delayed message is processed when it falls due, with no sweep to find it");
+      yield* Effect.sleep("10 millis");
+    }
+    assert.ok(reads.due.get("acme") <= 4, `acme was read a handful of times (${reads.due.get("acme")}), not polled`);
+    assert.equal(reads.due.get("globex"), 1, "a partition with nothing due is not read again");
+    assert.equal(reads.listed, 1, "and no full scan ran");
+    yield* Fiber.interrupt(runner);
+  })));
+
+test("a retry is indexed at its backoff time, and a cancelled head lets the next message through", () =>
+  withDatabase((db) => Effect.gen(function* () {
+    const tenant = db.forTenant("acme");
+    yield* tenant.documents.createCollection({ name: "counters" });
+    let calls = 0;
+    const handlers = (type) => type === "chat"
+      ? (message, context) => (message.payload.n === 1 && ++calls === 1
+        ? Effect.fail(new Error("first attempt fails"))
+        : counting(db.forTenant(context.tenant).documents)(message, context))
+      : undefined;
+    const runner = yield* Effect.forkScoped(db.entities.serve({ handlers, sweepInterval: "1 hour" }));
+    yield* tenant.entities.send({ type: "chat", id: "r", tag: "said", payload: { n: 1 } });
+    for (let tries = 0; (yield* tenant.documents.findById({ collection: "counters", id: "r" })) === undefined; tries++) {
+      assert.ok(tries < 400, "the retry ran at its backoff, with the sweep an hour away");
+      yield* Effect.sleep("10 millis");
+    }
+    assert.equal(calls, 2);
+
+    const held = yield* tenant.entities.send({ type: "chat", id: "q", tag: "said", payload: { n: 2 }, deliverAt: new Date(Date.now() + 3_600_000).toISOString() });
+    yield* tenant.entities.send({ type: "chat", id: "q", tag: "said", payload: { n: 3 } });
+    yield* Effect.sleep("100 millis");
+    assert.equal((yield* tenant.entities.state({ type: "chat", id: "q" })).pending, 2, "the head is not due, so it holds the one behind it");
+    assert.equal((yield* tenant.entities.cancel({ type: "chat", id: "q", messageKey: held.message.messageKey })).cancelled, true);
+    for (let tries = 0; (yield* tenant.entities.state({ type: "chat", id: "q" })).processed < 1; tries++) {
+      assert.ok(tries < 200, "cancelling the head wakes the runner");
+      yield* Effect.sleep("10 millis");
+    }
+    yield* Fiber.interrupt(runner);
+  })));

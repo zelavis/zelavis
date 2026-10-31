@@ -32,7 +32,7 @@ import type { ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
 import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { followersOver, type FollowersApi } from "./leader.js";
-import { entitiesFor, serveEntities, type EntitiesApi, type EntityServeOptions } from "./entities.js";
+import { entitiesFor, serveEntities, type EntitiesApi, type EntityServeOptions, type EntityWake } from "./entities.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
 import { isReservedTenantId, isValidCollectionName, SERVICE_TENANT_PREFIX } from "./naming.js";
 import { OUTBOX_NAMESPACE } from "./tenancy.js";
@@ -730,7 +730,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   };
 
   /** Partitions a durable entity was sent a message in, in this process: the entity runner looks at them at once. */
-  const entityWakes = yield* PubSub.sliding<PartitionKey>(1024);
+  const entityWakes = yield* PubSub.sliding<EntityWake>(1024);
 
   const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId, sharedStore: ObjectStoreApi): TenantApi => {
     const events = domainEventsFor(store, tenant);
@@ -755,7 +755,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       timeSeries,
       backups: backupsFor(store, tenant),
       outbox: outboxFor(store, documents),
-      entities: entitiesFor(store, documents, tenant, Effect.asVoid(PubSub.publish(entityWakes, tenant))),
+      entities: entitiesFor(store, documents, tenant, (at) => Effect.asVoid(PubSub.publish(entityWakes, { partition: tenant, at }))),
       migrations: migrationsFor(documents, schemas, tenant),
       systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
       shared,

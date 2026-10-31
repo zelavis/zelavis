@@ -931,8 +931,33 @@ export interface ZelavisStorageClient {
 }
 
 /** What a workload definition may carry; the Project is the client's. */
-export interface ZelavisWorkloadInput { readonly name?: string; readonly code?: string; readonly route?: string; readonly schedule?: string; readonly enabled?: boolean }
-export type ZelavisWorkloadType = "function" | "job" | "schedule" | "webhook";
+export interface ZelavisWorkloadInput {
+  readonly name?: string; readonly code?: string; readonly route?: string; readonly enabled?: boolean;
+  /** A schedule's cron expression: five fields, or six with seconds first. */
+  readonly schedule?: string;
+  /** The Tenant a job, schedule or webhook works in. */
+  readonly tenant?: string;
+  /** A webhook's outbound destination: outbox messages with topic `webhook.<name>` are POSTed here with an `Idempotency-Key`. */
+  readonly url?: string;
+  /** A webhook's shared secret, write-only: verifies an inbound body's HMAC and signs an outbound one. An empty string clears it. */
+  readonly secret?: string;
+  readonly signatureHeader?: string;
+  /** The header an inbound webhook carries the provider's event id in; the body's `id` when absent. */
+  readonly eventIdHeader?: string;
+}
+export type ZelavisWorkloadType = "function" | "job" | "schedule" | "webhook" | "entity";
+/** What running a job answers: its run, kept until the job's code has handled it. */
+export interface ZelavisJobRun { readonly message: EntityMessage; readonly duplicate: boolean }
+export interface ZelavisJobRunOptions {
+  /** The Tenant to run in; the job's own when omitted. */
+  readonly tenantId?: string;
+  /** The JSON object the job's code receives as the message payload. */
+  readonly input?: Record<string, unknown>;
+  /** Names the run, so a resend is recognised as the same one. */
+  readonly primaryKey?: string;
+  /** Not run before this time (ISO 8601). */
+  readonly deliverAt?: string;
+}
 
 export interface ZelavisWorkloadsClient {
   health(): Promise<{ readonly status: "ready" }>;
@@ -945,7 +970,8 @@ export interface ZelavisWorkloadsClient {
   /** Replace a definition: `{ name?, code?, route?, schedule?, enabled? }`. */
   update(id: string, input: ZelavisWorkloadInput): Promise<WorkloadDefinition>;
   /** Run it now; the answer is the run's log entry. */
-  run(id: string): Promise<WorkloadRunLog>;
+  /** Runs a function now and answers its log; a job is enqueued instead (see `ZelavisJobRunOptions`) and answers its kept run. */
+  run(id: string, options?: ZelavisJobRunOptions): Promise<WorkloadRunLog & Partial<ZelavisJobRun>>;
   logs(options?: { readonly workloadId?: string }): Promise<{ readonly logs: readonly WorkloadRunLog[] }>;
 }
 
@@ -2723,7 +2749,7 @@ function createWorkloadsClient(
     create: (input) => json(at(""), { method: "POST", body: { projectId, ...input } }),
     get: (workload) => json(at(`/${id(workload)}`)),
     update: (workload, input) => json(at(`/${id(workload)}`), { method: "PUT", body: input }),
-    run: (workload) => json(at(`/${id(workload)}/run`), { method: "POST", body: {} }),
+    run: (workload, options) => json(at(`/${id(workload)}/run`), { method: "POST", body: options ?? {} }),
     logs: (options) => json(at("/logs", { projectId, workloadId: options?.workloadId })),
   };
 }

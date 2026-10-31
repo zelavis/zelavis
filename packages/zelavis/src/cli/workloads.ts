@@ -2,7 +2,7 @@ import { bodyFlag, required, runTable, type CliInput, type CliTable } from "./co
 import type { ZelavisWorkloadType } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis workloads <health|menu|list|create|get|update|run|logs> --project ID [id|section] [--type function|job|schedule|webhook] [--data JSON] [--workload ID] [--url URL] [--token TOKEN] [--json]";
+  "zelavis workloads <health|menu|list|create|get|update|run|logs> --project ID [id|section] [--type function|job|schedule|webhook|entity] [--data JSON] [--workload ID] [--url URL] [--token TOKEN] [--json]";
 
 const workloads = (input: CliInput) => {
   const project = input.flags.get("--project");
@@ -25,7 +25,8 @@ const table: CliTable = {
     create: { run: (input) => workloads(input).create(bodyFlag(input, "--data", "workloads create")) },
     get: { run: (input) => workloads(input).get(required(input, 0, "A workload id")) },
     update: { run: (input) => workloads(input).update(required(input, 0, "A workload id"), bodyFlag(input, "--data", "workloads update")) },
-    run: { run: (input) => workloads(input).run(required(input, 0, "A workload id")) },
+    // A function runs now; for a job, --data is the run: { "tenantId"?, "input"?, "primaryKey"?, "deliverAt"? }.
+    run: { run: (input) => workloads(input).run(required(input, 0, "A workload id"), input.flags.has("--data") ? bodyFlag(input, "--data", "workloads run") : undefined) },
     logs: { run: (input) => workloads(input).logs(input.flags.has("--workload") ? { workloadId: input.flags.get("--workload")! } : undefined) },
   },
 };

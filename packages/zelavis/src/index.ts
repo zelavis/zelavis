@@ -215,7 +215,7 @@ import {
   workloadsEndpointGroup,
   type WorkloadsServiceOptions,
 } from "./app/workloads/index.js";
-import { serveEntityWorkloads } from "./app/workloads/workloads-service.js";
+import { serveDurableWorkloads } from "./app/workloads/durable.js";
 export { ZELAVIS_VERSION } from "./version.js";
 import {
   activateServiceRegistry,
@@ -6872,6 +6872,7 @@ export function zelavis(
                   ...(typeof options.subsystems?.workloads === "object"
                     ? options.subsystems.workloads
                     : {}),
+                  ...(resolvedDatabaseApi === undefined ? {} : { database: resolvedDatabaseApi }),
                   store:
                     (typeof options.subsystems?.workloads === "object"
                       ? options.subsystems.workloads.store
@@ -6882,7 +6883,7 @@ export function zelavis(
         );
         // Durable entities are served where the database's writer is, with the `entity` workloads as handlers.
         const entityWorkloads = resolvedDatabaseApi && workloadsCoreService
-          ? serveEntityWorkloads(resolvedDatabaseApi, workloadsCoreService.context.store)
+          ? serveDurableWorkloads(resolvedDatabaseApi, workloadsCoreService.context.store)
           : undefined;
         yield* Effect.addFinalizer(() =>
           ready ? Effect.void : integration(() => entityWorkloads?.stop()).pipe(Effect.orDie),

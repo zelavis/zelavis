@@ -7,7 +7,8 @@ import test from "node:test";
 import { defineDatabaseService } from "../dist/db/index.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 import { runEntitiesCommand } from "../dist/cli/entities.js";
-import { serveEntityWorkloads, createMemoryWorkloadsStore } from "../dist/app/workloads/workloads-service.js";
+import { createMemoryWorkloadsStore } from "../dist/app/workloads/workloads-service.js";
+import { serveDurableWorkloads } from "../dist/app/workloads/durable.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 import { fakePlatform, routeTable, runCli, steady } from "./_platform.mjs";
 
@@ -80,7 +81,7 @@ const scenario = async (api, entities) => {
   const store = createMemoryWorkloadsStore([]);
   await store.save({ id: "entity_order", projectId: "p1", type: "entity", name: "order", enabled: true, createdAt: "", updatedAt: "v1",
     code: "export default async function handle(message, { state }) { const total = (state?.total ?? 0) + (message.payload.total ?? message.payload.amount ?? 0); return { state: { total }, reply: { total } }; }" });
-  const serving = serveEntityWorkloads(api, store);
+  const serving = serveDurableWorkloads(api, store);
   try {
     for (let tries = 0; ((await api.forTenant("acme").entities.state({ type: "order", id: "o-1" })).pending) > 0; tries++) {
       assert.ok(tries < 300, "the entity workload processes the mailbox");

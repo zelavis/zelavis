@@ -271,7 +271,8 @@ export const entitiesFor = (
   store: ObjectStoreApi,
   documents: DocumentsApi,
   tenant: TenantId,
-  wake: Effect.Effect<void>,
+  /** Tell the runner in this process this Tenant has something due at `at` (epoch milliseconds; 0 is now). */
+  wake: (at: number) => Effect.Effect<void>,
 ): EntitiesApi => {
   const readNamed = <A>(identity: ObjectIdentity, validate: (value: unknown) => value is A, label: string) =>
     Effect.gen(function* () {
@@ -331,7 +332,7 @@ export const entitiesFor = (
             yield* put(txn, stateRecord?.seq ?? (yield* txn.allocate), { ...state, pending: state.pending + 1, updatedAt: sentAt }, stateIdentity(input.type, input.id));
             return { message: publicOf(message), duplicate: false };
           })));
-        if (!answer.duplicate) yield* wake;
+        if (!answer.duplicate) yield* wake(notBefore);
         return answer;
       }),
 
@@ -394,7 +395,7 @@ export const entitiesFor = (
         yield* checkAddress(input.type, input.id);
         yield* checkKey(input.messageKey, "a message key");
         const at = yield* Clock.currentTimeMillis;
-        return yield* dieUnlessMoving(store.transact((txn) =>
+        const answer = yield* dieUnlessMoving(store.transact((txn) =>
           Effect.gen(function* () {
             const message = yield* readNamed(messageIdentity(input.type, input.id, input.messageKey), storedMessage, "entity message");
             if (message === undefined) return { cancelled: false };
@@ -408,6 +409,9 @@ export const entitiesFor = (
               (current) => ({ ...current, pending: Math.max(0, current.pending - 1), updatedAt: new Date(at).toISOString() }), at);
             return { cancelled: true, message: publicOf(cancelled) };
           })));
+        // A cancelled head can put a later message first in line, due earlier than the index says.
+        if (answer.cancelled) yield* wake(0);
+        return answer;
       }),
 
     process: (type, id, handler, options) =>
@@ -535,12 +539,21 @@ export interface EntityServeOptions {
   readonly handlers: (type: string) => EntityHandler | undefined;
   /** Entities processed at once; 8 unless given. */
   readonly concurrency?: number;
-  /** How often every partition is looked at, for messages sent elsewhere and messages that became due; one second unless given. */
+  /**
+   * How often every partition is read again as a safety net, for what the due index cannot know: messages sent by
+   * another process, and wakes dropped under load. Also when finished messages are pruned. Five minutes unless given.
+   */
   readonly sweepInterval?: Duration.Input;
   /** How long finished messages are kept, and so how long a `primaryKey` is remembered; seven days unless given. */
   readonly retention?: Duration.Input;
   readonly maxAttempts?: number;
   readonly handlerTimeout?: Duration.Input;
+}
+
+/** Something became due in a partition, in this process: a send (at its `deliverAt`, or 0), or a cancel (0). */
+export interface EntityWake {
+  readonly partition: PartitionKey;
+  readonly at: number;
 }
 
 /**
@@ -556,17 +569,26 @@ export const unrefSleep = (millis: number): Effect.Effect<void> =>
 
 /** Messages one entity is given in a row before others get a turn. */
 const TURN = 32;
+/** A partition holding messages for a type with no handler is looked at again this often, in case one appeared. */
+const UNHANDLED_RECHECK_MILLIS = 5000;
+/** A partition that could not be read is tried again this long after. */
+const READ_RETRY_MILLIS = 1000;
+/** The longest one wait is: a timer far in the future adds nothing, and the safety net bounds it anyway. */
+const LONGEST_WAIT_MILLIS = 60 * 60_000;
 
 /**
- * Process every partition's due messages with `options.handlers` until interrupted: a partition named by `wakes`
- * (a send in this process) at once, every partition on each sweep. Runs where the database's writer is: the commit
- * of every step checks its message is still owed, so two of these over one database never finish a message twice,
- * but one per writer is the design.
+ * Process every partition's due messages with `options.handlers` until interrupted. The runner keeps a due index in
+ * memory, partition to the earliest time anything in it is due: one scan at the start builds it, a send, a retry and
+ * a cancel keep it current, and the runner sleeps until the earliest entry or the next wake, so an idle database
+ * costs nothing and a partition is read only when something in it is due. A full scan remains only as a rare safety
+ * net (`sweepInterval`), for what another process sent and for wakes dropped under load. Runs where the database's
+ * writer is: the commit of every step checks its message is still owed, so two of these over one database never
+ * finish a message twice, but one per writer is the design.
  */
 export const serveEntities = (input: {
   readonly partitions: Effect.Effect<ReadonlyArray<PartitionKey>, DbError>;
   readonly entities: (partition: PartitionKey) => EntitiesApi;
-  readonly wakes: PubSub.PubSub<PartitionKey>;
+  readonly wakes: PubSub.PubSub<EntityWake>;
   readonly options: EntityServeOptions;
 }): Effect.Effect<never, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -578,7 +600,14 @@ export const serveEntities = (input: {
       ...(options.handlerTimeout === undefined ? {} : { handlerTimeout: options.handlerTimeout }),
     };
     const retentionMillis = Duration.toMillis(options.retention ?? "7 days");
-    const sweepMillis = Duration.toMillis(options.sweepInterval ?? "1 second");
+    const safetyMillis = Math.max(1, Duration.toMillis(options.sweepInterval ?? "5 minutes"));
+
+    /** Partition to the earliest time a message in it may be due. Only this loop reads or changes it. */
+    const dueIndex = new Map<PartitionKey, number>();
+    const noteDue = (partition: PartitionKey, at: number) => {
+      const known = dueIndex.get(partition);
+      if (known === undefined || at < known) dueIndex.set(partition, at);
+    };
 
     /** One entity's messages in a row, until it has none due or its turn is up. */
     const drain = (partition: PartitionKey, type: string, id: string, handler: EntityHandler) =>
@@ -589,22 +618,32 @@ export const serveEntities = (input: {
         }
       });
 
+    /** Start what is due in a partition, and set its index entry to when the rest will be. */
     const visit = (partition: PartitionKey) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
+        let earliest: number | undefined;
+        const sooner = (at: number) => { earliest = earliest === undefined ? at : Math.min(earliest, at); };
         for (const head of yield* input.entities(partition).due()) {
-          if (head.notBefore > now) continue;
           const handler = options.handlers(head.type);
+          if (handler === undefined) { sooner(now + UNHANDLED_RECHECK_MILLIS); continue; }
+          if (head.notBefore > now) { sooner(head.notBefore); continue; }
           const name = `${partition}\u0000${head.type}\u0000${head.id}`;
-          if (handler === undefined || busy.has(name)) continue;
+          // A busy entity looks at its partition again when it is free, and so settles its own next time.
+          if (busy.has(name)) continue;
           busy.add(name);
           yield* Effect.forkScoped(permits.withPermits(1)(drain(partition, head.type, head.id, handler)).pipe(
             Effect.catchCause((cause) => Effect.logWarning(`Durable entity ${head.type}/${head.id} in ${partition} could not be processed; the next sweep tries again`, cause)),
-            // Free again, the partition is looked at once more: messages sent while it was busy are taken now, not at the sweep.
-            Effect.ensuring(Effect.andThen(Effect.sync(() => busy.delete(name)), PubSub.publish(input.wakes, partition))),
+            // Free again: the partition is read once more, which takes messages sent meanwhile and indexes a retry's time.
+            Effect.ensuring(Effect.andThen(Effect.sync(() => busy.delete(name)), PubSub.publish(input.wakes, { partition, at: 0 }))),
           ));
         }
-      }).pipe(Effect.catchCause((cause) => Effect.logWarning(`The durable entities of ${partition} could not be read; the next sweep tries again`, cause)));
+        if (earliest === undefined) dueIndex.delete(partition);
+        else dueIndex.set(partition, earliest);
+      }).pipe(Effect.catchCause((cause) => Effect.gen(function* () {
+        yield* Effect.logWarning(`The durable entities of ${partition} could not be read; trying again shortly`, cause);
+        dueIndex.set(partition, (yield* Clock.currentTimeMillis) + READ_RETRY_MILLIS);
+      })));
 
     const everyPartition = Effect.gen(function* () {
       const partitions = (yield* input.partitions).filter((partition) => partition !== GLOBAL_TENANT && !isReservedTenantId(partition));
@@ -612,23 +651,32 @@ export const serveEntities = (input: {
       return partitions;
     }).pipe(Effect.catchCause((cause) => Effect.as(Effect.logWarning("The partitions holding durable entities could not be listed", cause), [])));
 
-    let lastPrune = 0;
+    const prune = (partitions: ReadonlyArray<PartitionKey>, now: number) =>
+      Effect.forEach(partitions, (partition) => input.entities(partition).prune({ before: now - retentionMillis }).pipe(
+        Effect.catchCause((cause) => Effect.logWarning(`Finished durable entity messages of ${partition} could not be removed; the next pass tries again`, cause)),
+      ), { concurrency: 4, discard: true });
+
     const wakes = yield* PubSub.subscribe(input.wakes);
-    yield* everyPartition;
+    // The one scan: it builds the index.
+    const started = yield* Clock.currentTimeMillis;
+    yield* prune(yield* everyPartition, started);
+    let lastScan = started;
     return yield* Effect.forever(Effect.gen(function* () {
-      // Every partition woken since the last turn, each once; or, after a quiet interval, a sweep of them all.
-      const woke = yield* Effect.raceFirst(PubSub.takeAll(wakes), Effect.as(unrefSleep(sweepMillis), undefined));
-      if (woke !== undefined) {
-        yield* Effect.forEach(new Set(woke), visit, { concurrency: 4, discard: true });
+      const now = yield* Clock.currentTimeMillis;
+      let wait = lastScan + safetyMillis - now;
+      for (const at of dueIndex.values()) wait = Math.min(wait, at - now);
+      const woke = yield* Effect.raceFirst(
+        PubSub.takeAll(wakes),
+        Effect.as(unrefSleep(Math.min(Math.max(0, wait), LONGEST_WAIT_MILLIS)), undefined),
+      );
+      for (const wake of woke ?? []) noteDue(wake.partition, wake.at);
+      const at = yield* Clock.currentTimeMillis;
+      if (at - lastScan >= safetyMillis) {
+        lastScan = at;
+        yield* prune(yield* everyPartition, at);
         return;
       }
-      const partitions = yield* everyPartition;
-      const now = yield* Clock.currentTimeMillis;
-      if (now - lastPrune >= 60_000) {
-        lastPrune = now;
-        yield* Effect.forEach(partitions, (partition) => input.entities(partition).prune({ before: now - retentionMillis }).pipe(
-          Effect.catchCause((cause) => Effect.logWarning(`Finished durable entity messages of ${partition} could not be removed; the next pass tries again`, cause)),
-        ), { concurrency: 4, discard: true });
-      }
+      const ready = [...dueIndex].filter(([, due]) => due <= at).map(([partition]) => partition);
+      yield* Effect.forEach(ready, visit, { concurrency: 4, discard: true });
     }));
   });

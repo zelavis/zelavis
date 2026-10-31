@@ -94,6 +94,7 @@ const EXEMPT = {
     [`${method} /zelavis/api/v1/runtime/projects/{projectId}/data/{path}`, "passthrough: the typed App data operations behind it are checked one by one"],
     [`${method} /zelavis/api/v1/workloads/http/{projectId}/{path}`, "ingress: a Project's own HTTP workload, called by its users"],
   ])),
+  "POST /zelavis/api/v1/workloads/webhooks/{projectId}/{name}": "ingress: a provider's own call, authenticated by the webhook's signature",
 };
 
 /** Reached, but by calls the recorder cannot make with placeholder arguments, or by CLI code that is not a plain SDK call. */

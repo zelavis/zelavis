@@ -1,7 +1,7 @@
 # What Zelavis takes from Effect Cluster
 
-Status: **decided 2026-10-31** (delegated decision). Phase 1 (durable entities) is implemented (`src/db/entities.ts`,
-entity workloads); the later phases are ordered work, tracked in `pnotes/TODO.md`.
+Status: **decided 2026-10-31** (delegated decision). Phases 1 (durable entities, `src/db/entities.ts`) and 2 (durable Workloads, `src/app/workloads/durable.ts`) are
+implemented; the later phases are ordered work, tracked in `pnotes/TODO.md`.
 
 Sources: the four Effect "Module of the Week" posts on Cluster (actors, messaging, delivery, idempotency) and
 the Effect v4 source in `repos/effect/packages/effect/src/cluster` (`Entity`, `Sharding`, `ShardingConfig`,
@@ -126,9 +126,11 @@ shards.
    - Tests: SIGKILL tests in the style of `db-durability.test.mjs` proving each message's database effects
      land exactly once across crashes, a seeded model test of the mailbox state machine, and the
      multimodal and bounded checks the store already holds itself to.
-2. **Durable Workloads:** jobs, schedules (durable wakes, run where the writer is), inbound webhooks with
-   provider keys, outbound webhooks through the outbox with `Idempotency-Key`. This closes the TODO's
-   Workloads item.
+2. **Durable Workloads** (done 2026-10-31): jobs, schedules (durable wakes, run where the writer is), inbound
+   webhooks with provider keys, outbound webhooks through the outbox with `Idempotency-Key`, and the entity runner's
+   in-memory due index (partition to earliest due time; one scan at start; a safety-net scan every five minutes).
+   Outbound delivery and schedule arming still poll the workload definitions and the outbox on a timer (one to two
+   seconds); an outbox emit does not wake the runner.
 3. **Follower failover** (decision 5), qualified by kill and partition drills on disposable machines.
 4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
 5. **Delivery-guarantee table** in the public docs (decision 7), written alongside phase 1 and kept current.

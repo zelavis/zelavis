@@ -1,6 +1,10 @@
-import { Cause, Effect, Fiber } from "effect";
-import { unrefSleep, type EntityStep } from "../../db/entities.js";
-import type { RuntimeEntityHandler } from "../../db/runtime-api.js";
+import { Cause, Effect } from "effect";
+import { isValidTenantId } from "../../db/naming.js";
+import type { DatabaseRuntimeApi } from "../../db/runtime-api.js";
+import {
+  createModuleDataUrl, DEFAULT_SIGNATURE_HEADER, eventIdOf, isCronExpression, JOB_ENTITY, keptHeaders,
+  RESERVED_ENTITY_TYPES, verifySignature, WEBHOOK_ENTITY,
+} from "./durable.js";
 import { present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
 import type {
@@ -17,7 +21,25 @@ export interface WorkloadDefinition {
   name: string;
   code: string;
   route?: string;
+  /** A schedule's cron expression (five fields, or six with seconds first). */
   schedule?: string;
+  /**
+   * The Tenant a job, schedule or webhook works in: its mailbox, its wakes and its outbox are that Tenant's.
+   * A job run may name another.
+   */
+  tenant?: string;
+  /** A webhook's outbound destination: outbox messages with topic `webhook.<name>` in its Tenant are POSTed here. */
+  url?: string;
+  /**
+   * A webhook's shared secret: it verifies the `sha256=<hex>` HMAC of an inbound body and signs an outbound one.
+   * Write-only: reads answer `secretSet` instead.
+   */
+  secret?: string;
+  secretSet?: boolean;
+  /** The header an inbound webhook carries the signature in; `x-hub-signature-256` unless given. */
+  signatureHeader?: string;
+  /** The header an inbound webhook carries the provider's event id in; the body's `id` when absent. */
+  eventIdHeader?: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -50,12 +72,18 @@ export interface WorkloadsStore {
   appendLog: (log: WorkloadRunLog) => Promise<WorkloadRunLog> | WorkloadRunLog;
 }
 
+/** What the Workloads routes need from the Project's database: its Tenants' durable entities. */
+export type WorkloadsDatabase = Pick<DatabaseRuntimeApi, "forTenant">;
+
 export interface WorkloadsServiceOptions {
   store?: WorkloadsStore;
+  /** Where jobs are enqueued and inbound webhooks are saved; without it those routes answer 503. */
+  database?: WorkloadsDatabase;
 }
 
 export interface WorkloadsApi {
   store: WorkloadsStore;
+  database?: WorkloadsDatabase;
 }
 
 const workloadTypes = ["function", "job", "schedule", "webhook", "entity"] as const;
@@ -83,8 +111,28 @@ const defaultEntityCode = `export default async function handle(message, { state
 }
 `;
 
+/**
+ * A job, schedule or webhook workload's code is an entity handler too: one message and the state of the entity of
+ * its name in, a step out (see `defaultEntityCode`). The message's `payload` is a job's input, a schedule's
+ * `{ schedule, fireAt }`, or an inbound webhook's `{ headers, body, eventId, receivedAt }`.
+ */
+const defaultDurableCode = `export default async function handle(message, { state, tenant, documents }) {
+  return { reply: { ok: true } };
+}
+`;
+
 /** An entity workload's name is the entity type it handles. */
 const ENTITY_TYPE = /^[a-z][a-z0-9_-]{0,63}$/;
+const checkEntityName = (name: string) => {
+  if (!ENTITY_TYPE.test(name)) {
+    throw new TypeError("An entity workload is named after its entity type: a letter, then up to 63 letters, digits, `_` or `-`.");
+  }
+  if (RESERVED_ENTITY_TYPES.has(name)) {
+    throw new TypeError(`"${name}" is the entity type of ${name} workloads; an entity workload needs another name.`);
+  }
+};
+const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
+const BODY_LIMIT = 256 * 1024;
 
 export interface WorkloadExecutionResult {
   headers?: Record<string, string>;
@@ -159,6 +207,50 @@ function readBoolean(
   return value;
 }
 
+/** A string field that stays as it was when absent and is cleared by an empty string. */
+function readOptional(body: Record<string, unknown>, key: string, existing?: string) {
+  const value = body[key];
+  if (value == null) return existing;
+  if (typeof value !== "string") throw new TypeError(`${key} must be a string.`);
+  return value === "" ? undefined : value;
+}
+
+/** The fields durable workloads add, checked against the kind of workload they belong to. */
+function readDurableFields(body: Record<string, unknown>, type: WorkloadType, existing?: WorkloadDefinition) {
+  const tenant = readOptional(body, "tenant", existing?.tenant);
+  if (tenant !== undefined && !isValidTenantId(tenant)) throw new TypeError("tenant is not a valid Tenant id.");
+  if (tenant !== undefined && type === "function") throw new TypeError("tenant applies to jobs, schedules, webhooks and entities.");
+  const schedule = readOptional(body, "schedule", existing?.schedule);
+  if (type === "schedule" && schedule !== undefined && !isCronExpression(schedule)) {
+    throw new TypeError("schedule must be a cron expression: minute hour day month weekday (seconds first when six fields).");
+  }
+  const url = readOptional(body, "url", existing?.url);
+  const secret = readOptional(body, "secret", existing?.secret);
+  const signatureHeader = readOptional(body, "signatureHeader", existing?.signatureHeader)?.toLowerCase();
+  const eventIdHeader = readOptional(body, "eventIdHeader", existing?.eventIdHeader)?.toLowerCase();
+  if ((url !== undefined || secret !== undefined || signatureHeader !== undefined || eventIdHeader !== undefined) && type !== "webhook") {
+    throw new TypeError("url, secret, signatureHeader and eventIdHeader apply to webhook workloads.");
+  }
+  if (url !== undefined) {
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new TypeError("url must be an absolute http or https URL."); }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new TypeError("url must be an absolute http or https URL.");
+    if (parsed.username !== "" || parsed.password !== "") throw new TypeError("url carries no credentials; use a secret.");
+  }
+  if (secret !== undefined && (secret.length < 16 || secret.length > 512)) throw new TypeError("secret is 16 to 512 characters.");
+  for (const [name, header] of [["signatureHeader", signatureHeader], ["eventIdHeader", eventIdHeader]] as const) {
+    if (header !== undefined && !HEADER_NAME.test(header)) throw new TypeError(`${name} is an HTTP header name.`);
+  }
+  return {
+    ...(tenant === undefined ? {} : { tenant }),
+    ...(schedule === undefined ? {} : { schedule }),
+    ...(url === undefined ? {} : { url }),
+    ...(secret === undefined ? {} : { secret }),
+    ...(signatureHeader === undefined ? {} : { signatureHeader }),
+    ...(eventIdHeader === undefined ? {} : { eventIdHeader }),
+  };
+}
+
 function readWorkloadType(value: unknown): WorkloadType {
   if (
     typeof value === "string" &&
@@ -173,7 +265,14 @@ function readWorkloadType(value: unknown): WorkloadType {
 function jsonError(error: unknown, status = 400) {
   // Shared policy: 4xx keeps the caller-facing message, 5xx is genericized
   // unless it is a typed domain error.
-  return createJsonErrorResponse(status, error);
+  const tag = (error as { readonly _tag?: unknown } | null)?._tag;
+  return createJsonErrorResponse(tag === "MailboxFull" ? 409 : tag === "TenantMoving" ? 503 : status, error);
+}
+
+/** A definition as clients read it: the secret is write-only. */
+export function publicWorkload(workload: WorkloadDefinition): WorkloadDefinition {
+  const { secret, ...rest } = workload;
+  return secret === undefined ? rest : { ...rest, secretSet: true };
 }
 
 function normalizeRoutePath(path: string | undefined) {
@@ -187,12 +286,6 @@ function normalizeRoutePath(path: string | undefined) {
   }
 
   return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
-}
-
-function createModuleDataUrl(workload: WorkloadDefinition) {
-  return `data:text/javascript;charset=utf-8,${encodeURIComponent(
-    workload.code,
-  )}#${encodeURIComponent(`${workload.id}:${workload.updatedAt}`)}`;
 }
 
 function toHeaderRecord(headers: Headers): Record<string, string> {
@@ -375,9 +468,7 @@ function createWorkload(
   if (!name) {
     throw new TypeError("name is required.");
   }
-  if (type === "entity" && !ENTITY_TYPE.test(name)) {
-    throw new TypeError("An entity workload is named after its entity type: a letter, then up to 63 letters, digits, `_` or `-`.");
-  }
+  if (type === "entity") checkEntityName(name);
 
   const timestamp = now();
   const workload: WorkloadDefinition = {
@@ -385,15 +476,15 @@ function createWorkload(
     projectId: slugifyName(readString(input, "projectId", "default") ?? "default"),
     type,
     name,
-    code: readString(input, "code", type === "entity" ? defaultEntityCode : defaultFunctionCode) ?? defaultFunctionCode,
+    code: readString(input, "code", type === "entity" ? defaultEntityCode : type === "function" ? defaultFunctionCode : defaultDurableCode) ?? defaultFunctionCode,
     route: readString(input, "route"),
-    schedule: readString(input, "schedule"),
+    ...readDurableFields(input, type),
     enabled: readBoolean(input, "enabled", true),
     createdAt: timestamp,
     updatedAt: timestamp,
   };
 
-  return (yield* integrationValue(store.save(workload)));
+  return publicWorkload(yield* integrationValue(store.save(workload)));
 }));
   }
 
@@ -410,20 +501,20 @@ function updateWorkload(
 
   const input = readBodyObject(body);
   const name = slugifyName(readString(input, "name", existing.name) ?? existing.name);
-  if (existing.type === "entity" && !ENTITY_TYPE.test(name)) {
-    throw new TypeError("An entity workload is named after its entity type: a letter, then up to 63 letters, digits, `_` or `-`.");
-  }
+  if (existing.type === "entity") checkEntityName(name);
+  // Cleared fields are dropped, not kept as they were: start from the definition without the ones that can clear.
+  const { tenant: _tenant, schedule: _schedule, url: _url, secret: _secret, signatureHeader: _signature, eventIdHeader: _eventId, secretSet: _set, ...kept } = existing;
   const next: WorkloadDefinition = {
-    ...existing,
+    ...kept,
     name,
     code: readString(input, "code", existing.code) ?? existing.code,
     route: readString(input, "route", existing.route),
-    schedule: readString(input, "schedule", existing.schedule),
+    ...readDurableFields(input, existing.type, existing),
     enabled: readBoolean(input, "enabled", existing.enabled),
     updatedAt: now(),
   };
 
-  return (yield* integrationValue(store.save(next)));
+  return publicWorkload(yield* integrationValue(store.save(next)));
 }));
   }
 
@@ -461,6 +552,61 @@ function runWorkload(
     );
 
     return yield* integration(() => store.appendLog(log));
+  }));
+}
+
+function enqueueJob(database: WorkloadsDatabase | undefined, workload: WorkloadDefinition, body: unknown) {
+  return present(Effect.gen(function* () {
+    if (database === undefined) throw new TypeError("This runtime has no database to keep jobs in.");
+    const input = isRecord(body) ? body : {};
+    const tenant = readString(input, "tenantId") ?? workload.tenant;
+    if (tenant === undefined) throw new TypeError("Name a Tenant: tenantId in the request, or a tenant on the job.");
+    if (!isValidTenantId(tenant)) throw new TypeError("tenantId is not a valid Tenant id.");
+    if (input.input != null && !isRecord(input.input)) throw new TypeError("input must be a JSON object.");
+    const primaryKey = readString(input, "primaryKey");
+    const deliverAt = readString(input, "deliverAt");
+    return yield* integration(() => database.forTenant(tenant).entities.send({
+      type: JOB_ENTITY, id: workload.name, tag: "run", payload: (input.input ?? {}) as Record<string, never>,
+      ...(primaryKey === undefined ? {} : { primaryKey }), ...(deliverAt === undefined ? {} : { deliverAt }),
+    }));
+  }));
+}
+
+/**
+ * An inbound webhook: verified, then saved in its Tenant's mailbox keyed by the provider's event id, and only then
+ * answered. A provider's retry of the same event finds it already kept (`duplicate`), so a 2xx means "kept", never
+ * "will be kept". A mailbox that cannot take it answers 503 with `retry-after`, which providers retry.
+ */
+function receiveWebhook(database: WorkloadsDatabase | undefined, store: WorkloadsStore, projectId: string, name: string, request: Request) {
+  return present(Effect.gen(function* () {
+    const workload = (yield* integrationValue(store.list({ projectId, type: "webhook" }))).find((entry) => entry.enabled && entry.name === name);
+    if (workload === undefined) return { status: 404, body: { error: "Webhook not found." } };
+    if (database === undefined) return { status: 503, body: { error: "This runtime has no database to keep webhooks in." } };
+    if (workload.tenant === undefined) return { status: 409, body: { error: "This webhook has no tenant to keep events in." } };
+    const length = Number(request.headers.get("content-length") ?? 0);
+    if (Number.isFinite(length) && length > BODY_LIMIT) return { status: 413, body: { error: `A webhook body is at most ${BODY_LIMIT} bytes.` } };
+    const text = yield* integration(() => request.text());
+    if (text.length > BODY_LIMIT) return { status: 413, body: { error: `A webhook body is at most ${BODY_LIMIT} bytes.` } };
+    const signatureHeader = workload.signatureHeader ?? DEFAULT_SIGNATURE_HEADER;
+    if (workload.secret !== undefined && !(yield* verifySignature(workload.secret, text, request.headers.get(signatureHeader)))) {
+      return { status: 401, body: { error: "The signature does not match." } };
+    }
+    let parsed: unknown;
+    try { parsed = text === "" ? {} : JSON.parse(text); } catch { parsed = undefined; }
+    const eventId = eventIdOf(workload, request.headers, parsed);
+    if (eventId === undefined) return { status: 400, body: { error: "The event has no id to keep it by: name the header in eventIdHeader, or send a body with an id." } };
+    const body = isRecord(parsed) ? { body: parsed } : { raw: text };
+    const sent = yield* integration(() => database.forTenant(workload.tenant!).entities.send({
+      type: WEBHOOK_ENTITY, id: workload.name, tag: "received", primaryKey: eventId,
+      payload: JSON.parse(JSON.stringify({ eventId, receivedAt: now(), headers: keptHeaders(request.headers, signatureHeader), ...body })) as Record<string, never>,
+    })).pipe(Effect.catch((failure) => {
+      const error = unwrapFailure(failure) as { readonly _tag?: string };
+      return error._tag === "MailboxFull" || error._tag === "TenantMoving"
+        ? Effect.succeed({ unavailable: true as const })
+        : Effect.fail(failure);
+    }));
+    if ("unavailable" in sent) return { status: 503, headers: { "retry-after": "30" }, body: { error: "The webhook's mailbox cannot take the event now; send it again." } };
+    return { status: 202, body: { received: true, duplicate: sent.duplicate, messageKey: sent.message.messageKey } };
   }));
 }
 
@@ -608,7 +754,7 @@ export function workloadsEndpointGroup(
   options: WorkloadsServiceOptions = {},
 ): ZelavisEndpointGroup<WorkloadsApi> {
   const store = options.store ?? createMemoryWorkloadsStore();
-  const service: WorkloadsApi = { store };
+  const service: WorkloadsApi = { store, ...(options.database === undefined ? {} : { database: options.database }) };
 
   return {
     id: "workloads",
@@ -675,7 +821,7 @@ export function workloadsEndpointGroup(
             workloads: (yield* integrationValue(store.list({
               projectId: readProjectId(query),
               type: readTypeFromQuery(query),
-            }))),
+            }))).map(publicWorkload),
           };
   }))),
         },
@@ -722,7 +868,7 @@ export function workloadsEndpointGroup(
             if (!workload) {
               throw new TypeError("Workload not found.");
             }
-            return workload;
+            return publicWorkload(workload);
           }))),
         },
         {
@@ -748,6 +894,8 @@ export function workloadsEndpointGroup(
           spec: {
             operationId: "runWorkload",
             summary: "Run a workload now",
+            description:
+              "Runs a function now. For a job it enqueues a run instead: the body may name `tenantId` (the job's own Tenant when omitted), `input` (the JSON object the job's code receives as the message payload), a `primaryKey` that makes a resend the same run, and `deliverAt` (ISO 8601) to hold the run until then. The answer is `{ message, duplicate }`; the run is kept until the job's code has handled it, retried with growing pauses.",
             tags: ["workloads"],
             responses: {
               200: { description: "Run started" },
@@ -757,13 +905,42 @@ export function workloadsEndpointGroup(
           method: "POST",
           path: "/:id/run",
           access: { permissions: ["workloads.manage"] },
-          handler: route(({ params }) => present(Effect.gen(function* () {
+          handler: route(({ params, body }) => present(Effect.gen(function* () {
             const workload = (yield* integrationValue(store.read(params.id)));
             if (!workload) {
               throw new TypeError("Workload not found.");
             }
+            // A job is not run in the request: the run is kept in its Tenant's mailbox until its code has handled it.
+            if (workload.type === "job") return (yield* integrationValue(enqueueJob(options.database, workload, body)));
             return (yield* integrationValue(runWorkload(store, workload)));
           }))),
+        },
+        {
+          id: "workloads.webhooks.receive",
+          spec: {
+            operationId: "receiveWebhook",
+            summary: "Receive an inbound webhook",
+            description:
+              "Verifies the webhook's HMAC signature when it has a secret, saves the event in its Tenant's mailbox keyed by the provider's event id, and only then answers 202. A provider's retry of an event already kept answers 202 with `duplicate: true`. 401 when the signature does not match, 400 when the event has no id, 413 over 256 KiB, 503 with `retry-after` when the mailbox is full.",
+            tags: ["workloads"],
+            pathParams: {
+              projectId: { type: "string" as const, required: true, description: "The Project owning the webhook." },
+              name: { type: "string" as const, required: true, description: "The webhook workload's name." },
+            },
+            responses: {
+              202: { description: "{ received, duplicate, messageKey }" },
+              401: { description: "The signature does not match" },
+              404: { description: "No such webhook" },
+              503: { description: "Not kept; send it again" },
+            },
+          },
+          method: "POST" as const,
+          path: "/webhooks/:projectId/:name",
+          handler: ({ params, request }: ZelavisRouteContext<WorkloadsApi>) => present(
+            integration(() => receiveWebhook(options.database, store, params.projectId || "default", params.name!, request)).pipe(
+              Effect.catchCause((cause) => Effect.succeed(jsonError(unwrapFailure(Cause.squash(cause))))),
+            ),
+          ),
         },
         ...(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map((method) =>
           createHttpFunctionRoute(store, method),
@@ -792,52 +969,5 @@ export function workloadsEndpointGroup(
         },
       ],
     },
-  };
-}
-
-/** What the entity runner needs from the database: `DatabaseRuntimeApi.entities`. */
-interface EntityServing {
-  readonly entities: {
-    readonly serve: (handlers: (type: string) => RuntimeEntityHandler | undefined) => { readonly stop: () => Promise<void> };
-  };
-}
-
-/** How often the runner rereads the entity workloads, so a new or changed handler is used within this long. */
-const ENTITY_WORKLOAD_REFRESH_MILLIS = 2000;
-
-/**
- * Serve durable entities with the enabled `entity` workloads as their handlers, by name, until `stop`. The workloads
- * are reread every two seconds, so a handler added, changed or disabled takes effect without a restart; a type with
- * no enabled workload keeps its messages until one exists. A handler's module is loaded once per version of its code.
- */
-export function serveEntityWorkloads(database: EntityServing, store: WorkloadsStore): { readonly stop: () => Promise<void> } {
-  let handlers = new Map<string, RuntimeEntityHandler>();
-  const loaded = new Map<string, RuntimeEntityHandler>();
-  const handlerOf = (workload: WorkloadDefinition): RuntimeEntityHandler => {
-    const version = `${workload.id}:${workload.updatedAt}`;
-    const known = loaded.get(version);
-    if (known !== undefined) return known;
-    const handler: RuntimeEntityHandler = (message, context) => present(Effect.gen(function* () {
-      const module = (yield* integrationValue(import(createModuleDataUrl(workload)))) as { default?: unknown; handle?: unknown };
-      const handle = module.default ?? module.handle;
-      if (typeof handle !== "function") {
-        throw new TypeError(`Entity workload "${workload.name}" must export a default function or a named handle function.`);
-      }
-      return (yield* integrationValue(handle(message, context))) as EntityStep;
-    }));
-    loaded.set(version, handler);
-    return handler;
-  };
-  const refresh = Effect.gen(function* () {
-    const workloads = yield* integration(() => store.list({ type: "entity" }));
-    handlers = new Map(workloads.filter((workload) => workload.enabled).map((workload) => [workload.name, handlerOf(workload)]));
-    // Versions no workload names any more are let go.
-    const current = new Set(workloads.map((workload) => `${workload.id}:${workload.updatedAt}`));
-    for (const version of loaded.keys()) if (!current.has(version)) loaded.delete(version);
-  }).pipe(Effect.catchCause((cause) => Effect.logWarning("Entity workloads could not be read; the runner keeps the handlers it had", cause)));
-  const refreshing = Effect.runFork(Effect.andThen(refresh, Effect.forever(Effect.andThen(unrefSleep(ENTITY_WORKLOAD_REFRESH_MILLIS), refresh))));
-  const serving = database.entities.serve((type) => handlers.get(type));
-  return {
-    stop: () => present(Effect.andThen(Fiber.interrupt(refreshing), integration(() => serving.stop()))),
   };
 }
