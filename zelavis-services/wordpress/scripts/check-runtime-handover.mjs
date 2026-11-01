@@ -41,7 +41,7 @@ execFileSync("chown", ["-R", "zelavis:zelavis", join(frontend, "..")]);
 const started = await client.projects.start(app.id);
 assert.equal(started.runtime.status, "running");
 const stateDirectory = "/var/lib/zelavis/projects/.agent-processes";
-const identities = async () => (await Promise.all((await readdir(stateDirectory)).map(async name => JSON.parse(await readFile(join(stateDirectory, name), "utf8"))))).map(value => `${value.workloadId}:${value.pid}`).sort();
+const identities = async () => (await Promise.all((await readdir(stateDirectory)).filter(name => name.endsWith(".json")).map(async name => JSON.parse(await readFile(join(stateDirectory, name), "utf8"))))).map(value => `${value.workloadId}:${value.pid}`).sort();
 const before = await identities();
 assert.ok(before.some(value => value.startsWith(`${wp.id}:`)));
 assert.ok(before.some(value => value.startsWith(`${app.id}:`)));
