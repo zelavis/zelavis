@@ -171,7 +171,7 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   if (typeof runtime.error === "string") body.push(message(runtime.error, true));
   if (typeof preview.error === "string") body.push(message(preview.error, true));
 
-  if (update || recipeStatus && recipeStatus.state !== "current") body.push(upgradeNotice(project, recipes, act, path));
+  if (update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout) body.push(upgradeNotice(project, recipes, act, path));
 
   if (versions) body.push(versionPanel(context, project, path, act, versions));
 
@@ -211,7 +211,10 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
     return node("div", { class: "notice", "aria-label": "Project update" }, node("strong", {}, update.error ? "Update recovery required" : "Update in progress"),
       ...(typeof update.error === "string" ? [node("p", { class: "danger" }, update.error), button("Retry update", () => upgrade())] : []));
   }
-  const copy = status.state === "upgradeAvailable"
+  const layout = object(project.dataLayout);
+  const copy = layout.state === "upgradeRequired"
+    ? `This app's Zelavis data is in an older layout (format ${label(layout.from)}), so it stays on its current Zelavis version. Updating moves it to format ${label(layout.to)}: your data is kept, document versions and change history restart, and the previous data is retained until you remove it.${status.state === "upgradeAvailable" ? ` A newer recipe (${label(status.version)}) is applied with it.` : ""}`
+    : status.state === "upgradeAvailable"
     ? integration
       ? `A newer recipe is available: ${label(status.version)}. Updates this app's Zelavis integration while its service keeps running. The app manages its own software updates.`
       : `A newer recipe is available: ${label(status.version)}. Upgrading keeps this Project's data${restarts ? " and restarts it, so it is unavailable for a short while" : ""}. The application's own software is not changed.`

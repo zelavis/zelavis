@@ -454,6 +454,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   signGatewayAuthority: "project-id",
   commitUpgrade: "project-id",
   abandonUpgrade: "project-id",
+  migrateData: "descriptor",
   fencePrevious: "placement",
   adopt: "every-driver",
   detach: "every-driver",
@@ -604,6 +605,10 @@ export function createDeploymentBackendProjectRuntime(options: {
     gatewayTarget: Effect.fn("BackendProjects.gatewayTarget")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["gatewayTarget"]>>[1]) {
       const runtime = effectOperations(yield* evaluate(() => forDescriptor(project)));
       return runtime.gatewayTarget ? yield* runtime.gatewayTarget(project, placement) : project.runtime.url;
+    }),
+    migrateData: Effect.fn("BackendProjects.migrateData")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[1]) {
+      const migrate = effectOperations(yield* evaluate(() => forDescriptor(project))).migrateData;
+      return migrate ? yield* migrate(project, placement) : undefined;
     }),
     commitUpgrade: Effect.fn("BackendProjects.commitUpgrade")(function* (id: string) {
       const commit = effectOperations(yield* forProjectId(id)).commitUpgrade;

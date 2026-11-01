@@ -118,7 +118,9 @@ test("a bound App starts on the engine that wrote its data across a layout chang
     await release(directory, ZELAVIS_VERSION);
     const catalog = createNodeRuntimeCatalog({ directory, rootOwned: false });
     const journalFile = join(directory, "runtime-handover.json");
-    const select = () => Effect.runPromise(chooseBoundEngine({ journalFile, catalog }));
+    const layoutRoot = directory;
+    const select = () => Effect.runPromise(chooseBoundEngine({ journalFile, layoutRoot, catalog }));
+    const layout = (record) => writeFile(join(layoutRoot, "data-layout.json"), `${JSON.stringify(record)}\n`);
     const journal = (version) => writeFile(journalFile, `${JSON.stringify({ format: "zelavis-runtime/1", generation: 3, selected: { version, digest: older.selected.digest } })}\n`);
     const declare = async (version, dataFormat) => {
       const file = join(directory, version, "runtime-artifact.json");
@@ -141,7 +143,18 @@ test("a bound App starts on the engine that wrote its data across a layout chang
     await declare("1.0.0", CURRENT_FORMAT);
     assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "equal formats keep following the Platform");
 
+    // A migration records the layout it left: the data now agrees with the Platform even though the host's engine declares format 2.
     await declare("1.0.0", undefined);
+    await layout({ format: CURRENT_FORMAT });
+    assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "migrated data follows the Platform");
+    // An undone migration puts the old layout back and names the engine that wrote it, even if the journal already names the Platform's.
+    await journal(ZELAVIS_VERSION);
+    await layout({ format: 2, engine: "1.0.0" });
+    const undone = await select();
+    assert.equal(undone.version, "1.0.0", "old data stays on the engine that wrote it");
+    await rm(join(directory, "data-layout.json"), { force: true });
+
+    await journal("1.0.0");
     await rm(join(directory, "1.0.0"), { recursive: true, force: true });
     await assert.rejects(select(), undefined, "a held Project whose engine was removed fails loudly instead of opening its data on another engine");
 

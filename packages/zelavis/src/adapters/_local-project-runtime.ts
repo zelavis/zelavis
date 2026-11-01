@@ -398,6 +398,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             ...(managedIntegration(project) ? { zeroDowntimeUpdates: true, recipeUpdateMode: "integration" as const } : {}) }),
         supportsLiveUpdate: project => managedIntegration(project) || forDescriptor(project).supportsLiveUpdate?.(project) === true,
         versions: Effect.fn("LocalProjects.versions")(function* (project) {
+            if (project && managedIntegration(project)) return yield* effectOperations(integrationNode).versions!(project);
             if (project && forDescriptor(project) !== node) return { selectable: false, reason: "This recipe manages its own runtime version.", versions: [] };
             return yield* effectOperations(node).versions!(project);
         }),
@@ -603,6 +604,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             yield* integrationRuntime.destroy(id);
             driverOfProject.delete(id);
             recipeDefinitions.delete(id);
+        }),
+        // Only a managed app's bound App has data of its own to bring across a layout change here; a native App migrates in `prepare`.
+        migrateData: Effect.fn("LocalProjects.migrateData")(function* (project, placement) {
+            if (!managedIntegration(project)) return undefined;
+            return yield* integrationRuntime.migrateData!(project, placement);
         }),
         commitUpgrade: Effect.fn("LocalProjects.commitUpgrade")(function* (id) {
             const selected = effectOperations(yield* forProjectId(id));

@@ -183,6 +183,11 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   /** Recipe upgrades this Project has been through, oldest first, most recent ten. */
   recipeHistory?: readonly ZelavisProjectRecipeUpgrade[];
   /**
+   * Present on a managed app whose bound App still holds data in an earlier layout than the Platform writes. It stays on the engine
+   * that wrote that data until the Project's upgrade migrates it. Derived on every read, never stored.
+   */
+  dataLayout?: { readonly state: "upgradeRequired"; readonly from: number; readonly to: number };
+  /**
    * The locked isolation intent compared with the assigned backend, present
    * only when the recipe declares intent. Derived on every read, like
    * `capabilities`, because backend capability can change under a lock.
@@ -268,6 +273,8 @@ export interface ZelavisProjectVersions {
   readonly current?: string;
   /** The data layout the Project's database holds now (it can differ from what its locked engine writes after a migration). */
   readonly currentDataFormat?: number;
+  /** The layout the Platform's own engine writes, for a Project whose engine follows the Platform. */
+  readonly latestDataFormat?: number;
   readonly latest?: string;
   readonly selectable: boolean;
   readonly reason?: string;
@@ -288,6 +295,11 @@ export interface ZelavisProjectRuntimeDriver {
   /** Resolves only a verified installed engine and its bundled App recipe. */
   resolveVersion?(project: Readonly<ZelavisProjectDescriptor>, version?: string): Promise<{ engineVersion: string; recipe: ZelavisProjectRecipeLock } | undefined>;
   prepareUpdate?(previous: ZelavisProjectRecord, candidate: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<ZelavisProjectRuntimeUpdate>;
+  /**
+   * Brings a managed app's bound App across a data-layout change, whether or not its recipe changes: its host is stopped, its
+   * data migrated and swapped in, and the host started on the Platform's engine. Undefined when nothing needed migrating.
+   */
+  migrateData?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<{ readonly from: number; readonly to: number } | undefined>;
   /**
    * Acquires what a candidate recipe needs (its pinned programs) and checks this host can run it, while
    * the Project keeps serving from its current recipe. Used before a cross-layout upgrade takes the
@@ -1368,7 +1380,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
     }
     // Persisted refreshes hold the lifecycle permit. Fleet reads are a pure
     // view: Fabric may read them while a Project transition holds its permit.
-    const refresh = Effect.fn("Projects.refresh")(function* (id: string, persist: boolean): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
+    const refreshRecord = Effect.fn("Projects.refreshRecord")(function* (id: string, persist: boolean): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
         const record = yield* store.get(PROJECTS_NAMESPACE, id);
         if (!record) return undefined;
         const { project, repaired } = yield* evaluate(() => normalizeStoredProject(record.value));
@@ -1397,6 +1409,15 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         const current = unchanged ? project : applySnapshot(project, snapshot);
         return yield* (unchanged || !persist ? ingressView(current) : write(current));
     });
+    /** A managed app whose data layout trails the Platform's says so, so its card can offer the upgrade that migrates it. */
+    const withDataLayout = Effect.fn("Projects.withDataLayout")(function* (project: ZelavisProjectRecord | undefined): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
+        const listVersions = runtimeEffects.versions;
+        if (!project || !project.recipe.managed || project.deletion || project.runtimeUpdate || listVersions === undefined) return project;
+        const versions = yield* Effect.orElseSucceed(listVersions(project), () => undefined);
+        if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat === versions.latestDataFormat) return project;
+        return { ...project, dataLayout: { state: "upgradeRequired" as const, from: versions.currentDataFormat, to: versions.latestDataFormat } };
+    });
+    const refresh = (id: string, persist: boolean) => Effect.flatMap(refreshRecord(id, persist), withDataLayout);
     const deleteProject = Effect.fn("Projects.deleteProject")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
         const existingProject = yield* read(id);
         if (!existingProject) {
@@ -2264,6 +2285,12 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
                 if (input?.engineVersion !== undefined && project.placement)
                     return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
+                // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
+                // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
+                if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
+                    const migrated = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
+                    if (migrated && recipeStatusOf(project.recipe).state === "current") return (yield* refresh(project.id, false))!;
+                }
                 if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
                     (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
                 const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true && !(yield* changesDataLayout(project, input?.engineVersion)) &&
