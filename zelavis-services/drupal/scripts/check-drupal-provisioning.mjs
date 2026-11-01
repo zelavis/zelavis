@@ -61,7 +61,7 @@ const header = (text) => {
 if (phase === "create") {
   assert.notEqual(process.getuid(), 0, "the qualification client and Project must be unprivileged");
   const recipes = await client.projects.recipes();
-  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/drupal").hostPackages, ["mariadb-server"]);
+  assert.deepEqual(recipes.find((recipe) => recipe.name === "@zelavis/drupal").hostPackages, process.arch === "x64" ? [] : ["mariadb-server"]);
   let project = await client.projects.create({ id, name: "Qualification Drupal", recipeName: "@zelavis/drupal" });
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
   phpBinary = JSON.parse(await readFile(`${directory}/.zelavis/recipe-state.json`, "utf8")).commands.php;
@@ -87,7 +87,7 @@ if (phase === "create") {
   // Drupal's own installer (the code its web installer runs) with exactly those values.
   const site = `${directory}/app/site`;
   const adminPassword = `Adm-${randomBytes(12).toString("hex")}`;
-  const script = `${directory}/app/tmp/install.php`;
+  const script = `${directory}/.zelavis/server/tmp/install.php`;
   await writeFile(script, `<?php
 chdir($argv[1]);
 $loader = require 'autoload.php';
@@ -130,7 +130,7 @@ echo "installed";
   manifest.version = "0.0.0-qualification";
   await writeFile(`${frozen}/package.json`, JSON.stringify(manifest));
   await writeFile(`${frozen}/dist/recipe.js`, header(await readFile(`${frozen}/dist/recipe.js`, "utf8")));
-  await writeFile(`${directory}/app/Caddyfile`, header(await readFile(`${directory}/app/Caddyfile`, "utf8")));
+  await writeFile(`${directory}/.zelavis/server/Caddyfile`, header(await readFile(`${directory}/.zelavis/server/Caddyfile`, "utf8")));
   const descriptor = JSON.parse(await readFile(`${directory}/project.json`, "utf8"));
   descriptor.recipe = { ...descriptor.recipe, version: manifest.version, artifact: { digest: await digestArtifactDirectory(frozen) } };
   await writeFile(`${directory}/project.json`, JSON.stringify(descriptor));
@@ -147,7 +147,7 @@ echo "installed";
   project = await client.projects.start(id);
   assert.equal(project.recipe.version, "0.0.0-qualification");
   assert.equal(project.runtime.status, "running", JSON.stringify(project));
-  const run = `${directory}/app/run`;
+  const run = `${directory}/.zelavis/server/run`;
   const pids = async () => Object.fromEntries(await Promise.all(["caddy", "php-fpm", "mariadb"].map(async (name) => [name, (await readFile(`${run}/${name}.pid`, "utf8")).trim()])));
   const before = await pids();
   assert.equal((await ask(`${project.runtime.url}/`)).header, "historical");
