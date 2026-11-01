@@ -157,6 +157,7 @@ shards.
    (`/runtime/writer-leases`, `httpLeaseStore`) and `pnpm release:qualify:failover` holds a `SIGKILL`, a partition and
    an unacknowledged tail to the decision in separate containers. Other followers find the new writer from the lease
    (`followWriter`), `allowDataLoss` needs its own permission and is audited, and the control flow is decision 9.
+   The writer names the one follower it waits for (`standby`) and only that follower is promoted without accepting loss: the lease's `acknowledgedHead` lags up to a third of its life, so without it a different level follower could miss a write acknowledged just before the writer died.
    **Open:** the Fabric half of decision 9 — a general way to start a Project on another node from its follower copy
    (a standby Project supervised by that node's Agent) and to commit the placement `{owner, epoch}` when the lease
    epoch advances — and running `standby` inside those standby Projects.

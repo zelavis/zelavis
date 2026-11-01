@@ -59,7 +59,7 @@ export function createFabricClient(json: Json): ZelavisFabricClient {
 
 /** A partition's writer lease as the Platform's authority keeps it, with the version a conditional write names. */
 export interface ZelavisWriterLeaseRecord {
-  readonly lease: { readonly partition: string; readonly owner: string; readonly epoch: number; readonly expiresAt: number; readonly acknowledgedHead: number; readonly endpoint?: string; readonly lostPositions?: number };
+  readonly lease: { readonly partition: string; readonly owner: string; readonly epoch: number; readonly expiresAt: number; readonly acknowledgedHead: number; readonly endpoint?: string; readonly standby?: string; readonly lostPositions?: number };
   readonly version: string;
 }
 

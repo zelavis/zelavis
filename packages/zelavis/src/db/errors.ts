@@ -227,6 +227,16 @@ export class LeaseOwnedByAnother extends Schema.TaggedError<LeaseOwnedByAnother>
   epoch: Schema.Finite,
 }) {}
 
+/**
+ * The writer named a standby, the one follower whose acknowledgment its writes wait for, and this is another: only the
+ * designated standby is known to hold every acknowledged write. An operator accepts that loss with `allowDataLoss`.
+ */
+export class NotDesignatedStandby extends Schema.TaggedError<NotDesignatedStandby>()("NotDesignatedStandby", {
+  partition: Schema.String,
+  standby: Schema.String,
+  owner: Schema.String,
+}) {}
+
 /** The partition has never had a writer lease, so there is no writer to take over from. */
 export class NoWriterLease extends Schema.TaggedError<NoWriterLease>()("NoWriterLease", {
   partition: Schema.String,

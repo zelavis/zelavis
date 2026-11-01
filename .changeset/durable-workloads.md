@@ -31,3 +31,6 @@ interruptible, so a follower whose leader is partitioned can still be stopped an
 Followers find the new writer from the lease alone (`endpoint`, `db.writerLeases.follow`), accepting data loss in a
 promotion needs `database.failover.accept-data-loss`, and the Platform audits every change of writer
 (`GET /runtime/writer-lease-audit`, `client.writerLeases.audit()`, `zelavis leases audit`).
+
+A writer lease can name its `standby`, the one follower its acknowledgments wait for; only that follower is promoted
+without accepting data loss (`NotDesignatedStandby`), so an acknowledged write is held by the follower that is promoted.

@@ -93,7 +93,7 @@ process.on("SIGUSR2", () => { writing = false; say("quiesced"); });
 if (ROLE === "writer") {
   await documents.createCollection({ name: "posts" });
   const scope = Effect.runSync(Scope.make());
-  const handle = await inScope(scope, database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT }));
+  const handle = await inScope(scope, database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, ...(env("STANDBY", "") === "" ? {} : { standby: env("STANDBY", "") }) }));
   say("writer", { epoch: (await Effect.runPromise(handle.lease)).epoch });
   await writeLoop(handle, 1);
   // Superseded: stop being a writer and follow whoever the lease names now. What this node wrote past what was
@@ -110,6 +110,7 @@ if (ROLE === "writer") {
   say("standby");
   const handle = await inScope(scope, database.writerLeases.standby({
     partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, interval: "50 millis", pollMillis: 300, leaderFor,
+    ...(env("SUCCESSOR", "") === "" ? {} : { successor: env("SUCCESSOR", "") }),
   }).pipe(Effect.orDie));
   const ids = await idsNow();
   // The lease is created with expiresAt = the instant of the compare-and-set + ttl: when the promotion actually landed.

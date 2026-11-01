@@ -62,6 +62,23 @@ test("a lease changes hands only by expiry or release, only to a follower that h
     assert.equal(restarted.epoch, 4, "an owner starting again takes a new epoch, fencing its former self");
   }).pipe(Effect.provide(TestClock.layer()))));
 
+test("only the designated standby is promoted without accepting loss, and the new writer names its own", () =>
+  Effect.runPromise(Effect.gen(function* () {
+    const leases = memoryLeaseStore();
+    const first = yield* acquireWriter(leases, { partition: "p", owner: "A", ttlMillis: 1000, standby: "B" });
+    assert.equal(first.standby, "B");
+    yield* renewWriter(leases, first, { ttlMillis: 1000, acknowledgedHead: 5 });
+    yield* TestClock.adjust("2 seconds");
+    const refused = fail(yield* Effect.exit(promoteFollower(leases, { partition: "p", owner: "C", ttlMillis: 1000, followerHead: 9 })));
+    assert.deepEqual([refused._tag, refused.standby, refused.owner], ["NotDesignatedStandby", "B", "C"], "another follower, even one that is level, is not known to hold what was acknowledged");
+    const promoted = yield* promoteFollower(leases, { partition: "p", owner: "B", ttlMillis: 1000, followerHead: 5, successor: "A" });
+    assert.deepEqual([promoted.lease.epoch, promoted.lease.standby], [2, "A"]);
+    yield* TestClock.adjust("2 seconds");
+    const override = yield* promoteFollower(leases, { partition: "p", owner: "C", ttlMillis: 1000, followerHead: 5, allowDataLoss: true });
+    assert.equal(override.lease.epoch, 3, "an operator may override, accepting that acknowledged writes may be missing");
+    assert.equal(override.lease.standby, undefined);
+  }).pipe(Effect.provide(TestClock.layer()))));
+
 const random = (seed) => () => {
   seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
   let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);

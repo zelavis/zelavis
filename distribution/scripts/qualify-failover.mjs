@@ -83,9 +83,9 @@ const common = (endpoint) => ({ AUTHORITY: "http://authority:8080", TOKEN: "dril
 await drill("kill", async ({ start, until: wait_ }) => {
   start("authority", {});
   await wait(800);
-  const a = start("A", { ROLE: "writer", ...common("http://A:8080") });
+  const a = start("A", { ROLE: "writer", STANDBY: "B", ...common("http://A:8080") });
   await wait(800);
-  const b = start("B", { ROLE: "standby", ...common("http://B:8080") });
+  const b = start("B", { ROLE: "standby", SUCCESSOR: "A", ...common("http://B:8080") });
   await wait_("the writer to have 25 acknowledged writes", () => idsAcked(events(a)).length >= 25, 90_000);
   const killedAt = Date.now();
   docker("kill", "-s", "KILL", a);
@@ -110,11 +110,12 @@ await drill("kill", async ({ start, until: wait_ }) => {
 await drill("partition", async ({ net, start, until: wait_ }) => {
   start("authority", {});
   await wait(800);
-  const a = start("A", { ROLE: "writer", ...common("http://A:8080") });
+  const a = start("A", { ROLE: "writer", STANDBY: "B", ...common("http://A:8080") });
   await wait(800);
-  const b = start("B", { ROLE: "standby", ...common("http://B:8080") });
-  // A third node that is never promoted: it must find the new writer from the lease alone.
-  const c = start("C", { ROLE: "follower", ...common("http://C:8080") });
+  const b = start("B", { ROLE: "standby", SUCCESSOR: "A", ...common("http://B:8080") });
+  // A third node that tries to stand by too but is not the designated standby: it must never be promoted, and it
+  // must find the new writer from the lease alone.
+  const c = start("C", { ROLE: "standby", ...common("http://C:8080") });
   await wait_("the writer to have 25 acknowledged writes", () => idsAcked(events(a)).length >= 25, 90_000);
   const cutAt = Date.now();
   docker("network", "disconnect", net, a);
@@ -140,7 +141,8 @@ await drill("partition", async ({ net, start, until: wait_ }) => {
   const bFinalProbe = await finalOf(b);
   const aFinal = await finalOf(a);
   const cFinal = await finalOf(c);
-  check(JSON.stringify(cFinal.by) === JSON.stringify(bFinalProbe.by), "the third follower, never promoted, found the new writer from the lease and holds exactly what it holds");
+  check(!events(c).some((event) => event.event === "promoted"), "the third node, not the designated standby, was never promoted");
+  check(JSON.stringify(cFinal.by) === JSON.stringify(bFinalProbe.by), "and it found the new writer from the lease and holds exactly what it holds");
   const acked = idsAcked(events(a));
   check(acked.every((id) => bFinalProbe.ids.includes(id)), `every write the old writer acknowledged (${acked.length}) is on the new writer`);
   const same = JSON.stringify(aFinal.ids) === JSON.stringify(bFinalProbe.ids);
@@ -156,10 +158,10 @@ await drill("unacknowledged-tail", async ({ net, repl, start, until: wait_ }) =>
   // Lease traffic on one network, replication on another, so the follower can be cut off from the writer alone.
   start("authority", {});
   await wait(800);
-  const a = start("A", { ROLE: "writer", ...common("http://A-r:8080") });
+  const a = start("A", { ROLE: "writer", STANDBY: "B", ...common("http://A-r:8080") });
   docker("network", "connect", "--alias", "A-r", repl, a);
   await wait(800);
-  const b = start("B", { ROLE: "standby", ...common("http://B-r:8080") });
+  const b = start("B", { ROLE: "standby", SUCCESSOR: "A", ...common("http://B-r:8080") });
   docker("network", "connect", "--alias", "B-r", repl, b);
   await wait_("the writer to have 15 acknowledged writes", () => idsAcked(events(a)).length >= 15, 90_000);
   docker("network", "disconnect", repl, b);

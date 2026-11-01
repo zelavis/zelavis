@@ -1,6 +1,6 @@
 import { Clock, Duration, Effect, Fiber, type Scope } from "effect";
 import { isNonNegativeInteger, isString, objectFields, optional } from "../core/json-validation.js";
-import { FollowerBehind, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, StoreError, WriterFenced, type DbError } from "./errors.js";
+import { FollowerBehind, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, NotDesignatedStandby, StoreError, WriterFenced, type DbError } from "./errors.js";
 import type { PartitionKey } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
 
@@ -43,6 +43,12 @@ export interface WriterLease {
    * promotion; opaque to the protocol.
    */
   readonly endpoint?: string;
+  /**
+   * The one follower the writer's acknowledgments wait for. A write acknowledged to a caller is then held by it, so it
+   * is the only follower promoted without accepting loss. Without one, any follower that has reached the last reported
+   * `acknowledgedHead` may be promoted, and that head is only as fresh as the last renewal (up to a third of the lease).
+   */
+  readonly standby?: string;
   /** Set by a promotion that accepted data loss: the acknowledged positions the new writer's copy was missing. */
   readonly lostPositions?: number;
 }
@@ -51,6 +57,7 @@ export interface WriterLease {
 export const isWriterLease = objectFields<WriterLease>({
   partition: isString, owner: isString, epoch: isNonNegativeInteger, expiresAt: isNonNegativeInteger, acknowledgedHead: isNonNegativeInteger,
   endpoint: optional((value): value is string => isString(value) && value.length <= 2048),
+  standby: optional((value): value is string => isString(value) && value.length > 0 && value.length <= 128),
   lostPositions: optional(isNonNegativeInteger),
 });
 
@@ -120,13 +127,14 @@ export const acquireWriter = (leases: LeaseStore, input: {
   readonly ttlMillis: number;
   readonly head?: number;
   readonly endpoint?: string;
+  readonly standby?: string;
 }): Effect.Effect<WriterLease, StoreError | LeaseOwnedByAnother | LeaseStillHeld> =>
   Effect.gen(function* () {
     const ttl = yield* checkedTtl(input.ttlMillis);
     const now = yield* Clock.currentTimeMillis;
     const observed = yield* leases.read(input.partition);
     if (observed === undefined) {
-      const lease: WriterLease = { partition: input.partition, owner: input.owner, epoch: 1, expiresAt: now + ttl, acknowledgedHead: input.head ?? 0, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) };
+      const lease: WriterLease = { partition: input.partition, owner: input.owner, epoch: 1, expiresAt: now + ttl, acknowledgedHead: input.head ?? 0, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }), ...(input.standby === undefined ? {} : { standby: input.standby }) };
       if (yield* leases.create(lease)) return lease;
       const raced = yield* leases.read(input.partition);
       return yield* (raced === undefined ? Effect.die(new Error("a lease vanished while being created")) : Effect.fail(taken(raced)));
@@ -138,6 +146,7 @@ export const acquireWriter = (leases: LeaseStore, input: {
       ...observed.lease, epoch: observed.lease.epoch + 1, expiresAt: now + ttl,
       acknowledgedHead: Math.max(observed.lease.acknowledgedHead, input.head ?? 0),
       ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+      ...(input.standby === undefined ? {} : { standby: input.standby }),
     };
     if (yield* leases.replace(observed, lease)) return lease;
     const raced = yield* leases.read(input.partition);
@@ -194,13 +203,19 @@ export const promoteFollower = (leases: LeaseStore, input: {
   readonly allowDataLoss?: boolean;
   /** Where followers read the new writer. */
   readonly endpoint?: string;
-}): Effect.Effect<Promotion, StoreError | LeaseStillHeld | FollowerBehind | NoWriterLease> =>
+  /** The standby the new writer's acknowledgments will wait for. */
+  readonly successor?: string;
+}): Effect.Effect<Promotion, StoreError | LeaseStillHeld | FollowerBehind | NoWriterLease | NotDesignatedStandby> =>
   Effect.gen(function* () {
     const ttl = yield* checkedTtl(input.ttlMillis);
     const now = yield* Clock.currentTimeMillis;
     const observed = yield* leases.read(input.partition);
     if (observed === undefined) return yield* new NoWriterLease({ partition: input.partition });
     if (observed.lease.expiresAt > now) return yield* taken(observed);
+    const designated = observed.lease.standby;
+    if (designated !== undefined && designated !== input.owner && input.allowDataLoss !== true) {
+      return yield* new NotDesignatedStandby({ partition: input.partition, standby: designated, owner: input.owner });
+    }
     const required = observed.lease.acknowledgedHead;
     if (input.followerHead < required && input.allowDataLoss !== true) {
       return yield* new FollowerBehind({ partition: input.partition, head: input.followerHead, required });
@@ -209,6 +224,7 @@ export const promoteFollower = (leases: LeaseStore, input: {
       partition: input.partition, owner: input.owner, epoch: observed.lease.epoch + 1, expiresAt: now + ttl,
       acknowledgedHead: input.followerHead,
       ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+      ...(input.successor === undefined ? {} : { standby: input.successor }),
       ...(required > input.followerHead ? { lostPositions: required - input.followerHead } : {}),
     };
     if (yield* leases.replace(observed, lease)) return { lease, lostPositions: Math.max(0, required - input.followerHead) };
@@ -234,6 +250,8 @@ export interface HoldWriterInput {
   readonly lease?: WriterLease;
   /** Where followers read this writer, carried by the lease it acquires. */
   readonly endpoint?: string;
+  /** The follower whose acknowledgment this writer's writes wait for: the only one promoted without accepting loss. */
+  readonly standby?: string;
   /** The highest log position acknowledged by followers now: carried in every renewal. */
   readonly acknowledged?: Effect.Effect<number>;
 }
@@ -248,7 +266,7 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
     const ttl = yield* checkedTtl(input.ttlMillis);
     const margin = leaseMargin(ttl);
     const partition = input.store.partition;
-    let held = input.lease ?? (yield* acquireWriter(input.leases, { partition, owner: input.owner, ttlMillis: ttl, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) }));
+    let held = input.lease ?? (yield* acquireWriter(input.leases, { partition, owner: input.owner, ttlMillis: ttl, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }), ...(input.standby === undefined ? {} : { standby: input.standby }) }));
     let superseded = false;
 
     const gate: Effect.Effect<void, DbError> = Effect.gen(function* () {
@@ -296,6 +314,8 @@ export interface StandbyInput {
   readonly acknowledged?: Effect.Effect<number>;
   /** Where followers read this node once it is the writer. */
   readonly endpoint?: string;
+  /** The follower this node's writes will wait for once it is the writer. */
+  readonly successor?: string;
   /** Promote even if followers' acknowledged writes would be lost; the promotion says how many. */
   readonly allowDataLoss?: boolean;
 }
@@ -329,6 +349,7 @@ export const standby = (input: StandbyInput): Effect.Effect<WriterHandle & { rea
         partition, owner: input.owner, ttlMillis: ttl, followerHead: head,
         ...(input.allowDataLoss === undefined ? {} : { allowDataLoss: input.allowDataLoss }),
         ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+        ...(input.successor === undefined ? {} : { successor: input.successor }),
       }));
       if (promoted._tag === "Success") {
         const handle = yield* holdWriter({

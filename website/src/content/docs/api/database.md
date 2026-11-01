@@ -156,6 +156,12 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   (`LeaseStillHeld`), and when its own head has reached the highest acknowledged position (`FollowerBehind`): it holds
   every write that was promised under `writeAcknowledged`. The epoch rises with the change, so two followers racing
   get one winner. `allowDataLoss` promotes a copy that is behind and reports `lostPositions`.
+- **One promotable follower.** A writer names a `standby`, the follower its acknowledgments wait for (`hold({ standby })`),
+  and only that follower is promoted without accepting loss (`NotDesignatedStandby` for any other; the new writer names
+  its own `successor`). That is what makes "acknowledged" mean "held by the one that will be promoted". Without a
+  designated standby the promotion rule falls back on `acknowledgedHead`, which a writer reports only at renewal, up to
+  a third of the lease behind: with several promotable followers a write acknowledged just before the writer died can
+  be missing from one that is level with the last report. Name a standby whenever more than one follower exists.
 - **What can be lost.** Writes the old writer committed past what its followers had acknowledged were never promised
   to anyone beyond the writer's own disk. They survive on the old host and are lost to the new writer; when the old
   writer returns it is refused, and it is made a follower of the new one (`db.followers.follow`), which copies the
