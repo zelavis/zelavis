@@ -69,9 +69,12 @@ const AUDIT_RETAINED = 500;
 export const systemStoreLeaseAudit = (store: ZelavisSystemStore): WriterLeaseAudit => {
   const failure = (op: string) => (cause: unknown) => new StoreError({ op, cause: cause instanceof Error ? cause.message : String(cause) });
   const ordered = <T extends { readonly key: string }>(entries: readonly T[]) => [...entries].sort((a, b) => (a.key < b.key ? 1 : -1));
+  // Two changes in one millisecond keep their order: the sequence breaks the tie before the random suffix does.
+  let sequence = 0;
   return {
     record: (entry) => Effect.gen(function* () {
-      const key = `${String(entry.at).padStart(15, "0")}-${crypto.randomUUID()}`;
+      sequence = (sequence + 1) % 1_000_000;
+      const key = `${String(entry.at).padStart(15, "0")}-${String(sequence).padStart(6, "0")}-${crypto.randomUUID()}`;
       yield* integration(() => store.set(AUDIT_NAMESPACE, key, entry as unknown as ZelavisSystemStoreValue));
       const all = ordered(yield* integration(() => store.list(AUDIT_NAMESPACE)));
       for (const old of all.slice(AUDIT_RETAINED)) yield* integration(() => store.delete(AUDIT_NAMESPACE, old.key));
