@@ -31,9 +31,13 @@ long steps in the background, and keep the machine awake (lid open) while they r
 1. **Start from `dev`.** It must hold every change for the release, committed; another
    agent's uncommitted files in the main checkout are never staged. Each change carries
    a changeset (`.changeset/*.md`) saying what users get, in their words.
-2. **Use the release worktree** `../zelavis-release`, detached at `dev`
-   (`git worktree add --detach ../zelavis-release dev` the first time, then
-   `git checkout --detach dev` in it). Releases never touch the main checkout.
+2. **Use a temporary release worktree**, detached at `dev`, outside the Projects folder:
+   `git worktree add --detach <empty temp dir>/zelavis-release dev` (on macOS or Linux,
+   `"$(mktemp -d)/zelavis-release"`; elsewhere any new directory outside the repository), and note its path. It
+   exists only for this release and is removed in step 8; never create a standing folder
+   beside the repository. Releases never touch the main checkout. Commit the release
+   commits there and note their sha: if the folder is lost before step 8, recreate it with
+   `git worktree add --detach <new dir> <release commit>` and carry on.
 3. **Version** in the worktree: `pnpm release:version:alpha` (or `release:version` for a
    stable release; prerelease mode must be exited first). Read the CHANGELOG it writes,
    commit `chore(release): version packages (alpha.N)`. If the build then changes
@@ -71,7 +75,8 @@ long steps in the background, and keep the machine awake (lid open) while they r
    minutes) and that its `dist.integrity` matches the packed tarball the script reported.
 8. **Merge back:** in the main checkout, `git merge --ff-only <release commit>` (the worktree
    is `dev` plus the release commits), then push `dev` when the owner agrees. `dev` must
-   hold exactly what was published.
+   hold exactly what was published. Then remove the worktree: `git worktree remove --force
+   <path>` (it holds only build output and `node_modules`; the release commits are on `dev`).
 9. **Website allow-list, every release, never skipped.** Every release publishes the
    allow-list to zelavis.com, whether or not a service changed: installed servers learn new
    versions, minimum Platform versions and a renewed expiry only from it, and a missed one
