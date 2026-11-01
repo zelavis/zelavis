@@ -1,4 +1,5 @@
 import { Clock, Duration, Effect, Fiber, type Scope } from "effect";
+import { isNonNegativeInteger, isString, objectFields } from "../core/json-validation.js";
 import { FollowerBehind, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, StoreError, WriterFenced, type DbError } from "./errors.js";
 import type { PartitionKey } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
@@ -38,6 +39,11 @@ export interface WriterLease {
   /** The highest log position known acknowledged by followers when the lease was last renewed. */
   readonly acknowledgedHead: number;
 }
+
+/** Whether a value is a lease record: what a store or a wire answer is checked against before it is trusted. */
+export const isWriterLease = objectFields<WriterLease>({
+  partition: isString, owner: isString, epoch: isNonNegativeInteger, expiresAt: isNonNegativeInteger, acknowledgedHead: isNonNegativeInteger,
+});
 
 /** A lease as read, with what a compare-and-set needs to replace exactly it. */
 export interface LeaseRead {

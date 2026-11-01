@@ -136,9 +136,11 @@ shards.
    Fabric planner).
 3. **Follower failover** (decision 5): implemented 2026-10-31 in `src/db/writer-lease.ts` (lease protocol, gate in
    the store's write path, `standby`/`hold`, `followers lease|promote|demote` over JS, HTTP, SDK and CLI), tested with
-   two databases in one process, a cut-off writer and a seeded protocol model. **Open:** kill and partition drills on
-   disposable machines, a lease authority shared across hosts (the System Store is one host's), and automatic
-   promotion by the Platform Fabric.
+   two databases in one process, a cut-off writer and a seeded protocol model. The Platform serves the lease authority
+   (`/runtime/writer-leases`, `httpLeaseStore`) and `pnpm release:qualify:failover` holds a `SIGKILL`, a partition and
+   an unacknowledged tail to the decision in separate containers. **Open:** moving the Project's placement and routing
+   to the promoted follower's host (the Fabric commit), running `standby` in Project runtimes, re-pointing other
+   followers, and an audit entry and owner permission for `allowDataLoss`.
 4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
 5. **Delivery-guarantee table** in the public docs (decision 7), written alongside phase 1 and kept current.
 

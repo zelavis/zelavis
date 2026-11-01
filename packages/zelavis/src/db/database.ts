@@ -446,6 +446,10 @@ export interface WriterLeaseStandby extends Omit<StandbyInput, "store" | "follow
   readonly leader: LeaderSource;
   /** How often the follower reads the writer when it has heard nothing. */
   readonly interval: Duration.Input;
+  /** Wakes a pass when the writer moved (`remoteChanges`), so the follower does not wait for `interval`. */
+  readonly wakeups?: Stream.Stream<unknown, never>;
+  /** Report what this follower holds to the writer after each pass: what `writeAcknowledged` waits on, and what the writer's lease carries. */
+  readonly acknowledgments?: { readonly name: string; readonly to: { readonly acknowledge: (follower: string, position: number) => Effect.Effect<void, DbError> } };
 }
 
 /** The highest position any follower has acknowledged for `partition`: what a writer's renewals carry. */
@@ -1048,7 +1052,11 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         const acknowledged = input.acknowledged ?? highestAcknowledged(followers, input.partition);
         return yield* standbyFor({
           ...input, store: storeFor(input.partition), acknowledged,
-          follow: followers.follow(input.leader, { partition: input.partition, interval: input.interval }).pipe(Effect.orDie),
+          follow: followers.follow(input.leader, {
+            partition: input.partition, interval: input.interval,
+            ...(input.wakeups === undefined ? {} : { wakeups: input.wakeups }),
+            ...(input.acknowledgments === undefined ? {} : { acknowledgments: input.acknowledgments }),
+          }).pipe(Effect.orDie),
         });
       }),
     },

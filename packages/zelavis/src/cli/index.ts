@@ -25,6 +25,7 @@ export * from "./fabric.js";
 export * from "./assistant.js";
 export * from "./backends.js";
 export * from "./agent-status.js";
+export * from "./leases.js";
 export * from "./workloads.js";
 export * from "./services.js";
 export * from "./auth.js";

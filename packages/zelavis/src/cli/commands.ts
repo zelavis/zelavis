@@ -26,6 +26,7 @@ import { runHostOperationsCommand } from "./host-operations.js";
 import { runStorageCommand } from "./storage.js";
 import { runCrossTenantIndexesCommand } from "./cross-tenant-indexes.js";
 import { runFollowersCommand } from "./followers.js";
+import { runLeasesCommand } from "./leases.js";
 import { runEntitiesCommand } from "./entities.js";
 import { runFabricCommand } from "./fabric.js";
 import { runRuntimeCommand } from "./runtime.js";
@@ -170,6 +171,7 @@ Usage:
   zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
   zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project <id> [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
   zelavis entities <send|message|cancel|state|mailbox|list> --project <id> <type> [id] [message-key] [--tag TAG] [--data JSON] [--primary-key KEY] [--deliver-at ISO] [--tenant ID] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis leases <show|put> PARTITION [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|changes> --project <id> [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url <url>] [--token <token>] [--json]
   zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
@@ -220,6 +222,8 @@ Commands:
                             cross-Tenant indexes: one collection from every Tenant.
   entities                  Send messages to an App Project's durable entities and read
                             their state, mailboxes and replies.
+  leases                    Read and conditionally write a partition's writer lease in the
+                            Platform's lease authority.
   followers                 The leader side of an App Project's database for followers
                             on other hosts: stats, records, log, holds, acknowledgments
                             and the change feed.
@@ -705,6 +709,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "followers") {
       (yield* integration(() => runFollowersCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "leases") {
+      (yield* integration(() => runLeasesCommand(args.slice(1))));
       return;
     }
     if (args[0] === "workloads") {

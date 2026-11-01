@@ -222,7 +222,12 @@ export interface LeaderTransport {
   readonly changes: (input: { readonly heads?: Readonly<Record<string, number>>; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }) => Promise<unknown>;
 }
 
-const call = <S extends Schema.Top>(op: string, schema: S, request: () => Promise<unknown>, interruptible = false) =>
+/**
+ * A request to the leader. Interruptible: a follower whose leader has gone away (a partition drops packets and the
+ * connection just hangs) must still be stoppable, for a standby has to end its following before it is promoted. An
+ * abandoned request's late answer is ignored, never applied.
+ */
+const call = <S extends Schema.Top>(op: string, schema: S, request: () => Promise<unknown>, interruptible = true) =>
   integration(request, { interruptible }).pipe(
     Effect.catch(failureOfTransport(op)),
     Effect.flatMap((answer) => Schema.decodeUnknownEffect(schema as unknown as Schema.Decoder<S["Type"]>)(answer).pipe(
@@ -246,7 +251,7 @@ export const remoteLeader = (transport: LeaderTransport, partition: PartitionKey
         (page) => page.records.map(recordOfWire),
       ),
     holdLog: (input) => call("leader.hold", HoldWire, () => transport.hold(partition, input)),
-    releaseLog: (id) => Effect.asVoid(integration(() => transport.release(partition, id)).pipe(Effect.catch(failureOfTransport("leader.release")))),
+    releaseLog: (id) => Effect.asVoid(integration(() => transport.release(partition, id), { interruptible: true }).pipe(Effect.catch(failureOfTransport("leader.release")))),
     snapshotAt: unsupported("leader.snapshotAt"),
     scanSnapshot: () => unsupported("leader.scanSnapshot"),
     events: {
@@ -283,7 +288,7 @@ export const remoteLeader = (transport: LeaderTransport, partition: PartitionKey
 /** Where a follower on another host reports what it holds: the leader's own acknowledgment record. */
 export const remoteAcknowledgments = (transport: LeaderTransport, partition: PartitionKey) => ({
   acknowledge: (follower: string, position: number): Effect.Effect<void, DbError> =>
-    Effect.asVoid(integration(() => transport.acknowledge(partition, { follower, position })).pipe(
+    Effect.asVoid(integration(() => transport.acknowledge(partition, { follower, position }), { interruptible: true }).pipe(
       Effect.catch(failureOfTransport("leader.acknowledge")),
     )),
 });

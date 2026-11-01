@@ -168,11 +168,27 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   (`database.replicate`), `client.followers(projectId).lease|promote|demote`, `zelavis followers lease|promote|demote`.
   Stop following the partition before promoting it.
 
-What this is not yet: the leases of two hosts are only as shared as the store they are both given, and no deployment
-composes a store shared across hosts, so cross-host failover has not been qualified by kill and partition drills on
-disposable machines. Nothing promotes automatically in a Project runtime; the Platform Fabric (or an operator) decides
-and calls `promote`. The tests run two databases in one process, cut the writer off from its lease store, and hold the
-gate, the promotion and the old writer's fencing to the behaviour above.
+- **One authority for every host.** The Platform keeps the lease in its System Store and serves it at
+  `/runtime/writer-leases/:partition` (`database.replicate`, system scope): `GET` reads the lease with an opaque
+  version, `PUT` creates it (409 when one exists) or replaces exactly the version read (409 when it changed since).
+  A runtime on another host uses `httpLeaseStore({ apiRoot, token })` (`zelavis/db`), `client.writerLeases.get|put`
+  or `zelavis leases show|put`. An authority that cannot be reached is a `StoreError`: the holder cannot renew, so
+  its gate refuses writes once the lease cannot be proved, and a partitioned writer stops by itself.
+- **Qualified in separate containers.** `pnpm release:qualify:failover` runs a lease authority, a writer and a
+  follower, each with its own database, on private Docker networks, and holds three drills to the behaviour above:
+  a `SIGKILL` of the writer (promoted after the lease lapsed, every acknowledged write on the new writer, positions
+  carry on), a partition of the writer that keeps running (it refused its own writes before the follower was
+  promoted, and after the network returned it followed the new writer and held exactly what it holds), and a
+  follower cut off from a writer that went on committing writes nobody acknowledged (promotion lost no acknowledged
+  position, and the old writer's unacknowledged tail was replaced by the new writer's history). The drills found
+  that a follower's requests to a partitioned writer hung and could not be interrupted, which stopped a standby from
+  being promoted; requests to a leader are now interruptible.
+
+What is not done: nothing yet moves the Project's placement and routing to the follower's host after a promotion,
+so the Gateway still sends requests to the old writer's host until the Platform Fabric commits the new placement;
+no Project runtime runs `standby` by itself, so an operator or the Fabric calls `promote`; a third follower still
+follows the old leader until it is pointed at the new one; and a promotion with `allowDataLoss` carries no audit
+entry of its own.
 
 
 Every route needs `database.replicate`, which the Platform grants with `project.runtime.manage`.

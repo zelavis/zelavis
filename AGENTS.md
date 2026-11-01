@@ -2014,6 +2014,12 @@ restores the previous templates.
 this checkout's recipes, backs it up through its own schedule while it serves (zero
 failed requests), drills and restores it, then drills the same run on a second, fresh
 disposable machine from the shared target and the recovery key alone.
+`pnpm release:qualify:failover` runs follower failover in separate Docker containers on private
+networks: a lease authority (the Platform's writer-lease routes), a writer and a follower, each with
+its own database. It `SIGKILL`s the writer, partitions it from the network while it keeps running,
+and cuts the follower off from a writer holding unacknowledged writes; each time the follower must
+be promoted only after the lease lapses, the old writer must be refused before that, every
+acknowledged write must survive, and the returned writer must converge on the new one.
 
 New system installations always enable their separate Project Agent. No optional
 Agent flag remains. Never prune qualified engines needed for Project selection,

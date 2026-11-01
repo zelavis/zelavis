@@ -1,9 +1,9 @@
 import type { AccountImportInput, AccountImportResult } from "../app/identity/account-import.js";
 import {
-  createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient,
-  type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient,
+  createAgentClient, createAssistantClient, createDeploymentBackendsClient, createFabricClient, createServicesClient, createWriterLeasesClient,
+  type ZelavisServicesClient, type ZelavisAgentClient, type ZelavisAssistantClient, type ZelavisDeploymentBackendsClient, type ZelavisFabricClient, type ZelavisWriterLeasesClient,
 } from "./platform-clients.js";
-export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient } from "./platform-clients.js";
+export type { ZelavisServicesClient, ZelavisAgentClient, ZelavisAssistantClient, ZelavisAssistantEvent, ZelavisDeploymentBackendsClient, ZelavisFabricClient, ZelavisWriterLeasesClient, ZelavisWriterLeaseRecord } from "./platform-clients.js";
 import type { SystemView, SystemViewResult } from "../db/system-views.js";
 import type {
   CrossTenantIndexDefinition, CrossTenantIndexSummary, CrossTenantQueryInput, CrossTenantQueryResult,
@@ -450,6 +450,8 @@ export interface ZelavisClient {
   followers(projectId: string): ZelavisFollowersClient;
   /** The Fabric's nodes, Project placements and migrations. Same contract as `zelavis fabric`. */
   readonly fabric: ZelavisFabricClient;
+  /** The Platform's writer-lease authority, over `/runtime/writer-leases`. Same contract as `zelavis leases`. */
+  readonly writerLeases: ZelavisWriterLeasesClient;
   /** The Assistant's threads, replies, approvals, providers and audit. Same contract as `zelavis assistant`. */
   readonly assistant: ZelavisAssistantClient;
   /** Where Projects may run. Same contract as `zelavis backends`. */
@@ -2055,6 +2057,7 @@ export function createZelavisClient(
     crossTenantIndexes: (projectId) => createCrossTenantIndexesClient(json, projectId),
     followers: (projectId) => createFollowersClient(json, projectId),
     fabric: createFabricClient(json),
+    writerLeases: createWriterLeasesClient(json),
     assistant: createAssistantClient(json, request),
     deploymentBackends: createDeploymentBackendsClient(json),
     agent: createAgentClient(json),

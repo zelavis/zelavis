@@ -57,6 +57,32 @@ export function createFabricClient(json: Json): ZelavisFabricClient {
   };
 }
 
+/** A partition's writer lease as the Platform's authority keeps it, with the version a conditional write names. */
+export interface ZelavisWriterLeaseRecord {
+  readonly lease: { readonly partition: string; readonly owner: string; readonly epoch: number; readonly expiresAt: number; readonly acknowledgedHead: number };
+  readonly version: string;
+}
+
+/**
+ * The Platform's writer-lease authority, over `/runtime/writer-leases` (`database.replicate`, system scope). Same
+ * contract as `zelavis leases`. Lease holders on other hosts use `httpLeaseStore` (`zelavis/db`), which is this client's
+ * two calls with the protocol's conditions and a timeout.
+ */
+export interface ZelavisWriterLeasesClient {
+  /** The lease and its version; 404 when the partition has never had one. */
+  get(partition: string): Promise<ZelavisWriterLeaseRecord>;
+  /** Create the lease (without `expectedVersion`; 409 if one exists) or replace exactly the version read (409 if it changed). */
+  put(partition: string, input: { readonly lease: ZelavisWriterLeaseRecord["lease"]; readonly expectedVersion?: string }): Promise<{ readonly written: boolean }>;
+}
+
+export function createWriterLeasesClient(json: Json): ZelavisWriterLeasesClient {
+  const at = (partition: string) => `/runtime/writer-leases/${segment(partition, "partition")}`;
+  return {
+    get: (partition) => json(at(partition)),
+    put: (partition, input) => json(at(partition), { method: "PUT", body: input }),
+  };
+}
+
 /** One event of a streamed Assistant reply: `text`, `tool`, `done` or `error`, with the data the Platform sent. */
 export interface ZelavisAssistantEvent {
   readonly event: string;

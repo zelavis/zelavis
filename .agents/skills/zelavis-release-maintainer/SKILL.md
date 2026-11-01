@@ -49,7 +49,9 @@ long steps in the background, and keep the machine awake (lid open) while they r
    long-history gate (`release:qualify:history`: apps made by old releases, carried by live
    updates onto the candidate, every recipe upgrade with zero failed requests), the backup
    gate (`release:qualify:backups`: a serving WordPress Project backed up, drilled and restored,
-   then the same run drilled on a second fresh machine from the target and recovery key), then the
+   then the same run drilled on a second fresh machine from the target and recovery key), the
+   failover gate (`release:qualify:failover`: a writer and a follower in separate containers with a
+   lease authority; a `SIGKILL`, a network partition and an unacknowledged tail), then the
    worker installation). Nothing else may build in the
    worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
    `Qualified <sha>`. A red run is fixed on `dev` (commit, push when the owner agrees),

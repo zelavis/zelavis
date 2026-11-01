@@ -22,3 +22,8 @@ lost); one compare-and-set raises the epoch. `db.writerLeases.hold|standby`, `GE
 planner never plans more than one replica of a runtime that holds a database. Inbound webhooks accept timestamped
 signatures (`signatureScheme: "timestamped"`), and the workload runner no longer polls: it is woken by definition
 changes, outbox commits and due times.
+
+The Platform serves the writer-lease authority at `/runtime/writer-leases/:partition`, with `httpLeaseStore`,
+`client.writerLeases` and `zelavis leases` for runtimes on other hosts. `pnpm release:qualify:failover` qualifies
+failover in separate containers (a `SIGKILL`, a partition and an unacknowledged tail). Requests to a leader are now
+interruptible, so a follower whose leader is partitioned can still be stopped and a standby promoted.

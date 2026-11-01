@@ -82,6 +82,7 @@ import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspe
 import { platformBackupRoutes } from "./platform/platform-backups.js";
 import type { DatabaseBackupsHost } from "./db/node-backups.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
+import { createWriterLeaseRoutes } from "./platform/writer-lease-routes.js";
 import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
 import { createCloudRoutes } from "./platform/cloud-routes.js";
 import type { CloudCapacityController } from "./platform/cloud-capacity.js";
@@ -4644,6 +4645,7 @@ function resolvePlatformEndpointGroup(
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
         ...createNodeRoutes({ store: systemStore, platformVersion: PLATFORM_VERSION }),
+        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore)) : []),
         ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",
