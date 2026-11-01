@@ -180,6 +180,39 @@ Native Zelavis Apps update the complete engine through the same handover used
 by the Platform. Their shared composition has scoped Project authority; the
 outer Platform's Fabric remains the privileged hosting control plane.
 
+## Data layout changes
+
+An engine opens exactly the data layout it writes and refuses any other. Each engine release declares its layout in its
+runtime artifact (`metadata.dataFormat`; a release that declares none wrote layout 2, as every release up to alpha.42 did).
+A Platform update therefore never moves a Project across a layout change: native Apps keep their locked engine, and a
+managed app's bound App stays on the engine that wrote its data, at a live restart and at a cold start alike. The
+Project then reports `dataLayout: { "state": "upgradeRequired", "from": 2, "to": 4 }` and its card offers the upgrade even when its
+recipe is current.
+
+The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/projects/:id/upgrade`,
+`zelavis projects upgrade <id>`, the card's **Update recipe**) is the migration. It is never a live handover:
+
+1. The Project (a managed app's bound App) is stopped. A managed app's own processes keep serving.
+2. The engine that wrote the data exports every Tenant, under its own Node.
+3. The current engine recreates collections, documents and schemas in a new database through the documents API and checks
+   that the counts and every document's data match. Nothing is written to the original data.
+4. The new database is swapped in. The original is kept beside it as `data.format-<n>-<time>` until you remove it, and a
+   journal lets a crash be settled from the files alone.
+5. The Project starts on the new engine. If it cannot start, or the upgrade cannot be recorded, the original data and its engine
+   return and the migrated data is set aside as `data.discarded-<time>`.
+
+The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated, how
+many documents had their version and change history restarted, and the directory that keeps the original. What does not
+carry over: document versions, change history and event positions restart (clients using `expectedVersion` must read again,
+consumers of an old change-feed cursor start over), and idempotency receipts are dropped. A migration refuses to run when the
+free space beside the data is under about 3.5 times its size, and it fails, naming them, on record kinds it cannot recreate yet.
+The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
+`GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
+`client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
+`zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
+`project.runtime.manage`; removal cannot be undone, is refused while a migration is unsettled or the Project has an unfinished update,
+and never touches the live data.
+
 ## Project and visitor continuity
 
 System installations run the Project Agent in its own systemd unit. A Platform

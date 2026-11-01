@@ -190,6 +190,14 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   return node("article", { class: "k-card" }, ...body);
 }
 
+/** What a data-layout migration changed, for the line shown after an upgrade; an upgrade that migrated nothing leaves the data as it was. */
+function migrationSummary(value: unknown): string {
+  const migration = object(value);
+  if (migration.retained === undefined) return "Its data is unchanged.";
+  const restarted = Number(migration.documentsWithHistoryDropped);
+  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated${restarted > 0 ? `; version and change history restarted for ${restarted}` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
+}
+
 function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string) {
   const name = label(project.name);
   const runtime = object(project.runtime);
@@ -203,7 +211,7 @@ function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recip
   const upgrade = (recipeName?: string) => act(request(`${path}/upgrade`, "POST", { restart: true, ...(recipeName ? { recipeName } : {}) }), result => {
     const upgraded = object(result.project ?? result);
     const next = object(upgraded.recipe);
-    return `${name} now uses ${label(next.name)}${next.version ? ` ${label(next.version)}` : ""}. Its data is unchanged. ${object(upgraded.runtime).status === "running" ? "It is running at the same address." : "Start it when you are ready."}`;
+    return `${name} now uses ${label(next.name)}${next.version ? ` ${label(next.version)}` : ""}. ${migrationSummary(object(result.project ?? result).dataMigration)} ${object(upgraded.runtime).status === "running" ? "It is running at the same address." : "Start it when you are ready."}`;
   });
   if (project.deletion) return node("div");
   if (project.runtimeUpdate) {

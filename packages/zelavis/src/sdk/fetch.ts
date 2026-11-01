@@ -46,6 +46,7 @@ import type {
   ZelavisProjectRecord,
   ZelavisProjectSetupValue,
   ZelavisProjectVersions,
+  ZelavisProjectRetainedData,
 } from "../project.js";
 import type { ZelavisProjectIsolationIntent } from "../project-isolation.js";
 import type {
@@ -1425,6 +1426,10 @@ export interface ZelavisProjectsClient {
   /** Who revealed the secrets, newest first. Needs `project.setup.reveal`. */
   setupReveals(projectId: string): Promise<readonly ZelavisProjectSetupReveal[]>;
   switchVersion(projectId: string, version: string): Promise<ZelavisProjectRecord>;
+  /** Data an upgrade's migration kept beside the Project's live data. Needs `project.view`. */
+  retainedData(projectId: string): Promise<readonly ZelavisProjectRetainedData[]>;
+  /** Removes one retained directory by the exact `name` `retainedData` gave. Irreversible. Needs `project.runtime.manage`. */
+  removeRetainedData(projectId: string, name: string): Promise<void>;
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
@@ -2836,6 +2841,8 @@ function createProjectsClient(
     revealSetup: (projectId) => json<{ values: readonly ZelavisProjectSetupValue[] }>(projectPath(projectId, "setup/reveal"), { method: "POST" }).then(result => result.values),
     setupReveals: (projectId) => json<{ reveals: readonly ZelavisProjectSetupReveal[] }>(projectPath(projectId, "setup/audit")).then(result => result.reveals),
     switchVersion: (projectId, version) => json<ProjectBody>(projectPath(projectId, "version"), { method: "POST", body: { version } }).then(result => result.project),
+    retainedData: (projectId) => json<{ retained: readonly ZelavisProjectRetainedData[] }>(projectPath(projectId, "retained-data")).then(result => result.retained),
+    removeRetainedData: (projectId, name) => json<unknown>(projectPath(projectId, `retained-data/${encodeURIComponent(name)}`), { method: "DELETE" }).then(() => undefined),
     list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
     get: (projectId) => present(Effect.gen(function* () {
     return ((yield* integrationValue(json<ProjectBody>(projectPath(projectId))))).project;

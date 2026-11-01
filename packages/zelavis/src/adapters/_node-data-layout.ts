@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Data, Effect } from "effect";
 import { arrayOf, isSafeInteger, isString, literal, objectFields, optional, parseJson } from "../core/json-validation.js";
@@ -109,4 +109,56 @@ export const settleDataSwap = Effect.fn("DataLayout.settle")(function* (paths: D
     return "undone";
   }
   return (yield* undoDataSwap(paths, stamp)) ? "undone" : "none";
+});
+
+/**
+ * Start what needs the migrated data (a managed app's bound host). If it does not start, the swap is undone, the old data is
+ * back, and `restart` brings the host up again on the engine that wrote it (best effort: the original failure is the one reported).
+ */
+export const startOnSwappedData = <A, E>(paths: DataSwapPaths, stamp: string, start: Effect.Effect<A, E>, restart: Effect.Effect<unknown, unknown>) =>
+  start.pipe(Effect.onError(() => undoDataSwap(paths, stamp).pipe(
+    Effect.orElseSucceed(() => false),
+    Effect.andThen(restart.pipe(Effect.orElseSucceed(() => undefined))))));
+
+
+/** Data a migration kept: the layout it replaced, or the migrated copy an undone migration set aside. */
+export interface RetainedData {
+  readonly name: string;
+  readonly kind: "replaced-by-migration" | "set-aside-by-undo";
+  readonly bytes: number;
+}
+const RETAINED_NAME = /^data\.(format-[0-9]+|discarded)-[0-9A-Za-z]+$/;
+
+const bytesIn = (directory: string): Effect.Effect<number, IntegrationFailure> => Effect.gen(function* () {
+  let total = 0;
+  for (const entry of yield* integration(() => readdir(directory, { withFileTypes: true }))) {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) total += yield* bytesIn(entryPath);
+    else if (entry.isFile()) total += (yield* integration(() => stat(entryPath))).size;
+  }
+  return total;
+});
+
+export const listRetainedData = Effect.fn("DataLayout.retained")(function* (paths: DataSwapPaths): Effect.fn.Return<ReadonlyArray<RetainedData>, IntegrationFailure> {
+  const entries = yield* integration(() => readdir(paths.zelavis, { withFileTypes: true })).pipe(Effect.catch(() => Effect.succeed([])));
+  const found: RetainedData[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !RETAINED_NAME.test(entry.name)) continue;
+    found.push({ name: entry.name, kind: entry.name.startsWith("data.discarded-") ? "set-aside-by-undo" : "replaced-by-migration", bytes: yield* bytesIn(join(paths.zelavis, entry.name)) });
+  }
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+});
+
+/**
+ * Removes one retained directory, by the exact name `listRetainedData` gave. Refused while a swap is unsettled, because the journal may
+ * still need it to undo, and for anything that is not such a directory (a link, another name, a path).
+ */
+export const removeRetainedData = Effect.fn("DataLayout.removeRetained")(function* (paths: DataSwapPaths, name: string): Effect.fn.Return<void, DataSwapFailure | IntegrationFailure> {
+  if (!RETAINED_NAME.test(name)) return yield* new DataSwapFailure({ message: `"${name}" is not retained data.` });
+  if (yield* exists(path(paths, names.journal))) return yield* new DataSwapFailure({ message: "A data migration is unsettled for this Project; retained data is kept until it is." });
+  const target = path(paths, name);
+  const stats = yield* integration(() => lstat(target)).pipe(Effect.catch(() => Effect.succeed(undefined)));
+  if (stats === undefined) return yield* new DataSwapFailure({ message: `"${name}" does not exist.` });
+  if (!stats.isDirectory() || stats.isSymbolicLink()) return yield* new DataSwapFailure({ message: `"${name}" is not a plain directory.` });
+  yield* integration(() => rm(target, { recursive: true }));
 });

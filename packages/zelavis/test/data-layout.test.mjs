@@ -92,3 +92,53 @@ test("an undo that cannot find the data it set aside refuses instead of guessing
     assert.equal(await shard(join(paths.zelavis, "data", "primary", "shards"), "new.sqlite"), "format four", "the current data is untouched");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a host that will not start on the migrated data gets the old data and its own engine back, and the failure is the one reported", async () => {
+  const { startOnSwappedData } = await import("../dist/adapters/_node-data-layout.js");
+  const { root, paths, migrated } = await project();
+  try {
+    await run(swapInMigratedData(paths, { migratedShards: migrated, from: 2, to: 4, stamp: "s1", engine: "1.0.0" }));
+    const seen = [];
+    const failing = Effect.sync(() => { seen.push("start"); }).pipe(Effect.andThen(Effect.fail(new Error("the bound host would not start on the new engine"))));
+    const restart = Effect.sync(() => { seen.push(["restart", "data back"]); });
+    await assert.rejects(run(startOnSwappedData(paths, "u1", failing, restart)), /would not start/);
+    assert.deepEqual(seen.map((step) => (Array.isArray(step) ? step[0] : step)), ["start", "restart"], "started once on the new data, then again after the undo");
+    assert.equal(await shard(join(paths.zelavis, "data", "primary", "shards"), "old.sqlite"), "format two", "the old data is back");
+    assert.deepEqual(await run(dataFormatOnDisk(paths, 4)), 2);
+    const layout = JSON.parse(await readFile(join(paths.zelavis, "data-layout.json"), "utf8"));
+    assert.deepEqual(layout, { format: 2, engine: "1.0.0" }, "and it names the engine that wrote it, which a restart must use");
+    assert.ok((await names(paths)).includes("data.discarded-u1"), "the migrated data is set aside, not deleted");
+
+    // A host that starts leaves the swap alone.
+    const ok = await project();
+    try {
+      await run(swapInMigratedData(ok.paths, { migratedShards: ok.migrated, from: 2, to: 4, stamp: "s2" }));
+      await run(startOnSwappedData(ok.paths, "u2", Effect.void, Effect.sync(() => { throw new Error("must not restart"); })));
+      assert.equal(await shard(join(ok.paths.zelavis, "data", "primary", "shards"), "new.sqlite"), "format four");
+    } finally { await rm(ok.root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("retained data is listed with its size and removed only by an exact name, never while a swap is unsettled", async () => {
+  const { listRetainedData, removeRetainedData } = await import("../dist/adapters/_node-data-layout.js");
+  const { root, paths, migrated } = await project();
+  try {
+    const { retained } = await run(swapInMigratedData(paths, { migratedShards: migrated, from: 2, to: 4, stamp: "s1" }));
+    await assert.rejects(run(removeRetainedData(paths, retained)), /unsettled/, "the journal may still need it to undo");
+    await run(commitDataSwap(paths));
+    const listed = await run(listRetainedData(paths));
+    assert.deepEqual(listed.map((entry) => [entry.name, entry.kind]), [[retained, "replaced-by-migration"]]);
+    assert.equal(listed[0].bytes, "format two".length, "the size is what the kept shards hold");
+
+    // Only such a directory, by its exact name.
+    for (const bad of ["data", "../x", `${retained}/primary`, "data.format-2-", "migration-x", "data-layout.json"]) {
+      await assert.rejects(run(removeRetainedData(paths, bad)), /not retained data/, bad);
+    }
+    await assert.rejects(run(removeRetainedData(paths, "data.format-9-nothere")), /does not exist/);
+    assert.equal((await readdir(join(paths.zelavis, "data", "primary", "shards"))).length > 0, true, "the live data is untouched");
+
+    await run(removeRetainedData(paths, retained));
+    assert.deepEqual(await run(listRetainedData(paths)), []);
+    assert.equal(await shard(join(paths.zelavis, "data", "primary", "shards"), "new.sqlite"), "format four", "removing retained data never touches the live data");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

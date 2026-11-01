@@ -5,7 +5,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient, type ZelavisTenantBackup, type ZelavisTenantRestoreMode } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|versions|setup|setup-audit|get|create|rename|start|stop|restart|upgrade|switch-version|retained-data|remove-retained-data|logs|remove|tenants|system-views|create-tenant|delete-tenant|branch-tenant|merge-branch|recovery-window|workflows|backup-schedules|create-backup-schedule|delete-backup-schedule|run-backup|backup-runs|verify-backup|restore-backup|drill-backup|storage|export-tenant|export-stream|images|create-image|delete-image|verify-image|prune-images|restore-tenant> [id|name] [new-name] [--id ID] [--recipe NAME] [--engine-version EXACT] [--method ID] [--software-version V] [--no-start] [--restart] [--reveal] [--install-host-packages] [--tenant ID] [--table NAME] [--confirm ID] [--to ID] [--view NAME] [--limit N] [--after CURSOR] [--output FILE] [--file BACKUP.json] [--into empty|purge|merge] [--outbox leave|copy] [--as-of CURSOR|--as-of-time ISO] [--dry-run] [--resolve JSON] [--data JSON] [--recovery-key KEY] [--schedule NAME] [--durability crash|power] [--until-consistent] [--storage sqlite|lmdb|rocksdb] [--keep N] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * A backup file read back, checked only for being one.
@@ -134,7 +134,7 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     return;
   }
   const extra = ["verify-backup", "restore-backup", "drill-backup"].includes(action) ? 2
-    : ["rename", "create-image", "delete-image", "verify-image", "delete-backup-schedule", "run-backup"].includes(action) ? 1 : 0;
+    : ["rename", "create-image", "delete-image", "verify-image", "delete-backup-schedule", "run-backup", "remove-retained-data"].includes(action) ? 1 : 0;
   if (rest.length > extra) throw new Error(`Unexpected argument "${rest[extra]}". ${usage}`);
   if (storage !== undefined && action !== "create-image") throw new Error("--storage is only supported by projects create-image.");
   if (reveal && action !== "setup") throw new Error("--reveal is only supported by projects setup.");
@@ -212,6 +212,19 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
     case "setup-audit": {
       const reveals = yield* integration(() => client.projects.setupReveals(requireTarget("id")));
       print({ reveals }, () => reveals.map(entry => `${new Date(entry.at).toISOString()}\t${entry.principalType}:${entry.principalId}\t${entry.revealed.join(",")}`).join("\n") || "No reveals.");
+      return;
+    }
+    case "retained-data": {
+      const retained = yield* integration(() => client.projects.retainedData(requireTarget("id")));
+      print({ retained }, () => retained.map(entry => `${entry.name}\t${entry.kind}\t${entry.bytes} bytes`).join("\n") || "No retained data.");
+      return;
+    }
+    case "remove-retained-data": {
+      const name = rest[0];
+      if (!name) throw new Error("projects remove-retained-data requires <id> <name>.");
+      if (confirm !== name) throw new Error(`Removing retained data cannot be undone. Repeat the name with --confirm ${name}.`);
+      yield* integration(() => client.projects.removeRetainedData(requireTarget("id"), name));
+      print({ removed: name }, () => `Removed ${name}`);
       return;
     }
     case "switch-version": {

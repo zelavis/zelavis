@@ -174,6 +174,27 @@ export interface ZelavisProjectRecipeUpgrade {
   readonly upgradedAt: string;
 }
 
+/** Data a migration kept beside a Project's live data; it stays until its owner removes it. */
+export interface ZelavisProjectRetainedData {
+  /** The exact directory name; give it back to remove it. */
+  readonly name: string;
+  readonly kind: "replaced-by-migration" | "set-aside-by-undo";
+  readonly bytes: number;
+}
+
+/** What an upgrade that brought a Project's data forward to another layout did; present on that upgrade's response only. */
+export interface ZelavisProjectDataMigration {
+  readonly from: number;
+  readonly to: number;
+  readonly tenants: number;
+  readonly collections: number;
+  readonly documents: number;
+  /** Documents whose version and change history restarted. */
+  readonly documentsWithHistoryDropped: number;
+  /** The directory beside the Project's data that keeps the data as it was; remove it when it is no longer needed. */
+  readonly retained: string;
+}
+
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   /** Derived Edge ingress state, never the Agent's private runtime target. */
   preview?: ZelavisProjectPreview;
@@ -187,6 +208,8 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
    * that wrote that data until the Project's upgrade migrates it. Derived on every read, never stored.
    */
   dataLayout?: { readonly state: "upgradeRequired"; readonly from: number; readonly to: number };
+  /** Present only on the response of the upgrade that migrated this Project's data; never stored. */
+  dataMigration?: ZelavisProjectDataMigration;
   /**
    * The locked isolation intent compared with the assigned backend, present
    * only when the recipe declares intent. Derived on every read, like
@@ -299,7 +322,7 @@ export interface ZelavisProjectRuntimeDriver {
    * Brings a managed app's bound App across a data-layout change, whether or not its recipe changes: its host is stopped, its
    * data migrated and swapped in, and the host started on the Platform's engine. Undefined when nothing needed migrating.
    */
-  migrateData?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<{ readonly from: number; readonly to: number } | undefined>;
+  migrateData?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<ZelavisProjectDataMigration | undefined>;
   /**
    * Acquires what a candidate recipe needs (its pinned programs) and checks this host can run it, while
    * the Project keeps serving from its current recipe. Used before a cross-layout upgrade takes the
@@ -353,7 +376,10 @@ export interface ZelavisProjectRuntimeDriver {
    * (an earlier layout's state) can be let go. Best effort: a driver that misses it settles at
    * the next start.
    */
-  commitUpgrade?(projectId: string): Promise<void>;
+  commitUpgrade?(projectId: string): Promise<ZelavisProjectDataMigration | void>;
+  /** Data a migration kept for this Project, and its removal by exact name. */
+  retainedData?(projectId: string): Promise<readonly ZelavisProjectRetainedData[]>;
+  removeRetainedData?(projectId: string, name: string): Promise<void>;
   /** The upgrade was not recorded: put the Project's files back as the earlier recipe left them. */
   abandonUpgrade?(projectId: string): Promise<void>;
   status(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
@@ -455,6 +481,10 @@ export interface ZelavisProjectManager {
    */
   upgrade(id: string, input?: { recipeName?: string; engineVersion?: string; restart?: boolean }): Promise<ZelavisProjectRecord>;
   switchVersion(id: string, version: string): Promise<ZelavisProjectRecord>;
+  /** Data an upgrade's migration kept beside this Project's live data. */
+  retainedData(id: string): Promise<readonly ZelavisProjectRetainedData[]>;
+  /** Removes one retained directory by the exact name `retainedData` gave. Irreversible. */
+  removeRetainedData(id: string, name: string): Promise<void>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
   /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
@@ -2054,6 +2084,22 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             if (!runtimeEffects.setupValues) return [];
             return yield* runtimeEffects.setupValues(projectId, { reveal: options?.reveal === true });
         }),
+        retainedData: Effect.fn("Projects.retainedData")(function* (id: string) {
+            const project = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
+            const list = runtimeEffects.retainedData;
+            return list === undefined ? [] : yield* list(project.id);
+        }),
+        removeRetainedData: Effect.fn("Projects.removeRetainedData")(function* (id: string, name: string) {
+            const projectId = yield* evaluate(() => normalizeProjectId(id));
+            yield* withProjectLifecycle(projectId, Effect.fn("Projects.transition")(function* () {
+                const project = yield* requireProject(projectId);
+                yield* evaluate(() => assertProjectIsOperable(project, "changed"));
+                if (project.runtimeUpdate) return yield* Effect.fail(new ZelavisProjectConflictError(`Project "${projectId}" has an unfinished update; retained data is kept until it is settled.`));
+                const remove = runtimeEffects.removeRetainedData;
+                if (remove === undefined) return yield* Effect.fail(new ZelavisProjectValidationError("This Project's runtime keeps no retained data."));
+                yield* remove(projectId, name).pipe(Effect.mapError((error) => error instanceof Error && error._tag === "DataSwapFailure" ? new ZelavisProjectValidationError(error.message) : error));
+            }));
+        }),
         switchVersion: Effect.fn("Projects.switchVersion")(function* (id: string, version: string) {
             yield* evaluate(() => { if (!isExactVersion(version)) throw new ZelavisProjectValidationError("Engine selection requires an exact version."); });
             return yield* manager.upgrade(id, { engineVersion: version });
@@ -2273,10 +2319,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const started = yield* Effect.exit(manager.start(current.id));
                     if (Exit.isFailure(upgrade)) return yield* Effect.failCause(upgrade.cause);
                     if (Exit.isFailure(started)) return yield* Effect.failCause(started.cause);
-                    return started.value;
+                    return upgrade.value.dataMigration ? { ...started.value, dataMigration: upgrade.value.dataMigration } : started.value;
                 }
             }
-            return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+            let performed: ZelavisProjectDataMigration | undefined;
+            const upgraded = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
                 let project = yield* requireProject(id);
                 // A deletion tombstone always wins over recovery of an update.
                 if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
@@ -2289,7 +2336,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
                 if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
                     const migrated = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
-                    if (migrated && recipeStatusOf(project.recipe).state === "current") return (yield* refresh(project.id, false))!;
+                    performed = migrated;
+                    if (migrated && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: migrated };
                 }
                 if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
                     (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
@@ -2390,7 +2438,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const previousEngine = selection ? (yield* (runtimeEffects.versions?.(project) ?? Effect.succeed(undefined)))?.current : undefined;
                     yield* runtimeEffects.prepare(candidate, next);
                     return yield* write({ ...upgraded, capabilities: runtime.capabilities(candidate) }).pipe(
-                        Effect.tap(() => (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined))),
+                        Effect.flatMap((written) => (runtimeEffects.commitUpgrade?.(project.id) ?? Effect.succeed(undefined)).pipe(
+                            Effect.orElseSucceed(() => undefined),
+                            Effect.map((migrated) => migrated ? { ...written, dataMigration: migrated } : written))),
                         Effect.onError(() => Effect.gen(function* () {
                             // Whatever the driver moved to prepare the new recipe goes back before anything else.
                             yield* (runtimeEffects.abandonUpgrade?.(project.id) ?? Effect.void).pipe(Effect.orElseSucceed(() => undefined));
@@ -2421,6 +2471,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     if (recovery._tag === "Failure") yield* write({ ...latest, runtimeUpdate: { ...intent, error: String(Cause.squash(cause)).slice(0, 4000) } });
                 }).pipe(Effect.orDie)));
             }));
+            // The migration this upgrade performed, so whoever asked can tell the owner what changed.
+            return performed && !upgraded.dataMigration ? { ...upgraded, dataMigration: performed } : upgraded;
         }),
         logs: Effect.fn("Projects.logs")(function* (id: Parameters<ZelavisProjectManager["logs"]>[0]) {
             yield* requireProject(id);

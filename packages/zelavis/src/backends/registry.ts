@@ -455,6 +455,8 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   commitUpgrade: "project-id",
   abandonUpgrade: "project-id",
   migrateData: "descriptor",
+  retainedData: "project-id",
+  removeRetainedData: "project-id",
   fencePrevious: "placement",
   adopt: "every-driver",
   detach: "every-driver",
@@ -610,9 +612,17 @@ export function createDeploymentBackendProjectRuntime(options: {
       const migrate = effectOperations(yield* evaluate(() => forDescriptor(project))).migrateData;
       return migrate ? yield* migrate(project, placement) : undefined;
     }),
+    retainedData: Effect.fn("BackendProjects.retainedData")(function* (id: string) {
+      const list = effectOperations(yield* forProjectId(id)).retainedData;
+      return list ? yield* list(id) : [];
+    }),
+    removeRetainedData: Effect.fn("BackendProjects.removeRetainedData")(function* (id: string, name: string) {
+      const remove = effectOperations(yield* forProjectId(id)).removeRetainedData;
+      if (remove) yield* remove(id, name);
+    }),
     commitUpgrade: Effect.fn("BackendProjects.commitUpgrade")(function* (id: string) {
       const commit = effectOperations(yield* forProjectId(id)).commitUpgrade;
-      if (commit) yield* commit(id);
+      return commit ? yield* commit(id) : undefined;
     }),
     abandonUpgrade: Effect.fn("BackendProjects.abandonUpgrade")(function* (id: string) {
       const abandon = effectOperations(yield* forProjectId(id)).abandonUpgrade;

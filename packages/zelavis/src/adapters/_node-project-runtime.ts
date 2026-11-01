@@ -15,7 +15,7 @@ import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { engineConvergence } from "../core/runtime/engine-convergence.js";
 import { chooseBoundEngine } from "./_node-bound-engine.js";
 import { migrateDataLayout } from "./_node-data-migration.js";
-import { commitDataSwap, dataFormatOnDisk, dataLayoutOnDisk, recordDataLayout, settleDataSwap, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
+import { commitDataSwap, dataFormatOnDisk, dataLayoutOnDisk, listRetainedData, recordDataLayout, removeRetainedData, settleDataSwap, startOnSwappedData, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
 import { readNodeRuntimeJournalSelection } from "./_node-runtime-journal.js";
 import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
@@ -30,7 +30,7 @@ import { createGatewayAuthorityNonce, createGatewayAuthoritySecret, signGatewayA
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type { ZelavisAgentProcess, ZelavisAgentProcessRunner, } from "../core/agent/process-command.js";
 import { ZelavisProjectValidationError } from "../project.js";
-import type { ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRecord, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, } from "../project.js";
+import type { ZelavisProjectDataMigration, ZelavisProjectLogEntry, ZelavisProjectRecipeLock, ZelavisProjectRecord, ZelavisProjectRuntimeDriver, ZelavisProjectRuntimeSnapshot, } from "../project.js";
 export interface NodeProcessProjectRuntimeOptions {
     directory: string;
     /** Project-scoped SDK integration beside a managed third-party workload. */
@@ -368,6 +368,10 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 }
             }
         });
+    /** The migration a native App's `prepare` made, until the upgrade that needed it is recorded and `commitUpgrade` reports it. */
+    const migrations = new Map<string, ZelavisProjectDataMigration>();
+    /** Where this driver's database lives: a native App's `.zelavis`, a managed app's bound App under `.zelavis/integration`. */
+    const dataRoot = (projectId: string) => join(projectDirectory(projectId), ".zelavis", ...(options.integrationOnly ? ["integration"] : []));
     const stampNow = () => new Date().toISOString().replace(/[-:.]/g, "");
     /**
      * Migrates a native App's data when the engine it moves to writes another layout, and says whether it did. The Project is
@@ -379,13 +383,13 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         yield* settleDataSwap(paths, yield* catalog.dataFormat(previous.version), stamp);
         const from = yield* dataFormatOnDisk(paths, yield* catalog.dataFormat(previous.version));
         const to = yield* catalog.dataFormat(target.version);
-        if (from === to) return false;
+        if (from === to) return undefined;
         const shards = join(root, "data", "primary", "shards");
         const hasDatabase = yield* integration(() => lstat(shards)).pipe(Effect.as(true), Effect.catch(() => Effect.succeed(false)));
         if (!hasDatabase) {
             // Nothing to bring forward: whatever the new engine creates here is its own layout.
             yield* recordDataLayout(paths, to);
-            return false;
+            return undefined;
         }
         const earlier = yield* catalog.resolve(previous, "project", {}, {});
         const work = join(root, `migration-${stamp}`);
@@ -395,7 +399,8 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         // What the migration changed that a person should know: kept with the retained data, shown by the dashboard.
         yield* integration(() => writeFile(join(root, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
         yield* integration(() => rm(work, { recursive: true, force: true }));
-        return true;
+        return { from, to, tenants: report.tenants, collections: report.collections, documents: report.documents,
+            documentsWithHistoryDropped: report.documentsWithHistoryDropped, retained } satisfies ZelavisProjectDataMigration;
     });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "node-process",
@@ -561,7 +566,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 const previousRuntime = engine.runtime;
                 engine.runtime = selected;
                 if (!options.integrationOnly && previousRuntime !== undefined && previousRuntime.version !== selected.version) {
-                    migrated = yield* migrateLayout(join(directory, ".zelavis"), catalog, previousRuntime, selected);
+                    const report = yield* migrateLayout(join(directory, ".zelavis"), catalog, previousRuntime, selected);
+                    migrated = report !== undefined;
+                    if (report) migrations.set(project.id, report);
                 }
                 if (recipe.name === "@zelavis/app") {
                     const selectedApp = yield* catalog.app(selected.version);
@@ -611,24 +618,35 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 gatewaySecrets.delete(project.id);
                 existing.snapshot = stoppedSnapshot(existing);
             }
-            const migrated = yield* migrateLayout(root, catalog, held, yield* catalog.select(ZELAVIS_VERSION));
+            const report = yield* migrateLayout(root, catalog, held, yield* catalog.select(ZELAVIS_VERSION));
+            const migrated = report !== undefined;
             const paths = { zelavis: root };
             // The host now starts on the Platform's engine; if it cannot, the old data and the engine that wrote it return.
             // A stopped Project's host stays stopped; its next start follows the layout on disk.
             if (existing?.process?.running === true || project.runtime.status === "running") {
-                yield* driver.start(project, placement).pipe(Effect.onError(() => Effect.gen(function* () {
-                    if (migrated) yield* undoDataSwap(paths, stampNow()).pipe(Effect.orElseSucceed(() => false));
-                    yield* driver.start(project, placement).pipe(Effect.orElseSucceed(() => undefined));
-                })));
+                yield* migrated
+                    ? startOnSwappedData(paths, stampNow(), driver.start(project, placement), driver.start(project, placement))
+                    : driver.start(project, placement);
             }
             yield* commitDataSwap(paths);
-            return { from: layout.format, to: CURRENT_FORMAT };
+            return report;
         }),
         // The upgrade was recorded, or was not: either way the swap it made is settled, never half-kept.
         commitUpgrade: Effect.fn("NodeProjects.commitUpgrade")(function* (projectId: string) {
-            if (!options.integrationOnly) yield* commitDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") });
+            if (options.integrationOnly) return undefined;
+            yield* commitDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") });
+            const report = migrations.get(projectId);
+            migrations.delete(projectId);
+            return report;
+        }),
+        retainedData: Effect.fn("NodeProjects.retainedData")(function* (projectId: string) {
+            return yield* listRetainedData({ zelavis: dataRoot(projectId) });
+        }),
+        removeRetainedData: Effect.fn("NodeProjects.removeRetainedData")(function* (projectId: string, name: string) {
+            yield* removeRetainedData({ zelavis: dataRoot(projectId) }, name);
         }),
         abandonUpgrade: Effect.fn("NodeProjects.abandonUpgrade")(function* (projectId: string) {
+            migrations.delete(projectId);
             if (!options.integrationOnly) yield* undoDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") }, stampNow());
         }),
         adopt: () => adopt(),

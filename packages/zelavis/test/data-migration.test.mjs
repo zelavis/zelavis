@@ -59,6 +59,9 @@ test("a database written by an earlier layout is recreated through the documents
       document(t, "posts", 6, "p2", { title: "gone" }),
       { kind: "retract", seq: 6, version: 2, at: 0 },
       { kind: "put", seq: 7, version: 1, at: 0, identity: { namespace: `zv.idempotency/${t}`, key: "key-1" }, body: b64({ done: true }) },
+      { kind: "put", seq: 8, version: 1, at: 0, identity: { namespace: "zv.schema", key: `${t}/posts/1` }, body: b64({ collection: "posts", version: 1, active: true, fields: [{ name: "title", field: { _tag: "TextField", label: "Title", required: false } }] }) },
+      { kind: "put", seq: 9, version: 1, at: 0, identity: { namespace: "zv.schema", key: `${t}/posts/2` }, body: b64({ collection: "posts", version: 2, active: false, fields: [{ name: "title", field: { _tag: "TextField", label: "Title", required: true } }] }) },
+      { kind: "put", seq: 10, version: 1, at: 0, identity: { namespace: "zv.schema.active", key: `${t}/posts` }, body: b64({ version: 1 }) },
     ],
     "tenant-empty": [],
   });
@@ -67,6 +70,7 @@ test("a database written by an earlier layout is recreated through the documents
     const report = await Effect.runPromise(migrateDataLayout(input));
     assert.equal(report.tenants, 2);
     assert.equal(report.collections, 2);
+    assert.equal(report.schemas, 2, "every saved schema version is recreated");
     assert.equal(report.documents, 3, "the retracted post is not carried");
     assert.equal(report.documentsWithHistoryDropped, 1, "u2 had been updated");
     assert.deepEqual(report.dropped, { "zv.idempotency": 1 });
@@ -80,6 +84,8 @@ test("a database written by an earlier layout is recreated through the documents
       assert.equal((await Effect.runPromise(documents.findById({ collection: "users", id: "u2" }))).version, 1, "versions restart");
       const eq = await Effect.runPromise(documents.findMany({ collection: "users", where: [{ path: "email", op: "eq", value: "b@x.test" }] }));
       assert.deepEqual(eq.map((d) => d.id), ["u2"], "the recreated index answers");
+      const versions = await Effect.runPromise(opened.database.forTenant(t).schemas.listVersions("posts"));
+      assert.deepEqual(versions.map((v) => [v.version, v.active]), [[1, true], [2, false]], "the active schema stays the active one");
     } finally { await opened.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -119,5 +125,18 @@ test("an export that reaches the earlier engine's cap is refused as possibly tru
   try {
     assert.match(await failure(migrateDataLayout(input)), /export cap/);
     await assert.rejects(stat(input.workDirectory));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a migration that would not fit refuses before copying anything", async () => {
+  const { root, source, input } = await fixture({ "tenant-a": [collection("tenant-a", "users")] });
+  try {
+    await writeFile(join(source, "big.bin"), Buffer.alloc(10_000));
+    const before = await listing(source);
+    assert.match(await failure(migrateDataLayout({ ...input, freeBytes: 10_000 })), /not enough free space.*Nothing was changed/);
+    await assert.rejects(stat(input.workDirectory), "nothing was staged");
+    assert.equal(await listing(source), before);
+    const report = await Effect.runPromise(migrateDataLayout({ ...input, freeBytes: 10_000 * 4 }));
+    assert.equal(report.collections, 1, "with room it runs");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

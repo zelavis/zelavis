@@ -12,7 +12,7 @@ const digest = version => `sha256:${(version.startsWith("1") ? "a" : "b").repeat
 const recipe = version => ({ name: "@zelavis/app", title: "Zelavis App", version, specifier: "@zelavis/app", runtimeKinds: ["native"], artifact: { digest: digest(version) } });
 
 async function platform(t, { failPrepare = false } = {}) {
-  const store = createMemorySystemStore(), selected = new Map(), running = new Set(), data = new Map(), calls = [];
+  const store = createMemorySystemStore(), selected = new Map(), running = new Set(), data = new Map(), reports = new Map(), calls = [];
   const runtime = {
     name: "qualified-fixture", runtimeKinds: ["native"],
     capabilities: () => ({ zeroDowntimeUpdates: true, independentRuntimeVersion: true }), supportsLiveUpdate: () => true,
@@ -31,10 +31,11 @@ async function platform(t, { failPrepare = false } = {}) {
       if (before !== undefined && formats[before] !== formats[project.engineVersion]) {
         if (failPrepare) throw Error("migration failed");
         data.set(project.id, formats[project.engineVersion]);
+        reports.set(project.id, { from: formats[before], to: formats[project.engineVersion], tenants: 1, collections: 1, documents: 3, documentsWithHistoryDropped: 1, retained: "data.format-2-x" });
       }
       selected.set(project.id, project.engineVersion);
     },
-    async commitUpgrade(id) { calls.push(["commit", id]); },
+    async commitUpgrade(id) { calls.push(["commit", id]); return reports.get(id); },
     async abandonUpgrade(id) { calls.push(["abandon", id]); },
     async start(project) { calls.push(["start", project.id]); running.add(project.id); return { status: "running", url: "http://127.0.0.1:1" }; },
     async stop(id) { calls.push(["stop", id]); running.delete(id); return { status: "stopped" }; },
@@ -64,6 +65,7 @@ test("an upgrade across a data-layout change stops the Project, migrates in prep
   assert.equal(upgraded.runtime.status, "running");
   assert.equal(selected.get("old"), "2.0.1");
   assert.equal(data.get("old"), 4, "the driver migrated the data");
+  assert.deepEqual(upgraded.dataMigration, { from: 2, to: 4, tenants: 1, collections: 1, documents: 3, documentsWithHistoryDropped: 1, retained: "data.format-2-x" }, "the upgrade response carries the report");
   const order = calls.map(call => call[0]);
   assert.ok(order.indexOf("stop") < order.indexOf("prepare") && order.indexOf("prepare") < order.indexOf("commit") && order.indexOf("commit") < order.lastIndexOf("start"), `stopped, migrated while stopped, settled, started again: ${order}`);
   assert.ok(!order.includes("prepareUpdate") && !order.includes("applyUpdate"), "never the live engine handover");

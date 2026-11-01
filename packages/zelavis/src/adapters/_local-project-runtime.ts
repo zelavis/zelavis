@@ -356,6 +356,11 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
         const operations = effectOperations(selected);
         return selected.supportsLiveUpdate?.(project) === true && operations.prepareUpdate && operations.applyUpdate && operations.settleUpdate ? operations : undefined;
     };
+    const retainedOwner = Effect.fn("LocalProjects.retainedOwner")(function* (id: string) {
+        const selected = yield* forProjectId(id);
+        const managed = recipeDefinitions.get(id)?.definition.managed !== undefined && selected !== node && selected !== serverFrontend;
+        return effectOperations(managed ? integrationNode : selected);
+    });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "local-project",
         detach: Effect.fn("LocalProjects.detach")(function* () {
@@ -610,9 +615,18 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             if (!managedIntegration(project)) return undefined;
             return yield* integrationRuntime.migrateData!(project, placement);
         }),
+        // A managed app's bound App keeps its data under the integration driver; any other Project's data is its own driver's.
+        retainedData: Effect.fn("LocalProjects.retainedData")(function* (id) {
+            const owner = yield* retainedOwner(id);
+            return owner.retainedData ? yield* owner.retainedData(id) : [];
+        }),
+        removeRetainedData: Effect.fn("LocalProjects.removeRetainedData")(function* (id, name) {
+            const owner = yield* retainedOwner(id);
+            if (owner.removeRetainedData) yield* owner.removeRetainedData(id, name);
+        }),
         commitUpgrade: Effect.fn("LocalProjects.commitUpgrade")(function* (id) {
             const selected = effectOperations(yield* forProjectId(id));
-            if (selected.commitUpgrade) yield* selected.commitUpgrade(id);
+            return selected.commitUpgrade ? yield* selected.commitUpgrade(id) : undefined;
         }),
         abandonUpgrade: Effect.fn("LocalProjects.abandonUpgrade")(function* (id) {
             const selected = effectOperations(yield* forProjectId(id));

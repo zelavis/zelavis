@@ -6087,6 +6087,34 @@ function resolvePlatformEndpointGroup(
           }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
         },
         {
+          id: "runtime.projects.retainedData.list",
+          spec: {
+            operationId: "listProjectRetainedData", summary: "List data a migration kept beside a Project's live data", tags: ["projects"],
+            responses: { 200: { description: "Retained data" }, 404: { description: "No such Project" } },
+          },
+          method: "GET", path: "/projects/:projectId/retained-data",
+          access: { permissions: ["project.view"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              return { status: 200, body: { retained: yield* integration(() => projects!.retainedData(params.projectId ?? "")) } };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
+          id: "runtime.projects.retainedData.remove",
+          spec: {
+            operationId: "removeProjectRetainedData", summary: "Remove one directory of retained data, by its exact name. Irreversible.", tags: ["projects"],
+            responses: { 200: { description: "Removed" }, 400: { description: "Not retained data, or a migration is unsettled" },
+              404: { description: "No such Project" }, 409: { description: "The Project has an unfinished update" } },
+          },
+          method: "DELETE", path: "/projects/:projectId/retained-data/:name",
+          access: { permissions: ["project.runtime.manage"], scope: { type: "project", projectIdParam: "projectId" } },
+          handler: ({ params }: { params: Record<string, string> }) => present(Effect.gen(function* () {
+              if (!projects) return unavailableProjectsResponse();
+              yield* integration(() => projects!.removeRetainedData(params.projectId ?? "", params.name ?? ""));
+              return { status: 200, body: { removed: params.name } };
+          }).pipe(Effect.catch(error => Effect.succeed(projectErrorResponse(unwrapFailure(error)))))),
+        },
+        {
           id: "runtime.projects.create",
           spec: {
             operationId: "createProject",

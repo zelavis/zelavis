@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { cp, mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { Data, Effect } from "effect";
 import { evaluate, integration, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { arrayOf, isSafeInteger, isString, literal, objectFields, optional, parseJson } from "../core/json-validation.js";
@@ -30,12 +30,16 @@ export interface DataMigrationInput {
   /** The compiled `_data-export-worker.js`. */
   readonly exportWorker: string;
   readonly exportTimeoutMs?: number;
+  /** Free bytes where the staging goes; read from the file system when omitted. Tests set it. */
+  readonly freeBytes?: number;
 }
 
 export interface DataMigrationReport {
   readonly shardsDirectory: string;
   readonly tenants: number;
   readonly collections: number;
+  /** Schema versions recreated, and which versions are active. */
+  readonly schemas: number;
   readonly documents: number;
   /** Documents that had been updated or were already at a later version; their versions restart at one. */
   readonly documentsWithHistoryDropped: number;
@@ -59,6 +63,20 @@ const exportManifest = objectFields<{ readonly format: "zelavis-data-export/1"; 
   tenants: arrayOf(objectFields<{ readonly tenant: string; readonly file: string }>({ tenant: isString, file: isString })),
 });
 const tenantExport = objectFields<{ readonly tenant: string; readonly events: ReadonlyArray<ExportedEvent> }>({ tenant: isString, events: arrayOf(exportedEvent) });
+
+/** Bytes a directory tree holds; staging needs several times this: a copy, the export and the migrated database. */
+const treeBytes = (directory: string): Effect.Effect<number, DataMigrationFailure> => Effect.gen(function* () {
+  let total = 0;
+  const entries = yield* attempt("The data to migrate cannot be measured.", () => readdir(directory, { withFileTypes: true }));
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) total += yield* treeBytes(path);
+    else if (entry.isFile()) total += (yield* attempt("The data to migrate cannot be measured.", () => stat(path))).size;
+  }
+  return total;
+});
+/** A copy of the source, its export (about as large) and the migrated database, plus room to spare. */
+const STAGING_FACTOR = 3.5;
 const WRITE_BATCH = 500;
 const MAX_TENANT_FILE_BYTES = 512 * 1024 * 1024;
 /** Held by the earlier engine per Tenant and rebuilt or short-lived here: idempotency receipts and projection checkpoints. */
@@ -117,6 +135,11 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
   const sourceStats = yield* attempt("The data to migrate cannot be read.", () => stat(resolve(input.sourceShards)));
   if (!sourceStats.isDirectory()) return yield* fail("The data to migrate is not a directory.");
 
+  const sourceBytes = yield* treeBytes(resolve(input.sourceShards));
+  const fileSystem = input.freeBytes === undefined ? yield* attempt("The free space cannot be read.", () => statfs(dirname(work))) : undefined;
+  const free = input.freeBytes ?? Number(fileSystem!.bavail) * Number(fileSystem!.bsize);
+  if (free < sourceBytes * STAGING_FACTOR) return yield* fail(`There is not enough free space to migrate: about ${Math.ceil(sourceBytes * STAGING_FACTOR)} bytes are needed beside the data, ${free} are free. Nothing was changed.`);
+
   const run = Effect.gen(function* () {
     yield* attempt("The staging directory could not be created.", () => mkdir(work, { recursive: true, mode: 0o700 }));
     yield* attempt("The data could not be copied for export.", () => cp(resolve(input.sourceShards), source, { recursive: true }));
@@ -126,7 +149,7 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
 
     const opened = yield* attempt("The migrated database could not be created.", () => openNodeDatabase({ directory: migrated }));
     return yield* Effect.gen(function* () {
-      let collections = 0, documents = 0, historyDropped = 0;
+      let collections = 0, schemas = 0, documents = 0, historyDropped = 0;
       const dropped: Record<string, number> = {};
       for (const entry of manifest.tenants) {
         const file = join(exported, entry.file);
@@ -138,10 +161,12 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
         const tenantDocuments = opened.database.forTenant(entry.tenant).documents;
 
         const isCollection = (e: ExportedEvent) => e.identity?.namespace.startsWith("zv.collection/") === true;
+        const isSchema = (e: ExportedEvent) => e.identity?.namespace === "zv.schema";
+        const isActiveSchema = (e: ExportedEvent) => e.identity?.namespace === "zv.schema.active";
         const isDocument = (e: ExportedEvent) => e.identity?.namespace.startsWith("doc/") === true;
         const unknown: Record<string, number> = {};
         for (const event of live) {
-          if (isCollection(event) || isDocument(event)) continue;
+          if (isCollection(event) || isDocument(event) || isSchema(event) || isActiveSchema(event)) continue;
           const namespace = event.identity?.namespace ?? "(no identity)";
           if (DROPPED_PREFIXES.some((prefix) => namespace.startsWith(prefix))) dropped[namespace.split("/")[0]!] = (dropped[namespace.split("/")[0]!] ?? 0) + 1;
           else unknown[namespace.split("/")[0]!] = (unknown[namespace.split("/")[0]!] ?? 0) + 1;
@@ -196,8 +221,28 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
           }
           if (seen !== ids.size) return yield* fail(`Verification failed for "${entry.tenant}/${collection}": ${ids.size} documents expected, ${seen} read back.`);
         }
+
+        // Schemas go in last, saved inactive and then activated: an active schema would judge the documents as they come in, and the
+        // earlier engine never checked what it already held when a schema was activated.
+        const tenantSchemas = opened.database.forTenant(entry.tenant).schemas;
+        const savedSchemas = live.filter(isSchema).map((e) => decode(e) as { collection: string; version: number; fields: never });
+        for (const schema of savedSchemas.sort((a, b) => a.collection.localeCompare(b.collection) || a.version - b.version)) {
+          yield* tenantSchemas.save({ collection: schema.collection, version: schema.version, fields: schema.fields, activate: false })
+            .pipe(Effect.mapError((error) => fail(`Schema ${schema.collection}@${schema.version} of Tenant "${entry.tenant}" could not be recreated: ${error._tag}.`, error)));
+          schemas += 1;
+        }
+        const prefix = `${entry.tenant}/`;
+        for (const record of live.filter(isActiveSchema)) {
+          const collection = (record.identity?.key ?? "").startsWith(prefix) ? (record.identity?.key ?? "").slice(prefix.length) : undefined;
+          const version = (decode(record) as { version?: number }).version;
+          if (collection === undefined || version === undefined) return yield* fail(`Tenant "${entry.tenant}" has an active-schema record this migration cannot read.`);
+          yield* tenantSchemas.activate(collection, version)
+            .pipe(Effect.mapError((error) => fail(`Schema ${collection}@${version} of Tenant "${entry.tenant}" could not be activated: ${error._tag}.`, error)));
+        }
+        const readBack = yield* tenantSchemas.listCollections.pipe(Effect.mapError((error) => fail(`Schemas of Tenant "${entry.tenant}" cannot be read back.`, error)));
+        if (savedSchemas.length > 0 && readBack.length === 0) return yield* fail(`Verification failed for "${entry.tenant}": its schemas were not found after recreation.`);
       }
-      return { shardsDirectory: migrated, tenants: manifest.tenants.length, collections, documents, documentsWithHistoryDropped: historyDropped, dropped } satisfies DataMigrationReport;
+      return { shardsDirectory: migrated, tenants: manifest.tenants.length, collections, schemas, documents, documentsWithHistoryDropped: historyDropped, dropped } satisfies DataMigrationReport;
     }).pipe(Effect.ensuring(Effect.promise(() => opened.close()).pipe(Effect.orDie)));
   });
 
