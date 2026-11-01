@@ -264,6 +264,12 @@ export function recipeHostConformance(test, makeHost) {
     const down = await sandbox(t, { fetch: () => { never += 1; return Promise.reject(new Error("offline")); } });
     await failure(down.host.download({ url: "https://example.com/a", sha256: digestOf(bytes), maxBytes: 1024, destination: "e.bin" }));
     assert.equal(never, 3, "three attempts and then it gives up");
+
+    // A failed download says which host stumbled and the network's own code, so a flaky mirror is found from the message.
+    const reset = await sandbox(t, { fetch: () => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) })) });
+    const named = await failure(reset.host.download({ url: "https://mirror.example.org/a", sha256: digestOf(bytes), maxBytes: 1024, destination: "f.bin" }));
+    assert.match(named.message, /^The download failed \(mirror\.example\.org: ECONNRESET\)\.$/);
+    assert.ok(!/https?:|\/a/.test(named.message), "the address and its path are not repeated, only the host");
   });
 
   test("a redirect is followed only to https, a few times", async (t) => {

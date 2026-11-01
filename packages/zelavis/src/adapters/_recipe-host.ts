@@ -288,13 +288,21 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
       if (typeof input.sha256 !== "string" || !SHA256.test(input.sha256)) return yield* refuse("download", "A download needs the SHA-256 it must match.");
       if (!Number.isInteger(input.maxBytes) || input.maxBytes < 1 || input.maxBytes > 1024 * 1024 * 1024) return yield* refuse("download", "The size limit is not valid.");
       const destination = yield* locate("download", input.destination);
-      const failed = "The download failed.";
+      // The host and the network's own code say which download stumbled and how; the cause is otherwise lost.
+      const reason = (cause: unknown) => {
+        const code = (cause as { cause?: { code?: unknown }; code?: unknown } | undefined);
+        const detail = [code?.cause?.code, code?.code, (cause as { name?: unknown } | undefined)?.name].find((value) => typeof value === "string");
+        return `The download failed (${url.host}${typeof detail === "string" ? `: ${detail}` : ""}).`;
+      };
+      const failed = `The download failed (${url.host}).`;
       const limit = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
       let current = url;
       let response: Response | undefined;
       for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
         const target = current;
-        response = yield* attempt("download", failed, (signal) => fetchImpl(target, { redirect: "manual", signal: AbortSignal.any([signal, limit]) }), { interruptible: true });
+        response = yield* integration((signal) => fetchImpl(target, { redirect: "manual", signal: AbortSignal.any([signal, limit]) }), { interruptible: true }).pipe(
+          Effect.mapError((failure: IntegrationFailure) => failure.cause instanceof RecipeError ? failure.cause : fail("download", reason(failure.cause))),
+        );
         if (response.status < 300 || response.status > 399) break;
         const next = response.headers.get("location");
         if (!next || hop === MAX_REDIRECTS) return yield* refuse("download", "The download redirected too many times.");
@@ -310,9 +318,11 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
       const partial = `${destination}.${randomBytes(6).toString("hex")}.part`;
       const measured = measure(input.maxBytes);
       yield* Effect.gen(function* () {
-        yield* attempt("download", failed, (signal) => pipeline(
+        yield* integration((signal) => pipeline(
           body, measured.stream, createWriteStream(partial, { flags: "wx", mode: 0o644 }), { signal: AbortSignal.any([signal, limit]) },
-        ), { interruptible: true });
+        ), { interruptible: true }).pipe(
+          Effect.mapError((failure: IntegrationFailure) => failure.cause instanceof RecipeError ? failure.cause : fail("download", reason(failure.cause))),
+        );
         const actual = measured.digest();
         const expected = Buffer.from(input.sha256, "hex");
         if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
@@ -323,7 +333,7 @@ export function createRecipeHost(options: RecipeHostOptions): RecipeHostApi {
     });
 
   /** A download that fails because the network or the server stumbled, not because of what it carried, is tried again. */
-  const transient = (error: RecipeError) => error.message === "The download failed." || /^The server answered (?:5\d\d|429)\./.test(error.message);
+  const transient = (error: RecipeError) => error.message.startsWith("The download failed") || /^The server answered (?:5\d\d|429)\./.test(error.message);
 
   const api: RecipeHostApi = {
     files: {
