@@ -187,6 +187,17 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   authority grows with nothing. The drill runs it with 100 Tenants: every Tenant is fenced on the old writer, the
   standby holds them all, a third node that tries to stand by is refused, and the returning old writer and that
   third node converge on the new writer, Tenants created after the loss included.
+- **A Project's start is guarded by its lease.** A Project runtime started with `ZELAVIS_LEASE_AUTHORITY` (the Platform's API
+  root), `ZELAVIS_LEASE_TOKEN` (a service account with `database.replicate` at the system scope), `ZELAVIS_LEASE_NODE` (this
+  node) and `ZELAVIS_LEASE_STANDBY` (the standby its writes wait for; optional `ZELAVIS_LEASE_TTL_MILLIS`, default 15000, and
+  `ZELAVIS_LEASE_ENDPOINT`) takes the whole-database lease before its database is handed out (`openNodeDatabase({ lease })`,
+  `writerLeases.startDatabase`), or does not open at all. A free lease, or this node's own, is acquired at a new epoch; another
+  node's is taken only when it has lapsed or been released *and* this node is the standby that writer named (`LeaseStillHeld`,
+  `NotDesignatedStandby` otherwise). So the lease, not whichever component decided to start the Project, is the fence: a node
+  told to start a Project whose writer is live refuses to serve it. The variables are all or nothing, and a runtime that finds
+  itself superseded stops (exit 75) rather than serve stale reads. Closing the database releases the lease. The drill starts the
+  old writer's container as the Project: refused while the new writer's lease is live, opened from the copy it kept following once
+  that lease lapsed, holding every write the lost writer acknowledged.
 - **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
   released.
 - **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`

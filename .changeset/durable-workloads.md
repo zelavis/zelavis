@@ -42,3 +42,7 @@ over the whole database (`writerLeases.holdDatabase|standbyDatabase|followDataba
 write and always names its standby. A single write reached a follower in a median 5 ms with 500 Tenants and 6 ms with 4,000.
 `remoteChanges` keeps its shape over the feed; `zelavis followers feed|partitions` and `client.followers(id).feed|partitions`
 replace `changes`.
+
+A Project runtime's start is guarded by its whole-database writer lease: with `ZELAVIS_LEASE_AUTHORITY`, `_TOKEN`, `_NODE` and
+`_STANDBY` set it takes the lease before its database opens (`openNodeDatabase({ lease })`), or does not open; another node's
+lease is taken only as the lapsed writer's named standby, and a runtime superseded while serving stops.

@@ -41,19 +41,21 @@ async function drill(name, body) {
   const net = `zvf-${run}-${name}`;
   const containers = [];
   const dirs = [];
-  const start = (node, env, { alias } = {}) => {
-    const dir = mkdtempSync(join(tmpdir(), "zv-failover-")); dirs.push(dir);
-    const container = `${net}-${node}`;
+  const dataOf = new Map();
+  const start = (node, env, { alias, dir: reuse, label } = {}) => {
+    const dir = reuse ?? mkdtempSync(join(tmpdir(), "zv-failover-")); if (reuse === undefined) dirs.push(dir);
+    const container = `${net}-${label ?? node}`;
     docker("run", "-d", "--name", container, "--network", net, "--network-alias", alias ?? node,
       ...Object.entries({ NAME: node, TTL_MILLIS: String(TTL), ...env }).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
       "-v", `${root}:/repo:ro`, "-v", `${dir}:/data`, IMAGE, `/repo/distribution/scripts/failover/${node === "authority" ? "authority" : "node"}.mjs`);
     containers.push(container);
+    dataOf.set(container, dir);
     return container;
   };
   try {
     docker("network", "create", net);
     docker("network", "create", `${net}-r`);
-    await body({ net, repl: `${net}-r`, start, events, until });
+    await body({ net, repl: `${net}-r`, start, dataOf, events, until });
   } finally {
     for (const container of containers) dockerQuiet("rm", "-f", container);
     dockerQuiet("network", "rm", net);
@@ -112,7 +114,7 @@ await drill("kill", async ({ start, until: wait_ }) => {
  * returning old writer must find the new writer from the lease. Run once with the lease on one partition and once on
  * the whole database (many Tenants), which is how a Project fails over.
  */
-const partitionDrill = (name, extra) => drill(name, async ({ net, start, until: wait_ }) => {
+const partitionDrill = (name, extra, afterwards) => drill(name, async ({ net, start, dataOf, until: wait_ }) => {
   start("authority", {});
   await wait(800);
   const a = start("A", { ...extra, ROLE: "writer", STANDBY: "B", ...common("http://A:8080") });
@@ -143,6 +145,12 @@ const partitionDrill = (name, extra) => drill(name, async ({ net, start, until: 
   await wait_("the old writer to follow the new one", () => events(a).some((event) => event.event === "following"), 60_000);
   // Let the old writer converge on the new writer's log, then compare what each holds.
   await quiesce(b);
+  let early;
+  if (extra.MODE === "database") {
+    // A node told to start the Project while its writer is live (B still renews its lease) must open nothing.
+    early = start("A", { ...extra, ROLE: "start", STANDBY: "B", ...common("http://A:8080") }, { label: "A-early" });
+    await wait_("the early start to answer", () => events(early).some((event) => ["start-refused", "started"].includes(event.event)), 60_000);
+  }
   const bFinalProbe = await finalOf(b);
   const aFinal = await finalOf(a);
   const cFinal = await finalOf(c);
@@ -152,6 +160,23 @@ const partitionDrill = (name, extra) => drill(name, async ({ net, start, until: 
   check(acked.every((id) => bFinalProbe.ids.includes(id)), `every write the old writer acknowledged (${acked.length}) is on the new writer`);
   const same = JSON.stringify(aFinal.ids) === JSON.stringify(bFinalProbe.ids);
   check(same, "the returned writer holds exactly what the new writer holds");
+  if (extra.MODE === "database") {
+    const refusal = events(early).find((event) => ["start-refused", "started"].includes(event.event));
+    check(refusal.event === "start-refused" && /LeaseStillHeld/.test(refusal.why), `a start while the writer's lease is live opened nothing (${refusal.why ?? refusal.event})`);
+    // B is lost for good and stops renewing. Its lease lapses; A, the standby B named, is started as the Project from
+    // the copy it kept following, and takes over.
+    await wait(TTL + 2000);
+    const late = start("A", { ...extra, ROLE: "start", STANDBY: "B", ...common("http://A:8080") }, { dir: dataOf.get(a), label: "A-late" });
+    await wait_("the standby to be started once the lease lapsed", () => events(late).some((event) => ["start-refused", "started"].includes(event.event)), 60_000);
+    const opened = events(late).find((event) => ["start-refused", "started"].includes(event.event));
+    check(opened.event === "started", `the named standby started once the lease lapsed (${opened.why ?? "epoch " + opened.epoch})`);
+    if (opened.event === "started") {
+      check(opened.epoch === 3, "at the next epoch");
+      const lost = idsAcked(events(b));
+      check(lost.every((id) => opened.ids.includes(id)), `the database it opened holds every write the lost writer acknowledged (${lost.length})`);
+      await wait_("the started Project to write", () => events(late).filter((event) => event.event === "committed" || event.event === "acked").length >= 5, 30_000);
+    }
+  }
   if (!same) {
     const onlyA = aFinal.ids.filter((id) => !bFinalProbe.ids.includes(id)), onlyB = bFinalProbe.ids.filter((id) => !aFinal.ids.includes(id));
     console.log(`    only on the returned writer: ${onlyA.join(" ") || "-"}\n    only on the new writer: ${onlyB.length} (${onlyB.slice(0, 5).join(" ")}…)\n    heads: returned ${aFinal.head}, new ${bFinalProbe.head}`);

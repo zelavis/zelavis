@@ -1,3 +1,4 @@
+import type { DatabaseLeaseStart } from "../db/database.js";
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
 import { InvalidBackup } from "../db/errors.js";
@@ -110,6 +111,11 @@ export interface NodeAdapterDatabaseOptions {
    * flushes every commit to the device. Reported by the database's health.
    */
   durability?: "crash" | "power";
+  /**
+   * Take the Project's whole-database writer lease before the database opens, and open nothing when it cannot be taken
+   * (`startWriter`). Absent: the database is not lease-guarded.
+   */
+  lease?: DatabaseLeaseStart;
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
@@ -316,6 +322,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(databaseOptions.durability === undefined
             ? {}
             : { engine: { durability: databaseOptions.durability } }),
+          ...(databaseOptions.lease === undefined ? {} : { lease: databaseOptions.lease }),
           // A Project's backups capture all of it: its database, its runtime store (accounts' sessions, workload
           // definitions and runs, Project metadata) and its media files.
           ...(isProjectRuntime ? {

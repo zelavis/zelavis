@@ -101,7 +101,7 @@ export const memoryLeaseStore = (): LeaseStore => {
 };
 
 /** The failures of the lease protocol that are not the store's. */
-export type LeaseFailure = LeaseStillHeld | FollowerBehind | LeaseOwnedByAnother | NoWriterLease | WriterFenced;
+export type LeaseFailure = LeaseStillHeld | FollowerBehind | LeaseOwnedByAnother | NoWriterLease | NotDesignatedStandby | WriterFenced;
 
 const TTL_MIN_MILLIS = 100;
 const TTL_MAX_MILLIS = 10 * 60_000;
@@ -252,6 +252,8 @@ export interface HoldWriterInput {
   readonly endpoint?: string;
   /** The follower whose acknowledgment this writer's writes wait for: the only one promoted without accepting loss. */
   readonly standby?: string;
+  /** Called once when the lease is found superseded: a writer that has lost its place should stop serving, not only be refused. */
+  readonly onSuperseded?: () => void;
   /** The highest log position acknowledged by followers now: carried in every renewal. */
   readonly acknowledged?: Effect.Effect<number>;
 }
@@ -285,7 +287,7 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
         const renewed = yield* Effect.exit(renewWriter(input.leases, held, { ttlMillis: ttl, acknowledgedHead }));
         if (renewed._tag === "Success") { held = renewed.value; continue; }
         const failure = renewed.cause.reasons.map((reason) => (reason as { error?: unknown }).error).find((error) => error instanceof WriterFenced);
-        if (failure !== undefined) { superseded = true; return; }
+        if (failure !== undefined) { superseded = true; input.onSuperseded?.(); return; }
         // The lease store could not be reached: keep trying; the gate refuses writes once the lease cannot be proved.
         yield* Effect.logWarning(`The writer lease of ${partition} could not be renewed; trying again`, renewed.cause);
       }
@@ -415,4 +417,37 @@ export const followWriter = <L>(input: FollowWriterInput<L>): Effect.Effect<neve
       }
       yield* Effect.sleep(Duration.millis(poll));
     }
+  });
+
+/**
+ * Take the writer lease of a scope (a Project) at start, whichever way this node comes to hold it, or fail so that the
+ * node does not serve:
+ * - no lease yet, or this node's own (a restart): acquire it, at a new epoch;
+ * - another node's: promote this node, which succeeds only when that lease has lapsed or been released and this node is
+ *   the standby it named (`LeaseStillHeld`, `NotDesignatedStandby` otherwise).
+ * That makes the lease the fence for any start, however the Fabric decided it: a node that was told to start a Project
+ * the lease says belongs to another, still live, writer refuses to serve it. For a scope the standby holds everything
+ * acknowledged by construction, so no head is compared (see `DatabaseLeaseHold`).
+ */
+export const startWriter = (leases: LeaseStore, input: {
+  readonly scope: string;
+  readonly owner: string;
+  readonly ttlMillis: number;
+  readonly endpoint?: string;
+  /** The standby this node's writes will wait for. */
+  readonly standby: string;
+}): Effect.Effect<WriterLease, StoreError | LeaseOwnedByAnother | LeaseStillHeld | FollowerBehind | NoWriterLease | NotDesignatedStandby> =>
+  Effect.gen(function* () {
+    const observed = yield* leases.read(input.scope);
+    if (observed === undefined || observed.lease.owner === input.owner) {
+      return yield* acquireWriter(leases, {
+        partition: input.scope, owner: input.owner, ttlMillis: input.ttlMillis, standby: input.standby,
+        ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+      });
+    }
+    const promotion = yield* promoteFollower(leases, {
+      partition: input.scope, owner: input.owner, ttlMillis: input.ttlMillis, followerHead: 0, successor: input.standby,
+      ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+    });
+    return promotion.lease;
   });

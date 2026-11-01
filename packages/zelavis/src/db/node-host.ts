@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import type { LeaseStore } from "./writer-lease.js";
+import type { DatabaseLeaseStart } from "./database.js";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +58,12 @@ export interface OpenNodeDatabaseOptions {
   readonly backupComponents?: ReadonlyArray<BackupComponent>;
   /** Where writer leases are kept, so the runtime API can show, take over and give up a partition's lease (`followers.lease|promote|demote`). */
   readonly leases?: LeaseStore;
+  /**
+   * Take the Project's whole-database writer lease before the database is handed out, and refuse to open when it cannot
+   * be taken: a node told to start a Project whose lease another live writer holds does not serve it. Held until the
+   * database closes, which releases it (see `startWriter`).
+   */
+  readonly lease?: DatabaseLeaseStart;
   /** How cross-Tenant indexes are kept current; see `MakeDatabaseOptions.crossTenantRefresh`. */
   readonly crossTenantRefresh?: MakeDatabaseOptions["crossTenantRefresh"];
 }
@@ -131,6 +138,17 @@ export const openNodeDatabase = (
       scope,
     ),
   )));
+
+  // The lease is taken before anything is handed out: a node that cannot hold it opens nothing, and the scope it was
+  // held in closes with the database (or at once, when taking it fails).
+  if (options.lease !== undefined) {
+    const lease = options.lease;
+    yield* integrationValue(Effect.runPromise(
+      Scope.provide(database.writerLeases.startDatabase(lease), scope).pipe(
+        Effect.tapError(() => Scope.close(scope, Exit.succeed(undefined))),
+      ),
+    ));
+  }
 
   // Beside the shards and the images, so a database moved with its directory takes its schedules along.
   const backups = (yield* integrationValue(Effect.runPromise(backupsHost({

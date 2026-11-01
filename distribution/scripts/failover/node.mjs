@@ -27,7 +27,21 @@ const allTenants = () => (MODE === "database" ? Array.from({ length: TENANTS }, 
 const say = (event, extra = {}) => console.log(JSON.stringify({ event, node: NAME, at: Date.now(), ...extra }));
 
 mkdirSync("/data/shards", { recursive: true });
-const opened = await openNodeDatabase({ directory: "/data/shards", crossTenantRefresh: false });
+const leases = httpLeaseStore({ apiRoot: `${AUTHORITY}/zelavis/api/v1`, token: TOKEN, timeoutMillis: 1000 });
+// ROLE=start: this container is started as the Project, the way a node is told to start one. The database takes the
+// whole-database lease before it opens, or does not open at all.
+const startLease = ROLE === "start" ? {
+  leases, scope: SCOPE, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, standby: env("STANDBY", "none"),
+  onSuperseded: () => { say("superseded"); process.exit(75); },
+} : undefined;
+let opened;
+try {
+  opened = await openNodeDatabase({ directory: "/data/shards", crossTenantRefresh: false, ...(startLease === undefined ? {} : { lease: startLease }) });
+} catch (error) {
+  const chain = [error, error?.cause, error?.cause?.cause].map((entry) => entry?._tag ?? entry?.message ?? "").filter(Boolean).join(" < ");
+  say("start-refused", { why: chain || String(error) });
+  process.exit(3);
+}
 const { database, api } = opened;
 
 // ---- the leader transport, served for the peer's follower ----
@@ -52,7 +66,6 @@ createServer(async (request, response) => {
   return send(404, { error: "no follower route" });
 }).listen(8080);
 
-const leases = httpLeaseStore({ apiRoot: `${AUTHORITY}/zelavis/api/v1`, token: TOKEN, timeoutMillis: 1000 });
 // Where the writer is comes from its lease (`endpoint`), never from configuration: after a promotion the lease names the new one.
 const leaderFor = (endpoint) => {
   const transport = createZelavisClient({ baseUrl: endpoint, rootPath: "/zelavis" }).followers("p1");
@@ -126,6 +139,12 @@ if (ROLE === "writer") {
   await Effect.runPromise(Scope.close(scope, Exit.void));
   say("following");
   await Effect.runPromise(follow());
+} else if (ROLE === "start") {
+  const held = (await Effect.runPromise(leases.read(SCOPE))).lease;
+  const ids = await idsNow();
+  say("started", { epoch: held.epoch, ids, held: ids.length });
+  const handle = { writable: Effect.succeed(true), lease: Effect.succeed(held) };
+  await writeLoop(handle, ids.length === 0 ? 1 : Number(ids[ids.length - 1].slice(1)) + 1);
 } else if (ROLE === "follower") {
   // Never promoted: follows whoever holds the lease, before and after any promotion.
   say("follower");

@@ -1,5 +1,5 @@
 import { type Duration, Effect, Option, PubSub, type Scope, Stream, SubscriptionRef } from "effect";
-import type { DbError, InvalidExport, LeaseOwnedByAnother, LeaseStillHeld, StoreError } from "./errors.js";
+import type { DbError, FollowerBehind, InvalidExport, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, NotDesignatedStandby, StoreError } from "./errors.js";
 import type { KvEngine } from "./kv.js";
 import { BranchNotMergeable, InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
@@ -34,7 +34,7 @@ import { exportDividedPage, type ExportPage, type ExportPageInput } from "./expo
 import { makeChangeFeed } from "./change-feed.js";
 import { followersOver, type DatabaseLeader, type FollowersApi } from "./leader.js";
 import {
-  followWriter, holdWriter, standby as standbyFor, type HoldWriterInput, type LeaseStore, type Promotion, type StandbyInput, type WriterHandle,
+  followWriter, holdWriter, startWriter, standby as standbyFor, type HoldWriterInput, type LeaseStore, type Promotion, type StandbyInput, type WriterHandle,
 } from "./writer-lease.js";
 import { entitiesFor, serveEntities, type EntitiesApi, type EntityServeOptions, type EntityWake } from "./entities.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
@@ -426,6 +426,11 @@ export interface DatabaseApi {
     readonly standby: (input: WriterLeaseStandby) => Effect.Effect<WriterHandle & { readonly promotion: Promotion }, DbError, Scope.Scope>;
     /** Hold the writer lease of the whole database (see `DatabaseLeaseHold`) until the scope closes. */
     readonly holdDatabase: (input: DatabaseLeaseHold) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld, Scope.Scope>;
+    /**
+     * Take the whole-database lease the way a starting Project does, or fail (`startWriter`): acquire it when it is free or
+     * this node's own, promote this node when it is the lapsed writer's named standby, otherwise refuse. Held until the scope closes.
+     */
+    readonly startDatabase: (input: DatabaseLeaseStart) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld | FollowerBehind | NoWriterLease | NotDesignatedStandby, Scope.Scope>;
     /** Follow whoever holds the whole-database lease, and the new one after a promotion (see `DatabaseLeaseFollow`). */
     readonly followDatabase: (input: DatabaseLeaseFollow) => Effect.Effect<never>;
     /** Stand by for the whole database: follow until the lease lapses, then take it over; the standby it names is promotable. */
@@ -471,6 +476,9 @@ export interface DatabaseLeaseHold extends Omit<HoldWriterInput, "store" | "ackn
   readonly scope: string;
   readonly standby: string;
 }
+/** What a Project runtime needs to take its lease at start (see `startWriter`). */
+export interface DatabaseLeaseStart extends Omit<DatabaseLeaseHold, "lease"> {}
+
 export interface DatabaseLeaseFollow {
   readonly scope: string;
   readonly leases: LeaseStore;
@@ -1174,6 +1182,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       holdDatabase: (input) => holdWriter({ ...input, store: wholeDatabase(input.scope) }),
       standbyDatabase: (input) => standbyFor({ ...input, store: wholeDatabase(input.scope), follow: followingDatabase(input) }),
       followDatabase: (input) => followingDatabase(input),
+      startDatabase: (input) => Effect.gen(function* () {
+        const lease = yield* startWriter(input.leases, { scope: input.scope, owner: input.owner, ttlMillis: input.ttlMillis, standby: input.standby, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) });
+        return yield* holdWriter({ ...input, lease, store: wholeDatabase(input.scope) });
+      }),
     },
     entities: {
       serve: (options) => serveEntities({ partitions, entities: (partition) => handleOf(partition).entities, wakes: entityWakes, options }),

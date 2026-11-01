@@ -158,7 +158,7 @@ shards.
    an unacknowledged tail to the decision in separate containers. Other followers find the new writer from the lease
    (`followWriter`), `allowDataLoss` needs its own permission and is audited, and the control flow is decision 9.
    The writer names the one follower it waits for (`standby`) and only that follower is promoted without accepting loss: the lease's `acknowledgedHead` lags up to a third of its life, so without it a different level follower could miss a write acknowledged just before the writer died.
-   The Project is the failover unit: one whole-database lease with a designated standby, a fixed-ring change feed and a paged listing, so following and failing over cost the changes (the drill runs 100 Tenants; steady-state latency is the same at 500 and 4,000). **Open:** the Fabric half of decision 9 — a general way to start a Project on another node from its follower copy
+   The Project is the failover unit: one whole-database lease with a designated standby, a fixed-ring change feed and a paged listing, so following and failing over cost the changes (the drill runs 100 Tenants; steady-state latency is the same at 500 and 4,000). A Project runtime's start takes the whole-database lease before its database opens (`startWriter`, `ZELAVIS_LEASE_*`), so the lease is the fence for any start. **Open:** the Fabric half of decision 9 — a general way to start a Project on another node from its follower copy
    (a standby Project supervised by that node's Agent) and to commit the placement `{owner, epoch}` when the lease
    epoch advances — and running `standby` inside those standby Projects.
 4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
