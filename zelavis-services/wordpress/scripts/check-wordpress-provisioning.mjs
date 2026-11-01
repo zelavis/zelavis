@@ -95,10 +95,10 @@ export function register() {
     await rootAgent.close();
     await assert.rejects(access("/opt/zelavis/host-agent/agent-operations/operations.sqlite"), { code: "EACCES" });
     const recipes = await client.projects.recipes();
-    // The fixed host package sets the WordPress this Platform offers needs: the hand-written runtime of
-    // earlier releases names wordpress-stack, the recipe names mariadb-server.
+    // The fixed host package sets the WordPress this Platform offers still needs. The recipe brings its own MariaDB
+    // where the vendor builds one (Linux x86_64), so it needs no host set there; elsewhere it names mariadb-server.
     const hostPackageSets = recipes.find((recipe) => recipe.name === "@zelavis/wordpress").hostPackages;
-    assert.ok(Array.isArray(hostPackageSets) && hostPackageSets.length > 0, JSON.stringify(hostPackageSets));
+    assert.deepEqual(hostPackageSets, process.arch === "x64" ? [] : ["mariadb-server"]);
     let project = ["verify-preview", "upgrade", "start-historical", "stop", "live-upgrade"].includes(phase) ? await client.projects.get("qualification-wordpress") : await (async () => { await installRecipeIfAvailable({ baseUrl, cookie: await readFile("/var/lib/zelavis/qualification-session", "utf8") }, "@zelavis/wordpress"); return client.projects.create({ id: "qualification-wordpress", name: "Qualification WordPress", recipeName: "@zelavis/wordpress", installHostPackages: true }); })();
     if (phase === "start-historical") {
       assert.equal(project.recipeStatus.state, "upgradeAvailable");

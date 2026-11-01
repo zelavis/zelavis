@@ -176,10 +176,12 @@ test("without tmux the terminal reports why, and opens nothing", async (t) => {
 test("the terminal is the owner's: HTTP and the SDK need server.terminal.use", async (t) => {
   const data = await mkdtemp(join(tmpdir(), "zelavis-terminal-"));
   t.after(() => rm(data, { recursive: true, force: true }));
+  // The tmux probe runs on the first request, not at construction, so tmux stays hidden for the whole test:
+  // a machine that has tmux installed (a CI runner) must see the same "unavailable" answer as one that has not.
   const path = process.env.PATH;
   process.env.PATH = join(data, "no-such-bin");
+  t.after(() => { process.env.PATH = path; });
   const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: data, services: false, projects: false }) });
-  process.env.PATH = path;
   t.after(() => zv.close());
   const call = (suffix, principal, init = {}) => zv.fetch(new Request(`http://localhost/zelavis/api/v1/runtime/terminal${suffix}`, init), { principal });
   const owner = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
