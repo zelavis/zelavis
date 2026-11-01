@@ -80,6 +80,16 @@ async function underTraffic(urls, operation, label) {
   return result;
 }
 
+
+/** The bound App of a managed app: which engine its host last selected, and the data layout it records. */
+async function bound(id) {
+  const root = join(projects, id, '.zelavis', 'integration');
+  const journal = JSON.parse(await readFile(join(root, 'runtime-handover.json'), 'utf8'));
+  const layout = await readFile(join(root, 'data-layout.json'), 'utf8').then((text) => JSON.parse(text), () => undefined);
+  const retained = (await readdir(root)).filter((name) => name.startsWith('data.format-'));
+  return { engine: journal.selected.version, layout, retained, root };
+}
+
 const sites = (state) => Object.values(state.sites ?? {});
 
 if (phase === 'create-wordpress') {
@@ -138,6 +148,33 @@ if (phase === 'create-wordpress') {
   assert.match(status.run.message, /Projects restarted once/);
   console.log('PASS: historical Agent conversion is explicit and desired Projects recovered.');
 
+} else if (phase === 'held') {
+  // The Platform moved to an engine that writes another data layout. A managed app's bound App must not follow it: its data stays
+  // in the layout it was written in, on the engine that wrote it, and the Project says it can be upgraded.
+  const { client } = await sdk();
+  for (const site of sites(await readState())) {
+    const project = await client.projects.get(site.id);
+    assert.deepEqual(project.dataLayout, { state: 'upgradeRequired', from: 2, to: 4 }, `${site.id} offers the layout migration`);
+    const held = await bound(site.id);
+    assert.equal(held.engine, process.env.ZELAVIS_HISTORY_PREVIOUS, `${site.id}: its host still runs the engine that wrote its data`);
+    assert.equal(held.layout, undefined, `${site.id}: nothing has been migrated`);
+    console.log(`PASS: ${site.id} stays on ${held.engine} with its format-2 data; the Project offers the migration.`);
+  }
+} else if (phase === 'migrated') {
+  const { cookie, client } = await sdk();
+  for (const site of sites(await readState())) {
+    const project = await client.projects.get(site.id);
+    assert.equal(project.dataLayout, undefined, `${site.id} no longer offers the migration`);
+    const after = await bound(site.id);
+    assert.equal(after.engine, process.env.ZELAVIS_HISTORY_TO, `${site.id}: its host now follows the Platform's engine`);
+    assert.deepEqual(after.layout, { format: 4 }, `${site.id}: the data layout is recorded`);
+    const kept = after.retained.filter((name) => name.startsWith('data.format-2-'));
+    assert.equal(kept.length, 1, `${site.id}: the format-2 data is kept (${after.retained})`);
+    const shards = await readdir(join(after.root, kept[0], 'primary', 'shards'));
+    assert.ok(shards.some((name) => name.endsWith('.sqlite')), `${site.id}: the kept data is the original shards`);
+    await open(cookie, site.id);
+    console.log(`PASS: ${site.id} runs on ${after.engine} with migrated data; the format-2 data is kept in ${kept[0]}.`);
+  }
 } else if (phase === 'unlist') {
   // Run as root with the Platform stopped: the server forgets it installed WordPress, as one whose WordPress
   // came with an earlier Platform never had it installed.

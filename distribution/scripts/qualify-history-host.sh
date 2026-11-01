@@ -40,7 +40,7 @@ systemctl start zelavis.socket zelavis.service
 ready
 "$NODE" /workspace/zelavis-services/wordpress/scripts/check-wordpress-provisioning.mjs claim
 chown zelavis:zelavis /var/lib/zelavis/qualification-session
-check() { runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" /workspace/distribution/scripts/qualify-history.mjs "$@"; }
+check() { runuser -u zelavis -- env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_HISTORY_PREVIOUS="$ZELAVIS_HISTORY_PREVIOUS" ZELAVIS_HISTORY_TO="$TO" "$NODE" /workspace/distribution/scripts/qualify-history.mjs "$@"; }
 check create-wordpress
 printf 'PASS: %s made a WordPress site with its own runtime, and opened it.\n' "$FROM"
 # Live updates, the way Update now moves a server: stage the release, then hand over to it. Never the
@@ -66,15 +66,33 @@ env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_HISTORY_TO="$TO" "$NODE" /workspac
 NODE=/opt/zelavis/current/runtime/node/bin/node
 check serving
 printf 'PASS: live update to the candidate %s; every site still serves.\n' "$TO"
+check held
+# A restart of the whole Platform must keep a held app on its engine too: a cold start is the other way a host could be moved.
+systemctl restart zelavis.service
+ready
+check serving
+check held
+printf 'PASS: after a Platform restart a held app is still on the engine that wrote its data.\n'
 # A server whose WordPress came with an earlier Platform holds it only as a Marketplace listing.
 systemctl stop zelavis.service zelavis.socket
 env ZELAVIS_PROVISIONING_DISPOSABLE=1 "$NODE" /workspace/distribution/scripts/qualify-history.mjs unlist
 systemctl start zelavis.socket zelavis.service
 ready
+# The recipes bring their own MariaDB only where the vendor builds one (x86_64). On any other CPU the new recipe needs the host's,
+# which a real server installs from the create-project form; the gate has no form, so it installs the same package set
+# (distribution/operations/zelavis.packages-install, set mariadb-server) once.
+if [ "$(uname -m)" != x86_64 ] && ! command -v mariadb-dump >/dev/null 2>&1; then
+  apt-get update -qq >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server-core mariadb-client-core mariadb-client >/dev/null 2>&1 || { echo "FAIL: could not install the MariaDB package set for the upgrade step"; exit 1; }
+fi
 check upgrade
+check migrated
+printf 'PASS: Update recipe migrated each held app: its host follows the Platform, its format-2 data is kept.\n'
 systemctl restart zelavis.service
 ready
 check serving
+check migrated
+printf 'PASS: after a Platform restart each migrated app is still on the Platform engine with its migrated data.\n'
 # The restarted Platform adopts what runs; it never starts a second copy of a process (a second Caddy shares its
 # port, a second PHP-FPM fails on its socket and loops).
 sleep 20
