@@ -896,8 +896,14 @@ export interface ZelavisFollowersClient {
   promote(partition: string, input: { readonly owner: string; readonly ttlMillis: number; readonly allowDataLoss?: boolean }): Promise<{ readonly lease: ZelavisWriterLease; readonly lostPositions: number }>;
   /** Give up the lease this database holds, so a follower can be promoted at once. */
   demote(partition: string): Promise<{ readonly released: boolean }>;
-  /** Partitions whose heads moved past `heads`, waiting up to `timeoutMillis` for a write when none has. */
-  changes(input?: { readonly heads?: Readonly<Record<string, number>>; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }): Promise<{ readonly heads: Readonly<Record<string, number>>; readonly more: boolean }>;
+  /**
+   * The partitions written since `cursor` (the previous answer's), oldest first, each once; waits up to `timeoutMillis`
+   * when none is owed. Without a cursor the answer is the current position and `resync: true`. The cost is the
+   * changes, whatever the number of partitions; a cursor the leader cannot answer is a `resync` too.
+   */
+  feed(input?: { readonly cursor?: string; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }): Promise<{ readonly cursor: string; readonly partitions: ReadonlyArray<string>; readonly resync: boolean; readonly more: boolean }>;
+  /** The Tenant partitions with their log heads, `limit` (1 to 1000) at a time; `next` continues. */
+  partitions(input?: { readonly after?: string; readonly limit?: number }): Promise<{ readonly partitions: ReadonlyArray<{ readonly partition: string; readonly head: number }>; readonly next?: string }>;
 }
 
 export interface ZelavisWriterLease {
@@ -2701,7 +2707,8 @@ function createFollowersClient(
     lease: (partition) => json(at(partition, "lease")),
     promote: (partition, input) => json(at(partition, "lease/promote"), { method: "POST", body: input }),
     demote: (partition) => json(at(partition, "lease/demote"), { method: "POST", body: {} }),
-    changes: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/changes`), { method: "POST", body: input ?? {} }),
+    feed: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/feed`), { method: "POST", body: input ?? {} }),
+    partitions: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/partitions`), { method: "POST", body: input ?? {} }),
   };
 }
 

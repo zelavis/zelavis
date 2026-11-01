@@ -316,3 +316,32 @@ test("a follower that was not promoted finds the new writer from the lease alone
   await until(async () => (await docs(A, 8)) !== undefined, "the old writer follows the new one");
   await until(async () => (await docs(C, 8)) !== undefined, "and so does C");
 });
+
+test("a lease over the whole database gates every Tenant on every shard at once, and costs the same however many there are", { timeout: 60_000 }, async (t) => {
+  const A = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const leases = memoryLeaseStore();
+  const scope = newScope();
+  t.after(() => closeScope(scope));
+  const tenants = Array.from({ length: 40 }, (_, at) => `tenant-${at}`);
+  for (const tenant of tenants) {
+    await A.api.forTenant(tenant).documents.createCollection({ name: "posts" });
+    await A.api.forTenant(tenant).documents.insert({ collection: "posts", id: "p1", data: {} });
+  }
+  const write = (tenant, id) => Effect.runPromiseExit(A.database.forTenant(tenant).documents.insert({ collection: "posts", id, data: {} }));
+  assert.ok(Exit.isSuccess(await write("tenant-0", "before")), "writable before the lease");
+
+  const reachable = partitionable(leases);
+  const handle = await inScope(scope, A.database.writerLeases.holdDatabase({ scope: "project-1", leases: reachable.store, owner: "A", ttlMillis: 1500, endpoint: "A", standby: "B" }));
+  assert.deepEqual([(await Effect.runPromise(handle.lease)).partition, (await Effect.runPromise(handle.lease)).standby], ["project-1", "B"]);
+  for (const tenant of tenants) assert.ok(Exit.isSuccess(await write(tenant, "held")), `${tenant} writable while the lease is live`);
+  // A leased database is not moved or removed from under its lease, whichever Tenant is asked.
+  assert.ok(Exit.isFailure(await Effect.runPromiseExit(A.database.dropTenant("tenant-3"))));
+
+  // Cut off from the authority, the whole database stops: every Tenant, not one, and nothing lands.
+  reachable.state.cut = true;
+  let attempt = 0;
+  await until(async () => Exit.isFailure(await write("tenant-0", `late-${attempt++}`)), "the gate closes when the lease cannot be proved");
+  for (const tenant of tenants) assert.ok(Exit.isFailure(await write(tenant, "after")), `${tenant} refused`);
+  assert.equal(await A.api.forTenant("tenant-7").documents.findById({ collection: "posts", id: "after" }), undefined, "nothing of a refused write landed");
+  assert.equal((await A.api.forTenant("tenant-7").documents.findById({ collection: "posts", id: "p1" }))?.id, "p1", "reads go on");
+});

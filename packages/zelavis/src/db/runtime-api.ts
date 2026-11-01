@@ -11,7 +11,7 @@ import type { CovarianceInput, MeasureHistogramInput, MeasureHistogram } from ".
 import type { ActivatedSchema, PendingActivation } from "./schema-activation.js";
 import type { GeneratedSchemaTypes, LogicalSchemaBundle, SchemaExportOptions, SchemaImportOptions, SchemaImportResult } from "./schema-transfer.js";
 import type { ExportPage, ExportPageInput } from "./export-stream.js";
-import { eventToWire, LEADER_LOG_LIMIT, LEADER_RECORDS_LIMIT, recordToWire, validFollowerName, type LeaderChanges, type LeaderTransport } from "./leader.js";
+import { eventToWire, LEADER_LOG_LIMIT, LEADER_RECORDS_LIMIT, recordToWire, validFollowerName, type LeaderFeed, type LeaderPartitions, type LeaderTransport } from "./leader.js";
 import { asSeq } from "./model.js";
 import type { EntityMessage, EntitySend, EntityServeOptions, EntityState, EntityStep } from "./entities.js";
 import { integration } from "../core/runtime/effect-boundary.js";
@@ -398,7 +398,8 @@ export interface DatabaseRuntimeApi {
    */
   readonly followers: LeaderTransport & {
     readonly stats: (partition: string) => Promise<PartitionStats>;
-    readonly changes: (input: Parameters<LeaderTransport["changes"]>[0]) => Promise<LeaderChanges>;
+    readonly feed: (input: Parameters<LeaderTransport["feed"]>[0]) => Promise<LeaderFeed>;
+    readonly partitions: (input: Parameters<LeaderTransport["partitions"]>[0]) => Promise<LeaderPartitions>;
     /** How far each follower has said it holds `partition`. */
     readonly acknowledgments: (partition: string) => Promise<{ readonly partition: string; readonly followers: ReadonlyArray<{ readonly name: string; readonly position: number }> }>;
     /** The partition's writer lease, and whether this database holds it. Refused when no lease store is configured. */
@@ -715,7 +716,8 @@ const followersRuntime = (database: DatabaseApi, leases: LeaseStore | undefined)
       const positions = yield* record.positions;
       return { partition, followers: [...positions].map(([name, position]) => ({ name, position })).sort((a, b) => (a.name < b.name ? -1 : 1)) };
     })),
-    changes: (input) => run(database.followers.changes(input)),
+    feed: (input) => run(database.followers.feed(input)),
+    partitions: (input) => run(database.followers.partitions(input)),
   };
 };
 

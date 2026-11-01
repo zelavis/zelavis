@@ -5,7 +5,8 @@ import {
   StoreError, TenantBranching, TenantMoving, TenantRelocated,
 } from "./errors.js";
 import type { DbEvent, EventCursor } from "./events.js";
-import { followLeader, type FollowerAcknowledgments, type FollowerPass, makeFollowerAcknowledgments } from "./followers.js";
+import { followLeader, levelFollower, type FollowerAcknowledgments, type FollowerPass, makeFollowerAcknowledgments } from "./followers.js";
+import type { ChangeFeed, FeedCursor } from "./change-feed.js";
 import { asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq } from "./model.js";
 import { isReservedTenantId } from "./naming.js";
 import type { LeaderSource, ObjectStoreApi, PartitionStats, RecordState, ShardStoreApi } from "./store.js";
@@ -39,15 +40,15 @@ import { GLOBAL_TENANT } from "./topology.js";
 export const LEADER_RECORDS_LIMIT = 512;
 /** Log entries a page of the leader's log may hold. */
 export const LEADER_LOG_LIMIT = 512;
-/** Partitions one answer of the change feed names; `more` says to ask again at once. */
-export const CHANGES_LIMIT = 1000;
-/** Partitions a caller may say it knows the heads of. */
-export const CHANGES_KNOWN_LIMIT = 100_000;
-/** How long the change feed waits for a write unless told, and at most. */
-const CHANGES_DEFAULT_TIMEOUT_MILLIS = 25_000;
-const CHANGES_MAX_TIMEOUT_MILLIS = 60_000;
-/** Partitions whose stats the change feed reads at once. */
+/** Partitions whose stats a listing page reads at once. */
 const STATS_CONCURRENCY = 8;
+/** Partitions a page of the leader's partition listing may hold. */
+export const PARTITIONS_PAGE_LIMIT = 1000;
+/** Partitions a caller may filter the change feed to: a limit on one request, not on the database. */
+export const FEED_FILTER_LIMIT = 10_000;
+/** How long the change feed waits for a write unless told, and at most. */
+const FEED_DEFAULT_TIMEOUT_MILLIS = 25_000;
+const FEED_MAX_TIMEOUT_MILLIS = 60_000;
 /** A follower name is what an acknowledgment is filed under. */
 const FOLLOWER_NAME_LIMIT = 128;
 
@@ -119,10 +120,18 @@ const EventWire = Schema.Union([
 ]);
 const EventsWire = Schema.Struct({ events: Schema.Array(EventWire) });
 const HoldWire = Schema.Struct({ position: Schema.Finite });
-const ChangesWire = Schema.Struct({
-  heads: Schema.Record(Schema.String, Schema.Finite),
+const FeedWire = Schema.Struct({
+  cursor: Schema.String,
+  partitions: Schema.Array(Schema.String),
+  resync: Schema.Boolean,
   more: Schema.Boolean,
 });
+const PartitionsWire = Schema.Struct({
+  partitions: Schema.Array(Schema.Struct({ partition: Schema.String, head: Schema.Finite })),
+  next: Schema.optional(Schema.String),
+});
+export type LeaderFeed = typeof FeedWire.Type;
+export type LeaderPartitions = typeof PartitionsWire.Type;
 
 export type RecordPageWire = typeof RecordsWire.Type;
 export type EventPageWire = typeof EventsWire.Type;
@@ -219,7 +228,8 @@ export interface LeaderTransport {
   readonly hold: (partition: string, input: { readonly id: string; readonly position: number; readonly ttlMillis: number }) => Promise<unknown>;
   readonly release: (partition: string, id: string) => Promise<unknown>;
   readonly acknowledge: (partition: string, input: { readonly follower: string; readonly position: number }) => Promise<unknown>;
-  readonly changes: (input: { readonly heads?: Readonly<Record<string, number>>; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }) => Promise<unknown>;
+  readonly feed: (input: { readonly cursor?: string; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }) => Promise<unknown>;
+  readonly partitions: (input: { readonly after?: string; readonly limit?: number }) => Promise<unknown>;
 }
 
 /**
@@ -294,7 +304,7 @@ export const remoteAcknowledgments = (transport: LeaderTransport, partition: Par
 });
 
 export interface RemoteChangesOptions {
-  /** Only these partitions; every Tenant partition the leader holds when omitted. */
+  /** Only these partitions. Without it a resync names nothing (the caller lists the partitions itself, or sweeps). */
   readonly partitions?: ReadonlyArray<string>;
   /** How long each request waits for a write before answering nothing new. */
   readonly timeout?: Duration.Input;
@@ -303,27 +313,23 @@ export interface RemoteChangesOptions {
 }
 
 /**
- * The partitions a leader on another host has written past what this side has seen, as they move: the first
- * answer names every partition holding anything, each later one what moved since. The heads are the
- * leader's durable log heads, so a request lost to the network, or a stream started again, misses nothing —
- * the next answer reports every partition that moved meanwhile. Failed requests are retried with a capped
- * backoff; the stream ends only when interrupted.
+ * The partitions a leader on another host has written, as they are written: each answer names what was touched since
+ * the last, so the cost is the changes and not the partitions. A leader that restarted, or a cursor the leader's ring
+ * no longer reaches, is a resync: with `partitions` given every one of them is named once (they are the caller's to
+ * check), otherwise nothing is, and the caller lists the partitions (`remoteDatabaseLeader`) or sweeps. Failed
+ * requests are retried with a capped backoff; the stream ends only when interrupted.
  */
 export const remoteChanges = (transport: LeaderTransport, options: RemoteChangesOptions = {}): Stream.Stream<PartitionKey> => {
-  const heads = new Map<string, number>();
-  const timeoutMillis = Math.min(CHANGES_MAX_TIMEOUT_MILLIS, Duration.toMillis(options.timeout ?? CHANGES_DEFAULT_TIMEOUT_MILLIS));
-  const ask = Effect.suspend(() => call("leader.changes", ChangesWire, () => transport.changes({
-    heads: Object.fromEntries(heads),
+  let cursor: string | undefined;
+  const timeoutMillis = Math.min(FEED_MAX_TIMEOUT_MILLIS, Duration.toMillis(options.timeout ?? FEED_DEFAULT_TIMEOUT_MILLIS));
+  const ask = Effect.suspend(() => call("leader.feed", FeedWire, () => transport.feed({
+    ...(cursor === undefined ? {} : { cursor }),
     ...(options.partitions === undefined ? {} : { partitions: options.partitions }),
-    timeoutMillis,
+    timeoutMillis: cursor === undefined ? 0 : timeoutMillis,
   }), true)).pipe(
     Effect.map((answer) => {
-      const moved: PartitionKey[] = [];
-      for (const [partition, head] of Object.entries(answer.heads)) {
-        if (head > (heads.get(partition) ?? 0)) moved.push(partition);
-        heads.set(partition, Math.max(head, heads.get(partition) ?? 0));
-      }
-      return moved;
+      cursor = answer.cursor;
+      return answer.resync ? [...(options.partitions ?? [])] : [...answer.partitions];
     }),
     Effect.retry(Schedule.min([Schedule.exponential(options.retry ?? "1 second"), Schedule.spaced("1 minute")])),
     Effect.orDie,
@@ -331,23 +337,50 @@ export const remoteChanges = (transport: LeaderTransport, options: RemoteChanges
   return Stream.flattenIterable(Stream.repeat(Stream.fromEffect(ask), Schedule.forever));
 };
 
+/**
+ * A leader as a whole database: what a follower of every partition needs. The listing and the feed are the only two
+ * ways to learn which partitions there are, and neither reads a partition that did not change.
+ */
+export interface DatabaseLeader {
+  /** What was touched since `cursor`; with none, the current position and a resync. */
+  readonly feed: (input: { readonly cursor?: string; readonly timeoutMillis?: number }) => Effect.Effect<LeaderFeed, DbError | InvalidFollowerRequest>;
+  /** The partitions, with their log heads, a page at a time in a stable order. */
+  readonly partitions: (input: { readonly after?: string; readonly limit: number }) => Effect.Effect<LeaderPartitions, DbError | InvalidFollowerRequest>;
+  readonly source: (partition: PartitionKey) => Effect.Effect<LeaderSource, DbError | InvalidFollowerRequest>;
+  /** Report what the follower holds of a partition, when the leader keeps acknowledgments. */
+  readonly acknowledge?: (partition: PartitionKey, follower: string, position: number) => Effect.Effect<void, DbError | InvalidFollowerRequest>;
+}
+
+/** A leader in this process: the same listing, feed and sources, without a transport. */
+export const localDatabaseLeader = (followers: FollowersApi): DatabaseLeader => ({
+  feed: (input) => followers.feed(input),
+  partitions: (input) => followers.partitions(input),
+  source: (partition) => followers.source(partition),
+  acknowledge: (partition, follower, position) => Effect.flatMap(followers.acknowledgments(partition), (record) => record.acknowledge(follower, position)),
+});
+
+/** A leader on another host, through the leader transport. */
+export const remoteDatabaseLeader = (transport: LeaderTransport): DatabaseLeader => ({
+  feed: (input) => call("leader.feed", FeedWire, () => transport.feed(input)),
+  partitions: (input) => call("leader.partitions", PartitionsWire, () => transport.partitions(input)),
+  source: (partition) => Effect.succeed(remoteLeader(transport, partition)),
+  acknowledge: (partition, follower, position) => remoteAcknowledgments(transport, partition).acknowledge(follower, position),
+});
+
 // ---------------------------------------------------------------------------------------------------
 // The leader's side.
 
-/** What the change feed answers: each partition that moved past what the caller knows, with its head. */
-export interface LeaderChanges {
-  readonly heads: Readonly<Record<string, number>>;
-  /** More partitions moved than one answer names; ask again with these heads at once. */
-  readonly more: boolean;
-}
-
-export interface LeaderChangesInput {
-  /** The heads the caller knows; a partition it does not name counts as at 0. */
-  readonly heads?: Readonly<Record<string, number>>;
-  /** Only these partitions; every Tenant partition when omitted. */
+export interface LeaderFeedInput {
+  /** Where the caller last looked (`cursor` of the previous answer); none asks for the current position and a resync. */
+  readonly cursor?: string;
+  /** Only these partitions. */
   readonly partitions?: ReadonlyArray<string>;
-  /** How long to wait for a write when nothing has moved, 0 to 60000 milliseconds; 25000 unless given. */
+  /** How long to wait for a write when nothing is owed, 0 to 60000 milliseconds; 25000 unless given. */
   readonly timeoutMillis?: number;
+}
+export interface LeaderPartitionsInput {
+  readonly after?: string;
+  readonly limit?: number;
 }
 
 /** The leader side of following, and following into this database. */
@@ -359,8 +392,28 @@ export interface FollowersApi {
   readonly source: (partition: PartitionKey) => Effect.Effect<LeaderSource, InvalidFollowerRequest>;
   /** The record of how far each follower holds `partition`, for `writeAcknowledged`. Kept per partition while the database is open. */
   readonly acknowledgments: (partition: PartitionKey) => Effect.Effect<FollowerAcknowledgments, InvalidFollowerRequest>;
-  /** Partitions written past `heads`, waiting up to `timeoutMillis` for a write when none has been. */
-  readonly changes: (input?: LeaderChangesInput) => Effect.Effect<LeaderChanges, DbError | InvalidFollowerRequest>;
+  /**
+   * The partitions written since a cursor, waiting up to `timeoutMillis` for a write when none is owed. Its cost is the
+   * changes, never the partitions; a cursor it cannot answer (another life of the leader, or further back than its
+   * ring) is a `resync`, and the partitions are listed instead.
+   */
+  readonly feed: (input?: LeaderFeedInput) => Effect.Effect<LeaderFeed, DbError | InvalidFollowerRequest>;
+  /** The Tenant partitions with their log heads, `limit` (1 to 1000) at a time in a stable order; `next` continues. */
+  readonly partitions: (input?: LeaderPartitionsInput) => Effect.Effect<LeaderPartitions, DbError | InvalidFollowerRequest>;
+  /**
+   * Keep every partition of this database level with `leader`'s until interrupted: one listing at the start, then only
+   * what the leader's feed names, a bounded number at a time, each one leveled (`levelFollower`) and acknowledged. The
+   * cost of following is the cost of the changes, whatever the number of Tenants. A leader that cannot be reached is
+   * retried with a capped backoff; a partition that cannot be leveled is retried on the next turn.
+   */
+  readonly followAll: (leader: DatabaseLeader, options: {
+    /** What acknowledgments are filed under at the leader. */
+    readonly name?: string;
+    /** Partitions leveled at once; 8 unless given. */
+    readonly concurrency?: number;
+    /** How long each feed request waits for a write; 25 seconds unless given. */
+    readonly timeoutMillis?: number;
+  }) => Effect.Effect<never, DbError | InvalidFollowerRequest>;
   /**
    * Keep `partition` here a follower of `leader` until interrupted (`followLeader`), into the shard routing
    * places it on, telling this database's cross-Tenant indexes after every pass that changed it. Writing the
@@ -387,7 +440,10 @@ export const validFollowerName = (name: unknown): name is string =>
 
 export const followersOver = (input: {
   readonly routed: (partition: PartitionKey) => ObjectStoreApi;
-  readonly partitions: Effect.Effect<ReadonlyArray<PartitionKey>, DbError>;
+  /** The Tenant partitions a page at a time, in a stable order: `next` continues, none ends. */
+  readonly partitionsPage: (after: string | undefined, limit: number) => Effect.Effect<{ readonly partitions: ReadonlyArray<PartitionKey>; readonly next?: string }, DbError>;
+  /** Which partitions were written, for the feed. */
+  readonly feed: ChangeFeed;
   readonly shardFor: (partition: PartitionKey) => ShardStoreApi;
   /** Tells whatever reads a partition (the cross-Tenant indexes) that it changed. */
   readonly changed: (partition: PartitionKey) => Effect.Effect<void>;
@@ -397,27 +453,13 @@ export const followersOver = (input: {
   Effect.gen(function* () {
     const records = new Map<PartitionKey, FollowerAcknowledgments>();
 
-    const headsOf = (partitions: ReadonlyArray<PartitionKey>) =>
-      Effect.forEach(partitions, (partition) => Effect.map(input.routed(partition).stats, (stats) => [partition, stats.head] as const),
-        { concurrency: STATS_CONCURRENCY });
-
-    const moved = (request: LeaderChangesInput) =>
-      Effect.gen(function* () {
-        const known = request.heads ?? {};
-        const candidates = request.partitions === undefined
-          ? yield* input.partitions
-          : yield* Effect.forEach(request.partitions, validFollowerPartition);
-        const answer: Record<string, number> = {};
-        let count = 0;
-        let more = false;
-        for (const [partition, head] of yield* headsOf(candidates)) {
-          if (head <= (known[partition] ?? 0)) continue;
-          if (count === CHANGES_LIMIT) { more = true; break; }
-          answer[partition] = head;
-          count += 1;
-        }
-        return { heads: answer, more };
-      });
+    const decodeCursor = (cursor: string | undefined) => {
+      if (cursor === undefined) return undefined;
+      const at = cursor.lastIndexOf(":");
+      const seq = Number(cursor.slice(at + 1));
+      return at > 0 && Number.isSafeInteger(seq) && seq >= 0 ? { epoch: cursor.slice(0, at), seq } : undefined;
+    };
+    const encodeCursor = (cursor: FeedCursor) => `${cursor.epoch}:${cursor.seq}`;
 
     return {
       source: (partition) => Effect.map(validFollowerPartition(partition), (valid) => input.routed(valid)),
@@ -435,31 +477,116 @@ export const followersOver = (input: {
               });
         }),
 
-      changes: (request = {}) =>
+      feed: (request = {}) =>
         Effect.gen(function* () {
-          const timeout = request.timeoutMillis ?? CHANGES_DEFAULT_TIMEOUT_MILLIS;
-          if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > CHANGES_MAX_TIMEOUT_MILLIS) {
-            return yield* new InvalidFollowerRequest({ partition: "*", reason: `timeoutMillis is 0 to ${CHANGES_MAX_TIMEOUT_MILLIS}` });
+          const timeout = request.timeoutMillis ?? FEED_DEFAULT_TIMEOUT_MILLIS;
+          if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > FEED_MAX_TIMEOUT_MILLIS) {
+            return yield* new InvalidFollowerRequest({ partition: "*", reason: `timeoutMillis is 0 to ${FEED_MAX_TIMEOUT_MILLIS}` });
           }
-          if (request.heads !== undefined && Object.keys(request.heads).length > CHANGES_KNOWN_LIMIT) {
-            return yield* new InvalidFollowerRequest({ partition: "*", reason: `at most ${CHANGES_KNOWN_LIMIT} known heads` });
+          if (request.partitions !== undefined && request.partitions.length > FEED_FILTER_LIMIT) {
+            return yield* new InvalidFollowerRequest({ partition: "*", reason: `at most ${FEED_FILTER_LIMIT} partitions in one request` });
           }
-          if (request.partitions !== undefined && request.partitions.length > CHANGES_KNOWN_LIMIT) {
-            return yield* new InvalidFollowerRequest({ partition: "*", reason: `at most ${CHANGES_KNOWN_LIMIT} partitions` });
+          if (request.cursor !== undefined && decodeCursor(request.cursor) === undefined) {
+            return yield* new InvalidFollowerRequest({ partition: "*", reason: "cursor is the one a previous answer returned" });
           }
+          const cursor = decodeCursor(request.cursor);
+          const only = request.partitions === undefined ? undefined : new Set(request.partitions);
           const deadline = Date.now() + timeout;
           for (;;) {
-            // Read the write count before the heads, so a write landing between the two wakes the wait below.
+            // Read the write count before the feed, so a write landing between the two wakes the wait below.
             const seen = yield* SubscriptionRef.get(input.writes);
-            const answer = yield* moved(request);
+            const answer = input.feed.since(cursor, { ...(only === undefined ? {} : { only }) });
             const left = deadline - Date.now();
-            if (Object.keys(answer.heads).length > 0 || left <= 0) return answer;
+            const owed = answer.resync || answer.partitions.length > 0 || answer.more;
+            // A cursor of none is asked for its position and answered at once; waiting is for a cursor that is level.
+            if (owed || left <= 0) {
+              return { cursor: encodeCursor(answer.cursor), partitions: answer.partitions, resync: answer.resync, more: answer.more } satisfies LeaderFeed;
+            }
             const woke = yield* SubscriptionRef.changes(input.writes).pipe(
               Stream.filter((count) => count !== seen),
               Stream.runHead,
               Effect.timeoutOption(Duration.millis(left)),
             );
-            if (Option.isNone(woke)) return yield* moved(request);
+            if (Option.isNone(woke)) {
+              const final = input.feed.since(cursor, { ...(only === undefined ? {} : { only }) });
+              return { cursor: encodeCursor(final.cursor), partitions: final.partitions, resync: final.resync, more: final.more } satisfies LeaderFeed;
+            }
+          }
+        }),
+
+      partitions: (request = {}) =>
+        Effect.gen(function* () {
+          const limit = request.limit ?? PARTITIONS_PAGE_LIMIT;
+          if (!Number.isSafeInteger(limit) || limit < 1 || limit > PARTITIONS_PAGE_LIMIT) {
+            return yield* new InvalidFollowerRequest({ partition: "*", reason: `a page holds 1 to ${PARTITIONS_PAGE_LIMIT} partitions` });
+          }
+          const page = yield* input.partitionsPage(request.after, limit);
+          const heads = yield* Effect.forEach(page.partitions, (partition) =>
+            Effect.map(input.routed(partition).stats, (stats) => ({ partition, head: stats.head })), { concurrency: STATS_CONCURRENCY });
+          return { partitions: heads, ...(page.next === undefined ? {} : { next: page.next }) } satisfies LeaderPartitions;
+        }),
+
+      followAll: (leader, options) =>
+        Effect.gen(function* () {
+          const name = options.name ?? "follower";
+          const concurrency = Math.max(1, options.concurrency ?? 8);
+          const timeoutMillis = options.timeoutMillis ?? FEED_DEFAULT_TIMEOUT_MILLIS;
+          /** Partitions that could not be leveled, tried again on the next turn; past the cap a resync covers them all. */
+          const retry = new Set<PartitionKey>();
+          const RETRY_CAP = 10_000;
+
+          const level = (partition: PartitionKey) =>
+            Effect.gen(function* () {
+              const source = yield* leader.source(partition);
+              const pass = yield* levelFollower(source, { shard: input.shardFor(partition), partition });
+              if (pass.seeded > 0 || pass.applied > 0) {
+                yield* SubscriptionRef.update(input.writes, (count) => count + 1);
+                yield* input.changed(partition);
+              }
+              if (leader.acknowledge !== undefined) {
+                yield* leader.acknowledge(partition, name, (yield* input.routed(partition).stats).head);
+              }
+              retry.delete(partition);
+            }).pipe(Effect.catchCause((cause) => {
+              retry.add(partition);
+              return Effect.logWarning(`Following ${partition} could not level it; trying again on the next turn`, cause);
+            }));
+
+          const levelAll = (partitions: Iterable<PartitionKey>) =>
+            Effect.forEach(partitions, level, { concurrency, discard: true });
+
+          /** The listing: every partition the leader holds, a page at a time, compared with this side's own head. */
+          const resync = Effect.gen(function* () {
+            let after: string | undefined;
+            for (;;) {
+              const page = yield* leader.partitions({ ...(after === undefined ? {} : { after }), limit: PARTITIONS_PAGE_LIMIT });
+              const behind = yield* Effect.filter(page.partitions, ({ partition, head }) =>
+                Effect.map(input.routed(partition).stats, (stats) => stats.head !== head));
+              yield* levelAll(behind.map((entry) => entry.partition));
+              if (page.next === undefined) return;
+              after = page.next;
+            }
+          });
+
+          /** A leader that cannot be reached is asked again, doubling to half a minute; the follow ends only when interrupted. */
+          const reachable = <A>(ask: Effect.Effect<A, DbError | InvalidFollowerRequest>) =>
+            ask.pipe(Effect.retry(Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("30 seconds")])));
+
+          let cursor: string | undefined;
+          for (;;) {
+            if (cursor === undefined || retry.size > RETRY_CAP) {
+              // The position first, then the listing: whatever is written during the listing is named by the feed after it.
+              const start = yield* reachable(leader.feed({ timeoutMillis: 0 }));
+              // The listing covers everything, so what failed before is covered; what fails during it is kept.
+              retry.clear();
+              yield* resync.pipe(reachable);
+              cursor = start.cursor;
+              continue;
+            }
+            const answer = yield* reachable(leader.feed({ cursor, timeoutMillis }));
+            if (answer.resync) { cursor = undefined; continue; }
+            yield* levelAll(new Set([...answer.partitions, ...retry]));
+            cursor = answer.cursor;
           }
         }),
 

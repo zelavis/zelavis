@@ -293,6 +293,8 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
     yield* Effect.addFinalizer(() => Effect.andThen(
       Fiber.interrupt(renewing),
       Effect.suspend(() => superseded ? Effect.void : releaseWriter(input.leases, held)).pipe(
+        // An unreachable authority must not keep a closing scope open for ever: the lease expires on its own.
+        Effect.timeout(Duration.millis(ttl)),
         Effect.catchCause((cause) => Effect.logWarning(`The writer lease of ${partition} could not be released; it expires on its own`, cause)),
       ),
     ));
@@ -306,7 +308,7 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
 export interface StandbyInput {
   readonly leases: LeaseStore;
   /** The follower partition's store here. */
-  readonly store: Pick<ObjectStoreApi, "guard" | "partition" | "stats">;
+  readonly store: { readonly partition: PartitionKey; readonly guard: ObjectStoreApi["guard"]; readonly stats: Effect.Effect<{ readonly head: number }, DbError> };
   readonly owner: string;
   readonly ttlMillis: number;
   /** Keeps the partition level with the writer until interrupted: normally `database.followers.follow(...)`. */

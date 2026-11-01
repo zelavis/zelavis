@@ -1,7 +1,7 @@
-import { bodyFlag, integerFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
+import { integerFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|changes> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--url URL] [--token TOKEN] [--json]";
 
 const followers = (input: CliInput) =>
   input.client.followers(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "followers commands need --project"));
@@ -16,7 +16,7 @@ const table: CliTable = {
   name: "followers",
   usage,
   switches: ["--allow-data-loss"],
-  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--heads", "--partitions", "--timeout-millis"],
+  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--cursor", "--partitions", "--timeout-millis"],
   actions: {
     stats: {
       run: (input) => followers(input).stats(partition(input)),
@@ -80,18 +80,26 @@ const table: CliTable = {
       run: (input) => followers(input).demote(partition(input)),
       text: (result: { released: boolean }) => (result.released ? "Released." : "This database held no lease for the partition."),
     },
-    changes: {
+    feed: {
       run: (input) => {
         const partitions = input.flags.get("--partitions");
         const timeoutMillis = integerFlag(input, "--timeout-millis");
-        return followers(input).changes({
-          ...(input.flags.has("--heads") ? { heads: bodyFlag<Record<string, number>>(input, "--heads", "followers changes") } : {}),
+        return followers(input).feed({
+          ...(input.flags.has("--cursor") ? { cursor: input.flags.get("--cursor")! } : {}),
           ...(partitions === undefined ? {} : { partitions: partitions.split(",").filter((name) => name.length > 0) }),
           ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
         });
       },
-      text: (result: { heads: Record<string, number>; more: boolean }) =>
-        [...Object.entries(result.heads).map(([name, head]) => `${name}\t${head}`), ...(result.more ? ["more: ask again"] : [])].join("\n") || "Nothing moved.",
+      text: (result: { cursor: string; partitions: string[]; resync: boolean; more: boolean }) =>
+        [...result.partitions, ...(result.resync ? ["resync: list the partitions"] : []), ...(result.more ? ["more: ask again"] : []), `cursor ${result.cursor}`].join("\n"),
+    },
+    partitions: {
+      run: (input) => followers(input).partitions({
+        ...(input.flags.has("--after") ? { after: input.flags.get("--after")! } : {}),
+        ...(integerFlag(input, "--limit") === undefined ? {} : { limit: integerFlag(input, "--limit")! }),
+      }),
+      text: (result: { partitions: ReadonlyArray<{ partition: string; head: number }>; next?: string }) =>
+        [...result.partitions.map((entry) => `${entry.partition}\t${entry.head}`), ...(result.next === undefined ? [] : [`next ${result.next}`])].join("\n") || "No partitions.",
     },
   },
 };

@@ -149,41 +149,55 @@ test("a remote hold is taken on the leader's own placement and moves with the pa
   }));
 });
 
-test("the change feed names what moved, waits for a write, and is refused for a reserved partition", async (t) => {
+test("the change feed names what was written since a cursor, waits for a write, lists the partitions in pages, and asks for a resync it cannot answer", async (t) => {
   const leader = await openTemporaryDatabase(t, { crossTenantRefresh: false });
   await posts(leader.api, "acme", 1, 3);
   await posts(leader.api, "beta", 1, 2);
   const transport = transportOf(leaderFetch(leader.api));
 
-  const everything = await transport.changes({});
-  assert.deepEqual(Object.keys(everything.heads).sort(), ["acme", "beta"]);
-  assert.equal(everything.more, false);
-  assert.deepEqual(Object.keys((await transport.changes({ partitions: ["acme"] })).heads), ["acme"]);
-
-  const nothing = await transport.changes({ heads: everything.heads, timeoutMillis: 50 });
-  assert.deepEqual(nothing.heads, {}, "nothing moved within the wait");
+  // No cursor: the position, and a resync. Then only what changes.
+  const first = await transport.feed({});
+  assert.equal(first.resync, true);
+  assert.deepEqual(first.partitions, []);
+  const nothing = await transport.feed({ cursor: first.cursor, timeoutMillis: 50 });
+  assert.deepEqual([nothing.resync, nothing.partitions, nothing.more], [false, [], false], "nothing was written within the wait");
 
   const started = Date.now();
-  const waiting = transport.changes({ heads: everything.heads, timeoutMillis: 10_000 });
+  const waiting = transport.feed({ cursor: nothing.cursor, timeoutMillis: 10_000 });
   await new Promise((resolve) => setTimeout(resolve, 100));
   await posts(leader.api, "beta", 3, 3);
   const moved = await waiting;
-  assert.deepEqual(Object.keys(moved.heads), ["beta"]);
-  assert.ok(moved.heads.beta > everything.heads.beta);
+  assert.deepEqual(moved.partitions, ["beta"]);
   assert.ok(Date.now() - started < 5_000, "answered on the write, not at the end of the wait");
+  assert.deepEqual((await transport.feed({ cursor: nothing.cursor, partitions: ["acme"], timeoutMillis: 0 })).partitions, [], "only the partitions asked about");
 
-  await assert.rejects(transport.changes({ partitions: ["zv.global"] }), (error) => error.status === 400);
-  await assert.rejects(transport.changes({ timeoutMillis: 120_000 }), (error) => error.status === 400);
+  await assert.rejects(transport.feed({ timeoutMillis: 120_000 }), (error) => error.status === 400);
+  await assert.rejects(transport.feed({ cursor: "not a cursor" }), (error) => error.status === 400);
+  assert.equal((await transport.feed({ cursor: "another-life:3", timeoutMillis: 0 })).resync, true, "a cursor from another life of the leader");
 
-  // As a stream: every partition first, then each that moves.
+  // The listing is paged, each partition with its head, and reserved partitions are not in it.
+  for (const name of ["t1", "t2", "t3", "t4", "t5"]) await posts(leader.api, name, 1, 1);
+  const names = [];
+  let after;
+  for (let pages = 0; pages < 10; pages++) {
+    const page = await transport.partitions({ limit: 3, ...(after === undefined ? {} : { after }) });
+    assert.ok(page.partitions.length <= 3);
+    for (const entry of page.partitions) { assert.ok(entry.head > 0); names.push(entry.partition); }
+    after = page.next;
+    if (after === undefined) break;
+  }
+  assert.deepEqual(names.sort(), ["acme", "beta", "t1", "t2", "t3", "t4", "t5"], "every Tenant once, none of the reserved ones");
+  await assert.rejects(transport.partitions({ limit: 5000 }), (error) => error.status === 400);
+
+  // As a stream, for the partitions a caller follows: they are named once at the start, then each that moves.
   const seen = await run(Effect.gen(function* () {
-    const fiber = yield* Effect.forkChild(Stream.runCollect(Stream.take(remoteChanges(transport, { timeout: "5 seconds" }), 3)));
+    const fiber = yield* Effect.forkChild(Stream.runCollect(Stream.take(remoteChanges(transport, { partitions: ["acme", "beta", "gamma"], timeout: "5 seconds" }), 4)));
     yield* Effect.sleep("100 millis");
     yield* Effect.promise(() => posts(leader.api, "gamma", 1, 1));
     return yield* Fiber.join(fiber);
   }));
-  assert.deepEqual([...seen].slice(0, 2).sort(), ["acme", "beta"]);
-  assert.equal([...seen][2], "gamma");
+  assert.deepEqual([...seen].slice(0, 3).sort(), ["acme", "beta", "gamma"]);
+  assert.equal([...seen][3], "gamma");
 });
 
 test("a cross-Tenant index on a follower's database reads a leader's write when the follow loop wakes, not at its sweep", async (t) => {

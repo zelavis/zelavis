@@ -34,3 +34,11 @@ promotion needs `database.failover.accept-data-loss`, and the Platform audits ev
 
 A writer lease can name its `standby`, the one follower its acknowledgments wait for; only that follower is promoted
 without accepting data loss (`NotDesignatedStandby`), so an acknowledged write is held by the follower that is promoted.
+
+Following and failing over a whole database scale with the changes, not the Tenants. The leader's change feed is a fixed
+ring (`feed`, replacing `changes`, which read every partition on every call), partitions are listed a page at a time
+(`partitions`), `followers.followAll` follows a database by the feed, and a Project fails over as one: a single lease
+over the whole database (`writerLeases.holdDatabase|standbyDatabase|followDatabase`) gates every shard with one check per
+write and always names its standby. A single write reached a follower in a median 5 ms with 500 Tenants and 6 ms with 4,000.
+`remoteChanges` keeps its shape over the feed; `zelavis followers feed|partitions` and `client.followers(id).feed|partitions`
+replace `changes`.

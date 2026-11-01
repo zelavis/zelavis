@@ -107,15 +107,20 @@ await drill("kill", async ({ start, until: wait_ }) => {
   check(numbers.some((n) => n > Math.max(...acked.map(number))), "the new writer wrote past the old one");
 });
 
-await drill("partition", async ({ net, start, until: wait_ }) => {
+/**
+ * The partition drill: the writer is cut off the network while it keeps running; a never-promoted third node and the
+ * returning old writer must find the new writer from the lease. Run once with the lease on one partition and once on
+ * the whole database (many Tenants), which is how a Project fails over.
+ */
+const partitionDrill = (name, extra) => drill(name, async ({ net, start, until: wait_ }) => {
   start("authority", {});
   await wait(800);
-  const a = start("A", { ROLE: "writer", STANDBY: "B", ...common("http://A:8080") });
+  const a = start("A", { ...extra, ROLE: "writer", STANDBY: "B", ...common("http://A:8080") });
   await wait(800);
-  const b = start("B", { ROLE: "standby", SUCCESSOR: "A", ...common("http://B:8080") });
+  const b = start("B", { ...extra, ROLE: "standby", SUCCESSOR: "A", ...common("http://B:8080") });
   // A third node that tries to stand by too but is not the designated standby: it must never be promoted, and it
   // must find the new writer from the lease alone.
-  const c = start("C", { ROLE: "standby", ...common("http://C:8080") });
+  const c = start("C", { ...extra, ROLE: "standby", ...common("http://C:8080") });
   await wait_("the writer to have 25 acknowledged writes", () => idsAcked(events(a)).length >= 25, 90_000);
   const cutAt = Date.now();
   docker("network", "disconnect", net, a);
@@ -153,6 +158,9 @@ await drill("partition", async ({ net, start, until: wait_ }) => {
     console.log(events(a).filter((event) => ["following", "follow-failed", "fenced"].includes(event.event)).map((event) => `    ${JSON.stringify(event)}`).join("\n"));
   }
 });
+
+await partitionDrill("partition", {});
+await partitionDrill("project", { MODE: "database", TENANTS: "100" });
 
 await drill("unacknowledged-tail", async ({ net, repl, start, until: wait_ }) => {
   // Lease traffic on one network, replication on another, so the follower can be cut off from the writer alone.

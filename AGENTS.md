@@ -1137,6 +1137,12 @@ Key rules:
   failures (`CursorCompacted`, `LogCompacted`, …) cross it as themselves, and
   acknowledgments are filed with the leader (`db.followers.acknowledgments`).
   Never add a second follower algorithm for the remote case.
+- **Scalability is rule one for the database and the Fabric.** Anything that lists, follows, replicates or fences a
+  database costs the number of changes in steady state, never the number of Tenants, and its authority state does not
+  grow with them: the change feed is a fixed ring, listings are paged with nothing held between pages, a Project's
+  failover lease is one record whatever its size, and acknowledged positions are not kept per Tenant (the lease names
+  its one promotable standby instead). A full listing is the rare resync path and may be as long as the data. A change
+  that adds a per-Tenant read, record or loop to a hot path or to the authority needs a different design.
 - Append to the log before projecting into the lenses. A crash must leave an
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check

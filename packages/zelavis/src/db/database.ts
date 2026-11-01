@@ -31,7 +31,8 @@ import { partitionRouter } from "./routing.js";
 import type { LeaderSource, ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
 import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
-import { followersOver, type FollowersApi } from "./leader.js";
+import { makeChangeFeed } from "./change-feed.js";
+import { followersOver, type DatabaseLeader, type FollowersApi } from "./leader.js";
 import {
   followWriter, holdWriter, standby as standbyFor, type HoldWriterInput, type LeaseStore, type Promotion, type StandbyInput, type WriterHandle,
 } from "./writer-lease.js";
@@ -423,6 +424,12 @@ export interface DatabaseApi {
   readonly writerLeases: {
     readonly hold: (input: WriterLeaseHold) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld, Scope.Scope>;
     readonly standby: (input: WriterLeaseStandby) => Effect.Effect<WriterHandle & { readonly promotion: Promotion }, DbError, Scope.Scope>;
+    /** Hold the writer lease of the whole database (see `DatabaseLeaseHold`) until the scope closes. */
+    readonly holdDatabase: (input: DatabaseLeaseHold) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld, Scope.Scope>;
+    /** Follow whoever holds the whole-database lease, and the new one after a promotion (see `DatabaseLeaseFollow`). */
+    readonly followDatabase: (input: DatabaseLeaseFollow) => Effect.Effect<never>;
+    /** Stand by for the whole database: follow until the lease lapses, then take it over; the standby it names is promotable. */
+    readonly standbyDatabase: (input: DatabaseLeaseStandby) => Effect.Effect<WriterHandle & { readonly promotion: Promotion }, DbError, Scope.Scope>;
     /**
      * Follow whoever holds the partition's writer lease until interrupted, and follow the new writer after a
      * promotion: for a follower that is not the one promoted, and for an old writer that was superseded.
@@ -453,6 +460,33 @@ export interface WriterLeader {
   /** Report what this follower holds to the writer after each pass: what `writeAcknowledged` waits on, and what the writer's lease carries. */
   readonly acknowledgments?: { readonly name: string; readonly to: { readonly acknowledge: (follower: string, position: number) => Effect.Effect<void, DbError> } };
 }
+/**
+ * A lease over the whole database: the Project is the failover unit. It is one record whatever the number of Tenants,
+ * and gates every change on every shard at a constant cost, so it scales with the data, not against it. A
+ * database-wide lease always names its `standby`: with one promotable follower the acknowledged positions need not be
+ * kept per Tenant, because every acknowledged write waited on that follower.
+ */
+export interface DatabaseLeaseHold extends Omit<HoldWriterInput, "store" | "acknowledged" | "standby"> {
+  /** What the lease is keyed by, normally the Project's id. */
+  readonly scope: string;
+  readonly standby: string;
+}
+export interface DatabaseLeaseFollow {
+  readonly scope: string;
+  readonly leases: LeaseStore;
+  /** This node: a lease it holds itself is not followed. */
+  readonly owner: string;
+  /** The writer's database, for a lease's `endpoint`; the lease alone says where the writer is. */
+  readonly leaderFor: (endpoint: string) => DatabaseLeader;
+  /** What acknowledgments are filed under at the writer; the owner unless given. */
+  readonly name?: string;
+  /** How long each feed request waits for a write; 25 seconds unless given. */
+  readonly timeoutMillis?: number;
+  /** How often the lease is read for a change of writer; a second unless given. */
+  readonly pollMillis?: number;
+}
+export interface DatabaseLeaseStandby extends Omit<StandbyInput, "store" | "acknowledged" | "follow">, Omit<DatabaseLeaseFollow, "owner" | "leases"> {}
+
 export interface WriterLeaseFollow {
   readonly partition: PartitionKey;
   readonly leases: LeaseStore;
@@ -672,8 +706,12 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
    */
   /** Moves on every write in this process, so the follower change feed can wait for one. */
   const writes = yield* SubscriptionRef.make(0);
-  const wrote = (partition: PartitionKey) =>
-    Effect.andThen(SubscriptionRef.update(writes, (count) => count + 1), crossTenant.touched(partition));
+  /** Which partitions were written, for followers on other hosts: a fixed ring, so it costs the same for any number of Tenants. */
+  const feed = makeChangeFeed();
+  const wrote = (partition: PartitionKey) => {
+    if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) feed.touch(partition);
+    return Effect.andThen(SubscriptionRef.update(writes, (count) => count + 1), crossTenant.touched(partition));
+  };
   const watched = (store: ObjectStoreApi, partition: PartitionKey): ObjectStoreApi => ({
     ...store,
     get generation() {
@@ -1043,14 +1081,64 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return [...found].sort();
   });
 
+  /**
+   * The Tenant partitions a page at a time, shard by shard in id order and key order within each: `after` is the
+   * last one the previous page ended at. A plugin's private Tenant is not the App's to follow, as it is not its to
+   * search, and the reserved partitions are the database's own. Nothing is held between pages.
+   */
+  const partitionsPage = (after: string | undefined, limit: number) =>
+    Effect.gen(function* () {
+      const ids = [...shards.keys()].sort();
+      let index = 0;
+      let last: PartitionKey | undefined;
+      if (after !== undefined) {
+        const at = after.indexOf("\u0001");
+        index = Number(after.slice(0, at));
+        last = after.slice(at + 1);
+        if (at < 0 || !Number.isSafeInteger(index) || index < 0) return { partitions: [] as PartitionKey[] };
+      }
+      const out: PartitionKey[] = [];
+      for (; index < ids.length; index++, last = undefined) {
+        const shard = shards.get(ids[index]!)!;
+        for (;;) {
+          const raw = yield* shard.partitionsPage(last, Math.max(8, limit - out.length));
+          if (raw.length === 0) break;
+          for (const partition of raw) {
+            last = partition;
+            if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) out.push(partition);
+            if (out.length >= limit) return { partitions: out, next: `${index}\u0001${partition}` };
+          }
+        }
+      }
+      return { partitions: out };
+    });
+
   const followers = yield* followersOver({
     routed: (partition) => router.routed(partition),
-    // A plugin's private Tenant is not the App's to follow, as it is not its to search.
-    partitions: Effect.map(partitions, (keys) => keys.filter((key) => !key.startsWith(SERVICE_TENANT_PREFIX))),
+    partitionsPage,
+    feed,
     shardFor: (partition) => shards.get(shardOf(partition))!,
     changed: (partition) => crossTenant.touched(partition),
     writes,
   });
+
+  /** The whole database as one lease subject: a gate installed on every shard, and no single log head. */
+  const wholeDatabase = (scope: string) => ({
+    partition: scope,
+    guard: (gate: Effect.Effect<void, DbError> | undefined) => Effect.forEach([...shards.values()], (shard) => shard.guardShard(gate), { discard: true }),
+    stats: Effect.succeed({ head: 0 }),
+  });
+
+  /** Follow the whole-database lease's writer: every partition of each writer found, by its feed. */
+  const followingDatabase = (input: Pick<DatabaseLeaseFollow, "scope" | "leases" | "owner" | "leaderFor" | "name" | "timeoutMillis" | "pollMillis">): Effect.Effect<never> =>
+    followWriter<DatabaseLeader>({
+      leases: input.leases, partition: input.scope, owner: input.owner, leaderFor: input.leaderFor,
+      ...(input.pollMillis === undefined ? {} : { pollMillis: input.pollMillis }),
+      follow: (leader) => followers.followAll(leader, {
+        name: input.name ?? input.owner,
+        ...(input.timeoutMillis === undefined ? {} : { timeoutMillis: input.timeoutMillis }),
+      }),
+    });
 
   /** Follow the lease's writer: each writer found is read through `followers.follow`, with its wakeups and acknowledgments. */
   const followingWriter = (input: WriterLeaseFollow): Effect.Effect<never> =>
@@ -1083,6 +1171,9 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         });
       }),
       follow: (input) => followingWriter(input),
+      holdDatabase: (input) => holdWriter({ ...input, store: wholeDatabase(input.scope) }),
+      standbyDatabase: (input) => standbyFor({ ...input, store: wholeDatabase(input.scope), follow: followingDatabase(input) }),
+      followDatabase: (input) => followingDatabase(input),
     },
     entities: {
       serve: (options) => serveEntities({ partitions, entities: (partition) => handleOf(partition).entities, wakes: entityWakes, options }),

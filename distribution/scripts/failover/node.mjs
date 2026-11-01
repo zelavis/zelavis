@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import { openNodeDatabase } from "/repo/packages/zelavis/dist/db/node-host.js";
 import {
-  defineDatabaseService, httpLeaseStore, remoteAcknowledgments, remoteLeader, writeAcknowledged,
+  defineDatabaseService, httpLeaseStore, remoteAcknowledgments, remoteDatabaseLeader, remoteLeader, writeAcknowledged,
 } from "/repo/packages/zelavis/dist/db/index.js";
 import { createZelavisClient } from "/repo/packages/zelavis/dist/sdk/fetch.js";
 
@@ -18,12 +18,17 @@ const AUTHORITY = env("AUTHORITY", "http://authority:8080");
 const TOKEN = env("TOKEN", "drill-token");
 const TTL = Number(env("TTL_MILLIS", "3000"));
 const PARTITION = "acme";
+// MODE=partition: the lease guards one partition. MODE=database: it guards the whole database, many Tenants, the Project.
+const MODE = env("MODE", "partition");
+const TENANTS = MODE === "database" ? Number(env("TENANTS", "100")) : 1;
+const SCOPE = "project-1";
+const tenantOf = (n) => (MODE === "database" ? `tenant-${n % TENANTS}` : PARTITION);
+const allTenants = () => (MODE === "database" ? Array.from({ length: TENANTS }, (_, at) => `tenant-${at}`) : [PARTITION]);
 const say = (event, extra = {}) => console.log(JSON.stringify({ event, node: NAME, at: Date.now(), ...extra }));
 
 mkdirSync("/data/shards", { recursive: true });
 const opened = await openNodeDatabase({ directory: "/data/shards", crossTenantRefresh: false });
 const { database, api } = opened;
-const documents = api.forTenant(PARTITION).documents;
 
 // ---- the leader transport, served for the peer's follower ----
 const PROXY = "/zelavis/api/v1/runtime/projects/p1/proxy/zelavis/api/v1/database";
@@ -51,25 +56,42 @@ const leases = httpLeaseStore({ apiRoot: `${AUTHORITY}/zelavis/api/v1`, token: T
 // Where the writer is comes from its lease (`endpoint`), never from configuration: after a promotion the lease names the new one.
 const leaderFor = (endpoint) => {
   const transport = createZelavisClient({ baseUrl: endpoint, rootPath: "/zelavis" }).followers("p1");
+  if (MODE === "database") return remoteDatabaseLeader(transport);
   return { source: remoteLeader(transport, PARTITION), acknowledgments: { name: NAME, to: remoteAcknowledgments(transport, PARTITION) } };
 };
 const inScope = (scope, effect) => Effect.runPromise(effect.pipe(Effect.provideService(Scope.Scope, scope)));
-const idsNow = async () => (await documents.findMany({ collection: "posts" })).map((doc) => doc.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
-const headNow = async () => (await Effect.runPromise(Effect.flatMap(database.followers.source(PARTITION), (source) => source.stats))).head;
+/** Every document the node holds as [id, author], in write order, across the Tenants of its mode. */
+const docsNow = async () => {
+  const out = [];
+  for (const tenant of allTenants()) {
+    const found = await api.forTenant(tenant).documents.findMany({ collection: "posts" }).catch(() => []);
+    for (const doc of found) out.push([doc.id, doc.data.by]);
+  }
+  return out.sort((a, b) => Number(a[0].slice(1)) - Number(b[0].slice(1)));
+};
+const idsNow = async () => (await docsNow()).map(([id]) => id);
+const headNow = async () => (MODE === "database" ? (await idsNow()).length
+  : (await Effect.runPromise(Effect.flatMap(database.followers.source(PARTITION), (source) => source.stats))).head);
+
+/** Follow whoever holds the lease, however many Tenants there are. */
+const follow = () => (MODE === "database"
+  ? database.writerLeases.followDatabase({ scope: SCOPE, leases, owner: NAME, leaderFor, timeoutMillis: 500, pollMillis: 300 })
+  : database.writerLeases.follow({ partition: PARTITION, leases, owner: NAME, leaderFor, interval: "100 millis", pollMillis: 300 }));
 
 // ---- writing ----
 let writing = false;
 const writeLoop = async (handle, start) => {
   writing = true;
-  const source = await Effect.runPromise(database.followers.source(PARTITION));
-  const acknowledgments = await Effect.runPromise(database.followers.acknowledgments(PARTITION));
   for (let n = start; writing; n++) {
     const id = `p${n}`;
-    const insert = database.forTenant(PARTITION).documents.insert({ collection: "posts", id, data: { n, by: NAME } });
+    const tenant = tenantOf(n);
+    const source = await Effect.runPromise(database.followers.source(tenant));
+    const acknowledgments = await Effect.runPromise(database.followers.acknowledgments(tenant));
+    const insert = database.forTenant(tenant).documents.insert({ collection: "posts", id, data: { n, by: NAME } });
     // With a follower reporting, a write is acknowledged once the follower holds it: that is the promise a failover keeps.
     const exit = await Effect.runPromiseExit(writeAcknowledged(source, acknowledgments, insert, { followers: 1, timeout: "1500 millis" }));
     // When the write actually committed: the document's own creation time, not when this line is printed.
-    const committedAt = async () => Date.parse((await documents.findById({ collection: "posts", id }))?.createdAt ?? "");
+    const committedAt = async () => Date.parse((await api.forTenant(tenant).documents.findById({ collection: "posts", id }))?.createdAt ?? "");
     if (Exit.isSuccess(exit)) say("acked", { id, position: exit.value.position, committedAt: await committedAt() });
     else {
       const error = exit.cause.reasons.map((reason) => reason.error ?? reason.defect).find((value) => value !== undefined);
@@ -82,7 +104,7 @@ const writeLoop = async (handle, start) => {
 };
 
 const final = async () => {
-  const docs = (await documents.findMany({ collection: "posts" })).map((doc) => [doc.id, doc.data.by]).sort((a, b) => Number(a[0].slice(1)) - Number(b[0].slice(1)));
+  const docs = await docsNow();
   say("final", { ids: docs.map(([id]) => id), by: Object.fromEntries(docs), head: await headNow() });
   process.exit(0);
 };
@@ -91,27 +113,30 @@ process.on("SIGTERM", () => { writing = false; final(); });
 process.on("SIGUSR2", () => { writing = false; say("quiesced"); });
 
 if (ROLE === "writer") {
-  await documents.createCollection({ name: "posts" });
+  for (const tenant of allTenants()) await api.forTenant(tenant).documents.createCollection({ name: "posts" });
   const scope = Effect.runSync(Scope.make());
-  const handle = await inScope(scope, database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, ...(env("STANDBY", "") === "" ? {} : { standby: env("STANDBY", "") }) }));
+  const standby = env("STANDBY", "") === "" ? {} : { standby: env("STANDBY", "") };
+  const handle = await inScope(scope, MODE === "database"
+    ? database.writerLeases.holdDatabase({ scope: SCOPE, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, standby: env("STANDBY", "") })
+    : database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, ...standby }));
   say("writer", { epoch: (await Effect.runPromise(handle.lease)).epoch });
   await writeLoop(handle, 1);
   // Superseded: stop being a writer and follow whoever the lease names now. What this node wrote past what was
   // acknowledged is copied over by the follow.
   await Effect.runPromise(Scope.close(scope, Exit.void));
   say("following");
-  await Effect.runPromise(database.writerLeases.follow({ partition: PARTITION, leases, owner: NAME, leaderFor, interval: "100 millis", pollMillis: 300 }));
+  await Effect.runPromise(follow());
 } else if (ROLE === "follower") {
   // Never promoted: follows whoever holds the lease, before and after any promotion.
   say("follower");
-  await Effect.runPromise(database.writerLeases.follow({ partition: PARTITION, leases, owner: NAME, leaderFor, interval: "100 millis", pollMillis: 300 }));
+  await Effect.runPromise(follow());
 } else {
   const scope = Effect.runSync(Scope.make());
   say("standby");
-  const handle = await inScope(scope, database.writerLeases.standby({
-    partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, interval: "50 millis", pollMillis: 300, leaderFor,
-    ...(env("SUCCESSOR", "") === "" ? {} : { successor: env("SUCCESSOR", "") }),
-  }).pipe(Effect.orDie));
+  const successor = env("SUCCESSOR", "") === "" ? {} : { successor: env("SUCCESSOR", "") };
+  const handle = await inScope(scope, (MODE === "database"
+    ? database.writerLeases.standbyDatabase({ scope: SCOPE, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, pollMillis: 300, timeoutMillis: 500, leaderFor, ...successor })
+    : database.writerLeases.standby({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, interval: "50 millis", pollMillis: 300, leaderFor, ...successor })).pipe(Effect.orDie));
   const ids = await idsNow();
   // The lease is created with expiresAt = the instant of the compare-and-set + ttl: when the promotion actually landed.
   say("promoted", { ids, casAt: handle.promotion.lease.expiresAt - TTL, epoch: handle.promotion.lease.epoch, lostPositions: handle.promotion.lostPositions, held: ids.length, head: await headNow() });

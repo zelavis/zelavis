@@ -336,6 +336,8 @@ interface ShardContext {
   readonly origin: string;
   /** How many postings one clause of a query reads before it is checked per candidate instead. */
   readonly probeCap: number;
+  /** The writer-lease gate of the whole shard: every partition's changes pass it unless it has a gate of its own. */
+  shardGate?: Effect.Effect<void, DbError>;
 }
 
 /** A record as a projection is about to leave it. */
@@ -597,7 +599,7 @@ const openPartition = (
    * changes of that kind and take only `exclusive`.
    */
   const exclusiveWrite = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    exclusiveReady(Effect.flatMap(unfenced, () => Effect.flatMap(Effect.suspend(() => leaseGate ?? Effect.void), () => effect)));
+    exclusiveReady(Effect.flatMap(unfenced, () => Effect.flatMap(Effect.suspend(() => leaseGate ?? context.shardGate ?? Effect.void), () => effect)));
 
   const conditions = () => [
     { key: shardMetaKey(SHARD_GENERATION), value: u64Bytes(generation) },
@@ -3066,7 +3068,7 @@ const openPartition = (
 
     fence: (move) =>
       exclusive(Effect.gen(function* () {
-        if (leaseGate !== undefined) return yield* new PartitionLeased({ partition });
+        if (leaseGate !== undefined || context.shardGate !== undefined) return yield* new PartitionLeased({ partition });
         yield* write([{ op: "put", key: keys.meta(META_FENCE), value: encodeFence(move) }]);
         fence = { from: move.from, to: move.to };
       })),
@@ -3271,20 +3273,12 @@ export const shardOverKv = (
     return handle;
   };
 
-  return {
-    shard: context.shard,
-    generation: context.claim.generation,
-    partition: (partition) => handleOf(partition).api,
-
-    /**
-     * Every partition with a key here, found by seeking from one partition's
-     * range to the next. One read per partition, and nothing to keep in step:
-     * a partition is listed exactly while it holds something.
-     */
-    partitions: Effect.gen(function* () {
+  /** Partitions with a key here after `after`, at most `limit`, in key order: one seek per partition, nothing kept. */
+  const listPartitions = (after: PartitionKey | undefined, limit: number) => Effect.gen(function* () {
       const out: PartitionKey[] = [];
-      let from: Uint8Array | undefined;
-      for (;;) {
+      let from: Uint8Array | undefined = after === undefined ? undefined : prefixEnd(partitionPrefix(after));
+      if (after !== undefined && from === undefined) return out;
+      while (out.length < limit) {
         const first = [...(yield* Stream.runCollect(
           context.engine.scan(partitionSpace(), { ...(from === undefined ? {} : { from }), limit: 1 }),
         ))][0];
@@ -3296,7 +3290,21 @@ export const shardOverKv = (
         from = end;
       }
       return out;
-    }),
+    });
+
+  return {
+    shard: context.shard,
+    generation: context.claim.generation,
+    partition: (partition) => handleOf(partition).api,
+    guardShard: (gate) => Effect.sync(() => { context.shardGate = gate; }),
+
+    /**
+     * Every partition with a key here, found by seeking from one partition's
+     * range to the next. One read per partition, and nothing to keep in step:
+     * a partition is listed exactly while it holds something.
+     */
+    partitions: listPartitions(undefined, Number.POSITIVE_INFINITY),
+    partitionsPage: listPartitions,
 
     drop: (partition) => handleOf(partition).drop,
 

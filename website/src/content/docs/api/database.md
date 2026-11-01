@@ -124,10 +124,21 @@ yield* writeAcknowledged(yield* leaderDb.followers.source('acme'), yield* leader
 - **Acknowledgments with the leader.** A follower reports the head it committed, after its own commit; the leader keeps
   each follower's highest position per partition while it is open (`db.followers.acknowledgments`), and
   `writeAcknowledged` waits on it.
-- **The change feed.** `changes` answers which partitions moved past the heads a caller says it knows, waiting up to
-  `timeoutMillis` (default 25 s, at most 60 s) for a write when none has, at most 1000 partitions an answer with `more`.
-  The heads are the durable log heads, so a request lost to the network, or a follower restarted, misses nothing: the
-  next answer names everything that moved. A follower wakes on it instead of polling.
+- **The change feed.** `feed` answers which partitions were written since a cursor, oldest touch first, each once, at
+  most 1000 an answer with `more`, waiting up to `timeoutMillis` (default 25 s, at most 60 s) when none is owed. Its cost
+  is the number of changes, never the number of partitions: the leader keeps a fixed ring of recent touches
+  (65,536), so a database of any number of Tenants costs the same to follow as one of a few. A cursor from another life
+  of the leader, or further back than the ring, answers `resync: true`, and the follower lists the partitions instead
+  (`partitions`, a page of 1000 at a time with each head, nothing held between pages) and levels only those whose head
+  differs from its own. A request lost to the network, or a follower restarted, misses nothing.
+- **Following a whole database.** `db.followers.followAll(leader, { name })` lists once, then follows only what the feed
+  names, a bounded number of partitions at a time, each one leveled and acknowledged; a partition that cannot be leveled
+  is tried again on the next turn, a leader that cannot be reached is retried with a capped backoff. `leader` is
+  `localDatabaseLeader(db.followers)` in the same process or `remoteDatabaseLeader(client.followers(projectId))` across
+  hosts. Measured in one process: a single write reached the follower in a median 5 ms with 500 Tenants and 6 ms with
+  4,000, asking about one partition each time; the initial sync is linear in the data, as it must be. The reserved
+  partitions (`zv.global`, `zv.topology`) are not followed; a standby for a whole Project copies them when it is
+  promoted, which is not built yet.
 - **Following into a database.** `db.followers.follow` keeps a partition of this database a follower of a leader and
   tells this database's cross-Tenant indexes after every pass that changed it, so an index on a read replica follows
   the leader's writes as they arrive. Writing a followed partition any other way diverges it, and the next pass copies
@@ -168,6 +179,14 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   partition again where its log diverged.
 - **A graceful stop hands over at once.** Closing the holder releases the lease, and a standby promotes within a third
   of the time to live instead of waiting for it to lapse.
+- **A Project fails over as one, at the same cost whatever its size.** `db.writerLeases.holdDatabase({ scope, … , standby })`
+  takes one lease for the whole database and gates every change on every shard with a single check per write;
+  `standbyDatabase` follows every partition (`followAll`) and takes over when the lease lapses; `followDatabase` follows
+  whoever holds it. The lease is one small record however many Tenants there are, and it always names its standby:
+  every acknowledged write waited on that one follower, so no acknowledged position needs keeping per Tenant, and the
+  authority grows with nothing. The drill runs it with 100 Tenants: every Tenant is fenced on the old writer, the
+  standby holds them all, a third node that tries to stand by is refused, and the returning old writer and that
+  third node converge on the new writer, Tenants created after the loss included.
 - **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
   released.
 - **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`
@@ -210,9 +229,9 @@ Every route needs `database.replicate`, which the Platform grants with `project.
 
 | Form | Operations |
 |---|---|
-| HTTP | `GET …/database/followers/:partition/stats`, `POST …/:partition/records` `{ after?, limit }`, `POST …/:partition/log` `{ after?\|from?, limit }`, `POST …/:partition/holds` `{ id, position, ttlMillis }`, `DELETE …/:partition/holds/:holdId`, `POST\|GET …/:partition/acknowledgments`, `POST …/database/followers/changes` `{ heads?, partitions?, timeoutMillis? }` |
-| SDK | `client.followers(projectId).stats\|records\|log\|hold\|release\|acknowledge\|acknowledgments\|changes` |
-| CLI | `zelavis followers <stats\|records\|log\|hold\|release\|acknowledge\|acknowledgments\|changes> --project ID [partition] …` |
+| HTTP | `GET …/database/followers/:partition/stats`, `POST …/:partition/records` `{ after?, limit }`, `POST …/:partition/log` `{ after?\|from?, limit }`, `POST …/:partition/holds` `{ id, position, ttlMillis }`, `DELETE …/:partition/holds/:holdId`, `POST\|GET …/:partition/acknowledgments`, `POST …/database/followers/feed` `{ cursor?, partitions?, timeoutMillis? }`, `POST …/database/followers/partitions` `{ after?, limit? }` |
+| SDK | `client.followers(projectId).stats\|records\|log\|hold\|release\|acknowledge\|acknowledgments\|feed\|partitions` |
+| CLI | `zelavis followers <stats\|records\|log\|hold\|release\|acknowledge\|acknowledgments\|feed\|partitions> --project ID [partition] …` |
 
 Not yet: a writer elsewhere promoted from a follower (failover), which needs the fenced `{owner, epoch}` handover the
 Fabric gives Project placement, and remote shard movement.
@@ -860,7 +879,7 @@ refused: a derived index cannot enforce uniqueness in source Tenants. Geometry a
 override fields in that body). The native dashboard's JSON forms accept these same declarations and queries.
 The background refresh reads a partition shortly after a write in this process, and also after any partition named
 by its `notifications` stream (`crossTenantRefresh: { notifications }`): a writer on another host through its change
-feed (`remoteChanges`), and a partition this database follows through its follow loop. The sweep (one minute by
+feed (`remoteChanges`; after a resync it names nothing and the sweep covers it), and a partition this database follows through its follow loop. The sweep (one minute by
 default) is what remains for anything neither names.
 
 ## Backups and restore

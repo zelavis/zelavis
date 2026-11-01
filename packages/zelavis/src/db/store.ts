@@ -609,6 +609,17 @@ export interface ShardStoreApi {
    */
   readonly partition: (partition: PartitionKey) => ObjectStoreApi;
 
+  /**
+   * Install (or, with `undefined`, remove) the writer-lease gate of the whole shard: checked under each partition's
+   * writer before every change to any partition on it, after the move fence, unless that partition has a gate of its
+   * own. This is how one lease guards a whole database at O(1) a write however many Tenants it holds. While it stands
+   * no partition can be fenced for a move or removal (`PartitionLeased`).
+   */
+  readonly guardShard: (gate: Effect.Effect<void, DbError> | undefined) => Effect.Effect<void>;
+
+  /** Partitions holding any key on this shard after `after`, at most `limit`, in key order: a page of `partitions`. */
+  readonly partitionsPage: (after: PartitionKey | undefined, limit: number) => Effect.Effect<PartitionKey[], DbError>;
+
   /** Every partition holding any key on this shard, in key order. */
   readonly partitions: Effect.Effect<ReadonlyArray<PartitionKey>, DbError>;
 

@@ -1018,39 +1018,65 @@ function defineDatabaseRootService(
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
         },
         {
-          id: "database.followers.changes",
+          id: "database.followers.feed",
           spec: {
-            operationId: "databaseFollowerChanges",
-            summary: "Which partitions moved past the heads a follower knows",
-            description: "The leader's change feed for followers on other hosts. Answers each partition (every Tenant partition, or the ones `partitions` names) whose log head is past what `heads` says the caller knows, a partition it does not name counting as at 0; when none is, it waits up to `timeoutMillis` (0 to 60000, default 25000) for a write. At most 1000 partitions an answer, with `more` to ask again at once. The heads are the durable log heads, so a request lost or a follower restarted misses nothing: the next answer names everything that moved meanwhile.",
+            operationId: "databaseFollowerFeed",
+            summary: "Which partitions were written since a follower last looked",
+            description: "The leader's change feed for followers on other hosts. `cursor` is where the caller last looked (the `cursor` of the previous answer); without one the answer is the current position and `resync: true`. Otherwise it names the partitions written since the cursor, oldest touch first, each once, at most 1000 (`more` to ask again at once); when none is owed it waits up to `timeoutMillis` (0 to 60000, default 25000) for a write. Its cost is the number of changes, never the number of partitions, and it keeps a fixed ring of recent touches: a cursor from another life of the leader, or further back than the ring, answers `resync: true`, and the caller lists the partitions (`partitions`) and compares each one's head with its own. A request lost, or a follower restarted, misses nothing.",
             tags: ["database"],
             requestBody: { required: false, schema: { type: "object", properties: {
-              heads: { type: "object", additionalProperties: { type: "integer" }, description: "Partition to the head the caller knows" },
-              partitions: { type: "array", items: { type: "string" }, description: "Only these partitions" },
+              cursor: { type: "string", description: "The cursor the previous answer returned" },
+              partitions: { type: "array", items: { type: "string" }, description: "Only these partitions (at most 10000 in one request)" },
               timeoutMillis: { type: "integer", description: "How long to wait for a write, 0 to 60000" },
             } } },
-            responses: { 200: { description: "{ heads, more }" }, 400: { description: "A reserved partition or a bound exceeded" } },
+            responses: { 200: { description: "{ cursor, partitions, resync, more }" }, 400: { description: "A malformed cursor or a bound exceeded" } },
           },
           method: "POST",
           access: { permissions: ["database.replicate"] },
-          path: "/followers/changes",
+          path: "/followers/feed",
           handler: ({ service, body }) => present(Effect.gen(function* () {
             const input = readBodyObject(body);
-            const heads = input.heads;
+            const cursor = input.cursor;
             const partitions = input.partitions;
             const timeoutMillis = input.timeoutMillis;
-            if (heads !== undefined && (heads === null || typeof heads !== "object" || Array.isArray(heads) || Object.values(heads).some((head) => typeof head !== "number"))) {
-              return { status: 400, body: { error: `"heads" maps each partition to the head the caller knows.` } };
-            }
+            if (cursor !== undefined && typeof cursor !== "string") return { status: 400, body: { error: `"cursor" is the one a previous answer returned.` } };
             if (partitions !== undefined && (!Array.isArray(partitions) || partitions.some((partition) => typeof partition !== "string"))) {
               return { status: 400, body: { error: `"partitions" is a list of partition names.` } };
             }
             if (timeoutMillis !== undefined && typeof timeoutMillis !== "number") return { status: 400, body: { error: `"timeoutMillis" is a number from 0 to 60000.` } };
-            return { body: yield* integration(() => service.followers.changes({
-              ...(heads === undefined ? {} : { heads: heads as Record<string, number> }),
+            return { body: yield* integration(() => service.followers.feed({
+              ...(cursor === undefined ? {} : { cursor }),
               ...(partitions === undefined ? {} : { partitions: partitions as string[] }),
               ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
             }), { interruptible: true }) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.partitions",
+          spec: {
+            operationId: "databaseFollowerPartitions",
+            summary: "The partitions the leader holds, with their log heads",
+            description: "The Tenant partitions a page at a time in a stable order, each with its log head: what a follower lists to start, and again after a resync. `after` is the `next` of the previous page; a page holds 1 to 1000 partitions. Nothing is held between pages, so a database of any size is listed with the same memory.",
+            tags: ["database"],
+            requestBody: { required: false, schema: { type: "object", properties: {
+              after: { type: "string", description: "The `next` the previous page returned" },
+              limit: { type: "integer", description: "1 to 1000; 1000 unless given" },
+            } } },
+            responses: { 200: { description: "{ partitions: [{ partition, head }], next? }" }, 400: { description: "A bound exceeded" } },
+          },
+          method: "POST",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/partitions",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const after = input.after;
+            const limit = input.limit;
+            if (after !== undefined && typeof after !== "string") return { status: 400, body: { error: `"after" is the "next" of the previous page.` } };
+            if (limit !== undefined && typeof limit !== "number") return { status: 400, body: { error: `"limit" is a number from 1 to 1000.` } };
+            return { body: yield* integration(() => service.followers.partitions({
+              ...(after === undefined ? {} : { after }),
+              ...(limit === undefined ? {} : { limit }),
+            })) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
         },
         {
