@@ -266,10 +266,12 @@ export interface ZelavisProjectSetupValue {
 
 export interface ZelavisProjectVersions {
   readonly current?: string;
+  /** The data layout the Project's database holds now (it can differ from what its locked engine writes after a migration). */
+  readonly currentDataFormat?: number;
   readonly latest?: string;
   readonly selectable: boolean;
   readonly reason?: string;
-  readonly versions: readonly { readonly version: string; readonly status: "available" | "unavailable"; readonly error?: string; readonly nodeVersion?: string }[];
+  readonly versions: readonly { readonly version: string; readonly status: "available" | "unavailable"; readonly error?: string; readonly nodeVersion?: string; readonly dataFormat?: number }[];
 }
 
 export interface ZelavisProjectRuntimeDriver {
@@ -974,6 +976,18 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
     const { projectRecipes, runtime } = options;
     const store = effectOperations(options.store);
     const runtimeEffects = effectOperations(runtime, ["capabilities", "supportsLiveUpdate"]);
+    /**
+     * Whether upgrading to `engineVersion` (the newest installed engine when omitted) changes the data layout the Project's
+     * database holds. Such an upgrade is never live: the Project is stopped, its data is migrated while nothing writes it, and
+     * the driver swaps the migrated data in.
+     */
+    const changesDataLayout = Effect.fn("Projects.changesDataLayout")(function* (project: ZelavisProjectRecord, engineVersion?: string) {
+        const listVersions = runtimeEffects.versions;
+        const versions = listVersions === undefined ? undefined : yield* Effect.orElseSucceed(listVersions(project), () => undefined);
+        if (!versions?.selectable || versions.currentDataFormat === undefined) return false;
+        const target = versions.versions.find((entry) => entry.version === (engineVersion ?? versions.latest));
+        return target?.dataFormat !== undefined && target.dataFormat !== versions.currentDataFormat;
+    });
     const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
     const defaultRuntimeKind = yield* evaluate(() => normalizeRuntimeKind(runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND));
     if (!availableRuntimeKinds.includes(defaultRuntimeKind)) {
@@ -2227,7 +2241,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             yield* refreshRecipes();
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
-                const liveCapable = runtime.supportsLiveUpdate?.(current) === true &&
+                const liveCapable = runtime.supportsLiveUpdate?.(current) === true && !(yield* changesDataLayout(current, input.engineVersion)) &&
                     runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
                 const managedIntegration = runtime.capabilities(current).recipeUpdateMode === "integration";
                 // Only a running Project that cannot be upgraded where it stands is taken down for it.
@@ -2252,7 +2266,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     return yield* Effect.fail(new ZelavisProjectConflictError("Version selection requires the Project's local runtime catalog."));
                 if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
                     (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
-                const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true &&
+                const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true && !(yield* changesDataLayout(project, input?.engineVersion)) &&
                     runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;
                 const integrationUpdate = runtime.capabilities(project).recipeUpdateMode === "integration" &&
                     runtimeEffects.prepareUpdate && runtimeEffects.applyUpdate && runtimeEffects.recoverUpdate;

@@ -14,6 +14,8 @@ import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { engineConvergence } from "../core/runtime/engine-convergence.js";
 import { chooseBoundEngine } from "./_node-bound-engine.js";
+import { migrateDataLayout } from "./_node-data-migration.js";
+import { commitDataSwap, dataFormatOnDisk, settleDataSwap, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
 import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
@@ -365,6 +367,30 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 }
             }
         });
+    const stampNow = () => new Date().toISOString().replace(/[-:.]/g, "");
+    /**
+     * Migrates a native App's data when the engine it moves to writes another layout, and says whether it did. The Project is
+     * stopped; its data is exported by the engine that wrote it, recreated by the current one, verified, and swapped in with the
+     * old data kept beside it. Nothing is migrated when the layouts agree or the Project has no database yet.
+     */
+    const migrateLayout = Effect.fn("NodeProjects.migrateLayout")(function* (directory: string, catalog: ReturnType<typeof createNodeRuntimeCatalog>, previous: RuntimeRelease, target: RuntimeRelease) {
+        const paths = { zelavis: join(directory, ".zelavis") }, stamp = stampNow();
+        yield* settleDataSwap(paths, yield* catalog.dataFormat(previous.version), stamp);
+        const from = yield* dataFormatOnDisk(paths, yield* catalog.dataFormat(previous.version));
+        const to = yield* catalog.dataFormat(target.version);
+        const shards = join(paths.zelavis, "data", "primary", "shards");
+        const hasDatabase = yield* integration(() => lstat(shards)).pipe(Effect.as(true), Effect.catch(() => Effect.succeed(false)));
+        if (from === to || !hasDatabase) return false;
+        const earlier = yield* catalog.resolve(previous, "project", {}, {});
+        const work = join(paths.zelavis, `migration-${stamp}`);
+        const report = yield* migrateDataLayout({ sourceShards: shards, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"),
+            exportWorker: fileURLToPath(new URL("./_data-export-worker.js", import.meta.url)) });
+        const { retained } = yield* swapInMigratedData(paths, { migratedShards: report.shardsDirectory, from, to, stamp }).pipe(Effect.onError(() => undoDataSwap(paths, stamp).pipe(Effect.orElseSucceed(() => false))));
+        // What the migration changed that a person should know: kept with the retained data, shown by the dashboard.
+        yield* integration(() => writeFile(join(paths.zelavis, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
+        yield* integration(() => rm(work, { recursive: true, force: true }));
+        return true;
+    });
     const driver: EffectOperations<ZelavisProjectRuntimeDriver> = {
         name: "node-process",
         runtimeKinds: Object.freeze(["native"]),
@@ -376,9 +402,13 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const configuration = yield* catalogConfiguration();
             if (!configuration || project && (project.recipe.name !== "@zelavis/app" || project.runtimeKind !== "native"))
                 return { selectable: false, reason: "Engine version selection requires an installer-managed native Zelavis App.", versions: [] };
-            const versions = yield* createNodeRuntimeCatalog(configuration).list();
+            const catalog = createNodeRuntimeCatalog(configuration);
+            const versions = yield* catalog.list();
             const current = project ? (yield* readCreationEngine(projectDirectory(project.id))).runtime?.version : undefined;
-            return { selectable: true, current, latest: versions.find(value => value.status === "available")?.version, versions };
+            const currentDataFormat = project && current
+                ? yield* dataFormatOnDisk({ zelavis: join(projectDirectory(project.id), ".zelavis") }, yield* catalog.dataFormat(current)).pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+            return { selectable: true, current, ...(currentDataFormat === undefined ? {} : { currentDataFormat }), latest: versions.find(value => value.status === "available")?.version, versions };
         }),
         resolveVersion: Effect.fn("NodeProjects.resolveVersion")(function* (project, version) {
             const configuration = yield* catalogConfiguration();
@@ -504,6 +534,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             // what it runs. Preparing fails, with the reason, when it cannot be frozen.
             const engine = yield* readCreationEngine(directory);
             const catalogOptions = yield* catalogConfiguration();
+            let migrated = false;
             let app: { packageDirectory: string; recipe: ZelavisProjectRecipeLock } | undefined;
             if (catalogOptions) {
                 const catalog = createNodeRuntimeCatalog(catalogOptions);
@@ -511,13 +542,18 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     : engine.runtime ? yield* catalog.select(engine.runtime.version) : yield* catalog.latest();
                 if (engine.runtime && (!project.engineVersion || project.engineVersion === engine.runtime.version) && engine.runtime.digest !== selected.digest)
                     return yield* new IntegrationFailure(new Error("The installed engine differs from this Project's exact runtime lock."));
+                const previousRuntime = engine.runtime;
                 engine.runtime = selected;
+                if (!options.integrationOnly && previousRuntime !== undefined && previousRuntime.version !== selected.version) {
+                    migrated = yield* migrateLayout(directory, catalog, previousRuntime, selected);
+                }
                 if (recipe.name === "@zelavis/app") {
                     const selectedApp = yield* catalog.app(selected.version);
                     app = selectedApp;
                     if (selectedApp.recipe.version !== recipe.version) return yield* new IntegrationFailure(new Error("Selected engine and App recipe do not match."));
                 }
             }
+            yield* Effect.gen(function* () {
             const artifact = yield* integration(() => ensureRecipeArtifact(recipe, directory, dataDirectory,
                 app ? () => app!.packageDirectory : options.recipePackageDirectory));
             yield* integration(() => writeFile(join(directory, "project.json"), `${JSON.stringify({
@@ -532,6 +568,15 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     capabilities: driver.capabilities(project),
                 },
             }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }));
+            // The migrated data goes back if the lock that makes it current could not be written.
+            }).pipe(Effect.onError(() => migrated ? undoDataSwap({ zelavis: join(directory, ".zelavis") }, stampNow()).pipe(Effect.orElseSucceed(() => false)) : Effect.void));
+        }),
+        // The upgrade was recorded, or was not: either way the swap it made is settled, never half-kept.
+        commitUpgrade: Effect.fn("NodeProjects.commitUpgrade")(function* (projectId: string) {
+            if (!options.integrationOnly) yield* commitDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") });
+        }),
+        abandonUpgrade: Effect.fn("NodeProjects.abandonUpgrade")(function* (projectId: string) {
+            if (!options.integrationOnly) yield* undoDataSwap({ zelavis: join(projectDirectory(projectId), ".zelavis") }, stampNow());
         }),
         adopt: () => adopt(),
         start: Effect.fn("NodeProjects.start")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
@@ -615,6 +660,10 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     return yield* installed.select(chosen.version);
                 }) : undefined }
                 : yield* readCreationEngine(directory);
+            // A crash between a migration's swap and the record of the upgrade that needed it is settled before the data is opened.
+            if (!options.integrationOnly && catalogOptions && engine.runtime) {
+                yield* settleDataSwap({ zelavis: join(directory, ".zelavis") }, yield* createNodeRuntimeCatalog(catalogOptions).dataFormat(engine.runtime.version), stampNow());
+            }
             let executable = process.execPath, selectedRunner = runnerPath;
             if (catalogOptions) {
                 if (!engine.runtime) return yield* new IntegrationFailure(new Error("Installed Project has no exact runtime engine lock; prepare it before starting."));
