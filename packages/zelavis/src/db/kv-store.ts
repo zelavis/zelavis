@@ -61,7 +61,7 @@ const SHARD_FORMAT = "format";
  * The layout this code writes. A shard carries it so a layout change is caught
  * on open instead of misread.
  */
-const CURRENT_FORMAT = 4;
+export const CURRENT_FORMAT = 4;
 
 /** One partition's own counters and marks. */
 const META_NEXT_SEQ = "next_seq";

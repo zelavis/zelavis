@@ -12,6 +12,9 @@ import { ensureRecipeArtifact } from "./_recipe-artifact.js";
 import { ZELAVIS_VERSION } from "../version.js";
 import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
+import { engineConvergence } from "../core/runtime/engine-convergence.js";
+import { chooseBoundEngine } from "./_node-bound-engine.js";
+import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { freezeNodeProjectRelease, restoreNodeProjectRelease, verifyNodeProjectRelease } from "./_node-project-release.js";
 import { prepareManagedRecipeUpdate } from "./_managed-recipe-update.js";
 import { randomUUID } from "node:crypto";
@@ -55,6 +58,8 @@ export interface NodeProcessProjectRuntimeOptions {
 }
 interface NodeProjectProcess {
     boundEngineVersion?: string;
+    /** The Platform engine this bound App was held back from, so the reason is logged once and not at every start. */
+    convergenceHeldFrom?: string;
     /** The runner the host process executes, which is the code it loads recipes with. */
     runner?: string;
     process?: ZelavisAgentProcess;
@@ -553,7 +558,19 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     });
                     if (previous.version !== ZELAVIS_VERSION) {
                         const catalog = yield* catalogConfiguration();
-                        if (catalog) yield* createNodeRuntimeCatalog(catalog).select(ZELAVIS_VERSION);
+                        if (catalog) {
+                            const installed = createNodeRuntimeCatalog(catalog);
+                            // The Platform update never moves a Project across a data-layout change: its own recipe upgrade does.
+                            const convergence = engineConvergence({ from: yield* installed.dataFormat(previous.version), to: CURRENT_FORMAT });
+                            if (!convergence.converge) {
+                                if (current.convergenceHeldFrom !== ZELAVIS_VERSION) {
+                                    current.convergenceHeldFrom = ZELAVIS_VERSION;
+                                    appendLog(current, "system", `Staying on Zelavis ${previous.version}. ${convergence.reason}`);
+                                }
+                                return current.snapshot;
+                            }
+                            yield* installed.select(ZELAVIS_VERSION);
+                        }
                         const target = { version: ZELAVIS_VERSION, digest: previous.digest };
                         const { record } = yield* verifyNodeProjectRelease(projectDirectory(project.id), project.id, target);
                         const canonical = yield* integration(() => readFile(join(projectDirectory(project.id), "project.json"), "utf8"));
@@ -588,8 +605,15 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 return (yield* error);
             }));
             const catalogOptions = yield* catalogConfiguration();
+            let heldReason: string | undefined;
             const engine = options.integrationOnly
-                ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* createNodeRuntimeCatalog(catalogOptions).select(ZELAVIS_VERSION) : undefined }
+                ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* Effect.gen(function* () {
+                    const installed = createNodeRuntimeCatalog(catalogOptions);
+                    // A cold start follows the Platform too, except across a data-layout change; see `chooseBoundEngine`.
+                    const chosen = yield* chooseBoundEngine({ journalFile: join(directory, ".zelavis", "integration", "runtime-handover.json"), catalog: installed });
+                    heldReason = chosen.heldReason;
+                    return yield* installed.select(chosen.version);
+                }) : undefined }
                 : yield* readCreationEngine(directory);
             let executable = process.execPath, selectedRunner = runnerPath;
             if (catalogOptions) {
@@ -612,6 +636,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             };
             processes.set(project.id, state);
             appendLog(state, "system", `Starting ${project.name} with ${driver.name}.`);
+            if (heldReason !== undefined) appendLog(state, "system", `Staying on Zelavis ${state.boundEngineVersion}. ${heldReason}`);
             // A fresh secret per start: a restarted runtime never accepts envelopes
             // signed for its previous process.
             const gatewaySecret = createGatewayAuthoritySecret();
