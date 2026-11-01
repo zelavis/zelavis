@@ -117,6 +117,23 @@ shards.
    - Interrupts are messages.
    - Execution ownership follows the global partition's writer.
 
+9. **Who calls whom in a failover (decided 2026-11-01).** Decentralised where it can be, central where authority is.
+   - **Nobody tells a follower to take over.** A standby watches the writer's lease in the Platform's lease authority and,
+     once it has lapsed and the standby holds every acknowledged position, promotes itself with one compare-and-set
+     against that authority. The authority's conditions are the only arbiter; a coordinator that could be wrong or
+     partitioned is not in the path of safety.
+   - **Nobody tells the other followers where the writer went.** The lease carries the writer's `endpoint`; every
+     follower (a third node, or the old writer returning) reads the lease and follows whoever it names
+     (`followWriter`). A change of epoch re-points them.
+   - **The Platform never calls a node to promote.** It holds the authority, so it learns of a promotion by the lease
+     record itself, audits it (`GET /runtime/writer-lease-audit`, with who asked and any accepted loss) and, when the
+     partition belongs to a Project, reconciles the Project's Fabric placement `{owner, epoch}` to the promoted node:
+     the Fabric starts the Project there through the existing signed remote start and fences the previous owner by
+     epoch. The promoted node does not ask the Fabric for placement, and the Fabric does not order promotions; it
+     only decides which nodes may stand by (policy) and where the Project's traffic goes (placement).
+   - **Operators** may still `promote`/`demote` by hand; accepting data loss needs
+     `database.failover.accept-data-loss` and is audited.
+
 ## Phases
 
 1. **Durable entities** (done 2026-10-31) in `zelavis/db` and the Workloads service:
@@ -138,9 +155,11 @@ shards.
    the store's write path, `standby`/`hold`, `followers lease|promote|demote` over JS, HTTP, SDK and CLI), tested with
    two databases in one process, a cut-off writer and a seeded protocol model. The Platform serves the lease authority
    (`/runtime/writer-leases`, `httpLeaseStore`) and `pnpm release:qualify:failover` holds a `SIGKILL`, a partition and
-   an unacknowledged tail to the decision in separate containers. **Open:** moving the Project's placement and routing
-   to the promoted follower's host (the Fabric commit), running `standby` in Project runtimes, re-pointing other
-   followers, and an audit entry and owner permission for `allowDataLoss`.
+   an unacknowledged tail to the decision in separate containers. Other followers find the new writer from the lease
+   (`followWriter`), `allowDataLoss` needs its own permission and is audited, and the control flow is decision 9.
+   **Open:** the Fabric half of decision 9 — a general way to start a Project on another node from its follower copy
+   (a standby Project supervised by that node's Agent) and to commit the placement `{owner, epoch}` when the lease
+   epoch advances — and running `standby` inside those standby Projects.
 4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
 5. **Delivery-guarantee table** in the public docs (decision 7), written alongside phase 1 and kept current.
 

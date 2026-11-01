@@ -171,7 +171,7 @@ Usage:
   zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
   zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project <id> [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
   zelavis entities <send|message|cancel|state|mailbox|list> --project <id> <type> [id] [message-key] [--tag TAG] [--data JSON] [--primary-key KEY] [--deliver-at ISO] [--tenant ID] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
-  zelavis leases <show|put> PARTITION [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis leases <show|put|audit> [PARTITION] [--data JSON] [--limit N] [--url <url>] [--token <token>] [--json]
   zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|changes> --project <id> [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--heads JSON] [--partitions A,B] [--timeout-millis N] [--url <url>] [--token <token>] [--json]
   zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]

@@ -165,7 +165,7 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
 - **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
   released.
 - **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`
-  (`database.replicate`), `client.followers(projectId).lease|promote|demote`, `zelavis followers lease|promote|demote`.
+  (`database.replicate`; `allowDataLoss` also needs `database.failover.accept-data-loss`), `client.followers(projectId).lease|promote|demote`, `zelavis followers lease|promote|demote`.
   Stop following the partition before promoting it.
 
 - **One authority for every host.** The Platform keeps the lease in its System Store and serves it at
@@ -184,11 +184,20 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   that a follower's requests to a partitioned writer hung and could not be interrupted, which stopped a standby from
   being promoted; requests to a leader are now interruptible.
 
-What is not done: nothing yet moves the Project's placement and routing to the follower's host after a promotion,
-so the Gateway still sends requests to the old writer's host until the Platform Fabric commits the new placement;
-no Project runtime runs `standby` by itself, so an operator or the Fabric calls `promote`; a third follower still
-follows the old leader until it is pointed at the new one; and a promotion with `allowDataLoss` carries no audit
-entry of its own.
+- **Nobody tells anyone where the writer went.** The lease carries the writer's `endpoint`. A standby promotes itself
+  (one compare-and-set against the authority, no coordinator in the path of safety), and every other follower, and an
+  old writer that returns, reads the lease and follows whoever it names (`db.writerLeases.follow`, or the `leaderFor`
+  of `standby`). The drill has a third node that is never promoted and holds exactly what the new writer holds.
+- **Accepting data loss is audited and gated.** `allowDataLoss` needs `database.failover.accept-data-loss` (403
+  otherwise), and the Platform records every change of writer (who asked, from which owner and epoch to which, the
+  positions a promotion accepted losing) at `GET /runtime/writer-lease-audit`, `client.writerLeases.audit()` and
+  `zelavis leases audit`. Renewals are not recorded.
+
+What is not done: nothing yet moves the Project's placement and routing to the promoted host. The decided flow is that
+the Platform, which holds the authority and so sees every promotion, commits the Project's placement
+`{owner, epoch}` to the promoted node and the Fabric starts the Project there through the existing signed remote start;
+that needs a way to start a Project on another node from its follower copy, which does not exist, so the Gateway still
+sends requests to the old writer's host. No Project runtime runs `standby` by itself.
 
 
 Every route needs `database.replicate`, which the Platform grants with `project.runtime.manage`.

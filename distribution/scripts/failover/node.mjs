@@ -13,7 +13,7 @@ import { createZelavisClient } from "/repo/packages/zelavis/dist/sdk/fetch.js";
 const env = (name, fallback) => process.env[name] ?? fallback;
 const NAME = env("NAME", "node");
 const ROLE = env("ROLE", "writer");
-const PEER = env("PEER", "");
+const ENDPOINT = env("ENDPOINT", `http://${NAME}:8080`);
 const AUTHORITY = env("AUTHORITY", "http://authority:8080");
 const TOKEN = env("TOKEN", "drill-token");
 const TTL = Number(env("TTL_MILLIS", "3000"));
@@ -48,7 +48,11 @@ createServer(async (request, response) => {
 }).listen(8080);
 
 const leases = httpLeaseStore({ apiRoot: `${AUTHORITY}/zelavis/api/v1`, token: TOKEN, timeoutMillis: 1000 });
-const remote = () => createZelavisClient({ baseUrl: PEER, rootPath: "/zelavis" }).followers("p1");
+// Where the writer is comes from its lease (`endpoint`), never from configuration: after a promotion the lease names the new one.
+const leaderFor = (endpoint) => {
+  const transport = createZelavisClient({ baseUrl: endpoint, rootPath: "/zelavis" }).followers("p1");
+  return { source: remoteLeader(transport, PARTITION), acknowledgments: { name: NAME, to: remoteAcknowledgments(transport, PARTITION) } };
+};
 const inScope = (scope, effect) => Effect.runPromise(effect.pipe(Effect.provideService(Scope.Scope, scope)));
 const idsNow = async () => (await documents.findMany({ collection: "posts" })).map((doc) => doc.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 const headNow = async () => (await Effect.runPromise(Effect.flatMap(database.followers.source(PARTITION), (source) => source.stats))).head;
@@ -89,26 +93,23 @@ process.on("SIGUSR2", () => { writing = false; say("quiesced"); });
 if (ROLE === "writer") {
   await documents.createCollection({ name: "posts" });
   const scope = Effect.runSync(Scope.make());
-  const handle = await inScope(scope, database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL }));
+  const handle = await inScope(scope, database.writerLeases.hold({ partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT }));
   say("writer", { epoch: (await Effect.runPromise(handle.lease)).epoch });
   await writeLoop(handle, 1);
-  // Superseded: stop being a writer and follow the new one. What this node wrote past what was acknowledged is copied over.
+  // Superseded: stop being a writer and follow whoever the lease names now. What this node wrote past what was
+  // acknowledged is copied over by the follow.
   await Effect.runPromise(Scope.close(scope, Exit.void));
-  say("following", { peer: PEER });
-  // A follow that cannot reach the new writer ends; the node tries again until the network is back.
-  for (;;) {
-    await Effect.runPromise(database.followers.follow(remoteLeader(remote(), PARTITION), { partition: PARTITION, interval: "100 millis" }).pipe(
-      Effect.catchCause((cause) => Effect.sync(() => say("follow-failed", { cause: String(cause).slice(0, 200) })))));
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
+  say("following");
+  await Effect.runPromise(database.writerLeases.follow({ partition: PARTITION, leases, owner: NAME, leaderFor, interval: "100 millis", pollMillis: 300 }));
+} else if (ROLE === "follower") {
+  // Never promoted: follows whoever holds the lease, before and after any promotion.
+  say("follower");
+  await Effect.runPromise(database.writerLeases.follow({ partition: PARTITION, leases, owner: NAME, leaderFor, interval: "100 millis", pollMillis: 300 }));
 } else {
   const scope = Effect.runSync(Scope.make());
-  say("standby", { peer: PEER });
-  const transport = remote();
+  say("standby");
   const handle = await inScope(scope, database.writerLeases.standby({
-    partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, interval: "50 millis",
-    leader: remoteLeader(transport, PARTITION),
-    acknowledgments: { name: NAME, to: remoteAcknowledgments(transport, PARTITION) },
+    partition: PARTITION, leases, owner: NAME, ttlMillis: TTL, endpoint: ENDPOINT, interval: "50 millis", pollMillis: 300, leaderFor,
   }).pipe(Effect.orDie));
   const ids = await idsNow();
   // The lease is created with expiresAt = the instant of the compare-and-set + ttl: when the promotion actually landed.

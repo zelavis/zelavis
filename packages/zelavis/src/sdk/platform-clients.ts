@@ -59,7 +59,7 @@ export function createFabricClient(json: Json): ZelavisFabricClient {
 
 /** A partition's writer lease as the Platform's authority keeps it, with the version a conditional write names. */
 export interface ZelavisWriterLeaseRecord {
-  readonly lease: { readonly partition: string; readonly owner: string; readonly epoch: number; readonly expiresAt: number; readonly acknowledgedHead: number };
+  readonly lease: { readonly partition: string; readonly owner: string; readonly epoch: number; readonly expiresAt: number; readonly acknowledgedHead: number; readonly endpoint?: string; readonly lostPositions?: number };
   readonly version: string;
 }
 
@@ -73,6 +73,8 @@ export interface ZelavisWriterLeasesClient {
   get(partition: string): Promise<ZelavisWriterLeaseRecord>;
   /** Create the lease (without `expectedVersion`; 409 if one exists) or replace exactly the version read (409 if it changed). */
   put(partition: string, input: { readonly lease: ZelavisWriterLeaseRecord["lease"]; readonly expectedVersion?: string }): Promise<{ readonly written: boolean }>;
+  /** Changes of writer, newest first: who asked, from which owner and epoch to which, and positions a promotion accepted losing. */
+  audit(options?: { readonly limit?: number }): Promise<{ readonly entries: ReadonlyArray<{ readonly at: number; readonly principal: string; readonly partition: string; readonly from?: { readonly owner: string; readonly epoch: number }; readonly to: { readonly owner: string; readonly epoch: number }; readonly lostPositions?: number }> }>;
 }
 
 export function createWriterLeasesClient(json: Json): ZelavisWriterLeasesClient {
@@ -80,6 +82,7 @@ export function createWriterLeasesClient(json: Json): ZelavisWriterLeasesClient 
   return {
     get: (partition) => json(at(partition)),
     put: (partition, input) => json(at(partition), { method: "PUT", body: input }),
+    audit: (options) => json(withQuery("/runtime/writer-lease-audit", { limit: options?.limit })),
   };
 }
 

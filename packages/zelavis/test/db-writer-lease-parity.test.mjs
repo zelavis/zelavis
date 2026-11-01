@@ -12,7 +12,7 @@ import { openTemporaryDatabase } from "./_database.mjs";
 import { fakePlatform, routeTable, runCli, steady } from "./_platform.mjs";
 import { leaderFetch } from "./fixtures/leader-routes.mjs";
 
-const operator = { id: "op", type: "service", permissions: ["database.replicate"], metadata: { tenantId: "acme" } };
+const operator = { id: "op", type: "service", permissions: ["database.replicate", "database.failover.accept-data-loss"], metadata: { tenantId: "acme" } };
 const BASE = "http://zv.test/zelavis";
 const DATA = "/zelavis/api/v1/runtime/projects/p1/data";
 const platformOf = (api) => fakePlatform({ prefix: DATA, principal: operator, routes: routeTable([{ basePath: "", api: defineDatabaseService(api).api, context: api }]) });
@@ -105,4 +105,19 @@ test("a writer lease comes out the same through JS, HTTP, the SDK and the CLI", 
       assert.deepEqual(results[name][step], js[step], `${name}: ${step}`);
     }
   }
+});
+
+test("accepting data loss in a promotion needs its own permission, which database.replicate alone does not give", async (t) => {
+  const leases = memoryLeaseStore();
+  const opened = await openTemporaryDatabase(t, { crossTenantRefresh: false, leases });
+  const first = await Effect.runPromise(acquireWriter(leases, { partition: "acme", owner: "A", ttlMillis: 100 }));
+  await Effect.runPromise(renewWriter(leases, first, { ttlMillis: 100, acknowledgedHead: 50 }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const replicate = { id: "op", type: "service", permissions: ["database.replicate"], metadata: {} };
+  const call = fakePlatform({ prefix: DATA, principal: replicate, routes: routeTable([{ basePath: "", api: defineDatabaseService(opened.api).api, context: opened.api }]) });
+  const promote = (body) => call(`http://zv.test${DATA}/followers/acme/lease/promote`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  const denied = await promote({ owner: "B", ttlMillis: 2000, allowDataLoss: true });
+  assert.equal(denied.status, 403);
+  assert.match((await denied.json()).error, /database\.failover\.accept-data-loss/);
+  assert.equal((await promote({ owner: "B", ttlMillis: 2000 })).status, 409, "an ordinary promotion is still judged on its merits (FollowerBehind)");
 });

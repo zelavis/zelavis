@@ -1,5 +1,5 @@
 import { Clock, Duration, Effect, Fiber, type Scope } from "effect";
-import { isNonNegativeInteger, isString, objectFields } from "../core/json-validation.js";
+import { isNonNegativeInteger, isString, objectFields, optional } from "../core/json-validation.js";
 import { FollowerBehind, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, StoreError, WriterFenced, type DbError } from "./errors.js";
 import type { PartitionKey } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
@@ -38,11 +38,20 @@ export interface WriterLease {
   readonly expiresAt: number;
   /** The highest log position known acknowledged by followers when the lease was last renewed. */
   readonly acknowledgedHead: number;
+  /**
+   * Where followers read this writer (its leader transport), so they find the new writer from the lease alone after a
+   * promotion; opaque to the protocol.
+   */
+  readonly endpoint?: string;
+  /** Set by a promotion that accepted data loss: the acknowledged positions the new writer's copy was missing. */
+  readonly lostPositions?: number;
 }
 
 /** Whether a value is a lease record: what a store or a wire answer is checked against before it is trusted. */
 export const isWriterLease = objectFields<WriterLease>({
   partition: isString, owner: isString, epoch: isNonNegativeInteger, expiresAt: isNonNegativeInteger, acknowledgedHead: isNonNegativeInteger,
+  endpoint: optional((value): value is string => isString(value) && value.length <= 2048),
+  lostPositions: optional(isNonNegativeInteger),
 });
 
 /** A lease as read, with what a compare-and-set needs to replace exactly it. */
@@ -110,13 +119,14 @@ export const acquireWriter = (leases: LeaseStore, input: {
   readonly owner: string;
   readonly ttlMillis: number;
   readonly head?: number;
+  readonly endpoint?: string;
 }): Effect.Effect<WriterLease, StoreError | LeaseOwnedByAnother | LeaseStillHeld> =>
   Effect.gen(function* () {
     const ttl = yield* checkedTtl(input.ttlMillis);
     const now = yield* Clock.currentTimeMillis;
     const observed = yield* leases.read(input.partition);
     if (observed === undefined) {
-      const lease: WriterLease = { partition: input.partition, owner: input.owner, epoch: 1, expiresAt: now + ttl, acknowledgedHead: input.head ?? 0 };
+      const lease: WriterLease = { partition: input.partition, owner: input.owner, epoch: 1, expiresAt: now + ttl, acknowledgedHead: input.head ?? 0, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) };
       if (yield* leases.create(lease)) return lease;
       const raced = yield* leases.read(input.partition);
       return yield* (raced === undefined ? Effect.die(new Error("a lease vanished while being created")) : Effect.fail(taken(raced)));
@@ -127,6 +137,7 @@ export const acquireWriter = (leases: LeaseStore, input: {
     const lease: WriterLease = {
       ...observed.lease, epoch: observed.lease.epoch + 1, expiresAt: now + ttl,
       acknowledgedHead: Math.max(observed.lease.acknowledgedHead, input.head ?? 0),
+      ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
     };
     if (yield* leases.replace(observed, lease)) return lease;
     const raced = yield* leases.read(input.partition);
@@ -181,6 +192,8 @@ export const promoteFollower = (leases: LeaseStore, input: {
   readonly ttlMillis: number;
   readonly followerHead: number;
   readonly allowDataLoss?: boolean;
+  /** Where followers read the new writer. */
+  readonly endpoint?: string;
 }): Effect.Effect<Promotion, StoreError | LeaseStillHeld | FollowerBehind | NoWriterLease> =>
   Effect.gen(function* () {
     const ttl = yield* checkedTtl(input.ttlMillis);
@@ -195,6 +208,8 @@ export const promoteFollower = (leases: LeaseStore, input: {
     const lease: WriterLease = {
       partition: input.partition, owner: input.owner, epoch: observed.lease.epoch + 1, expiresAt: now + ttl,
       acknowledgedHead: input.followerHead,
+      ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+      ...(required > input.followerHead ? { lostPositions: required - input.followerHead } : {}),
     };
     if (yield* leases.replace(observed, lease)) return { lease, lostPositions: Math.max(0, required - input.followerHead) };
     const raced = yield* leases.read(input.partition);
@@ -217,6 +232,8 @@ export interface HoldWriterInput {
   readonly ttlMillis: number;
   /** A lease already won, by `promoteFollower`; otherwise the owner's lease is acquired. */
   readonly lease?: WriterLease;
+  /** Where followers read this writer, carried by the lease it acquires. */
+  readonly endpoint?: string;
   /** The highest log position acknowledged by followers now: carried in every renewal. */
   readonly acknowledged?: Effect.Effect<number>;
 }
@@ -231,7 +248,7 @@ export const holdWriter = (input: HoldWriterInput): Effect.Effect<WriterHandle, 
     const ttl = yield* checkedTtl(input.ttlMillis);
     const margin = leaseMargin(ttl);
     const partition = input.store.partition;
-    let held = input.lease ?? (yield* acquireWriter(input.leases, { partition, owner: input.owner, ttlMillis: ttl }));
+    let held = input.lease ?? (yield* acquireWriter(input.leases, { partition, owner: input.owner, ttlMillis: ttl, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) }));
     let superseded = false;
 
     const gate: Effect.Effect<void, DbError> = Effect.gen(function* () {
@@ -277,6 +294,8 @@ export interface StandbyInput {
   /** Keeps the partition level with the writer until interrupted: normally `database.followers.follow(...)`. */
   readonly follow: Effect.Effect<never, unknown>;
   readonly acknowledged?: Effect.Effect<number>;
+  /** Where followers read this node once it is the writer. */
+  readonly endpoint?: string;
   /** Promote even if followers' acknowledged writes would be lost; the promotion says how many. */
   readonly allowDataLoss?: boolean;
 }
@@ -309,6 +328,7 @@ export const standby = (input: StandbyInput): Effect.Effect<WriterHandle & { rea
       const promoted = yield* Effect.exit(promoteFollower(input.leases, {
         partition, owner: input.owner, ttlMillis: ttl, followerHead: head,
         ...(input.allowDataLoss === undefined ? {} : { allowDataLoss: input.allowDataLoss }),
+        ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
       }));
       if (promoted._tag === "Success") {
         const handle = yield* holdWriter({
@@ -325,5 +345,51 @@ export const standby = (input: StandbyInput): Effect.Effect<WriterHandle & { rea
       yield* Effect.logWarning(`${partition} was not promoted on ${input.owner}; following again`, promoted.cause);
       following = yield* Effect.forkScoped(input.follow.pipe(Effect.catchCause((cause) => Effect.logWarning(`Following ${partition} stopped`, cause))));
       yield* Effect.sleep(Duration.millis(STANDBY_RETRY_MILLIS));
+    }
+  });
+
+export interface FollowWriterInput<L> {
+  readonly leases: LeaseStore;
+  readonly partition: PartitionKey;
+  /** This node: a lease it holds itself is not followed. */
+  readonly owner: string;
+  /** The leader to read for a lease's endpoint. */
+  readonly leaderFor: (endpoint: string) => L;
+  /** Keeps this node level with `leader` until interrupted; a failure ends it and it is started again shortly. */
+  readonly follow: (leader: L) => Effect.Effect<never, unknown>;
+  /** How often the lease is read for a change of writer; 1000 unless given. */
+  readonly pollMillis?: number;
+}
+
+const FOLLOW_RESTART_MILLIS = 500;
+
+/**
+ * Follow whoever holds the partition's writer lease, and follow the new one after a promotion: the leader to read is
+ * found from the lease's `endpoint`, so no node has to be told where the writer went, and a follower that was not the
+ * one promoted (a third node, or the old writer returning) points itself at the new writer from the lease alone. The
+ * lease is read on a timer because that is how a change of writer is seen; following itself is not polled.
+ */
+export const followWriter = <L>(input: FollowWriterInput<L>): Effect.Effect<never> =>
+  Effect.gen(function* () {
+    const partition = input.partition;
+    const poll = Math.max(50, input.pollMillis ?? 1000);
+    let following: { readonly key: string; readonly fiber: Fiber.Fiber<unknown, unknown> } | undefined;
+    const restarting = (leader: L) => Effect.forever(input.follow(leader).pipe(
+      Effect.catchCause((cause) => Effect.logWarning(`Following the writer of ${partition} stopped; trying again`, cause)),
+      Effect.andThen(Effect.sleep(Duration.millis(FOLLOW_RESTART_MILLIS))),
+    ));
+    for (;;) {
+      const read = yield* Effect.exit(input.leases.read(partition));
+      if (read._tag === "Success") {
+        const lease = read.value?.lease;
+        const key = lease === undefined || lease.owner === input.owner || lease.endpoint === undefined ? undefined : `${lease.epoch}\u0000${lease.endpoint}`;
+        if (key !== following?.key) {
+          if (following !== undefined) yield* Fiber.interrupt(following.fiber);
+          following = key === undefined || lease?.endpoint === undefined ? undefined : { key, fiber: yield* Effect.forkChild(restarting(input.leaderFor(lease.endpoint))) };
+        }
+      } else {
+        yield* Effect.logWarning(`The writer lease of ${partition} could not be read; keeping the writer already followed`, read.cause);
+      }
+      yield* Effect.sleep(Duration.millis(poll));
     }
   });

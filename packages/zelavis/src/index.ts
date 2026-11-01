@@ -1,6 +1,6 @@
 import { neededHostPackages, provisionableRequirements } from "./project-host-packages.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
-import { systemStoreLeaseStore } from "./platform/writer-lease-store.js";
+import { systemStoreLeaseAudit, systemStoreLeaseStore } from "./platform/writer-lease-store.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
@@ -4645,7 +4645,7 @@ function resolvePlatformEndpointGroup(
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
         ...createNodeRoutes({ store: systemStore, platformVersion: PLATFORM_VERSION }),
-        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore)) : []),
+        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore), systemStoreLeaseAudit(systemStore)) : []),
         ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",

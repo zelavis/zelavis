@@ -27,3 +27,7 @@ The Platform serves the writer-lease authority at `/runtime/writer-leases/:parti
 `client.writerLeases` and `zelavis leases` for runtimes on other hosts. `pnpm release:qualify:failover` qualifies
 failover in separate containers (a `SIGKILL`, a partition and an unacknowledged tail). Requests to a leader are now
 interruptible, so a follower whose leader is partitioned can still be stopped and a standby promoted.
+
+Followers find the new writer from the lease alone (`endpoint`, `db.writerLeases.follow`), accepting data loss in a
+promotion needs `database.failover.accept-data-loss`, and the Platform audits every change of writer
+(`GET /runtime/writer-lease-audit`, `client.writerLeases.audit()`, `zelavis leases audit`).

@@ -42,3 +42,43 @@ export const systemStoreLeaseStore = (store: ZelavisSystemStore): LeaseStore => 
     },
   };
 };
+
+/** A change of writer, as the authority recorded it. */
+export interface WriterLeaseAuditEntry {
+  readonly at: number;
+  /** Who asked: the service account or principal that made the call. */
+  readonly principal: string;
+  readonly partition: string;
+  readonly from?: { readonly owner: string; readonly epoch: number };
+  readonly to: { readonly owner: string; readonly epoch: number };
+  /** A promotion that accepted data loss: the acknowledged positions its copy was missing. */
+  readonly lostPositions?: number;
+}
+
+export interface WriterLeaseAudit {
+  readonly record: (entry: WriterLeaseAuditEntry) => Effect.Effect<void, StoreError>;
+  /** The newest entries first, at most `limit`. */
+  readonly list: (limit: number) => Effect.Effect<readonly WriterLeaseAuditEntry[], StoreError>;
+}
+
+const AUDIT_NAMESPACE = "fabric.writer-lease-audit.v1";
+/** Entries kept; older ones are removed as new ones are written. */
+const AUDIT_RETAINED = 500;
+
+/** The audit trail of changes of writer, in the System Store. Never holds a credential or a lease's contents beyond owner and epoch. */
+export const systemStoreLeaseAudit = (store: ZelavisSystemStore): WriterLeaseAudit => {
+  const failure = (op: string) => (cause: unknown) => new StoreError({ op, cause: cause instanceof Error ? cause.message : String(cause) });
+  const ordered = <T extends { readonly key: string }>(entries: readonly T[]) => [...entries].sort((a, b) => (a.key < b.key ? 1 : -1));
+  return {
+    record: (entry) => Effect.gen(function* () {
+      const key = `${String(entry.at).padStart(15, "0")}-${crypto.randomUUID()}`;
+      yield* integration(() => store.set(AUDIT_NAMESPACE, key, entry as unknown as ZelavisSystemStoreValue));
+      const all = ordered(yield* integration(() => store.list(AUDIT_NAMESPACE)));
+      for (const old of all.slice(AUDIT_RETAINED)) yield* integration(() => store.delete(AUDIT_NAMESPACE, old.key));
+    }).pipe(Effect.mapError(failure("lease.audit"))),
+    list: (limit) => integration(() => store.list(AUDIT_NAMESPACE)).pipe(
+      Effect.map((records) => ordered(records).slice(0, limit).map((record) => record.value as unknown as WriterLeaseAuditEntry)),
+      Effect.mapError(failure("lease.audit")),
+    ),
+  };
+};

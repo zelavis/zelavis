@@ -4,7 +4,7 @@
 // log positions a cursor taken on the writer continues on.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Clock, Effect, Exit, Scope } from "effect";
+import { Clock, Effect, Exit, Fiber, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import {
   acquireWriter, memoryLeaseStore, promoteFollower, releaseWriter, renewWriter,
@@ -173,13 +173,13 @@ test("a paused writer is refused before a follower may write, the follower takes
 
   await A.api.forTenant("acme").documents.createCollection({ name: "posts" });
   await insert(A, 0);
-  const handleA = await inScope(scopeA, A.database.writerLeases.hold({ partition: "acme", leases: reachA.store, owner: "A", ttlMillis: TTL }));
+  const handleA = await inScope(scopeA, A.database.writerLeases.hold({ partition: "acme", leases: reachA.store, owner: "A", ttlMillis: TTL, endpoint: "A" }));
   assert.equal((await Effect.runPromise(handleA.lease)).epoch, 1);
 
   const sourceA = await Effect.runPromise(A.database.followers.source("acme"));
   let promoted;
   const standing = inScope(scopeB, B.database.writerLeases.standby({
-    partition: "acme", leases: shared, owner: "B", ttlMillis: TTL, leader: sourceA, interval: "30 millis",
+    partition: "acme", leases: shared, owner: "B", ttlMillis: TTL, leaderFor: () => ({ source: sourceA }), interval: "30 millis", pollMillis: 100,
   })).then((handle) => { promoted = handle; return handle; });
 
   for (let n = 1; n <= 20; n++) await insert(A, n);
@@ -235,10 +235,10 @@ test("a graceful stop hands the partition over at once, not after the time to li
   t.after(async () => { await closeScope(scopeA); await closeScope(scopeB); });
   await A.api.forTenant("acme").documents.createCollection({ name: "posts" });
   await insert(A, 1);
-  await inScope(scopeA, A.database.writerLeases.hold({ partition: "acme", leases, owner: "A", ttlMillis: TTL }));
+  await inScope(scopeA, A.database.writerLeases.hold({ partition: "acme", leases, owner: "A", ttlMillis: TTL, endpoint: "A" }));
   const sourceA = await Effect.runPromise(A.database.followers.source("acme"));
   const standing = inScope(scopeB, B.database.writerLeases.standby({
-    partition: "acme", leases, owner: "B", ttlMillis: TTL, leader: sourceA, interval: "30 millis",
+    partition: "acme", leases, owner: "B", ttlMillis: TTL, leaderFor: () => ({ source: sourceA }), interval: "30 millis", pollMillis: 100,
   }));
   await until(async () => (await docs(B, 1)) !== undefined, "B holds p1");
   const closed = Date.now();
@@ -262,4 +262,40 @@ test("a leased partition cannot be moved or removed until the lease is released"
   assert.ok(await docs(A, 1), "and nothing of it was");
   await closeScope(scope);
   await Effect.runPromise(A.database.dropTenant("acme"));
+});
+
+test("a follower that was not promoted finds the new writer from the lease alone, and so does the returning old writer", { timeout: 60_000 }, async (t) => {
+  const A = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const B = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const C = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const leases = memoryLeaseStore();
+  const TTL = 1500;
+  const scopeA = newScope(), scopeB = newScope(), scopeC = newScope();
+  t.after(async () => { await closeScope(scopeA); await closeScope(scopeB); await closeScope(scopeC); });
+  await A.api.forTenant("acme").documents.createCollection({ name: "posts" });
+  await insert(A, 1);
+  const sources = {};
+  for (const [name, database] of [["A", A], ["B", B]]) sources[name] = await Effect.runPromise(database.database.followers.source("acme"));
+  const leaderFor = (endpoint) => ({ source: sources[endpoint] });
+
+  await inScope(scopeA, A.database.writerLeases.hold({ partition: "acme", leases, owner: "A", ttlMillis: TTL, endpoint: "A" }));
+  const standing = inScope(scopeB, B.database.writerLeases.standby({ partition: "acme", leases, owner: "B", ttlMillis: TTL, endpoint: "B", leaderFor, interval: "30 millis", pollMillis: 100 }));
+  // C is never promoted: it only follows whoever the lease names.
+  const fibers = [];
+  t.after(() => Promise.all(fibers.map((fiber) => Effect.runPromise(Fiber.interrupt(fiber)))));
+  fibers.push(Effect.runFork(C.database.writerLeases.follow({ partition: "acme", leases, owner: "C", leaderFor, interval: "30 millis", pollMillis: 100 })));
+  for (let n = 2; n <= 6; n++) await insert(A, n);
+  await until(async () => (await docs(C, 6)) !== undefined, "C follows A");
+
+  await closeScope(scopeA); // a graceful stop: the lease is released
+  const handle = await standing;
+  assert.equal(handle.promotion.lease.epoch, 2);
+  await insert(B, 7);
+  await until(async () => (await docs(C, 7)) !== undefined, "C found the new writer from the lease and holds what it wrote");
+
+  // The old writer comes back as a follower of whoever holds the lease now.
+  fibers.push(Effect.runFork(A.database.writerLeases.follow({ partition: "acme", leases, owner: "A", leaderFor, interval: "30 millis", pollMillis: 100 })));
+  await insert(B, 8);
+  await until(async () => (await docs(A, 8)) !== undefined, "the old writer follows the new one");
+  await until(async () => (await docs(C, 8)) !== undefined, "and so does C");
 });

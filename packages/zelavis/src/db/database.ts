@@ -33,7 +33,7 @@ import type { EventCursor } from "./events.js";
 import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { followersOver, type FollowersApi } from "./leader.js";
 import {
-  holdWriter, standby as standbyFor, type HoldWriterInput, type Promotion, type StandbyInput, type WriterHandle,
+  followWriter, holdWriter, standby as standbyFor, type HoldWriterInput, type LeaseStore, type Promotion, type StandbyInput, type WriterHandle,
 } from "./writer-lease.js";
 import { entitiesFor, serveEntities, type EntitiesApi, type EntityServeOptions, type EntityWake } from "./entities.js";
 import { keyValueFor, type KeyValueApi } from "./key-value.js";
@@ -423,6 +423,11 @@ export interface DatabaseApi {
   readonly writerLeases: {
     readonly hold: (input: WriterLeaseHold) => Effect.Effect<WriterHandle, StoreError | LeaseOwnedByAnother | LeaseStillHeld, Scope.Scope>;
     readonly standby: (input: WriterLeaseStandby) => Effect.Effect<WriterHandle & { readonly promotion: Promotion }, DbError, Scope.Scope>;
+    /**
+     * Follow whoever holds the partition's writer lease until interrupted, and follow the new writer after a
+     * promotion: for a follower that is not the one promoted, and for an old writer that was superseded.
+     */
+    readonly follow: (input: WriterLeaseFollow) => Effect.Effect<never>;
   };
   readonly entities: {
     readonly serve: (options: EntityServeOptions) => Effect.Effect<never, never, Scope.Scope>;
@@ -440,17 +445,27 @@ export interface DatabaseApi {
 export interface WriterLeaseHold extends Omit<HoldWriterInput, "store"> {
   readonly partition: PartitionKey;
 }
-export interface WriterLeaseStandby extends Omit<StandbyInput, "store" | "follow"> {
-  readonly partition: PartitionKey;
-  /** The writer being followed. */
-  readonly leader: LeaderSource;
-  /** How often the follower reads the writer when it has heard nothing. */
-  readonly interval: Duration.Input;
+/** The writer a follower reads: its leader transport, and how it is woken and reports what it holds. */
+export interface WriterLeader {
+  readonly source: LeaderSource;
   /** Wakes a pass when the writer moved (`remoteChanges`), so the follower does not wait for `interval`. */
   readonly wakeups?: Stream.Stream<unknown, never>;
   /** Report what this follower holds to the writer after each pass: what `writeAcknowledged` waits on, and what the writer's lease carries. */
   readonly acknowledgments?: { readonly name: string; readonly to: { readonly acknowledge: (follower: string, position: number) => Effect.Effect<void, DbError> } };
 }
+export interface WriterLeaseFollow {
+  readonly partition: PartitionKey;
+  readonly leases: LeaseStore;
+  /** This node: a lease it holds itself is not followed. */
+  readonly owner: string;
+  /** The writer to read for a lease's `endpoint`. The lease alone says where the writer is, before and after a promotion. */
+  readonly leaderFor: (endpoint: string) => WriterLeader;
+  /** How often a pass runs when the writer has not woken it. */
+  readonly interval: Duration.Input;
+  /** How often the lease is read for a change of writer; a second unless given. */
+  readonly pollMillis?: number;
+}
+export interface WriterLeaseStandby extends Omit<StandbyInput, "store" | "follow">, Omit<WriterLeaseFollow, "owner" | "leases"> {}
 
 /** The highest position any follower has acknowledged for `partition`: what a writer's renewals carry. */
 const highestAcknowledged = (followers: FollowersApi, partition: PartitionKey): Effect.Effect<number> =>
@@ -1037,6 +1052,18 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     writes,
   });
 
+  /** Follow the lease's writer: each writer found is read through `followers.follow`, with its wakeups and acknowledgments. */
+  const followingWriter = (input: WriterLeaseFollow): Effect.Effect<never> =>
+    followWriter<WriterLeader>({
+      leases: input.leases, partition: input.partition, owner: input.owner, leaderFor: input.leaderFor,
+      ...(input.pollMillis === undefined ? {} : { pollMillis: input.pollMillis }),
+      follow: (leader) => followers.follow(leader.source, {
+        partition: input.partition, interval: input.interval,
+        ...(leader.wakeups === undefined ? {} : { wakeups: leader.wakeups }),
+        ...(leader.acknowledgments === undefined ? {} : { acknowledgments: leader.acknowledgments }),
+      }),
+    });
+
   return {
     get partitionMap() {
       return topology.current();
@@ -1052,13 +1079,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         const acknowledged = input.acknowledged ?? highestAcknowledged(followers, input.partition);
         return yield* standbyFor({
           ...input, store: storeFor(input.partition), acknowledged,
-          follow: followers.follow(input.leader, {
-            partition: input.partition, interval: input.interval,
-            ...(input.wakeups === undefined ? {} : { wakeups: input.wakeups }),
-            ...(input.acknowledgments === undefined ? {} : { acknowledgments: input.acknowledgments }),
-          }).pipe(Effect.orDie),
+          follow: followingWriter(input),
         });
       }),
+      follow: (input) => followingWriter(input),
     },
     entities: {
       serve: (options) => serveEntities({ partitions, entities: (partition) => handleOf(partition).entities, wakes: entityWakes, options }),

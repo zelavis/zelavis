@@ -108,6 +108,17 @@ function mayChooseTenant(principal: ZelavisPrincipal | undefined): boolean {
   return Boolean(principal.grants?.some((grant) => holds(grant.permission)));
 }
 
+/**
+ * Whether the caller may accept data loss in a failover promotion: an owner-level right of its own, not implied by
+ * `database.replicate` (which lets a follower read and acknowledge). A wildcard holds it, as for every permission.
+ */
+const ACCEPT_DATA_LOSS = "database.failover.accept-data-loss";
+function mayAcceptDataLoss(principal: ZelavisPrincipal | undefined): boolean {
+  if (!principal) return false;
+  const holds = (permission: string) => permission === ACCEPT_DATA_LOSS || permission === "*";
+  return Boolean(principal.permissions?.some(holds) || principal.grants?.some((grant) => holds(grant.permission)));
+}
+
 /** Reads the Tenant a write-shaped schema request addresses. */
 /** An import's source from a request body; the import itself validates every field. */
 function importSourceOf(collection: string, input: Record<string, unknown>): ImportSource {
@@ -1181,15 +1192,18 @@ function defineDatabaseRootService(
             requestBody: { required: true, schema: { type: "object", required: ["owner", "ttlMillis"], properties: {
               owner: { type: "string", description: "Names the new writer" },
               ttlMillis: { type: "integer", description: "The lease's time to live, 100 to 600000; renewed every third of it" },
-              allowDataLoss: { type: "boolean", description: "Promote although acknowledged positions are missing; the answer says how many" },
+              allowDataLoss: { type: "boolean", description: "Promote although acknowledged positions are missing; the answer says how many. Needs database.failover.accept-data-loss (403 otherwise); the lease authority audits it" },
             } } },
             responses: { 200: { description: "{ lease, lostPositions }" }, 409: { description: "LeaseStillHeld, FollowerBehind, NoWriterLease or LeaseOwnedByAnother" } },
           },
           method: "POST",
           access: { permissions: ["database.replicate"] },
           path: "/followers/:partition/lease/promote",
-          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+          handler: ({ service, params, body, principal }) => present(Effect.gen(function* () {
             const input = readBodyObject(body);
+            if (input.allowDataLoss === true && !mayAcceptDataLoss(principal)) {
+              return { status: 403, body: { error: `Accepting data loss in a promotion needs ${ACCEPT_DATA_LOSS}.` } };
+            }
             return { body: yield* integration(() => service.followers.promote(params.partition, {
               owner: input.owner as string, ttlMillis: input.ttlMillis as number,
               ...(input.allowDataLoss === undefined ? {} : { allowDataLoss: input.allowDataLoss as boolean }),

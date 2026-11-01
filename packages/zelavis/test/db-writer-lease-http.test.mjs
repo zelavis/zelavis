@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect, Exit } from "effect";
 import { createWriterLeaseRoutes } from "../dist/platform/writer-lease-routes.js";
+import { systemStoreLeaseAudit } from "../dist/platform/writer-lease-store.js";
 import { acquireWriter, httpLeaseStore, memoryLeaseStore, promoteFollower, releaseWriter, renewWriter } from "../dist/db/index.js";
 
 const API = "http://zv.test/zelavis/api/v1";
@@ -92,4 +93,31 @@ test("an authority that cannot be reached is a StoreError, so a holder stops by 
     assert.equal(failure(await Effect.runPromiseExit(down.create({ partition: "acme", owner: "a", epoch: 1, expiresAt: 1, acknowledgedHead: 0 })))._tag, "StoreError");
   }
   assert.equal(failure(await Effect.runPromiseExit(over(async () => new Response("<html>", { status: 200 })).read("acme")))._tag, "StoreError");
+});
+
+test("every change of writer is audited with who asked and what a promotion accepted losing; renewals are not", async () => {
+  const kept = new Map();
+  const store = {
+    list: async () => [...kept].map(([key, value]) => ({ key, value })),
+    set: async (_namespace, key, value) => { kept.set(key, value); return { key, value }; },
+    delete: async (_namespace, key) => kept.delete(key),
+  };
+  const audit = systemStoreLeaseAudit(store);
+  const leases = memoryLeaseStore();
+  const routes = createWriterLeaseRoutes(leases, audit);
+  const handle = (id) => routes.find((route) => route.id === id).handler;
+  const as = (principal) => ({ id: principal, permissions: ["*"] });
+  const put = async (principal, partition, body) => { const answer = await handle("runtime.writerLeases.write")({ params: { partition }, body, principal: as(principal), query: new URLSearchParams() }); return { status: answer.status ?? 200 }; };
+  const read = async (partition) => (await handle("runtime.writerLeases.read")({ params: { partition } })).body;
+
+  const first = { partition: "acme", owner: "east", epoch: 1, expiresAt: Date.now() - 1, acknowledgedHead: 50 };
+  assert.equal((await put("svc-east", "acme", { lease: first })).status, 201);
+  const renewed = await read("acme");
+  assert.equal((await put("svc-east", "acme", { lease: { ...first, expiresAt: Date.now() + 5000 }, expectedVersion: renewed.version })).status, 200, "a renewal");
+  const current = await read("acme");
+  assert.equal((await put("svc-west", "acme", { lease: { ...first, owner: "west", epoch: 2, expiresAt: Date.now() + 5000, acknowledgedHead: 1, lostPositions: 49 }, expectedVersion: current.version })).status, 200, "a lossy promotion");
+  const trail = (await handle("runtime.writerLeases.audit")({ query: new URLSearchParams("limit=10") })).body.entries;
+  assert.equal(trail.length, 2, "the creation and the promotion, not the renewal");
+  assert.deepEqual([trail[0].principal, trail[0].from, trail[0].to, trail[0].lostPositions], ["svc-west", { owner: "east", epoch: 1 }, { owner: "west", epoch: 2 }, 49], "newest first");
+  assert.deepEqual([trail[1].principal, trail[1].from, trail[1].to], ["svc-east", undefined, { owner: "east", epoch: 1 }]);
 });

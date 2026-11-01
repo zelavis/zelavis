@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import type { ZelavisServerRoute } from "../core/index.js";
 import { present } from "../core/runtime/effect-boundary.js";
 import { isWriterLease, type LeaseStore } from "../db/writer-lease.js";
+import type { WriterLeaseAudit } from "./writer-lease-store.js";
 
 /**
  * HTTP for the writer-lease authority: `/runtime/writer-leases/:partition`.
@@ -18,7 +19,7 @@ const system = { type: "system" as const };
 const noStore = { "cache-control": "no-store" };
 const PARTITION = /^[A-Za-z0-9._~%-]{1,512}$/;
 
-export function createWriterLeaseRoutes(leases: LeaseStore): readonly ZelavisServerRoute<any>[] {
+export function createWriterLeaseRoutes(leases: LeaseStore, audit?: WriterLeaseAudit): readonly ZelavisServerRoute<any>[] {
   const refuse = (error: string, status = 400) => ({ status, headers: noStore, body: { error } });
   return [
     {
@@ -48,21 +49,52 @@ export function createWriterLeaseRoutes(leases: LeaseStore): readonly ZelavisSer
         } } },
         responses: { 200: { description: "Replaced" }, 201: { description: "Created" }, 409: { description: "The condition failed; nothing was written" } },
       },
-      handler: ({ params, body }) => present(Effect.gen(function* () {
+      handler: ({ params, body, principal }) => present(Effect.gen(function* () {
         if (!PARTITION.test(params.partition ?? "")) return refuse("A partition is 1 to 512 characters.");
         const input = (typeof body === "object" && body !== null ? body : {}) as { lease?: unknown; expectedVersion?: unknown };
         if (!isWriterLease(input.lease) || input.lease.partition !== params.partition) return refuse("The body is { lease: { partition, owner, epoch, expiresAt, acknowledgedHead }, expectedVersion? } for this partition.");
+        const lease = input.lease;
+        const who = typeof principal?.id === "string" ? principal.id : "unknown";
+        /** A change of writer (a new lease, or another owner or epoch) is audited after it lands; renewals are not. */
+        const audited = (before: { readonly owner: string; readonly epoch: number } | undefined) => before !== undefined && before.owner === lease.owner && before.epoch === lease.epoch
+          ? Effect.void
+          : (audit?.record({
+              at: Date.now(), principal: who, partition: lease.partition,
+              ...(before === undefined ? {} : { from: before }), to: { owner: lease.owner, epoch: lease.epoch },
+              ...(lease.lostPositions === undefined ? {} : { lostPositions: lease.lostPositions }),
+              // The change has landed and stands; an audit that could not be written is reported, never silent.
+            }) ?? Effect.void).pipe(Effect.catchCause((cause) => Effect.logError(`The change of writer of ${lease.partition} landed but its audit entry could not be written`, cause)));
         if (input.expectedVersion === undefined) {
-          return (yield* leases.create(input.lease)) ? { status: 201, headers: noStore, body: { written: true } } : refuse("A lease already exists.", 409);
+          if (!(yield* leases.create(lease))) return refuse("A lease already exists.", 409);
+          yield* audited(undefined);
+          return { status: 201, headers: noStore, body: { written: true } };
         }
         if (typeof input.expectedVersion !== "string" || input.expectedVersion.length > 4096) return refuse("expectedVersion is the version a read answered.");
         const expected = input.expectedVersion;
         const parsed = yield* Effect.exit(Effect.try(() => JSON.parse(expected) as unknown));
         if (parsed._tag === "Failure") return refuse("expectedVersion is the version a read answered.");
         const version = parsed.value;
-        const replaced = yield* leases.replace({ lease: input.lease, version }, input.lease);
-        return replaced ? { headers: noStore, body: { written: true } } : refuse("The lease changed since it was read.", 409);
+        const before = (yield* leases.read(lease.partition))?.lease;
+        const replaced = yield* leases.replace({ lease, version }, lease);
+        if (!replaced) return refuse("The lease changed since it was read.", 409);
+        yield* audited(before === undefined ? undefined : { owner: before.owner, epoch: before.epoch });
+        return { headers: noStore, body: { written: true } };
       }).pipe(Effect.catchCause(() => Effect.succeed(refuse("The lease store is unavailable.", 503))))),
+    },
+    {
+      id: "runtime.writerLeases.audit", method: "GET", path: "/writer-lease-audit",
+      access: { permissions: ["database.replicate"], scope: system },
+      spec: {
+        operationId: "listWriterLeaseAudit", summary: "Changes of writer, newest first", tags: ["runtime"],
+        description: "Every lease created or taken over: who asked, which partition, from which owner and epoch to which, and the acknowledged positions a promotion accepted losing. Renewals are not recorded. The newest 500 are kept.",
+        queryParams: { limit: { type: "integer", description: "At most this many entries, 1 to 200; 50 unless given" } },
+        responses: { 200: { description: "{ entries }" } },
+      },
+      handler: ({ query }) => present(Effect.gen(function* () {
+        const asked = Number(query?.get("limit") ?? 50);
+        const limit = Number.isSafeInteger(asked) ? Math.min(Math.max(asked, 1), 200) : 50;
+        return { headers: noStore, body: { entries: audit === undefined ? [] : yield* audit.list(limit) } };
+      }).pipe(Effect.catchCause(() => Effect.succeed(refuse("The audit trail is unavailable.", 503))))),
     },
   ];
 }
