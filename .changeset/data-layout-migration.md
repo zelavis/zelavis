@@ -8,3 +8,5 @@ the upgrade even when its recipe is current. **Update recipe** then stops the Pr
 current one, verifies them, and swaps them in with the original data kept as `data.format-<n>-<time>`; a failure puts the original back. The response carries a `dataMigration` report. Document
 versions, change history and event positions restart, and idempotency receipts are dropped. The migration needs free space of about 3.5 times the data and fails, naming them, on record kinds it
 cannot recreate yet.
+Time series are not carried (their points are derived from the restarted event log; register the series again and rebuild it). The kept data is listed and removed from each Project card, over
+HTTP (`GET|DELETE /runtime/projects/:id/retained-data`), the SDK (`projects.retainedData`, `removeRetainedData`) and the CLI (`zelavis projects retained-data|remove-retained-data`).

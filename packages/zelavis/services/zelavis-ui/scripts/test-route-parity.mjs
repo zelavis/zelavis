@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Effect } from "effect";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -505,6 +505,26 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const created = (yield* request("/runtime/projects")).projects.find(project => project.name === "UI lifecycle test");
   assert.ok(created?.id && created.runtime.status === "running");
   console.log("Action: native Projects create form preserves URL-backed input and creates a real App runtime.");
+
+  // Data a migration kept beside a Project's live data is listed on its card with its size, and removed only by typing its exact name.
+  const retainedName = "data.format-2-20261101T000000Z";
+  const retainedDir = join(data, "projects", "parity-lab", ".zelavis", retainedName);
+  yield* io(() => mkdir(join(retainedDir, "primary", "shards"), { recursive: true }));
+  yield* io(() => writeFile(join(retainedDir, "primary", "shards", "old.sqlite"), "x".repeat(2048)));
+  yield* visit("/projects");
+  yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).fill("Parity laboratory"));
+  yield* io(() => page.getByPlaceholder("Search projects", { exact: true }).press("Enter"));
+  const panel = page.getByLabel("Retained data", { exact: true });
+  yield* io(() => panel.getByText(retainedName, { exact: true }).waitFor());
+  assert.match(yield* io(() => panel.innerText()), /2(\.0)? KB|2048 B|2 KiB/i, "the panel shows what the kept data weighs");
+  const wrongName = yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { resolve(dialog.message()); dialog.accept("not the name"); }); panel.getByRole("button", { name: `Remove ${retainedName}`, exact: true }).click(); }));
+  assert.match(wrongName, new RegExp(retainedName), "the prompt names what is being removed");
+  assert.ok(yield* io(() => stat(retainedDir).then(() => true, () => false)), "a wrong confirmation removes nothing");
+  yield* io(() => new Promise(resolve => { page.once("dialog", dialog => { dialog.accept(retainedName); resolve(); }); panel.getByRole("button", { name: `Remove ${retainedName}`, exact: true }).click(); }));
+  yield* io(() => page.getByText(`Removed ${retainedName}.`, { exact: true }).waitFor());
+  assert.ok(!(yield* io(() => stat(retainedDir).then(() => true, () => false))), "typing the exact name removes the directory");
+  assert.equal(yield* io(() => page.getByLabel("Retained data", { exact: true }).count()), 0, "the panel goes with the data");
+  console.log("Action: a Project card lists retained data with its size and removes it only after its exact name is typed.");
 
   yield* visit("/settings/appearance");
   yield* io(() => page.getByLabel("Theme", { exact: true }).click());

@@ -204,14 +204,18 @@ The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/pr
 The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated, how
 many documents had their version and change history restarted, and the directory that keeps the original. What does not
 carry over: document versions, change history and event positions restart (clients using `expectedVersion` must read again,
-consumers of an old change-feed cursor start over), and idempotency receipts are dropped. A migration refuses to run when the
+consumers of an old change-feed cursor start over), and idempotency receipts are dropped. Time series are not carried: a series'
+definition is code the app registers at run time and its points are derived from the event log, which restarts, so after a migration
+the app registers the series again and rebuilds it from the migrated documents; the earlier points and the history they were built from
+are not recreated. A migration refuses to run when the
 free space beside the data is under about 3.5 times its size, and it fails, naming them, on record kinds it cannot recreate yet.
 The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
 `GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
 `client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
 `zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
 `project.runtime.manage`; removal cannot be undone, is refused while a migration is unsettled or the Project has an unfinished update,
-and never touches the live data.
+and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
+its exact name is typed.
 
 ## Project and visitor continuity
 

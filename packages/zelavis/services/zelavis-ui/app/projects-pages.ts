@@ -4,6 +4,7 @@ import { button, empty, link, message, node } from "./dom.ts";
 import { badge, card, columns, facts, flashNotice, page, resourceNotice, setFlash } from "./page-kit.ts";
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
+import { formatBytes } from "./storage-pages.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
 
@@ -130,14 +131,21 @@ export const projectsOverviewScreen = Effect.fn("ui.projectsOverview")(function*
   const versionData = versionTarget
     ? object(yield* request(`${api}/runtime/projects/${encodeURIComponent(versionProject)}/versions`).pipe(Effect.catch(error => Effect.succeed({ selectable: false, reason: error.message, versions: [] }))))
     : undefined;
-  const cards = visible.map(project => projectCard(context, project, recipes, act, label(project.id, "") === versionProject ? versionData : undefined));
+  // Data an earlier upgrade kept beside a Project's live data: a read per Project, a few at a time, and a failed read only hides the panel.
+  const retained = new Map<string, readonly Record<string, unknown>[]>(yield* Effect.forEach(visible, project => {
+    const projectId = label(project.id, "");
+    return request(`${api}/runtime/projects/${encodeURIComponent(projectId)}/retained-data`).pipe(
+      Effect.map(result => [projectId, array(object(result).retained).map(object)] as const),
+      Effect.catch(() => Effect.succeed([projectId, []] as const)));
+  }, { concurrency: 4 }));
+  const cards = visible.map(project => projectCard(context, project, recipes, act, label(project.id, "") === versionProject ? versionData : undefined, retained.get(label(project.id, "")) ?? []));
   if (cards.length) sections.push(node("div", { class: "k-grid cols-3" }, ...cards));
   else if (list.length === 0) sections.push(empty("No projects yet", "Create a Zelavis App project to start its independent local runtime."));
   else sections.push(resourceNotice("No matching projects", "Try a different project search."));
   return page(...sections);
 });
 
-function projectCard(context: ScreenContext, project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, versions?: Record<string, unknown>) {
+function projectCard(context: ScreenContext, project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, versions?: Record<string, unknown>, retained: readonly Record<string, unknown>[] = []) {
   const api = context.config.api.basePath;
   const id = label(project.id, "");
   const name = label(project.name);
@@ -174,6 +182,7 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   if (update || recipeStatus && recipeStatus.state !== "current" || project.dataLayout) body.push(upgradeNotice(project, recipes, act, path));
 
   if (versions) body.push(versionPanel(context, project, path, act, versions));
+  if (retained.length > 0) body.push(retainedPanel(project, retained, act, path, blocked));
 
   const actions: HTMLElement[] = [];
   if (recipe.name === "@zelavis/app" && capabilities.independentRuntimeVersion) {
@@ -188,6 +197,25 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   actions.push(link("Ask Assistant", `/assistant?project=${encodeURIComponent(id)}`, { "aria-label": `Ask Assistant about ${name}` }));
   body.push(node("div", { class: "actions" }, ...actions));
   return node("article", { class: "k-card" }, ...body);
+}
+
+/** Data an upgrade's migration kept beside the Project's live data, with its size; removing one cannot be undone, so its exact name is typed to confirm. */
+function retainedPanel(project: Record<string, unknown>, entries: readonly Record<string, unknown>[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string, blocked: boolean) {
+  const total = entries.reduce((sum, entry) => sum + Number(entry.bytes || 0), 0);
+  const rows = entries.map(entry => {
+    const name = label(entry.name, "");
+    const what = entry.kind === "set-aside-by-undo" ? "Migrated copy set aside when an upgrade was undone" : "Data as it was before an upgrade migrated it";
+    const remove = button("Remove", () => {
+      const typed = window.prompt(`${what}.\n\nRemoving ${name} frees ${formatBytes(Number(entry.bytes || 0))} and cannot be undone; ${label(project.name)}'s live data is not touched.\n\nType the name to confirm:`);
+      if (typed !== name) return;
+      act(request(`${path}/retained-data/${encodeURIComponent(name)}`, "DELETE"), () => `Removed ${name}.`);
+    }, { class: "danger", ...(blocked ? { disabled: "" } : {}), "aria-label": `Remove ${name}` });
+    return node("li", {}, node("code", {}, name), node("span", { class: "muted" }, ` · ${what} · ${formatBytes(Number(entry.bytes || 0))} `), remove);
+  });
+  return node("div", { class: "notice", "aria-label": "Retained data" },
+    node("strong", {}, `Retained data (${formatBytes(total)})`),
+    node("p", { class: "muted" }, "Kept so an upgrade that migrated this Project's data can be undone by hand. It is never removed automatically."),
+    node("ul", {}, ...rows));
 }
 
 /** What a data-layout migration changed, for the line shown after an upgrade; an upgrade that migrated nothing leaves the data as it was. */

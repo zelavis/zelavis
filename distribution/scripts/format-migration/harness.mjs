@@ -42,6 +42,8 @@ const pick = (xs) => xs[Math.floor(rng() * xs.length)];
 const words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa"];
 const sentence = (n) => Array.from({ length: n }, () => pick(words)).join(" ");
 
+const earlierVersion = JSON.parse((await import("node:fs")).readFileSync(join(args["old-host"], "node_modules/zelavis/package.json"), "utf8")).version;
+console.log(`earlier engine: zelavis ${earlierVersion}`);
 const work = mkdtempSync(join(tmpdir(), "zv-format-migration-"));
 const log = (...a) => console.log(...a);
 const timings = {};
@@ -79,6 +81,12 @@ if (args.from) {
       }
       for (const id of posts.filter(() => rng() < 0.25)) await runOld(d.update({ collection: "posts", id, data: { views: Math.floor(rng() * 5000) } }));
       for (const id of posts.filter(() => rng() < 0.1)) await runOld(d.delete({ collection: "posts", id }));
+      // A time series is derived from the event log: its definition is code (registered at run time, never stored) and its points are
+      // written without identity by ingesting events. See the time-series note in the report below.
+      const series = db.database.forTenant(tenant).timeSeries;
+      await runOld(series.define({ name: "post-views", map: (event) => event.type === "document.upserted" && event.collection === "posts" && typeof event.payload.data?.views === "number"
+        ? { timestamp: event.timestamp, value: event.payload.data.views, tags: { collection: "posts" } } : null }));
+      await runOld(series.ingest("post-views"));
       const schemas = db.database.forTenant(tenant).schemas;
       const fields = [{ name: "title", field: { _tag: "TextField", label: "Title", required: false } }];
       await runOld(schemas.save({ collection: "posts", version: 1, fields, activate: false }));
@@ -153,6 +161,27 @@ await timed("migrate", async () => {
     oldPlatform: earlierPlatform, exportWorker: join(args.repo, "packages/zelavis/dist/adapters/_data-export-worker.js") }));
 });
 log("migration report:", JSON.stringify({ ...report, shardsDirectory: undefined }));
+// Time series: the points are derived from the event log, which a migration restarts, and the definition is run-time code. Measured, not assumed:
+// the same definition on the old data and on the migrated data.
+const mapper = (event) => event.type === "document.upserted" && event.collection === "posts" && typeof event.payload.data?.views === "number"
+  ? { timestamp: event.timestamp, value: event.payload.data.views, tags: { collection: "posts" } } : null;
+const seriesNote = {};
+{
+  const old = await open(oldDb, oldCopy);
+  const fresh = await open(newDb, report.shardsDirectory);
+  for (const t of tenants) {
+    const oldSeries = old.database.forTenant(t).timeSeries;
+    await runOld(oldSeries.define({ name: "post-views", map: mapper }));
+    const before = await runOld(oldSeries.get("post-views").range({ limit: 100000 }));
+    const newSeries = fresh.database.forTenant(t).timeSeries;
+    await runNew(newSeries.define({ name: "post-views", map: mapper }));
+    await runNew(newSeries.rebuild("post-views"));
+    const after = await runNew(newSeries.get("post-views").range({ limit: 100000 }));
+    seriesNote[t] = { pointsBefore: before.length, pointsAfterRebuild: after.length, valuesEqual: JSON.stringify(before.map((p) => p.value).sort()) === JSON.stringify(after.map((p) => p.value).sort()) };
+  }
+  await old.close(); await fresh.close();
+}
+log("time series (points are derived from the event log, which restarts; the definition is run-time code and is registered again by the app):", JSON.stringify(seriesNote));
 const newAnswers = {};
 await timed("new-answers", async () => {
   const fresh = await open(newDb, report.shardsDirectory);
