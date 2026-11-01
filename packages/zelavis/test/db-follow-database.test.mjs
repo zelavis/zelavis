@@ -163,3 +163,19 @@ test("a Project fails over as one: every Tenant is fenced on the old writer, the
   await until(async () => (await ids(A.api, tenants[3])).includes("p2") && (await ids(A.api, "tenant-new")).length === 1, "the old writer follows the new one, new Tenants included");
   await until(async () => (await ids(C.api, tenants[3])).includes("p2") && (await ids(C.api, "tenant-new")).length === 1, "so does C, from the lease alone");
 });
+
+test("followers chain: what a node applies as a follower reaches the nodes that follow it", { timeout: 120_000 }, async (t) => {
+  const A = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const B = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const C = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  for (const at of [0, 1, 2]) await put(A.api, name(at), "a");
+  const fibers = [
+    Effect.runFork(B.database.followers.followAll(localDatabaseLeader(A.database.followers), { timeoutMillis: 100 })),
+    Effect.runFork(C.database.followers.followAll(localDatabaseLeader(B.database.followers), { timeoutMillis: 100 })),
+  ];
+  t.after(() => Promise.all(fibers.map((fiber) => Effect.runPromise(Fiber.interrupt(fiber)))));
+  await until(async () => (await ids(C.api, name(2))).length === 1, "C holds what A had, by way of B");
+  await wait(300);
+  await put(A.api, name(1), "b");
+  await until(async () => (await ids(C.api, name(1))).includes("b"), "and a write made after reaches C by way of B, with no write of B's own to wake it");
+});

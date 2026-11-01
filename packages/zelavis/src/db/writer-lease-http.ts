@@ -14,6 +14,12 @@ export interface HttpLeaseStoreOptions {
   readonly apiRoot: string;
   /** A service-account token with `database.replicate` at the system scope. */
   readonly token: string;
+  /**
+   * Which of the Platform's lease routes to use: `writer-leases` (a service-account token with `database.replicate` at
+   * the system scope; operators, the drill) or `project-leases` (the capability a Project is started with, which opens
+   * one Project's lease for one node and nothing else).
+   */
+  readonly route?: "writer-leases" | "project-leases";
   readonly fetch?: typeof fetch;
   /** Milliseconds a call may take; 3000 unless given. */
   readonly timeoutMillis?: number;
@@ -25,7 +31,7 @@ export const httpLeaseStore = (options: HttpLeaseStoreOptions): LeaseStore => {
   const root = options.apiRoot.replace(/\/+$/, "");
   const call = (op: string, partition: string, init: { readonly method: string; readonly body?: unknown }) =>
     Effect.gen(function* () {
-      const response = yield* integration((signal) => send(`${root}/runtime/writer-leases/${encodeURIComponent(partition)}`, {
+      const response = yield* integration((signal) => send(`${root}/runtime/${options.route ?? "writer-leases"}/${encodeURIComponent(partition)}`, {
         method: init.method,
         headers: { authorization: `Bearer ${options.token}`, accept: "application/json", ...(init.body === undefined ? {} : { "content-type": "application/json" }) },
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),

@@ -46,3 +46,10 @@ replace `changes`.
 A Project runtime's start is guarded by its whole-database writer lease: with `ZELAVIS_LEASE_AUTHORITY`, `_TOKEN`, `_NODE` and
 `_STANDBY` set it takes the lease before its database opens (`openNodeDatabase({ lease })`), or does not open; another node's
 lease is taken only as the lapsed writer's named standby, and a runtime superseded while serving stops.
+
+Projects can be lease-guarded by the Platform that starts them: with `ZELAVIS_PROJECT_LEASES_URL`, `_NODE` and `_STANDBY` set it gives
+each Project a lease capability (an HMAC over the Project and node, `/runtime/project-leases/:scope`) that opens that Project's lease
+for that node only, and the runtime takes the lease before serving.
+
+A node that follows one leader and leads a third now wakes its own followers: what a follower applies touches its change feed
+like a write does (followers chain).

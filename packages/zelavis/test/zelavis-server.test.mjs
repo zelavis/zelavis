@@ -1371,6 +1371,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.writerLeases.read",
       "runtime.writerLeases.write",
       "runtime.writerLeases.audit",
+      "runtime.projectLeases.read",
+      "runtime.projectLeases.write",
       "runtime.cloud.read",
       "runtime.cloud.connect",
       "runtime.cloud.disconnect",

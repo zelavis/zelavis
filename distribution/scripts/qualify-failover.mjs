@@ -155,7 +155,13 @@ const partitionDrill = (name, extra, afterwards) => drill(name, async ({ net, st
   const aFinal = await finalOf(a);
   const cFinal = await finalOf(c);
   check(!events(c).some((event) => event.event === "promoted"), "the third node, not the designated standby, was never promoted");
-  check(JSON.stringify(cFinal.by) === JSON.stringify(bFinalProbe.by), "and it found the new writer from the lease and holds exactly what it holds");
+  const cSame = JSON.stringify(cFinal.by) === JSON.stringify(bFinalProbe.by);
+  check(cSame, "and it found the new writer from the lease and holds exactly what it holds");
+  if (!cSame) {
+    const differing = [...new Set([...Object.keys(cFinal.by), ...Object.keys(bFinalProbe.by)])].filter((id) => cFinal.by[id] !== bFinalProbe.by[id]);
+    console.log(`    third node differs on ${differing.length}: ${differing.slice(0, 8).map((id) => `${id}(C:${cFinal.by[id] ?? "-"} B:${bFinalProbe.by[id] ?? "-"})`).join(" ")}; heads C ${cFinal.head} B ${bFinalProbe.head}`);
+    console.log(events(c).filter((event) => !["acked", "committed"].includes(event.event)).slice(-8).map((event) => `    ${JSON.stringify(event).slice(0, 220)}`).join("\n"));
+  }
   const acked = idsAcked(events(a));
   check(acked.every((id) => bFinalProbe.ids.includes(id)), `every write the old writer acknowledged (${acked.length}) is on the new writer`);
   const same = JSON.stringify(aFinal.ids) === JSON.stringify(bFinalProbe.ids);

@@ -30,7 +30,7 @@ export const leaseFromEnvironment = (projectId: string, environment: Readonly<Re
   const ttl = Number(environment.ZELAVIS_LEASE_TTL_MILLIS ?? 15_000);
   const endpoint = environment.ZELAVIS_LEASE_ENDPOINT?.trim();
   return {
-    leases: httpLeaseStore({ apiRoot: authority, token }),
+    leases: httpLeaseStore({ apiRoot: authority, token, route: "project-leases" }),
     scope: projectId, owner, standby, ttlMillis: ttl,
     ...(endpoint ? { endpoint } : {}),
     // A writer that finds itself superseded stops serving instead of only being refused: its reads would be stale.

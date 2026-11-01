@@ -1126,7 +1126,8 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     partitionsPage,
     feed,
     shardFor: (partition) => shards.get(shardOf(partition))!,
-    changed: (partition) => crossTenant.touched(partition),
+    // What a follower applied here is news to this node's own followers too (a chain of followers), as much as a write is.
+    changed: (partition) => Effect.andThen(Effect.sync(() => { if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) feed.touch(partition); }), crossTenant.touched(partition)),
     writes,
   });
 

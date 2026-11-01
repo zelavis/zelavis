@@ -188,16 +188,26 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   standby holds them all, a third node that tries to stand by is refused, and the returning old writer and that
   third node converge on the new writer, Tenants created after the loss included.
 - **A Project's start is guarded by its lease.** A Project runtime started with `ZELAVIS_LEASE_AUTHORITY` (the Platform's API
-  root), `ZELAVIS_LEASE_TOKEN` (a service account with `database.replicate` at the system scope), `ZELAVIS_LEASE_NODE` (this
-  node) and `ZELAVIS_LEASE_STANDBY` (the standby its writes wait for; optional `ZELAVIS_LEASE_TTL_MILLIS`, default 15000, and
-  `ZELAVIS_LEASE_ENDPOINT`) takes the whole-database lease before its database is handed out (`openNodeDatabase({ lease })`,
-  `writerLeases.startDatabase`), or does not open at all. A free lease, or this node's own, is acquired at a new epoch; another
-  node's is taken only when it has lapsed or been released *and* this node is the standby that writer named (`LeaseStillHeld`,
-  `NotDesignatedStandby` otherwise). So the lease, not whichever component decided to start the Project, is the fence: a node
-  told to start a Project whose writer is live refuses to serve it. The variables are all or nothing, and a runtime that finds
-  itself superseded stops (exit 75) rather than serve stale reads. Closing the database releases the lease. The drill starts the
-  old writer's container as the Project: refused while the new writer's lease is live, opened from the copy it kept following once
-  that lease lapsed, holding every write the lost writer acknowledged.
+  root), `ZELAVIS_LEASE_TOKEN`, `ZELAVIS_LEASE_NODE` (this node) and `ZELAVIS_LEASE_STANDBY` (the standby its writes wait for;
+  optional `ZELAVIS_LEASE_TTL_MILLIS`, default 15000, and `ZELAVIS_LEASE_ENDPOINT`) takes the whole-database lease before its
+  database is handed out (`openNodeDatabase({ lease })`, `writerLeases.startDatabase`), or does not open at all. A free lease,
+  or this node's own, is acquired at a new epoch; another node's is taken only when it has lapsed or been released *and* this
+  node is the standby that writer named (`LeaseStillHeld`, `NotDesignatedStandby` otherwise). So the lease, not whichever
+  component decided to start the Project, is the fence: a node told to start a Project whose writer is live refuses to serve
+  it. The variables are all or nothing, and a runtime that finds itself superseded stops (exit 75) rather than serve stale
+  reads. Closing the database releases the lease. The drill starts the old writer's container as the Project: refused while
+  the new writer's lease is live, opened from the copy it kept following once that lease lapsed, holding every write the lost
+  writer acknowledged.
+- **What a Project is given to do that.** The token is a *lease capability* the Platform mints at each start: an HMAC over
+  the Project and the node, under a key derived from the installation secret for this purpose alone. It opens that
+  Project's lease at `/runtime/project-leases/:scope` and nothing else, only for the node it names (a lease written naming
+  another owner is refused with 403), and only while the Project exists. A leaked token can touch no other Project's lease
+  and make no other node the writer; every change of writer it makes is audited as `project:<id>@<node>`. Lease-guarding is
+  off until the operator configures it on the Platform: `ZELAVIS_PROJECT_LEASES_URL` (the API root as a Project process
+  reaches it), `ZELAVIS_PROJECT_LEASES_NODE` (this node's id), `ZELAVIS_PROJECT_LEASES_STANDBY` (the node its writes wait
+  for), and optionally `ZELAVIS_PROJECT_LEASES_TTL_MILLIS` (default 30000, so each Project renews every ten seconds) and
+  `ZELAVIS_PROJECT_LEASES_ENDPOINT`. All three or none; a partial configuration is refused. One renewal per running Project
+  every third of the lease, so the authority's load grows with the Projects that are running, not with their Tenants.
 - **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
   released.
 - **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`

@@ -45,6 +45,11 @@ export interface NodeProcessProjectRuntimeOptions {
     recipePackageDirectory?: (name: string, version?: string) => Promise<string | undefined> | string | undefined;
     /** Gives a starting Project the allow-list this Platform holds (see `LocalMarketplace.handDown`). */
     handDownAllowlist?: (projectDataDirectory: string) => Promise<void>;
+    /**
+     * The writer-lease environment a starting Project is given (`ZELAVIS_LEASE_*`, see `leaseFromEnvironment`), or none
+     * for a Project that is not lease-guarded. Asked at every start, because the capability it carries is the Project's.
+     */
+    leaseEnvironment?: (projectId: string) => Promise<Readonly<Record<string, string>> | undefined>;
     /** Installer-acquired exact engines. No package acquisition occurs here. */
     runtimeCatalog?: { readonly directory: string; readonly rootOwned: boolean };
 }
@@ -611,6 +616,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             // signed for its previous process.
             const gatewaySecret = createGatewayAuthoritySecret();
             gatewaySecrets.set(project.id, gatewaySecret);
+            const leaseEnvironment = options.leaseEnvironment === undefined ? undefined : yield* integration(() => options.leaseEnvironment!(project.id));
             const ready = Deferred.makeUnsafe<ZelavisProjectRuntimeSnapshot, TaggedFailure>();
             function finish(error?: Error, snapshot?: ZelavisProjectRuntimeSnapshot) {
                 if (error) Deferred.doneUnsafe(ready, Effect.fail(new IntegrationFailure(error)));
@@ -631,6 +637,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     PORT: "0",
                     ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
                     ZELAVIS_PROJECT_ID: project.id,
+                    ...(leaseEnvironment ?? {}),
                     ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
                     ZELAVIS_PROJECT_INITIAL_RELEASE: JSON.stringify(initial),
                     ...(catalogOptions ? { ZELAVIS_RUNTIME_RELEASES_DIR: catalogOptions.directory, ZELAVIS_RUNTIME_ROOT_OWNED: String(catalogOptions.rootOwned) } : {}),

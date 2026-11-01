@@ -4645,7 +4645,11 @@ function resolvePlatformEndpointGroup(
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
         ...createNodeRoutes({ store: systemStore, platformVersion: PLATFORM_VERSION }),
-        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore), systemStoreLeaseAudit(systemStore)) : []),
+        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore), systemStoreLeaseAudit(systemStore), {
+          secret: () => loadPlatformMasterSecret(systemStore),
+          // Without a Project manager there is no Project whose lease could be held.
+          projectExists: (scope: string) => projects === undefined ? Promise.resolve(false) : present(Effect.map(integration(() => projects.get(scope)), (record) => record !== undefined)),
+        }) : []),
         ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",

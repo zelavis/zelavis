@@ -1,3 +1,4 @@
+import { projectLeaseConfiguration, projectLeaseEnvironment } from "./_project-lease-environment.js";
 import type { DatabaseLeaseStart } from "../db/database.js";
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
@@ -261,6 +262,8 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           yield* integration(() => pendingEdgeOwnership);
         }
       }
+      // Only the Platform starts Projects, so only it carries the lease configuration for them.
+      const projectLeases = isProjectRuntime ? undefined : projectLeaseConfiguration();
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextSubsystems: Record<string, unknown> = isProjectRuntime
@@ -421,6 +424,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             : {}),
           ...(serviceSources.marketplace
             ? { handDownAllowlist: (directory: string) => serviceSources.marketplace!.handDown(directory) }
+            : {}),
+          // Lease-guarded Projects, when the operator configured them (`_project-lease-environment.ts`).
+          ...(projectLeases !== undefined && systemStore !== undefined
+            ? { leaseEnvironment: (projectId: string) => projectLeaseEnvironment(projectLeases, systemStore, projectId) }
             : {}),
           // Without this a frontend Project cannot start at all: the driver
           // refuses rather than falling through to the Zelavis runner and
