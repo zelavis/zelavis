@@ -1504,6 +1504,7 @@ export const documentReads = (core: DocumentCore) => {
         return projectionIndexes.get(input.collection);
       }),
 
+  // A new DocumentsApi operation is also named in the list below, or this half of the API is not checked against it.
   } satisfies Pick<DocumentsApi, "count" | "modalities" | "listCollections" | "collectionExists" | "findById" | "findMany" | "searchStatistics" | "findPage" | "withRelated" | "traverse" | "summarize" | "summarizeBy" | "covariance" | "histogram" | "getVectorIndex">;
   return {
     operations, orderedPage, rebuildIndex, findDocuments,

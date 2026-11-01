@@ -1305,6 +1305,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         }
         return forgotten;
       }),
+  // A new DocumentsApi operation is also named in the list below, or this half of the API is not checked against it.
   } satisfies Pick<DocumentsApi, "createCollection" | "insert" | "update" | "delete" | "dropCollection" | "createIndex" | "dropIndex" | "addCheck" | "analyze" | "setColumns" | "locate" | "embed" | "declareFromSchema" | "rebuildVectorIndex" | "dropVectorIndex" | "addReference" | "dropReference" | "dropCheck" | "write" | "rewrite" | "forgetIdempotencyKeys">;
   return { operations };
 };
