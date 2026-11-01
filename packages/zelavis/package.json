@@ -210,22 +210,22 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "effect": "4.0.0",
-    "jose": "^6.2.12",
+    "jose": "^6.2.13",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.87.3",
+    "@effect/language-service": "^0.87.4",
     "@effect/tsgo": "^0.48.0",
-    "@harperfast/rocksdb-js": "2.10.0",
-    "@types/node": "^26.6.4",
+    "@harperfast/rocksdb-js": "2.12.0",
+    "@types/node": "^26.6.5",
     "@zelavis/app": "workspace:*",
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "@zelavis/ui": "workspace:*",
     "h3-js": "^4.5.0",
-    "lmdb": "^3.5.7",
+    "lmdb": "^3.5.9",
     "typescript": "^7.0.2",
-    "usearch": "^2.26.2"
+    "usearch": "^2.26.4"
   },
   "keywords": [
     "zelavis",
@@ -239,7 +239,7 @@
   "peerDependencies": {
     "@harperfast/rocksdb-js": "^2.9.1",
     "h3-js": "^4.5.0",
-    "lmdb": "^3.5.7",
+    "lmdb": "^3.5.9",
     "usearch": "^2.15.0"
   },
   "peerDependenciesMeta": {
