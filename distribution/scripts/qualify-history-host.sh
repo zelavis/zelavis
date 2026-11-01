@@ -61,17 +61,20 @@ for VERSION in $VIA; do
 done
 [ "$ZELAVIS_HISTORY_PREVIOUS" = "$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' /opt/zelavis/installation.json)" ] || hop "$ZELAVIS_HISTORY_PREVIOUS"
 check open
+check create-native
 # The candidate, through the installed release's own updater, as the update gate does.
 env ZELAVIS_PROVISIONING_DISPOSABLE=1 ZELAVIS_HISTORY_TO="$TO" "$NODE" /workspace/distribution/scripts/qualify-history.mjs candidate
 NODE=/opt/zelavis/current/runtime/node/bin/node
 check serving
 printf 'PASS: live update to the candidate %s; every site still serves.\n' "$TO"
 check held
+check native-held
 # A restart of the whole Platform must keep a held app on its engine too: a cold start is the other way a host could be moved.
 systemctl restart zelavis.service
 ready
 check serving
 check held
+check native-held
 printf 'PASS: after a Platform restart a held app is still on the engine that wrote its data.\n'
 # A server whose WordPress came with an earlier Platform holds it only as a Marketplace listing.
 systemctl stop zelavis.service zelavis.socket
@@ -86,13 +89,18 @@ if [ "$(uname -m)" != x86_64 ] && ! command -v mariadb-dump >/dev/null 2>&1; the
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server-core mariadb-client-core mariadb-client >/dev/null 2>&1 || { echo "FAIL: could not install the MariaDB package set for the upgrade step"; exit 1; }
 fi
 check upgrade
+check native-upgrade
+check native-migrated
 check migrated
 printf 'PASS: Update recipe migrated each held app: its host follows the Platform, its format-2 data is kept.\n'
 systemctl restart zelavis.service
 ready
 check serving
+check native-migrated
 check migrated
 printf 'PASS: after a Platform restart each migrated app is still on the Platform engine with its migrated data.\n'
+check retained-cleanup
+check serving
 # The restarted Platform adopts what runs; it never starts a second copy of a process (a second Caddy shares its
 # port, a second PHP-FPM fails on its socket and loops).
 sleep 20

@@ -175,6 +175,80 @@ if (phase === 'create-wordpress') {
     await open(cookie, site.id);
     console.log(`PASS: ${site.id} runs on ${after.engine} with migrated data; the format-2 data is kept in ${kept[0]}.`);
   }
+} else if (phase === 'create-native') {
+  // A native Zelavis App made by the previous release, with documents and a schema in its own database (format 2).
+  const { client } = await sdk();
+  await client.projects.create({ id: 'nexus', name: 'Nexus' });
+  await running(client, 'nexus');
+  const data = client.data('nexus');
+  await data.collections.create({ name: 'notes' });
+  const notes = { n1: { text: 'written by the previous release', n: 1 }, n2: { text: 'second note', n: 2 }, n3: { text: 'third note', n: 3 } };
+  for (const [id, body] of Object.entries(notes)) await data.documents.insert('notes', { id, data: body });
+  const versions = await client.projects.versions('nexus');
+  const state = await readState();
+  state.native = { id: 'nexus', notes, engine: versions.current };
+  await saveState(state);
+  console.log(`PASS: ${versions.current} made a native App with ${Object.keys(notes).length} documents.`);
+} else if (phase === 'native-held') {
+  // The Platform moved on. The native App keeps the engine that wrote its data and every document, and says an upgrade is available.
+  const { client } = await sdk();
+  const { native } = await readState();
+  const project = await running(client, native.id);
+  assert.equal(project.runtimeUpdate, undefined);
+  const versions = await client.projects.versions(native.id);
+  assert.equal(versions.current, native.engine, 'the native App stays on the engine that wrote its data');
+  for (const [id, body] of Object.entries(native.notes)) assert.deepEqual((await client.data(native.id).documents.get('notes', id)).data, body, `document ${id} is unchanged`);
+  console.log(`PASS: the native App stays on ${versions.current} with its documents readable.`);
+} else if (phase === 'native-upgrade') {
+  const { client } = await sdk();
+  const { native } = await readState();
+  const before = await client.projects.get(native.id);
+  const upgraded = await client.projects.upgrade(native.id, { restart: true });
+  assert.equal(upgraded.runtime.status, 'running');
+  assert.notEqual(upgraded.engineVersion, before.engineVersion, 'it moved to the newer engine');
+  assert.ok(upgraded.dataMigration, `the response reports the migration: ${JSON.stringify(upgraded).slice(0, 400)}`);
+  assert.equal(upgraded.dataMigration.from, 2);
+  assert.equal(upgraded.dataMigration.to, 4);
+  assert.equal(upgraded.dataMigration.documents, Object.keys(native.notes).length);
+  console.log(`PASS: native App upgraded ${native.engine} -> ${upgraded.engineVersion}; migration ${JSON.stringify(upgraded.dataMigration)}.`);
+} else if (phase === 'native-migrated') {
+  const { client } = await sdk();
+  const { native } = await readState();
+  const project = await running(client, native.id);
+  assert.notEqual(project.engineVersion, native.engine);
+  assert.equal(project.dataMigration, undefined, 'the report is not stored');
+  for (const [id, body] of Object.entries(native.notes)) assert.deepEqual((await client.data(native.id).documents.get('notes', id)).data, body, `document ${id} survived the migration`);
+  // Writes work on the migrated data.
+  await client.data(native.id).documents.insert('notes', { id: `after-${Date.now()}`, data: { text: 'written on the new engine' } });
+  const root = join(projects, native.id, '.zelavis');
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'data-layout.json'), 'utf8')), { format: 4 });
+  const kept = (await readdir(root)).filter((name) => name.startsWith('data.format-2-'));
+  assert.equal(kept.length, 1, `the format-2 data is kept (${kept})`);
+  const shards = await readdir(join(root, kept[0], 'primary', 'shards'));
+  assert.ok(shards.some((name) => name.endsWith('.sqlite')), 'the kept data is the original shards');
+  assert.ok((await readdir(root)).every((name) => name !== 'data-migration.json'), 'the swap is settled');
+  console.log(`PASS: the native App runs on ${project.engineVersion} with its documents; the format-2 data is kept in ${kept[0]}.`);
+} else if (phase === 'retained-cleanup') {
+  // The data each migration kept is listed with its size and removed by exact name; nothing else can be removed and the live data stays.
+  const { cookie, client } = await sdk();
+  const state = await readState();
+  const ids = [state.native.id, ...sites(state).map((site) => site.id)];
+  for (const id of ids) {
+    const listed = await client.projects.retainedData(id);
+    assert.equal(listed.length, 1, `${id}: one retained directory (${JSON.stringify(listed)})`);
+    assert.equal(listed[0].kind, 'replaced-by-migration');
+    assert.ok(listed[0].bytes > 0, `${id}: the kept data has a size`);
+    for (const wrong of ['data', '../data', 'data.format-2-nothere']) await assert.rejects(client.projects.removeRetainedData(id, wrong), `${id}: "${wrong}" is refused`);
+    const root = id === state.native.id ? join(projects, id, '.zelavis') : join(projects, id, '.zelavis', 'integration');
+    assert.ok((await readdir(root)).includes(listed[0].name), `${id}: still there after the refused removals`);
+    await client.projects.removeRetainedData(id, listed[0].name);
+    assert.deepEqual(await client.projects.retainedData(id), [], `${id}: nothing retained any more`);
+    assert.ok(!(await readdir(root)).includes(listed[0].name), `${id}: the directory is gone`);
+    console.log(`PASS: ${id}: ${listed[0].name} (${listed[0].bytes} bytes) listed and removed; wrong names refused.`);
+  }
+  for (const [docId, body] of Object.entries(state.native.notes)) assert.deepEqual((await client.data(state.native.id).documents.get('notes', docId)).data, body, `document ${docId} still reads`);
+  for (const site of sites(state)) await open(cookie, site.id);
+  console.log('PASS: removing the retained data left every live database and site working.');
 } else if (phase === 'unlist') {
   // Run as root with the Platform stopped: the server forgets it installed WordPress, as one whose WordPress
   // came with an earlier Platform never had it installed.

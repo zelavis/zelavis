@@ -9,7 +9,7 @@
 // Without --from it generates seeded data with the released engine (many collections, indexes, text, measures, edges,
 // updates, deletes). With --from it runs the same checks over real data. Exit code 1 on any difference.
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { mkdtempSync, cpSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, cpSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
@@ -79,6 +79,11 @@ if (args.from) {
       }
       for (const id of posts.filter(() => rng() < 0.25)) await runOld(d.update({ collection: "posts", id, data: { views: Math.floor(rng() * 5000) } }));
       for (const id of posts.filter(() => rng() < 0.1)) await runOld(d.delete({ collection: "posts", id }));
+      const schemas = db.database.forTenant(tenant).schemas;
+      const fields = [{ name: "title", field: { _tag: "TextField", label: "Title", required: false } }];
+      await runOld(schemas.save({ collection: "posts", version: 1, fields, activate: false }));
+      await runOld(schemas.save({ collection: "posts", version: 2, fields, activate: false }));
+      await runOld(schemas.activate("posts", 2));
     }
     await db.close();
   });
@@ -118,86 +123,46 @@ const answer = async (runner, documents, collections) => {
 const open = async (dbModule, directory) => dbModule.openNodeDatabase({ directory });
 const tenantsOf = async (db, runner) => runner(db.database.tenants);
 
-// 3. Old side: answers + export. Works on a copy so the source is never opened by an engine.
+// 3. Old side: answers, asked of a copy so the source is never opened in place.
 const oldCopy = join(work, "old-copy");
 cpSync(sourceDir, oldCopy, { recursive: true });
 const oldAnswers = {};
-const exported = {};
+const oldSchemas = {};
 let tenants;
-await timed("old-export", async () => {
+await timed("old-answers", async () => {
   const old = await open(oldDb, oldCopy);
   tenants = await tenantsOf(old, runOld);
   for (const t of tenants) {
     const documents = old.database.forTenant(t).documents;
     const collections = await runOld(documents.listCollections);
     oldAnswers[t] = await answer(runOld, documents, collections);
-    exported[t] = await runOld(old.database.forTenant(t).backups.exportTenant);
+    oldSchemas[t] = await runOld(old.database.forTenant(t).schemas.listCollections);
   }
   await old.close();
 });
 
-// The released engine filed every record under a name that carried its tenant, and its derived index entries
-// (manifests) were named by it too. A backup restore would bring the records in but the current engine would not see
-// them, so the migration reads the exported records and writes them back through the current documents API, the only
-// door that derives the lenses itself (fix_updates.md 14).
-let unhandledTotal = 0;
-const decodeBody = (event) => JSON.parse(Buffer.from(event.body, "base64").toString("utf8"));
-const liveRecords = (backup) => {
-  const bySeq = new Map();
-  for (const e of backup.events) { if (e.kind === "retract") bySeq.delete(e.seq); else bySeq.set(e.seq, e); }
-  return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
-};
-const COLLECTION_FIELDS = ["surface", "metadata", "indexes", "checks", "references", "analyzer", "spatial", "embedding", "edges", "measures"];
-const migrateTenant = async (documents, backup) => {
-  const live = liveRecords(backup);
-  const collections = live.filter((e) => e.identity.namespace.startsWith("zv.collection/")).map(decodeBody);
-  const pending = [...collections];
-  const made = new Set();
-  let guard = pending.length + 1;
-  while (pending.length > 0 && guard-- > 0) {
-    for (const c of [...pending]) {
-      const refs = (c.references ?? []).map((r) => r.collection ?? r.target).filter((n) => n && n !== c.name);
-      if (!refs.every((n) => made.has(n))) continue;
-      const input = { name: c.name };
-      for (const f of COLLECTION_FIELDS) if (c[f] !== undefined) input[f] = c[f];
-      await runNew(documents.createCollection(input));
-      made.add(c.name);
-      pending.splice(pending.indexOf(c), 1);
-    }
-  }
-  if (pending.length > 0) throw new Error(`collections with unresolvable references: ${pending.map((c) => c.name).join(", ")}`);
-  // Anything the documents API cannot recreate must be named, never dropped: a silent loss is the worst failure here.
-  const handled = (e) => e.identity.namespace.startsWith("zv.collection/") || e.identity.namespace.startsWith("doc/");
-  const unhandled = {};
-  for (const e of live) if (!handled(e)) { const ns = e.identity.namespace.replace(/\/[^/]*$/, ""); unhandled[ns] = (unhandled[ns] ?? 0) + 1; }
-  if (Object.keys(unhandled).length > 0) log("  UNHANDLED record namespaces (would be lost):", JSON.stringify(unhandled));
-  unhandledTotal += Object.values(unhandled).reduce((a, b) => a + b, 0);
-  let docs = 0, versionsLost = 0;
-  for (const e of live.filter((x) => x.identity.namespace.startsWith("doc/"))) {
-    const d = decodeBody(e);
-    await runNew(documents.insert({ collection: d.collection, id: d.id, data: d.data }));
-    docs++;
-    if (d.version > 1) versionsLost++;
-  }
-  return { collections: collections.length, documents: docs, documentsWithHistoryDropped: versionsLost };
-};
-const namespaces = new Set();
-for (const t of tenants) for (const e of exported[t].events) if (e.identity) namespaces.add(e.identity.namespace.replace(t, "<tenant>"));
-log("record namespaces in the old export:", [...namespaces].sort().join(", "));
-
-// 4. New side: restore into a fresh store, then ask again.
+// 4. The shipped migration, then the same questions of what it produced.
+const { migrateDataLayout } = await import(pathToFileURL(join(args.repo, "packages/zelavis/dist/adapters/_node-data-migration.js")).href);
+const earlierPlatform = join(work, "earlier-platform");
+mkdirSync(earlierPlatform);
+symlinkSync(join(args["old-host"], "node_modules/zelavis/dist"), join(earlierPlatform, "dist"));
+symlinkSync(join(args["old-host"], "node_modules"), join(earlierPlatform, "node_modules"));
+let report;
+await timed("migrate", async () => {
+  report = await runNew(migrateDataLayout({ sourceShards: sourceDir, workDirectory: join(work, "migration"), oldNode: process.execPath,
+    oldPlatform: earlierPlatform, exportWorker: join(args.repo, "packages/zelavis/dist/adapters/_data-export-worker.js") }));
+});
+log("migration report:", JSON.stringify({ ...report, shardsDirectory: undefined }));
 const newAnswers = {};
-const restored = {};
-await timed("new-restore", async () => {
-  const fresh = await open(newDb, join(work, "new-store"));
-  for (const t of tenants) restored[t] = await migrateTenant(fresh.database.forTenant(t).documents, exported[t]);
+await timed("new-answers", async () => {
+  const fresh = await open(newDb, report.shardsDirectory);
   for (const t of tenants) {
     const documents = fresh.database.forTenant(t).documents;
     const collections = await runNew(documents.listCollections);
     newAnswers[t] = await answer(runNew, documents, collections);
-    // Exported collections must exist on the new side as they did on the old.
-    newAnswers[t]["__collections"] = collections.map((c) => c.name).sort();
-    oldAnswers[t]["__collections"] = oldAnswers[t]["__collections"] ?? Object.keys(oldAnswers[t]).filter((k) => k.endsWith(":meta")).map((k) => k.split(":")[0]).sort();
+    const schemas = await runNew(fresh.database.forTenant(t).schemas.listCollections);
+    newAnswers[t]["__schemas"] = schemas.map((x) => [x.collection, x.versions ?? x.version, x.activeVersion ?? x.active]);
+    oldAnswers[t]["__schemas"] = oldSchemas[t].map((x) => [x.collection, x.versions ?? x.version, x.activeVersion ?? x.active]);
   }
   const newTenants = await runNew(fresh.database.tenants);
   if (JSON.stringify(newTenants) !== JSON.stringify(tenants)) log("TENANT LIST DIFFERS", tenants, newTenants);
@@ -213,11 +178,8 @@ for (const t of tenants) {
     const b = JSON.stringify(newAnswers[t][k]);
     if (a !== b) { differences++; log(`DIFF ${t} ${k}\n   old: ${String(a).slice(0, 200)}\n   new: ${String(b).slice(0, 200)}`); }
   }
-  const e = exported[t];
-  log(`tenant ${t}: events ${e.events.length} (puts ${e.events.filter((x) => x.kind === "put").length}, retracts ${e.events.filter((x) => x.kind === "retract").length}), restored ${JSON.stringify(restored[t])}`);
 }
 log("timings ms:", JSON.stringify(timings), "rss MB:", Math.round(process.memoryUsage().rss / 1048576));
-if (unhandledTotal > 0) { differences += 1; log(`${unhandledTotal} record(s) of kinds the migration cannot yet recreate`); }
 log(differences === 0 ? "RESULT: identical answers on old and restored data" : `RESULT: ${differences} difference(s)`);
 if (!args.keep) rmSync(work, { recursive: true, force: true }); else log("kept:", work);
 process.exit(differences === 0 ? 0 : 1);
