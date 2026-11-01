@@ -1,5 +1,13 @@
 # create-zelavis
 
+## 0.1.0-alpha.11
+
+### Patch Changes
+
+- 65e65af: Refuse `install --stage-only --dry-run` before release preparation and correct installer guidance for default Traefik ingress and private management listeners.
+  
+  Correct Debian package removal to inspect its lifecycle argument and stop the Platform, ingress, dashboard socket and updater activation. Management requests can no longer restart the removed Platform. The removal hook leaves running services alone during package upgrades.
+
 ## 0.1.0-alpha.10
 
 ### Patch Changes

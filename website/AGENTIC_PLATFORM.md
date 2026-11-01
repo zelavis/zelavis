@@ -81,7 +81,7 @@ prepare an Astro marketing storefront."
 
 In traditional platforms, evolving a schema means drafting SQL migrations, running CLI tools, praying there are no locks, and creating separate Elasticsearch or ClickHouse clusters for analytics.
 
-In Zelavis, the multi-model database (`zelavis/db`) is an event-sourced object engine on swappable storage (SQLite, libSQL, RocksDB, LMDB). A single document write is projected simultaneously through **document, column, measure, and graph lenses**.
+In Zelavis, the multi-model database (`zelavis/db`) is an event-sourced object engine on swappable storage (SQLite, RocksDB, LMDB). A single document write is projected simultaneously through **document, column, measure, and graph lenses**.
 
 #### Conversational Prompt
 ```txt

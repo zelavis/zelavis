@@ -1,4 +1,4 @@
-import { integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
+import { IntegrationFailure, integrationValue, presentProtocol } from "../core/runtime/effect-boundary.js";
 import { Effect } from "effect";
 /**
  * Talking to the Platform from a service page.
@@ -99,10 +99,10 @@ export function createServicePageFetch(
           ? safeParse(init.body)
           : init.body;
 
-    const result = (yield* integrationValue(new Promise<BrokerResponse>((resolve, reject) => {
+    const result = yield* Effect.callback<BrokerResponse, IntegrationFailure>((resume) => {
       const timer = setTimeout(() => {
         window.removeEventListener("message", onMessage);
-        reject(new Error("The dashboard did not answer this request in time."));
+        resume(Effect.fail(new IntegrationFailure(new Error("The dashboard did not answer this request in time."))));
       }, timeoutMs);
 
       const onMessage = (event: MessageEvent) => {
@@ -113,7 +113,7 @@ export function createServicePageFetch(
 
         clearTimeout(timer);
         window.removeEventListener("message", onMessage);
-        resolve(data);
+        resume(Effect.succeed(data));
       };
 
       window.addEventListener("message", onMessage);
@@ -130,7 +130,11 @@ export function createServicePageFetch(
         // window the message came from rather than by anything inside it.
         "*",
       );
-    })));
+      return Effect.sync(() => {
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+      });
+    });
 
     if (typeof result.error === "string") {
       throw new Error(result.error);

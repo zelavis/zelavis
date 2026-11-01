@@ -76,6 +76,12 @@ export const PART_SEPARATOR = "#";
 export const partitionKeyFor = (tenant: TenantId, part?: string): TenantId =>
   part === undefined ? tenant : `${tenant}${PART_SEPARATOR}${part}`;
 
+/** The Tenant a partition belongs to: the part key's Tenant, or the key itself when it is no part's. */
+export const tenantOfPartition = (partition: TenantId): TenantId => {
+  const at = partition.indexOf(PART_SEPARATOR);
+  return at === -1 ? partition : partition.slice(0, at);
+};
+
 /**
  * The number of virtual ranges a logical database is divided into.
  *

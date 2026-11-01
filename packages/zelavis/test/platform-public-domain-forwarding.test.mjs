@@ -65,7 +65,7 @@ function platform(site, overrides = {}) {
     fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
     projects: () => ({
-      get: async () => ({
+      view: async () => ({
         id: "site",
         kind: "zelavis",
         runtime: { status: "running", url: site.url },
@@ -156,7 +156,7 @@ test("a stopped Project answers instead of hanging", async () => {
       fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
       projects: () => ({
-        get: async () => ({ id: "site", kind: "zelavis", runtime: { status: "stopped" } }),
+        view: async () => ({ id: "site", kind: "zelavis", runtime: { status: "stopped" } }),
         listOwned: async () => [],
       }),
     },
@@ -175,7 +175,7 @@ test("a running frontend takes precedence over the Project runtime", async () =>
         fetchSite: fetchNodeSite,
     domainBindings: bindingStore({ "example.com": verified() }),
         projects: () => ({
-          get: async () => ({
+          view: async () => ({
             id: "site",
             kind: "zelavis",
             runtime: { status: "running", url: site.url },

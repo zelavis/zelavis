@@ -92,13 +92,33 @@ or activation occurs. The App receives no general host-operation authority.
    may the App publish its new logical map/routing generation and the Gateway
    publish an Agent-reported target for that placement. The App must bind the
    map transition to the grant identity and expected previous map version.
-   Readers of an older map either reach the still-readable source or retry;
-   they must not treat an empty target as an empty Tenant.
+   Readers of an older map either reach the still-readable source, retry, or,
+   once the source is cleaned up, get the relocation answer of step 6; they
+   must not treat an empty target or a cleaned source as an empty Tenant.
 5. Cleanup of the source follows cutover and is retryable. Keep enough grant,
    map, cursor, verification and recovery state to resume each phase after an
    App, Agent or Platform restart. Preserve the source/recovery artifact until
    completion is durable. Parent Project movement carries every child shard
    placement as one group and revokes/reissues grants under the new allocation.
+6. A cleaned source leaves a relocation record. Before the first batch that
+   removes the moved Tenant's (or part's) data, the source shard records the
+   partition-map version that moved it (`ShardStoreApi.relocate`). The record
+   lives with the shard's own metadata, outside the partition range being
+   removed, and only ever rises. Every routed call carries the map version it
+   was routed by (`RoutedBy`), and from that batch on the source refuses a call
+   routed by an older map with `TenantRelocated` naming the moving version,
+   never with an empty result, not-found, or partially removed data. The
+   record is not routing authority: it carries no address, and the caller
+   refreshes its map to at least that version and resolves the placement and
+   Agent-reported target as usual. A call routed by that version or a later
+   one passes, which is what lets a Tenant routed back to this shard be served
+   there; the record also keeps a stale router out of a copy being made onto
+   the shard before routing moves to it. Inside one Project runtime the router
+   is in-process and the source is dropped only after its leases drain, so no
+   caller arrives late there. Implemented in `zelavis/db` (store, router and
+   movement); a remote shard transport must carry the caller's map version
+   into `RoutedBy` and return `TenantRelocated` typed, since the in-process
+   tenant API treats it as a defect.
 
 The Platform must record the operation and phase before dispatching effects.
 Every phase is bounded and idempotent; no fleet-wide `Promise.all` or
@@ -121,7 +141,9 @@ local Node, a second writer, or an ungranted backend is allowed.
    the acknowledged prefix. A refused operation reports a stable reason and
    leaves a retryable durable state.
 4. Logical map publication never precedes verified physical activation;
-   cleanup never precedes durable route cutover. Cross-shard writes remain an
+   cleanup never precedes durable route cutover. A caller holding an older map
+   that reaches a cleaned source gets the relocation answer, never an empty
+   Tenant, including after the source restarts. Cross-shard writes remain an
    explicit distributed workflow, and shard cursors/checkpoints never use one
    physical SQLite sequence as a logical global order.
 5. Project deletion revokes grants and stops Agents before removing data;

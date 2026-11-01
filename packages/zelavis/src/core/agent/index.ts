@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import {
   resolveTrustedEd25519Key,
   type ZelavisHostOperationExecutor,
@@ -121,15 +123,17 @@ function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> {
 }
 
 /** Digest of a host operation's arguments, independent of key order. */
-export async function hostOperationArgumentsDigest(
+export function hostOperationArgumentsDigest(
   args: Readonly<Record<string, string>>,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const canonical = JSON.stringify(
     Object.keys(args).sort().map((name) => [name, args[name]]),
   );
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical))));
+  return (yield* integrationValue([...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")));
+}));
+  }
 
 function canonicalAgentClaims(claims: ZelavisAgentAuthorityClaims): string {
   return JSON.stringify([
@@ -177,26 +181,28 @@ function validateAgentAuthorityClaims(claims: ZelavisAgentAuthorityClaims) {
  * verifies with the public half, so compromising an Agent does not let it
  * issue authority to itself or any other Agent.
  */
-export async function signAgentAuthority(
+export function signAgentAuthority(
   privateKey: CryptoKey,
   claims: ZelavisAgentAuthorityClaims,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   validateAgentAuthorityClaims(claims);
   const payload = new TextEncoder().encode(canonicalAgentClaims(claims));
-  const signature = await crypto.subtle.sign(
+  const signature = (yield* integrationValue(crypto.subtle.sign(
     "Ed25519",
     privateKey,
     new TextEncoder().encode(`${AGENT_AUTHORITY_CONTEXT}${canonicalAgentClaims(claims)}`),
-  );
+  )));
   return `${base64UrlEncode(payload)}.${base64UrlEncode(new Uint8Array(signature))}`;
-}
+}));
+  }
 
 /**
  * Verifies signer trust, audience, exact request binding (including
  * arguments), expiry, and optional replay consumption, in that order: a nonce
  * is only consumed by an envelope that is otherwise valid.
  */
-export async function verifyAgentAuthority(
+export function verifyAgentAuthority(
   trust: ZelavisAgentAuthorityTrustStore,
   token: string,
   request: ZelavisHostOperationRequest,
@@ -206,6 +212,7 @@ export async function verifyAgentAuthority(
     readonly consumeNonce?: (nonce: string, expiresAt: number) => boolean;
   },
 ): Promise<ZelavisAgentAuthorityClaims | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisAgentAuthorityClaims | undefined, IntegrationFailure> {
   if (typeof token !== "string" || token.length > 16_384) return undefined;
   const separator = token.indexOf(".");
   if (separator <= 0 || separator === token.length - 1) return undefined;
@@ -251,21 +258,21 @@ export async function verifyAgentAuthority(
   const now = options.now ?? Date.now();
   // The key must be trusted now, not merely when the envelope claims it was
   // issued: authority is short-lived, so a closed or revoked key issues none.
-  const publicKey = await resolveTrustedEd25519Key(trust, keyId, now);
+  const publicKey = (yield* integrationValue(resolveTrustedEd25519Key(trust, keyId, now)));
   if (!publicKey || signatureBytes.byteLength !== 64) return undefined;
-  if (!(await crypto.subtle.verify(
+  if (!((yield* integrationValue(crypto.subtle.verify(
     "Ed25519",
     publicKey,
     signatureBytes,
     new TextEncoder().encode(`${AGENT_AUTHORITY_CONTEXT}${payloadText}`),
-  ))) return undefined;
+  ))))) return undefined;
   if (
     agentId !== options.audienceAgentId ||
     operationId !== request.operationId ||
     operation !== request.operation ||
     version !== request.version ||
     artifactDigest !== request.artifactDigest ||
-    argumentsDigest !== await hostOperationArgumentsDigest(request.arguments) ||
+    argumentsDigest !== (yield* integrationValue(hostOperationArgumentsDigest(request.arguments))) ||
     (projectId ?? undefined) !== request.projectId ||
     issuedAt > now + 5_000 ||
     expiresAt <= now ||
@@ -288,7 +295,8 @@ export async function verifyAgentAuthority(
     expiresAt,
     nonce,
   };
-}
+}));
+  }
 
 export function createAgentNonceTracker(): (nonce: string, expiresAt: number) => boolean {
   const seen = new Map<string, number>();

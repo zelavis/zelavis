@@ -17,3 +17,4 @@ export {
   type AllowlistRefusalCode,
 } from "./gate.js";
 export { allowlistCatalogEntries, type AllowlistCatalogEntry } from "./catalog.js";
+export { runsOn, selectListedVersion } from "./select.js";

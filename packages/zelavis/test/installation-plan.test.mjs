@@ -80,7 +80,7 @@ test("fresh install plans the existing inventory, without mutations or secret ma
     assert.ok(host.actions.some(action => action.command === "chown" && action.args.join(" ") === `root:zelavis ${path}`));
   }
   assert.ok(host.actions.some((a) => a.command === "systemctl" && a.args.join(" ") === "enable --now zelavis-agent.service"));
-  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
+  assert.deepEqual(JSON.parse(await host.read("/opt/zelavis/installation.json")), { schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "cli", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: true, ownsGroup: true });
 });
 
 test("rerun repairs units without recopying releases, recreating accounts or rotating tokens", async () => {
@@ -161,7 +161,11 @@ test("the dashboard port is held by a socket unit, and a live update leaves the 
   // Selection and receipt changes belong to the nonce-bound host commit.
   assert.equal(host.links.get("/opt/zelavis/current"), "/opt/zelavis/releases/1.0.0");
   assert.equal(JSON.parse(await host.read("/opt/zelavis/installation.json")).version, "1.0.0");
-  assert.ok(!host.actions.some((a) => a.command === "systemctl"));
+  // Only the root operation Agent is restarted, after the selection, to load the new release's operation manifests:
+  // it holds no Project and no traffic. The Platform, its socket, the Project Agent and the proxy are left alone.
+  assert.deepEqual(host.actions.filter((a) => a.command === "systemctl").map((a) => a.args.join(" ")), ["restart zelavis-host-agent.service"]);
+  const order = host.actions.map((a) => a.command === "systemctl" ? "agent" : a.args?.[0]?.endsWith("_node-runtime-select-cli.js") ? "select" : undefined).filter(Boolean);
+  assert.deepEqual(order, ["select", "agent"], "the Agent is restarted after the release is selected");
   assert.ok(host.actions.some((a) => a.command === "/opt/zelavis/releases/1.0.1/runtime/node/bin/node" && a.args[0].endsWith("_node-runtime-select-cli.js")));
 });
 
@@ -278,6 +282,15 @@ test("system updates wire a distinct root operation Agent and uninstall owns its
   assert.match(operationUnit, /--operations-only --endpoint-group-access/);
   assert.match(operationUnit, /--require-root-owned-operations --operation-cgroup delegated/);
   assert.match(operationUnit, /^Group=zelavis$/m);
+  for (const name of ["zelavis-agent.service", "zelavis-agent@.service"]) {
+    const source = await readFile(new URL(`../../../distribution/runtime/${name}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /--operations-root|--operation-cgroup|Delegate=yes/);
+  }
+  for (const name of ["zelavis.service", "zelavis@.service"]) {
+    const source = await readFile(new URL(`../../../distribution/runtime/${name}`, import.meta.url), "utf8");
+    assert.match(source, /^Wants=.*zelavis-agent/m);
+    assert.doesNotMatch(source, /^Requires=.*zelavis-agent/m);
+  }
   assert.deepEqual(plan.steps.find((step) => step.id === "host-agent-environment").action, { kind: "agent-environment", path: "/etc/zelavis/zelavis.env", endpoint: "/opt/zelavis/host-agent/agent", variable: "ZELAVIS_HOST_OPERATIONS_ENDPOINT" });
   assert.ok(plan.steps.findIndex((step) => step.id === "host-agent-enable") < plan.steps.findIndex((step) => step.id === "platform-enable"));
   assert.equal(plan.steps.some((step) => step.action.command === "apt-get"), false);

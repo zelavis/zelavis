@@ -1,4 +1,4 @@
-import { isString, objectFields, parseJson, isPositiveInteger, isBoolean, literal, optional } from "../json-validation.js";
+import { isString, objectFields, parseJson, parseJsonObject, isPositiveInteger, isBoolean, literal, optional, type JsonValidator } from "../json-validation.js";
 import { Effect } from "effect";
 import { evaluate, integration, IntegrationFailure, present, type TaggedFailure } from "./effect-boundary.js";
 import { assertInstallationInstance, assertInstallationPort, installationInstanceScope } from "./installation-instance.js";
@@ -91,8 +91,12 @@ export function validateInstallationPaths(paths: ZelavisInstallPaths): void {
   assertInstallationPath(paths.systemCommandPath, "system command", "zelavis");
 }
 
+/** Which kind of machine an installation receipt describes. A machine is one or the other. */
+export type ZelavisInstallationRole = "platform" | "worker";
+
 export interface ZelavisNativeInstallationReceipt {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
+  readonly role: "platform";
   readonly port: number;
   readonly edge: boolean;
   readonly mode: "system" | "user";
@@ -108,12 +112,56 @@ export interface ZelavisNativeInstallationReceipt {
   readonly ownsGroup: boolean;
 }
 
+/** The worker role's receipt: no port, no Edge, no instances, one dedicated account. */
+export interface ZelavisWorkerReceipt {
+  readonly schemaVersion: 3;
+  readonly role: "worker";
+  readonly version: string;
+  readonly installedBy: "script" | "create" | "cli";
+  readonly prefix: string;
+  readonly dataDirectory: string;
+  readonly commandPath: string;
+  readonly account: string;
+  readonly ownsUser: boolean;
+  readonly ownsGroup: boolean;
+}
+
+const roleRecord = objectFields<{ role: ZelavisInstallationRole }>({ role: literal("platform", "worker") });
+
+/**
+ * Reads a receipt, including the one the previous release wrote. That release (schemaVersion 2) knew only the
+ * Platform role and recorded none, so its receipt is a Platform's; reading it as one is what lets Update now carry an
+ * installation across the version that introduced roles. The installer writes the new receipt (version 3) when it
+ * finishes, so no version 2 receipt outlives the update.
+ */
+function parseReceipt<A>(content: string, check: JsonValidator<A>, context: string): A {
+  const raw = parseJsonObject(content);
+  return parseJson(raw.schemaVersion === 2 ? JSON.stringify({ ...raw, schemaVersion: 3, role: "platform" }) : content, check, context);
+}
+
+/**
+ * What kind of machine this prefix describes, from its receipt alone, or
+ * undefined when it has none. Every reader and remover chooses by this first,
+ * so one never interprets the other's receipt.
+ */
+export const readInstallationRoleProgram = Effect.fn("Installation.readInstallationRole")(function* (host: ZelavisInstallHost, prefix: string, instance = "default"): Effect.fn.Return<ZelavisInstallationRole | undefined, TaggedFailure> {
+  const scope = installationInstanceScope(prefix, instance);
+  const content = (yield* integration(() => host.read(scope.receipt)));
+  if (content === undefined) return undefined;
+  return (yield* evaluate(() => parseReceipt(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role;
+});
+
+export function readInstallationRole(host: ZelavisInstallHost, prefix: string, instance = "default"): Promise<ZelavisInstallationRole | undefined> { return present(readInstallationRoleProgram(host, prefix, instance)); }
+
 export const readNativeInstallationReceiptProgram = Effect.fn("Installation.readNativeInstallationReceipt")(function* (host: ZelavisInstallHost, prefix: string, instance = "default"): Effect.fn.Return<ZelavisNativeInstallationReceipt | undefined, TaggedFailure> {
   const scope = installationInstanceScope(prefix, instance);
   const content = (yield* integration(() => host.read(scope.receipt)));
   if (content === undefined) return undefined;
-  const value = yield* evaluate(() => parseJson(content, receiptRecord, `Native installation receipt at ${scope.receipt}`));
-  if (!value || value.schemaVersion !== 2 || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
+  if ((yield* evaluate(() => parseReceipt(content, roleRecord, `Installation receipt at ${scope.receipt}`))).role === "worker") {
+    return yield* new IntegrationFailure(new Error("This machine is a Zelavis worker, not a Platform. A machine is one or the other."));
+  }
+  const value = yield* evaluate(() => parseReceipt(content, receiptRecord, `Native installation receipt at ${scope.receipt}`));
+  if (!value || value.schemaVersion !== 3 || value.role !== "platform" || typeof value.edge !== "boolean" || !Number.isInteger(value.port) || value.port < 1024 || value.port > 65535 || typeof value.dataDirectory !== "string" ||
       !["system", "user"].includes(value.mode) || !["release", "package"].includes(value.source) ||
       value.instance !== instance || !["script", "deb", "create", "cli"].includes(value.installedBy) ||
       typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u.test(value.version) || typeof value.prefix !== "string" || typeof value.configDirectory !== "string" || typeof value.commandPath !== "string" || typeof value.ownsUser !== "boolean" || typeof value.ownsGroup !== "boolean") {
@@ -218,7 +266,7 @@ function renderSocket(template: string, input: { host: string; port: number; ins
   return input.instance ? listening.replace("[Socket]\n", `[Socket]\nService=zelavis@${input.instance}.service\n`) : listening;
 }
 
-function compareInstallationVersions(left: string, right: string): number {
+export function compareInstallationVersions(left: string, right: string): number {
   const parse = (value: string) => {
     const match = /^(\d+)\.(\d+)\.(\d+)(?:-([\da-zA-Z.-]+))?(?:\+[\da-zA-Z.-]+)?$/u.exec(value);
     if (!match) throw new Error(`Invalid installation version: ${value}`);
@@ -301,12 +349,16 @@ export const planZelavisReleaseInstallProgram = Effect.fn("Installation.planZela
       kind: "command", command: `${release}/runtime/node/bin/node`,
       args: [`${release}/platform/dist/adapters/_node-runtime-select-cli.js`, paths.prefix, scope.instance, paths.dataDirectory, version],
     });
+    // The root operation Agent reads its operation manifests when it starts, so a release's new or changed operations
+    // exist only for an Agent started after the release is selected. It holds no Project and no traffic (the Platform
+    // and the Project Agent are the ones that must not restart), so it alone is restarted, once the selection is made.
+    if (input.system) addStep(steps, "host-agent-restart", "Load the selected release's host operation manifests (no Project or Platform process is restarted)", { kind: "command", command: "systemctl", args: ["restart", scope.units[scope.units.length - 1]!] });
     return { operation: "install", installation: { kind: "packaged", path: `${release}/platform/dist/cli.js`, root: paths.prefix }, instance: scope.instance, dataDirectory: paths.dataDirectory, steps, warnings, retained: [] };
   }
   let ownsUser = previous?.ownsUser ?? false;
   let ownsGroup = previous?.ownsGroup ?? false;
   const recordOwnership = (id: string) => {
-    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 2, port, edge: input.system && !scope.named, mode: input.user ? "user" : "system", source: input.sourceKind ?? "release", instance: scope.instance, installedBy: input.installedBy ?? "cli", version, prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
+    const receipt: ZelavisNativeInstallationReceipt = { schemaVersion: 3, role: "platform", port, edge: input.system && !scope.named, mode: input.user ? "user" : "system", source: input.sourceKind ?? "release", instance: scope.instance, installedBy: input.installedBy ?? "cli", version, prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser, ownsGroup };
     addStep(steps, id, "Record installer paths and preserve account ownership (0600)", { kind: "write", path: scope.receipt, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600, atomic: true });
   };
   if (input.stopPlatform && !input.live) addStep(steps, "platform-stop", "Stop this installation's Platform before taking data ownership", { kind: "command", command: "systemctl", args: ["stop", scope.units[0]] });
@@ -419,6 +471,7 @@ export function planZelavisUninstall(input: {
   if (input.user && input.hostCommands) throw new Error("User uninstall must not execute system maintenance commands.");
   if (input.hostCommands) {
     command("stop", ["stop", scope.socket, ...scope.units]);
+    command("agent-cgroup-kill", ["kill", "--kill-who=all", "--signal=SIGKILL", scope.units[1]!]);
     command("disable", ["disable", scope.socket, ...scope.units]);
     addStep(steps, "data-reservation", "Reserve Platform data after stopping the owned units", { kind: "reserve-data", path: paths.dataDirectory });
   }
@@ -471,4 +524,4 @@ export const executeZelavisInstallationPlanProgram = Effect.fn("Installation.exe
 });
 export function executeZelavisInstallationPlan(host: ZelavisInstallHost, plan: ZelavisHostInstallationPlan, confirmation?: string): Promise<readonly string[]> { return present(executeZelavisInstallationPlanProgram(host, plan, confirmation)); }
 
-const receiptRecord = objectFields<ZelavisNativeInstallationReceipt>({ schemaVersion: literal(2), mode: literal("system", "user"), source: literal("release", "package"), installedBy: literal("script", "deb", "create", "cli"), prefix: isString, instance: isString, version: isString, edge: isBoolean, port: isPositiveInteger, configDirectory: isString, dataDirectory: isString, commandPath: isString, ownsUser: isBoolean, ownsGroup: isBoolean });
+const receiptRecord = objectFields<ZelavisNativeInstallationReceipt>({ schemaVersion: literal(3), role: literal("platform"), mode: literal("system", "user"), source: literal("release", "package"), installedBy: literal("script", "deb", "create", "cli"), prefix: isString, instance: isString, version: isString, edge: isBoolean, port: isPositiveInteger, configDirectory: isString, dataDirectory: isString, commandPath: isString, ownsUser: isBoolean, ownsGroup: isBoolean });

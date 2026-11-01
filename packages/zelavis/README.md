@@ -624,14 +624,24 @@ inspectable. Document, KV, events and scalar columns are always ready. Search,
 measures, graph, spatial and vector report `requires-declaration` until the
 collection defines the semantics needed to interpret its fields; Zelavis does
 not pretend an arbitrary string is searchable text or an arbitrary numeric
-array is an embedding.
+array is an embedding. Activating a schema version declares what its field
+types state (prose → search, numbers → measures, a single reference → an
+edge, `GeometryField` → spatial, `VectorField` → embedding) and re-derives the
+stored documents' postings before publishing the version; a version whose
+declarations stored documents break is refused, and an activation cut off by a
+crash finishes when the database opens (`src/db/schema-activation.ts`).
 
 Database administration stays logical too. `zv.db.systemViews` exposes
 collections, events, schemas, projections, and time-series definitions without
 revealing physical shard drivers or internal `zv_*` tables. `zv.db.backups`
-exports and restores a Tenant's schema and exact event history; the matching
-maintenance endpoints require `database.inspect`, `database.backup`, or
-`database.restore` permissions.
+exports a Tenant's records plus the events logged while the export ran, which
+a restore applies by version, so an export taken during writes restores to one
+moment. A restore's `into` is `empty` (the default, refusing a Tenant that holds
+data), `purge` or `merge`, and any other value is refused with
+`InvalidRestoreMode`. The matching maintenance endpoints require
+`database.inspect`, `database.backup`, or `database.restore` permissions; from
+outside a Project they are `client.projects.exportTenant|restoreTenant` and
+`zelavis projects export-tenant|restore-tenant`, through the Project proxy.
 
 Indexed numeric document fields must be finite. Inserts, updates, and atomic
 batches reject `NaN`, `Infinity`, and `-Infinity` with `InvalidDocumentValue`,
@@ -641,8 +651,74 @@ numbers before serialization can silently turn them into `null`.
 
 Reopening a database also opens shards needed by unfinished Tenant moves,
 including source shards no longer present in the current partition map.
-`db.movement.resume` finishes pending work; a move whose routing already changed
-cleans up its source without copying the target again.
+`db.movement.resume` finishes pending work: an interrupted copy carries on from
+the target's head unless its seed was cut off, and a move whose routing already
+changed cleans up its source without copying the target again. A move copies the
+Tenant's partition as it is — identifiers and log positions included — so
+edges, event cursors and projection checkpoints carry on after it. A Tenant
+handle is never bound to a shard: each operation runs against the placement
+routing names as it starts, under an in-process lease, so a handle taken before
+a move works after it. Once routing moves, the move waits for operations that
+reached the old shard to finish (up to `drainTimeout`, else `PlacementInUse`
+and a resume later) and then removes the Tenant from it entirely, fence
+included; until then a write that reached the old shard is refused there
+(`TenantMoving`, a 409 over HTTP). The old shard keeps only the partition-map
+version that moved the Tenant, so a call routed there by an older map is refused
+with `TenantRelocated` (refresh routing and retry) instead of finding the Tenant
+empty. A shard's Tenants are the partitions holding
+anything, so a Tenant holding only messages, time series or history moves too.
+Reopening also finishes any lens rebuild or reindex a crash cut off; until then
+that partition answers `LensesRebuilding`.
+
+`db.crossTenantIndexes` keeps one collection's documents from every Tenant in a
+partition of its own on the global shard, so a live query across Tenants reads
+one partition instead of fanning out (`scatter` remains the operator's tool).
+Each Tenant partition is followed from its own cursor, committed with the
+entries it produced; a Tenant compacted past its cursor, or removed and written
+again (told apart by its partition's `incarnation`), is derived again from its
+records. Plugins' `service:` Tenants are never read. It is eventually
+consistent: refreshed shortly after each write and swept every minute while the
+database is open (`crossTenantRefresh`), and a query reports `refreshedAt`. The
+same operations are HTTP routes under `database/cross-tenant-indexes`,
+`client.crossTenantIndexes(projectId)` and `zelavis cross-tenant-indexes`.
+
+`db.branchTenant(tenant, into, { outbox })` makes `into` a new Tenant holding
+a copy of `tenant` as of one position of its log: records, history,
+collections, schemas, projection and time-series state and idempotency
+receipts. The source's undelivered outbox messages stay with it (`outbox:
+"leave"`, the default) unless `outbox` is `"copy"`. The source keeps taking
+writes, and can be moved, while it is copied; the branch is the source at the
+branch point and goes its own way from there (there is no merging back). It
+keeps the source's identifiers, versions and log positions and records its
+lineage, so a cursor or checkpoint from the source up to the branch point
+carries on in it. A divided Tenant branches into one divided the same way, part
+by part, each part as of its own position: consistent within a part, not across
+parts. `db.tenants` lists Tenants (a divided one once, `db.partitions` lists the
+partition keys), and the Tenants overview shows a divided Tenant as one entry
+with its `parts`. Until a copy is whole its target answers `TenantBranching`; running
+the same branch again, or opening the database again, finishes one that was cut
+off. The same operation is `POST database/tenants/:tenantId/branch`,
+`client.projects.branchTenant`, `zelavis projects branch-tenant` and the
+dashboard's **Branch** action on Database → Tenants.
+
+A Tenant can be read out as a stream, a page at a time: `db.exportPage(tenant, { cursor, limit })` (also `POST
+database/tenants/:tenantId/export`, `client.projects.exportTenantPage` and `zelavis projects export-stream`) gives its
+records and then every change since. Apply the entries by version; once a page says `consistent` they are the Tenant as of
+one log position, and the same cursor keeps delivering changes. Nothing is pinned between calls but the Tenant's log, which
+the export holds (`store.holdLog`, compaction goes only as far as the lowest live hold) until it is consistent. A divided
+Tenant is one export whose entries name their part, consistent once every part is, each as of its own position. The backup
+(`backups.exportTenant`) is built on it. `db.maintenance.image(destination)` (also `POST database/maintenance/images`,
+`client.projects.createDatabaseImage` and `zelavis projects create-image`) is a physical backup of the whole database
+through the ordered key-value interface alone, so any engine images into any other and the copy opens as an ordinary
+database; restoring one is the operator's, with the Project stopped. `examples/analytics-feed` is a dependency-free
+consumer that keeps an analytics copy of a Tenant current from the stream.
+
+A read of several steps answers from one snapshot of its shard, so a query sees
+one moment however many writes land while it runs; writes still see the shard
+as it is. `documents.write({ emit })` records messages in the Tenant's outbox in
+the same transaction as its changes, and `outbox.read` returns them in commit
+order from a cursor, at least once: consumers deduplicate by message id and
+`outbox.remove` what they have handled.
 
 Node hosts can persist content-addressed runtime objects with
 `createNodeFileArtifactStore({ directory })` from `zelavis/adapters/node`.
@@ -773,13 +849,15 @@ explicit absence. The engine checks every condition and commits the batch in one
 destination operation; rejection returns `false` and changes nothing. Engines
 without conditional commits and a declared coordination scope refuse writable
 store activation. `claimGeneration(engine)` returns `{ generation, session }`;
-`storeOverKv(partition, engine, claim)` requires that complete claim, while
-`openStoreOverKv(partition, engine)` performs activation and format preparation.
+`shardOverKv(shard, engine, claim)` requires that complete claim, while
+`openShardOverKv(shard, engine)` performs activation and format preparation.
+A shard hands out one store per partition (`shard.partition(name)`): each owns
+the key range under its name, with its own identifiers, log and revision.
 
-Store activation claims a fresh writer session and increments the persisted
-generation atomically. Every store batch checks generation, session, and the
-revision read before building the operation, then advances that revision in the
-same commit. This covers events, lenses, document receipts, identifier allocation,
+Shard activation claims a fresh writer session and increments the persisted
+generation atomically. Every partition batch checks the shard's generation and
+session and the partition's revision read before building the operation, then
+advances that revision in the same commit. This covers events, lenses, document receipts, identifier allocation,
 replication application, format upgrades, and maintenance. A superseded session
 fails with `WriterFenced`; competing changes under the same claim fail with
 `StoreError` (`op: "store.conflict"`). Retry the complete operation after a clean
@@ -789,17 +867,15 @@ overlay remain within that operation; transactions remain shard-local.
 | Engine | Conditional commit and coordination |
 | --- | --- |
 | Memory | Synchronous checks and batch within the same engine instance. |
-| Node SQLite / local libSQL | Checks and writes inside `BEGIN IMMEDIATE`; independent local connections and SQLite processes are tested on macOS. Embedded replica/server configurations need separate qualification. |
+| Node SQLite | Checks and writes inside `BEGIN IMMEDIATE`; independent local connections and SQLite processes are tested on macOS. |
 | LMDB | Checks and writes inside an abortable child transaction; local independent connections and process takeover are tested. Queued ordinary transaction callbacks alone do not guarantee rollback on callback failure. |
 | RocksDB bindings | Native exclusive process/file ownership plus a scoped permit around checks and batches. The evaluated binding shares permits across local handles for the same resolved directory. Concurrent process owners, shared filesystems, and remote takeover are unsupported. |
-| libSQL client | Dedicated write transaction with batched condition reads and mutations. Independent connections are tested using its local file transport; production network servers are not qualified by those tests. |
 
-Existing four-byte generations are read and atomically widened to eight bytes at
-activation, preserving document/event bytes and cursor interpretation. Generations
-remain safe integer numbers and activation refuses exhaustion at
-`Number.MAX_SAFE_INTEGER` or malformed state. Older binaries must not reopen a
-widened store. Recovery must retain the current generation/session metadata;
-restoring an old authority snapshot is not a supported takeover procedure.
+Generations are eight bytes and remain safe integers; activation refuses
+exhaustion at `Number.MAX_SAFE_INTEGER` or malformed state. A store written by
+another layout is refused, never upgraded: recreate it. Recovery must retain the
+current generation/session metadata; restoring an old authority snapshot is not
+a supported takeover procedure.
 
 Opening an engine does not acquire a store writer claim. Writable store activation
 is a trusted low-level operation that supersedes prior store sessions; it does not
@@ -949,9 +1025,10 @@ GET /zelavis/api/v1/runtime/service-page-assets/:service/:bundle/*
 
 When a service registry store is configured, these endpoints read and update
 real install state instead of a hardcoded list. Dashboard metadata updates
-immediately, while service activation is runtime-controlled: a local runtime can
-recompose its service graph when supported, or require a process restart when
-live activation is unavailable. Runtime config exposes the current adapter's
+immediately, while service activation is runtime-controlled: an installed
+Platform hands traffic to a fresh engine of the same release (requests wait,
+none are refused), a host without that ability recomposes in process or asks for
+a restart, and a Project recipe is simply used by the next Project created. Runtime config exposes the current adapter's
 service activation capabilities so the dashboard can show whether uploaded
 specifiers, runtime installs, and isolated execution are actually supported.
 
@@ -1106,6 +1183,10 @@ transfer exclusive database ownership, and resume traffic after readiness and
 durable selection acknowledgement. A failed candidate is fenced before rollback.
 System installations use a separately supervised Project Agent so running Apps
 and qualified recipe processes survive a Platform engine handover.
+Project Agent conversion never holds the dashboard, authentication or repair
+APIs. Recovered public workloads resume independently of private integration
+warmup; failed conversion reports degradation and releases its coordination
+hold while Project ownership checks remain enforced.
 
 New Apps and explicit native App recipe upgrades use the latest qualified
 installed engine. Parent updates and rollbacks preserve existing App engine pins.

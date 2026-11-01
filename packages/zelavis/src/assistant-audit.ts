@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * Reading and retaining the Assistant's audit trail.
  *
@@ -51,7 +53,8 @@ function parse(value: unknown): AssistantToolAuditRecord | undefined {
 
 export function createAssistantAuditReader(store: ZelavisSystemStore) {
   return {
-    async list(query: AssistantAuditQuery = {}): Promise<AssistantAuditPage> {
+    list(query: AssistantAuditQuery = {}): Promise<AssistantAuditPage> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AssistantAuditPage, IntegrationFailure> {
       const limit = query.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > ASSISTANT_AUDIT_MAX_PAGE) {
         throw new AssistantAuditQueryError(`limit must be an integer from 1 to ${ASSISTANT_AUDIT_MAX_PAGE}.`);
@@ -59,7 +62,7 @@ export function createAssistantAuditReader(store: ZelavisSystemStore) {
       if (query.decision !== undefined && !DECISIONS.has(query.decision)) {
         throw new AssistantAuditQueryError("decision is not a known audit decision.");
       }
-      const records = (await store.list(ASSISTANT_AUDIT_NAMESPACE))
+      const records = ((yield* integrationValue(store.list(ASSISTANT_AUDIT_NAMESPACE))))
         .filter((record) => query.before === undefined || record.key < query.before)
         .sort((left, right) => (left.key < right.key ? 1 : -1));
 
@@ -81,22 +84,25 @@ export function createAssistantAuditReader(store: ZelavisSystemStore) {
         records: page.map((entry) => entry.record),
         ...(more ? { next: page[page.length - 1]!.key } : {}),
       };
-    },
+    }));
+  },
 
     /** Deletes records older than the retention window, a bounded batch at a time. */
-    async prune(options: { olderThanMs?: number; now?: number; batch?: number } = {}): Promise<number> {
+    prune(options: { olderThanMs?: number; now?: number; batch?: number } = {}): Promise<number> {
+    return present(Effect.gen(function* (): Effect.fn.Return<number, IntegrationFailure> {
       const cutoff = (options.now ?? Date.now()) - (options.olderThanMs ?? ASSISTANT_AUDIT_RETENTION_MS);
       const batch = options.batch ?? 500;
       let removed = 0;
-      for (const stored of await store.list(ASSISTANT_AUDIT_NAMESPACE)) {
+      for (const stored of (yield* integrationValue(store.list(ASSISTANT_AUDIT_NAMESPACE)))) {
         if (removed >= batch) break;
         const at = Date.parse(stored.key.split("_", 1)[0] ?? "");
         if (Number.isFinite(at) && at < cutoff &&
-            await store.delete(ASSISTANT_AUDIT_NAMESPACE, stored.key)) {
+            (yield* integrationValue(store.delete(ASSISTANT_AUDIT_NAMESPACE, stored.key)))) {
           removed += 1;
         }
       }
       return removed;
-    },
+    }));
+  },
   };
 }

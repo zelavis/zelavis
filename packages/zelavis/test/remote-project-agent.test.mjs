@@ -48,7 +48,7 @@ test("a remote Agent installs and runs a real locked Zelavis App Project", { tim
     assert.equal(created.status, 201, await created.clone().text());
     agent = await createRemoteProjectAgent({
       dataDirectory: agentData, host: "localhost", port: 0,
-      keyPem, certPem, trust, agentId: "agent-b", nodeId: "node-b",
+      keyPem, certPem, trust: () => trust, agentId: "agent-b", nodeId: "node-b",
     });
     const dispatcher = createHttpsProjectDispatcher({
       localNodeId: "node-a", projectsDirectory: join(platformData, "projects"),

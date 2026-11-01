@@ -1,5 +1,5 @@
-import { integrationValue, unwrapIntegrationResult, presentProtocol, IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { Effect } from "effect";
+import { integration, integrationValue, unwrapFailure, unwrapIntegrationResult, presentProtocol, IntegrationFailure, present } from "../core/runtime/effect-boundary.js";
+import { Cause, Effect } from "effect";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreRecord,
@@ -423,25 +423,28 @@ export function createZelavisEdgeManager(
     updatedAt: timestamp(),
   });
 
-  async function policyRecord(): Promise<ZelavisSystemStoreRecord> {
-    const existing = await options.store.get(EDGE_NAMESPACE, POLICY_KEY);
+  function policyRecord(): Promise<ZelavisSystemStoreRecord> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisSystemStoreRecord, IntegrationFailure> {
+    const existing = (yield* integrationValue(options.store.get(EDGE_NAMESPACE, POLICY_KEY)));
     if (existing) {
       readPolicy(existing.value);
       return existing;
     }
-    return (await options.store.setIfAbsent(
+    return ((yield* integrationValue(options.store.setIfAbsent(
       EDGE_NAMESPACE,
       POLICY_KEY,
       storeValue(initialPolicy()),
-    )).record;
+    )))).record;
+  }));
   }
 
-  async function writePolicy(
+  function writePolicy(
     targetAdapterId: string,
     publication: ZelavisEdgePublication,
   ): Promise<ZelavisEdgePolicy> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgePolicy, IntegrationFailure> {
     for (let attempt = 0; attempt < 8; attempt++) {
-      const currentRecord = await policyRecord();
+      const currentRecord = (yield* integrationValue(policyRecord()));
       const current = readPolicy(currentRecord.value);
       const next: ZelavisEdgePolicy = {
         schemaVersion: 1,
@@ -454,26 +457,28 @@ export function createZelavisEdgeManager(
         },
         updatedAt: timestamp(),
       };
-      const written = await options.store.compareAndSet(
+      const written = (yield* integrationValue(options.store.compareAndSet(
         EDGE_NAMESPACE,
         POLICY_KEY,
         currentRecord.updatedAt,
         storeValue(next),
         currentRecord.value,
-      );
+      )));
       if (written) return next;
     }
     throw new ZelavisEdgeConflictError(
       "Edge policy changed repeatedly while committing the adapter switch.",
     );
+  }));
   }
 
-  async function persistSwitch(
+  function persistSwitch(
     record: ZelavisSystemStoreRecord,
     current: ZelavisEdgeSwitchRecord,
     phase: ZelavisEdgeSwitchPhase,
     error?: string,
   ): Promise<{ store: ZelavisSystemStoreRecord; value: ZelavisEdgeSwitchRecord }> {
+    return present(Effect.gen(function* (): Effect.fn.Return<{ store: ZelavisSystemStoreRecord; value: ZelavisEdgeSwitchRecord }, IntegrationFailure> {
     const next: ZelavisEdgeSwitchRecord = {
       ...current,
       phase,
@@ -483,30 +488,32 @@ export function createZelavisEdgeManager(
       leaseExpiresAt: leaseExpiresAt(),
       ...(error ? { error } : {}),
     };
-    const written = await options.store.compareAndSet(
+    const written = (yield* integrationValue(options.store.compareAndSet(
       EDGE_NAMESPACE,
       ACTIVE_SWITCH_KEY,
       record.updatedAt,
       storeValue(next),
       record.value,
-    );
+    )));
     if (!written) {
       throw new ZelavisEdgeConflictError(
         `Edge switch "${current.id}" was changed by another controller.`,
       );
     }
-    await options.store.set(
+    (yield* integrationValue(options.store.set(
       EDGE_NAMESPACE,
       `switch:${next.id}`,
       storeValue(next),
-    );
+    )));
     return { store: written, value: next };
+  }));
   }
 
-  async function runSwitch(
+  function runSwitch(
     initialStore: ZelavisSystemStoreRecord,
     initial: ZelavisEdgeSwitchRecord,
   ): Promise<ZelavisEdgeSwitchRecord> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeSwitchRecord, IntegrationFailure> {
     let stored = initialStore;
     let operation = initial;
     const target = adapters.get(operation.targetAdapterId);
@@ -526,20 +533,20 @@ export function createZelavisEdgeManager(
         : {}),
     };
 
-    const advance = async (phase: ZelavisEdgeSwitchPhase) => {
-      const next = await persistSwitch(stored, operation, phase);
+    const advance = (phase: ZelavisEdgeSwitchPhase) => Effect.gen(function* () {
+      const next = (yield* integrationValue(persistSwitch(stored, operation, phase)));
       stored = next.store;
       operation = next.value;
-    };
+    });
 
-    try {
+    return yield* Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeSwitchRecord, IntegrationFailure> {
       while (operation.phase !== "complete") {
         switch (operation.phase) {
           case "preflight": {
-            const plan = await manager.planSwitch(
+            const plan = yield* integrationValue(manager.planSwitch(
               operation.targetAdapterId,
               operation.publication,
-            );
+            ));
             if (!plan.ready) {
               const reasons = [
                 plan.detection.detail,
@@ -551,34 +558,34 @@ export function createZelavisEdgeManager(
                 `Edge adapter "${target.id}" is not ready${reasons ? ` (${reasons})` : ""}.`,
               );
             }
-            await advance("stage-certificates");
+            yield* advance("stage-certificates");
             break;
           }
           case "stage-certificates":
-            await options.certificates.stage(context);
-            await advance("stage-routing");
+            yield* integration(() => options.certificates.stage(context));
+            yield* advance("stage-routing");
             break;
           case "stage-routing":
-            await target.stage(context);
-            await advance("verify");
+            yield* integration(() => target.stage(context));
+            yield* advance("verify");
             break;
           case "verify": {
-            const verification = await target.verify(context);
+            const verification = yield* integration(() => target.verify(context));
             if (!verification.ready) {
               throw new ZelavisEdgeValidationError(
                 `Edge adapter "${target.id}" failed staged verification${verification.detail ? `: ${verification.detail}` : "."}`,
               );
             }
-            await advance("activate-certificates");
+            yield* advance("activate-certificates");
             break;
           }
           case "activate-certificates":
-            await options.certificates.activate(context);
-            await advance("activate-routing");
+            yield* integration(() => options.certificates.activate(context));
+            yield* advance("activate-routing");
             break;
           case "activate-routing": {
             if (options.getPublication) {
-              const currentPub = await options.getPublication();
+              const currentPub = yield* integration(() => options.getPublication!());
               if (
                 currentPub &&
                 (currentPub.id !== operation.publication.id ||
@@ -589,19 +596,19 @@ export function createZelavisEdgeManager(
                 );
               }
             }
-            await target.activate(context);
-            await advance("drain");
+            yield* integration(() => target.activate(context));
+            yield* advance("drain");
             break;
           }
           case "drain":
             if (previous && previous.id !== target.id) {
-              await previous.drain?.(context);
+              yield* integration(() => previous.drain?.(context));
             }
-            await advance("commit");
+            yield* advance("commit");
             break;
           case "commit":
-            await writePolicy(target.id, operation.publication);
-            await advance("complete");
+            yield* integrationValue(writePolicy(target.id, operation.publication));
+            yield* advance("complete");
             break;
           case "rollback":
           case "failed":
@@ -615,68 +622,85 @@ export function createZelavisEdgeManager(
         }
       }
       return operation;
-    } catch (cause) {
+    }).pipe(Effect.catchCause((failure) => Effect.gen(function* () {
+      let cause = unwrapFailure(Cause.squash(failure));
       if (cause instanceof ZelavisEdgeConflictError) {
         throw cause;
       }
       const failedPhase = operation.phase;
-      try {
-        const rollingBack = await persistSwitch(
+      const rollbackFailure = yield* Effect.gen(function* () {
+        const rollingBack = yield* integrationValue(persistSwitch(
           stored,
           operation,
           "rollback",
           errorMessage(cause),
-        );
+        ));
         stored = rollingBack.store;
         operation = rollingBack.value;
-        await target.rollback?.(context);
-        await options.certificates.rollback?.(context);
-      } catch (rollbackCause) {
+        yield* integration(() => target.rollback?.(context));
+        yield* integration(() => options.certificates.rollback?.(context));
+      }).pipe(
+        Effect.as(undefined),
+        Effect.catchCause((rollbackCause) => Effect.succeed({ cause: unwrapFailure(Cause.squash(rollbackCause)) })),
+      );
+      if (rollbackFailure) {
         cause = new AggregateError(
-          [cause, rollbackCause],
+          [cause, rollbackFailure.cause],
           `Edge switch failed during ${failedPhase}, then rollback failed.`,
         );
       }
-      const failed = await persistSwitch(
+      const failed = yield* integrationValue(persistSwitch(
         stored,
         operation,
         "failed",
         errorMessage(cause),
-      );
+      ));
       throw new ZelavisEdgeSwitchError(failed.value, cause);
-    }
+    })));
+    }));
   }
 
   const manager: ZelavisEdgeManager = {
-    async getPolicy() {
-      return readPolicy((await policyRecord()).value);
+    getPolicy() {
+    return present(Effect.gen(function* () {
+      return (yield* integrationValue(readPolicy(((yield* integrationValue(policyRecord()))).value)));
+    }));
+  },
+    listAdapters() {
+      return present(Effect.gen(function* () {
+        const policy = yield* integrationValue(manager.getPolicy());
+        return yield* Effect.forEach(
+          [...adapters.values()],
+          (adapter) => Effect.gen(function* () {
+            return {
+              id: adapter.id,
+              title: adapter.title,
+              capabilities: [...adapter.capabilities],
+              detection: yield* integration(() => adapter.detect()),
+              active: policy.activeAdapterId === adapter.id,
+              desired: policy.desiredAdapterId === adapter.id,
+            };
+          }),
+          { concurrency: Math.max(1, adapters.size) },
+        );
+      }));
     },
-    async listAdapters() {
-      const policy = await manager.getPolicy();
-      return Promise.all(
-        [...adapters.values()].map(async (adapter) => ({
-          id: adapter.id,
-          title: adapter.title,
-          capabilities: [...adapter.capabilities],
-          detection: await adapter.detect(),
-          active: policy.activeAdapterId === adapter.id,
-          desired: policy.desiredAdapterId === adapter.id,
-        })),
-      );
-    },
-    async getActiveSwitch() {
-      const record = await options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY);
+    getActiveSwitch() {
+    return present(Effect.gen(function* () {
+      const record = (yield* integrationValue(options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY)));
       return record ? readSwitch(record.value) : undefined;
-    },
-    async planSwitch(targetAdapterId, publication) {
+    }));
+  },
+    planSwitch(targetAdapterId, publication) {
+    return present(Effect.gen(function* () {
       const id = normalizedId(targetAdapterId, "Edge adapter id");
       const adapter = adapters.get(id);
       if (!adapter) {
         throw new ZelavisEdgeValidationError(`Unknown Edge adapter "${id}".`);
       }
       const normalized = normalizePublication(publication);
-      const policy = await manager.getPolicy();
-      const detection = await adapter.detect();
+      const policy = (yield* integrationValue(manager.getPolicy()));
+      const detection = (yield* integrationValue(adapter.detect()));
       const capabilities = new Set(adapter.capabilities);
       const missingCapabilities = normalized.requiredCapabilities.filter(
         (capability) => !capabilities.has(capability),
@@ -695,8 +719,10 @@ export function createZelavisEdgeManager(
           detection.healthy &&
           missingCapabilities.length === 0,
       };
-    },
-    async switchAdapter(targetAdapterId, publication) {
+    }));
+  },
+    switchAdapter(targetAdapterId, publication) {
+      return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeSwitchRecord, IntegrationFailure> {
       if (localSwitch) {
         throw new ZelavisEdgeConflictError(
           "Another Edge adapter switch is already running in this controller.",
@@ -704,8 +730,8 @@ export function createZelavisEdgeManager(
       }
       const id = normalizedId(targetAdapterId, "Edge adapter id");
       const normalized = normalizePublication(publication);
-      const policy = await manager.getPolicy();
-      const current = await options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY);
+      const policy = yield* integrationValue(manager.getPolicy());
+      const current = yield* integrationValue(options.store.get(EDGE_NAMESPACE, ACTIVE_SWITCH_KEY));
       if (current) {
         const existing = readSwitch(current.value);
         if (existing.phase !== "complete" && existing.phase !== "failed") {
@@ -734,11 +760,11 @@ export function createZelavisEdgeManager(
             }
             // Stale/expired switch targeting a different adapter or revision.
             // Reconcile it first to clean up or forward-recover.
-            await manager.reconcile();
-            const refreshed = await options.store.get(
+            yield* integrationValue(manager.reconcile());
+            const refreshed = yield* integrationValue(options.store.get(
               EDGE_NAMESPACE,
               ACTIVE_SWITCH_KEY,
-            );
+            ));
             if (refreshed) {
               const refreshedSwitch = readSwitch(refreshed.value);
               if (
@@ -759,24 +785,22 @@ export function createZelavisEdgeManager(
               leaseExpiresAt: leaseExpiresAt(),
               updatedAt: timestamp(),
             };
-            const written = await options.store.compareAndSet(
+            const written = yield* integrationValue(options.store.compareAndSet(
               EDGE_NAMESPACE,
               ACTIVE_SWITCH_KEY,
               current.updatedAt,
               storeValue(claimedNext),
               current.value,
-            );
+            ));
             if (!written) {
               throw new ZelavisEdgeConflictError(
                 `Edge switch "${existing.id}" was claimed by another controller.`,
               );
             }
             localSwitch = runSwitch(written, claimedNext);
-            try {
-              return await localSwitch;
-            } finally {
-              localSwitch = undefined;
-            }
+            return yield* integrationValue(localSwitch).pipe(
+              Effect.ensuring(Effect.sync(() => { localSwitch = undefined; })),
+            );
           }
         }
       }
@@ -798,16 +822,16 @@ export function createZelavisEdgeManager(
         leaseExpiresAt: leaseExpiresAt(),
       };
       let claimed: ZelavisSystemStoreRecord;
-      const latestCurrent = await options.store.get(
+      const latestCurrent = yield* integrationValue(options.store.get(
         EDGE_NAMESPACE,
         ACTIVE_SWITCH_KEY,
-      );
+      ));
       if (!latestCurrent) {
-        const result = await options.store.setIfAbsent(
+        const result = yield* integrationValue(options.store.setIfAbsent(
           EDGE_NAMESPACE,
           ACTIVE_SWITCH_KEY,
           storeValue(operation),
-        );
+        ));
         if (!result.created) {
           throw new ZelavisEdgeConflictError(
             "Another Edge adapter switch was started concurrently.",
@@ -815,13 +839,13 @@ export function createZelavisEdgeManager(
         }
         claimed = result.record;
       } else {
-        const replaced = await options.store.compareAndSet(
+        const replaced = yield* integrationValue(options.store.compareAndSet(
           EDGE_NAMESPACE,
           ACTIVE_SWITCH_KEY,
           latestCurrent.updatedAt,
           storeValue(operation),
           latestCurrent.value,
-        );
+        ));
         if (!replaced) {
           throw new ZelavisEdgeConflictError(
             "Another Edge adapter switch was started concurrently.",
@@ -829,17 +853,16 @@ export function createZelavisEdgeManager(
         }
         claimed = replaced;
       }
-      await options.store.set(
+      yield* integrationValue(options.store.set(
         EDGE_NAMESPACE,
         `switch:${operation.id}`,
         storeValue(operation),
-      );
+      ));
       localSwitch = runSwitch(claimed, operation);
-      try {
-        return await localSwitch;
-      } finally {
-        localSwitch = undefined;
-      }
+      return yield* integrationValue(localSwitch).pipe(
+        Effect.ensuring(Effect.sync(() => { localSwitch = undefined; })),
+      );
+      }));
     },
     reconcile(): Promise<ZelavisEdgeReconciliationResult> { return presentProtocol(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeReconciliationResult, IntegrationFailure> {
       if (localSwitch) {

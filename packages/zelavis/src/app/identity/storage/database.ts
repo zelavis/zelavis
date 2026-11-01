@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import { IdentityConflictError } from "../core/errors.js";
 import type {
   DatabaseRuntimeApi,
@@ -72,114 +74,124 @@ class IdentityDocumentStore {
   private readonly ensuring = new Map<string, Promise<void>>();
   constructor(private readonly database: TenantRuntimeApi) {}
 
-  async ensure(collection: string) {
-    if (this.ensured.has(collection)) return;
+  ensure(collection: string): Promise<void> {
+    if (this.ensured.has(collection)) return Promise.resolve();
     const active = this.ensuring.get(collection);
     if (active) return active;
-    const operation = (async () => {
-      if (!(await this.database.documents.collectionExists(collection))) {
-        await this.database.documents.createCollection({
+    const self = this;
+    const operation = present(Effect.gen(function* () {
+      if (!((yield* integrationValue(self.database.documents.collectionExists(collection))))) {
+        (yield* integrationValue(self.database.documents.createCollection({
           name: collection,
           surface: "database",
           metadata: { owner: "zelavis/app/identity" },
-        });
+        })));
       }
-      this.ensured.add(collection);
-    })();
+      self.ensured.add(collection);
+    }).pipe(Effect.ensuring(Effect.sync(() => { self.ensuring.delete(collection); }))));
     this.ensuring.set(collection, operation);
-    try {
-      await operation;
-    } finally {
-      this.ensuring.delete(collection);
-    }
+    return operation;
   }
 
-  async set<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
-    await this.ensure(collection);
-    const existing = await this.database.documents.findById({ collection, id: entity.id });
+  set<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<T, IntegrationFailure> {
+    (yield* integrationValue(self.ensure(collection)));
+    const existing = (yield* integrationValue(self.database.documents.findById({ collection, id: entity.id })));
     if (existing) {
-      await this.database.documents.update({ collection, id: entity.id, data: serialize(entity), mode: "replace" });
+      (yield* integrationValue(self.database.documents.update({ collection, id: entity.id, data: serialize(entity), mode: "replace" })));
     } else {
-      await this.database.documents.insert({ collection, id: entity.id, data: serialize(entity) });
+      (yield* integrationValue(self.database.documents.insert({ collection, id: entity.id, data: serialize(entity) })));
     }
     return entity;
+  }));
   }
 
   /** Insert only: an existing id is a conflict, decided by the store. */
-  async create<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
-    await this.ensure(collection);
-    try {
-      await this.database.documents.insert({ collection, id: entity.id, data: serialize(entity) });
-    } catch (error) {
-      if (isDocumentConflict(error)) {
-        throw new IdentityConflictError("id", "An identity record with that id already exists.");
-      }
-      throw error;
-    }
-    return entity;
+  create<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<T, IntegrationFailure | IdentityConflictError> {
+      yield* integrationValue(self.ensure(collection));
+      yield* integration(() => self.database.documents.insert({ collection, id: entity.id, data: serialize(entity) })).pipe(
+        Effect.catchIf(isDocumentConflict, () => Effect.fail(new IdentityConflictError("id", "An identity record with that id already exists."))),
+      );
+      return entity;
+    }));
   }
 
-  async get<T extends IdentityEntity>(collection: string, id: string): Promise<T | null> {
-    await this.ensure(collection);
-    const document = await this.database.documents.findById({ collection, id });
+  get<T extends IdentityEntity>(collection: string, id: string): Promise<T | null> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<T | null, IntegrationFailure> {
+    (yield* integrationValue(self.ensure(collection)));
+    const document = (yield* integrationValue(self.database.documents.findById({ collection, id })));
     return document ? deserialize<T>(document.data) : null;
+  }));
   }
 
-  async list<T extends IdentityEntity>(collection: string): Promise<T[]> {
-    await this.ensure(collection);
-    return (await this.database.documents.findMany({ collection })).map((document) => deserialize<T>(document.data));
+  list<T extends IdentityEntity>(collection: string): Promise<T[]> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<T[], IntegrationFailure> {
+    (yield* integrationValue(self.ensure(collection)));
+    return (yield* integrationValue(((yield* integrationValue(self.database.documents.findMany({ collection })))).map((document) => deserialize<T>(document.data))));
+  }));
   }
 
-  async delete(collection: string, id: string): Promise<boolean> {
-    await this.ensure(collection);
-    return this.database.documents.delete({ collection, id });
+  delete(collection: string, id: string): Promise<boolean> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
+    (yield* integrationValue(self.ensure(collection)));
+    return (yield* integrationValue(self.database.documents.delete({ collection, id })));
+  }));
   }
 
-  async mutate<T extends IdentityEntity>(
+  mutate<T extends IdentityEntity>(
     collection: string,
     id: string,
     mutation: (current: T | null) => T | null,
   ): Promise<T | null> {
-    await this.ensure(collection);
-    for (let retry = 0; retry < 100; retry += 1) {
-      const document = await this.database.documents.findById({ collection, id });
-      const current = document ? deserialize<T>(document.data) : null;
-      const next = mutation(current);
-      try {
-        if (!document) {
-          if (!next) return null;
-          await this.database.documents.insert({
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<T | null, IntegrationFailure> {
+      yield* integrationValue(self.ensure(collection));
+      for (let retry = 0; retry < 100; retry += 1) {
+        const document = yield* integration(() => self.database.documents.findById({ collection, id }));
+        const current = document ? deserialize<T>(document.data) : null;
+        const next = mutation(current);
+        const outcome = yield* Effect.gen(function* (): Effect.fn.Return<{ readonly value: T | null }, IntegrationFailure> {
+          if (!document) {
+            if (!next) return { value: null };
+            yield* integration(() => self.database.documents.insert({
+              collection,
+              id,
+              data: serialize(next),
+            }));
+            return { value: next };
+          }
+          if (!next) {
+            yield* integration(() => self.database.documents.delete({
+              collection,
+              id,
+              expectedVersion: document.version,
+            }));
+            return { value: null };
+          }
+          yield* integration(() => self.database.documents.update({
             collection,
             id,
             data: serialize(next),
-          });
-          return next;
-        }
-        if (!next) {
-          await this.database.documents.delete({
-            collection,
-            id,
+            mode: "replace",
             expectedVersion: document.version,
-          });
-          return null;
-        }
-        await this.database.documents.update({
-          collection,
-          id,
-          data: serialize(next),
-          mode: "replace",
-          expectedVersion: document.version,
-        });
-        return next;
-      } catch (error) {
-        // The store fails with schema-tagged errors rather than classes, and
-        // a lost optimistic-concurrency race and a duplicate insert are the
-        // same tag: both mean another writer got there first, so both retry.
-        if (isDocumentConflict(error)) continue;
-        throw error;
+          }));
+          return { value: next };
+        }).pipe(
+          // The store fails with schema-tagged errors rather than classes, and
+          // a lost optimistic-concurrency race and a duplicate insert are the
+          // same tag: both mean another writer got there first, so both retry.
+          Effect.catchIf(isDocumentConflict, () => Effect.succeed(undefined)),
+        );
+        if (outcome) return outcome.value;
       }
-    }
-    throw new Error("Auth attempt update did not converge after 100 retries.");
+      throw new Error("Auth attempt update did not converge after 100 retries.");
+    }));
   }
 }
 
@@ -191,64 +203,65 @@ class IdentityDocumentStore {
 function createDocumentClaims(database: TenantRuntimeApi): ClaimBackend {
   const collection = "auth_unique";
   let ensured: Promise<void> | undefined;
-  const ensure = () => ensured ??= (async () => {
-    if (!(await database.documents.collectionExists(collection))) {
-      await database.documents.createCollection({
+  const ensure = () => ensured ??= present(Effect.gen(function* () {
+    if (!((yield* integrationValue(database.documents.collectionExists(collection))))) {
+      (yield* integrationValue(database.documents.createCollection({
         name: collection,
         surface: "database",
         metadata: { owner: "zelavis/app/identity" },
-      });
+      })));
     }
-  })();
-  const idOf = async (key: string) => {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  };
+  }));
+  const idOf = (key: string) => present(Effect.gen(function* () {
+    const digest = (yield* integrationValue(globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))));
+    return (yield* integrationValue(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")));
+  }));
   const read = (data: JsonObject) => data as unknown as { owner: string; at: number };
   return {
-    async claim(key, owner) {
-      await ensure();
-      const id = await idOf(key);
-      try {
-        await database.documents.insert({ collection, id, data: { owner, at: Date.now() } });
-        return { claimed: true as const };
-      } catch (error) {
-        if (!isDocumentConflict(error)) throw error;
-        const existing = await database.documents.findById({ collection, id });
-        if (!existing) return this.claim(key, owner);
-        const { owner: current, at } = read(existing.data);
-        return { claimed: false as const, owner: current, at };
-      }
+    claim(key, owner) {
+      const self = this;
+      return present(Effect.gen(function* (): Effect.fn.Return<Awaited<ReturnType<ClaimBackend["claim"]>>, IntegrationFailure> {
+        yield* integrationValue(ensure());
+        const id = yield* integrationValue(idOf(key));
+        return yield* integration(() => database.documents.insert({ collection, id, data: { owner, at: Date.now() } })).pipe(
+          Effect.as({ claimed: true as const }),
+          Effect.catchIf(isDocumentConflict, () => Effect.gen(function* () {
+            const existing = yield* integration(() => database.documents.findById({ collection, id }));
+            if (!existing) return yield* integrationValue(self.claim(key, owner));
+            const { owner: current, at } = read(existing.data);
+            return { claimed: false as const, owner: current, at };
+          })),
+        );
+      }));
     },
-    async takeover(key, staleOwner, owner) {
-      await ensure();
-      const id = await idOf(key);
-      const existing = await database.documents.findById({ collection, id });
-      if (!existing || read(existing.data).owner !== staleOwner) return false;
-      try {
-        await database.documents.update({
+    takeover(key, staleOwner, owner) {
+      return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
+        yield* integrationValue(ensure());
+        const id = yield* integrationValue(idOf(key));
+        const existing = yield* integration(() => database.documents.findById({ collection, id }));
+        if (!existing || read(existing.data).owner !== staleOwner) return false;
+        return yield* integration(() => database.documents.update({
           collection,
           id,
           data: { owner, at: Date.now() },
           mode: "replace",
           expectedVersion: existing.version,
-        });
-        return true;
-      } catch (error) {
-        if (isDocumentConflict(error)) return false;
-        throw error;
-      }
+        })).pipe(
+          Effect.as(true),
+          Effect.catchIf(isDocumentConflict, () => Effect.succeed(false)),
+        );
+      }));
     },
-    async release(key, owner) {
-      await ensure();
-      const id = await idOf(key);
-      const existing = await database.documents.findById({ collection, id });
-      if (!existing || read(existing.data).owner !== owner) return;
-      try {
-        await database.documents.delete({ collection, id, expectedVersion: existing.version });
-      } catch (error) {
-        if (!isDocumentConflict(error)) throw error;
-      }
+    release(key, owner) {
+      return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+        yield* integrationValue(ensure());
+        const id = yield* integrationValue(idOf(key));
+        const existing = yield* integration(() => database.documents.findById({ collection, id }));
+        if (!existing || read(existing.data).owner !== owner) return;
+        yield* integration(() => database.documents.delete({ collection, id, expectedVersion: existing.version })).pipe(
+          Effect.catchIf(isDocumentConflict, () => Effect.void),
+        );
+      }));
     },
   };
 }
@@ -266,8 +279,12 @@ export function createDatabaseAuthRepositories(
     delete: (id) => store.delete("auth_accounts", id),
     update: (entity) => store.set("auth_accounts", entity),
     findById: (id) => store.get("auth_accounts", id),
-    async findByEmail(email) { return (await store.list<Account>("auth_accounts")).find((item) => item.email === email) ?? null; },
-    async findByUsername(username) { return (await store.list<Account>("auth_accounts")).find((item) => item.username === username) ?? null; },
+    findByEmail(email) {
+    return present(Effect.gen(function* () { return ((yield* integrationValue(store.list<Account>("auth_accounts")))).find((item) => item.email === email) ?? null; }));
+  },
+    findByUsername(username) {
+    return present(Effect.gen(function* () { return ((yield* integrationValue(store.list<Account>("auth_accounts")))).find((item) => item.username === username) ?? null; }));
+  },
     list: () => store.list("auth_accounts"),
   };
   const baseCredentials: CredentialRepository = {
@@ -275,12 +292,16 @@ export function createDatabaseAuthRepositories(
     delete: (id) => store.delete("auth_credentials", id),
     update: (entity) => store.set("auth_credentials", entity),
     findById: (id) => store.get("auth_credentials", id),
-    async findByProviderIdentifier(provider, identifier) {
-      return (await store.list<Credential>("auth_credentials")).find(
+    findByProviderIdentifier(provider, identifier) {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(store.list<Credential>("auth_credentials")))).find(
         (item) => item.provider === provider && item.identifier === identifier,
       ) ?? null;
-    },
-    async listByAccountId(accountId) { return (await store.list<Credential>("auth_credentials")).filter((item) => item.accountId === accountId); },
+    }));
+  },
+    listByAccountId(accountId) {
+    return present(Effect.gen(function* () { return (yield* integrationValue(((yield* integrationValue(store.list<Credential>("auth_credentials")))).filter((item) => item.accountId === accountId))); }));
+  },
   };
   const sessions: SessionRepository = {
     create: (entity) => store.create("auth_sessions", entity),
@@ -288,8 +309,12 @@ export function createDatabaseAuthRepositories(
     delete: (id) => store.delete("auth_sessions", id),
     update: (entity) => store.set("auth_sessions", entity),
     findById: (id) => store.get("auth_sessions", id),
-    async findByTokenHash(tokenHash) { return (await store.list<Session>("auth_sessions")).find((item) => item.tokenHash === tokenHash) ?? null; },
-    async listByAccountId(accountId) { return (await store.list<Session>("auth_sessions")).filter((item) => item.accountId === accountId); },
+    findByTokenHash(tokenHash) {
+    return present(Effect.gen(function* () { return ((yield* integrationValue(store.list<Session>("auth_sessions")))).find((item) => item.tokenHash === tokenHash) ?? null; }));
+  },
+    listByAccountId(accountId) {
+    return present(Effect.gen(function* () { return (yield* integrationValue(((yield* integrationValue(store.list<Session>("auth_sessions")))).filter((item) => item.accountId === accountId))); }));
+  },
   };
   const accounts = withUniqueAccounts(baseAccounts, claims);
   const credentials = withUniqueCredentials(baseCredentials, claims);

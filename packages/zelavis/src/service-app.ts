@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * Synthesize asset-serving routes from a service's `app` field.
  *
@@ -196,12 +198,13 @@ function isDevRedirectExcluded(
 const DEFAULT_SHELL_CONTENT_TYPE = "text/html; charset=utf-8";
 const DEFAULT_SHELL_CACHE_CONTROL = "no-cache";
 
-async function renderShell(
+function renderShell(
   shell: ZelavisServiceAppShellDefinition,
   request: Request,
   relativePath: string,
 ): Promise<ZelavisRouteResponse> {
-  const result = await shell.render({ request, path: relativePath });
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisRouteResponse, IntegrationFailure> {
+  const result = (yield* integrationValue(shell.render({ request, path: relativePath })));
   const status = result.status ?? 200;
   const headers =
     result.headers ??
@@ -210,7 +213,8 @@ async function renderShell(
       "cache-control": DEFAULT_SHELL_CACHE_CONTROL,
     } as Record<string, string>);
   return { status, headers, body: result.body };
-}
+}));
+  }
 
 /** Text assets whose contents can carry references to other assets. */
 const REWRITABLE_CONTENT = /^(?:text\/|application\/(?:javascript|json))/;
@@ -319,19 +323,21 @@ function buildResponse(
   return { status, headers, body };
 }
 
-async function readWithFallback(
+function readWithFallback(
   store: BundleStore,
   scope: BundleScope,
   candidates: readonly string[],
 ) {
+    return present(Effect.gen(function* () {
   for (const candidate of candidates) {
-    const asset = await store.read(scope, candidate);
+    const asset = (yield* integrationValue(store.read(scope, candidate)));
     if (asset) {
       return { asset, resolvedPath: candidate };
     }
   }
   return undefined;
-}
+}));
+  }
 
 function createAppAssetHandler(options: AppHandlerOptions) {
   const {
@@ -346,10 +352,10 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     devUrlExcludePaths,
   } = options;
 
-  return async (context: {
+  return (context: {
     request: Request;
     params: Record<string, string>;
-  }) => {
+  }) => present(Effect.gen(function* () {
     const { request, params } = context;
     const scope = options.resolveScope?.(request) ?? defaultScope;
     // Resolve the mount-relative path. Three cases:
@@ -384,7 +390,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     // browser talks to Vite/RR/Next directly so HMR works.
     if (devUrl && !isDevRedirectExcluded(relativePath, devUrlExcludePaths)) {
       const url = new URL(request.url);
-      return buildDevRedirect(devUrl, relativePath, url.search);
+      return (yield* integrationValue(buildDevRedirect(devUrl, relativePath, url.search)));
     }
 
     if (mode === "spa") {
@@ -392,54 +398,54 @@ function createAppAssetHandler(options: AppHandlerOptions) {
       // `indexHtml` so services can inject runtime config.
       if (relativePath === "") {
         if (shell) {
-          return renderShell(shell, request, relativePath);
+          return (yield* integrationValue(renderShell(shell, request, relativePath)));
         }
-        const indexHit = await bundleStore.read(scope, indexHtml);
+        const indexHit = (yield* integrationValue(bundleStore.read(scope, indexHtml)));
         if (!indexHit) {
           return { status: 404, body: "Not found" };
         }
-        return buildResponse(
+        return (yield* integrationValue(buildResponse(
           indexHit.body,
           indexHit.contentType ?? guessContentType(indexHtml),
           indexHit.cacheControl,
           200,
           rewriteAssets,
-        );
+        )));
       }
 
       // Sub-path: try the exact asset, then SPA-fallback to either the
       // shell renderer or the static index document.
-      const exactHit = await bundleStore.read(scope, relativePath);
+      const exactHit = (yield* integrationValue(bundleStore.read(scope, relativePath)));
       if (exactHit) {
-        return buildResponse(
+        return (yield* integrationValue(buildResponse(
           exactHit.body,
           exactHit.contentType ?? guessContentType(relativePath),
           exactHit.cacheControl,
           200,
           rewriteAssets,
-        );
+        )));
       }
       if (shell) {
-        return renderShell(shell, request, relativePath);
+        return (yield* integrationValue(renderShell(shell, request, relativePath)));
       }
-      const fallbackHit = await bundleStore.read(scope, indexHtml);
+      const fallbackHit = (yield* integrationValue(bundleStore.read(scope, indexHtml)));
       if (!fallbackHit) {
         return { status: 404, body: "Not found" };
       }
-      return buildResponse(
+      return (yield* integrationValue(buildResponse(
         fallbackHit.body,
         fallbackHit.contentType ?? guessContentType(indexHtml),
         fallbackHit.cacheControl,
         200,
         rewriteAssets,
-      );
+      )));
     }
 
     // MPA mode: filesystem-style resolution. Try the exact path, then
     // `<path>.html`, then `<path>/index.html`. No SPA fallback, but if a
     // shell renderer is configured it gets a chance to handle the root.
     if (relativePath === "" && shell) {
-      return renderShell(shell, request, relativePath);
+      return (yield* integrationValue(renderShell(shell, request, relativePath)));
     }
     const candidates: string[] = [];
     if (relativePath === "") {
@@ -453,20 +459,20 @@ function createAppAssetHandler(options: AppHandlerOptions) {
         );
       }
     }
-    const hit = await readWithFallback(bundleStore, scope, candidates);
+    const hit = (yield* integrationValue(readWithFallback(bundleStore, scope, candidates)));
     if (!hit) {
       return { status: 404, body: "Not found" };
     }
     const contentType =
       hit.asset.contentType ?? guessContentType(hit.resolvedPath);
-    return buildResponse(
+    return (yield* integrationValue(buildResponse(
       hit.asset.body,
       contentType,
       hit.asset.cacheControl,
       200,
       rewriteAssets,
-    );
-  };
+    )));
+  }));
 }
 
 export interface SynthesizeServiceAppOptions {
@@ -510,9 +516,10 @@ export interface SynthesizeServiceAppOptions {
  * Async because the domain-binding store lookups it does for
  * extension services may be I/O-bound (KV / blob backends).
  */
-export async function synthesizeServiceAppService(
+export function synthesizeServiceAppService(
   options: SynthesizeServiceAppOptions,
 ): Promise<ZelavisRuntimeService | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisRuntimeService | undefined, IntegrationFailure> {
   const { service, bundleStore, projectId, effectiveMount, domainBindings } =
     options;
   const app = service.app;
@@ -531,12 +538,12 @@ export async function synthesizeServiceAppService(
   // through a future deployment adapter.
   let hosts: readonly string[] | undefined;
   if (service.scope === "extension") {
-    const authorized = await listAuthorizedHostsForService({
+    const authorized = (yield* integrationValue(listAuthorizedHostsForService({
       scope: "extension",
       projectId,
       serviceName: service.name,
       domainBindings,
-    });
+    })));
     hosts = authorized.length > 0 ? Object.freeze([...authorized]) : undefined;
 
     if ((!hosts || hosts.length === 0) && domainPolicy === "required") {
@@ -622,15 +629,16 @@ export async function synthesizeServiceAppService(
     },
   ];
 
-  return Object.freeze({
+  return (yield* integrationValue(Object.freeze({
     name: `${service.name}:app`,
     basePath: mount,
     service: Object.freeze({}),
     api: Object.freeze({
       v1: Object.freeze(routes),
     }),
-  }) as ZelavisRuntimeService;
-}
+  }) as ZelavisRuntimeService));
+}));
+  }
 
 /**
  * Apply scope-based mount rewriting. Extension-scoped services (uploaded

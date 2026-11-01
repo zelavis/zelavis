@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type {
   AuthAttemptRepository,
   AuthSecurityEventRepository,
@@ -30,15 +32,17 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return value;
 }
 
-async function sha256(value: string): Promise<string> {
+function sha256(value: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const input = new TextEncoder().encode(value);
   const bytes = new Uint8Array(input.byteLength);
   bytes.set(input);
-  const digest = await crypto.subtle.digest("SHA-256", bytes.buffer);
-  return [...new Uint8Array(digest)]
+  const digest = (yield* integrationValue(crypto.subtle.digest("SHA-256", bytes.buffer)));
+  return (yield* integrationValue([...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+    .join("")));
+}));
+  }
 
 export class AuthSecurityService {
   private readonly maxAttempts: number;
@@ -51,85 +55,100 @@ export class AuthSecurityService {
     this.blockMs = positiveInteger(options.blockMs, DEFAULT_BLOCK_MS);
   }
 
-  private async event(
+  private event(
     context: AuthAttemptContext,
     input: Omit<AuthSecurityEvent, "id" | "provider" | "subjectHash" | "occurredAt">,
   ): Promise<void> {
-    await this.options.events.append({
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    (yield* integrationValue(self.options.events.append({
       id: `security_event_${crypto.randomUUID()}`,
       provider: context.provider,
       subjectHash: context.subjectHash,
       occurredAt: new Date(),
       ...input,
-    });
+    })));
+  }));
   }
 
-  async beginAuthentication(
+  beginAuthentication(
     provider: string,
     input: unknown,
     now = new Date(),
   ): Promise<AuthAttemptContext> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthAttemptContext, IntegrationFailure> {
     const identifier = input && typeof input === "object" &&
       typeof (input as { identifier?: unknown }).identifier === "string"
       ? (input as { identifier: string }).identifier.trim().toLowerCase()
       : "unknown";
     const context = {
       provider,
-      subjectHash: await sha256(`${provider}\u0000${identifier}`),
+      subjectHash: (yield* integrationValue(sha256(`${provider}\u0000${identifier}`))),
     };
-    const state = await this.options.attempts.findByKeyHash(context.subjectHash);
+    const state = (yield* integrationValue(self.options.attempts.findByKeyHash(context.subjectHash)));
     if (state?.blockedUntil && state.blockedUntil > now) {
-      await this.event(context, {
+      (yield* integrationValue(self.event(context, {
         type: "authentication.blocked",
         outcome: "blocked",
-      });
+      })));
       throw new AuthRateLimitError(
         (state.blockedUntil.getTime() - now.getTime()) / 1_000,
       );
     }
     return context;
+  }));
   }
 
-  async authenticationFailed(
+  authenticationFailed(
     context: AuthAttemptContext,
     now = new Date(),
   ): Promise<void> {
-    await this.options.attempts.mutate(context.subjectHash, (current) => {
-      const cutoff = now.getTime() - this.windowMs;
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    (yield* integrationValue(self.options.attempts.mutate(context.subjectHash, (current) => {
+      const cutoff = now.getTime() - self.windowMs;
       const failures = [
         ...(current?.failures ?? []).filter((failure) => failure.getTime() >= cutoff),
         now,
-      ].slice(-this.maxAttempts);
+      ].slice(-self.maxAttempts);
       return {
         keyHash: context.subjectHash,
         failures,
-        blockedUntil: failures.length >= this.maxAttempts
-          ? new Date(now.getTime() + this.blockMs)
+        blockedUntil: failures.length >= self.maxAttempts
+          ? new Date(now.getTime() + self.blockMs)
           : undefined,
         updatedAt: now,
       };
-    });
-    await this.event(context, {
+    })));
+    (yield* integrationValue(self.event(context, {
       type: "authentication.failed",
       outcome: "failure",
-    });
+    })));
+  }));
   }
 
-  async authenticationSucceeded(
+  authenticationSucceeded(
     context: AuthAttemptContext,
     accountId: string,
   ): Promise<void> {
-    await this.options.attempts.mutate(context.subjectHash, () => null);
-    await this.event(context, {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    (yield* integrationValue(self.options.attempts.mutate(context.subjectHash, () => null)));
+    (yield* integrationValue(self.event(context, {
       type: "authentication.succeeded",
       outcome: "success",
       accountId,
-    });
+    })));
+  }));
   }
 
-  async listEvents(): Promise<AuthSecurityEvent[]> {
-    return (await this.options.events.list()).sort(
+  listEvents(): Promise<AuthSecurityEvent[]> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthSecurityEvent[], IntegrationFailure> {
+    return (yield* integrationValue(((yield* integrationValue(self.options.events.list()))).sort(
       (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
-    );
+    )));
+  }));
   }
 }

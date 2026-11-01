@@ -65,11 +65,13 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-search-lang-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({ name: "articles", analyzer: STEMMED_ANALYZER });
       for (const [id, data] of STEMMED_ROWS) yield* docs.insert({ collection: "articles", id, data });
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
 

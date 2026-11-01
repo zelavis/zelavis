@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, integration, present, integrationValue, unwrapFailure, IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * Domain-binding verifiers — the runtime-agnostic checks that prove
  * an operator controls a hostname before the dispatcher lets them
@@ -74,30 +76,28 @@ export function createNodeDnsTxtResolver(): DnsTxtResolver {
   let cached: Promise<(host: string) => Promise<string[][]>> | undefined;
   const load = () => {
     if (!cached) {
-      cached = (async () => {
-        try {
-          const importRuntimeModule = new Function(
-            "specifier",
-            "return import(specifier)",
-          ) as (specifier: string) => Promise<NodeDnsPromisesModule>;
-          const dns = await importRuntimeModule("node:dns/promises");
-          return dns.resolveTxt;
-        } catch {
-          throw new Error(
-            "createNodeDnsTxtResolver: `node:dns/promises` is unavailable. " +
-              "Provide a custom DnsTxtResolver implementation for this runtime.",
-          );
-        }
-      })();
+      cached = present(evaluate(() => new Function(
+        "specifier",
+        "return import(specifier)",
+      ) as (specifier: string) => Promise<NodeDnsPromisesModule>).pipe(
+        Effect.flatMap((importRuntimeModule) => integration(() => importRuntimeModule("node:dns/promises"))),
+        Effect.map((dns) => dns.resolveTxt),
+        Effect.mapError(() => new IntegrationFailure(new Error(
+          "createNodeDnsTxtResolver: `node:dns/promises` is unavailable. " +
+            "Provide a custom DnsTxtResolver implementation for this runtime.",
+        ))),
+      ));
     }
     return cached;
   };
 
   return {
-    async resolveTxt(host) {
-      const resolveTxt = await load();
-      return resolveTxt(host);
-    },
+    resolveTxt(host) {
+    return present(Effect.gen(function* () {
+      const resolveTxt = (yield* integrationValue(load()));
+      return (yield* integrationValue(resolveTxt(host)));
+    }));
+  },
   };
 }
 
@@ -147,46 +147,47 @@ function flattenTxtRecords(
  * "TXT records found but none matched" is different from "no TXT
  * records returned" is different from "DNS lookup failed".
  */
-export async function verifyDomainBindingViaDns(
+export function verifyDomainBindingViaDns(
   store: DomainBindingStore,
   host: string,
   options: VerifyDomainBindingViaDnsOptions = {},
 ): Promise<DomainBinding> {
+  return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure | Error> {
   const normalized = host.toLowerCase();
-  const binding = await store.get(normalized);
+  const binding = yield* integrationValue(store.get(normalized));
   if (!binding) {
-    throw new Error(`No domain binding exists for "${normalized}".`);
+    return yield* new IntegrationFailure(new Error(`No domain binding exists for "${normalized}".`));
   }
 
   const prefix = options.challengePrefix ?? DEFAULT_DNS_CHALLENGE_PREFIX;
   const resolver = options.resolver ?? getDefaultResolver();
   const challengeHost = `${prefix}.${normalized}`;
 
-  let records: readonly (readonly string[])[];
-  try {
-    records = await resolver.resolveTxt(challengeHost);
-  } catch (error) {
-    const cause =
-      error instanceof Error ? error.message : String(error ?? "unknown");
-    throw new Error(
-      `DNS-TXT lookup for "${challengeHost}" failed: ${cause}`,
-    );
-  }
+  const records = yield* integration(() => resolver.resolveTxt(challengeHost)).pipe(
+    Effect.mapError((failure) => {
+      const error = unwrapFailure(failure);
+      const cause =
+        error instanceof Error ? error.message : String(error ?? "unknown");
+      return new IntegrationFailure(new Error(
+        `DNS-TXT lookup for "${challengeHost}" failed: ${cause}`,
+      ));
+    }),
+  );
 
   if (!records || records.length === 0) {
-    throw new Error(`No TXT records returned for "${challengeHost}".`);
+    return yield* new IntegrationFailure(new Error(`No TXT records returned for "${challengeHost}".`));
   }
 
   const flattened = flattenTxtRecords(records);
   if (!flattened.includes(binding.verificationToken)) {
-    throw new Error(
+    return yield* new IntegrationFailure(new Error(
       `TXT records at "${challengeHost}" did not include the expected token. ` +
         `Found ${flattened.length} record(s); none matched.`,
-    );
+    ));
   }
 
   const now = new Date().toISOString();
-  return store.put(
+  return yield* integrationValue(store.put(
     {
       ...binding,
       verifiedAt: now,
@@ -194,7 +195,8 @@ export async function verifyDomainBindingViaDns(
       updatedAt: now,
     },
     "upsert",
-  );
+  ));
+  }));
 }
 
 export interface VerifyDomainBindingViaHttpOptions {
@@ -242,15 +244,16 @@ export interface VerifyDomainBindingViaHttpOptions {
  * Throws with method-specific reasons (network error, non-200
  * status, body mismatch) so operators can fix the right thing.
  */
-export async function verifyDomainBindingViaHttp(
+export function verifyDomainBindingViaHttp(
   store: DomainBindingStore,
   host: string,
   options: VerifyDomainBindingViaHttpOptions = {},
 ): Promise<DomainBinding> {
+  return present(Effect.gen(function* (): Effect.fn.Return<DomainBinding, IntegrationFailure | Error> {
   const normalized = host.toLowerCase();
-  const binding = await store.get(normalized);
+  const binding = yield* integrationValue(store.get(normalized));
   if (!binding) {
-    throw new Error(`No domain binding exists for "${normalized}".`);
+    return yield* new IntegrationFailure(new Error(`No domain binding exists for "${normalized}".`));
   }
 
   const scheme = options.scheme ?? "http";
@@ -261,47 +264,46 @@ export async function verifyDomainBindingViaHttp(
   const url = `${scheme}://${normalized}${path}/${binding.verificationToken}`;
   const fetchImpl = options.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") {
-    throw new Error(
+    return yield* new IntegrationFailure(new Error(
       "verifyDomainBindingViaHttp requires a fetch implementation; pass one via `options.fetch`.",
-    );
+    ));
   }
 
   const timeoutMs = options.timeoutMs ?? 10_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response: Response;
-  try {
-    response = await fetchImpl(url, {
-      method: "GET",
-      redirect: "manual",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const cause =
-      error instanceof Error ? error.message : String(error ?? "unknown");
-    throw new Error(`HTTP-01 fetch of "${url}" failed: ${cause}`);
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = yield* integration(() => fetchImpl(url, {
+    method: "GET",
+    redirect: "manual",
+    signal: controller.signal,
+  })).pipe(
+    Effect.mapError((failure) => {
+      const error = unwrapFailure(failure);
+      const cause =
+        error instanceof Error ? error.message : String(error ?? "unknown");
+      return new IntegrationFailure(new Error(`HTTP-01 fetch of "${url}" failed: ${cause}`));
+    }),
+    Effect.ensuring(Effect.sync(() => clearTimeout(timer))),
+  );
 
   if (response.status !== 200) {
-    throw new Error(
+    return yield* new IntegrationFailure(new Error(
       `HTTP-01 fetch of "${url}" returned ${response.status}; expected 200.`,
-    );
+    ));
   }
 
   // Trim trailing whitespace — some webservers append newlines to
   // static files, and a strict equality check would spuriously fail.
-  const body = (await response.text()).trim();
+  const body = (yield* integration(() => response.text())).trim();
   if (body !== binding.verificationToken) {
-    throw new Error(
+    return yield* new IntegrationFailure(new Error(
       `HTTP-01 response body at "${url}" did not match the expected token.`,
-    );
+    ));
   }
 
   const now = new Date().toISOString();
-  return store.put(
+  return yield* integrationValue(store.put(
     {
       ...binding,
       verifiedAt: now,
@@ -309,7 +311,8 @@ export async function verifyDomainBindingViaHttp(
       updatedAt: now,
     },
     "upsert",
-  );
+  ));
+  }));
 }
 
 export interface CreateDomainChallengeServiceOptions {
@@ -352,10 +355,10 @@ export function createDomainChallengeService(
     id: "zelavis.domain.challenge",
     method: "GET",
     path: routePath,
-    handler: async ({ request, params }) => {
+    handler: ({ request, params }) => present(Effect.gen(function* () {
       const url = new URL(request.url);
       const host = url.host.toLowerCase();
-      const binding = await store.get(host);
+      const binding = (yield* integrationValue(store.get(host)));
       if (!binding) {
         return { status: 404, body: "Not found" };
       }
@@ -368,7 +371,7 @@ export function createDomainChallengeService(
         headers: { "content-type": "text/plain; charset=utf-8" },
         body: binding.verificationToken,
       };
-    },
+    })),
   };
 
   return {

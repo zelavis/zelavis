@@ -127,9 +127,9 @@ test("time series: points do not feed back into the event log", async (t) => {
       yield* timeSeries.define(viewsSeries);
       yield* seed(documents, [{ day: 0, views: 10, region: "eu" }]);
 
-      const before = yield* events.read();
+      const before = (yield* events.read()).events;
       yield* timeSeries.ingest("views");
-      const after = yield* events.read();
+      const after = (yield* events.read()).events;
       assert.deepEqual(
         after.map((e) => e.eventId),
         before.map((e) => e.eventId),

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../runtime/effect-boundary.js";
 import {
   resolveTrustedEd25519Key,
   type ZelavisHostOperationTrustStore,
@@ -40,30 +42,34 @@ export function createProjectDispatchNonceConsumer(
   sweepExpired(now?: number): Promise<number>;
 } {
   if (!validId(agentId)) throw new TypeError("Invalid Agent id.");
-  const keyFor = async (nonce: string) => {
-    const hash = await crypto.subtle.digest("SHA-256",
-      new TextEncoder().encode(`${agentId}\0${nonce}`));
-    return [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, "0")).join("");
-  };
+  const keyFor = (nonce: string) => present(Effect.gen(function* () {
+    const hash = (yield* integrationValue(crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(`${agentId}\0${nonce}`))));
+    return (yield* integrationValue([...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, "0")).join("")));
+  }));
   return {
-    async consume(nonce, expiresAt) {
+    consume(nonce, expiresAt) {
+    return present(Effect.gen(function* () {
       if (!validId(nonce) || !Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) return false;
-      const key = await keyFor(nonce);
-      return (await store.setIfAbsent(NONCE_NAMESPACE, key,
-        { agentId, expiresAt })).created;
-    },
-    async sweepExpired(now = Date.now()) {
+      const key = (yield* integrationValue(keyFor(nonce)));
+      return ((yield* integrationValue(store.setIfAbsent(NONCE_NAMESPACE, key,
+        { agentId, expiresAt })))).created;
+    }));
+  },
+    sweepExpired(now = Date.now()) {
+    return present(Effect.gen(function* () {
       if (!Number.isSafeInteger(now)) throw new TypeError("Invalid cleanup time.");
       let removed = 0;
-      for (const record of await store.list(NONCE_NAMESPACE)) {
+      for (const record of (yield* integrationValue(store.list(NONCE_NAMESPACE)))) {
         const value = record.value;
         if (!value || typeof value !== "object" || Array.isArray(value)) continue;
         const expiry = (value as { readonly expiresAt?: unknown }).expiresAt;
         if (typeof expiry !== "number" || expiry > now) continue;
-        if (await store.compareAndDelete(NONCE_NAMESPACE, record.key, record.updatedAt)) removed += 1;
+        if ((yield* integrationValue(store.compareAndDelete(NONCE_NAMESPACE, record.key, record.updatedAt)))) removed += 1;
       }
       return removed;
-    },
+    }));
+  },
   };
 }
 
@@ -95,10 +101,11 @@ function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> {
 }
 
 /** Platform signer: one action for one Agent, Project, owner session and epoch. */
-export async function signProjectDispatchAuthority(
+export function signProjectDispatchAuthority(
   privateKey: CryptoKey,
   claims: ProjectDispatchClaims,
 ): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   if (!validId(claims.keyId) || !validId(claims.agentId) ||
       !validId(claims.projectId) || !validId(claims.nodeId) ||
       !validId(claims.ownerSession) || !validId(claims.nonce) ||
@@ -113,13 +120,14 @@ export async function signProjectDispatchAuthority(
     throw new TypeError("Project dispatch claims are invalid or unbounded.");
   }
   const payload = canonical(claims);
-  const signature = await crypto.subtle.sign("Ed25519", privateKey,
-    new TextEncoder().encode(`${CONTEXT}${payload}`));
+  const signature = (yield* integrationValue(crypto.subtle.sign("Ed25519", privateKey,
+    new TextEncoder().encode(`${CONTEXT}${payload}`))));
   return `${base64UrlEncode(new TextEncoder().encode(payload))}.${base64UrlEncode(new Uint8Array(signature))}`;
-}
+}));
+  }
 
 /** Destination verifier. The caller must read placement at execution time. */
-export async function verifyProjectDispatchAuthority(
+export function verifyProjectDispatchAuthority(
   trust: ZelavisHostOperationTrustStore,
   token: string,
   options: {
@@ -130,6 +138,7 @@ export async function verifyProjectDispatchAuthority(
     readonly consumeNonce: (nonce: string, expiresAt: number) => boolean | Promise<boolean>;
   },
 ): Promise<ProjectDispatchClaims | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ProjectDispatchClaims | undefined, IntegrationFailure> {
   if (typeof token !== "string" || token.length > 8_192 ||
       !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return undefined;
   const separator = token.indexOf(".");
@@ -163,18 +172,19 @@ export async function verifyProjectDispatchAuthority(
       options.placement.state !== "active" || options.placement.leaseExpiresAt <= now ||
       issuedAt > now + 5_000 || expiresAt <= now ||
       expiresAt <= issuedAt || expiresAt - issuedAt > 60_000) return undefined;
-  const publicKey = await resolveTrustedEd25519Key(trust, keyId, now);
+  const publicKey = (yield* integrationValue(resolveTrustedEd25519Key(trust, keyId, now)));
   if (!publicKey || signature.byteLength !== 64 ||
-      !(await crypto.subtle.verify("Ed25519", publicKey, signature,
-        new TextEncoder().encode(`${CONTEXT}${payload}`)))) return undefined;
-  if (!(await options.consumeNonce(nonce, expiresAt))) return undefined;
+      !((yield* integrationValue(crypto.subtle.verify("Ed25519", publicKey, signature,
+        new TextEncoder().encode(`${CONTEXT}${payload}`)))))) return undefined;
+  if (!((yield* integrationValue(options.consumeNonce(nonce, expiresAt))))) return undefined;
   return { keyId, agentId, action, projectId, nodeId, ownerSession,
     epoch, issuedAt, expiresAt, nonce,
     ...(artifactDigest === null ? {} : { artifactDigest }) };
-}
+}));
+  }
 
 /** Authorize one destination operation against the current committed lease. */
-export async function receiveProjectDispatch<T>(input: {
+export function receiveProjectDispatch<T>(input: {
   readonly trust: ZelavisHostOperationTrustStore;
   readonly token: string;
   readonly agentId: string;
@@ -185,21 +195,23 @@ export async function receiveProjectDispatch<T>(input: {
   readonly consumeNonce: (nonce: string, expiresAt: number) => boolean | Promise<boolean>;
   readonly execute: (claims: ProjectDispatchClaims) => Promise<T>;
 }): Promise<T> {
+    return present(Effect.gen(function* (): Effect.fn.Return<T, IntegrationFailure> {
   if (!validId(input.projectId) || !validId(input.nodeId)) {
     throw new TypeError("Invalid destination Project identity.");
   }
-  const placement = await input.readPlacement(input.projectId);
+  const placement = (yield* integrationValue(input.readPlacement(input.projectId)));
   if (!placement || placement.nodeId !== input.nodeId) {
     throw new Error("Project placement is absent or assigned to another Node.");
   }
-  const claims = await verifyProjectDispatchAuthority(input.trust, input.token, {
+  const claims = (yield* integrationValue(verifyProjectDispatchAuthority(input.trust, input.token, {
     agentId: input.agentId,
     action: input.action,
     placement,
     consumeNonce: input.consumeNonce,
-  });
+  })));
   if (!claims || claims.projectId !== input.projectId) {
     throw new Error("Project dispatch authority is invalid or stale.");
   }
-  return input.execute(claims);
-}
+  return (yield* integrationValue(input.execute(claims)));
+}));
+  }

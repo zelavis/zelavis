@@ -47,7 +47,9 @@ for (const [engine, open] of engines) {
     const dir = mkdtempSync(join(tmpdir(), `zv-composite-${engine}-`));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const store = yield* open(dir);
+      const shard = yield* open(dir);
+
+      const store = shard.partition("t1");
       const docs = documentsFor(store, "t1");
       yield* docs.createCollection({ name: "items" });
       yield* docs.createCollection({ name: "plain" });
@@ -57,7 +59,7 @@ for (const [engine, open] of engines) {
       }
       // Created over documents already there, so the rewrite is what fills it.
       if (index) yield* docs.createIndex({ collection: "items", name: "by_status_price", fields: BY_STATUS_PRICE });
-      return yield* body(docs, store);
+      return yield* body(docs, store, shard);
     })));
   };
   const ids = (found) => found.map((d) => d.id);

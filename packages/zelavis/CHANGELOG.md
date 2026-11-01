@@ -1,5 +1,153 @@
 # zelavis
 
+## 2.0.0-alpha.42
+
+### Patch Changes
+
+- 65e65af: Refuse `install --stage-only --dry-run` before release preparation and correct installer guidance for default Traefik ingress and private management listeners.
+  
+  Correct Debian package removal to inspect its lifecycle argument and stop the Platform, ingress, dashboard socket and updater activation. Management requests can no longer restart the removed Platform. The removal hook leaves running services alone during package upgrades.
+
+## 2.0.0-alpha.41
+
+### Patch Changes
+
+- e3cd867: Keep the dashboard, login, Project status, logs and repair APIs available during
+  Project Agent conversion. Resume recovered sites before private integrations
+  finish starting, and release expired or failed recovery holds so one Project
+  cannot leave the Platform and other sites permanently unavailable. Allow cold
+  Project hosts to finish their bounded startup before declaring them failed.
+  
+  Keep unused hosting backends lazy during conversion, include private integration
+  failures in the owning Project's logs, and show App hosts and workers in their
+  Project diagnostics.
+  Private Project runtimes restore asynchronously after public recovery, with
+  separate per-Project deadlines. Qualification covers both the previous-release
+  update and the direct pre-survival Agent conversion on two CPUs and 4 GB.
+
+## 2.0.0-alpha.40
+
+### Patch Changes
+
+- d07cc80: Update the separately supervised Linux Project Agent with the Platform while preserving Project process identities, placement custody and private App-host control. Durable process records, authenticated reconnectable host commands, kernel locks and client reconnection also recover surviving workloads after an Agent crash. Ordinary stops still stop workloads, and uninstall fences the owned unit cgroup.
+
+  An Agent installed before this protocol needs one explicit conversion during Update now: Projects restart once while management and preview admission wait for recovery. Later Agent replacements preserve their processes. Agent failure is reported separately from the committed Platform engine. User-mode embedded Agents receive new code when their persistent host next starts; remote-worker and Bun replacement are not qualified by this Linux system-installation path.
+
+## 2.0.0-alpha.39
+
+### Patch Changes
+
+- c038a76: The terminal fills its window: it was fitted to nine columns because the island holding it was an inline element, which also made typed text hard to follow. API keys are now a section of Server → Access with presets (Debug read-only, Operator, Project client), one-time display, rotation and revocation. A new read-only diagnostic, `zelavis debug processes` (`client.debug.processes`, `GET /runtime/debug/processes`, permission `server.debug.read`), lists the Platform account's Zelavis processes with secrets removed and flags a command running more than once side by side.
+- 84b8e68: Two more read-only diagnostics behind `server.debug.read`: `zelavis debug updates` shows the last ten finished updates with the installer's output, which the updater now keeps so a failed update can still be read after the next attempt; `zelavis debug project <id>` gathers one Project's record, runtime log, related Platform log entries and processes in one answer.
+- 5745c67: A Platform update is no longer rolled back because a Project is down. After the new engine takes over, a Project that is stopped or failed is reported in the log and left to the normal restoration of Projects that should be running; only a Project running at the wrong address, or stuck mid-transition, still fails the update.
+
+## 2.0.0-alpha.38
+
+### Patch Changes
+
+- acf44d8: A Platform update no longer fails because a Project has leftover duplicate processes. When adopting a Project's running processes, identical extra copies of a process the plan already adopted (left by a replacement an earlier failed update never stopped) are stopped instead of making the whole adoption fail, and a genuine mismatch now names the process and the field that differs.
+- c8c7ff0: A Project never runs two copies of the same process. Before a recipe process starts, any uncontrolled process of that Project running the exact same command (left behind when an engine was lost mid-start, or a failed update) is stopped first.
+
+## 2.0.0-alpha.37
+
+### Patch Changes
+
+- 3548515: The Marketplace no longer offers a version your Zelavis cannot run. Each version on the allow-list now names the oldest Zelavis it needs, so a server is offered every app, plugin and frontend at the newest version it runs, and creating or upgrading a Project picks that version too. Installing a version that needs a newer Zelavis is refused before anything is downloaded, with a message naming the version to update to.
+- 659cb13: The dashboard is now built with Fuzor. It is the same dashboard to use: every page is there and every page is now native: the Database workspace uses three grid libraries with draft recovery, Content Studio, Workloads, Storage and Media, the Marketplaces, Server and Fabric, the Assistant, Settings and the first-run setup were rebuilt, and **Update now** is in the shell on every page. Uploads from the dashboard keep their label, alt text and purpose (the Gateway removed them before). One build now mounts at any root path (`/zelavis`, `/admin`, `/`), the dashboard calls the Platform it runs in directly rather than over a guessed address, and the package ships only built output that needs nothing installed beside it. The previous React dashboard stays in the repository as `@zelavis/ui-legacy`, private and no longer shipped. Development uses the Fuzor checkout next to the repository when there is one, and the pinned npm release otherwise.
+- 16739cd: Recipe updates that move an app to a new layout keep its site answering throughout. Reading a Project while it crossed to a new layout reported it stopped, and that closed its preview listener, so visitors were refused for a few seconds; a crossing Project now stays running to readers and to Edge. Processes a live upgrade starts now run from the new recipe's root, so after the next Platform update they are taken over instead of being started a second time (a duplicate web server, and a PHP-FPM that restarted every 15 seconds). Apps already upgraded by an earlier release are taken over too. A new release gate qualifies these against a server with a history: apps made by old releases, carried by live updates onto the new release, and every recipe upgrade answered without a single failed request.
+
+## 2.0.0-alpha.36
+
+### Patch Changes
+
+- f803d6d: A managed app whose integration host had kept running through several Platform updates could fail **Update recipe** with "Recipe manifest does not match contract 1", because that host loaded the new recipe with its own older code. A host now checks only that a recipe is the locked one, never its content, so later recipes cannot trip it, and a host from an earlier release that cannot read a recipe it is about to load is replaced first. The app's own processes keep serving while it is. Requests that fail with a reference ID now record the full error under that ID in **Server → Logs** and the service journal, so the reference always leads to the cause.
+
+## 2.0.0-alpha.35
+
+### Patch Changes
+
+- f7202e9: A recipe update that failed with "Update recovery required" is now recovered when the Platform reconciles, such as after **Update now**. Before, the recovery restarted the app's previous processes without the Project's placement, so the Agent refused them again and the Project stayed stuck. The app then runs on its previous recipe and can be updated again.
+
+## 2.0.0-alpha.34
+
+### Patch Changes
+
+- f869f2a: A recipe update that replaces an app's processes, such as DokuWiki moving to the new `app/` layout, now works after the Platform has been updated. After **Update now**, the Platform takes over running apps without the placement it had handed out, so a replacement process was refused by the Agent ("A process could not be started") and the update needed recovery. The Platform now hands the current placement to every process it starts, including for apps it took over. A failed update of this kind is recovered when the Platform next starts, including through **Update now**.
+
+## 2.0.0-alpha.33
+
+### Patch Changes
+
+- a68c62c: Creating a Project from an app or upgrading one now installs the app's newest listed version first, on the server, when it is not installed yet. This works the same from the dashboard, the API, the SDK and the CLI. A WordPress site created while WordPress came with the Platform now upgrades with one click: before, the Upgrade button failed with "listed in the Marketplace but not installed yet". App cards in the Marketplace no longer offer **Update**, because each Project keeps its own version and moves only when you upgrade it. Plugins and frontends keep their **Update** button.
+
+## 2.0.0-alpha.32
+
+### Patch Changes
+
+- 2492a84: Upgrading a Project to a recipe the Marketplace lists but this server has not installed now works from the dashboard: **Upgrade** installs the recipe first, then upgrades. This is the case of a WordPress site created while WordPress came with the Platform. Before, the upgrade ran from the listing, which carries no install instructions, and failed with "Integration updates cannot change the app's deployment contract". Through the API, SDK and CLI such an upgrade is now refused with a message saying to install the recipe first.
+
+## 2.0.0-alpha.31
+
+### Patch Changes
+
+- 43f76c4: Creating a Project from the form works again for a recipe the Platform bundles but has not switched on yet, such as Zelavis App. The form tried to download it from npm, the Platform refused, and no Project was created. It now installs each recipe the way the Marketplace does: a listed package is downloaded, a bundled one is switched on where it is.
+- fc4b2dd: An installed app, plugin or frontend that the Marketplace now offers at a newer version shows **Update to** that version, and updating it takes effect at once. Before, installing a newer WordPress recipe was accepted but ignored until the Platform restarted, so Projects never offered the upgrade. The Platform picks the version from its allow-list, as it does for its own updates. After updating a recipe, its Projects offer **Upgrade** straight away. The same update is available as `POST /runtime/services/:name/update`, `client.marketplace.update(name)` and `zelavis marketplace update <name>`. `client.marketplace.services()` and `zelavis marketplace updates` list what can be updated.
+
+## 2.0.0-alpha.30
+
+### Patch Changes
+
+- 7185b50: A third-party app's Project now keeps the application, and only the application, in `app/`: its site in `app/site` and its database in `app/db`. Everything Zelavis runs it with (web server and PHP configuration, pid files, logs, temporary files) lives in `.zelavis/server` instead, so recipe updates, new dashboard features and Platform updates never touch the application's folder. WordPress, DokuWiki, Drupal, Joomla, TYPO3 and PrestaShop use this layout (recipe contract 2). An existing Project moves to it with an ordinary recipe upgrade, live and without stopping: its site and database stay exactly where they are, only the Platform's own files move out of `app/`.
+- e540a0d: A WordPress Project created before the recipe-based WordPress (alpha.26) upgrades from the dashboard while it runs: the Platform fetches what the new recipe needs while the site keeps serving, then holds the site's requests for the few seconds it takes to stop the old processes, take its folders over into the new layout (the same files, database, address, password and admin login) and start the new ones. Visitors wait instead of getting an error, and if anything goes wrong the earlier setup is put back and started again. Site previews and a Project's own domains now wait the same way during any such switch, instead of answering that the site is not running.
+
+## 2.0.0-alpha.29
+
+### Patch Changes
+
+- da0251b: A Project that keeps failing to start is no longer prepared and failed again every 15 seconds: automatic starts back off after each failure (15 seconds, doubling, up to an hour), its failure reason stays on the Project, and starting, stopping, updating, upgrading or deleting it tries again at once.
+
+## 2.0.0-alpha.28
+
+### Patch Changes
+
+- ec1e06e: Requests to a Project keep flowing while its Zelavis version is switched or its recipe is updated live: the Platform finds and reaches the Project without waiting for the operation (a managed app's integration runtime aside), so they pause only for the moment the engine is handed over instead of for the whole switch (which could exceed 30 seconds).
+- b14db6c: Deleting a third-party app Project (WordPress, DokuWiki, Drupal, Joomla, TYPO3, PrestaShop) no longer breaks the next Project created from the same recipe with "The recipe package has no readable package.json." Projects of one recipe version share its runtime, which now runs from a copy kept beside the Projects instead of inside the first one; copies no Project uses are removed when the Platform starts.
+- da2994f: A plugin or frontend installed, updated or uninstalled on a running Platform now takes effect without a restart: the Platform hands traffic to a fresh engine of the same release through the same handover that applies updates, so requests wait briefly instead of failing and no previous code stays loaded. Installing a Project recipe needs no reload; the next Project created or upgraded uses it.
+
+## 2.0.0-alpha.27
+
+### Patch Changes
+
+- fd2b31c: The Platform now records the cause behind every "Action failed, Reference: …" message in a bounded, redacted log (and the service journal), read from Server → Logs, `client.logs.read`, `GET /runtime/logs` and `zelavis logs --ref`. Server → Terminal (`client.terminal`, `/runtime/terminal*`, `zelavis terminal`) gives principals with `server.terminal.use` a shell inside tmux as the Platform's unprivileged account, with a fixed `terminal` host package set that installs tmux. A recipe that is only in the Marketplace catalogue is installed before a Project is created from it (the Marketplace and the Projects form do it, and the server refuses otherwise), and the installed package then replaces its catalogue listing, so the Project is locked with the recipe's install methods instead of none. A service installed at runtime stays extension-scoped in the service list once the Platform recomposes, so its dashboard page stays sandboxed and its menus are not offered inside Projects.
+
+## 2.0.0-alpha.26
+
+### Patch Changes
+
+- 7c7dab2: WordPress is now a recipe (`defineRecipe` install and start phases) run by the Platform's recipe runtime instead of a hand-written runtime module. Phases run in their own process under Node's permission model, the process plan is supervised and adopted after a restart, and the WordPress release is pinned in the recipe's `zelavis.project.install` manifest. A stopped WordPress Project made by an earlier version upgrades to it from the Upgrade action: its folders are renamed into the new layout and its ports, database password and socket identity are carried over, so its address, content, uploads and admin login stay as they were (the move is journaled and is reversed if anything fails). New Projects use the new layout.
+  
+  A running Project made from a recipe with a process plan now upgrades to a newer recipe without stopping: the new plan is reconciled against the running processes, unchanged ones keep serving, configuration-only changes reload in place and only changed processes are replaced in dependency order, with a durable journal and rollback to the previous plan on any failure.
+  
+  Managed apps (WordPress and any recipe that declares `managed`) upgrade their processes and their Zelavis integration in one transaction while running, and a recipe upgraded while stopped prepares the app the next time it starts.
+  
+  A recipe can place its data directories by name (`directories` in the manifest, `context.directories.named`). A running Project upgrades to a recipe that names another path without touching its data, and the data moves, atomically, the next time the Project starts from a stop.
+  
+  While a launch change replaces a serving process, public requests wait at the gateway instead of failing. `@zelavis/dokuwiki` is a second managed recipe (Nginx and PHP-FPM, no database) on the same path, and WordPress now declares its site and database directories by name.
+  
+  Recipes can declare `setup` values (templates over the Project's ports, directories, sockets, account and generated secrets) for an application's own installer: `projects setup <id> [--reveal]`, `client.projects.setup|revealSetup` and `GET|POST /projects/:id/setup[/reveal]`; revealing needs `project.setup.reveal` and is audited. `@zelavis/joomla` is the first recipe to use them. Host package sets `php-stack` and `mariadb-server` join `wordpress-stack`; `@zelavis/dokuwiki` uses `php-stack` alone.
+  
+  The dashboard has a Setup page for managed Projects (values, a Reveal secrets button and recent reveals), and the reveal trail is readable through HTTP, SDK and CLI (`projects setup-audit`). `@zelavis/wordpress` now needs the `php-stack` and `mariadb-server` sets; `@zelavis/typo3` is a fourth managed recipe.
+  
+  Recipes bring their own PHP: manifest `runtimes` pin a build per platform (address, SHA-256, size), unpacked once into `<data>/runtimes/<sha256>/` and offered as commands. WordPress, DokuWiki, Joomla and TYPO3 no longer need PHP on the host, run the PHP version they pin, and an upgrade can switch builds. The host package sets are now `nginx` and `mariadb-server`.
+  
+  Recipes bring their own web server too: all five managed recipes (WordPress, DokuWiki, Joomla, TYPO3, new `@zelavis/prestashop`) pin Caddy next to their PHP, so only MariaDB is still taken from the host (`mariadb-server`), and DokuWiki needs nothing from it. The recipe host unpacks `.zip` archives with plain Node, retries downloads that stumble, and the Platform prunes runtime builds no Project names.
+  
+  New `@zelavis/drupal` (Drupal 11.4.9 from drupal.org, pinned): the sixth managed recipe, on its own PHP 8.4 and Caddy, with Drupal's web installer fed from the Project's setup values. A runtime download may list up to three `mirrors` (other places holding the same archive, tried in order; the digest is the only trust).
+  
+  Recipes bring their own MariaDB on Linux x86_64 (pinned official 11.4.9 build as the `mariadbd`, `mariadb-install-db` and `mariadb` runtimes); a runtime's `hostRequirement` names the host requirement used on platforms without a build. WordPress, Joomla, TYPO3, PrestaShop and the new Drupal no longer need the `mariadb-server` host package there.
+  
+  WordPress, Joomla, TYPO3, PrestaShop and Drupal offer a second install method, `container`, that runs MariaDB from the official image (pinned by digest) through the operator's own Docker; the database code of all five is now one shared helper in `zelavis/recipe`. A process can be ready on its server's greeting (`readiness.greeting`), and `RecipeContext.account` carries numeric `uid`/`gid`.
+
 ## 2.0.0-alpha.25
 
 ### Patch Changes

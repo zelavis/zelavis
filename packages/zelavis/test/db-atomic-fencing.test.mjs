@@ -5,14 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { Effect, Stream } from "effect";
-import { claimGeneration, openStoreOverKv, storeOverKv } from "../dist/db/kv-store.js";
-import { metaKey } from "../dist/db/keys.js";
+import { Deferred, Effect, Stream } from "effect";
+import { claimGeneration, openShardOverKv, shardOverKv } from "../dist/db/kv-store.js";
+import { partitionKeys, shardMetaKey } from "../dist/db/keys.js";
+import { StoreError } from "../dist/db/errors.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
-import { makeLibsqlEngine } from "../dist/db/engines/libsql.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
-import { makeLibsqlRemoteEngine } from "../dist/db/engines/libsql-remote.js";
 import { engineAvailable } from "./_engine-available.mjs";
 import { makeRocksdbJsEngine } from "../dist/db/engines/rocksdb-js.js";
 
@@ -22,6 +21,10 @@ const put = (store, seq = 1) => store.transact(txn => txn.put(seq, enc.encode("p
 const state = engine => Stream.runCollect(engine.scan(new Uint8Array()));
 const error = effect => effect.pipe(Effect.match({ onSuccess: () => undefined, onFailure: e => e }));
 const run = effect => Effect.runPromise(Effect.scoped(effect));
+/** The one partition these tests write, on a shard opened over `engine`. */
+const openPartitionOver = (partition, engine) =>
+  Effect.map(openShardOverKv(partition, engine), (shard) => shard.partition(partition));
+const partitionOver = (partition, engine, claim) => shardOverKv(partition, engine, claim).partition(partition);
 const directory = body => {
   const dir = mkdtempSync(join(tmpdir(), "zelavis-atomic-fence-"));
   return Promise.resolve().then(() => body(dir)).finally(() => rmSync(dir, { recursive: true, force: true }));
@@ -29,9 +32,7 @@ const directory = body => {
 const makers = [
   ["memory", () => Effect.succeed(memoryKvEngine())],
   ["node-sqlite", dir => makeNodeSqliteEngine("acme", dir)],
-  ["libsql", dir => makeLibsqlEngine("acme", { directory: dir })],
   ["lmdb", dir => makeLmdbEngine("acme", dir)],
-  ["libsql-client local transport", dir => makeLibsqlRemoteEngine("acme", { url: `file:${join(dir, "remote.sqlite")}` })],
   ["rocksdb-js exclusive process", dir => makeRocksdbJsEngine("acme", dir)],
 ];
 
@@ -51,13 +52,13 @@ for (const [name, make] of makers) {
 
   test(`${name}: takeover during a prepared transaction fences the batch and all maintenance`, () => directory(dir => run(Effect.gen(function* () {
     const engine = yield* make(dir);
-    const stale = yield* openStoreOverKv("acme", engine);
+    const stale = yield* openPartitionOver("acme", engine);
     yield* put(stale);
     const independent = name === "memory" || name.startsWith("rocksdb-js") ? engine : yield* make(dir);
     let before;
     const result = yield* error(stale.transact(txn => Effect.gen(function* () {
       yield* txn.put(2, enc.encode("late"), manifest);
-      const current = yield* openStoreOverKv("acme", independent);
+      const current = yield* openPartitionOver("acme", independent);
       yield* put(current, 3);
       before = yield* state(independent);
     })));
@@ -75,9 +76,9 @@ for (const [name, make] of makers) {
 test("SQLite: same-claim contention rejects dependent stale reads; foreign session cannot reuse a generation", () => directory(dir => run(Effect.gen(function* () {
   const engine = yield* makeNodeSqliteEngine("acme", dir);
   const claim = yield* claimGeneration(engine);
-  const first = storeOverKv("acme", engine, claim);
+  const first = partitionOver("acme", engine, claim);
   const otherEngine = yield* makeNodeSqliteEngine("acme", dir);
-  const second = storeOverKv("acme", otherEngine, claim);
+  const second = partitionOver("acme", otherEngine, claim);
   let before;
   const conflict = yield* error(first.transact(txn => Effect.gen(function* () {
     yield* txn.put(1, enc.encode("late"), manifest);
@@ -86,7 +87,7 @@ test("SQLite: same-claim contention rejects dependent stale reads; foreign sessi
   })));
   assert.equal(conflict?.op, "store.conflict");
   assert.deepEqual(yield* state(otherEngine), before);
-  const forged = storeOverKv("acme", engine, { generation: claim.generation, session: enc.encode("foreign") });
+  const forged = partitionOver("acme", engine, { generation: claim.generation, session: enc.encode("foreign") });
   assert.equal((yield* error(forged.nextSeq))?._tag, "WriterFenced");
 }))));
 
@@ -99,7 +100,7 @@ test("SQLite: concurrent independent claims advance generations without reuse", 
 
 test("SQLite: another process can supersede a paused writer; restart preserves the high-water mark", () => directory(dir => run(Effect.gen(function* () {
   const engine = yield* makeNodeSqliteEngine("acme", dir);
-  const stale = yield* openStoreOverKv("acme", engine);
+  const stale = yield* openPartitionOver("acme", engine);
   let before;
   const result = yield* error(stale.transact(txn => Effect.gen(function* () {
     yield* txn.put(1, enc.encode("late"), manifest);
@@ -115,24 +116,19 @@ test("SQLite: another process can supersede a paused writer; restart preserves t
   })));
   assert.equal(result?._tag, "WriterFenced");
   assert.deepEqual(yield* state(engine), before);
-  const reopened = yield* openStoreOverKv("acme", engine);
+  const reopened = yield* openPartitionOver("acme", engine);
   assert.equal(reopened.generation, 3);
 }))));
 
-test("generation widening preserves existing events and refuses exhaustion or malformed state", () => run(Effect.gen(function* () {
+test("an exhausted or malformed generation is refused, and the shard is left as it was", () => run(Effect.gen(function* () {
   const engine = memoryKvEngine();
-  const original = yield* openStoreOverKv("acme", engine);
+  const original = yield* openPartitionOver("acme", engine);
   yield* put(original);
-  const events = yield* Stream.runCollect(original.events.read());
-  yield* engine.write([{ op: "put", key: metaKey("generation"), value: Uint8Array.of(255,255,255,255) }]);
-  const widened = yield* openStoreOverKv("acme", engine);
-  assert.equal(widened.generation, 2 ** 32);
-  assert.deepEqual(yield* Stream.runCollect(widened.events.read()), events);
-  assert.equal((yield* engine.get(metaKey("generation"))).length, 8);
+  assert.equal((yield* engine.get(shardMetaKey("generation"))).length, 8);
   const exhausted = new Uint8Array(8);
   new DataView(exhausted.buffer).setBigUint64(0, BigInt(Number.MAX_SAFE_INTEGER));
-  for (const value of [exhausted, Uint8Array.of(1,2,3)]) {
-    yield* engine.write([{ op: "put", key: metaKey("generation"), value }]);
+  for (const value of [exhausted, Uint8Array.of(1,2,3), Uint8Array.of(255,255,255,255)]) {
+    yield* engine.write([{ op: "put", key: shardMetaKey("generation"), value }]);
     const before = yield* state(engine);
     assert.equal((yield* error(claimGeneration(engine)))?._tag, "StoreError");
     assert.deepEqual(yield* state(engine), before);
@@ -142,7 +138,7 @@ test("generation widening preserves existing events and refuses exhaustion or ma
 test("an engine without destination conditions refuses activation", () => run(Effect.gen(function* () {
   const engine = memoryKvEngine();
   const { conditionalWrite, ...unsupported } = engine;
-  assert.equal((yield* error(openStoreOverKv("acme", unsupported)))?.op, "generation.claim");
+  assert.equal((yield* error(openPartitionOver("acme", unsupported)))?.op, "generation.claim");
   assert.deepEqual(yield* state(engine), []);
 })));
 
@@ -161,7 +157,7 @@ for (const [name, make] of makers) {
         }
         return yield* base.conditionalWrite(writes, conditions);
       }) };
-      const stale = yield* openStoreOverKv("acme", engine);
+      const stale = yield* openPartitionOver("acme", engine);
       yield* put(stale);
       armed = true;
       assert.equal((yield* error(operation(stale)))?._tag, "WriterFenced");
@@ -191,7 +187,7 @@ test("SQLite: competing real processes never claim the same generation", () => d
 
 test("LMDB: another process fences a transaction prepared by the previous session", () => directory(dir => run(Effect.gen(function* () {
   const engine = yield* makeLmdbEngine("acme", dir);
-  const stale = yield* openStoreOverKv("acme", engine);
+  const stale = yield* openPartitionOver("acme", engine);
   let before;
   const outcome = yield* error(stale.transact(txn => Effect.gen(function* () {
     yield* txn.put(1, enc.encode("late"), manifest);
@@ -224,3 +220,91 @@ for (const [name, make] of makers) {
     }
   }))));
 }
+
+const hex = (bytes) => Buffer.from(bytes).toString("hex");
+
+test("a write reads nothing before its work: the commit itself checks the writer, the revision and the fence", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  const watched = new Set([
+    shardMetaKey("generation"), shardMetaKey("writer_session"),
+    partitionKeys("acme").meta("revision"), partitionKeys("acme").meta("fence"),
+  ].map(hex));
+  let reads = 0;
+  const engine = { ...base, get: (key) => { if (watched.has(hex(key))) reads++; return base.get(key); } };
+  const store = yield* openPartitionOver("acme", engine);
+  reads = 0;
+  yield* put(store, 1);
+  assert.ok(reads > 0, "the first write reads what the handle then keeps, so the counter does see these keys");
+  reads = 0;
+  for (let seq = 2; seq <= 20; seq++) yield* put(store, seq);
+  yield* store.nextSeq;
+  yield* store.writable;
+  assert.equal(reads, 0, "and no write after it reads any of them");
+})));
+
+test("something writing around a handle costs it one refused commit, after which it reads the partition afresh", () => run(Effect.gen(function* () {
+  const engine = memoryKvEngine();
+  const claim = yield* claimGeneration(engine);
+  const first = partitionOver("acme", engine, claim);
+  const second = partitionOver("acme", engine, claim);
+  yield* put(first, 1);
+  yield* put(second, 2);
+  const refused = yield* error(put(first, 3));
+  assert.equal(refused?.op, "store.conflict", "the stale revision is caught by the commit, not trusted");
+  yield* put(first, 3);
+  assert.equal((yield* first.stats).records, 3, "nothing either handle committed was lost");
+})));
+
+test("a commit the engine reports as failed may still have landed, so the handle forgets what it kept", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  let failNext = false;
+  const engine = {
+    ...base,
+    conditionalWrite: (writes, conditions) => {
+      if (!failNext) return base.conditionalWrite(writes, conditions);
+      failNext = false;
+      // Applied, then lost on the way back: the failure a remote engine can give.
+      return Effect.flatMap(base.conditionalWrite(writes, conditions),
+        () => Effect.fail(new StoreError({ op: "test.commit", cause: "connection reset" })));
+    },
+  };
+  const store = yield* openPartitionOver("acme", engine);
+  yield* put(store, 1);
+  failNext = true;
+  assert.equal((yield* error(put(store, 2)))?._tag, "StoreError");
+  // Kept, the revision from before that commit would refuse this one.
+  yield* put(store, 3);
+  assert.equal((yield* store.stats).records, 3);
+})));
+
+test("a fence is checked under the writer: every write either committed before it or is refused", () => run(Effect.gen(function* () {
+  const base = memoryKvEngine();
+  const tenth = yield* Deferred.make();
+  let commits = 0;
+  // Each commit yields, so the fence can arrive while a write holds the writer.
+  const engine = {
+    ...base,
+    conditionalWrite: (writes, conditions) => Effect.gen(function* () {
+      yield* Effect.sleep(1);
+      const accepted = yield* base.conditionalWrite(writes, conditions);
+      if (++commits === 10) yield* Deferred.succeed(tenth, undefined);
+      return accepted;
+    }),
+  };
+  const store = yield* openPartitionOver("acme", engine);
+  // Spaced like separate requests, so the fence, waiting on the writer, gets
+  // its turn between two of them.
+  const writes = Effect.forEach(Array.from({ length: 40 }, (_, i) => i + 1),
+    (seq) => Effect.andThen(Effect.sleep(1), error(put(store, seq))));
+  const fence = Effect.gen(function* () {
+    yield* Deferred.await(tenth);
+    yield* store.fence({ from: "s0", to: "s1" });
+    return (yield* store.stats).head;
+  });
+  const [results, headAtFence] = yield* Effect.all([writes, fence], { concurrency: 2 });
+  const after = yield* store.stats;
+  assert.equal(after.head, headAtFence, "nothing landed after the fence");
+  assert.equal(results.filter((result) => result === undefined).length, after.records);
+  assert.ok(results.every((result) => result === undefined || result._tag === "TenantMoving"));
+  assert.ok(after.records > 0 && after.records < 40, "the fence went on part way through");
+})));

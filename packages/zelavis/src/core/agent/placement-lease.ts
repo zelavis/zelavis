@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { integration, integrationValue, present, type IntegrationFailure } from "../runtime/effect-boundary.js";
 /** Agent-side view of a committed Platform placement. */
 export interface AgentPlacementLease {
   readonly projectId: string;
@@ -54,7 +56,7 @@ export function createAgentPlacementLeaseSupervisor(options: {
   let stopping = false;
   let pending: Promise<boolean> | undefined;
 
-  const fence = async () => {
+  const fence = (): Promise<boolean> => present(Effect.gen(function* () {
     if (closed || stopped || stopping) return false;
     fenced = true;
     if (timer !== undefined) clearTimer(timer);
@@ -62,18 +64,17 @@ export function createAgentPlacementLeaseSupervisor(options: {
     timer = undefined;
     expiryTimer = undefined;
     stopping = true;
-    try {
-      await options.onFence();
-      stopped = true;
-    } catch {
+    yield* integration(() => options.onFence()).pipe(
+      Effect.tap(() => Effect.sync(() => { stopped = true; })),
       // A failed stop does not restore authority. Keep trying to terminate the
       // process until the Agent itself closes and stops its runner.
-      if (!closed) timer = setTimer(() => { void fence(); }, 1_000);
-    } finally {
-      stopping = false;
-    }
+      Effect.catchCause(() => Effect.sync(() => {
+        if (!closed) timer = setTimer(() => { void fence(); }, 1_000);
+      })),
+      Effect.ensuring(Effect.sync(() => { stopping = false; })),
+    );
     return false;
-  };
+  }));
 
   const schedule = () => {
     if (closed || fenced) return;
@@ -87,33 +88,33 @@ export function createAgentPlacementLeaseSupervisor(options: {
   const check = (): Promise<boolean> => {
     if (closed || fenced) return Promise.resolve(false);
     if (pending) return pending;
-    pending = (async () => {
+    pending = present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
       // The old deadline remains in force while the authority read is pending.
       const requestedAt = monotonicNow();
-      if (requestedAt >= deadline && deadline !== Number.NEGATIVE_INFINITY) return fence();
-      let lease: AgentPlacementLease | undefined;
-      try {
-        lease = await options.read(options.identity.projectId);
-      } catch {
-        return fence();
-      }
+      if (requestedAt >= deadline && deadline !== Number.NEGATIVE_INFINITY) return yield* integrationValue(fence());
+      const read = yield* integration(() => options.read(options.identity.projectId)).pipe(
+        Effect.map((value) => ({ value })),
+        Effect.catchCause(() => Effect.succeed(undefined)),
+      );
+      if (!read) return yield* integrationValue(fence());
+      const lease: AgentPlacementLease | undefined = read.value;
       if (closed || fenced) return false;
       const expected = options.identity;
       if (!lease || lease.state !== "active" ||
           lease.projectId !== expected.projectId || lease.nodeId !== expected.nodeId ||
           lease.ownerSession !== expected.ownerSession || lease.epoch !== expected.epoch ||
           !Number.isFinite(lease.authorityNow) || !Number.isFinite(lease.leaseExpiresAt) ||
-          lease.leaseExpiresAt <= lease.authorityNow) return fence();
+          lease.leaseExpiresAt <= lease.authorityNow) return yield* integrationValue(fence());
       const proposedDeadline = requestedAt + (lease.leaseExpiresAt - lease.authorityNow);
       // A delayed response cannot rescue a lease that expired while in flight.
-      if (monotonicNow() >= proposedDeadline) return fence();
+      if (monotonicNow() >= proposedDeadline) return yield* integrationValue(fence());
       deadline = lease.leaseExpiresAt > publishedExpiry
         ? proposedDeadline
         : Math.min(deadline, proposedDeadline);
       publishedExpiry = Math.max(publishedExpiry, lease.leaseExpiresAt);
       schedule();
       return true;
-    })().finally(() => { pending = undefined; });
+    })).finally(() => { pending = undefined; });
     return pending;
   };
 

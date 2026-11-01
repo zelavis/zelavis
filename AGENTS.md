@@ -23,11 +23,15 @@ a stronger ownership claim than self-hosting a database alone. No implementation
 describe either as available in docs, README, dashboard, or marketing copy until it ships;
 `pnotes/TODO.md` lists them as roadmap only.
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
 ## Product Positioning
+
+Supported storage engines follow [the owner decision](.agents/references/storage-engine-policy.md):
+SQLite by default, optional LMDB and RocksDB. Both libSQL targets are retired;
+do not restore aliases or silently replace them with Turso Database.
 
 The canonical public tagline is:
 
@@ -100,6 +104,9 @@ integration needs access to repo-maintained guidance, point it at `AGENTS.md`
 or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
 `.agents/`. The tracked Claude session-start hook should keep those symlinks
 current automatically.
+The hook locates the ancestor containing `.agents/skills/` before creating links,
+including when invoked inside the nested private `pnotes/` Git repository.
+`pnotes/` needs no separate `.claude/` configuration or skill copies.
 
 ## Service Loading Rules
 
@@ -115,12 +122,20 @@ current automatically.
   bundled into the service; acquisition refuses a package whose manifest lists
   `dependencies` the Platform will not install.
 - Acquired packages live in content-addressed folders, so an update is a new
-  module with no restart; unreferenced folders are pruned at start. Activation
-  of an update or uninstall reports `restartRecommended`.
+  module with no restart; unreferenced folders are pruned at start.
+- A served engine composes its runtime once. Under the persistent host, a
+  plugin or frontend install, update or uninstall is activated by `engineReload`:
+  the engine asks its host (`reload`, engine-token authority) for a fresh engine
+  of the same release through the shared handover, scheduled rather than awaited
+  because the asking request is drained first; requests wait, none are refused,
+  and the new process holds no previous code. A recipe (`kind: "app"`) triggers
+  no reload: recipes are read live from the registry (`resolveLiveServiceRegistry`)
+  when Projects are listed, created or upgraded. Without a host, activation keeps
+  `restartRecommended` for updates and uninstalls.
 - Platform and native App engine handover is implemented; its contract and
   qualification limits are in `website/.../architecture/updates.md`. Exact installed native App engine
-  version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation keeps
-  the registry's `restartRecommended` behavior.
+  version selection is available through dashboard, SDK, HTTP and CLI. Loadable service activation reuses
+  that handover as a same-release reload (above).
 
 ## Distribution Trust Model
 
@@ -130,9 +145,17 @@ keys, GPG/APT keys, CI secrets or GitHub Actions/Releases in the delivery path,
 and none may be reintroduced without the owner asking for them explicitly.
 
 - A release is the published `zelavis` npm package (`pnpm release:publish:*` is
-  Changesets versioning and a publish plus a check that the version is on npm;
-  manual authentication uses direct recursive pnpm publishing so browser 2FA
-  has an interactive terminal). Nothing is built,
+  Changesets versioning and a publish plus a check that the version is on npm).
+  The wrapper packs each public package npm lacks with `pnpm pack`, which rewrites
+  `workspace:` ranges, and publishes the tarballs with `npm publish` in dependency
+  order, so npm runs its own browser login and 2FA in an interactive terminal;
+  pnpm's publisher no longer starts that flow. Services and Platform publish in one run:
+  `pnpm allowlist update` lists an unpublished service version with its local pack's digest
+  (packing is deterministic), and the publisher refuses a service tarball whose digest is not
+  the listed one before anything is published; `release:check` ends by
+  naming the commit it qualified, and `ZELAVIS_RELEASE_QUALIFIED=<sha>` lets the
+  publish step skip re-running it for exactly that clean commit. The step-by-step
+  runbook is the release-maintainer skill. Nothing is built,
   signed, uploaded or hosted per release.
 - Trust anchors are https origins and nothing else: **npm** (package integrity is
   npm's own registry digest), **nodejs.org** (the pinned private Node, checked against
@@ -154,7 +177,7 @@ and none may be reintroduced without the owner asking for them explicitly.
 - A server installation updates itself from the dashboard (see
   `website/.../architecture/updates.md`). That adds no new trust: the updater
   fetches only what the installer already does (nodejs.org and npm), by the same script.
-- The installer and any package (`.deb` included) install no web server, PHP or database. Those belong to the WordPress recipe, which provisions its own Nginx, PHP-FPM and MariaDB when a WordPress Project is created; a base Platform install stays free of them.
+- The installer and any package (`.deb` included) install no web server, PHP or database. Those belong to the recipes: a recipe brings its own pinned PHP and web server (Caddy) (manifest `runtimes`, unpacked into `<data>/runtimes/<sha256>/`, shared read-only by digest, pruned when no Project names them) and brings its own MariaDB where the vendor builds one (Linux x86_64, from archive.mariadb.org; elsewhere a manifest `hostRequirement` falls back to the host's, installed by the fixed `mariadb-server` package set); a base Platform install stays free of them.
 - APT and a published `.deb` are deferred. `pnpm distribution:deb` builds one from a
   staged tree and its `postinst` runs `zelavis install --from-release`.
 
@@ -209,6 +232,68 @@ maintenance in CI, forks, and when `ZELAVIS_GITHUB_MAINTENANCE=0`. Stop its fibe
 and pending subprocesses when the dev server shuts down. No shared credentials,
 OS timers, cleanup workflows, or reference-sync side effects.
 
+## Cloud Capacity And Alchemy
+
+Decision (2026-10-06). The provisioning code, fenced state store and `CapacityProvider` exist in `packages/zelavis/services/zelavis-cloud` (private; built into one bundle the Platform loads by path when `ZELAVIS_CLOUD_POLICY` names the operator's policy file and an enrollment endpoint is served) and pass against a fake Hetzner API; real-cloud behavior is not yet proven. Full reasoning,
+measurements and open tests are in `.agents/references/alchemy-architecture-brief.md`.
+
+- Cloud capacity is a core capability. The capacity controller, provider
+  connections, enrollment and the dashboard flow live in the Platform over the
+  existing `CapacityProvider` contract (`core/provider`). Fabric alone decides
+  allocation, placement, draining and fencing; a provisioning engine only
+  supplies machines and external resources and never becomes a second authority.
+- Alchemy (pinned to an exact version) is the default engine for provisioning
+  external resources, shipped in a bundled first-party cloud service, never in the
+  core runtime and never as something a self-hoster installs. Do not write a
+  general infrastructure-as-code engine in-house. If its behavioral tests fail,
+  fall back to a narrow adapter on the `@distilled.cloud/*` clients, not a rebuilt
+  engine.
+- It is bundled, not installed: engine plus the needed provider code, with
+  `effect` host-provided. Measured at 824 KB (against 1.3 GB unbundled), no native
+  binding and no other clouds' code. The bundle needs one build patch (stubbing
+  module-scope `import.meta.resolve`); the repo owns that patch and re-verifies
+  it on every Alchemy bump. The "no native dependency" rule is unchanged.
+- Existing servers are the primary path. Server creation is optional everywhere:
+  `install.sh` on the user's own machine, or enrolling an Agent with a one-time
+  token, needs no cloud and no provider. Connecting a provider only adds adopt
+  conveniences (firewall, DNS) and automatic scale-out. Zelavis deletes only
+  machines it labeled itself, never adopted or user-enrolled ones.
+- A provisioned machine is not a Node until enrollment verifies identity, version,
+  backend and health. Release only after Fabric reports the Node drained and
+  fenced. Provider calls check the current epoch, and a promotion rotates the
+  provider token.
+- The Alchemy state store is provisioning state only, written conditionally and
+  backed by Zelavis storage with its own epoch checks (Alchemy's interface has no
+  lock). It never holds Project, placement or data authority.
+- Alchemy telemetry is on by default: its own entrypoints export traces, metrics
+  and logs to a vendor collector (`otel.alchemy.run`) with a persistent user id,
+  git root-commit and hashed origin/branch, and host details, and write that id
+  under the user's home directory. Never compose its telemetry layer or its
+  `Test/Core` helper in shipped code or tests. Run it only through
+  `makeAlchemyRunner`, which composes none of that, keeps Alchemy's files under a
+  directory we choose (`ALCHEMY_HOME`), passes credentials as in-memory
+  configuration instead of `process.env`, and sets the vendor's opt-out. The
+  network guard test (every request goes to the cloud API host, with a
+  negative control proving the observer sees stray requests) must stay green on
+  every Alchemy bump.
+- Provisioned machine names are deterministic from the capacity request id.
+  Alchemy's default names carry a random suffix held only in its state, so
+  lost state would orphan a machine nobody deletes.
+- Provider tokens are stored encrypted, never returned or logged, and every use is
+  audited. The wizard states plainly what a token can do and recommends a
+  dedicated cloud project. Scale-out consent is separate from the firewall and DNS
+  conveniences.
+- Alchemy also powers a local deploy tool (`npx`) that creates a server from a
+  token for users who want that. It runs on the user's machine and ships nothing
+  in the Platform.
+- Not in scope: Alchemy as a runtime for Projects, a replacement for Fabric
+  reconciliation, or part of local native App creation. A recipe may later declare
+  bounded external resources, provisioned through the same service, with a
+  checkpointed deletion participant; arbitrary stack files from a recipe are
+  never executed.
+- DigitalOcean, Vultr and Linode have no Alchemy provider; adding one is a custom
+  provider.
+
 ## Marketplace Allow-List
 
 `@zelavis/marketplace` owns what may be installed. The marketplace hosts no code:
@@ -226,20 +311,40 @@ Rules that hold for every change:
   https-only, no-redirect and size bounds.
 - The install gate authorizes an exact listed version before any fetch and
   verifies the listed digest after; a tag or range is never a listed version.
+  Each listed version names `platform`, the oldest Zelavis it runs on (from that
+  version's published `peerDependencies.zelavis`, which must be `>=<exact>`). An
+  installation is offered the newest version its own Zelavis runs, and the gate
+  refuses one that needs a newer Platform (`platform_too_old`). Never pick a listed
+  version anywhere else than `selectListedVersion`.
   Registry `official` is reserved for what the host bundled, so listed services
   are `community` in the registry and their maintainer is separate metadata.
 - The development shortcut (`ZELAVIS_OFFICIAL_SERVICES_DIR`) only ever names
   packages in the operator's own checkout and must never become a way to install
   from anywhere else.
 - Releases run `pnpm allowlist update` (rebuild the list from `zelavis-services/*`
-  and npm's digests, bump `sequence`) and `pnpm allowlist publish` (a plain copy with
-  a fresh expiry at `website/public/allowlist.json`, served by the next website deploy).
-  Publish changed official services first, update the snapshot, then build and
-  publish the Platform. `pnpm allowlist check` refuses stale defaults during release
+  with npm's digests, or the local pack's for a version npm does not have yet, bump
+  `sequence`) and `pnpm allowlist publish` (a plain copy with a fresh expiry at
+  `website/public/allowlist.json`, served by the next website deploy). The publisher
+  checks every service tarball against the listed digest before it publishes anything,
+  and publishes a changed service only with the Platform that ships its listing; deploy
+  the website list after that publish. `pnpm allowlist check` refuses stale defaults during release
   validation. A runtime composes its catalogue from the shipped snapshot; a
   background website refresh applies on the next start, not to that initial catalogue.
 - Operators see and refresh the list through `runtime/marketplace/allowlist`, the
   SDK and `zelavis marketplace`; keep the three in step.
+- An installed service the list offers at a newer version is an update
+  (`update: { version }` in `runtime/services`; `POST runtime/services/:name/update`,
+  `client.marketplace.update`, `zelavis marketplace update`). The version comes from
+  the list, never the request, and installs through the same gate. The store is the
+  authority for every package the composition took from it, so the live registry
+  serves the new version without a restart, and a registry change tells the Project
+  manager its recipe reading is stale.
+- A recipe (`kind: "app"`) is never run from its installed copy: each Project freezes
+  its own. So creating a Project from a recipe or upgrading one first brings the recipe
+  to the newest listed version (`acquireRecipe`, acquired through the same gate when it
+  is only listed or installed older), and the Marketplace shows **Update** only for
+  plugins and frontends, which do run from their installed copy. Never move that
+  acquisition into a client: the SDK, CLI and HTTP get it from the Project operations.
 
 ## Platform And App Service Boundary
 
@@ -369,9 +474,29 @@ Rules that hold for every change:
   `packages/zelavis/services/*`, officially maintained services in `zelavis-services/*`, Project recipes,
   and external extensions.
 - **Service Dashboard Pages**: `pageAssets` is obsolete and removed. All service
-  dashboard pages and static assets stream directly from disk via `packageDir`
-  (resolved from `dashboard/` or package root) with classic 90s webspace
-  semantics. Inlined asset string maps are not supported.
+  dashboard pages and static assets stream directly from their named bundle directory below `packageDir`.
+  A bundle is one safe directory name; never fall back to the package root, and resolve symlinks before
+  proving a file remains inside that bundle. Inlined asset string maps are not supported.
+  The installed frontend may supply a component runtime (`serviceUi`: `@zelavis/ui`
+  builds `fuzor/ui` under the `zv` brand); the Platform adds its stylesheet and module to
+  every HTML page it serves unless the page opts out with
+  `<meta name="zelavis-service-ui" content="none">`. The entry discovers component tags and imports only their families,
+  including markup added later; page code waits for `customElements.whenDefined` before using a component's methods
+  or form value. `serviceUi.modules` is a map of flat content-hashed JavaScript filenames to static build source.
+  `runtime/service-ui/:file` serves only exact own entries in that map, never arbitrary filesystem or service paths.
+  The entry, stylesheet and build modules are public on purpose:
+  an extension's page is sandboxed with an opaque origin and sends no credentials.
+  For the same reason the dashboard frames an extension's page at a page capability URL
+  (`runtime/page-capabilities/<token>/<bundle>/<file>`, `platform/page-capability.ts`): an HMAC token
+  (key derived from the installation master secret) naming service, bundle and optional Project, expiring in hours,
+  minted for an authenticated viewer by a GET that records nothing (`project.view` for a Project's page). The Platform builds every path it reads
+  from the token's claims, never from the request, and a Project's files are fetched through the Gateway forwarder
+  as a `service-page` principal with no permissions. Never widen it to files outside that bundle.
+  Trust is the `scope` the host composed a service with: services the operator passes to `zelavis()`, the bundled
+  ones (`loadSystemPackage`) and the selected frontend are `system`; anything installed or dropped into a services
+  folder is forced to `extension`, and a service reported with no scope is treated as one. `runtime/config` and the
+  registry listing say the same, and the dashboard puts an extension's menus only in the Extensions slide and frames
+  its page without the dashboard's origin.
 
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define
@@ -441,17 +566,42 @@ package's definition. Project driver wrappers forward the verified definition.
 Opening managed Project overview pages must not probe unused native APIs.
 
 Custom recipe runtimes execute from verified digest-specific module paths below
-`<project>/.zelavis/recipe-modules` so ESM caching cannot reuse relative imports
-from a previous recipe during an explicit upgrade. These are derived copies,
-not a second lock or authority. Failed preparation restores the previous frozen
+`<projects>/.recipe-modules` so ESM caching cannot reuse relative imports
+from a previous recipe during an explicit upgrade. A driver, and the copy it runs
+from, is shared by every Project frozen to the same digest, so the copy never
+lives inside one Project: deleting that Project would break the others. These
+are derived copies, not a second lock or authority, rebuilt from a Project's
+frozen recipe when missing and pruned at adoption when no loaded driver uses them. Failed preparation restores the previous frozen
 recipe and host descriptor. Record the locked driver before provisioning so
 its custom cleanup can still run after failure and restart. A missing descriptor after early preparation failure
 must still allow cleanup of that exact Project through its trusted driver or
 Agent; malformed descriptors and genuine cleanup failures must remain visible.
 
 
+**The app folder rule.** A third-party app's Project keeps the application, and only the
+application, in `<project>/app/`: its code, uploads and configuration (`app/site`) and its database
+(`app/db`), each a named directory of the recipe manifest. Zelavis never writes inside `app/` after the
+app is installed, whatever changes around it: recipe versions, integration code, dashboard menus and
+APIs, Platform updates. Everything Zelavis owns for running the app (web server and PHP-FPM
+configuration, pid files, logs, `run/`, `tmp/`, `sessions/`) lives in `<project>/.zelavis/server/`, the
+recipe runtime's `root`, which Zelavis may rewrite freely. Recipe manifest contract 2 is this layout;
+contract 1 (application and plumbing together in `app/`) runs unchanged until its Project upgrades to a
+contract 2 recipe, which moves only the plumbing out. A new recipe declares every directory of
+application data as a named directory, and nothing else of the application lives under `root`. Each
+named directory also says how a backup captures it (`backup`: `files` copied as it is, or `recipe`, made
+consistent by the recipe's own `backup` phase, such as a database dump with `dumpMariaDb`); a managed
+Project's integration runtime stages both as the `app` backup component (`stageRecipeBackup`), never
+writing inside `app/`. A directory that declares neither is not captured, and the backup says so.
+
 Managed third-party app recipe updates refresh Zelavis integration, not the app's
-software. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
+software. When the recipe also supervises the app's processes (a recipe runtime such as
+WordPress, and any future Joomla, phpBB, PrestaShop or TYPO3 recipe), the running update is one
+transaction: the recipe's plan is reconciled first (kept, reloaded or replaced processes, and
+configuration rewritten by its install phase) and can be undone; the integration host's
+handover is the single commit point, and a crash is settled from the host's proven selection
+(`settleUpdate`). A recipe upgraded while the Project is stopped prepares the app (install
+phase, recorded as `installedFor` in the recipe state) the next time it starts. This is generic:
+nothing in it knows WordPress. WordPress and future Drupal/Shopware/PrestaShop/TYPO3/Joomla apps own
 their software updates. The native managed-runtime path must keep the service
 running, stage a verified integration recipe, persist its update intent, and
 commit metadata/artifact without provisioning, rewriting runtime configuration,
@@ -538,6 +688,37 @@ its children, reconciles desired state with bounded concurrency, and stops them
 when `Zelavis.close()` runs. Production worker Agents must be supervised
 separately so customer runtimes survive control-plane restarts while remaining
 subject to the one logical Platform authority.
+
+Linux Node system Project Agents use an opt-in survivable runner: flush validated
+UUID/boot/start-tick records before exec activation, keep append-file output,
+recover under kernel locks, and revalidate placement leases before exposing
+handles. Native and managed integration hosts use authenticated private socket
+control with command deduplication; never persist Gateway keys in process records
+or logs. The Project Agent unit is process-only (`KillMode=process`, no delegated
+operation controllers); the separate root operation Agent retains its containment.
+Project units omit `PrivateTmp` so surviving databases do not depend on an
+Agent-owned temporary namespace. Qualify writes after the full update sequence.
+A reconnecting client keeps handles through bounded transport loss, rebinds by
+identity, and never replays ambiguous starts or operation submissions. Explicit
+stops consume only a valid generation/boot/expiry marker; markerless shutdown
+stops workloads. Uninstall also kills the owned unit cgroup. Agent update failure
+reports degradation without rolling back the selected Platform engine.
+Pre-protocol Agents convert once through Update now with held Project admission and a
+Project restart. This conversion hold must never gate the dashboard, authentication,
+Project status, logs, diagnostics or repair controls. Release public traffic when
+its workloads recover, independently of private integration warmup; failed recovery
+reports degradation and releases the coordination hold, while ordinary per-Project
+readiness and ownership fencing remain in force. Qualify failed and slow recovery,
+not only successful conversion. User-mode embedded Agents follow when their host next starts;
+remote-worker/Bun replacement and multi-host partition recovery remain unqualified.
+Conversion restores only previously used private integrations; an unused hosting
+Project must not acquire a backend merely because the Platform updates. Include
+private integration startup failures in that Project's ordinary logs and diagnostics.
+Private restoration runs after public recovery, with its own bounded concurrency
+and per-Project deadlines; it must not extend or fail a completed Agent conversion.
+The updater's reporting window must exceed the engine's public recovery window.
+Read `.agents/references/agent-handover-plan.md` for verified design corrections and
+qualification evidence; primitive proofs alone do not qualify a release.
 
 Platform and Zelavis App engine updates use one shared handover design:
 `core/runtime/admission.ts` and `handover.ts`, with concrete Node execution under
@@ -791,7 +972,8 @@ algorithms and must preserve reproducible seeds and traces.
   legacy occurrences outside the migrated lifecycle modules; this debt is not
   permission to introduce or copy Promise orchestration. Its only maintenance
   command, `node scripts/check-effect-usage.mjs --prune-baseline`, removes resolved
-  entries. Never expand it to make a change pass. Migrate touched orchestration.
+  entries. Never expand it to make a change pass, and never route around it (a wrapper, a parallel module, an
+  untouched legacy statement): migrate touched orchestration, and add the file to `migratedFiles` so it cannot regain debt.
 - Project lifecycle, local/native runtime drivers, WordPress provisioning and
   update orchestration are fully checked with no legacy allowances. Interruptions
   must release coordination permits, stop partially acquired processes, preserve
@@ -841,6 +1023,13 @@ On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
 and never fall back from it silently. This does not substitute for pinned
 shared libraries or destination fencing.
 
+The dashboard terminal (`runtime/terminal*`, `zelavis terminal`, Server → Terminal) is the one
+deliberate shell and is not a host operation: it is owner-level (`server.terminal.use`, system
+scope), runs inside tmux as the Platform's own unprivileged account with a small fixed
+environment (never root, never the Platform's variables), and its sessions belong to the opening
+principal. It adds no native dependency and no root escalation; opening and closing are logged,
+typed input and output never are. Do not widen it into a command runner for the Agent or recipes.
+
 Agent authority is Ed25519: only the Platform holds the private key, Agents
 trust its public file, and envelopes bind the exact arguments
 (`argumentsDigest`). The Platform issues authority only through the host
@@ -855,12 +1044,27 @@ host-operation Agent: it accepts only installed-operation catalog, submit and
 status messages, and never opens or reclaims Project process state. Root
 provisioning endpoint ownership and installation wiring remain planned; the
 combined Project process Agent must not become the root package installer.
-The initial `zelavis/recipe` Effect authoring contract is available, but its
-manifest is not yet integrated into package admission or Project execution.
+The `zelavis/recipe` Effect authoring contract is available. Its manifest
+(`zelavis.project.install`) is validated at package load, and the method and software
+version are chosen once at creation and locked in the Project, and `@zelavis/wordpress`
+runs through it (its recipe is `defineRecipe` phases over `createRecipeProjectRuntime`; the old
+hand-written runtime module is gone).
 Keep recipe revisions distinct from software versions, lock a named method at
 creation, and never use method selection as an automatic start-time fallback.
+Recipe upgrades have a zero-downtime goal whatever the recipe change. A running Project
+upgrades live when the new recipe keeps its layout: the new plan is reconciled against the
+running processes by fingerprint (`core/recipe/plan-diff.ts`, `plan-controller.ts`), so
+unchanged processes keep serving, a configuration-only change reloads in place (`config` +
+`update` in the plan), and only a process whose launch changed is replaced, in dependency
+order; a durable journal (`adapters/_recipe-upgrade.ts`) decides previous/target after a
+crash, and any failure rolls back to the previous plan. Not live yet: adopting an earlier recipe's layout (`adopt`) needs the `restart` option (stop, upgrade, start again); a recipe that places data by name (`directories`, read from
+`context.directories.named`) upgrades live with the data left where it is and moves it, atomically, at the next start from a stop, a replaced process is covered for public requests by the ingress gate (`ingressReady`: requests wait at the gateway while a launch change replaces a serving process) but a replaced database still pauses what needs it, and new requirements or commands refuse the live path and roll
+back. Those are limits, never precedent for a new recipe feature.
 Do not claim the JS recipe driver or OCI recipe execution ships until integrated
-and qualified. RecipeHost is a convention for trusted code, not a JS sandbox.
+and qualified. The Node RecipeHost (`adapters/_recipe-host.ts`) and the separate-process
+phase runner (`_recipe-phase.ts`, Node permission model, parent re-validates results) exist
+with a conformance suite, and WordPress uses them. RecipeHost confines the files and
+commands it mediates; it is not a JS sandbox.
 Service setup hooks have a deadline; an abandoned setup cannot add services.
 
 Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
@@ -889,6 +1093,13 @@ shared, partition-local identifier space, so a predicate spanning several data
 models is one set intersection rather than an exchange between engines. Its
 event log is the source of truth for writes and the replication stream.
 
+One engine holds one shard, and a shard holds many partitions — a tenant, a
+part of a divided tenant, or a reserved partition (`zv.global`, `zv.topology`).
+Every key a partition writes begins with `[0x01][partition name]`, so a
+partition owns one contiguous key range with its own identifiers, its own log
+and its own writer, and it can be copied, listed or removed as a range. Only
+the shard's writer claim and layout marker live outside the partitions.
+
 Key rules:
 
 - Writes go through the documents API. There is no raw SQL surface and one must
@@ -897,18 +1108,54 @@ Key rules:
   where the at-most-once guard lives: a write may carry an `idempotencyKey`, and
   its receipt is written in the same transaction as the change, so there is no
   moment where the write has happened and the key has not been noted.
+- App data authority distinguishes `database.read`, `database.write` and
+  `database.define` (`project.data.read|write|define` on the Gateway). Collection,
+  schema, index, analyzer, spatial, embedding, check and reference definition
+  changes require define; record writers cannot disable their own constraints.
+  The data Gateway delegates only these concrete data permissions and the
+  child checks each operation, including POST reads. Operator scatter still
+  goes through the Project proxy and requires inspect. The App change feed
+  (`events.read`, HTTP `events/read`, CLI `data changes`) reads the same bounded
+  Tenant event log; keep its returned cursor even for empty filtered pages.
+  Service-account CLI grants are explicit: `--permission` is Platform-wide,
+  `--project` plus repeated `--project-permission` is Project-scoped. Never
+  infer operator permissions merely because a Project was named.
 - Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
   key with no value, and a transaction is one atomic batch with reads overlaying
   it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
-  knows which engine it is. SQLite (default), libSQL, RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
+  knows which engine it is. SQLite (default), RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
+- What a returned commit survives is an open-time choice, `durability`:
+  `crash` (default) or `power` (a device flush per commit), reported by
+  health. An engine that cannot keep `power` refuses it at open (RocksDB's
+  binding) rather than giving the weaker promise. Follower acknowledgments
+  (`writeAcknowledged`) are reported only after the follower commits, and a
+  missed policy fails with `FollowersNotAcknowledged` without undoing the write.
+  A follower on another host reads its leader through the leader transport
+  (`db/leader.ts`: `GET|POST …/database/followers/*`, `database.replicate`,
+  `client.followers`, `zelavis followers`) as a `LeaderSource` (`remoteLeader`),
+  so the same `levelFollower`/`followLeader` code runs on both sides; carried
+  failures (`CursorCompacted`, `LogCompacted`, …) cross it as themselves, and
+  acknowledgments are filed with the leader (`db.followers.acknowledgments`).
+  Never add a second follower algorithm for the remote case.
+- **Scalability is rule one for the database and the Fabric.** Anything that lists, follows, replicates or fences a
+  database costs the number of changes in steady state, never the number of Tenants, and its authority state does not
+  grow with them: the change feed is a fixed ring, listings are paged with nothing held between pages, a Project's
+  failover lease is one record whatever its size, and acknowledged positions are not kept per Tenant (the lease names
+  its one promotable standby instead). A full listing is the rare resync path and may be as long as the data. A change
+  that adds a per-Tenant read, record or loop to a hot path or to the authority needs a different design.
 - Append to the log before projecting into the lenses. A crash must leave an
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
-- Ordered KV store commits must atomically check writer generation, session,
-  and the revision observed before dependent reads. Advance the revision with
-  every protected batch, including replication, allocation, maintenance and
-  format upgrades. Generation acquisition is conditional and never wraps.
+- Ordered KV store commits must atomically check the shard's writer generation
+  and session, and the partition's revision observed before dependent reads.
+  Advance the revision with every protected batch, including replication,
+  allocation, maintenance and format upgrades. Generation acquisition is conditional and never wraps.
+  That conditional commit is the check: a partition handle keeps its revision,
+  lens state and fence rather than reading them, or the writer, before every
+  write, and a refused or failed commit drops what it kept so the next
+  operation reads afresh. A shard store keeps one handle per partition; a
+  second writer on the same claim is caught by the revision, never trusted.
   Reject unsupported coordination; do not emulate shared-writer fencing with
   a read followed by an unconditional write. RocksDB's exclusive-file mode
   is local single-process ownership, not concurrent takeover. LMDB batches use
@@ -916,17 +1163,55 @@ Key rules:
   earlier mutations when the callback throws. Keep current ownership metadata
   through recovery; restoring an old authority snapshot requires a separate
   disaster-recovery protocol.
-- A store admits one writer at a time. Every store write reads state and
-  writes it back changed, so two in flight on an asynchronous engine read the
-  same value and one is lost. Reads take no permit. Nothing holding the permit
-  may call another store write, or it waits on itself.
+- A partition admits one writer at a time. Every partition write reads state
+  and writes it back changed, so two in flight on an asynchronous engine read
+  the same value and one is lost. Writers to different partitions on one shard
+  do not wait for each other; the engine applies each batch atomically. Reads
+  take no permit. Nothing holding the permit may call another write to the same
+  partition, or it waits on itself.
+- What Zelavis takes from Effect Cluster is decided in
+  [.agents/references/effect-cluster-decision.md](.agents/references/effect-cluster-decision.md):
+  its Entity model becomes native durable entities whose mailbox lives in the
+  Tenant's partition (handler writes and the processed mark in one batch), never
+  Cluster's lease-only `Sharding`/`RunnerStorage` as placement or writer authority.
+  Singleton duties (index refresh, backup schedules, workflow resumption,
+  schedules) run where the writer claim is held. Every channel states its
+  delivery guarantee; nothing claims exactly-once delivery.
+- Durable entities (`db/entities.ts`, `tenant.entities`, `db.entities.serve`) keep
+  an entity's messages, pending markers and state as records in its Tenant's
+  partition. A handler answers a step; its writes, outbox messages, state and
+  reply commit with the message's processed mark through `documents.write`'s
+  internal `WRITE_ALONG` hook, and that commit re-checks the pending marker's
+  version, so a message is never finished twice. Never run a handler inside the
+  transaction, and never mark a message processed in a batch of its own. In a
+  Project the enabled `entity` workloads are the handlers by name.
+- Offline editing and independent multi-writer replication are reviewed in
+  [.agents/references/offline-replication-decision.md](.agents/references/offline-replication-decision.md).
+  Keep fenced single-writer authority and adapter-neutral event replication.
+  Device-local proposals are not commits; CRDT/custom/LWW policies require a
+  separately approved operation and collection specification before runtime code.
+- A record is one value — version, identity, manifest and body — so one read
+  is the whole record and no copy of one is torn. Retracting a record leaves
+  its version and the log position that retracted it, and every application of
+  an event is by version, retracted records included: an event older than what
+  is held changes nothing, so a late or repeated event never brings back what
+  was removed. `events.follow`/`followAll` additionally keep the leader's log
+  positions: a repeated position is compared and skipped, a different event at
+  a held position is `ReplicaDiverged`, and a position past the next is
+  `EventGap`.
+- Identifiers are 48-bit and log positions and counters 64-bit, per partition.
+  Each is refused at its limit (`PartitionExhausted` for identifiers), never
+  wrapped: a wrapped identifier names a record that already exists.
 - Document values, and anything a query compares or orders, use one order: the
   ordered lens's (`compareOrderedValues` in `db/keys.ts`) — booleans, then
   numbers, then strings by code point, then null. Never `localeCompare` or any
   other host order for them, including when sorting in memory: a result sorted
   in memory must match the same result read from an index, on every host.
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
-  the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
+  the live keys united with each value's blobs less that value's tombstones — a
+  tombstone cancels only its own value's posting, which matters for a prefix
+  that spans several values — and why `terms()` lists a word known only to
+  blobs only while some posting survives that word's own tombstones. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
   removed afterwards leaves a tombstone rather than editing one. So a removal
   path must go through the store's own helpers — deleting a posting key
@@ -936,7 +1221,17 @@ Key rules:
   from the manifests when that accumulation needs checking. After its first
   full sweep a seal reads only the groups marked dirty since, and the same
   helpers write those marks — a posting written around them is never sealed
-  until the next reindex.
+  until the next reindex. A seal writes each blob before deleting the live keys
+  and tombstones it settles, so its batches can be bounded without ever
+  leaving a tombstone gone while a blob still claims the posting.
+- Every scalar of a document is a column posting unless its collection
+  declares `columns`, the fields it queries; then only those (each covering
+  the fields below it) are, which is what keeps a wide document from writing
+  an index entry per field. Equality, `in`, ranges and single-field order on
+  any other field are refused (`UnindexedField`), never run as a scan;
+  filters checked per document still work. A reference must read a declared
+  field. Changing the columns (`setColumns`) rewrites the collection's
+  documents, the way `analyze` does.
 - A composite index is a column of the ordered lens whose value is the
   document's tuple, encoded by `orderedTuple` so that string order is tuple
   order; the store knows nothing of it. A document write reads its collection's
@@ -947,7 +1242,7 @@ Key rules:
   read out of the transaction.
 - A document write checks what it depends on — the id, the version, a
   precondition, a unique value, a check, a reference — inside the transaction
-  that writes it (`transactChecked` in `documents.ts`), never before it: only
+  that writes it (`transactChecked` in `document-core.ts`), never before it: only
   there does the store's one writer keep the answer true until the write
   lands, and a failure there discards the whole batch. Reads inside a
   transaction see committed state, not the transaction's own writes, so a
@@ -955,7 +1250,7 @@ Key rules:
   (as `releaseReferences` and `linkTargets` do), never from a second read.
 - A read that joins two collections answers the named collection's query first
   and turns the ids it returns into an equality union over the referencing
-  field's own postings (`relatedFilters` in `documents.ts`), so a join stays a
+  field's own postings (`relatedFilters` in `document-reads.ts`), so a join stays a
   set operation over the one dense identifier space. Never read the
   referencing collection and filter it in memory, and never let a reference
   the collection does not declare pass as a clause matching everything or
@@ -965,8 +1260,17 @@ Key rules:
   reads every document, id and unique value through it. A transaction sees
   committed state, so a second write built on a fresh read undoes the first,
   and two writes each pass a check the other already answered. Atomicity stops
-  at one partition, which is one shard: there is no cross-shard write, and a
-  scatter reads. For nearly every Tenant the partition is the Tenant. A Tenant
+  at one partition: a transaction writes only its own partition's keys, so two
+  tenants that share a shard never commit together, and nothing relies on a
+  colocation a move would end. There is no cross-partition write, a scatter
+  reads, and a write spanning tenants or parts is a workflow (an orchestrated
+  saga with idempotent steps and compensations) — never two-phase commit.
+  Sagas run on `effect/workflow` over `db.workflowEngine` (`workflow-engine.ts`,
+  the one file that touches that unstable API): executions, activity results,
+  deferreds and clocks are recorded in the global partition, a recorded step
+  never runs again, unfinished executions resume when their workflow registers,
+  Tenant writes go through `tenantWriteActivity` (idempotency key per step),
+  and `startFromOutbox` starts them from a Tenant's outbox. For nearly every Tenant the partition is the Tenant. A Tenant
   too large for one Shard may be divided into parts, and then the partition is
   the part: `db.forTenant` refuses a divided Tenant rather than answering for a
   fraction of it, `db.forPart` reaches one, and a question about the whole is a
@@ -977,52 +1281,298 @@ Key rules:
   entries at a time, so a take of a few rows still reads thousands; the limit
   is what lets an engine stop at the source. Every engine honours it, and
   `test/db-kv-engines.test.mjs` holds each to the same answers.
+- One payload written through either door (documents or KV) answers the same
+  through every lens — id/key, equality, range and order, terms, measures,
+  edges, geometry, similarity — after a backfill, on a follower and after a
+  restore, on every engine: `test/db-multimodal-conformance.test.mjs` is that
+  matrix, checked against an exact model. A new lens or write path joins it.
+- Search phrase acceleration uses adjacent word-pair postings: two words are
+  exact, longer phrases verify candidate order. Synonyms expand single words at
+  query time. Ranked scatter sums matching-corpus statistics before scoring each
+  partition, never merges incomparable local BM25 scores. It provides no
+  cross-partition snapshot. Text plus vector uses bounded weighted reciprocal
+  rank fusion under the same structured filters; qualify it against exact
+  rankings (`test/db-search-ranking.test.mjs`). HTTP/SDK/CLI carry hybrid options,
+  corpus statistics and operator-only scatter together.
 - One transaction is one batch, and that is the whole durability story: a
-  killed process loses no commit that returned, a write-ahead log truncated by
-  a power cut costs a suffix rather than leaving holes, and an interrupted
-  maintenance pass is a state the reader already handles rather than damage to
-  repair. `test/db-durability.test.mjs` holds the store to all three by killing
-  real processes; anything that makes a write span two batches breaks it.
+  killed process loses no commit that returned, and a write-ahead log
+  truncated by a power cut costs a suffix rather than leaving holes. Upkeep
+  runs in batches of bounded size, and an interrupted pass is either a state
+  the reader already handles (a seal, a compaction, a snapshot under an id
+  nothing names yet) or one the partition refuses: `rebuildLenses` and
+  `reindexLenses` run behind a persisted mark, reads and writes fail with
+  `LensesRebuilding` until the last batch clears it, and a database finishes an
+  interrupted run when it opens (`resumeMaintenance`).
+  `test/db-durability.test.mjs` holds the store to all of it by killing real
+  processes; anything that makes a write span two batches breaks it.
+- A scan of a partition's records begun at log position `p`, followed by the
+  events after `p` applied by version, is the partition as of the last of them.
+  This holds because records are single values, versions only grow and
+  identifiers are never reused, and it is how a copy is taken without stopping
+  the writer: `seed` (and with it `db.movement` and `levelFollower`) and
+  `snapshot` rely on it. Keep them on it rather than locking the writer for the
+  length of a copy. A seed of a source that has compacted writes what it
+  copies as the copy's first snapshot too, recorded at the compaction point in
+  its last batch, so the copy can still `rebuildLenses`.
+- A read of several steps — resolving a query, then reading what it named —
+  answers from one snapshot of its shard (`store.reading`; every engine's
+  `snapshot`: a read transaction on a second connection for the SQLite
+  family, LMDB's read transaction, a RocksDB transaction, an array the memory
+  engine never mutates). Document, KV, event, time-series reads and a backup
+  export each run in one. Writes, upkeep and the beliefs a partition handle
+  keeps (its revision, lens state, fence and relocation) never read a snapshot: a stale
+  fence kept as current would let a write through that the partition refuses.
+  So everything under the writer's permit reads the engine as it is, and so do
+  the reads that fill a belief; a snapshot is taken at its first read, never
+  later.
+- A query reads each clause only up to a cap (`probeCap`, 4096): a clause that
+  fits is an exact set; an AND checks its broad clauses per candidate against
+  the candidate's manifest, and an ordered read checks a broad `where` per row.
+  That check (`holds` and `inRange` in `kv-store.ts`) must give exactly the
+  lens's answer — the lens's one order, a one-sided range kept to its bound's
+  kind — and `test/db-bounded-evaluation.test.mjs` compares the two.
+- A read that stops early — a page after a cursor, or the first matches of an
+  unsorted read — resolves with options (`resolve(query, { after, limit })`):
+  a window of identifiers at a time, each window the cap rounded down to a
+  power of two so it never straddles a sealed segment, jumping to the next
+  identifier any posting list holds and stopping once the caller has enough.
+  Terms, equalities and edges are one seek per window; ranges and term
+  prefixes are checked per candidate. `findPage` in identifier order and
+  `findMany` with a limit and no order or search read only what they return.
+  A range or term prefix alone has no windowed form; given `within` (a list
+  every match is known to be in — documents pass their collection's postings)
+  it is driven by that list, each candidate checked, and a read spends at most
+  the cap in checks before evaluating the query whole, once: thinly scattered
+  matches cost no more than they did. `test/db-windowed-resolve.test.mjs`
+  holds the windowed answer to the whole one across window and page sizes.
 - The log is the source of truth up to the compaction point, not forever.
-  Payloads, manifests and identities are the snapshot, so `db.maintenance`
-  compacts by truncating the log — after which storage tracks live objects
-  rather than every write ever taken. Anything reading history must therefore
+  Records are the snapshot, so `db.maintenance` compacts by truncating the log
+  — after which storage tracks live objects rather than every write ever
+  taken — and drops retracted records whose retraction is behind the cut,
+  since nothing can replay an older event for them any more. Anything reading history must therefore
   handle being cut off rather than assume it can reach the beginning: an old
   cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
   `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
   postings, a state-derived export for backups) are what still work.
+- The log is the transactional outbox: every write's event is in the batch
+  that makes the change. A tenant's event read (and the KV change feed built on
+  it) looks at a bounded stretch of the log and returns `{ events, cursor,
+  more }`, where `cursor` moves past everything it looked at, matching or not.
+  Consumers continue from that cursor, never from the last matching event, or a
+  long run of other writes is read again forever. App code that must emit a
+  message with a write does it through the same batch: `documents.write({
+  emit })` records each message in the tenant's `zv.outbox` records inside the
+  transaction that commits the changes, so the message exists exactly when
+  they do. `outbox.read` pages the log the same way, skipping messages since
+  removed; delivery is at least once, so consumers deduplicate by message id
+  and `outbox.remove` what they have handled. A message id the outbox holds is
+  refused, never replaced.
+- A consumer that writes into the partition whose log it reads commits each
+  batch of what it derives together with the cursor that batch reached, in one
+  transaction, re-reading its cursor inside it (`txn.allocate` hands out
+  identifiers there) — never the derived writes in one transaction and the
+  cursor in another, which repeats or skips work when a run is cut off between
+  them. A time series does this, and rebuilds into a new generation that
+  replaces the one reads use in the same transaction as its last points, so an
+  interrupted rebuild leaves the old series whole. A projection's `apply`
+  writes outside the store, so it is at least once: it must be idempotent,
+  keyed by `eventId`, and a rebuild clears the checkpoint before its reset.
+  A materialized aggregate (`aggregates.refresh`) computes from one snapshot
+  and publishes its results with that snapshot's log head as `checkpoint`, in
+  one transaction that refuses to publish if the head moved: never a result
+  newer or older than its checkpoint.
 - A partition map carries routing and no data, so changing where an occupied
-  range points is a relocation, not a map edit. `db.movement` copies the records
-  unfenced, catches the copy up from the source log, fences writes only for the
-  last catch-up, and moves routing last; every step is recorded so an
-  interrupted one resumes. Routing is one record for every tenant in a
+  range points is a relocation, not a map edit. `db.movement` copies the
+  tenant's partition as it is (`seed`, then the source's log by `followAll` at
+  the positions it holds there), unfenced, fences writes only for the last
+  catch-up, and moves routing last; every step is recorded so an interrupted
+  one resumes, carrying the copy on from the target's head — the target's
+  positions are the source's — unless its seed never finished (`stats.seeding`,
+  set by a seed's first batch and cleared by its last) or the source has
+  compacted past that head, when it copies again (`levelFollower`, which also
+  copies again a target ahead of or diverging from its source; a pass applies
+  a bounded number of batches, so a tenant written faster than it is copied
+  ends each round and the fence ends the rounds). Identifiers and positions are the source's own, so edges, event
+  cursors and projection checkpoints carry on after a move. The fence is the
+  partition's own (`ObjectStoreApi.fence`), never copied, and the store checks
+  it under the partition's writer for every change — documents, time series,
+  checkpoints, a restore, an allocated identifier — so a change either committed
+  before it or is refused, and one last catch-up after fencing is complete. Routing is one record for every tenant in a
   rebalance, so it moves once, after all of them are copied — applying it while
   one was still uncopied would route a tenant to a shard that does not hold it.
-  `topology.update` still refuses an occupied range. Routing is read
-  from the topology on every call — never cached from the map a handle opened
-  with, which would go on reading the shard the records left.
+  `topology.update` still refuses an occupied range.
+- A tenant handle is never bound to a shard. Each operation it runs — every
+  store call inside it, nested operations included — goes to the one placement
+  routing names as the operation starts (`PartitionRouter.operations`), so a
+  handle taken before a move works after it and no operation spans two
+  placements: an identifier taken from the source's counter and written on the
+  target was never copied, and the next write there could be handed it again.
+  An operation holds an in-process lease on its placement until it ends (a
+  stream until it is consumed); upkeep visits a partition only where routing
+  places it, under one too. After routing moves, a move waits — up to
+  `drainTimeout`, then `PlacementInUse` with routing moved and the source
+  intact and fenced, for a resume — until no lease on the source is held, then
+  drops the source partition whole, fence included: nothing can arrive there
+  any more. Leases are in-process because the writer is; a restart holds none.
+  What the source keeps is the map version that moved the tenant
+  (`ShardStoreApi.relocate`), one of the shard's own records outside the
+  partition's range and written in a batch before the first removal. Every
+  routed call carries the map version it was routed by (`RoutedBy`, set by the
+  router in the same step as the shard), and a partition refuses a call routed
+  by an older map with `TenantRelocated` rather than answer it empty: an empty
+  answer from a shard a tenant left reads as an empty tenant. The version only
+  rises, and a call nobody routed is not checked. The in-process router is
+  never behind its own moves, so there it is a defect; it exists for routers
+  that hold a map of their own.
+- A shard's tenants are the partitions holding any key, the reserved
+  `zv.`-prefixed ones aside (`tenantsOn`), never a marker some layer has to
+  remember to write. A tenant whose collections are gone still holds its log,
+  identifier counter and receipts — and maybe time series or messages — and a
+  move that left them behind would let it start identifiers and positions over
+  under every cursor handed out before.
 - Crossing partitions is a separate API, never a fallback. `forTenant` is
   single-partition by construction; `db.scatter` is the only thing that fans
-  out, and it reports what each leg cost. A `Seq` names an object only together
+  out, and it reports what each leg cost. A live question across Tenants does
+  not fan out at all: it reads a cross-Tenant index (`db.crossTenantIndexes`),
+  one collection's documents from every Tenant copied into a bounded set of
+  derived shard placements. The index is derived, never authoritative: it follows each
+  Tenant partition's log from a cursor kept per partition and committed in the
+  same transaction as the entries that batch produced, and it trusts a cursor
+  only in the partition life it was read in (`PartitionStats.incarnation`,
+  written with a partition's first batch, kept by a copy, new after a removal).
+  A cursor compacted past or from another life derives that partition's
+  entries again from its records. Its refresh reads a partition soon after a
+  write in this process or one its `notifications` stream names (a writer's
+  change feed, `remoteChanges`; a follow loop); the sweep is the backstop. Plugins' `service:` partitions are never
+  read. Defining one needs `database.indexes.manage`; querying needs
+  `database.inspect`. A `Seq` names an object only together
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
+  Definitions freeze 1–32 derived shards; a source partition hashes to one so
+  its entries and cursor still commit together. Query pages merge bounded chunks
+  from those placements, with incarnation/query-bound continuation. Geometry,
+  vectors and non-unique composites use source paths. A durable re-derivation
+  marker refuses queries until complete; refresh resumes it after interruption.
+  Index refresh status (last successful full pass and failures) is persisted in
+  its registry. Database → Cross-Tenant Indexes consumes the public operations;
+  query, selected index and continuation belong in the URL.
+- A branch (`db.branchTenant`) is a new Tenant copied from another as of one
+  position of its log, by `seed` with `{ branch: true }`: the records, then the
+  source's log up to the position read once they were copied and no further,
+  so the branch is the source at exactly that position however the source was
+  written meanwhile. It keeps the source's identifiers, versions and positions,
+  takes a new `incarnation`, and records its lineage (the partitions whose log
+  it shares and up to where), which is the one way a partition accepts a cursor
+  another issued: only up to that branch point, where both logs are the same.
+  That is what keeps copied checkpoints and time-series cursors valid; never
+  rewrite them instead. The lineage is written with the first batch and the
+  seeding mark cleared with the last, all under the target's writer, and while
+  the mark stands the partition refuses every read and write
+  (`TenantBranching`); running the branch again, or the database opening,
+  starts it over. Only the target is leased for the copy: the source is read a
+  page per routed call (`scanRecords`), so it can move meanwhile and the next
+  page is read where it went; never hold the source for the whole copy. What a
+  branch leaves behind (`leave`, the outbox by default) is copied and then
+  retracted in the branch's own log while the mark stands, never skipped in
+  the copy, which would break the shared log; the namespaces are recorded
+  beside the mark so a resume leaves the same ones. A divided Tenant branches
+  part by part into a Tenant divided the same way, each part as of its own position:
+  per-part consistency only, with no one moment across the parts. That is a
+  decision, not a gap: cross-part writes are sagas, so a single cut could still
+  catch one half done, and it would cost a primitive that holds several writers.
+  `db.tenants` and `tenants/overview` report Tenants, a divided one as a single
+  entry carrying its `parts` (`db.partitions` lists the keys). Merging back
+  (`db.mergeBranch`) follows
+  [.agents/references/branch-merge-decision.md](.agents/references/branch-merge-decision.md):
+  per document from the branch point, no default winner, nothing written while
+  a conflict is unsettled, writes through the source's documents API checked
+  against the versions read, repeatable by state. A branch as of a past
+  position (`asOf`, `asOfTime`) is made from the source's log, replayed from
+  empty or from its stored snapshot; compaction never cuts past that snapshot,
+  so snapshot plus log is the recovery horizon, and a point before it is
+  refused (`LogCompacted`); `recoveryWindow`
+  reports the reach. Its position is recorded with the seeding mark
+  (`stats.asOf`) so a resume is as of the same point. A cut-off branch whose
+  source is gone is removed at open; one
+  waiting on a relocation finishes when the relocation does. A Tenant removal
+  fences, drains and then removes; one that cannot drain lifts its fence, and
+  one cut off after removing began is finished at open (its `removed` fence is
+  the tombstone). A divided Tenant is removed part by part and stays divided.
+- A reader that copies records and then follows the log (a copy, a branch, a
+  follower, an export) takes a hold on the source's log (`holdLog`: a named,
+  renewable, raise-only claim with a time limit, at most 64 a partition, taken under
+  the permit `compact` takes) so compaction goes only as far as the lowest live
+  hold and reports `heldAt` instead of refusing. A hold only prevents starvation:
+  holds live with the writer, a move carries the live holds to the target before
+  routing points there and again before the source is dropped, a remote reader
+  holds through the leader transport, and correctness stays with the readers' own
+  detection (`CursorCompacted`, `LogCompacted`). Never hold a source for a whole long read through a snapshot
+  instead; a pinned read transaction is the failure this replaces.
+- The export stream (`exportPage`, `db/export-stream.ts`) is the one way a
+  Tenant is read out online: a page of records and a page of the log per call,
+  entries applied by version, `consistent` once the log has been read to its end
+  after the last record was, and true from then on. Its cursor is opaque, bound to
+  the partition and its life, validated, and bounded; the hold lasts only until it is
+  consistent; a divided Tenant is one export with a cursor per part, consistent per
+  part. `exportTenant` is built on it, and so should any consumer (OLAP feed, replica,
+  backup): do not reintroduce a snapshot-pinned export.
+- A database image (`maintenance.image`) is a physical backup made through the
+  ordered key-value interface alone: every key of every shard (topology and global
+  included) from one snapshot per shard into an empty engine of any kind. It must
+  stay engine-agnostic: no SQLite-specific, file-copy or engine-native path as the
+  contract, and no raw-key import that bypasses the documents API. An image opens as an
+  ordinary database; restoring one is an operator act with the Project stopped, never a
+  route, because the database being replaced cannot authorize its own replacement.
+  A native OLAP engine is never part of the core runtime (no native dependency): an
+  analytics store is an external consumer of the export stream.
+- Scheduled off-site backups (`node-backups.ts`) are images packed and sealed
+  with AES-256-GCM per part (run and position as additional data), written to
+  a target that passed `probeFileStorageGuarantees`, each object `ifAbsent`,
+  the manifest last as the commit point. Each schedule has its own key,
+  answered once as `recoveryKey`; credentials and keys are never answered back.
+  A run is named components (`BackupComponent`): a Project captures
+  `database`, `runtime` (`VACUUM INTO` of its runtime store) and `media`, and a
+  managed app's Project also `app` (its recipe's named directories, see the app
+  folder rule); the Platform captures `system-store` as records, applied only
+  host-locally with the Platform stopped (`zelavis system-store import`,
+  maintenance ownership). A drill opens what it restored; `drillFrom` drills a
+  run on a machine holding only the target and the recovery key, recording
+  nothing there.
 - A restore says what to do about data already there — refuse, purge, or merge
-  — and never guesses. Whatever the mode, the identities inside a backup must
-  name the tenant being restored into: they are lens keys, and a merge looks
-  them up, so a mislabelled backup would write over the tenant they really
-  belong to on the same shard.
+  — and never guesses. Its label must name the tenant it is restored into, and
+  it writes only into that tenant's own partition, so nothing in a backup can
+  reach another tenant's records. An empty or purged tenant gets the backup's
+  own identifiers back, reserved before anything is written (`reserve`) so
+  nothing written meanwhile can take one; a retired record at one only lifts
+  the restored versions. A merge, or a tenant where live records hold some of
+  them, remaps them, and edges with them. Checkpoints and time-series state
+  are positions in the old log, so a backup carries neither. A restore into the
+  tenant a backup came from writes into that tenant's own log — a purge's
+  retractions, then the backup's records — so its projections and series carry
+  on from where they were and end where a rebuild over the whole log ends. A
+  purge works a page of records per transaction, never the whole tenant at once.
 - A schema version governs what is accepted next, never what is already
-  stored: activating one rewrites nothing. `tenant.migrations` is the separate,
+  stored: activating one rewrites no document. It does declare what the
+  version implies safely (`deriveDeclarations`: prose → analyzer, numbers →
+  measures, a single reference → edge, `GeometryField`/`VectorField` → spatial
+  and embedding only because they state the coordinate model or the model,
+  version, dimension and metric), and activation is a durable workflow
+  (`schema-activation.ts`): intent, apply and re-derive postings, publish in
+  one transaction that checks the intent and the collection's derived version.
+  Refused activations restore the previous declarations; interrupted ones
+  finish at open. Hand-made declarations are never replaced by derived ones. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions
   are data rather than functions — inspectable, and reviewable before they run.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
   on one node, which is what keeps the intersection cheap. Tenant scoping is
-  structural — the tenant is part of every namespace and lens key — never a
-  predicate a caller can omit.
-- Identifiers are dense and partition-local. Global identity is
-  `(PartitionKey, Seq)`; a globally unique id would make posting sets sparse and
-  destroy scan locality.
+  structural — the tenant is the partition, the first part of every key it
+  writes — never a predicate a caller can omit, and never something each lens
+  has to remember to name.
+- Identifiers are dense and partition-local: each partition hands out its own.
+  Global identity is `(PartitionKey, Seq)`; a globally unique id, or one shared
+  by every tenant on a shard, would make posting sets sparse and destroy scan
+  locality.
 - Queries are data, not closures. A closure cannot cross a node boundary, so a
   router that accepts one can only ever answer locally.
 - `DatabaseCollection.surface` is a first-class field. Use
@@ -1159,8 +1709,13 @@ surfaces are implementation gaps, not precedent for another exception.
   all three forms together, and identify unimplemented forms as gaps rather
   than describing them as shipped.
 
-This is the required direction for public APIs, not a claim that the current
-SDK, HTTP routes, and CLI already have full parity. Internal implementation
+`test/capability-parity.test.mjs` enforces it: the operations are derived from a
+composed Platform's OpenAPI document and the Project database and storage
+services; SDK coverage is recorded by calling every client method against a
+recording fetch, CLI coverage from the SDK methods the CLI calls. Anything else
+must be declared there (checked against the client and the CLI usage) or
+exempted with its reason (assets, passthroughs, browser redirects). A new
+route without an SDK method and a CLI command fails it. Internal implementation
 helpers are not separate public capabilities.
 
 The dashboard is a client of Zelavis, not the source of truth for platform behavior. Any feature exposed in the dashboard must also be available to non-dashboard callers such as the CLI, AI agents, scripts, plugins, external admin tools, and future automation flows.
@@ -1345,21 +1900,19 @@ those grants, while endpoints remain the authority layer.
   focused `zelavis/*` subpaths and does not own product menus or root authority.
 - `pnotes/` is the ignored, separate private repository holding one file,
   `pnotes/TODO.md`: the maintained private roadmap, decisions and open work
-  (design notes, plans, handovers and evidence are condensed into it rather than
-  kept as separate files). Never stage or publish its contents in the main
+  (keep design context only where it supports unfinished work; do not turn it
+  into a release history, audit log or completed-work archive). Never stage or publish its contents in the main
   repository, and never make public documentation checks or CI depend on it.
 - When available, update `pnotes/TODO.md` (its checkbox sections, such as
   "Platform, Fabric and Agents" or "Cleanup list") when a core, App-versioning,
   or Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.
-- Keep that roadmap current in the same change, never afterwards. A change
-  that finishes an item marks it done in its own commit and says what it now
-  does and what it cost — the numbers, where they were measured. Anything the
-  work turned up goes in as a new open item then, while it is still known: a
-  follow-up, a limit hit, a cost worth paying down later. And check what you
-  touched on the way past: an item left open because nobody revisited it reads
-  as work outstanding, which is the same defect as a stale comment, and the
-  next reader plans around it.
+- Keep that roadmap current in the same change, never afterwards. Remove
+  completed items and their progress/validation history so the TODO shrinks;
+  do not retain checked-off entries or add a Done section. Preserve unfinished
+  follow-ups as concise open items, including any limits the work uncovered.
+  Completed behavior belongs in tests, maintained documentation and Git history.
+  Revisit nearby stale entries rather than leaving finished work marked open.
 - `packages/zelavis/src/app` owns the built-in App stack exported as `zelavis/app`
   (identity primitives and Project-scoped workloads; the document-first database
   is `zelavis/db`). The official Project recipe itself is the `@zelavis/app`
@@ -1367,7 +1920,7 @@ those grants, while endpoints remain the authority layer.
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
-- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/zelavis-ui` is the Fuzor dashboard (`@zelavis/ui`) the runtime package ships; `zelavis-ui-legacy` is the former React dashboard, kept only as reference.
 - `packages/zelavis/src/adapters` holds the host, runtime and storage adapters
   (Node, Bun, Agent, Project runtimes), exported through `zelavis/adapters/*`
   subpaths.
@@ -1447,12 +2000,32 @@ The current pre-handover manual conversion is a known gap to eliminate; do not
 use it as precedent for future releases or add permanent legacy runtime paths.
 The release gate `pnpm release:qualify:update` starts from the actual previous npm
 release in disposable Linux/systemd and qualifies the packed candidate with
-continuous dashboard/App/WordPress traffic. Before publication only acquisition
+continuous dashboard/App/WordPress traffic. `pnpm release:qualify:conversion` also
+starts directly from alpha.39, the last pre-survival Agent, until that conversion
+is retired. Both run with 2 CPUs and 4 GiB rather than the Mac's full resources.
+`pnpm release:qualify:history` qualifies a
+server with a history: apps made by old releases (`distribution/history.json`: a
+hand-written WordPress from alpha.25, a contract-1 DokuWiki from alpha.29), opened so
+their integration hosts start, carried by live updates (never the installer) through the
+previous release onto the candidate, a recipe left only listed, then every recipe
+upgrade under traffic with zero failed requests, and exactly one of each process after a
+Platform restart. Each release keeps the allow-list it shipped with there. When a release
+changes host, runtime or recipe-layout behaviour, add it to `via`. Before publication only acquisition
 is substituted; after publication qualify the ordinary authenticated update API
 with real npm acquisition. Candidate Node pins are read from JSON before its code
 runs. Live root commit refreshes the selected release's authored unit templates
 and daemon-reloads without restarting the host or Project Agent; rollback
 restores the previous templates.
+`pnpm release:qualify:backups` makes a WordPress Project on the packed candidate with
+this checkout's recipes, backs it up through its own schedule while it serves (zero
+failed requests), drills and restores it, then drills the same run on a second, fresh
+disposable machine from the shared target and the recovery key alone.
+`pnpm release:qualify:failover` runs follower failover in separate Docker containers on private
+networks: a lease authority (the Platform's writer-lease routes), a writer and a follower, each with
+its own database. It `SIGKILL`s the writer, partitions it from the network while it keeps running,
+and cuts the follower off from a writer holding unacknowledged writes; each time the follower must
+be promoted only after the lease lapses, the old writer must be refused before that, every
+acknowledged write must survive, and the returned writer must converge on the new one.
 
 New system installations always enable their separate Project Agent. No optional
 Agent flag remains. Never prune qualified engines needed for Project selection,
@@ -1479,6 +2052,21 @@ and development Agent state, and Linux Project `runtime-sockets`. Whenever
 an installer starts owning another resource, update the complete-uninstall
 inventory, staged program, isolated destructive-path tests, and public docs in
 the same change.
+
+The worker role (`zelavis install --role worker`, Linux/systemd/root only) is a
+second, deliberately smaller installation role: the release tree, a dedicated
+`zelavis-worker` account, `zelavis-worker.service` and `zelavis-worker.path`, and data
+in `<data>-worker`. It shares the installation receipt (`<prefix>/installation.json`,
+`schemaVersion: 3`) with the Platform role, told apart by `role`: a machine is a
+Platform or a worker by construction, every reader chooses by role first
+(`readInstallationRoleProgram`), and each role's reader refuses the other's receipt. One
+role-aware uninstaller (`adapters/_node-installation-uninstaller.ts`) plans each role's
+own inventory. The worker plan carries no enrollment credential; `zelavis worker join`
+runs as the worker account. Its inventory is in
+`core/runtime/worker-installation-plan.ts` and is qualified by
+`distribution/scripts/qualify-worker.sh` (Docker, Debian/systemd); update that inventory,
+the staged release assets and the docs together whenever the worker installer owns
+another resource.
 
 Each package should remain independently useful and focused.
 
@@ -1565,34 +2153,77 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
+**The dashboard is the Fuzor dashboard**, `packages/zelavis/services/zelavis-ui` (`@zelavis/ui`), decided by
+the owner 2026-10-15 and cut over the same day. **All new dashboard UI is built there, natively**: a new
+page, control or flow is never another React route. Fuzor owns its routing and compiled server views.
+Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboard orchestration.
 
-- It uses **React Router v8** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
-- Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
-- Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
-- The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
-- Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
-- Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
-- Below the dashboard desktop breakpoint (`lg`), the sidebar is the whole app shell. Keep the desktop content inset hidden there; mobile and smaller tablet views should be composed from slide navigation and route slots.
-- Do not build separate desktop-only and mobile-only versions of feature behavior. Extract reusable workspace/panel components first, keep page-level data loading in routes/resource routes, and let desktop pages and future mobile slots share those components.
-- Shared UI primitives must stay aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
-- Dashboard routes should use shared control defaults. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
-- Do not add blog-style route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Dashboard content should start with the actual workspace, table, form, chart, or contextual controls unless the page needs a title for a genuinely distinct object or focused editor.
-- Content Studio routes must create collections with
-  `surface: "content-studio"` as a top-level field.
+- **The dashboard is entirely native.** Every route is a Fuzor page: a screen in `app/screens.ts` or a module it
+  calls (`app/dashboard-routes.ts` lists them, and the route parity test visits each at desktop and mobile
+  sizes). Pages are built from the small DOM builders in `app/dom.ts` and `app/page-kit.ts`; a page with live
+  state (the terminal, the media gallery, the schema builder, the Assistant conversation, the rich text and code
+  editors) is a `fuzor-island` whose module owns its state and cleans up with the page. **React is used only
+  where a library needs it**: the Glide Data Grid. Everything else, including Lexical (without its React
+  bindings) and CodeMirror, is plain DOM.
+- **The former React Router dashboard** is `packages/zelavis/services/zelavis-ui-legacy`
+  (`@zelavis/ui-legacy`): private, never loaded by a Platform, never published, and no longer part of the
+  dashboard's build. It stays only as the reference for what the new dashboard might lack. Do not fix, extend
+  or depend on it; a feature found there that is missing here is built here.
+- **Fuzor comes from the owner's checkout when one exists** (`FUZOR_DIR`, default `../fuzor` beside this
+  repository) and otherwise from the pinned npm release, so the owner always builds against the Fuzor on
+  disk while CI and other contributors use the exact published one. Every build rebuilds a stale checkout
+  (`scripts/fuzor-source.mjs`) and records which Fuzor it used in `.fuzor/fuzor-build.json`. Fuzor is
+  published to npm by the owner on its own cadence; the `fuzor` pin here moves only to a published
+  version, and a feature Zelavis needs from Fuzor is added to Fuzor first (the owner allows patching it).
+- **The build is mount-independent.** It is compiled against the placeholder root `/__zelavis__`
+  (`app/mount.ts`) and the frontend adapter (`src/mount-rewrite.ts`) replaces it with the Platform's
+  `rootPath` as it serves (assets, the server entry's requests and responses). Dashboard code takes the
+  mount from `app/mount.ts` and never writes `/zelavis` or `/api/v1` literally. The dashboard calls
+  `v1` of the Platform it is mounted on.
+- **Nothing is installed beside the shipped dashboard.** The server entry is bundled so it imports only
+  `effect` (which the Platform provides) and Node; the build refuses output that imports anything else.
+  The dashboard's server code calls the Platform in-process through the frontend context's `fetch`, never
+  over a guessed address.
+- Draft recovery is bounded tab-local storage partitioned by opaque session, Project, Tenant and table;
+  retain original record versions, surface storage failures, clear saved/discarded entries and
+  sign-out journals, and never journal authentication/provider credentials. See
+  `.agents/skills/zelavis-dashboard-ui/SKILL.md` for the workflow. Service pages keep extension frames
+  opaque and broker requests only within the owner's namespace through the exact Project proxy, with
+  bounded requests and scoped cleanup. A new iframe document cannot inherit the old grant. Schema/typed
+  record editors use public codecs and existing database operations; schema journals stay separate from
+  record journals and retain source versions. Wildcard routes must leave asset and script/style
+  requests to asset serving.
+- **Qualification** is `pnpm run ci:ui` (also part of `release:check`): the Fuzor package's browser
+  suites start throwaway Platforms and check the first-owner and login gates, the embedded production
+  bundle at its mount, every route at desktop and mobile sizes, the update banner, representative actions
+  (create, upload, edit, save, run) and the three grid libraries. Keep it green; a new page adds its pattern to
+  `app/dashboard-routes.ts`. `PARITY_SHOTS=<dir>` makes the parity run save a screenshot of the main pages.
+
+Dashboard rules (they hold for every page of `@zelavis/ui`):
+
+- The sidebar uses a slide-based navigation model; treat each slide as a distinct panel. Its menus are
+  built natively from what the Platform reports (`app/navigation-menu.ts`: registered service menus,
+  capabilities, content types, tables, workloads) and filtered by what the signed-in principal may use.
+- Below the desktop breakpoint (`lg`) the sidebar is the whole app shell. Compose pages from small modules
+  that work at every size; do not build separate desktop-only and mobile-only versions of a feature.
+- Do not add title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item.
+  Content should start with the actual workspace, table, form, chart, or contextual controls unless the page
+  needs a title for a genuinely distinct object or focused editor.
+- Content Studio routes must create collections with `surface: "content-studio"` as a top-level field.
 - Database routes that create raw tables must use `surface: "database"`.
-- Content Studio sidebar sections show only `surface: "content-studio"`
-  collections and label them as Collections.
-- Core Database sidebar sections show all registered collections, label raw
-  collection entries as Tables, and keep system tables in a distinct System
-  Tables area.
+- Content Studio sidebar sections show only `surface: "content-studio"` collections and label them as
+  Collections. Core Database sidebar sections show all registered collections, label raw collection
+  entries as Tables, and keep system tables in a distinct System Tables area.
 
-**Data loading**: every route that fetches data uses a `clientLoader` + `useLoaderData`. Never fetch in `useEffect` for page-level data. After mutations, use `useRevalidator().revalidate()`. Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is accessed in child routes via `useRouteLoaderData<typeof rootClientLoader>('root')`.
+**Data loading**: a page is a screen function that reads what it needs from the Platform's endpoints with
+Effect when it is drawn (never ad hoc in an event handler's callbacks), and an action runs through
+`context.run`, which reports failures and refreshes the page. A page with live state is a `fuzor-island`.
 
 **URL state & reconstructability**:
-- Everything that can survive a reload must be in the URL. Use `useTypedSearchParams` / `useTypedSearchParam` from `app/lib/use-typed-search-params.ts`. `clientLoader` reads search params from `request.url` so data and URL are always in sync on reload.
-- Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`). Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
+- Everything that can survive a reload must be in the URL (`context.setSearch`). Filters, tabs, the selected
+  record, the open panel and the form values a link may carry belong in the query string.
+- Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`).
+  Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
 
 **Menu items and content area rules**:
 - **Rule 1 (Always Change Content)**: Clicking any menu item or slide **MUST** update the URL and change the content area to its own dedicated page or panel. Even parent items with nested child items must land on an Overview page/route of that section when opened.
@@ -1604,14 +2235,13 @@ When working on UI behavior:
 
 - Treat the dashboard as one client of Zelavis endpoints. Do not put platform-only behavior in route components, local React state, or dashboard-only actions.
 - Prefer `pnpm dev` for end-to-end runtime and dashboard iteration.
-- Use `pnpm --filter @zelavis/ui typecheck` and `pnpm --filter @zelavis/ui build` to validate UI-only changes.
+- Use `pnpm --filter @zelavis/ui typecheck`, `build` and `test` to validate UI-only changes, and `pnpm run ci:ui` for the browser suites.
 - Preserve the existing design language unless the task explicitly asks for redesign.
 
 ## Generated and Sensitive Files
 
 Treat these carefully:
 
-- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 
@@ -1634,17 +2264,12 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   invisible — the command still succeeds, having quietly checked less. Prefer
   `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
   deliberate exceptions, so a new package is covered by default.
-- Dashboard behavior is proven in a real browser: `pnpm run ci:ui:local` runs the
-  smoke specs against a throwaway Platform, and `pnpm run ci:ui:setup:local` runs
-  the first-run wizard against an unclaimed one. Both pick free ports and stop
-  only the processes they started; never make an e2e script claim a fixed port
-  or kill by port or command line, because that can take down a running dev
-  server. Specs share one runtime and run one at a time. Run `pnpm run docs:check`
-  after docs changes.
-- Dashboard boot, mounting and navigation changes also require
-  `pnpm run ci:ui:embedded:local`: the production bundle served by a throwaway
-  Platform must hydrate and navigate on desktop and mobile without browser errors.
-  Dev-server tests alone do not cover rewritten production HTML and asset URLs.
+- Dashboard behavior is proven in a real browser: `pnpm run ci:ui` (also `ci:ui:local`) builds the dashboard bundle
+  first (the embedded and parity suites test that built bundle, never the dev server) and then runs the Fuzor
+  dashboard's browser suites against throwaway Platforms, including the embedded production bundle at its
+  mount on desktop and mobile sizes. The suites pick free ports and stop only the processes they started;
+  never make an e2e script claim a fixed port or kill by port or command line, because that can take down
+  a running dev server. Run `pnpm run docs:check` after docs changes.
 - Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
   workspace package is invisible to every root command, whatever its scripts say.
 
@@ -1671,6 +2296,20 @@ Do not manually edit generated files unless the user explicitly asks for it and 
   `git merge origin/main` on `dev` before continuing.
 - Short feature branches go off `dev` or `main` and are squash-merged as usual.
 - Do not assume GitHub app or automation credentials can open PRs automatically; if that fails, leave the branch pushed and provide the PR URL to the user.
+
+## Releasing
+
+When the owner asks for a release ("release", "release a new alpha", "publish a new version",
+"cut a stable release"), follow the runbook in
+`.agents/skills/zelavis-release-maintainer/SKILL.md` step by step, from step 1. It names every
+command, what only the owner does (npm login and 2FA, approving pushes and deploys), and what
+must be green before anything is published. Do not ask the owner to explain the procedure.
+
+Publishing the allow-list to zelavis.com is part of every release, never optional and never
+only "when services changed": after the npm publish, run `pnpm allowlist publish`, ask the owner
+to approve the website deploy, and deploy it. A release is not finished until
+`https://zelavis.com/allowlist.json` serves the shipped snapshot's `sequence`; report it as
+unfinished until then.
 
 ## Documentation Expectations
 

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Acquiring service packages from remote sources.
  *
@@ -240,23 +242,25 @@ export interface AcquiredPackage {
   readonly integrity: string;
 }
 
-async function readCapped(
+function readCapped(
   response: Response,
   limit: number,
   label: string,
 ): Promise<Uint8Array> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Uint8Array, IntegrationFailure> {
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (declared > limit) {
     throw new Error(`${label} exceeds the ${limit} byte limit.`);
   }
 
-  const body = new Uint8Array(await response.arrayBuffer());
+  const body = new Uint8Array((yield* integrationValue(response.arrayBuffer())));
   // Content-Length is a claim, not a guarantee; check what arrived.
   if (body.byteLength > limit) {
     throw new Error(`${label} exceeds the ${limit} byte limit.`);
   }
   return body;
-}
+}));
+  }
 
 interface NpmVersionMetadata {
   dist?: { tarball?: unknown; integrity?: unknown };
@@ -270,10 +274,11 @@ interface NpmVersionMetadata {
  * followed, and the bytes are verified before they are returned. Any one of
  * those alone leaves a gap.
  */
-export async function acquirePackage(
+export function acquirePackage(
   reference: string,
   options: AcquirePackageOptions = {},
 ): Promise<AcquiredPackage> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcquiredPackage, IntegrationFailure> {
   const ref = parsePackageSourceRef(reference, {
     defaultRegistry: options.defaultRegistry ?? ZELAVIS_DEFAULT_NPM_REGISTRY,
   });
@@ -286,14 +291,14 @@ export async function acquirePackage(
     // No registry vouches for a bare URL, so there is no digest to verify
     // against. It is allowed only for hosts the operator listed explicitly,
     // and the reference records the hash of what was actually installed.
-    const response = await doFetch(ref.url, { redirect: "error" });
+    const response = (yield* integrationValue(doFetch(ref.url, { redirect: "error" })));
     if (!response.ok) {
       throw new Error(
         `Failed to download package from ${ref.url}: ${response.status}.`,
       );
     }
 
-    const body = await readCapped(response, MAX_ARCHIVE_BYTES, "Package archive");
+    const body = (yield* integrationValue(readCapped(response, MAX_ARCHIVE_BYTES, "Package archive")));
     return {
       entries: stripPackagePrefix(readTarGzEntries(body)),
       resolved: ref.url,
@@ -302,11 +307,12 @@ export async function acquirePackage(
   }
 
   if (ref.kind === "git") {
-    return acquireFromGit(ref, options.policy, doFetch);
+    return (yield* integrationValue(acquireFromGit(ref, options.policy, doFetch)));
   }
 
-  return acquireFromNpm(ref, doFetch);
-}
+  return (yield* integrationValue(acquireFromNpm(ref, doFetch)));
+}));
+  }
 
 /**
  * Acquires a commit's source archive from a Git forge.
@@ -318,37 +324,40 @@ export async function acquirePackage(
  * digest of what actually arrived is recorded so the install is still
  * content-addressed and reproducible after the fact.
  */
-async function acquireFromGit(
+function acquireFromGit(
   ref: Extract<ZelavisPackageSourceRef, { kind: "git" }>,
   policy: ZelavisServiceSourcePolicy | undefined,
   doFetch: typeof globalThis.fetch,
 ): Promise<AcquiredPackage> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcquiredPackage, IntegrationFailure> {
   const url = resolveGitArchiveUrl(ref, policy);
 
   // Forges redirect archive downloads to storage hosts, so this cannot be
   // `redirect: "error"` the way the others are. Each hop is bounded and the
   // final response is size-capped; the trust still rests on the pinned commit,
   // which a redirect cannot change.
-  const response = await doFetch(url.toString());
+  const response = (yield* integrationValue(doFetch(url.toString())));
   if (!response.ok) {
     throw new Error(
       `Failed to download ${ref.repository}@${ref.commit.slice(0, 12)} from ${ref.host}: ${response.status}.`,
     );
   }
 
-  const body = await readCapped(response, MAX_ARCHIVE_BYTES, "Package archive");
+  const body = (yield* integrationValue(readCapped(response, MAX_ARCHIVE_BYTES, "Package archive")));
 
   return {
     entries: stripSingleRootDirectory(readTarGzEntries(body)),
     resolved: `git+https://${ref.host}/${ref.repository}#${ref.commit}`,
     integrity: `sha512-${createHash("sha512").update(body).digest("base64")}`,
   };
-}
+}));
+  }
 
-async function acquireFromNpm(
+function acquireFromNpm(
   ref: Extract<ZelavisPackageSourceRef, { kind: "npm" }>,
   doFetch: typeof globalThis.fetch,
 ): Promise<AcquiredPackage> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AcquiredPackage, IntegrationFailure> {
   // The package name goes in a URL path. Encoding it keeps a name that somehow
   // passed validation from reaching a different endpoint than intended; the
   // scope separator stays literal because that is how registries address it.
@@ -358,10 +367,10 @@ async function acquireFromNpm(
     .join("/");
   const metadataUrl = `${ref.registry}/${encodedName}/${encodeURIComponent(ref.version)}`;
 
-  const metadataResponse = await doFetch(metadataUrl, {
+  const metadataResponse = (yield* integrationValue(doFetch(metadataUrl, {
     headers: { accept: "application/json" },
     redirect: "error",
-  });
+  })));
 
   if (!metadataResponse.ok) {
     throw new Error(
@@ -369,11 +378,11 @@ async function acquireFromNpm(
     );
   }
 
-  const raw = await readCapped(
+  const raw = (yield* integrationValue(readCapped(
     metadataResponse,
     MAX_METADATA_BYTES,
     "Registry metadata",
-  );
+  )));
 
   let metadata: NpmVersionMetadata & { version?: unknown };
   try {
@@ -398,20 +407,20 @@ async function acquireFromNpm(
 
   const tarballUrl = assertTarballOrigin(tarball, ref.registry);
 
-  const archiveResponse = await doFetch(tarballUrl.toString(), {
+  const archiveResponse = (yield* integrationValue(doFetch(tarballUrl.toString(), {
     redirect: "error",
-  });
+  })));
   if (!archiveResponse.ok) {
     throw new Error(
       `Failed to download ${ref.name}@${ref.version}: ${archiveResponse.status}.`,
     );
   }
 
-  const body = await readCapped(
+  const body = (yield* integrationValue(readCapped(
     archiveResponse,
     MAX_ARCHIVE_BYTES,
     "Package archive",
-  );
+  )));
   verifyIntegrity(body, integrity);
 
   const resolvedVersion =
@@ -424,4 +433,5 @@ async function acquireFromNpm(
     resolved: `npm:${ref.name}@${resolvedVersion}`,
     integrity,
   };
-}
+}));
+  }

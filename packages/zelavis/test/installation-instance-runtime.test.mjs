@@ -53,9 +53,18 @@ test("shared management CLI re-executes the selected immutable release and serve
   await new Promise((resolve) => server.close(resolve));
   await writeFile(`${f.scope}/runtime.json`, JSON.stringify({...f.descriptor, version: "2.0.0", port}));
   const pkg = fileURLToPath(new URL("../", import.meta.url));
+  const manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));
+  const shippedServices = [...new Set(manifest.files.filter((path) => path.startsWith("services/")).map((path) => path.split("/")[1]))].sort();
+  assert.ok(!shippedServices.includes("new-ui"), "the experimental dashboard remains opt-in");
   for (const version of ["1.0.0", "2.0.0"]) {
     const release = `${f.prefix}/releases/${version}`;
     await stageEngineFixture(pkg, release, version);
+    assert.deepEqual((await readdir(join(release, "platform/services"))).sort(), shippedServices);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(release, "platform/services/zelavis-marketplace/allowlist.snapshot.json"), "utf8")),
+      JSON.parse(await readFile(join(pkg, "services/zelavis-marketplace/allowlist.snapshot.json"), "utf8")),
+      "the installed fixture carries the published marketplace snapshot",
+    );
   }
   await symlink(`${f.prefix}/releases/1.0.0`, `${f.prefix}/current`);
   await symlink(`${f.prefix}/releases/2.0.0`, `${f.scope}/current`);

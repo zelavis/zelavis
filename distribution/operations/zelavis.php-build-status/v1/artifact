@@ -1,0 +1,37 @@
+#!/bin/sh
+# zelavis.php-build-status v1 — where one build stands, as one bounded JSON object: its state, its exit code, the
+# last lines of its log and, once it succeeded, each archive's file name, SHA-256 and size. Read-only. Every
+# string is reduced to a safe character set, so the output is valid JSON without an escaping library.
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+[ "$#" -eq 2 ] && [ "$1" = --job ] || { echo 'Expected --job.' >&2; exit 2; }
+job=$2
+case "$job" in *[!a-f0-9]*) echo 'Invalid job.' >&2; exit 2 ;; esac
+[ "${#job}" -eq 16 ] || { echo 'Invalid job.' >&2; exit 2; }
+command -v docker >/dev/null 2>&1 || { echo 'No container engine is installed on this host.' >&2; exit 2; }
+name="zv-phpbuild-$job"
+
+# The container must be one of ours: the label is what makes it a build, whatever else is named like it.
+if [ "$(docker inspect --format '{{index .Config.Labels "zelavis.php-build"}}' "$name" 2>/dev/null)" != 1 ]; then
+  printf '{"schema":1,"job":"%s","state":"missing","exitCode":null,"log":"","builds":[]}\n' "$job"
+  exit 0
+fi
+state=$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null)
+code=$(docker inspect --format '{{.State.ExitCode}}' "$name" 2>/dev/null)
+case "$state" in created|running|paused|restarting|removing|exited|dead) ;; *) state=unknown ;; esac
+case "$code" in ''|*[!0-9]*) code=null ;; esac
+[ "$state" = exited ] || code=null
+
+# The last of the log, with newlines as " | " and only characters that need no escaping.
+log=$(docker logs --tail 12 "$name" 2>&1 | tr '\n' '|' | tr -cd 'A-Za-z0-9 ._:/=+|,()-' | tail -c 700)
+
+builds=""
+if [ "$state" = exited ] && [ "$code" = 0 ]; then
+  list=$(docker cp "$name:/out/builds.jsonl" - 2>/dev/null | tar -xO 2>/dev/null \
+    | sed -n 's/.*"file":"\([A-Za-z0-9._-]*\)","sha256":"\([0-9a-f]\{64\}\)","bytes":\([0-9]*\).*/{"file":"\1","sha256":"\2","bytes":\3}/p' | head -n 8 | tr '\n' ',')
+  builds=${list%,}
+fi
+
+printf '{"schema":1,"job":"%s","state":"%s","exitCode":%s,"log":"%s","builds":[%s]}\n' "$job" "$state" "$code" "$log" "$builds"

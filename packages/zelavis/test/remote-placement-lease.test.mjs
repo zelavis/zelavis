@@ -35,7 +35,7 @@ test("remote Agent persists lease high-water and fences before a newer epoch", a
   let fenced = false;
   let calls = 0;
   const make = (store) => createRemotePlacementLeaseStore({
-    store, trust, agentId: "agent-b", nodeId: "node-b",
+    store, trust: () => trust, agentId: "agent-b", nodeId: "node-b",
     fencePrevious: async (placement) => {
       calls += 1;
       assert.equal(placement.epoch, 1);

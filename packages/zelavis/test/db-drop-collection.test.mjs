@@ -61,7 +61,7 @@ test("dropping a collection that is not there says so rather than pretending", a
   );
 });
 
-test("a tenant with nothing left stops being listed", async (t) => {
+test("a tenant whose collections are all gone still holds its history, and stays an occupant", async (t) => {
   const { api } = await openTemporaryDatabase(t);
   await api.forTenant("ghost").documents.createCollection({ name: "temp" });
   await api.forTenant("stays").documents.createCollection({ name: "kept" });
@@ -69,30 +69,17 @@ test("a tenant with nothing left stops being listed", async (t) => {
 
   await api.forTenant("ghost").documents.dropCollection({ name: "temp" });
   assert.deepEqual(await api.forTenant("ghost").documents.listCollections(), []);
-  assert.deepEqual(
-    await api.tenants(),
-    ["stays"],
-    "a tenant holding no collection is not an occupant of the shard",
-  );
+  // Its log, its identifier counter and its retired records are still its own:
+  // a move that left them behind would let it start its identifiers and log
+  // positions over, under every cursor handed out before.
+  assert.deepEqual(await api.tenants(), ["ghost", "stays"]);
+  assert.ok((await api.forTenant("ghost").events.read({})).events.length > 0, "its history is still there");
 });
 
-test("a tenant keeps its place while it still holds a collection", async (t) => {
+test("a tenant is an occupant from its first write, whatever that write holds", async (t) => {
   const { api } = await openTemporaryDatabase(t);
-  const tenant = api.forTenant("acme");
-  await tenant.documents.createCollection({ name: "first" });
-  await tenant.documents.createCollection({ name: "second" });
-
-  await tenant.documents.dropCollection({ name: "first" });
-  assert.deepEqual(
-    await api.tenants(),
-    ["acme"],
-    "dropping one of several collections must not evict the tenant",
-  );
-
-  await tenant.documents.dropCollection({ name: "second" });
   assert.deepEqual(await api.tenants(), []);
-
-  // And it comes back as an occupant if it stores something again.
-  await tenant.documents.createCollection({ name: "third" });
-  assert.deepEqual(await api.tenants(), ["acme"]);
+  // No collection at all: only a message in its outbox.
+  await api.forTenant("messenger").outbox.emit({ topic: "hello", payload: {} });
+  assert.deepEqual(await api.tenants(), ["messenger"]);
 });

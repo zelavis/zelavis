@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, unwrapFailure, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type {
   AuthenticationInput,
   AuthenticationResult,
@@ -50,10 +52,12 @@ function secureValue(bytes = 32): string {
   return base64Url(value);
 }
 
-async function sha256(value: string): Promise<string> {
+function sha256(value: string): Promise<string> {
+    return present(Effect.gen(function* (): Effect.fn.Return<string, IntegrationFailure> {
   const bytes = new TextEncoder().encode(value);
-  return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
-}
+  return (yield* integrationValue(base64Url(new Uint8Array((yield* integrationValue(crypto.subtle.digest("SHA-256", bytes)))))));
+}));
+  }
 
 function generatedId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -126,11 +130,13 @@ export class AuthenticationService {
     };
   }
 
-  async beginAuthorizationCode(
+  beginAuthorizationCode(
     providerName: string,
     input: BeginAuthorizationCodeInput = {},
   ): Promise<BeginAuthorizationCodeResult> {
-    const provider = this.providers.get(providerName);
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<BeginAuthorizationCodeResult, IntegrationFailure> {
+    const provider = self.providers.get(providerName);
     if (!provider?.authorizationCode) {
       throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support Authorization Code login.`,
@@ -140,14 +146,14 @@ export class AuthenticationService {
     if (mode === "link" && !input.accountId) {
       throw new IdentityValidationError("Account linking requires an authenticated account.");
     }
-    if (input.accountId && !(await this.options.accounts.findById(input.accountId))) {
+    if (input.accountId && !((yield* integrationValue(self.options.accounts.findById(input.accountId))))) {
       throw new IdentityNotFoundError("The account selected for linking does not exist.");
     }
 
     const state = secureValue();
     const codeVerifier = secureValue(64);
     const nonce = secureValue();
-    const stateHash = await sha256(state);
+    const stateHash = (yield* integrationValue(sha256(state)));
     const expiresAt = new Date(Date.now() + 10 * 60_000);
     const flow: IdentityAuthorizationFlow = {
       stateHash,
@@ -160,168 +166,182 @@ export class AuthenticationService {
       createdAt: new Date(),
       expiresAt,
     };
-    await this.options.authorizationFlows.mutate(stateHash, (current) => {
+    (yield* integrationValue(self.options.authorizationFlows.mutate(stateHash, (current) => {
       if (current) throw new IdentityValidationError("Authorization state collision.");
       return flow;
-    });
+    })));
     const authorizationUrl = provider.authorizationCode.createAuthorizationUrl({
       state,
       nonce,
-      codeChallenge: await sha256(codeVerifier),
+      codeChallenge: (yield* integrationValue(sha256(codeVerifier))),
       redirectUri: flow.redirectUri,
     });
     return { authorizationUrl: String(authorizationUrl), expiresAt };
+  }));
   }
 
-  async completeAuthorizationCode(
+  completeAuthorizationCode(
     providerName: string,
     input: { state: string; code: string },
   ): Promise<AuthenticationResult> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthenticationResult, IntegrationFailure> {
     if (!input.state || !input.code) {
       throw new IdentityValidationError("Authorization callback requires state and code.");
     }
-    const provider = this.providers.get(providerName);
+    const provider = self.providers.get(providerName);
     if (!provider?.authorizationCode) {
       throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support Authorization Code login.`,
       );
     }
-    const stateHash = await sha256(input.state);
+    const stateHash = yield* integrationValue(sha256(input.state));
     let consumed: IdentityAuthorizationFlow | null = null;
-    await this.options.authorizationFlows.mutate(stateHash, (current) => {
+    yield* integrationValue(self.options.authorizationFlows.mutate(stateHash, (current) => {
       consumed = current;
       return null;
-    });
+    }));
     const flow = consumed as IdentityAuthorizationFlow | null;
     if (!flow || flow.provider !== providerName || flow.expiresAt <= new Date()) {
       throw new IdentityValidationError("Authorization state is invalid or expired.");
     }
 
-    const identity: AuthorizationCodeIdentity = await provider.authorizationCode.exchange({
+    const identity: AuthorizationCodeIdentity = yield* integrationValue(provider.authorizationCode.exchange({
       code: input.code,
       codeVerifier: flow.codeVerifier,
       nonce: flow.nonce,
       redirectUri: flow.redirectUri,
-    });
+    }));
     if (!identity.identifier?.trim()) {
       throw new IdentityValidationError("Authorization provider returned no stable subject.");
     }
+    const identifier = identity.identifier;
+    const isConflict = (failure: IntegrationFailure) => unwrapFailure(failure) instanceof IdentityConflictError;
 
-    const registered = await this.options.credentials.findByProviderIdentifier(
+    const registered = yield* integrationValue(self.options.credentials.findByProviderIdentifier(
       providerName,
-      identity.identifier,
-    );
+      identifier,
+    ));
     let account;
     let credential = registered;
     if (flow.mode === "link") {
-      account = await this.options.accounts.findById(flow.accountId!);
-      if (!account) throw new IdentityNotFoundError("The linked account no longer exists.");
-      if (credential && credential.accountId !== account.id) {
+      const linked = yield* integrationValue(self.options.accounts.findById(flow.accountId!));
+      if (!linked) throw new IdentityNotFoundError("The linked account no longer exists.");
+      account = linked;
+      if (credential && credential.accountId !== linked.id) {
         throw new IdentityValidationError("That external identity is linked to another account.");
       }
       if (!credential) {
-        try {
-          credential = await this.options.credentials.create({
-            id: generatedId("credential"),
-            accountId: account.id,
-            provider: providerName,
-            identifier: identity.identifier,
-            metadata: identity.metadata,
-          });
-        } catch (error) {
-          if (!(error instanceof IdentityConflictError)) throw error;
+        credential = yield* integrationValue(self.options.credentials.create({
+          id: generatedId("credential"),
+          accountId: linked.id,
+          provider: providerName,
+          identifier,
+          metadata: identity.metadata,
+        })).pipe(Effect.catchIf(isConflict, () => Effect.gen(function* () {
           // Another link for the same identity landed first: fine if it was to
           // this account, refused if it was to someone else's.
-          const winner = await this.options.credentials.findByProviderIdentifier(
+          const winner = yield* integrationValue(self.options.credentials.findByProviderIdentifier(
             providerName,
-            identity.identifier,
-          );
-          if (!winner || winner.accountId !== account.id) {
+            identifier,
+          ));
+          if (!winner || winner.accountId !== linked.id) {
             throw new IdentityValidationError("That external identity is linked to another account.");
           }
-          credential = winner;
-        }
+          return winner;
+        })));
       }
     } else if (credential) {
-      account = await this.options.accounts.findById(credential.accountId);
-      if (!account) throw new IdentityNotFoundError("The linked account no longer exists.");
+      const existing = yield* integrationValue(self.options.accounts.findById(credential.accountId));
+      if (!existing) throw new IdentityNotFoundError("The linked account no longer exists.");
+      account = existing;
     } else {
       // Two first logins for one external identity can arrive together. Both
       // see no credential; one wins the atomic create and the other must adopt
       // the winner's account rather than leave a second one behind.
       let created: Account | undefined;
-      try {
-        created = await this.options.accounts.create({
+      const adopted = yield* Effect.gen(function* () {
+        created = yield* integrationValue(self.options.accounts.create({
           id: generatedId("account"),
           email: identity.email,
           username: identity.username ?? (!identity.email ? `oidc_${secureValue(9)}` : undefined),
           displayName: identity.displayName,
           verified: identity.verified ?? false,
           metadata: identity.metadata,
-        });
-        credential = await this.options.credentials.create({
+        }));
+        const newCredential = yield* integrationValue(self.options.credentials.create({
           id: generatedId("credential"),
           accountId: created.id,
           provider: providerName,
-          identifier: identity.identifier,
+          identifier,
           metadata: identity.metadata,
-        });
-        account = created;
-      } catch (error) {
-        if (created) await this.options.accounts.delete(created.id);
-        if (!(error instanceof IdentityConflictError)) throw error;
-        const winner = await this.options.credentials.findByProviderIdentifier(
+        }));
+        return { account: created, credential: newCredential };
+      }).pipe(Effect.catch((failure) => Effect.gen(function* () {
+        if (created) yield* integrationValue(self.options.accounts.delete(created.id));
+        if (!isConflict(failure)) return yield* Effect.fail(failure);
+        const winner = yield* integrationValue(self.options.credentials.findByProviderIdentifier(
           providerName,
-          identity.identifier,
-        );
+          identifier,
+        ));
         const winnerAccount = winner
-          ? await this.options.accounts.findById(winner.accountId)
+          ? yield* integrationValue(self.options.accounts.findById(winner.accountId))
           : null;
-        if (!winner || !winnerAccount) throw error;
-        credential = winner;
-        account = winnerAccount;
-      }
+        if (!winner || !winnerAccount) return yield* Effect.fail(failure);
+        return { account: winnerAccount, credential: winner };
+      })));
+      credential = adopted.credential;
+      account = adopted.account;
     }
 
-    const session = await this.options.sessions.create({
+    const session = yield* integrationValue(self.options.sessions.create({
       accountId: account.id,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
       metadata: { provider: providerName, authentication: "authorization-code" },
-    });
+    }));
     return { account, credential, session };
+    }));
   }
 
-  async beginRecovery(
+  beginRecovery(
     providerName: string,
     input: CredentialRecoveryStartInput,
   ): Promise<CredentialRecoveryStartResult> {
-    const provider = this.providers.get(providerName);
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<CredentialRecoveryStartResult, IntegrationFailure> {
+    const provider = self.providers.get(providerName);
     if (!provider?.beginRecovery || !provider.completeRecovery) {
       throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support recovery.`,
       );
     }
-    return provider.beginRecovery(input, this.providerApi());
+    return (yield* integrationValue(provider.beginRecovery(input, self.providerApi())));
+  }));
   }
 
-  async completeRecovery(
+  completeRecovery(
     providerName: string,
     input: CredentialRecoveryCompleteInput,
   ): Promise<void> {
-    const provider = this.providers.get(providerName);
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    const provider = self.providers.get(providerName);
     if (!provider?.beginRecovery || !provider.completeRecovery) {
       throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support recovery.`,
       );
     }
-    await provider.completeRecovery(input, this.providerApi());
+    (yield* integrationValue(provider.completeRecovery(input, self.providerApi())));
+  }));
   }
 
-  async prepareCredential(
+  prepareCredential(
     providerName: string,
     input: CredentialEnrollmentInput,
   ): Promise<PreparedCredential> {
-    const provider = this.providers.get(providerName);
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<PreparedCredential, IntegrationFailure> {
+    const provider = self.providers.get(providerName);
     if (!provider) {
       throw new IdentityNotFoundError(
         `Unknown authentication provider: ${providerName}`,
@@ -332,11 +352,14 @@ export class AuthenticationService {
         `Authentication provider ${providerName} does not support credential enrollment.`,
       );
     }
-    return provider.prepareCredential(input);
+    return (yield* integrationValue(provider.prepareCredential(input)));
+  }));
   }
 
-  async authenticate(providerName: string, input: AuthenticationInput): Promise<AuthenticationResult> {
-    const provider = this.providers.get(providerName);
+  authenticate(providerName: string, input: AuthenticationInput): Promise<AuthenticationResult> {
+    const self = this;
+    return present(Effect.gen(function* (): Effect.fn.Return<AuthenticationResult, IntegrationFailure> {
+    const provider = self.providers.get(providerName);
 
     if (!provider) {
       throw new IdentityNotFoundError(
@@ -349,6 +372,7 @@ export class AuthenticationService {
         `Authentication provider ${providerName} requires its Authorization Code workflow.`,
       );
     }
-    return provider.authenticate(input, this.providerApi());
+    return (yield* integrationValue(provider.authenticate(input, self.providerApi())));
+  }));
   }
 }

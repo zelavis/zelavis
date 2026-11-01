@@ -140,3 +140,30 @@ test("interruption during ownership transfer completes safe activation before re
   assert.equal(controller.snapshot().release, next);
   assert.equal(admission.snapshot().paused, false);
 });
+
+test("reload hands over to a fresh owner of the release already serving; replace with that release changes nothing", async () => {
+  const f = fixture();
+  assert.equal((await Effect.runPromise(f.controller.replace(old))).generation, 1, "the release already serving is no change");
+  assert.deepEqual(f.events, []);
+  const done = await Effect.runPromise(f.admission.enter);
+  const fiber = Effect.runFork(f.controller.reload());
+  assert.deepEqual(f.events, ["prepare", "checkpoint:prepared"], "prepared while the asking request still runs");
+  const queued = Effect.runFork(f.admission.enter);
+  done();
+  const result = await Effect.runPromise(Fiber.join(fiber));
+  (await Effect.runPromise(Fiber.join(queued)))();
+  assert.deepEqual(result.release, old);
+  assert.equal(result.generation, 2);
+  assert.deepEqual(f.events, ["prepare", "checkpoint:prepared", "checkpoint:releasing", "deactivate", "checkpoint:activating", "activate", "probe", "checkpoint:committing", "commit:1.0.0", "checkpoint:ready"]);
+  assert.equal(f.controller.snapshot().generation, 2);
+});
+
+test("a reload that fails to activate restores the release it reloaded, under a new generation", async () => {
+  const f = fixture({ activate: true });
+  await assert.rejects(Effect.runPromise(f.controller.reload()), error => error instanceof RuntimeHandoverFailure);
+  assert.ok(f.events.includes("restore"));
+  assert.equal(f.owner(), old.version);
+  assert.deepEqual(f.controller.snapshot().release, old);
+  assert.equal(f.controller.snapshot().generation, 3);
+  assert.equal(f.controller.snapshot().requiresRecovery, false);
+});

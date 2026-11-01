@@ -147,13 +147,20 @@ test("the default services ship their manifest and built output, not their sourc
   // `files: ["services"]` once published whole folders: the dashboard's React
   // source, its tests and test results, generated types and a node_modules.
   const expected = ["zelavis-app", "zelavis-auth", "zelavis-marketplace", "zelavis-ui"];
-  assert.deepEqual((await readdir(join(unpacked, "services"))).sort(), expected);
+  // The cloud service is not a default service: only its self-contained bundle ships.
+  assert.deepEqual((await readdir(join(unpacked, "services"))).sort(), [...expected, "zelavis-cloud"].sort());
+  assert.equal(await shipped("services/zelavis-cloud/bundle/index.js"), true, "the cloud bundle");
+  for (const leftover of ["src", "dist", "test", "scripts", "node_modules", "package.json"]) {
+    assert.equal(await shipped(`services/zelavis-cloud/${leftover}`), false, `services/zelavis-cloud/${leftover} must not be published`);
+  }
   for (const service of expected) {
     assert.equal(await shipped(`services/${service}/package.json`), true, `${service} has no manifest`);
     assert.equal(await shipped(`services/${service}/dist`), true, `${service} has no built output`);
   }
-  assert.equal(await shipped("services/zelavis-ui/build/client"), true, "the dashboard's browser assets");
-  for (const leftover of ["app", "tests", "test-results", ".react-router", "node_modules"]) {
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/web/dist-spa"), true, "the dashboard's browser assets");
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/dist-backend/entry.mjs"), true, "the dashboard's server entry");
+  assert.equal(await shipped("services/zelavis-ui/.fuzor/fuzor-build.json"), true, "which Fuzor built the dashboard");
+  for (const leftover of ["app", "tests", "test-results", "node_modules", "islands", "behaviors", "scripts", "src", "components", "pages", ".fuzor/legacy-output", ".fuzor/dist-spa"]) {
     assert.equal(await shipped(`services/zelavis-ui/${leftover}`), false, `services/zelavis-ui/${leftover} must not be published`);
   }
 });
@@ -171,7 +178,7 @@ test("the package loads from the tarball in a bare consumer", async () => {
 
 test("runtime-neutral subpaths load without the optional engines", async () => {
   // These must not drag in a peer dependency. The DB engine subpaths
-  // deliberately are not listed: `libsql`, `lmdb`, `rocksdb` and friends are
+  // deliberately are not listed: `lmdb`, `rocksdb` and friends are
   // peer dependencies, so a consumer that has not installed them should fail
   // to import those, and that is correct behaviour rather than a defect.
   for (const subpath of ["zelavis/core", "zelavis/sdk", "zelavis/sdk/browser", "zelavis/service"]) {

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { integration, present, type IntegrationFailure } from "../../core/runtime/effect-boundary.js";
 import type { ZelavisBackendHostProbes } from "../host.js";
 import type {
   ZelavisDeploymentBackendAdapter,
@@ -5,17 +7,19 @@ import type {
 } from "../registry.js";
 import type { ZelavisProjectRuntimeDriver } from "../../project.js";
 
-async function detectNativeBackend(
+function detectNativeBackend(
   host: ZelavisBackendHostProbes,
 ): Promise<ZelavisDeploymentBackendDetection> {
+  return present(Effect.gen(function* (): Effect.fn.Return<ZelavisDeploymentBackendDetection, IntegrationFailure> {
   const linux = host.platform === "linux";
   const [cgroupV2, systemd, userNamespaces] = linux
-    ? await Promise.all([
-        host.pathExists("/sys/fs/cgroup/cgroup.controllers"),
-        host.pathExists("/run/systemd/system"),
-        host.readTextFile("/proc/sys/user/max_user_namespaces")
-          .then((value) => Number.parseInt(value?.trim() ?? "", 10) > 0),
-      ])
+    ? yield* Effect.all([
+        integration(() => host.pathExists("/sys/fs/cgroup/cgroup.controllers")),
+        integration(() => host.pathExists("/run/systemd/system")),
+        integration(() => host.readTextFile("/proc/sys/user/max_user_namespaces")).pipe(
+          Effect.map((value) => Number.parseInt(value?.trim() ?? "", 10) > 0),
+        ),
+      ], { concurrency: 3 })
     : [false, false, false];
   return {
     state: "ready",
@@ -30,6 +34,7 @@ async function detectNativeBackend(
       isolationProfile: "legacy-process",
     },
   };
+  }));
 }
 
 /** Built-in native backend adapter. Execution remains on the local Project driver. */

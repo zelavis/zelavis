@@ -7,6 +7,15 @@ export class RecipeError extends Schema.TaggedError<RecipeError>()(
 
 /** References keep generated credentials out of plans and progress records. */
 export interface RecipeSecret { readonly secret: string }
+/**
+ * What the Platform does with a running process when a newer plan still contains it but its
+ * configuration changed. `reload` signals it and leaves it serving (nginx and PHP-FPM reload
+ * gracefully); `restart` replaces it. The default is `restart`, which is always correct.
+ */
+export type ProcessUpdate =
+  | { readonly strategy: "restart" }
+  | { readonly strategy: "reload"; readonly signal: "SIGHUP" | "SIGUSR1" | "SIGUSR2" };
+
 export interface ProcessPlan {
   readonly processes: readonly {
     readonly name: string;
@@ -15,10 +24,22 @@ export interface ProcessPlan {
     readonly args: readonly (string | RecipeSecret)[];
     readonly env: Readonly<Record<string, string | RecipeSecret>>;
     readonly dependsOn: readonly string[];
-    readonly readiness: {
-      readonly port: string;
-      readonly timeoutMs: number;
-    };
+    /**
+     * Ready when a declared port accepts connections (with `greeting`, and the server speaks first, as MySQL does:
+     * a published container port accepts before the server inside it is up, so only a greeting proves it), or when a file (a unix socket, a pid
+     * file) exists. A path must lie below the project or its socket directory.
+     */
+    readonly readiness:
+      | { readonly port: string; readonly timeoutMs: number; readonly greeting?: boolean }
+      | { readonly path: string; readonly timeoutMs: number };
+    /**
+     * Files this process reads its configuration from, as absolute paths below the project or its
+     * socket directory. Their content is part of the process's identity: when it changes between
+     * two plans the process is reloaded or restarted according to `update`, and when it does not
+     * the process is left alone.
+     */
+    readonly config?: readonly string[];
+    readonly update?: ProcessUpdate;
   }[];
 }
 
@@ -32,10 +53,18 @@ const ProcessPlanWire = Schema.Struct({
     args: Schema.Array(PlanValue).check(Schema.isMaxLength(128)),
     env: Schema.Record(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)), PlanValue),
     dependsOn: Schema.Array(PlanName).check(Schema.isMaxLength(64)),
-    readiness: Schema.Struct({
-      port: PlanName,
-      timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
-    }),
+    readiness: Schema.Union([
+      Schema.Struct({ port: PlanName, timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })), greeting: Schema.optional(Schema.Boolean) }),
+      Schema.Struct({
+        path: Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/)),
+        timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 900000 })),
+      }),
+    ]),
+    config: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(1024), Schema.isPattern(/^\/[^\x00]*$/))).check(Schema.isMaxLength(8))),
+    update: Schema.optional(Schema.Union([
+      Schema.Struct({ strategy: Schema.Literal("restart") }),
+      Schema.Struct({ strategy: Schema.Literal("reload"), signal: Schema.Literals(["SIGHUP", "SIGUSR1", "SIGUSR2"]) }),
+    ])),
   })).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
 });
 
@@ -43,6 +72,8 @@ const ProcessPlanWire = Schema.Struct({
 export function parseProcessPlan(input: unknown, allowed: {
   readonly commands: readonly string[];
   readonly ports: readonly string[];
+  /** Absolute directories a readiness path may lie below. */
+  readonly directories?: readonly string[];
 }): ProcessPlan {
   try {
     let plan: typeof ProcessPlanWire.Type;
@@ -55,9 +86,19 @@ export function parseProcessPlan(input: unknown, allowed: {
     if (processes.size !== plan.processes.length) throw new Error("Duplicate process names.");
     for (const process of plan.processes) {
       if (!allowed.commands.includes(process.command)) throw new Error(`Undeclared executable "${process.command}".`);
-      if (!allowed.ports.includes(process.readiness.port)) throw new Error(`Undeclared port "${process.readiness.port}".`);
+      if ("port" in process.readiness) {
+        if (!allowed.ports.includes(process.readiness.port)) throw new Error(`Undeclared port "${process.readiness.port}".`);
+      } else {
+        const path = process.readiness.path;
+        const inside = (allowed.directories ?? []).some((directory) => path.startsWith(`${directory.replace(/\/+$/, "")}/`));
+        if (!inside || path.split("/").includes("..")) throw new Error("A readiness path must lie below the project or its socket directory.");
+      }
       if (Object.keys(process.env).length > 128) throw new Error("Too many environment entries.");
       if (new Set(process.dependsOn).size !== process.dependsOn.length) throw new Error("Duplicate process dependencies.");
+      for (const path of process.config ?? []) {
+        const inside = (allowed.directories ?? []).some((directory) => path.startsWith(`${directory.replace(/\/+$/, "")}/`));
+        if (!inside || path.split("/").includes("..")) throw new Error("A configuration path must lie below the project or its socket directory.");
+      }
     }
     const visited = new Set<string>();
     const visiting = new Set<string>();
@@ -78,7 +119,9 @@ export function parseProcessPlan(input: unknown, allowed: {
       env: Object.freeze(Object.fromEntries(Object.entries(process.env).map(([key, value]) =>
         [key, typeof value === "string" ? value : Object.freeze({ ...value })]))),
       dependsOn: Object.freeze([...process.dependsOn]),
-      readiness: Object.freeze({ ...process.readiness }),
+      readiness: Object.freeze({ ...process.readiness }) as typeof process.readiness,
+      ...(process.config ? { config: Object.freeze([...process.config]) } : {}),
+      ...(process.update ? { update: Object.freeze({ ...process.update }) as typeof process.update } : {}),
     }))) });
   } catch (cause) {
     if (cause instanceof RecipeError) throw cause;
@@ -93,6 +136,28 @@ export interface RecipeContext {
   readonly method: RecipeMethod;
   readonly config: Readonly<Record<string, string | number | boolean | RecipeSecret>>;
   readonly ports: Readonly<Record<string, number>>;
+  /** Absolute locations a phase needs to write into configuration files. */
+  readonly directories: {
+    /** Everything the recipe's files API reaches. Phases and processes work here. */
+    readonly root: string;
+    /** Where unix sockets live: short, and visible to every process of the Project. */
+    readonly sockets: string;
+    /**
+     * The manifest's `directories`, by name, at the place each is now. After an upgrade that names
+     * another path this stays the old one until the Project is next started from a stop.
+     */
+    readonly named: Readonly<Record<string, string>>;
+  };
+  /** The OS account the Project's processes run as. */
+  readonly account: {
+    readonly user: string;
+    readonly group: string;
+    /** The same account as numbers, for a program that cannot resolve names (a container's user). */
+    readonly uid?: number;
+    readonly gid?: number;
+    /** True when the Platform is root and daemons must drop to this account themselves. */
+    readonly switchUser: boolean;
+  };
 }
 
 /**
@@ -103,14 +168,23 @@ export interface RecipeContext {
 export interface RecipeHostApi {
   readonly files: {
     readonly read: (path: string) => Effect.Effect<string, RecipeError>;
-    readonly write: (path: string, content: string | RecipeSecret) => Effect.Effect<void, RecipeError>;
+    /** Content may be assembled from text and secret references; a file with a secret is private. */
+    readonly write: (path: string, content: string | RecipeSecret | readonly (string | RecipeSecret)[]) => Effect.Effect<void, RecipeError>;
+    readonly exists: (path: string) => Effect.Effect<boolean, RecipeError>;
     readonly mkdir: (path: string) => Effect.Effect<void, RecipeError>;
     readonly remove: (path: string) => Effect.Effect<void, RecipeError>;
   };
   readonly download: (input: {
     readonly url: string; readonly sha256: string; readonly maxBytes: number; readonly destination: string;
   }) => Effect.Effect<void, RecipeError>;
-  readonly extract: (archive: string, destination: string) => Effect.Effect<void, RecipeError>;
+  /**
+   * Unpacks a `.tar.gz` below the project. `destination` must not exist yet. With
+   * `stripTopLevel`, the archive must have exactly one top-level directory, whose
+   * contents become the destination (how release archives are usually laid out).
+   */
+  readonly extract: (archive: string, destination: string, options?: {
+    readonly stripTopLevel?: boolean;
+  }) => Effect.Effect<void, RecipeError>;
   readonly run: (input: {
     readonly command: string;
     readonly args: readonly (string | RecipeSecret)[];

@@ -12,10 +12,29 @@ import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runMarketplaceCommand } from "./marketplace.js";
 import { runUpdateCommand } from "./update.js";
+import { runDebugCommand } from "./debug.js";
+import { runLogsCommand } from "./logs.js";
+import { runTerminalCommand } from "./terminal.js";
 import { runProjectsCommand } from "./projects.js";
+import { runNodesCommand } from "./nodes.js";
+import { runCloudCommand } from "./cloud.js";
+import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
+import { runBackupsCommand } from "./backups.js";
 import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
+import { runStorageCommand } from "./storage.js";
+import { runCrossTenantIndexesCommand } from "./cross-tenant-indexes.js";
+import { runFollowersCommand } from "./followers.js";
+import { runLeasesCommand } from "./leases.js";
+import { runEntitiesCommand } from "./entities.js";
+import { runFabricCommand } from "./fabric.js";
+import { runRuntimeCommand } from "./runtime.js";
+import { runEnvironmentCommand } from "./environment.js";
+import { runAssistantCommand } from "./assistant.js";
+import { runBackendsCommand } from "./backends.js";
+import { runAgentStatusCommand } from "./agent-status.js";
+import { runWorkloadsCommand } from "./workloads.js";
 import { runEdgeCommand } from "./edge.js";
 import { ZelavisClientHttpError } from "../sdk/fetch.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
@@ -47,6 +66,8 @@ export interface ZelavisCliServeOptions {
   dataDirectory?: string;
   /** Where the Platform finds and installs services; defaults to `<data>/services`. */
   servicesDirectory?: string;
+  /** Serve a narrow HTTPS enrollment listener so machines can join a Platform reached by IP. */
+  enrollment?: { port: number; addresses: readonly string[] };
 }
 
 export interface ZelavisCliRuntime {
@@ -83,6 +104,8 @@ interface ParsedArgs {
   port?: number;
   dataDirectory?: string;
   servicesDirectory?: string;
+  enrollmentPort?: number;
+  enrollmentAddresses?: string[];
   url?: string;
   specifier?: string;
   source?: RuntimeServiceSource;
@@ -118,18 +141,39 @@ function printHelp(): void {
 
 Usage:
   zelavis system-store <namespaces|records NAMESPACE> [--limit N] [--after KEY] [--url URL] [--token TOKEN] [--json]
+  zelavis system-store import RECORDS.jsonl --confirm import [--replace] [--data-dir DIR]
+  zelavis backups <schedules|create-schedule|delete-schedule|run|runs|verify|restore|drill|drill-from> [name] [run-id] [--data JSON] [--confirm NAME] [--schedule NAME] [--recovery-key KEY] [--target-dir PATH] [--target JSON] [--json]
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
-  zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>]
+  zelavis serve [--instance <name>] [--host <host>] [--port <port>] [--data-dir <path>] [--services-dir <path>] [--enrollment-port <port> [--enrollment-address <ip-or-host>]...]
   zelavis install --from-release <path> | --from-npm <path> [--instance <name> --port <port>] [--user] [--dry-run]
   zelavis doctor [--instance <name>] [--user | --system] [--json]
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
-  zelavis marketplace <allowlist|refresh> [--url <url>] [--token <token>] [--json]
+  zelavis marketplace <allowlist|refresh|updates|update <name>> [--url <url>] [--token <token>] [--json]
+  zelavis worker join --platform-url <https-url> --node-id <id> --enrollment-token <token> [--platform-fingerprint sha256:<hex> | --platform-ca-file <file>] [--address <host-or-ip>] [--port <port>] [--data-dir <path>] [--json]
+  zelavis cloud <status|connect|disconnect|nodes|request|release> [id] [--provider NAME] [--label TEXT] [--region NAME] [--url <url>] [--token <token>] [--json]   (provider token from ZELAVIS_CLOUD_TOKEN)
+  zelavis nodes <list|platform|trust|audit|enroll-token|enroll|remove> [node-id] [--ttl-minutes N] [--replace] [--enrollment-token TOKEN --cert-file FILE --agent-url URL [--trust-out FILE]] [--url <url>] [--token <token>] [--json]
   zelavis update <status|check|apply> [--wait] [--url <url>] [--token <token>] [--json]
-  zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
+  zelavis terminal <status|list|install|open|attach|close> [session-id] [--url <url>] [--token <token>] [--json]
+  zelavis debug <processes|updates|project <id>> [--url <url>] [--token <token>] [--json]
+  zelavis logs [--ref <reference>] [--level <level>] [--source <name>] [--limit <n>] [--after <sequence>] [--follow] [--url <url>] [--token <token>] [--json]
+  zelavis projects <list|recipes|get|create|start|stop|restart|upgrade|logs|remove|tenants|create-tenant|export-tenant|restore-tenant> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--tenant <id>] [--output <file>] [--file <backup.json>] [--into empty|purge|merge] [--url <url>] [--token <token>] [--json]
+  zelavis auth <providers|oauth-providers|sign-up|sign-in|session|refresh|sign-out|sessions|revoke-session|recovery-providers|recover|complete-recovery|accounts|create-account|create-credentials|account-sessions|revoke-account-sessions|revoke-account-session|security-events|oauth-connections|configure-oauth|remove-oauth|oauth-start|link-start|bootstrap-status|bootstrap> [provider|id] [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
-  zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
+  zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
+  zelavis runtime <config|access|settings|update-settings> [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis environment <identity|health|create-session|update-session|session|close-session|usage|start-process|process|operate-process|events> [id] [--data JSON] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis fabric <snapshot|health|nodes|node|placements|placement|plan|migrations> [id] [--data JSON] [--url <url>] [--token <token>] [--json]
+  zelavis assistant <audit|provider|set-provider|clear-provider|project-provider|set-project-provider|clear-project-provider|threads|create-thread|thread|delete-thread|send|stream|decide> [id] [text|approval-id] [--data JSON] [--project ID] [--decision approve|deny] [--confirm ID] [--url <url>] [--token <token>] [--json]
+  zelavis backends <list|detect|enable|disable|default> [backend-id] [--url <url>] [--token <token>] [--json]
+  zelavis agent <status|operations|operation> [operation-id] [--url <url>] [--token <token>] [--json]
+  zelavis storage <list|metadata|get|put|delete> --project <id> [path|prefix] [--file FILE | --text TEXT] [--output FILE] [--content-type T] [--metadata JSON] [--url <url>] [--token <token>] [--json]
+  zelavis cross-tenant-indexes <list|get|define|drop|refresh|query> --project <id> [name] [--definition JSON] [--where JSON] [--order-by JSON] [--tenants A,B] [--search TEXT] [--limit N] [--after CURSOR] [--url <url>] [--token <token>] [--json]
+  zelavis entities <send|message|cancel|state|mailbox|list> --project <id> <type> [id] [message-key] [--tag TAG] [--data JSON] [--primary-key KEY] [--deliver-at ISO] [--tenant ID] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis leases <show|put|audit> [PARTITION] [--data JSON] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions> --project <id> [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--url <url>] [--token <token>] [--json]
+  zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
@@ -162,11 +206,27 @@ Commands:
                             outlive the Platform that drives it.
   edge                      Inspect, preflight, and safely switch the reverse
                             proxy behind the proxy-neutral Edge controller.
-  marketplace               Show or refresh the marketplace allow-list.
+  marketplace               Show or refresh the marketplace allow-list; list and install service updates.
+  terminal                  Open a shell on the server inside tmux (owner only).
+  debug                     Read-only diagnostics: the Platform account's Zelavis processes and copies
+  logs                      Read the Platform's recent log; --ref shows the cause
+                            behind the reference of an "Action failed" message.
   update                    Check for a newer version and update this installation
                             from its own dashboard route; status, check, apply.
   projects                  List, create, start, stop, restart, upgrade, remove and read
-                            logs of Projects; recipes lists Project recipes.
+                            logs of Projects; recipes lists Project recipes;
+                            tenants, create-tenant, delete-tenant and branch-tenant list, add, remove
+                            and copy the Tenants of an App Project's database; export-tenant and restore-tenant
+                            back up and restore one of them.
+  cross-tenant-indexes      Define, list, refresh, query and drop an App Project's
+                            cross-Tenant indexes: one collection from every Tenant.
+  entities                  Send messages to an App Project's durable entities and read
+                            their state, mailboxes and replies.
+  leases                    Read and conditionally write a partition's writer lease in the
+                            Platform's lease authority.
+  followers                 The leader side of an App Project's database for followers
+                            on other hosts: stats, records, log, holds, acknowledgments
+                            and the change feed.
   auth service-accounts     Create and revoke machine identities and rotate their
                             one-time Platform API tokens.
   services list             List runtime service registry entries.
@@ -283,6 +343,16 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--data-dir=")) {
       parsed.dataDirectory = arg.slice("--data-dir=".length);
+    } else if (arg === "--enrollment-port") {
+      parsed.enrollmentPort = parsePort(readValue(args, index, arg));
+      index += 1;
+    } else if (arg.startsWith("--enrollment-port=")) {
+      parsed.enrollmentPort = parsePort(arg.slice("--enrollment-port=".length));
+    } else if (arg === "--enrollment-address") {
+      (parsed.enrollmentAddresses ??= []).push(readValue(args, index, arg));
+      index += 1;
+    } else if (arg.startsWith("--enrollment-address=")) {
+      (parsed.enrollmentAddresses ??= []).push(arg.slice("--enrollment-address=".length));
     } else if (arg === "--services-dir") {
       parsed.servicesDirectory = readValue(args, index, arg);
       index += 1;
@@ -415,142 +485,122 @@ function formatUninstallPlan(plan: ZelavisInstallationUninstallPlan): string {
   return lines.join("\n");
 }
 
-async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
+const refuse = (message: string) => new IntegrationFailure(new Error(message));
+
+const runServicesCommand = Effect.fn("CLI.services")(function* (parsed: ParsedArgs): Effect.fn.Return<void, TaggedFailure> {
   const clientOptions = {
     url: parsed.url,
     headers: parsed.token ? { authorization: `Bearer ${parsed.token}` } : undefined,
   };
   if (parsed.target === "sources") {
-    const sources = await listRuntimeServiceSources(clientOptions);
+    const sources = yield* integration(() => listRuntimeServiceSources(clientOptions));
     console.log(JSON.stringify({ sources }, null, 2));
     return;
   }
   if (parsed.target === "list") {
-    const services = await listRuntimeServices(clientOptions);
+    const services = yield* integration(() => listRuntimeServices(clientOptions));
     console.log(formatRuntimeServiceList(services));
     return;
   }
 
   if (parsed.target === "install" || parsed.target === "enable") {
-    if (!parsed.name) throw new Error("services install requires a service name.");
-    const result = await updateRuntimeService(
-      parsed.name,
-      { status: "installed" },
-      clientOptions,
-    );
-    console.log(`Installed ${parsed.name}.`);
+    if (!parsed.name) return yield* refuse("services install requires a service name.");
+    const name = parsed.name;
+    const result = yield* integration(() => updateRuntimeService(name, { status: "installed" }, clientOptions));
+    console.log(`Installed ${name}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
   if (parsed.target === "disable" || parsed.target === "uninstall") {
-    if (!parsed.name) throw new Error("services disable requires a service name.");
-    const result = await updateRuntimeService(
-      parsed.name,
-      { status: "available" },
-      clientOptions,
-    );
-    console.log(`Disabled ${parsed.name}.`);
+    if (!parsed.name) return yield* refuse("services disable requires a service name.");
+    const name = parsed.name;
+    const result = yield* integration(() => updateRuntimeService(name, { status: "available" }, clientOptions));
+    console.log(`Disabled ${name}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
   if (parsed.target === "register") {
-    if (!parsed.specifier) throw new Error("services register requires --specifier.");
-    const result = await registerRuntimeService(
+    if (!parsed.specifier) return yield* refuse("services register requires --specifier.");
+    const specifier = parsed.specifier;
+    const result = yield* integration(() => registerRuntimeService(
       {
-        specifier: parsed.specifier,
+        specifier,
         name: parsed.name,
         source: parsed.source,
         order: parsed.order,
         status: parsed.install ? "installed" : "available",
       },
       clientOptions,
-    );
-    const service = result.services.find(
-      (entry) => entry.name === parsed.name,
-    );
-    console.log(`Registered ${service?.name ?? parsed.specifier}.`);
+    ));
+    const service = result.services.find((entry) => entry.name === parsed.name);
+    console.log(`Registered ${service?.name ?? specifier}.`);
     const activation = formatActivationResult(result.activation);
     if (activation) console.log(activation);
     return;
   }
 
-  throw new Error(
-    `Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`,
-  );
-}
+  return yield* refuse(`Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`);
+});
 
 // The provider Zelavis ships with. An installation that replaced it names
 // its own with --provider.
 const DEFAULT_BOOTSTRAP_PROVIDER = "password";
 
-async function resolveBootstrapPassword(parsed: ParsedArgs): Promise<string> {
+const resolveBootstrapPassword = Effect.fn("CLI.bootstrapPassword")(function* (parsed: ParsedArgs): Effect.fn.Return<string, TaggedFailure> {
   if (parsed.passwordStdin) {
-    const piped = await readAllStdin();
-    if (!piped) {
-      throw new Error("--password-stdin was given but standard input was empty.");
-    }
+    const piped = yield* integration(() => readAllStdin());
+    if (!piped) return yield* refuse("--password-stdin was given but standard input was empty.");
     return piped;
   }
 
-  const password = await promptSecret("Owner password: ");
-  const confirmation = await promptSecret("Confirm password: ");
-  if (password !== confirmation) {
-    throw new Error("The passwords did not match.");
-  }
+  const password = yield* integration(() => promptSecret("Owner password: "));
+  const confirmation = yield* integration(() => promptSecret("Confirm password: "));
+  if (password !== confirmation) return yield* refuse("The passwords did not match.");
   return password;
-}
+});
 
-async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
+const runBootstrapCommand = Effect.fn("CLI.bootstrap")(function* (parsed: ParsedArgs): Effect.fn.Return<void, TaggedFailure> {
   if (parsed.target === "status") {
-    console.log(formatBootstrapStatus(await readBootstrapStatus({ url: parsed.url })));
+    console.log(formatBootstrapStatus(yield* integration(() => readBootstrapStatus({ url: parsed.url }))));
     return;
   }
   if (parsed.target) {
-    throw new Error(
-      `Unknown bootstrap command "${parsed.target}". Expected status, or no argument to create the owner.`,
-    );
+    return yield* refuse(`Unknown bootstrap command "${parsed.target}". Expected status, or no argument to create the owner.`);
   }
 
   const token = parsed.token ?? process.env.ZELAVIS_BOOTSTRAP_TOKEN;
   if (!token) {
-    throw new Error(
-      "A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.",
-    );
+    return yield* refuse("A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.");
   }
-  if (!parsed.email && !parsed.username) {
-    throw new Error("bootstrap requires --email or --username.");
-  }
+  if (!parsed.email && !parsed.username) return yield* refuse("bootstrap requires --email or --username.");
 
   // Checked before the password is asked for, so an operator is not made to
   // type a secret into a Platform that was never going to accept it.
-  const status = await readBootstrapStatus({ url: parsed.url });
-  if (!status.required) {
-    throw new Error("This Platform already has an owner.");
-  }
+  const status = yield* integration(() => readBootstrapStatus({ url: parsed.url }));
+  if (!status.required) return yield* refuse("This Platform already has an owner.");
   const provider = parsed.provider ?? DEFAULT_BOOTSTRAP_PROVIDER;
   if (!status.enrollmentProviders.includes(provider)) {
-    throw new Error(
-      status.enrollmentProviders.length
-        ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
-        : "This Platform has no credential provider installed, so no owner can be enrolled.",
-    );
+    return yield* refuse(status.enrollmentProviders.length
+      ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
+      : "This Platform has no credential provider installed, so no owner can be enrolled.");
   }
 
-  const result = await bootstrapPlatformOwner(
+  const password = yield* resolveBootstrapPassword(parsed);
+  const result = yield* integration(() => bootstrapPlatformOwner(
     {
       bootstrapToken: token,
       provider,
-      password: await resolveBootstrapPassword(parsed),
+      password,
       ...(parsed.email ? { email: parsed.email } : {}),
       ...(parsed.username ? { username: parsed.username } : {}),
       ...(parsed.displayName ? { displayName: parsed.displayName } : {}),
     },
     { url: parsed.url },
-  );
+  ));
 
   // The session token is deliberately not printed. It is a live owner
   // credential, and stdout is redirected into logs far too often.
@@ -558,7 +608,7 @@ async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
     `Created Platform owner ${result.account.email ?? result.account.username ?? result.account.id}.`,
   );
   console.log("Sign in from the dashboard, or with the auth API, to continue.");
-}
+});
 
 const runCliProgram = Effect.fn("CLI.dispatch")(function* (
   args: readonly string[] = process.argv.slice(2),
@@ -576,12 +626,40 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       (yield* integration(() => runMarketplaceCommand(args.slice(1))));
       return;
     }
+    if (args[0] === "worker") {
+      (yield* integration(() => runWorkerCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "cloud") {
+      (yield* integration(() => runCloudCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "nodes") {
+      (yield* integration(() => runNodesCommand(args.slice(1))));
+      return;
+    }
     if (args[0] === "update") {
       (yield* integration(() => runUpdateCommand(args.slice(1))));
       return;
     }
+    if (args[0] === "terminal") {
+      (yield* integration(() => runTerminalCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "debug") {
+      (yield* integration(() => runDebugCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "logs") {
+      (yield* integration(() => runLogsCommand(args.slice(1))));
+      return;
+    }
     if (args[0] === "auth") {
       (yield* integration(() => runAuthCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "backups") {
+      yield* integration(() => runBackupsCommand(args.slice(1)));
       return;
     }
     if (args[0] === "system-store") {
@@ -590,6 +668,55 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "data") {
       (yield* integration(() => runDataCommand(args.slice(1))));
+      return;
+    }
+    // `zelavis agent` runs the Agent; with one of these words it asks the Platform what the Agent reports.
+    if (args[0] === "agent" && ["status", "operations", "operation"].includes(args[1] ?? "")) {
+      (yield* integration(() => runAgentStatusCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "runtime") {
+      (yield* integration(() => runRuntimeCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "environment") {
+      (yield* integration(() => runEnvironmentCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "fabric") {
+      (yield* integration(() => runFabricCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "assistant") {
+      (yield* integration(() => runAssistantCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "backends") {
+      (yield* integration(() => runBackendsCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "storage") {
+      (yield* integration(() => runStorageCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "cross-tenant-indexes") {
+      (yield* integration(() => runCrossTenantIndexesCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "entities") {
+      (yield* integration(() => runEntitiesCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "followers") {
+      (yield* integration(() => runFollowersCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "leases") {
+      (yield* integration(() => runLeasesCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "workloads") {
+      (yield* integration(() => runWorkloadsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "host-operations") {
@@ -649,6 +776,9 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
         ...((parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)
           ? { servicesDirectory: (parsed.servicesDirectory ?? process.env.ZELAVIS_SERVICES_DIR)! }
           : {}),
+        ...(parsed.enrollmentPort !== undefined
+          ? { enrollment: { port: parsed.enrollmentPort, addresses: parsed.enrollmentAddresses ?? [] } }
+          : parsed.enrollmentAddresses ? (() => { throw new Error("--enrollment-address requires --enrollment-port."); })() : {}),
       })));
       return;
     }
@@ -735,7 +865,7 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       return;
     }
     if (parsed.command === "bootstrap") {
-      (yield* integration(() => runBootstrapCommand(parsed)));
+      yield* runBootstrapCommand(parsed);
       return;
     }
     if (parsed.command === "setup") {
@@ -749,7 +879,7 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       return;
     }
     if (parsed.command === "services") {
-      (yield* integration(() => runServicesCommand(parsed)));
+      yield* runServicesCommand(parsed);
       return;
     }
     return yield* new IntegrationFailure(new Error(`Unknown command "${parsed.command}".`));

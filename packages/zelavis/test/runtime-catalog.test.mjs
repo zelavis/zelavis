@@ -92,3 +92,73 @@ test("an exact engine selects its own verified App recipe and refuses altered re
     await assert.rejects(Effect.runPromise(catalog.app("1.0.0")), /file digest mismatch/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("a release declares the data format it writes, and one that declares none is read as the format every earlier release wrote", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-format-"));
+  try {
+    const { CURRENT_FORMAT } = await import("../dist/db/kv-store.js");
+    const { root } = await release(directory, "3.0.0");
+    const catalog = createNodeRuntimeCatalog({ directory, rootOwned: false });
+    assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), CURRENT_FORMAT, "a newly sealed artifact declares this build's format");
+    const file = join(root, "runtime-artifact.json");
+    const artifact = JSON.parse(await readFile(file, "utf8"));
+    delete artifact.metadata.dataFormat;
+    await writeFile(file, `${JSON.stringify(artifact)}\n`);
+    assert.equal(await Effect.runPromise(catalog.dataFormat("3.0.0")), 2, "alpha.5 to alpha.42 declared nothing and wrote format 2");
+    await assert.rejects(Effect.runPromise(catalog.dataFormat("latest")), /exact version/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a bound App starts on the engine that wrote its data across a layout change, and follows the Platform otherwise", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-bound-engine-"));
+  try {
+    const { chooseBoundEngine } = await import("../dist/adapters/_node-bound-engine.js");
+    const { ZELAVIS_VERSION } = await import("../dist/version.js");
+    const older = await release(directory, "1.0.0");
+    await release(directory, ZELAVIS_VERSION);
+    const catalog = createNodeRuntimeCatalog({ directory, rootOwned: false });
+    const journalFile = join(directory, "runtime-handover.json");
+    const layoutRoot = directory;
+    const select = () => Effect.runPromise(chooseBoundEngine({ journalFile, layoutRoot, catalog }));
+    const layout = (record) => writeFile(join(layoutRoot, "data-layout.json"), `${JSON.stringify(record)}\n`);
+    const journal = (version) => writeFile(journalFile, `${JSON.stringify({ format: "zelavis-runtime/1", generation: 3, selected: { version, digest: older.selected.digest } })}\n`);
+    const declare = async (version, dataFormat) => {
+      const file = join(directory, version, "runtime-artifact.json");
+      const artifact = JSON.parse(await readFile(file, "utf8"));
+      if (dataFormat === undefined) delete artifact.metadata.dataFormat; else artifact.metadata.dataFormat = dataFormat;
+      await writeFile(file, `${JSON.stringify(artifact)}\n`);
+    };
+
+    assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "a host that never ran starts on the Platform's engine");
+    await journal(ZELAVIS_VERSION);
+    assert.deepEqual(await select(), { version: ZELAVIS_VERSION });
+
+    await journal("1.0.0");
+    await declare("1.0.0", undefined);
+    const held = await select();
+    assert.equal(held.version, "1.0.0", "format 2 data stays on the engine that wrote it, not the Platform's");
+    assert.match(held.heldReason, /format 2.*older.*recipe is upgraded/);
+
+    const { CURRENT_FORMAT } = await import("../dist/db/kv-store.js");
+    await declare("1.0.0", CURRENT_FORMAT);
+    assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "equal formats keep following the Platform");
+
+    // A migration records the layout it left: the data now agrees with the Platform even though the host's engine declares format 2.
+    await declare("1.0.0", undefined);
+    await layout({ format: CURRENT_FORMAT });
+    assert.deepEqual(await select(), { version: ZELAVIS_VERSION }, "migrated data follows the Platform");
+    // An undone migration puts the old layout back and names the engine that wrote it, even if the journal already names the Platform's.
+    await journal(ZELAVIS_VERSION);
+    await layout({ format: 2, engine: "1.0.0" });
+    const undone = await select();
+    assert.equal(undone.version, "1.0.0", "old data stays on the engine that wrote it");
+    await rm(join(directory, "data-layout.json"), { force: true });
+
+    await journal("1.0.0");
+    await rm(join(directory, "1.0.0"), { recursive: true, force: true });
+    await assert.rejects(select(), undefined, "a held Project whose engine was removed fails loudly instead of opening its data on another engine");
+
+    await writeFile(journalFile, "not a journal");
+    await assert.rejects(select());
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

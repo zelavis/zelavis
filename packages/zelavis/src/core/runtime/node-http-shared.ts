@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, IntegrationFailure } from "./effect-boundary.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import {
@@ -80,10 +82,11 @@ function toBodyInit(body: unknown): BodyInit | undefined {
   return String(body);
 }
 
-export async function toNodeLikeWebRequest(
+export function toNodeLikeWebRequest(
   request: NodeLikeRequest,
   options: ToNodeLikeWebRequestOptions = {},
 ): Promise<Request> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Request, IntegrationFailure> {
   const headers = new Headers();
 
   for (const [key, value] of Object.entries(request.headers)) {
@@ -106,7 +109,7 @@ export async function toNodeLikeWebRequest(
       : toBodyInit(request.body)
     : undefined;
 
-  return createRequestFromPlainInput({
+  return (yield* integrationValue(createRequestFromPlainInput({
     url: options.url ?? request.url ?? "/",
     method,
     headers,
@@ -115,14 +118,16 @@ export async function toNodeLikeWebRequest(
     baseUrl:
       options.baseUrl ??
       `${getRequestProtocol(request)}://${request.headers.host ?? "localhost"}`,
-  });
-}
+  })));
+}));
+  }
 
-export async function sendNodeLikeResponse(
+export function sendNodeLikeResponse(
   response: ServerResponse,
   payload: Response,
   method = "GET",
 ): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   response.statusCode = payload.status;
 
   for (const [key, value] of toResponseHeaderEntries(payload.headers)) {
@@ -149,13 +154,21 @@ export async function sendNodeLikeResponse(
     return;
   }
 
-  await new Promise<void>((resolve, reject) => {
+  yield* Effect.callback<void, IntegrationFailure>((resume) => {
     const stream = Readable.fromWeb(payload.body as any);
+    const refuse = (cause: Error) => resume(Effect.fail(new IntegrationFailure(cause)));
+    const finish = () => resume(Effect.void);
 
-    stream.on("error", reject);
-    response.on("error", reject);
-    response.on("finish", resolve);
+    stream.on("error", refuse);
+    response.on("error", refuse);
+    response.on("finish", finish);
 
     stream.pipe(response);
+    return Effect.sync(() => {
+      stream.off("error", refuse);
+      response.off("error", refuse);
+      response.off("finish", finish);
+    });
   });
+  }));
 }

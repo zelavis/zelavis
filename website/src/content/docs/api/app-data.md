@@ -19,8 +19,9 @@ Two properties, and both matter:
   from there by the database service. A client cannot address another Tenant's
   records however it composes a request.
 - **Data authority is not Platform authority.** `project.data.read` and
-  `project.data.write` imply `database.read` and `database.write` and nothing
-  else. Holding them does not let a caller start, stop, reconfigure, or inspect
+  `project.data.write` imply `database.read` and `database.write`.
+  `project.data.define` separately authorizes collection/schema/index definitions.
+  Holding them does not let a caller start, stop, reconfigure, or inspect
   the Project runtime — which is the whole point, because the App is a tenant of
   that Project rather than its operator.
 
@@ -35,14 +36,26 @@ about it is special:
 ```bash
 zelavis auth service-accounts create \
   --name "my-app" \
-  --permission project.data.read \
-  --permission project.data.write \
+  --project-permission project.data.read \
+  --project-permission project.data.write \
   --project app_myproduct
 ```
 
 Reads and writes are separate permissions, as `project.view` and
 `project.runtime.manage` are: holding one does not confer the other. A client
 that only reports is granted `project.data.read` alone.
+
+Schema authority is separate too: give `project.data.define` only to trusted
+schema/deployment clients. It maps to `database.define`, which permits creating
+and dropping collections, saving/activating schemas, and changing column,
+search, spatial, embedding, composite index, check and reference declarations.
+An ordinary record writer cannot disable its validation rules. Definition
+authority alone grants no document read/write authority. A POST query, corpus
+statistics read or change-feed read requires only read authority; the Gateway
+delegates exact data grants and the child operation checks its own requirement.
+Use repeated `--project-permission` flags with `--project` for these scoped
+grants. `--permission` names Platform-wide authority; the CLI adds no implicit
+Project operator permissions.
 
 ## JavaScript
 
@@ -56,6 +69,7 @@ const zv = createZelavisClient({
 
 const data = zv.data('app_myproduct');
 
+// Run once with a schema client granted project.data.define.
 await data.collections.create({ name: 'boards' });
 
 const board = await data.documents.insert('boards', {
@@ -85,6 +99,107 @@ const updated = await data.documents.update('boards', board.id, {
 
 A stale `expectedVersion` is a conflict rather than a silent overwrite.
 
+### Indexing only the fields you query
+
+By default every field of every document is indexed, so any field can be
+filtered or sorted on. A collection that names the fields it queries indexes
+only those, and its documents cost far less to write and store: in one
+measurement, a document with 28 fields and four of them declared wrote 47%
+fewer bytes per insert and took 56% less space once the log was compacted than
+the same collection indexing every field.
+
+```ts
+await data.collections.create({ name: 'posts', columns: ['status', 'author', 'publishedAt'] });
+
+// Later: index another field, or every field again.
+await data.collections.setColumns('posts', ['status', 'author', 'publishedAt', 'slug']);
+await data.collections.setColumns('posts', null);
+```
+
+A declared field covers everything below it, so `author` covers `author.id`.
+Filtering or sorting by equality, `in`, a range or a single field on any
+other field fails with `UnindexedField` (400) instead of scanning the
+collection; filters checked per document, such as `ne`, still work on any
+field. A reference must read a declared field. `setColumns` rewrites the
+collection's documents under the new choice, so a newly added field answers
+for every document once it returns. The CLI takes the same choice:
+`zelavis data create-collection posts --columns status,author` and
+`zelavis data set-columns posts --columns all`.
+
+### How many documents
+
+`count` answers how many documents a collection holds, counted from the collection's identifiers in the index without
+reading any document, so it is linear in the collection and cheap beside reading it. A collection's own definition is not
+one of them, and an unknown collection is a 404.
+
+| Form | Call |
+|---|---|
+| HTTP | `GET /zelavis/api/v1/runtime/projects/:projectId/data/documents/collections/:collection/count` (the database's `GET …/database/documents/collections/:collection/count`) |
+| SDK | `data.collections.count('posts')` |
+| CLI | `zelavis data count posts --project ID` |
+
+### Definitions, summaries, schemas and series
+
+The rest of the database's operations are in all three forms too. Their bodies are the database's own vocabulary
+(`/api/database/...` in the OpenAPI spec). In the SDK the inputs and answers (definitions, schemas, traversal, summaries, related, time series, health) are the server's own TypeScript types, so a wrong field
+is a compile error; the CLI passes `--data` through and prints the database's own answer, so the three answer alike,
+refusals included. In the CLI the body is `--data JSON`, and a name (an index, check, reference
+or schema version) is the third argument. HTTP paths are under `/zelavis/api/v1/runtime/projects/:projectId/data/`.
+
+| What | HTTP (`data/…`) | SDK (`data.…`) | CLI (`zelavis data … --project ID`) |
+|---|---|---|---|
+| Collection exists | `GET documents/collections/:c/exists` | `collections.exists(c)` | `exists c` |
+| Analyzer, spatial index, embedding | `POST documents/:c/analyzer\|geometry\|embedding` | `collections.setAnalyzer\|setSpatial\|setEmbedding(c, body)` | `set-analyzer\|set-spatial\|set-embedding c --data` |
+| Rewrite to today's lenses | `POST maintenance/documents/rewrite` | `collections.rewrite(c?)` | `rewrite [c]` |
+| Composite indexes | `POST documents/:c/indexes`, `DELETE …/indexes/:name` | `indexes.create(c, body)`, `indexes.drop(c, name)` | `create-index c --data`, `drop-index c name` |
+| Checks | `POST documents/:c/checks`, `DELETE …/checks/:name` | `checks.add`, `checks.drop` | `add-check`, `drop-check` |
+| References | `POST documents/:c/references`, `DELETE …/references/:name` | `references.add`, `references.drop` | `add-reference`, `drop-reference` |
+| Traversal, summaries, related | `POST documents/:c/traverse\|summarize\|summarize-by\|related` | `documents.traverse\|summarize\|summarizeBy\|related(c, body)` | `traverse\|summarize\|summarize-by\|related c --data` |
+| Covariance, measure histogram | `POST documents/:c/covariance\|histogram` | `documents.covariance\|histogram(c, body)` | `covariance\|histogram c --data` |
+| Materialized aggregates | `GET\|POST aggregates`, `GET\|DELETE aggregates/:name`, `POST aggregates/:name/refresh` | `aggregates.list\|define\|get\|refresh\|drop` | `aggregates`, `define-aggregate --data`, `get-aggregate\|refresh-aggregate\|drop-aggregate name` |
+| Imports from CSV, NDJSON, JSON | `POST documents/:c/imports/plan\|run\|verify` | `imports.plan\|run\|verify(c, source)` | `import-plan\|import-run\|import-verify c --data JSON [--file EXPORT]` |
+| Text corpus statistics | `POST documents/:c/search-statistics` | `documents.searchStatistics(c, { search, … })` | `search-statistics c --data` |
+| Tenant change feed | `POST events/read` | `events.read({ collection?, documentId?, after?, limit? })` | `changes --data` or `changes --after CURSOR --limit N` |
+| Text, vector and structured ranking | `POST documents/:c/query` | `documents.query(c, { search, similar, hybrid?, where?, statistics?, … })` | `query c --data` |
+| Schemas | `GET schemas/collections`, `GET\|POST schemas/:c`, `POST …/activate\|validate`, `GET schemas/collections/activations`, `POST schemas/collections/activations/resume` | `schemas.list\|versions\|save\|activate\|validate\|activations\|resumeActivations` | `schemas`, `schema-versions`, `save-schema`, `activate-schema c VERSION`, `validate-schema`, `schema-activations`, `resume-schema-activations` |
+| Time series | `GET timeseries/series`, `POST timeseries/:s/range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest` | `timeseries.list\|range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest` | `series`, `series-range\|aggregate\|windows\|moving\|histogram\|interpolate\|ingest s` |
+| Health | `GET health` | `health()` | `health` |
+
+The operator's read-only maintenance views (needs `database.inspect`, carried by `project.view`) are on the Project
+rather than the App data client: `client.projects.systemViews(projectId, { tenantId? })` and
+`client.projects.systemView(projectId, view, { tenantId?, limit?, after? })`, or
+`zelavis projects system-views <id> [--view NAME] [--tenant T] [--limit N] [--after CURSOR]`.
+
+Cross-Tenant search is also operator-only: `data.documents.scatter(c, { tenants?,
+search?, where?, limit?, perTenantLimit? })` uses the Project proxy and requires
+`project.view`. Its HTTP route is `POST …/proxy/zelavis/api/v1/database/documents/:c/scatter`;
+the CLI is `zelavis data scatter c --project ID --data JSON`. App data grants
+cannot authorize it. See [Database search](/api/database/#search-global-ranking-and-hybrid-reads)
+for ranking, candidate limits and cross-partition consistency.
+
+### Following changes
+
+```ts
+const changes = await data.events.read({ after: savedCursor, limit: 100 });
+for (const event of changes.events) await applyIdempotently(event.eventId, event);
+savedCursor = changes.cursor;
+// If more is true, read the next page immediately; otherwise poll later.
+```
+
+The feed reads the Tenant's existing event log. It includes collection creation,
+definition updates and deletion (`collection.created|updated|deleted`), plus
+`document.upserted|deleted`. Schema activation may re-derive document versions,
+so consumers can observe those upserts too. Keep the returned cursor even on an
+empty filtered page: it advances past log entries that did not match.
+
+Pages accept 1–1000 events (100 by default) and bound the underlying log scan.
+Filters are optional collection/document identity, always within the caller's
+Tenant. Cursors are opaque and may expire through compaction; on that refusal,
+take a fresh [Tenant export](/api/database) and establish a new checkpoint.
+There is no global order across Tenants or divided-Tenant parts. Retrying a read
+has no side effects; consumers deduplicate by event id and persist their cursor
+only after applying the page successfully.
+
 ### Several changes as one
 
 `write` applies a batch atomically, in the order given:
@@ -104,6 +219,28 @@ a response cannot tell a lost reply from a lost request; a retry carrying the
 same key is answered with what the first attempt returned instead of being
 applied twice.
 
+### Messages with a write
+
+`emit` records messages in the Tenant's outbox in the same transaction as the
+batch, so a message exists exactly when the change it describes does. A
+consumer reads them in commit order and removes what it has handled:
+
+```ts
+await data.documents.write({
+  operations: [{ _tag: 'Insert', collection: 'orders', id: 'o1', data: { total: 10 } }],
+  emit: [{ topic: 'order.placed', payload: { order: 'o1' } }],
+});
+
+const page = await data.outbox.read({ after: lastCursor, limit: 100 });
+for (const message of page.messages) await deliver(message); // deduplicate by message.id
+await data.outbox.remove(page.messages.map((message) => message.id));
+lastCursor = page.cursor;
+```
+
+Delivery is at least once, so deliver idempotently by `message.id`. Reading needs
+only `project.data.read`. See [Database](/api/database/#outbox) for the full
+contract.
+
 ## HTTP
 
 Every call is a path under the Project's data route. The database service's own
@@ -121,6 +258,10 @@ Content-Type: application/json
 GET /zelavis/api/v1/runtime/projects/app_myproduct/data/documents/collections
 ```
 
+```http
+GET /zelavis/api/v1/runtime/projects/app_myproduct/data/outbox/messages?limit=100
+```
+
 A request that names a `tenantId` other than its own is answered `403`, not
 honoured.
 
@@ -131,6 +272,8 @@ zelavis data collections --project app_myproduct
 zelavis data insert boards --project app_myproduct --data '{"title":"Engineering"}'
 zelavis data query boards --project app_myproduct --where '[{"path":"archived","value":false}]'
 zelavis data get boards brd_01h... --project app_myproduct --json
+zelavis data outbox --project app_myproduct --limit 100 --json
+zelavis data outbox-remove --project app_myproduct --ids msg_1,msg_2
 ```
 
 There is no `--tenant` flag. The Tenant follows from whoever the token
@@ -148,5 +291,6 @@ authority and is confined to its own records.
 The data route reaches the whole database service, but only collections and
 documents have a typed SDK and CLI today. Schemas, projections, time series,
 search, geometry, and traversal are reachable over HTTP at the same boundary and
-still need their typed surfaces. There is also no change feed: a client learns
-about writes by asking.
+still need their typed surfaces. There is no general document change feed yet:
+the outbox carries the messages App code emits with its writes, and the KV
+change feed follows one KV namespace.

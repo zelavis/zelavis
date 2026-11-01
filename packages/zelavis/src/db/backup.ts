@@ -1,13 +1,19 @@
 import { Effect, Stream } from "effect";
 import { equals } from "./query.js";
 import {
+  type DbError,
+  type InvalidExport,
   BackupFormatUnsupported,
   BackupTenantMismatch,
+  InvalidRestoreMode,
+  type TenantMoving,
   TenantNotEmpty,
 } from "./errors.js";
+import { carried, checkedLimit, EXPORT_MAX_LIMIT, exportPartitionPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
+import { MAX_SEQ } from "./keys.js";
 import { asSeq, emptyManifest, type IndexManifest, type ObjectIdentity, type Seq } from "./model.js";
 import type { ObjectStoreApi } from "./store.js";
-import { COLLECTION_NAMESPACE_PREFIX, isDerivedNamespace, tenantOf } from "./tenancy.js";
+import { COLLECTION_NAMESPACE } from "./tenancy.js";
 import type { TenantId } from "./topology.js";
 
 export const ZELAVIS_DB_BACKUP_V1 = "zelavis.db-backup.v1" as const;
@@ -64,6 +70,9 @@ export type RestoreMode =
    */
   | "merge";
 
+/** Every mode a restore has, in the order the docs describe them. */
+export const RESTORE_MODES: ReadonlyArray<RestoreMode> = ["empty", "purge", "merge"];
+
 export interface RestoreOptions {
   /** Defaults to `empty`. */
   readonly into?: RestoreMode;
@@ -93,6 +102,12 @@ export interface BackupsApi {
    */
   readonly exportTenant: Effect.Effect<TenantBackupV1>;
   /**
+   * One page of this tenant as a stream: its records, then every change since, from the cursor the
+   * last page gave. See `ExportPage`. Refused with `CursorCompacted` or `LogCompacted` when the log
+   * the export was following was cut, and with `StoreError` for a cursor that is not this tenant's.
+   */
+  readonly exportPage: (input?: ExportPageInput) => Effect.Effect<ExportPage, DbError | InvalidExport>;
+  /**
    * Replay a backup into this tenant.
    *
    * Restores under the tenant the backup was taken from — checked rather than
@@ -104,109 +119,88 @@ export interface BackupsApi {
    * refuses, because replaying blindly over live data would repoint each name
    * at a new record while leaving the old one indexed — matching queries,
    * reachable by nothing. `purge` and `merge` are the two coherent answers.
+   * A tenant being moved off this shard refuses the restore (`TenantMoving`),
+   * as it refuses every other write.
    */
   readonly restoreTenant: (
     backup: TenantBackupV1,
     options?: RestoreOptions,
   ) => Effect.Effect<
     RestoreResult,
-    BackupFormatUnsupported | BackupTenantMismatch | TenantNotEmpty
+    BackupFormatUnsupported | BackupTenantMismatch | InvalidRestoreMode | TenantNotEmpty | TenantMoving
   >;
 }
 
-const toBase64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
+/** Records a purge retracts per transaction. */
+const PURGE_BATCH = 256;
+
 const fromBase64 = (value: string) => new Uint8Array(Buffer.from(value, "base64"));
 
 export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => {
-  /** One put per live record, for a log that no longer reaches back far enough. */
-  const exportFromState = () =>
-    Effect.gen(function* () {
-      const events: BackupEvent[] = [];
-      for (const record of yield* store.liveRecords) {
-        const owner = tenantOf(record.identity.namespace, record.identity.key);
-        if (owner !== tenant) continue;
-        if (isDerivedNamespace(record.identity.namespace)) continue;
-        events.push({
-          kind: "put",
-          seq: record.seq,
-          version: record.version,
-          at: Date.now(),
-          body: toBase64(record.bytes),
-          manifest: record.manifest,
-          identity: record.identity,
-        });
-      }
-      return {
-        format: ZELAVIS_DB_BACKUP_V1,
-        exportedAt: new Date().toISOString(),
-        tenantId: tenant,
-        events,
-      };
-    }).pipe(Effect.orDie);
-
   /**
-   * Retract every record belonging to this tenant.
+   * Retract every record a backup would carry.
    *
    * Selected by the rule an export uses, so what a purge removes is exactly
    * what a backup would have carried — a restore that cleared less than it
    * replaces would leave records behind that the backup never knew about.
+   *
+   * A page of records at a time, each page's retractions one transaction, so
+   * a large tenant is neither read into memory nor written in one batch. The
+   * retractions go into the tenant's log like any other, so projections and
+   * time series reading it carry on: they see the records go, then the
+   * restored ones arrive, exactly as a rebuild over the whole log would.
    */
   const purge = Effect.gen(function* () {
-    const doomed = (yield* store.liveRecords).filter((record) =>
-      tenantOf(record.identity.namespace, record.identity.key) === tenant
-      && !isDerivedNamespace(record.identity.namespace));
-    for (const record of doomed) {
-      yield* store.transact((txn) => txn.retract(asSeq(record.seq)));
+    let removed = 0;
+    let after: Seq | undefined;
+    for (;;) {
+      const page = yield* store.scanRecords({ ...(after === undefined ? {} : { after }), limit: PURGE_BATCH });
+      if (page.length === 0) return removed;
+      after = page[page.length - 1]!.seq;
+      const doomed = page.filter(({ record }) => record.live && carried(record.identity)).map(({ seq }) => seq);
+      if (doomed.length === 0) continue;
+      yield* store.transact((txn) => Effect.forEach(doomed, (seq) => txn.retract(seq), { discard: true }));
+      removed += doomed.length;
     }
-    return doomed.length;
   }).pipe(Effect.orDie);
 
   return {
+    /**
+     * Every record the tenant holds, then every event logged since the records
+     * began to be read.
+     *
+     * Built from the export stream (`exportPage`): pages of records read while writes carry
+     * on, each with a page of the log, until the entries received are one position's state. A
+     * restore applies everything by version, so an event older than the record already exported
+     * changes nothing and a newer one brings it forward, and the restored tenant is the tenant as
+     * of the last of them. Nothing is held open between pages but the log (`holdLog`), so a large
+     * tenant does not pin a read snapshot for the length of the export, and a compaction running
+     * meanwhile cannot cut it off. Reading the records rather than the whole log keeps an export
+     * the size of what the tenant holds, not of everything it was ever written.
+     */
     exportTenant: Effect.gen(function* () {
-      const compactedTo = yield* store.compactedTo;
-      if (compactedTo > 0) return yield* exportFromState();
-
-      // A retraction carries no identity, so ownership is remembered from the
-      // put that established each sequence and applied to the delete that
-      // follows it.
-      const owners = new Map<number, TenantId>();
-      const events: BackupEvent[] = [];
-      const raw = yield* Stream.runCollect(store.events.read({ limit: 1_000_000 }));
-
-      for (const event of raw) {
-        if (event._tag === "ObjectPut") {
-          if (event.identity === undefined) continue;
-          if (isDerivedNamespace(event.identity.namespace)) continue;
-          const owner = tenantOf(event.identity.namespace, event.identity.key);
-          if (owner === undefined) continue;
-          owners.set(event.seq, owner);
-          if (owner !== tenant) continue;
-          events.push({
-            kind: "put",
-            seq: event.seq,
-            version: event.version,
-            at: event.at,
-            body: toBase64(event.bytes),
-            manifest: event.manifest,
-            identity: event.identity,
-          });
-        } else if (owners.get(event.seq) === tenant) {
-          events.push({
-            kind: "retract",
-            seq: event.seq,
-            version: event.version,
-            at: event.at,
-          });
-        }
+      const entries: BackupEvent[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = yield* exportPartitionPage(store, { ...(cursor === undefined ? {} : { cursor }), limit: EXPORT_MAX_LIMIT });
+        entries.push(...page.entries);
+        if (page.consistent) break;
+        cursor = page.cursor;
       }
-
       return {
         format: ZELAVIS_DB_BACKUP_V1,
         exportedAt: new Date().toISOString(),
         tenantId: tenant,
-        events,
+        events: entries,
       };
     }).pipe(Effect.orDie),
+
+    exportPage: (input) =>
+      Effect.gen(function* () {
+        const limit = yield* checkedLimit(input?.limit);
+        const page = yield* exportPartitionPage(store, { ...(input?.cursor === undefined ? {} : { cursor: input.cursor }), limit });
+        return { tenantId: tenant, entries: page.entries, cursor: page.cursor, consistent: page.consistent } satisfies ExportPage;
+      }),
 
   restoreTenant: (backup, options) =>
     Effect.gen(function* () {
@@ -216,27 +210,22 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       if (backup.tenantId !== tenant) {
         return yield* new BackupTenantMismatch({ expected: tenant, received: backup.tenantId });
       }
-
-      // The label on a backup says which tenant it is for; the identities
-      // inside say which tenant it is *of*. They can disagree — a hand-edited
-      // or hand-assembled backup — and under `empty` that only ever stored
-      // records no query for this tenant reached. A merge looks names up to
-      // decide what to write over, so the same disagreement would write over
-      // another tenant's records on the same shard. Checked once, for every
-      // mode, rather than defended against in the one that made it dangerous.
-      for (const event of backup.events) {
-        const identity = event.identity;
-        if (identity === undefined) continue;
-        const owner = tenantOf(identity.namespace, identity.key);
-        if (owner !== undefined && owner !== tenant) {
-          return yield* new BackupTenantMismatch({ expected: tenant, received: owner });
-        }
+      // Identifiers are kept where they can be, so each must be one.
+      const malformed = backup.events.find((event) => !Number.isSafeInteger(event.seq) || event.seq < 1 || event.seq > MAX_SEQ);
+      if (malformed !== undefined) {
+        return yield* new BackupFormatUnsupported({ format: `${backup.format} naming identifier ${String(malformed.seq)}` });
       }
 
+      // The label is the only tenant a backup names. The records inside are
+      // named within a partition, and a restore writes into this tenant's own,
+      // so nothing in a backup can reach another tenant's records.
       const mode = options?.into ?? "empty";
+      // Checked here, where the modes are decided, because the options come
+      // from HTTP bodies and CLI flags as much as from typed callers.
+      if (!RESTORE_MODES.includes(mode)) return yield* new InvalidRestoreMode({ mode: String(mode) });
       if (mode === "empty") {
         const occupied = yield* Stream.runCollect(
-          Stream.take(store.resolve(equals(`${COLLECTION_NAMESPACE_PREFIX}${tenant}`, "\u0000collection")), 1),
+          Stream.take(store.resolve(equals(COLLECTION_NAMESPACE, "\u0000collection")), 1),
         );
         if (occupied.length > 0) return yield* new TenantNotEmpty({ tenant });
       }
@@ -247,10 +236,27 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       // tenant ends up as the backup describes it, not as a union.
       const removed = mode === "purge" ? yield* purge : 0;
 
-      // Sequences are allocated per shard, so a backup's are meaningless in the
-      // shard it is restored into — several tenants share one, and reusing the
-      // original numbers would overwrite whatever else holds them. Each is
-      // remapped once and the mapping carries retractions to the right record.
+      // A backup's identifiers are those of the partition it was taken from,
+      // and an empty or purged tenant keeps them: its records come back as the
+      // ones they were, edges and all. A retired record at one of them only
+      // means its versions start higher. A live one there — a receipt or a
+      // checkpoint a purge keeps, from another history than the backup's —
+      // would be written over, so then, as in a merge, each identifier is
+      // remapped once and the mapping carries retractions and edges along.
+      const retiredVersions = new Map<number, number>();
+      const liveHeld = new Set<number>();
+      if (mode !== "merge") {
+        // Reserved before looking, so no write arriving meanwhile can be handed
+        // one of them and then be written over, or ignore the backup's record.
+        const highest = backup.events.reduce((top, event) => Math.max(top, event.seq), 0);
+        if (highest > 0) yield* store.reserve(asSeq(highest));
+        yield* Stream.runForEach(store.records, ({ seq, record }) =>
+          Effect.sync(() => {
+            if (record.live) liveHeld.add(seq);
+            else retiredVersions.set(seq, record.version);
+          }));
+      }
+      const verbatim = mode !== "merge" && backup.events.every((event) => event.kind !== "put" || !liveHeld.has(event.seq));
       const remapped = new Map<number, Seq>();
       /**
        * How far to lift a restored record's versions.
@@ -264,24 +270,38 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       let applied = 0;
       let superseded = 0;
 
+      // Every record is given its identifier before any is written, because an
+      // edge names its target by identifier: a manifest restored as it was
+      // would point at the backup's numbers, which here name some other record
+      // or nothing. Assigning first lets an edge reach a target that the
+      // backup happens to list after the record naming it.
+      for (const event of backup.events) {
+        if (event.kind !== "put" || remapped.has(event.seq)) continue;
+        if (verbatim) {
+          remapped.set(event.seq, asSeq(event.seq));
+          const retired = retiredVersions.get(event.seq);
+          if (retired !== undefined) lift.set(event.seq, retired);
+          continue;
+        }
+        const identity = event.identity;
+        const local = mode === "merge" && identity !== undefined
+          ? yield* store.lookup(identity.namespace, identity.key)
+          : undefined;
+        if (local === undefined) {
+          remapped.set(event.seq, yield* store.nextSeq);
+        } else {
+          remapped.set(event.seq, local);
+          const current = yield* store.read(local);
+          lift.set(event.seq, current?.version ?? 0);
+          superseded += 1;
+        }
+      }
+
       for (const event of backup.events) {
         if (event.kind === "put") {
           const identity = event.identity;
-          let seq = remapped.get(event.seq);
-          if (seq === undefined) {
-            const local = mode === "merge" && identity !== undefined
-              ? yield* store.lookup(identity.namespace, identity.key)
-              : undefined;
-            if (local === undefined) {
-              seq = yield* store.nextSeq;
-            } else {
-              seq = local;
-              const current = yield* store.read(local);
-              lift.set(event.seq, current?.version ?? 0);
-              superseded += 1;
-            }
-            remapped.set(event.seq, seq);
-          }
+          const seq = remapped.get(event.seq)!;
+          const manifest = (event.manifest as IndexManifest | undefined) ?? emptyManifest;
           yield* store.events.apply({
             _tag: "ObjectPut",
             partition: store.partition,
@@ -290,7 +310,16 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
             seq,
             version: event.version + (lift.get(event.seq) ?? 0),
             bytes: event.body === undefined ? new Uint8Array() : fromBase64(event.body),
-            manifest: (event.manifest as IndexManifest | undefined) ?? emptyManifest,
+            // An edge to a record the backup does not hold names nothing that
+            // exists here, so it is dropped rather than left pointing at
+            // whatever this shard gave that number to.
+            manifest: {
+              ...manifest,
+              edges: manifest.edges.flatMap(([edgeType, to]) => {
+                const target = remapped.get(to);
+                return target === undefined ? [] : [[edgeType, target] as const];
+              }),
+            },
             ...(identity === undefined ? {} : { identity }),
           });
           applied++;
@@ -314,11 +343,16 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
     }).pipe(
       Effect.catchTags({
         StoreError: Effect.die,
+        PartitionLeased: Effect.die,
         WriterFenced: Effect.die,
         ForeignCursor: Effect.die,
         CursorCompacted: Effect.die,
         LogCompacted: Effect.die,
         PartitionUnavailable: Effect.die,
+        PartitionExhausted: Effect.die,
+        LensesRebuilding: Effect.die,
+        TenantBranching: Effect.die,
+        TenantRelocated: Effect.die,
       }),
     ),
   };

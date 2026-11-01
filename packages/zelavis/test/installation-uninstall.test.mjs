@@ -6,7 +6,7 @@ import test from "node:test";
 import { ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION, assertCompleteUninstallConfirmation } from "../dist/core/runtime/installation.js";
 import { createNodeInstallationUninstaller } from "../dist/adapters/node.js";
 
-const receipt = (paths, overrides = {}) => ({ schemaVersion: 2, port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: false, ownsGroup: false, ...overrides });
+const receipt = (paths, overrides = {}) => ({ schemaVersion: 3, role: "platform", port: 3000, edge: true, mode: "system", source: "release", instance: "default", installedBy: "script", version: "1.0.0", prefix: paths.prefix, configDirectory: paths.configDirectory, dataDirectory: paths.dataDirectory, commandPath: paths.commandPath, ownsUser: false, ownsGroup: false, ...overrides });
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "zelavis-uninstaller-api-"));
@@ -36,6 +36,10 @@ test("the Node adapter executes its inspected plan and removes only isolated pat
   assert.equal(plan.targets.find((target) => target.id === "data").kind, "directory");
   assert.equal(new Set(plan.targets.map((target) => target.id)).size, plan.targets.length);
   await assert.rejects(uninstaller.uninstall({ confirmation: "yes" }), /DELETE-ALL-ZELAVIS-DATA/);
+  const owned = ["agent/agent.json", "agent/handover.json", "agent/agent.lock", "agent-update.sock", "update/agent-updates.json",
+    "projects/.agent-processes/.runner-lock.sqlite", "projects/.agent-processes/process.json", "projects/.agent-processes/process.out",
+    "projects/.agent-processes/process.err", "projects/sample/.zelavis/host-control.json", "pcontrolhash"];
+  for (const file of owned) { const path = join(options.paths.dataDirectory, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, "owned test artifact"); }
   await access(options.paths.dataDirectory);
   const result = await uninstaller.uninstall({ confirmation: ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION });
   assert.equal(result.removed, true);

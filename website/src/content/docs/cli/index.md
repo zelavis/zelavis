@@ -20,6 +20,11 @@ Platform yourself:
 zelavis serve
 ```
 
+`zelavis serve --enrollment-port 8444 [--enrollment-address <ip-or-host>]...` also serves a
+narrow HTTPS listener (self-signed, pinned) through which worker machines enroll; see
+[Node Enrollment](../architecture/node-enrollment/). `zelavis nodes platform` prints its URL
+and the fingerprint to pin.
+
 ## Commands
 
 Plugin-owned operations use the plural namespace consistently:
@@ -57,6 +62,29 @@ command tree.
   `--require-root-owned-operations` is for packaged installs. `zelavis serve`
   runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
   directory.
+- `terminal status|list|install|open|attach|close [session-id]` is the owner's shell on the server
+  (`client.terminal`, `GET|POST|DELETE /zelavis/api/v1/runtime/terminal*`, permission
+  `server.terminal.use` in system scope; Server → Terminal in the dashboard). `open` starts a
+  session and attaches to it, `attach` picks one up again, and Ctrl-] detaches while the session
+  keeps running. Sessions run inside tmux as the account the Platform runs as (never root) with a
+  small fixed environment, belong to the principal that opened them, and are bounded in number,
+  input size and idle time. `install` adds tmux through the audited `zelavis.packages-install`
+  operation (it also needs `server.packages.install`). Opening and closing are written to the
+  Platform log; typed input and printed output are never recorded. `nodeAdapter({ terminal: false })`
+  removes it.
+- `logs [--ref REFERENCE] [--level LEVEL] [--source NAME] [--limit N] [--after SEQUENCE] [--follow]`
+  reads the Platform's recent log (`client.logs.read`, `GET /zelavis/api/v1/runtime/logs`,
+  permission `server.logs.read` in system scope). An unexpected request failure answers with a
+  generic message and a reference; `--ref` prints the cause recorded under that reference.
+  The log is bounded and kept in memory (it is emptied by a restart, and the same error lines
+  are written to the service journal), and secrets are redacted when an entry is written.
+- `debug processes|updates|project <id> [--json]` is read-only diagnostics for whoever debugs a server (`client.debug.processes|updates|project`, `GET /zelavis/api/v1/runtime/debug/processes|updates|projects/:id`, permission `server.debug.read` in system scope, which the terminal and log permissions do not imply; each read is written to the Platform log with the principal). `updates` shows the running version and the last ten finished updates with the installer's output tail, which the updater keeps in `<data>/update/history.json` so a failed or rolled-back update can be read after the next attempt. `project` gathers one Project's record (runtime state, placement, locked recipe, unfinished update or deletion), its newest 100 runtime log lines, the Platform log entries that name it and its processes. `processes` lists the Zelavis processes of the account the Platform runs as, with
+  secrets removed from their command lines, and flags a command running more than once side by side
+  (a leftover copy). It is read-only (`client.debug.processes`,
+  `GET /zelavis/api/v1/runtime/debug/processes`, permission `server.debug.read` in system scope, which
+  the terminal and log permissions do not imply). Each read is written to the Platform log with the
+  principal. Give a script or an agent a key made with the **Debug (read-only)** preset (Server → Access
+  → API keys) and it can answer these questions without a shell.
 - `update status|check|apply [--wait]` shows the running version and the newest one on
   its channel, looks again, or asks the installation to update itself and, with
   `--wait`, follows it to the end. It calls the same routes as the dashboard
@@ -66,6 +94,22 @@ command tree.
   the installed release, so it has no HTTP route and a system update refuses to run
   unless it is root. See
   [Updating without downtime](../architecture/updates/).
+- `worker join --platform-url URL --node-id ID --enrollment-token T` makes this machine a Node
+  of a Platform: it generates the Agent's key and certificate locally, authenticates the
+  Platform (https only; `--platform-ca-file` or `--platform-fingerprint` for a private or
+  self-signed one), enrolls, and writes the Agent configuration. Host-local; the enrollment
+  it makes is `client.nodes.enroll`. `worker refresh-trust` re-reads the Platform's public keys over
+  the same pinned connection (a running Agent does this daily by itself). See
+  [Node Enrollment](../architecture/node-enrollment/).
+- `cloud status|connect|disconnect|nodes|request|release|scaling` manages cloud capacity
+  (`client.cloud`): one provider connection and the machines created through it. The
+  provider token is read from `ZELAVIS_CLOUD_TOKEN`, never from an option, so it stays
+  out of shell history. See [Node Enrollment](../architecture/node-enrollment/).
+- `nodes list|platform|audit|enroll-token|enroll|remove` manages the machines that join this Platform
+  (`client.nodes`). `enroll-token <node-id>` issues a single-use credential and shows it
+  once; `enroll <node-id> --enrollment-token T --cert-file F --agent-url URL` is what the
+  joining machine runs, and `--trust-out FILE` saves the Platform's trust keys for its
+  Agent. See [Node Enrollment](../architecture/node-enrollment/).
 - `host-operations catalog|submit|get|audit` requests host operations
   through the Platform (`client.hostOperations.*`,
   `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>
@@ -86,9 +130,59 @@ command tree.
   installed native App engines. `projects switch-version <id> --engine-version
   <exact-version>` selects one with its matching App recipe. `create <name>` and
   `upgrade <id>` also accept `--engine-version`; their default is the latest
-  qualified installed engine. Running qualified Apps switch through the shared
+  qualified installed engine. `create` also takes `--method ID` and `--software-version V` for a
+  recipe that offers install choices (`projects recipes` shows them). Running qualified Apps switch through the shared
   handover at their existing address. Source installations and unsupported
   drivers report why independent selection is unavailable.
+  `projects setup <id> [--reveal]` shows the values an installed application's own
+  setup asks for (a database address and name, a generated password), from
+  `GET|POST /zelavis/api/v1/runtime/projects/:projectId/setup[/reveal]` and
+  `client.projects.setup|revealSetup`. A secret carries no value until `--reveal`,
+  which needs `project.setup.reveal` and is recorded in the audit trail.
+  `projects system-views <id> [--view NAME] [--tenant T] [--limit N] [--after CURSOR]` reads the
+  database's maintenance views (needs `database.inspect`); the rest of the database's
+  operations are `data` actions, listed in [App data](../api/app-data/).
+  `projects tenants <id>` lists every Tenant of an App Project's database with its
+  shard, tables, stored records and bytes (a divided Tenant is one line of totals followed by one
+  indented line per part, and `--json` gives each Tenant's `parts`); `projects create-tenant <id> --tenant T --table N`
+  adds one by writing its first table; `projects delete-tenant <id> --tenant T --confirm T`
+  removes one with its history for good (needs `database.drop`);
+  `projects branch-tenant <id> --tenant T --to NEW [--outbox leave|copy]` makes `NEW` a copy of `T` as of one
+  position of its log, which then goes its own way; `T`'s undelivered outbox messages stay with it unless
+  `--outbox copy` (needs `database.restore`). They call
+  `client.projects.tenants|createTenant|deleteTenant|branchTenant` and the database's `tenants/overview` and
+  `documents/collections` routes through the Project proxy (`project.view` and
+  `database.write`); the dashboard's Database → Tenants page uses the same routes.
+  `projects export-stream <id> --tenant T [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`
+  reads a Tenant out as a stream, a page at a time: its records, then every change since, with `consistent` set once the
+  entries received (applied by version) are the Tenant as of one log position; a divided Tenant is one export whose entries
+  name their `part` (needs `database.backup`); `projects create-image <id> <name> [--storage sqlite|lmdb|rocksdb]`
+  copies every shard, byte for byte through the ordered key-value interface, into a physical backup `name` on the host in
+  any local engine, and `projects images <id>` lists them (needs `database.backup`); there is no restore command, because
+  replacing the live database is done with the Project stopped.
+  `projects export-tenant <id> [--tenant T] [--output FILE]` backs up one Tenant of
+  an App Project's database (the caller's own unless `--tenant` names another) and
+  prints the backup, or writes it owner-only to `FILE`.
+  `projects restore-tenant <id> --file FILE [--into empty|purge|merge] [--tenant T]`
+  restores one; `empty`, the default, refuses a Tenant that holds data. Both call
+  `client.projects.exportTenant|restoreTenant` and the database's
+  `maintenance/backups/export|restore` route through the Project proxy, and need
+  `project.runtime.manage`. See [Database](../api/database/#backups-and-restore).
+- `fabric`, `assistant`, `backends` and `agent status|operations|operation` read and change the
+  Fabric, the Assistant, the deployment backends and the Agent's report through the SDK; see
+  [Platform operations](../api/platform-operations/).
+- `storage <list|metadata|get|put|delete> --project ID [PATH]` and
+  `workloads <health|menu|list|create|get|update|run|logs> --project ID [ID]` manage an App
+  Project's files and workloads through `client.storage|workloads(projectId)`, over the Project
+  proxy; see [Project files and workloads](../api/project-files-and-workloads/).
+- `data <action> --project ID` reads and writes an App Project's data as the
+  token's own Tenant (`client.data(projectId)`, the Project's `data/*` route):
+  collections and documents, the KV commands, and the outbox — `data outbox
+  [topic] [--after C] [--limit N]` reads messages in commit order,
+  `outbox-emit <topic> [id] --data JSON` emits one, `outbox-remove --ids a,b`
+  removes handled ones, and `data write --operations JSON --emit JSON` commits
+  messages with a batch. See [App Data](../api/app-data/) and
+  [Database](../api/database/#outbox).
 - `auth service-accounts list|create|rotate|revoke` manages revocable Platform
   machine identities through `client.auth.admin.*`. Creation and rotation
   print a token once. Repeated `--permission` options add Platform permissions;
@@ -114,8 +208,9 @@ command tree.
 ## Host-local install and doctor
 
 `zelavis install --from-release /absolute/release` uses a staged release, while
-`zelavis install --from package --version <exact-version>` acquires its matching
-verified prebuilt archive. Both use the same plan; `--dry-run` inspects it,
+`zelavis install --from-npm /absolute/prepared-tree` completes the private Node
+and npm package tree acquired by the canonical bootstrap. Both use the same
+plan; `--dry-run` inspects it,
 `--user` selects user mode and `--json` selects structured output. Existing
 receipts identify the source, entry, mode, selected instance, port and Edge ownership. Foreign layouts,
 live data owners and occupied or reserved instance ports are refused. `--force` only permits

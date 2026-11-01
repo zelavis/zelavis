@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import type { IdentityRepositories } from "../contracts/repositories.js";
 import { AccountService } from "../services/account-service.js";
 import { AuthenticationService } from "../services/authentication-service.js";
@@ -28,7 +30,8 @@ export interface CreateIdentityOptions {
   };
 }
 
-export async function createIdentity(options: CreateIdentityOptions = {}): Promise<IdentityApi> {
+export function createIdentity(options: CreateIdentityOptions = {}): Promise<IdentityApi> {
+    return present(Effect.gen(function* (): Effect.fn.Return<IdentityApi, IntegrationFailure> {
   const repositories = createInMemoryAuthRepositories(options.repositories);
   const accounts = new AccountService(repositories.accounts);
   const credentials = new CredentialService(repositories.credentials);
@@ -66,8 +69,9 @@ export async function createIdentity(options: CreateIdentityOptions = {}): Promi
   };
 
   for (const method of options.methods ?? []) {
-    await method.register(api, options.methodContext?.(method));
+    (yield* integrationValue(method.register(api, options.methodContext?.(method))));
   }
 
   return api;
-}
+}));
+  }

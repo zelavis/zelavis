@@ -1,8 +1,8 @@
 [Unit]
 Description=Zelavis Platform OS
 After=network-online.target zelavis-%i.socket zelavis-agent@%i.service
-Wants=network-online.target
-Requires=zelavis-%i.socket zelavis-agent@%i.service
+Wants=network-online.target zelavis-agent@%i.service
+Requires=zelavis-%i.socket
 
 [Service]
 Type=simple

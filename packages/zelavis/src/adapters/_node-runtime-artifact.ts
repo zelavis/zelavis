@@ -1,3 +1,4 @@
+import { CURRENT_FORMAT } from "../db/kv-store.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readdir, readFile, readlink, realpath, writeFile } from "node:fs/promises";
@@ -82,7 +83,7 @@ export const sealNodeRuntimeArtifact = Effect.fn("RuntimeArtifact.seal")(functio
   const input: ZelavisRuntimeArtifactManifest = { formatVersion: "ZELAVIS_RUNTIME_ARTIFACT_V1", name: `zelavis-${release.platform}-${release.architecture}`,
     version: release.version, runtime: "node", entrypoint: "bin/zelavis", files: tree.files, fileDigests: Object.fromEntries(entries),
     ...(compatibilityDate ? { compatibilityDate } : {}),
-    metadata: { platform: release.platform, architecture: release.architecture, nodeVersion: release.nodeVersion, protocol: NODE_RUNTIME_PROTOCOL,
+    metadata: { platform: release.platform, architecture: release.architecture, nodeVersion: release.nodeVersion, protocol: NODE_RUNTIME_PROTOCOL, dataFormat: CURRENT_FORMAT,
       edgeDefaultAdapter: "traefik", ...(release.edge?.traefikVersion ? { traefikVersion: release.edge.traefikVersion } : {}), links: tree.links } };
   const digest = yield* integration(() => createRuntimeArtifactManifestDigest(input));
   const artifact = yield* evaluate(() => defineRuntimeArtifact({ ...input, digest }));

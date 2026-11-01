@@ -21,6 +21,7 @@ case "${1:-}" in
   --help|-h)
     echo 'Usage: install.sh [--version <exact> | --channel alpha|latest] [installer flags]'
     echo 'Installer flags: --user --instance <name> --port <port> --dry-run --public --force --allow-downgrade --json'
+    echo 'Worker role: --role worker (a machine that runs Projects for a Platform; Linux system mode only)'
     echo 'Linux system mode requires root and systemd. macOS defaults to --user.'
     exit 0 ;;
   [0-9]*) VERSION=$1; ENTRY=create; shift ;;

@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../../../core/runtime/effect-boundary.js";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { OAuthConnection } from "./oauth-connections.js";
 import type {
@@ -99,7 +101,8 @@ export function createAuthorizationCodeFlow(
       return url;
     },
 
-    async exchange(input: AuthorizationCodeExchange): Promise<OAuthIdentity> {
+    exchange(input: AuthorizationCodeExchange): Promise<OAuthIdentity> {
+    return present(Effect.gen(function* (): Effect.fn.Return<OAuthIdentity, IntegrationFailure> {
       const requestFetch = options.fetch ?? globalThis.fetch;
       const body = new URLSearchParams({
         grant_type: "authorization_code",
@@ -110,14 +113,14 @@ export function createAuthorizationCodeFlow(
       });
       if (connection.clientSecret) body.set("client_secret", connection.clientSecret);
 
-      const response = await requestFetch(definition.tokenEndpoint, {
+      const response = (yield* integrationValue(requestFetch(definition.tokenEndpoint, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },
         body,
-      });
+      })));
       if (!response.ok) {
         // The provider's body can quote the request, which carries the client
         // secret; only the status is repeated.
@@ -126,7 +129,7 @@ export function createAuthorizationCodeFlow(
         );
       }
 
-      const tokens = (await response.json()) as {
+      const tokens = ((yield* integrationValue(response.json()))) as {
         id_token?: unknown;
         access_token?: unknown;
       };
@@ -137,11 +140,11 @@ export function createAuthorizationCodeFlow(
             `${definition.name} did not return an ID token, so the identity could not be verified.`,
           );
         }
-        const verified = await jwtVerify(tokens.id_token, jwks, {
+        const verified = (yield* integrationValue(jwtVerify(tokens.id_token, jwks, {
           issuer,
           audience: connection.clientId,
           algorithms: [...(definition.algorithms ?? ["RS256", "ES256", "EdDSA"])],
-        });
+        })));
         if (!constantTimeEqual(input.nonce, verified.payload.nonce)) {
           throw new TypeError(
             `The ID token from ${definition.name} does not belong to this sign-in attempt.`,
@@ -168,19 +171,19 @@ export function createAuthorizationCodeFlow(
         throw new TypeError(`${definition.name} did not return an access token.`);
       }
 
-      const userInfo = await requestFetch(definition.userInfoEndpoint, {
+      const userInfo = (yield* integrationValue(requestFetch(definition.userInfoEndpoint, {
         headers: {
           authorization: `Bearer ${tokens.access_token}`,
           accept: "application/json",
         },
-      });
+      })));
       if (!userInfo.ok) {
         throw new TypeError(
           `Reading the ${definition.name} profile failed with status ${userInfo.status}.`,
         );
       }
       const identity = (definition.mapIdentity ?? defaultIdentity)(
-        (await userInfo.json()) as OAuthIdentityClaims,
+        ((yield* integrationValue(userInfo.json()))) as OAuthIdentityClaims,
       );
       if (!identity?.identifier) {
         throw new TypeError(`${definition.name} returned no usable account identifier.`);
@@ -189,6 +192,7 @@ export function createAuthorizationCodeFlow(
         ...identity,
         metadata: { ...identity.metadata, provider: definition.name },
       };
-    },
+    }));
+  },
   };
 }

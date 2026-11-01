@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integration, integrationValue } from "../../../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStoreValue } from "../../../system-store.js";
 import type { ZelavisServiceStore } from "../../../platform/service-store.js";
 
@@ -81,29 +83,35 @@ export function createConnectionStore(
   store: ZelavisServiceStore,
 ): OAuthConnectionStore {
   return {
-    async read(provider) {
-      const value = await store.get(connectionKey(provider));
+    read(provider) {
+    return present(Effect.gen(function* () {
+      const value = (yield* integrationValue(store.get(connectionKey(provider))));
       return isConnection(value) ? value : undefined;
-    },
-    async list() {
-      const records = await store.list();
-      return records
+    }));
+  },
+    list() {
+    return present(Effect.gen(function* () {
+      const records = (yield* integrationValue(store.list()));
+      return (yield* integrationValue(records
         .filter((record) => record.key.startsWith(KEY_PREFIX))
         .map((record) => record.value as unknown)
         .filter(isConnection)
         .sort((left: OAuthConnection, right: OAuthConnection) =>
           left.provider.localeCompare(right.provider),
-        );
-    },
-    async write(connection) {
-      await store.set(
+        )));
+    }));
+  },
+    write(connection) {
+    return present(Effect.gen(function* () {
+      (yield* integrationValue(store.set(
         connectionKey(connection.provider),
         connection as unknown as ZelavisSystemStoreValue,
-      );
-    },
-    async remove(provider) {
-      return store.delete(connectionKey(provider));
-    },
+      )));
+    }));
+  },
+    remove(provider) {
+    return present(integration(() => store.delete(connectionKey(provider))));
+  },
   };
 }
 

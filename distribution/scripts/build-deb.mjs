@@ -55,9 +55,7 @@ await cp(
   join(stageDirectory, "share", "zelavis.service"),
   join(packageRoot, "lib", "systemd", "system", "zelavis.service"),
 );
-// Installed but not enabled: running Projects through the Agent is opted into
-// with `systemctl enable --now zelavis-agent` and a zelavis.service drop-in
-// setting ZELAVIS_AGENT_ENDPOINT=/var/lib/zelavis/agent.
+// The common installer enables Project supervision and writes its endpoint.
 await cp(
   join(stageDirectory, "share", "zelavis-agent.service"),
   join(packageRoot, "lib", "systemd", "system", "zelavis-agent.service"),
@@ -94,9 +92,12 @@ ZELAVIS_BIN_DIR=/usr/bin exec /opt/zelavis/package/runtime/node/bin/node /opt/ze
 `,
   { mode: 0o755 },
 );
+// Stop activation as well as the servers: an open dashboard socket can restart
+// the Platform after removal, and the update watcher can reinstall it.
+const removalUnits = "zelavis-update.path zelavis-update.service zelavis.socket zelavis.service zelavis-traefik.service";
 await writeFile(
   join(packageRoot, "DEBIAN", "prerm"),
-  `#!/bin/sh\nset -e\nif [ "${1}" = remove ] && command -v systemctl >/dev/null 2>&1; then\n  systemctl stop zelavis.service zelavis-traefik.service >/dev/null 2>&1 || true\n  systemctl disable zelavis.service zelavis-traefik.service >/dev/null 2>&1 || true\nfi\n`,
+  `#!/bin/sh\nset -e\nif [ "$1" = remove ] && command -v systemctl >/dev/null 2>&1; then\n  systemctl stop ${removalUnits} >/dev/null 2>&1 || true\n  systemctl disable ${removalUnits} >/dev/null 2>&1 || true\nfi\n`,
   { mode: 0o755 },
 );
 await writeFile(

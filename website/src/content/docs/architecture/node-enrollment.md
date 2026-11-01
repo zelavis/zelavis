@@ -1,0 +1,234 @@
+---
+title: Node Enrollment
+---
+A machine becomes a Fabric Node by **enrolling**: it presents a single-use credential
+and its own certificate, and receives the Platform's public trust keys. Enrolling is
+the authority to receive Project workloads, so the credential is short-lived, bound to
+one node id and consumed exactly once.
+
+## What exists
+
+The enrollment API, the node registry behind it, and dispatch to registered nodes.
+A node that enrolls after startup is listed in Fabric's inventory and can be sent
+Projects without a restart, as long as this installation has remote dispatch
+configured (`projects.remoteDispatch`, which may have an empty `nodes` map). Without
+it the Platform does not publish its trust keys and answers `409 nodes-disabled`,
+so no credential is issued that no machine could use.
+
+## Joining from a machine
+
+`zelavis worker join` makes the machine you run it on a Node of an existing Platform.
+It is host-local, so it has no HTTP route of its own; the enrollment it performs is
+the route below. It:
+
+1. generates the Agent's key and a self-signed certificate on the machine, with the
+   addresses the Platform will dial it by (no `openssl` needed); the key never leaves;
+2. **authenticates the Platform before sending anything**: over `https` only, with
+   either ordinary verification (`--platform-ca-file` for a private CA, otherwise
+   Node's public roots) or a pinned certificate (`--platform-fingerprint sha256:...`,
+   for a self-signed Platform). A pin is checked on the connection before a single
+   request byte is written, and nothing is followed on redirect;
+3. enrolls with the token and certificate, and writes the Agent's configuration, then
+   prints the one command that starts it.
+
+```txt
+zelavis worker join --platform-url https://panel.example.com --node-id worker-1 \
+  --enrollment-token <token> --address 203.0.113.11 [--port 8443]
+zelavis agent --data-dir <dir> --remote-project-config <dir>/worker/remote-project.json
+```
+
+Joining is retryable: the key and certificate are kept, so repeating the command after a
+crash or a lost response enrolls the same certificate, which the Platform lets finish. A
+machine joins one Platform as one node; joining elsewhere means removing its `worker`
+directory on purpose. The Agent must be reachable from the Platform on its port.
+
+A Platform that has no hostname yet answers on plain HTTP only, and `worker join`
+refuses that: the credential and the trust keys would cross an unauthenticated link.
+Give the Platform a hostname with HTTPS first, or pin its self-signed certificate.
+
+### The enrollment listener
+
+For a Platform reached by IP address, the Platform can serve a narrow HTTPS listener
+(`adapters/_enrollment-listener.ts`) with its own self-signed certificate
+(`adapters/_platform-tls.ts`; key kept at 0600 in the Platform data directory, renewed when it
+stops covering the addresses or nears expiry). The listener forwards only the enrollment and
+public-trust refresh `POST` paths to the runtime; every other path is a 404 that never reaches the
+runtime, bodies are capped at 64 KiB and connections at 64, so opening its port exposes no
+dashboard, API or Project. The host publishes where it listens and the certificate fingerprint
+(`GET /runtime/nodes/platform`, `client.nodes.platform()`, `zelavis nodes platform`; needs
+`server.nodes.view`), which is what `worker join --platform-fingerprint` pins. Tested over real
+TLS: enrolling with the right pin, a wrong pin sending nothing, only the enrollment path being
+forwarded, and an oversized body refused.
+
+Turn it on with `zelavis serve --enrollment-port 8444 [--enrollment-address <ip-or-host>]...`
+(a port from 1024; addresses default to the machine's first routable IPv4 and `localhost`, and
+become the certificate's names). The **persistent host** serves it, so it survives an engine
+replacement and drains with the engine; it forwards only
+`POST /zelavis/api/v1/runtime/nodes/enroll` and `POST /zelavis/api/v1/runtime/nodes/trust` to the engine and answers 404 to everything else
+without admitting the request. The engine publishes the endpoint, and enabling it also turns
+remote dispatch on, so enrolled nodes receive Projects. Open the port in the firewall yourself:
+nothing here changes the host firewall. Tested through the real host and engine (a machine
+joins by pinning the published fingerprint; the dashboard, bootstrap and every other path are
+unreachable on that port).
+
+## Installing the worker role
+
+`install.sh --role worker` installs a worker: one dedicated account, one unit that runs the
+Agent once the machine has joined, and the same installation receipt as a Platform, with `role: "worker"`,
+which complete removal reads. See [Installation](../../getting-started/installation/).
+`zelavis worker join`, run as that account, does the enrollment. Qualified in a disposable
+Debian/systemd container: the real installer, accounts and units, a real enrollment into a
+real Platform runtime with the node reported `ready`, an update that restarts the running
+Agent, the refusals, and complete removal.
+
+## What does not exist yet
+
+A worker is **not updated from the dashboard**: updating means running the installer again
+on it, and the Platform only checks the worker's version when it joins (see Versions).
+`zelavis doctor` inspects a worker too (receipt, release, account, data ownership, whether it has joined, the path and Agent units, and that the Agent port is listening); it cannot tell whether the Platform can reach that port through a firewall. A default Platform install is HTTP-only until a
+hostname and certificate are configured, and a worker refuses plain HTTP, so it can join
+only a Platform with HTTPS or one whose self-signed certificate it pins (the enrollment listener above provides that).
+Cloud first-boot generation and provider composition are implemented, but booting a real cloud
+machine through enrollment and Fabric health/readiness remains unqualified. Workers refresh
+the Platform's public trust keys at startup and daily (see Key rotation). The caller's address is
+not known to the route (a proxy may sit in front), so the credential is not bound to a
+source address.
+
+## How it works
+
+1. An operator issues an enrollment for a node id. The Platform returns a 256-bit
+   token **once** and stores only its hash, with the node id and an expiry
+   (default 60 minutes, at most 24 hours).
+2. The machine generates its own TLS key and certificate and calls enroll with the
+   token, its certificate and its HTTPS origin. The token is consumed with a
+   compare-and-set before the node is registered. The same certificate may finish an
+   enrollment that crashed after consuming; any other certificate is refused.
+3. The Platform pins the certificate as that node's Agent, answers with the node id,
+   the Agent id (`agent-<node id>`) and its public trust keys, and Fabric reports
+   the node `ready` only once the Agent answers a health probe as that node.
+
+A refusal is one answer, `403 Enrollment refused.`, whatever the reason: wrong
+token, unknown node, expired, replayed or already used. The reason is kept for audit
+and never sent: an operator reads it at `GET /runtime/nodes/audit` (`client.nodes.audit()`,
+`zelavis nodes audit`; needs `server.nodes.manage`), newest first, with the outcome
+(`enrolled`, `refused`, `worker-newer`, `node-exists`, `invalid`), the reason for a refusal and
+the version. It never holds a token, certificate or address, keeps a node id only when it has the
+shape of one, records only attempts the rate limiter admitted, and is capped at 500 entries and
+30 days. A node configured by the operator always wins over a registered node
+with the same id, and the local node id can never be taken over.
+
+## Operating it
+
+```txt
+GET    /zelavis/api/v1/runtime/nodes                  nodes and pending enrollments (server.nodes.view)
+POST   /zelavis/api/v1/runtime/nodes/enrollments      issue a single-use credential (server.nodes.enroll)
+POST   /zelavis/api/v1/runtime/nodes/enroll           a machine joins; the token is the credential, no session
+DELETE /zelavis/api/v1/runtime/nodes/:id              revoke a node (server.nodes.manage)
+```
+
+SDK: `client.nodes.list()`, `createEnrollment({ nodeId, ttlMinutes?, replace? })`,
+`enroll({ nodeId, token, certPem, url })` and `remove(nodeId)`.
+
+CLI: `zelavis nodes list`, `zelavis nodes enroll-token <node-id> [--ttl-minutes N] [--replace]`,
+`zelavis nodes enroll <node-id> --enrollment-token T --cert-file F --agent-url URL [--trust-out FILE]`
+and `zelavis nodes remove <node-id>`. `--token` is the API bearer token, as for every
+command; the enrollment credential is `--enrollment-token`.
+
+Issuing refuses with `409` if the node is already registered or has an unused,
+unexpired enrollment (`replace` replaces an unused one). Removing refuses with `409
+node-in-use` while any Project is placed on the node, and leaves a tombstone, so the
+node id is not silently reused. Enrollment attempts are limited to 120 a minute across
+the Platform, which bounds the work an anonymous caller can cause; the tokens are
+unguessable, so the limit protects resources, not secrecy.
+
+## Versions
+
+A joining machine reports the Zelavis version it runs (`version`, required). The Platform refuses a
+machine **newer** than itself with `409 worker-newer` (it may speak a protocol this Platform does
+not know) and says both versions, but only after the token has been verified, and without
+spending the token, so the same credential works once the Platform is updated. A machine at the
+same version is `current`; an older one is accepted and listed as `behind`
+(`compatibility` in `GET /runtime/nodes`, `client.nodes.list()` and `zelavis nodes list`); one that
+reported no version is `unknown`. This is a join-time check against the version the machine
+reported: nothing re-checks it after a worker is updated in place, and a worker is not updated from
+the dashboard.
+
+## Key rotation
+
+The Platform signs with an Ed25519 key for a year and rotates it 30 days before it expires,
+keeping the old key trusted until then. A worker received the keys when it enrolled, so it
+follows a rotation itself: `zelavis worker join` records how it authenticated the Platform
+(the certificate fingerprint, or a copy of the CA), and a running Agent asks again at start and
+daily over that same pinned connection (`POST /runtime/nodes/trust`, anonymous because the answer
+is public keys, with its own rate limit; the enrollment ingress forwards this one path besides
+enrollment). A new set replaces the old only when it is valid and holds a key valid now, so a
+failure or a hostile answer can never leave the machine trusting nothing; if the Platform cannot
+be reached the Agent keeps its keys and logs a warning. `zelavis worker refresh-trust` does the
+same on demand and rewrites the trust file. A Platform whose certificate no longer matches the pin
+cannot be asked, and needs the machine joined again.
+
+## Not a secret store
+
+Listing never shows a token, its hash or a certificate; it shows the certificate's
+SHA-256. The Platform's trust keys returned at enrollment are public keys.
+
+## In the dashboard
+
+**Server → Fabric → Nodes** lists enrolled machines and pending enrollments, creates a
+single-use join command for a machine you manage (the token is shown once, with the
+Platform's certificate fingerprint to pin) and revokes a node. **Infrastructure →
+Providers** connects a cloud provider with an API token, lists the machines Zelavis
+created, requests one and releases one. The dashboard calls the same `/runtime/nodes` and
+`/runtime/cloud` endpoints as the SDK and CLI, with the same permissions; a panel whose
+capability is not composed into the installation says so instead of failing. A connected
+provider also shows the automatic scale-out settings described below.
+
+## Cloud capacity
+
+A Platform can create the machines that join it. `/runtime/cloud` (SDK `client.cloud`, CLI
+`zelavis cloud`) holds one provider connection and the machines requested through it:
+
+```
+GET    /zelavis/api/v1/runtime/cloud               the connection, without its token   (server.cloud.view)
+POST   /zelavis/api/v1/runtime/cloud/connection    connect a provider with an API token (server.cloud.connect)
+DELETE /zelavis/api/v1/runtime/cloud/connection    forget the token                     (server.cloud.connect)
+GET    /zelavis/api/v1/runtime/cloud/nodes         machines this Platform created      (server.cloud.view)
+POST   /zelavis/api/v1/runtime/cloud/nodes         create a machine that enrolls itself (server.cloud.manage)
+DELETE /zelavis/api/v1/runtime/cloud/nodes/:id     delete such a machine                (server.cloud.manage)
+GET    /zelavis/api/v1/runtime/cloud/scaling       automatic scale-out settings         (server.cloud.view)
+PUT    /zelavis/api/v1/runtime/cloud/scaling       allow or forbid it, with limits      (server.cloud.connect)
+```
+
+The provider token can create and delete machines in its cloud project, so connecting
+needs its own permission, and a dedicated cloud project is recommended. The token is proved
+by use (it must be able to list) before it is kept, is sealed with a key derived from the
+Platform master secret, and is never returned, logged or put in a machine's first-boot data.
+Every use is audited with the acting principal, and an action that cannot be recorded does
+not run. Disconnecting is refused while machines this Platform created still exist, because
+releasing them needs the token. The provisioning engine is the bundled cloud service
+(`services/zelavis-cloud/bundle`, Alchemy and the Hetzner client inlined, nothing to install). The
+host loads it when `ZELAVIS_CLOUD_POLICY` names the operator's policy file (JSON: `location`, `image`,
+`maxNodes`, and `machineClasses` with `name`, `cpuCores`, `memoryBytes`, `diskBytes`; the Platform
+invents no defaults, because the right sizes are a property of the cloud) **and** the Platform serves an
+enrollment endpoint (`--enrollment-port`), since a machine it creates must be able to join. Without
+both, every route answers `503 cloud-unavailable`.
+A requested machine is created with first-boot data that installs the worker role and joins
+with a single-use token, and it is `ready` only after it has enrolled. This path is built
+and tested against a fake cloud, through the bundle and the real enrollment authority; it has not
+yet been run against a real one.
+
+### Automatic scale-out
+
+Consent to spend money is separate from the connection and **off by default**
+(`zelavis cloud scaling --enable --max-machines N --cooldown-minutes N`, `client.cloud.setScaling`,
+the dashboard card; needs `server.cloud.connect`, because it lets the Platform spend without a
+person). The signal is Fabric's own: on every reconciliation the Project manager reports how many
+replicas it could not place for `insufficient-capacity`, and only where placement is authoritative
+(a host that models no capacity would report shortfalls that are not real; `no-eligible-node` is not
+counted, because another machine would not fix it). With consent, a shortfall that has held for two
+minutes requests **one** machine, never while a machine is still starting, never past the maximum
+number of machines this Platform created, and never inside the pause since the last request, which is
+recorded before asking so a refusing cloud is not hammered. The request id is derived from the pause
+window, so a restart cannot double-order. Requests are audited as the `autoscaler`. Disconnecting the
+provider also removes the consent. There is no automatic scale-in: releasing a machine needs Fabric to
+report it drained and fenced, which is not built, so machines are released by a person.

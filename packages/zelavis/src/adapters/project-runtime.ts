@@ -25,6 +25,7 @@ export type {
   ZelavisAgentProcessRunner,
 } from "../core/agent/process-command.js";
 export { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+export { createRecipeProjectRuntime, type RecipeProjectRuntimeOptions } from "./_recipe-project-runtime.js";
 
 import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 import type { ZelavisProjectRuntimeDriver } from "../project.js";
@@ -33,8 +34,22 @@ import type { ZelavisProjectRuntimeDriver } from "../project.js";
 export interface ZelavisRecipeRuntimeContext {
   /** The directory holding every Project's directory. */
   readonly directory: string;
+  /** The recipe's own package folder: the digest-verified frozen copy this runtime was loaded from. */
+  readonly packageDirectory: string;
   /** The Agent that executes this host's Project processes. */
   readonly agent: ZelavisAgentProcessRunner;
+  /**
+   * Another version of this recipe, for upgrading a running Project to it. `source` finds the
+   * package of that exact name and version on this host, or nothing; `stage` freezes a package into
+   * a data directory and returns its content digest. Trust in the recipe is the Platform's, decided
+   * before a runtime is created.
+   */
+  readonly recipes: {
+    readonly source: (name: string, version: string) => Promise<string | undefined>;
+    readonly stage: (source: string, dataDirectory: string) => Promise<{ readonly digest: string }>;
+    /** The content digest of a frozen package directory, as the Project's lock records it. */
+    readonly digest: (packageDirectory: string) => Promise<string>;
+  };
   /** Options the operator set for this recipe's runtime. */
   readonly options: Readonly<Record<string, unknown>>;
 }
@@ -53,6 +68,6 @@ export type ZelavisEffectProjectRuntimeDriver = EffectOperations<ZelavisProjectR
 
 /** Keep runtime effects native inside the Platform and expose Promises at the driver API boundary. */
 export function defineEffectProjectRuntime(driver: ZelavisEffectProjectRuntimeDriver): ZelavisProjectRuntimeDriver {
-  const { adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget, ...metadata } = driver;
-  return Object.assign(presentOperations({ adopt, detach, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, applyUpdate, recoverUpdate, versions, resolveVersion, gatewayTarget }), metadata);
+  const { adopt, detach, commitUpgrade, abandonUpgrade, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, prefetchUpdate, applyUpdate, recoverUpdate, settleUpdate, ingressReady, setupValues, versions, resolveVersion, gatewayTarget, migrateData, retainedData, removeRetainedData, ...metadata } = driver;
+  return Object.assign(presentOperations({ adopt, detach, commitUpgrade, abandonUpgrade, prepare, start, stop, status, logs, destroy, close, signGatewayAuthority, fencePrevious, prepareUpdate, prefetchUpdate, applyUpdate, recoverUpdate, settleUpdate, ingressReady, setupValues, versions, resolveVersion, gatewayTarget, migrateData, retainedData, removeRetainedData }), metadata);
 }

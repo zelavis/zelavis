@@ -1,10 +1,12 @@
+import { Effect } from "effect";
+import { present } from "../core/runtime/effect-boundary.js";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
 
 /** Native ingress transport preserves the visitor Host when dialing a private target. */
 export function fetchNodeSite(url: URL, init: RequestInit): Promise<Response> {
-  return new Promise((resolve, reject) => {
+  return present(Effect.callback<Response, Error>((resume) => {
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => { headers[name] = value; });
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
@@ -17,11 +19,11 @@ export function fetchNodeSite(url: URL, init: RequestInit): Promise<Response> {
       const status = incoming.statusCode ?? 502;
       const empty = init.method === "HEAD" || [204, 205, 304].includes(status);
       if (empty) incoming.resume();
-      resolve(new Response(empty ? null : Readable.toWeb(incoming) as ReadableStream<Uint8Array>, {
+      resume(Effect.succeed(new Response(empty ? null : Readable.toWeb(incoming) as ReadableStream<Uint8Array>, {
         status, headers: responseHeaders,
-      }));
+      })));
     });
-    request.once("error", reject);
+    request.once("error", (error) => resume(Effect.fail(error)));
     request.end(init.body);
-  });
+  }));
 }

@@ -69,3 +69,6 @@ Thumbs.db
 
 # Local experiments; no generated cross-language SDKs are published.
 /scripts/sdk-codegen/generated/
+
+# Alchemy working directory
+.alchemy/

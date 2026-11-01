@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 import type { ZelavisServerRoute } from "../core/runtime/contracts.js";
 import { validatePluginNamespace } from "../core/service/manifest.js";
 
@@ -45,12 +47,13 @@ export function createPluginClients(
       if (segments.length >= 3) throw new TypeError("Plugin operations use namespace.resource.action.");
       return proxy([...segments, property]);
     },
-    async apply(_target, _this, args: [unknown?, PluginOperationOptions?]) {
+    apply(_target, _this, args: [unknown?, PluginOperationOptions?]) {
+    return present(Effect.gen(function* () {
       if (segments.length !== 3) throw new TypeError("Select a plugin namespace, resource and action.");
       const [namespace, resource, action] = segments;
       // Discover on every invocation: disabled/uninstalled plugins must not
       // remain callable through a cached registration list.
-      const operation = (await discover()).find((item) =>
+      const operation = ((yield* integrationValue(discover()))).find((item) =>
         item.namespace === namespace && item.resource === resource && item.action === action);
       if (!operation) throw new Error(`Unknown plugin operation: ${segments.join(".")}`);
       const [input, options] = args;
@@ -65,8 +68,9 @@ export function createPluginClients(
       if ((operation.method === "GET" || operation.method === "DELETE") && input !== undefined) {
         throw new TypeError("Use params/query options for operations without a request body.");
       }
-      return request(path, operation.method, input);
-    },
+      return (yield* integrationValue(request(path, operation.method, input)));
+    }));
+  },
   });
   return proxy([]) as PluginClients;
 }

@@ -9,6 +9,11 @@ export interface ZelavisManifestConfig {
   kind: string;
   namespace?: string;
   capabilities?: readonly string[];
+  /**
+   * Fixed host operations this plugin may ask the Platform to run for its callers, by id. The caller's own
+   * permissions still decide each request; this only says which operations the plugin can name.
+   */
+  hostOperations?: readonly string[];
   marketplace?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -147,6 +152,19 @@ export function validatePluginPackageManifest(
           `Invalid Zelavis service "${name}":\n"${String(capability)}" is not a valid capability.\nUse "<package or namespace>:<name>", as in "@zelavis/auth:credentials".`,
         );
       }
+    }
+  }
+
+  const hostOperations = (zelavis as Record<string, unknown>).hostOperations;
+  if (hostOperations !== undefined) {
+    if (kind !== "plugin") {
+      throw new TypeError(`Invalid Zelavis service "${name}":\n"zelavis.hostOperations" is only for plugins.`);
+    }
+    if (!Array.isArray(hostOperations) || hostOperations.length > 8 || new Set(hostOperations).size !== hostOperations.length ||
+        hostOperations.some((id) => typeof id !== "string" || !/^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/.test(id))) {
+      throw new TypeError(
+        `Invalid Zelavis service "${name}":\n"zelavis.hostOperations" must list at most eight distinct operation ids such as "zelavis.container-probe".`,
+      );
     }
   }
 

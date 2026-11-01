@@ -46,12 +46,10 @@ contains:
 - the `zelavis` launcher and systemd units
 - the complete-uninstall program and a release manifest
 
-The Debian package also declares Nginx, PHP-FPM and the WordPress PHP
-extensions, MariaDB server/client core binaries, `tar`, and `util-linux` (installer `flock`) as dependencies. The
-core MariaDB packages avoid provisioning a machine-wide database instance. This
-gives native WordPress Projects their required host stack without Docker. Each
-Project runs its own service instances and owns its own configuration, sockets,
-ports, logs, site files, credentials, and database data.
+The Debian package declares only `ca-certificates`, `tar`, and `util-linux`
+(installer `flock`) as dependencies. Recipes bring their own pinned application
+runtimes or request approved host package sets where needed. Each Project owns
+its configuration, sockets, ports, logs, site files, credentials and database data.
 
 The private Node runtime lives under `/opt/zelavis/current/runtime/node` after
 installation. It does not replace `/usr/bin/node` and cannot conflict with Node
@@ -80,8 +78,12 @@ preview ports. The updater prepares the new immutable release while the selected
 engine serves traffic, then uses `install --live` to drain accepted requests,
 transfer exclusive store ownership and probe the candidate. Root acknowledges
 the current link, private receipt and public version descriptor before admission
-resumes. Failed candidates are fenced before rollback. The host and separate
-Project Agent remain running; installed App engine pins remain unchanged.
+resumes. Failed candidates are fenced before rollback. The host remains running and installed App engine pins remain unchanged.
+Linux system installations then replace the process-only Project Agent with
+flushed process records, private host control and client rebind. Agents predating
+that protocol convert once under held admission and restart Projects. Later
+replacements preserve process identities. Agent degradation is recorded separately
+from the selected engine; user-mode embedded Agents follow on host restart.
 
 System installations have a dashboard socket unit and an enabled update path,
 which starts the root update helper when the Platform writes a request. A named
@@ -97,20 +99,20 @@ planned. See [the update architecture](../website/src/content/docs/architecture/
 
 ## Releasing
 
-A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs root
-verification and docs checks, publishes Changesets-versioned packages and confirms the exact
-version is on npm. That is all: there is no workflow, tag push, artifact, signing key
-or secret. npm authentication is the release owner's. Tracked version/source changes
-must be committed before publishing. After publishing, run the installer against the
-new version on a real host (`sudo zelavis doctor`).
-
-With the owner's manual npm login, the publisher runs recursive `pnpm publish`
-directly so browser verification can use the terminal. Versions already on npm
-are skipped; the requested `alpha` or `latest` tag is explicit for every package.
+A release is the npm package. `pnpm release:publish:alpha` (or `:latest`) runs
+`pnpm release:check` (unless `ZELAVIS_RELEASE_QUALIFIED` names this exact clean commit), packs
+every public package npm lacks with `pnpm pack`, checks each service tarball against the digest
+the shipped allow-list names, and publishes services and Platform in one run with `npm publish`,
+so npm's own browser login and 2FA run in the terminal. Versions already on npm are skipped; the
+requested `alpha` or `latest` tag is explicit for every package. That is all: there is no
+workflow, tag push, artifact, signing key or secret. Tracked version/source changes must be
+committed before publishing. After publishing, run the installer against the new version on a
+real host (`sudo zelavis doctor`).
 
 The website (`website/`) is deployed separately to Cloudflare Pages and serves
 `/install.sh`, the Install page and `/allowlist.json`. Publish a refreshed allow-list
-with `pnpm allowlist update` then `pnpm allowlist publish` and deploy the website.
+with `pnpm allowlist update` (before qualifying and publishing) and `pnpm allowlist publish`
+(after publishing), then deploy the website.
 
 ## Build commands
 
@@ -118,6 +120,7 @@ with `pnpm allowlist update` then `pnpm allowlist publish` and deploy the websit
 pnpm distribution:stage   # a release tree in distribution/.tmp/stage, from the workspace
 pnpm distribution:deb     # a .deb from that tree (Linux, needs dpkg-deb); not published
 pnpm distribution:test
+pnpm distribution:qualify:installer # disposable Debian 12 + Ubuntu 24.04 systemd guests
 ```
 
 Staging builds the workspace and deploys its production dependencies; build on the
@@ -125,9 +128,39 @@ OS and architecture you target. Generated files stay
 in `distribution/.tmp`, `distribution/.cache` and `distribution/artifacts`; none are
 committed.
 
+The installer qualification command needs Docker and built workspace packages
+(`pnpm run verify`). It executes the Docker host's native architecture, acquires
+the exact published Platform version in this checkout and the preceding baseline
+(`ZELAVIS_QUALIFY_BASELINE`, default `2.0.0-alpha.40`), and packs the checkout's
+`create-zelavis`. It builds the local Debian package with the checkout's packaging
+script. The target version must already exist on npm; this is qualification of
+published acquisition and local packaging, not the unpublished-candidate release gate.
+The second guest reuses that same package after verifying its SHA-256, version
+and architecture, so both distributions install the identical artifact.
+
+Each guest covers fresh installs through all three entries, all nine ordered
+entry transitions, Debian remove/reinstall, and complete removal. Every case
+claims an owner and retains a real App's record, frozen recipe and engine
+selection. Two-instance rounds exercise both installation/removal orders and
+authenticated **Update now** through npm and systemd, checking continuous HTTP,
+unchanged neighbouring processes, and retained App processes and data.
+
+Proof JSON and sanitized progress logs stay under
+`distribution/.tmp/installer-matrix/` (override `ZELAVIS_QUALIFY_PROOF_DIR`).
+Select `ZELAVIS_QUALIFY_DISTROS=debian` or `ubuntu` for one distribution;
+`ZELAVIS_QUALIFY_PHASE=entries`, `instances` or `deb` runs only that phase
+(the default is `all`, and proof records the selected scope).
+`ZELAVIS_HARNESS_KEEP=1` retains a failing guest for inspection. Run on an x86_64
+Linux Docker host to qualify native x86_64; an emulated image does not qualify it.
+The same `qualify-installer-matrix.mjs` runs in disposable systemd namespace
+guests. For a private-network guest, `qualification-proxy.mjs` provides a Unix
+socket TLS tunnel on the host and a loopback relay in the guest, restricted to
+the installer's public HTTPS download origins. Keep the guest's aggregate CPU,
+memory and task limits, input mounts and temporary disk directory isolated.
+
 ## Host operations
 
-`zelavis.host-report` v1 and the Edge operations ship under
+`zelavis.host-report` v1, `zelavis.container-probe` v1 (whether a container engine exists and works; read-only, takes no arguments), the PHP build operations (`zelavis.php-build-start|status|upload|clean` v1: one detached, resource-limited, labeled container per build around `distribution/php-builds/build.sh`, which the start operation carries inside its own artifact through `operation.json`'s `embed`; nothing is installed on the host and an archive goes from the build's output straight to a presigned R2 address) and the Edge operations ship under
 `operations/<id>/<version>/{artifact, manifest.json}` in every release tree. Sources
 live in `distribution/operations/` (`artifact` plus `operation.json` without a
 digest). `stage-operations.mjs` computes each digest and writes a plain manifest. There
@@ -143,15 +176,17 @@ release secret.
 System installations enable `zelavis-agent.service` (or the named-instance
 unit) as a separately supervised unprivileged Project process Agent. The
 installer configures `ZELAVIS_AGENT_ENDPOINT`; this custody lets running Projects
-survive a Platform engine handover. The Agent delegates cgroups and refuses a
-host without required cgroup v2 containment rather than silently falling back.
+survive a Platform engine handover. The Project unit is process-only and keeps
+its children at the unit root. It omits `PrivateTmp` so replacement cannot remove
+the temporary directory of a surviving database. Required cgroup v2 containment belongs to the
+separate root operation Agent, which refuses unavailable containment.
 The packaged Debian/systemd qualification exercises this path, including
 WordPress daemon adoption, Platform handover and rollback.
 
 The Platform creates its Agent authority key under
-`/var/lib/zelavis/system/agent-authority/`; the Agent reads only its public
-`platform-authority.json`. Root provisioning uses the separate operation-only
-Agent below.
+`/var/lib/zelavis/system/agent-authority/`; the root operation Agent reads only
+its public `platform-authority.json`. Root provisioning uses that separate
+operation-only Agent below.
 
 `zelavis agent --operations-only` accepts only installed-operation catalog,
 submission and status messages. It requires `--operations-root` and
@@ -159,14 +194,15 @@ submission and status messages. It requires `--operations-root` and
 neither the Project process registry nor the Platform System Store. This is a
 separately privileged provisioning endpoint. System installs and updates also enable
 `zelavis-host-agent.service` (or `zelavis-host-agent@<instance>.service`), running
-only installed signed operations as root with systemd-delegated cgroup containment.
+only installed operations as root with systemd-delegated cgroup containment.
 Its root-owned `<instance-prefix>/host-agent` directory and endpoint are limited to
 the Platform service group. Shared package policy/locking state lives at
 `<prefix>/host-packages` (root, 0700). `ZELAVIS_HOST_OPERATIONS_ENDPOINT` selects this
 broker separately from the unprivileged Project process Agent.
 
-The fixed `zelavis.packages-install` operation provisions `wordpress-stack` only
-after explicit `server.packages.install` authorization. The base installation
+The fixed `zelavis.packages-install` operation provisions the fixed sets `wordpress-stack`,
+`mariadb-server` and `terminal` (tmux, for the dashboard terminal) only (`wordpress-stack` is their union, kept only because the published
+`@zelavis/wordpress` 7.1.3-alpha.2 names it: remove it when WordPress is next released) after explicit `server.packages.install` authorization. The base installation
 adds no Nginx, PHP or MariaDB. Package-triggered starts are suppressed for the APT
 process tree; existing host units and policy are preserved. The persistent
 `/usr/sbin/policy-rc.d` wrapper delegates normal calls to
@@ -288,6 +324,11 @@ removes that shared inventory too. `--all` means all data of the selected
 instance, including its Projects; it does not remove every instance on the host.
 The instance directories, incoming Debian payload, descriptors, template units
 and Edge ownership files are covered by the destructive uninstall inventory and tests.
+The data inventory includes `agent/{agent.json,handover.json,agent.lock}`, the
+`projects/.agent-processes` runner lock/records/output, per-Project
+`.zelavis[/integration]/host-control.json`, root `p<hash>` control endpoints,
+`agent-update.sock` and `update/agent-updates.json` diagnostics. Removal performs
+an owned-unit cgroup kill after normal Agent stop to fence retained children.
 
 ## Package acquisition and user mode
 
@@ -406,6 +447,10 @@ once from npm dist-tags, then every request names that exact version. The bootst
 never falls back to a different release. Installer flags are literal arguments;
 macOS defaults to user mode. Linux system mode requires root and systemd.
 
-Open work: qualify the Debian/Ubuntu/systemd lifecycle, Agent cgroup delegation and
-Traefik download on a real host, and publish the first release that carries this
-installer. An APT repository and a published `.deb` are deferred.
+Default-instance Debian/systemd installation, Agent containment, Traefik ingress,
+updates, doctor and complete removal have release qualification tooling in
+`scripts/qualify-update.sh` and the WordPress provisioning harness. Run
+`pnpm distribution:qualify:installer` for the Debian/Ubuntu installer-entry
+matrix and named-instance lifecycle, including running Apps, independent live
+updates and both removal orders. An APT repository and a published `.deb` are
+deferred.

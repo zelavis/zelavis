@@ -1,4 +1,3 @@
-import { isUnknown, recordOf, parseJson } from "../core/json-validation.js";
 import { randomUUID } from "node:crypto";
 import { open, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -7,10 +6,11 @@ import { installationInstanceScope } from "../core/runtime/installation-instance
 import { evaluate, integration, IntegrationFailure, type TaggedFailure } from "../core/runtime/effect-boundary.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 import { createNodeInstallHost, nodeInstallationPaths } from "./_install-host.js";
-import { planZelavisRuntimeHostAssetsProgram } from "../core/runtime/installation-plan.js";
+import { planZelavisRuntimeHostAssetsProgram, readNativeInstallationReceiptProgram } from "../core/runtime/installation-plan.js";
 import { assertInstallationPath, planZelavisProductionEdgeDirectories } from "../core/runtime/installation-plan.js";
 import { assertProductionEdgePortsProgram } from "../core/runtime/installation-health.js";
 import { isExactVersion } from "../updates.js";
+import { prepareInstalledProjectAgentUpdate } from "./_agent-update.js";
 import { requestNodeRuntimeControl } from "./_node-runtime-control.js";
 
 const flushDirectory = (path: string) => process.platform === "win32" ? Effect.void : Effect.acquireUseRelease(
@@ -34,14 +34,16 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
 }) {
   yield* evaluate(() => { if (!isExactVersion(options.version)) throw new Error("Runtime selection requires an exact version."); });
   const scope = installationInstanceScope(options.prefix, options.instance);
-  const source = yield* integration(() => readFile(scope.receipt, "utf8"));
-  const receipt = yield* evaluate(() => {
+  yield* evaluate(() => {
     assertInstallationPath(options.prefix, "runtime selection prefix");
     assertInstallationPath(options.dataDirectory, "runtime selection data");
-    const value = parseJson(source, recordOf(isUnknown));
-    if (value.schemaVersion !== 2 || value.prefix !== options.prefix || value.instance !== options.instance || value.dataDirectory !== options.dataDirectory || !isExactVersion(value.version) || !["system", "user"].includes(String(value.mode))) throw new Error("Runtime selection disagrees with the installation receipt.");
-    if (value.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
-    return value;
+  });
+  // The one reader of the receipt: it validates the shape and refuses a worker's.
+  const found = yield* readNativeInstallationReceiptProgram(createNodeInstallHost(), options.prefix, options.instance);
+  const receipt = yield* evaluate(() => {
+    if (!found || found.prefix !== options.prefix || found.instance !== options.instance || found.dataDirectory !== options.dataDirectory || !isExactVersion(found.version)) throw new Error("Runtime selection disagrees with the installation receipt.");
+    if (found.mode === "system" && process.getuid?.() !== 0) throw new Error("System installation inventory selection must run through its root installer.");
+    return found;
   });
   const runtimeSource = yield* integration(() => readFile(scope.runtime, "utf8"));
   const runtime = yield* evaluate(() => {
@@ -69,7 +71,8 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
     for (const step of planZelavisProductionEdgeDirectories(paths)) yield* integration(() => host.execute(step.action));
   }
   const completed = Deferred.makeUnsafe<Readonly<Record<string, unknown>>, TaggedFailure>();
-  return yield* Effect.scoped(Effect.gen(function* () {
+  let agentUpdate: Effect.Effect<void, TaggedFailure> | undefined;
+  const result = yield* Effect.scoped(Effect.gen(function* () {
     yield* Effect.forkChild(requestNodeRuntimeControl(endpoint, { action: "select", version: options.version, commit: true }).pipe(
       Effect.onExit(exit => Deferred.done(completed, exit).pipe(Effect.asVoid)),
       Effect.ignore,
@@ -111,6 +114,10 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
               yield* integration(() => createNodeInstallHost().execute({ kind: "command", command: "systemctl", args: ["enable", "zelavis-traefik.service"] }));
             }
           }).pipe(Effect.ensuring(integration(() => rm(temporary, { force: true })).pipe(Effect.orDie)));
+          if (receipt.mode === "system") agentUpdate = yield* prepareInstalledProjectAgentUpdate({ prefix: options.prefix, instance: options.instance,
+            dataDirectory: options.dataDirectory, target: pending.release.version, engineGeneration: pending.generation }).pipe(
+              Effect.catch(error => Effect.logError(`Agent update preparation failed; selected engine retained: ${error.message}`).pipe(Effect.as(undefined))),
+            );
         }));
         yield* requestNodeRuntimeControl(endpoint, { action: "commit", nonce: pending.nonce, version: pending.release.version,
           generation: pending.generation, accepted: committed._tag === "Success" });
@@ -122,4 +129,6 @@ export const selectNodeInstallationRuntime = Effect.fn("RuntimeSelection.select"
   })).pipe(Effect.timeoutOrElse({ duration: 150_000,
     orElse: () => Effect.fail(new IntegrationFailure(new Error("Runtime inventory selection did not complete within its bounded handover window."))),
   }));
+  if (agentUpdate) yield* agentUpdate.pipe(Effect.catch(error => Effect.logError(`Agent update bookkeeping failed; selected engine retained: ${error.message}`)));
+  return result;
 });

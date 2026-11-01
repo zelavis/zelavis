@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type {
   ZelavisEdgeCapability,
   ZelavisEdgeHostname,
@@ -9,14 +11,18 @@ import type {
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis edge <status|plan|switch|publish|routes> [args] [--url URL] [--token TOKEN] [--json]\n" +
+  "zelavis edge <status|plan|switch|publish|routes|preflight|onboard|certificates|renew> [args] [--url URL] [--token TOKEN] [--json]\n" +
   "  zelavis edge status\n" +
   "  zelavis edge plan <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
   "  zelavis edge switch <adapter> --publication ID@REVISION [--routes N] [--require CAP] [--certificate-ref REF]\n" +
   "  zelavis edge publish\n" +
   "  zelavis edge routes [list] [--scope platform|project] [--project-id ID] [--hostname HOST]\n" +
   "  zelavis edge routes put <id> --hostname HOST --target URL [--weight N] [--protocol P] [--tls managed|external|none] [--certificate-ref REF] [--priority N] [--path-prefix /...] [--exact] [--project-id ID] [--scope platform|project]\n" +
-  "  zelavis edge routes delete <id>";
+  "  zelavis edge routes delete <id>\n" +
+  "  zelavis edge preflight <hostname>\n" +
+  "  zelavis edge onboard --mode MODE [--hostname HOST] [--local-target-url URL]\n" +
+  "  zelavis edge certificates\n" +
+  "  zelavis edge renew [--hostname HOST] [--renew-if-within-days N]";
 
 const capabilities = new Set<ZelavisEdgeCapability>([
   "http",
@@ -48,6 +54,9 @@ const knownFlags = new Set([
   "--path-prefix",
   "--project-id",
   "--scope",
+  "--mode",
+  "--local-target-url",
+  "--renew-if-within-days",
 ]);
 
 function parsePublication(value: string): Pick<ZelavisEdgePublication, "id" | "revision"> {
@@ -59,7 +68,8 @@ function parsePublication(value: string): Pick<ZelavisEdgePublication, "id" | "r
 }
 
 /** `zelavis edge` uses the same client contract as the dashboard and API. */
-export async function runEdgeCommand(args: readonly string[]): Promise<void> {
+export function runEdgeCommand(args: readonly string[]): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   const positional: string[] = [];
   let url = "http://localhost:3000/zelavis";
   let token: string | undefined;
@@ -79,6 +89,9 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
   let exactFlag = false;
   let projectIdFlag: string | undefined;
   let scopeFlag: "platform" | "project" | undefined;
+  let modeFlag: string | undefined;
+  let localTargetFlag: string | undefined;
+  let renewWithinFlag: number | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -139,6 +152,12 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
       }
     }
     if (flag === "--path-prefix") pathPrefixFlag = value;
+    if (flag === "--mode") modeFlag = value;
+    if (flag === "--local-target-url") localTargetFlag = value;
+    if (flag === "--renew-if-within-days") {
+      renewWithinFlag = Number(value);
+      if (!Number.isSafeInteger(renewWithinFlag) || renewWithinFlag < 0) throw new Error("--renew-if-within-days requires a non-negative integer.");
+    }
     if (flag === "--project-id") projectIdFlag = value;
     if (flag === "--scope") {
       if (value !== "platform" && value !== "project") {
@@ -164,7 +183,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
 
   if (action === "status") {
     if (subArgs.length > 0) throw new Error(`edge status does not accept arguments. ${usage}`);
-    const status = await client.edge.status();
+    const status = (yield* integrationValue(client.edge.status()));
     print(status, () => [
       `Active adapter: ${status.policy.activeAdapterId ?? "none"}`,
       `Desired adapter: ${status.policy.desiredAdapterId}`,
@@ -177,9 +196,46 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
     return;
   }
 
+  if (action === "preflight") {
+    const [host, ...extra] = subArgs;
+    if (!host || extra.length > 0) throw new Error(`edge preflight requires exactly one hostname. ${usage}`);
+    const result = (yield* integrationValue(client.edge.preflightHostname(host)));
+    print(result, () => `${result.hostname}: ${result.valid ? "valid" : "not valid"}${"detail" in result && result.detail ? ` — ${String(result.detail)}` : ""}`);
+    return;
+  }
+
+  if (action === "onboard") {
+    if (subArgs.length > 0) throw new Error(`edge onboard does not accept arguments. ${usage}`);
+    if (!modeFlag) throw new Error("edge onboard requires --mode.");
+    const result = (yield* integrationValue(client.edge.onboardHostname({
+      mode: modeFlag as never,
+      ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
+      ...(localTargetFlag ? { localTargetUrl: localTargetFlag } : {}),
+    })));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (action === "certificates") {
+    if (subArgs.length > 0) throw new Error(`edge certificates does not accept arguments. ${usage}`);
+    const result = (yield* integrationValue(client.edge.certificates()));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (action === "renew") {
+    if (subArgs.length > 0) throw new Error(`edge renew does not accept arguments. ${usage}`);
+    const result = (yield* integrationValue(client.edge.renewCertificates({
+      ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
+      ...(renewWithinFlag === undefined ? {} : { renewIfWithinDays: renewWithinFlag }),
+    })));
+    print(result, () => JSON.stringify(result, null, 2));
+    return;
+  }
+
   if (action === "publish") {
     if (subArgs.length > 0) throw new Error(`edge publish does not accept arguments. ${usage}`);
-    const pub = await client.edge.publish();
+    const pub = (yield* integrationValue(client.edge.publish()));
     print(pub, () =>
       `Published Edge revision ${pub.revision} (${pub.routeCount} routes, ${pub.requiredCapabilities.length} capabilities).`);
     return;
@@ -190,11 +246,11 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
     if (extra.length > 0) throw new Error(`Unexpected argument "${extra[0]}". ${usage}`);
 
     if (routeAction === "list") {
-      const result = await client.edge.routes({
+      const result = (yield* integrationValue(client.edge.routes({
         ...(scopeFlag ? { scope: scopeFlag } : {}),
         ...(projectIdFlag ? { projectId: projectIdFlag } : {}),
         ...(hostnameFlag ? { hostname: hostnameFlag } : {}),
-      });
+      })));
       print(result, () => [
         `Current publication: ${result.publication ? `rev ${result.publication.revision} (${result.publication.routeCount} routes)` : "none"}`,
         "",
@@ -213,7 +269,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
 
     if (routeAction === "delete") {
       if (!routeId) throw new Error(`edge routes delete requires a route id.`);
-      const deleted = await client.edge.deleteRoute(routeId);
+      const deleted = (yield* integrationValue(client.edge.deleteRoute(routeId)));
       print({ deleted }, () =>
         deleted ? `Deleted Edge route "${routeId}".` : `Edge route "${routeId}" was not found.`);
       return;
@@ -252,10 +308,10 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
         };
       }
 
-      const result = await client.edge.putRoute({
+      const result = (yield* integrationValue(client.edge.putRoute({
         route,
         ...(hostname ? { hostname } : {}),
-      });
+      })));
       print(result, () =>
         `Stored Edge route "${result.route.id}" (${result.route.hostname}${result.route.pathPrefix}).`);
       return;
@@ -281,7 +337,7 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
     },
   };
   if (action === "plan") {
-    const plan = await client.edge.plan(input);
+    const plan = (yield* integrationValue(client.edge.plan(input)));
     print({ plan }, () => plan.ready
       ? `Edge switch to ${plan.targetAdapterId} is ready.`
       : `Edge switch to ${plan.targetAdapterId} is not ready: ${[
@@ -292,7 +348,8 @@ export async function runEdgeCommand(args: readonly string[]): Promise<void> {
         ].filter(Boolean).join("; ") || plan.detection.state}`);
     return;
   }
-  const edgeSwitch = await client.edge.switch(input);
+  const edgeSwitch = (yield* integrationValue(client.edge.switch(input)));
   print({ edgeSwitch }, () =>
     `Edge switch ${edgeSwitch.id} completed with ${edgeSwitch.targetAdapterId}.`);
-}
+}));
+  }

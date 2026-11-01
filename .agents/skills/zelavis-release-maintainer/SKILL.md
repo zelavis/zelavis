@@ -1,6 +1,6 @@
 ---
 name: zelavis-release-maintainer
-description: Use when preparing or reviewing Zelavis releases, including Changesets, version bumps, publish flow, package README alignment, and release-risk validation across the workspace.
+description: Use whenever the owner asks to release, publish or cut a version of Zelavis ("release a new alpha", "publish a new version", "cut a stable release"), and when preparing or reviewing a release: Changesets, versioning, publishing services and the Platform, the allow-list, release qualification and the update gate. Holds the full step-by-step release runbook.
 ---
 
 # Zelavis Release Maintainer
@@ -19,43 +19,112 @@ Use this skill for:
 - Make sure package README usage still matches the shipped API.
 - Call out breaking changes clearly and early.
 
-## Release checklist
+## Release runbook
 
-1. Confirm which packages are actually affected.
-2. Add or review the relevant changeset.
-3. Verify public API and docs still match.
-4. When the distribution footprint changes, verify the staged
-   `share/uninstall.sh` inventory, isolated destructive-path test, and public
-   complete-uninstall documentation cover every newly owned host resource.
-5. Run the release validation commands before publishing.
-   When an official service changes, publish that service first, run
-   `pnpm allowlist update`, and only then build and publish the Platform.
-   `pnpm allowlist check` refuses defaults that differ from the qualified checkout
-   versions. A fresh runtime composes its catalogue from the shipped snapshot;
-   a website refresh applies on its next start and cannot repair the initial
-   catalogue of a release that shipped an outdated default.
-6. Keep alpha vs stable intent explicit.
-   Manual npm browser verification requires an interactive terminal; the release
-   wrapper uses direct recursive pnpm publishing after Changesets versioning.
-7. A release is `npm publish` and nothing else: no signing keys, secrets, GitHub
-   Actions/Releases, archives or APT repository (AGENTS.md "Distribution Trust
-   Model"). Do not add them without the owner asking. After publishing, install the
-   new version on a real host and run `zelavis doctor`; refresh
-   `pnpm allowlist update` / `pnpm allowlist publish` and deploy `website/` when
-   services changed.
-8. Installed servers update themselves from the dashboard (`zelavis update`), picking the
-   newest version on their channel from npm, so a published version is what they will
-   install. A release that cannot start is rolled back by the updater, but never publish
-   one on purpose; the first release that carries the updater still has to be installed
-   by running the installer, because older versions have no updater.
-9. Every future release must be installable through dashboard **Update now**,
-   including major runtime, protocol and installation-layout changes. Requiring
-   terminal commands or an installer rerun for a normal update is a product defect.
-   Qualify the ordinary update action from the previously installed release before
-   publishing; fresh-install and synthetic-version checks alone do not prove this.
-   The current pre-handover manual conversion is a known gap to eliminate, not a
-   precedent. Preserve data, Project locks, access URLs and rollback guarantees
-   through the existing trusted updater authority, without permanent legacy paths.
+A release is a sequence with a human in it: the owner types npm's login and approves
+2FA in their browser, and approves every outward step (publish, push, website deploy).
+A release has three outward parts and is finished only when all three are done: npm
+serves the version, `dev` is pushed, and zelavis.com serves the new allow-list (step 9).
+Everything else is the agent's. Say how long a step takes before starting it, run
+long steps in the background, and keep the machine awake (lid open) while they run.
+
+1. **Start from `dev`.** It must hold every change for the release, committed; another
+   agent's uncommitted files in the main checkout are never staged. Each change carries
+   a changeset (`.changeset/*.md`) saying what users get, in their words.
+2. **Use a temporary release worktree**, detached at `dev`, outside the Projects folder:
+   `git worktree add --detach <empty temp dir>/zelavis-release dev` (on macOS or Linux,
+   `"$(mktemp -d)/zelavis-release"`; elsewhere any new directory outside the repository), and note its path. It
+   exists only for this release and is removed in step 8; never create a standing folder
+   beside the repository. Releases never touch the main checkout. Commit the release
+   commits there and note their sha: if the folder is lost before step 8, recreate it with
+   `git worktree add --detach <new dir> <release commit>` and carry on.
+3. **Version** in the worktree: `pnpm release:version:alpha` (or `release:version` for a
+   stable release; prerelease mode must be exited first). Read the CHANGELOG it writes,
+   commit `chore(release): version packages (alpha.N)`. If the build then changes
+   generated files (the dashboard bundle), commit them as their own release commit.
+4. **Allow-list, when a service changed:** `pnpm allowlist update` in the worktree, then
+   commit the snapshot. A service version npm does not have yet is listed with the digest
+   of its local pack (packing is deterministic and npm's digest is the digest of the
+   uploaded tarball), so nothing is published first and nothing waits for npm.
+5. **Qualify:** `pnpm release:check` in the worktree (about 40 minutes: workspace checks,
+   then Docker qualification: the update gate from the actual previous npm release,
+   the direct alpha.39 Agent conversion gate (`release:qualify:conversion`, retained
+   until that conversion is retired), both on 2 CPUs / 4 GiB, the
+   long-history gate (`release:qualify:history`: apps made by old releases, carried by live
+   updates onto the candidate, every recipe upgrade with zero failed requests), the backup
+   gate (`release:qualify:backups`: a serving WordPress Project backed up, drilled and restored,
+   then the same run drilled on a second fresh machine from the target and recovery key), the
+   failover gate (`release:qualify:failover`: a writer and a follower in separate containers with a
+   lease authority; a `SIGKILL`, a network partition and an unacknowledged tail), then the
+   worker installation). Nothing else may build in the
+   worktree meanwhile: two builds there delete each other's `dist`. It must end green and print
+   `Qualified <sha>`. A red run is fixed on `dev` (commit, push when the owner agrees),
+   the worktree is re-versioned from `dev`, and qualification starts again. Never publish
+   on red, and never count a lucky rerun as qualification: find why it failed.
+6. **Publish (owner).** Hand the owner, in a terminal tab:
+   `npm login --auth-type=web`, then
+   `ZELAVIS_RELEASE_QUALIFIED=<sha> pnpm release:publish:alpha` in the worktree. One run
+   publishes services and Platform together: it packs each pending package with `pnpm pack`
+   (rewriting `workspace:` ranges), refuses before publishing anything if a service tarball's
+   digest is not the one the allow-list names, and publishes with `npm publish`, `zelavis`
+   first; npm prints "Authenticate your account at …" for each, which the owner approves. It
+   does not wait for npm to list what it published. A 404 from npm means "not logged in" or "this
+   token may not publish": log in again with `--auth-type=web`. `pnpm publish` must not be
+   used: it answers that 404 without starting npm's login.
+7. **Confirm** `npm view zelavis dist-tags` names the new version (npm lists it within
+   minutes) and that its `dist.integrity` matches the packed tarball the script reported.
+8. **Merge back:** in the main checkout, `git merge --ff-only <release commit>` (the worktree
+   is `dev` plus the release commits), then push `dev` when the owner agrees. `dev` must
+   hold exactly what was published. Then remove the worktree: `git worktree remove --force
+   <path>` (it holds only build output and `node_modules`; the release commits are on `dev`).
+9. **Website allow-list, every release, never skipped.** Every release publishes the
+   allow-list to zelavis.com, whether or not a service changed: installed servers learn new
+   versions, minimum Platform versions and a renewed expiry only from it, and a missed one
+   went unnoticed for three releases (alpha.37 to .39 shipped sequence 15 while zelavis.com
+   still served 12). In the main checkout after the merge-back, `pnpm allowlist publish`
+   writes `website/public/allowlist.json` from the shipped snapshot; commit it. Then ask the
+   owner to approve the deploy, in the same message that reports the publish, and after the
+   approval build and deploy `website/` with
+   `wrangler pages deploy dist --project-name zelavis-website --branch main`. The release is
+   not finished until `curl -fsS https://zelavis.com/allowlist.json` answers with the
+   snapshot's `sequence`; until then say so plainly in every status update.
+10. **Prune the roadmap:** remove completed release tasks from `pnotes/TODO.md` and keep
+    only unfinished follow-ups. Do not append a release history or validation log;
+    completed behavior belongs in tests, maintained documentation and Git history.
+    Commit and push private notes separately.
+11. **After publishing:** installed servers offer the version in **Update now**. Optionally
+    qualify the published path with real npm acquisition (`ZELAVIS_QUALIFY_UPDATE=npm`,
+    below). Tell the owner what to do on their server, if anything.
+
+## Release rules
+
+- Confirm which packages are actually affected; keep release changes separate from
+  unrelated refactors; prefer explicit release notes over vague changelog language.
+- Make sure package README usage still matches the shipped API, and call out breaking
+  changes clearly and early.
+- When the distribution footprint changes, verify the staged `share/uninstall.sh`
+  inventory, isolated destructive-path test, and public complete-uninstall documentation
+  cover every newly owned host resource.
+- `pnpm allowlist check` (part of `release:check`) refuses defaults that differ from the
+  qualified checkout versions. A fresh runtime composes its catalogue from the shipped
+  snapshot; a website refresh applies on its next start and cannot repair the initial
+  catalogue of a release that shipped an outdated default.
+- A release is `npm publish` and nothing else: no signing keys, secrets, GitHub
+  Actions/Releases, archives or APT repository (AGENTS.md "Distribution Trust Model").
+  Do not add them without the owner asking.
+- Installed servers update themselves from the dashboard (`zelavis update`), picking the
+  newest version on their channel from npm, so a published version is what they will
+  install. A release that cannot start is rolled back by the updater, but never publish
+  one on purpose; the first release that carries the updater still has to be installed
+  by running the installer, because older versions have no updater.
+- Every future release must be installable through dashboard **Update now**, including
+  major runtime, protocol and installation-layout changes. Requiring terminal commands or
+  an installer rerun for a normal update is a product defect. Qualify the ordinary update
+  action from the previously installed release before publishing; fresh-install and
+  synthetic-version checks alone do not prove this. The current pre-handover manual
+  conversion is a known gap to eliminate, not a precedent. Preserve data, Project locks,
+  access URLs and rollback guarantees through the existing trusted updater authority,
+  without permanent legacy paths.
 
 ## Useful commands
 
@@ -64,10 +133,19 @@ pnpm changeset
 pnpm release:status
 pnpm release:version
 pnpm release:version:alpha
+pnpm release:check
 pnpm release:publish:alpha
 pnpm release:publish:latest
-pnpm release:check
+pnpm allowlist update
+pnpm allowlist publish
 ```
+
+For an already-published release, `pnpm distribution:qualify:installer` runs the
+broader Debian/Ubuntu installer-entry and instance lifecycle matrix. Run it on
+each native architecture; an emulated image does not prove native coverage.
+The [distribution guide](../../../distribution/README.md) defines its scope,
+focused phases and proof output. The unpublished-candidate release gates below
+remain part of `release:check`.
 
 `pnpm release:check` includes `release:qualify:update` against the actual previous
 npm release in disposable Linux/systemd. Docker is required for this release gate,

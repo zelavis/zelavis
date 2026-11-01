@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PHP Builds</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --line: #dcdce2; --card: #f6f6f8; --accent: #2b59c3; --good: #1a7f37; --bad: #b3261e; --warn: #9a6700; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #141417; --fg: #ececf1; --muted: #9a9aa6; --line: #2e2e36; --card: #1c1c21; --accent: #8fb0ff; --good: #56d364; --bad: #ff8a80; --warn: #e3b341; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+    dt { color: var(--muted); }
+    dd { margin: 0; }
+    form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 12ch; }
+    button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; font: inherit; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+    code, pre { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+    .state { font-weight: 600; } .succeeded, .verified { color: var(--good); } .failed, .mismatch, .missing { color: var(--bad); } .running, .starting, .uploading { color: var(--warn); }
+    .note { color: var(--muted); } .error { color: var(--bad); }
+    .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>PHP Builds</h1>
+  <section id="host" aria-live="polite"><span class="note">Looking at this host…</span></section>
+  <section>
+    <form id="start">
+      <label for="php">PHP version</label>
+      <input id="php" name="php" placeholder="8.4.23" pattern="[0-9]+\.[0-9]+\.[0-9]+" required autocomplete="off" />
+      <button class="primary" id="go" type="submit" disabled>Build</button>
+      <span id="startNote" class="note"></span>
+    </form>
+  </section>
+  <section>
+    <table>
+      <thead><tr><th>Build</th><th>PHP</th><th>State</th><th>Started</th><th></th></tr></thead>
+      <tbody id="builds"><tr><td colspan="5" class="note">No builds yet.</td></tr></tbody>
+    </table>
+  </section>
+  <script type="module" src="./builds.js"></script>
+</body>
+</html>

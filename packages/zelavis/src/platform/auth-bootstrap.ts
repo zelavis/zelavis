@@ -1,3 +1,5 @@
+import { Effect, Semaphore } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import {
   IdentityValidationError,
   type Account,
@@ -50,34 +52,29 @@ export function createPlatformAuthBootstrap(
   auth: IdentityApi,
   options: { store?: ZelavisSystemStore } = {},
 ): IdentityBootstrapCapability {
-  let operationTail: Promise<void> = Promise.resolve();
+  const bootstrapGate = Semaphore.makeUnsafe(1);
 
-  async function completedAccounts(): Promise<Account[]> {
-    return (await auth.accounts.list()).filter(
+  function completedAccounts(): Promise<Account[]> {
+    return present(Effect.gen(function* (): Effect.fn.Return<Account[], IntegrationFailure> {
+    return (yield* integrationValue(((yield* integrationValue(auth.accounts.list()))).filter(
       (account) => !isPendingBootstrapAccount(account),
-    );
+    )));
+  }));
   }
 
-  async function cleanPendingAccounts(): Promise<void> {
-    const pending = (await auth.accounts.list()).filter(isPendingBootstrapAccount);
+  function cleanPendingAccounts(): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    const pending = ((yield* integrationValue(auth.accounts.list()))).filter(isPendingBootstrapAccount);
     for (const account of pending) {
-      for (const session of await auth.sessions.listByAccountId(account.id)) {
-        await auth.repositories.sessions.delete(session.id);
+      for (const session of (yield* integrationValue(auth.sessions.listByAccountId(account.id)))) {
+        (yield* integrationValue(auth.repositories.sessions.delete(session.id)));
       }
-      for (const credential of await auth.credentials.listByAccountId(account.id)) {
-        await auth.repositories.credentials.delete(credential.id);
+      for (const credential of (yield* integrationValue(auth.credentials.listByAccountId(account.id)))) {
+        (yield* integrationValue(auth.repositories.credentials.delete(credential.id)));
       }
-      await auth.repositories.accounts.delete(account.id);
+      (yield* integrationValue(auth.repositories.accounts.delete(account.id)));
     }
-  }
-
-  function serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = operationTail.then(operation, operation);
-    operationTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+  }));
   }
 
   function claimValue(claim: BootstrapClaim): ZelavisSystemStoreValue {
@@ -96,7 +93,8 @@ export function createPlatformAuthBootstrap(
       : undefined;
   }
 
-  async function acquireClaim(): Promise<ZelavisSystemStoreRecord | undefined> {
+  function acquireClaim(): Promise<ZelavisSystemStoreRecord | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisSystemStoreRecord | undefined, IntegrationFailure> {
     if (!options.store) return undefined;
     const now = new Date();
     const claim: BootstrapClaim = {
@@ -105,11 +103,11 @@ export function createPlatformAuthBootstrap(
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
-    const created = await options.store.setIfAbsent(
+    const created = (yield* integrationValue(options.store.setIfAbsent(
       BOOTSTRAP_CLAIM_NAMESPACE,
       BOOTSTRAP_CLAIM_KEY,
       claimValue(claim),
-    );
+    )));
     if (created.created) return created.record;
 
     const existing = readClaim(created.record);
@@ -120,26 +118,28 @@ export function createPlatformAuthBootstrap(
     if (existing.status === "pending" && leaseAge < BOOTSTRAP_CLAIM_LEASE_MS) {
       throw new IdentityValidationError("Platform owner bootstrap is already in progress.");
     }
-    const replaced = await options.store.compareAndSet(
+    const replaced = (yield* integrationValue(options.store.compareAndSet(
       BOOTSTRAP_CLAIM_NAMESPACE,
       BOOTSTRAP_CLAIM_KEY,
       created.record.updatedAt,
       claimValue(claim),
-    );
+    )));
     if (!replaced) {
       throw new IdentityValidationError("Platform owner bootstrap is already in progress.");
     }
     return replaced;
+  }));
   }
 
-  async function finishClaim(
+  function finishClaim(
     record: ZelavisSystemStoreRecord | undefined,
     status: "complete" | "failed",
   ): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
     if (!options.store || !record) return;
     const current = readClaim(record);
     if (!current) return;
-    await options.store.compareAndSet(
+    (yield* integrationValue(options.store.compareAndSet(
       BOOTSTRAP_CLAIM_NAMESPACE,
       BOOTSTRAP_CLAIM_KEY,
       record.updatedAt,
@@ -148,21 +148,24 @@ export function createPlatformAuthBootstrap(
         status,
         updatedAt: new Date().toISOString(),
       }),
-    );
+    )));
+  }));
   }
 
   return {
-    async status() {
+    status() {
+    return present(Effect.gen(function* () {
       return {
-        required: (await completedAccounts()).length === 0,
+        required: ((yield* integrationValue(completedAccounts()))).length === 0,
         providers: auth.authentication.listProviders(),
         enrollmentProviders: auth.authentication.listEnrollmentProviders(),
       };
-    },
+    }));
+  },
 
     bootstrap(input: IdentityBootstrapInput): Promise<IdentityBootstrapResult> {
-      return serialize(async () => {
-        if ((await completedAccounts()).length > 0) {
+      return present(bootstrapGate.withPermit(Effect.gen(function* (): Effect.fn.Return<IdentityBootstrapResult, IntegrationFailure> {
+        if ((yield* integrationValue(completedAccounts())).length > 0) {
           throw new IdentityValidationError(
             "Platform owner bootstrap is already complete.",
           );
@@ -187,10 +190,10 @@ export function createPlatformAuthBootstrap(
           );
         }
 
-        const prepared = await auth.authentication.prepareCredential(
+        const prepared = yield* integrationValue(auth.authentication.prepareCredential(
           input.provider,
           input.credential,
-        );
+        ));
         const email = prepared.accountIdentity?.email ?? normalizeOptional(input.account.email)?.toLowerCase();
         const username = prepared.accountIdentity?.username ?? normalizeOptional(input.account.username);
         const requestedEmail = normalizeOptional(input.account.email)?.toLowerCase();
@@ -211,16 +214,16 @@ export function createPlatformAuthBootstrap(
           );
         }
 
-        const claim = await acquireClaim();
+        const claim = yield* integrationValue(acquireClaim());
         const crypto = requireCrypto();
         const accountId = `account_${crypto.randomUUID()}`;
         const credentialId = `credential_${crypto.randomUUID()}`;
         let account: Account | undefined;
         let sessionId: string | undefined;
 
-        try {
-          await cleanPendingAccounts();
-          account = await auth.accounts.create({
+        return yield* Effect.gen(function* () {
+          yield* integrationValue(cleanPendingAccounts());
+          account = yield* integrationValue(auth.accounts.create({
             id: accountId,
             email,
             username,
@@ -228,37 +231,36 @@ export function createPlatformAuthBootstrap(
             roles: ["owner"],
             permissions: ["*"],
             metadata: { [BOOTSTRAP_STATE_KEY]: "pending" },
-          });
-          await auth.credentials.create({
+          }));
+          yield* integrationValue(auth.credentials.create({
             id: credentialId,
             accountId,
             provider: input.provider,
             identifier: prepared.identifier,
             secretHash: prepared.secretHash,
             metadata: prepared.metadata,
-          });
+          }));
           const { [BOOTSTRAP_STATE_KEY]: _state, ...metadata } = account.metadata ?? {};
-          account = await auth.repositories.accounts.update({
+          account = yield* integrationValue(auth.repositories.accounts.update({
             ...account,
             metadata: Object.keys(metadata).length ? metadata : undefined,
             updatedAt: new Date(),
-          });
-          const session = await auth.sessions.create({
+          }));
+          const session = yield* integrationValue(auth.sessions.create({
             accountId,
             expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
             metadata: { provider: input.provider, bootstrap: true },
-          });
+          }));
           sessionId = session.session.id;
-          await finishClaim(claim, "complete");
+          yield* integrationValue(finishClaim(claim, "complete"));
           return { account, session };
-        } catch (error) {
-          if (sessionId) await auth.repositories.sessions.delete(sessionId);
-          await auth.repositories.credentials.delete(credentialId);
-          if (account) await auth.repositories.accounts.delete(accountId);
-          await finishClaim(claim, "failed");
-          throw error;
-        }
-      });
+        }).pipe(Effect.onError(() => Effect.gen(function* () {
+          if (sessionId) yield* integrationValue(auth.repositories.sessions.delete(sessionId));
+          yield* integrationValue(auth.repositories.credentials.delete(credentialId));
+          if (account) yield* integrationValue(auth.repositories.accounts.delete(accountId));
+          yield* integrationValue(finishClaim(claim, "failed"));
+        }).pipe(Effect.orDie)));
+      })));
     },
   };
 }

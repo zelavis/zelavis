@@ -4,12 +4,14 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { Effect, Exit, Scope } from "effect";
 import { createNodePlatformHost } from "../dist/adapters/_node-platform-host.js";
 import { createZelavisClient } from "../dist/sdk/fetch.js";
 import { selectNodeInstallationRuntime } from "../dist/adapters/_node-runtime-selection.js";
 import { requestNodeRuntimeControl } from "../dist/adapters/_node-runtime-control.js";
 import { createLocalSqliteSystemStore } from "../dist/adapters/_sqlite-system-store.js";
+import { ZELAVIS_VERSION } from "../dist/version.js";
 
 const old = { version: "1.0.0", digest: `sha256:${"a".repeat(64)}` };
 const next = { version: "2.0.0", digest: `sha256:${"b".repeat(64)}` };
@@ -41,6 +43,38 @@ test("ordinary Platform startup remains ready when a desired-running Project can
   finally { await Effect.runPromise(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("Agent conversion keeps the dashboard, authentication, Project status and repair diagnostics available", { timeout: 30_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zv-platform-conversion-"));
+  const scope = Scope.makeUnsafe(), logs = [];
+  try {
+    const host = await Effect.runPromise(createNodePlatformHost({ dataDirectory: directory, host: "127.0.0.1", initial: old,
+      environment: { ZELAVIS_BOOTSTRAP_TOKEN: bootstrapToken }, startupTimeoutMs: 10_000,
+      output: (stream, line) => logs.push({ stream, line }),
+      resolve: (_release, configuration, environment) => Effect.succeed({ executable: process.execPath, worker, module, cwd: directory, configuration, environment }),
+    }).pipe(Effect.provideService(Scope.Scope, scope)));
+    const port = await Effect.runPromise(host.listen({ host: "127.0.0.1", port: 0 }));
+    const url = `http://127.0.0.1:${port}`, anonymous = createZelavisClient({ baseUrl: url });
+    await anonymous.json("/auth/bootstrap", { method: "POST", body: { bootstrapToken, provider: "password",
+      account: { email: "owner@example.com" }, credential: { identifier: "owner@example.com", password: "correct horse battery staple" } } });
+    const { session } = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
+    const generation = host.snapshot().generation;
+    const nonce = randomUUID();
+    const command = action => Effect.runPromise(requestNodeRuntimeControl(join(directory, "agent-update.sock"),
+      { action, nonce, release: ZELAVIS_VERSION, generation }));
+    assert.equal((await command("prepare")).phase, "held");
+    for (const path of ["/zelavis/", "/zelavis/api/v1/runtime/access", "/zelavis/api/v1/runtime/projects",
+      "/zelavis/api/v1/runtime/logs", "/zelavis/api/v1/runtime/debug/projects/missing"]) {
+      const response = await fetch(`${url}${path}`, { headers: { authorization: `Bearer ${session.token}` }, signal: AbortSignal.timeout(2000) });
+      assert.notEqual(response.status, 503, `${path} must remain available during conversion`);
+      await response.arrayBuffer();
+    }
+    const signedIn = await anonymous.auth.signInWithPassword({ identifier: "owner@example.com", password: "correct horse battery staple" });
+    assert.ok(signedIn.session.token);
+    assert.equal((await command("status")).phase, "held", "management access does not release workload admission");
+  } catch (error) { console.error(JSON.stringify(logs.slice(-20))); throw error; }
+  finally { await Effect.runPromise(Scope.close(scope, Exit.void)); await rm(directory, { recursive: true, force: true }); }
+});
+
 for (const failedActivation of [false, true]) test(`Platform ${failedActivation ? "rollback" : "handover"} preserves the running App, Fabric custody and public preview socket`, { timeout: 60_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "zv-platform-host-"));
   const scope = Scope.makeUnsafe(), logs = [];
@@ -48,7 +82,7 @@ for (const failedActivation of [false, true]) test(`Platform ${failedActivation 
     const prefix = join(directory, "installation");
     for (const release of [old, next]) await mkdir(join(prefix, "releases", release.version), { recursive: true });
     await symlink(join(prefix, "releases", old.version), join(prefix, "current"));
-    await writeFile(join(prefix, "installation.json"), JSON.stringify({ schemaVersion: 2, instance: "default", mode: "user", prefix, dataDirectory: directory, version: old.version }));
+    await writeFile(join(prefix, "installation.json"), JSON.stringify({ schemaVersion: 3, role: "platform", port: 3000, edge: false, mode: "user", source: "release", instance: "default", installedBy: "cli", version: old.version, prefix, configDirectory: join(prefix, "config"), dataDirectory: directory, commandPath: join(prefix, "bin", "zelavis"), ownsUser: false, ownsGroup: false }));
     await writeFile(join(prefix, "runtime.json"), JSON.stringify({ schemaVersion: 1, instance: "default", prefix, dataDirectory: directory, version: old.version }));
     const host = await Effect.runPromise(createNodePlatformHost({ dataDirectory: directory, host: "127.0.0.1", initial: old,
       select: version => Effect.succeed(version === old.version ? old : next),

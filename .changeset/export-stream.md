@@ -1,0 +1,5 @@
+---
+"zelavis": minor
+---
+
+Add the export stream: a Tenant read out a page at a time, its records and then every change since, from an opaque cursor. Apply the entries by version; once a page says `consistent` they are the Tenant as of one log position, and the same cursor keeps delivering changes, so one operation copies, backs up and feeds. Nothing is pinned between calls but the Tenant's log, held only until the export is consistent. A divided Tenant is one export whose entries name their part, consistent once every part is. Available as `db.exportPage` and `tenant.backups.exportPage`, `POST database/tenants/:tenantId/export` (needs `database.backup`), `client.projects.exportTenantPage` and `zelavis projects export-stream [--after CURSOR] [--limit N] [--until-consistent] [--output FILE]`. A bad cursor or limit is `InvalidExport` (400); a cursor the log has outrun is `CursorCompacted`/`LogCompacted` (now 409). `backups.exportTenant` is built on the stream, so a large Tenant's backup no longer holds a read snapshot for its length. `examples/analytics-feed` is a dependency-free consumer that keeps an analytics copy current, with a guide.

@@ -67,6 +67,8 @@ export interface ZelavisUpdateControl {
    * `requested`; the update itself runs as root and survives a Platform restart.
    */
   apply(requestedBy: string): Promise<ZelavisUpdateStatus>;
+  /** The last finished updates (up to ten), oldest first, each with the installer's output tail. */
+  history?(): Promise<readonly ZelavisUpdateRun[]>;
 }
 
 /** Raised for a request that cannot be honoured; the route turns it into a 409. */

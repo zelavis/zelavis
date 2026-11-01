@@ -1,16 +1,20 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 const NAMESPACE = "fabric.app-data-placement.v1";
 const MAX_ID_LENGTH = 256;
 
 /** Project deletion participant; idempotent after a stopped runtime. */
-export async function deleteAppShardPlacementReservations(
+export function deleteAppShardPlacementReservations(
   store: ZelavisSystemStore,
   projectId: string,
 ): Promise<void> {
+    return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
   if (!validId(projectId)) throw new TypeError("Invalid Project id for shard placement cleanup");
-  await store.delete(NAMESPACE, projectId);
-}
+  (yield* integrationValue(store.delete(NAMESPACE, projectId)));
+}));
+  }
 
 export interface AppShardPlacementRequest {
   readonly protocolVersion: 1;
@@ -169,55 +173,56 @@ export function createAppShardPlacementAuthority(options: {
 }): AppShardPlacementAuthority {
   // One CAS record per Project keeps aggregate reservation accounting atomic.
   const keyFor = (projectId: string) => projectId;
-  const current = async (projectId: string, shardId: string) => {
+  const current = (projectId: string, shardId: string) => present(Effect.gen(function* () {
     if (!validId(projectId) || !validId(shardId)) return undefined;
-    const record = await options.store.get(NAMESPACE, keyFor(projectId));
+    const record = (yield* integrationValue(options.store.get(NAMESPACE, keyFor(projectId))));
     return record ? decodeLedger(record.value, projectId).reservations.find((entry) => entry.shardId === shardId) : undefined;
-  };
+  }));
 
   return {
     current,
-    async request(callerProjectId, input) {
+    request(callerProjectId, input) {
+    return present(Effect.gen(function* () {
       const refuse = (reason: AppShardPlacementRefusal, currentRevision = 0): AppShardPlacementDecision =>
         ({ granted: false, reason, currentRevision });
       let request: unknown;
       try {
         request = structuredClone(input);
       } catch {
-        return refuse("invalid-request");
+        return (yield* integrationValue(refuse("invalid-request")));
       }
-      if (!validId(callerProjectId) || !validRequest(request)) return refuse("invalid-request");
-      if (callerProjectId !== request.projectId) return refuse("foreign-project");
-      const allocation = await options.allocation(callerProjectId);
+      if (!validId(callerProjectId) || !validRequest(request)) return (yield* integrationValue(refuse("invalid-request")));
+      if (callerProjectId !== request.projectId) return (yield* integrationValue(refuse("foreign-project")));
+      const allocation = (yield* integrationValue(options.allocation(callerProjectId)));
       if (!allocation || allocation.projectId !== callerProjectId ||
-          !positiveInteger(allocation.generation)) return refuse("allocation-unavailable");
+          !positiveInteger(allocation.generation)) return (yield* integrationValue(refuse("allocation-unavailable")));
       const key = keyFor(request.projectId);
-      const existing = await options.store.get(NAMESPACE, key);
+      const existing = (yield* integrationValue(options.store.get(NAMESPACE, key)));
       const ledger = existing ? decodeLedger(existing.value, request.projectId) : undefined;
       const revision = ledger?.revision ?? 0;
       const previous = ledger?.reservations.find((entry) => entry.shardId === request.shardId);
       const requestFingerprint = fingerprint(request);
       if (previous?.operationId === request.operationId) {
-        if (previous.requestFingerprint !== requestFingerprint) return refuse("operation-conflict", revision);
-        if (previous.allocationGeneration !== allocation.generation) return refuse("allocation-changed", revision);
+        if (previous.requestFingerprint !== requestFingerprint) return (yield* integrationValue(refuse("operation-conflict", revision)));
+        if (previous.allocationGeneration !== allocation.generation) return (yield* integrationValue(refuse("allocation-changed", revision)));
         return { granted: true, reservation: previous };
       }
-      if (ledger?.usedOperationIds.includes(request.operationId)) return refuse("operation-conflict", revision);
-      if (request.expectedRevision !== revision) return refuse("revision-conflict", revision);
+      if (ledger?.usedOperationIds.includes(request.operationId)) return (yield* integrationValue(refuse("operation-conflict", revision)));
+      if (request.expectedRevision !== revision) return (yield* integrationValue(refuse("revision-conflict", revision)));
       const others = ledger?.reservations.filter((entry) => entry.shardId !== request.shardId) ?? [];
       const occupiedRanges = new Set(others.flatMap((entry) => entry.virtualRanges));
-      if (request.virtualRanges.some((range) => occupiedRanges.has(range))) return refuse("range-conflict", revision);
+      if (request.virtualRanges.some((range) => occupiedRanges.has(range))) return (yield* integrationValue(refuse("range-conflict", revision)));
       if (request.resources.cpuCores + others.reduce((sum, entry) => sum + entry.resources.cpuCores, 0) > allocation.cpuCores ||
           request.resources.memoryBytes + others.reduce((sum, entry) => sum + entry.resources.memoryBytes, 0) > allocation.memoryBytes ||
-          request.resources.diskBytes + others.reduce((sum, entry) => sum + entry.resources.diskBytes, 0) > allocation.diskBytes) return refuse("out-of-envelope", revision);
-      const eligible = (await options.nodes()).filter((node) =>
+          request.resources.diskBytes + others.reduce((sum, entry) => sum + entry.resources.diskBytes, 0) > allocation.diskBytes) return (yield* integrationValue(refuse("out-of-envelope", revision)));
+      const eligible = ((yield* integrationValue(options.nodes()))).filter((node) =>
         node.ready && allocation.allowedNodeIds.includes(node.id) &&
         node.cpuCores >= request.resources.cpuCores &&
         node.memoryBytes >= request.resources.memoryBytes &&
         node.diskBytes >= request.resources.diskBytes,
       ).sort((a, b) => a.id.localeCompare(b.id));
       const node = eligible[0];
-      if (!node) return refuse("no-eligible-node", revision);
+      if (!node) return (yield* integrationValue(refuse("no-eligible-node", revision)));
       const reservation: AppShardPlacementReservation = {
         protocolVersion: 1,
         state: "reserved",
@@ -240,10 +245,10 @@ export function createAppShardPlacementAuthority(options: {
       };
       const value = next as unknown as ZelavisSystemStoreValue;
       const written = existing
-        ? await options.store.compareAndSet(NAMESPACE, key, existing.updatedAt, value, existing.value)
-        : (await options.store.setIfAbsent(NAMESPACE, key, value)).created;
+        ? (yield* integrationValue(options.store.compareAndSet(NAMESPACE, key, existing.updatedAt, value, existing.value)))
+        : ((yield* integrationValue(options.store.setIfAbsent(NAMESPACE, key, value)))).created;
       if (!written) {
-        const latestRecord = await options.store.get(NAMESPACE, key);
+        const latestRecord = (yield* integrationValue(options.store.get(NAMESPACE, key)));
         const latestLedger = latestRecord ? decodeLedger(latestRecord.value, request.projectId) : undefined;
         const latest = latestLedger?.reservations.find((entry) => entry.shardId === request.shardId);
         if (latest?.operationId === request.operationId &&
@@ -251,9 +256,10 @@ export function createAppShardPlacementAuthority(options: {
             latest.allocationGeneration === allocation.generation) {
           return { granted: true, reservation: latest };
         }
-        return refuse("revision-conflict", latestLedger?.revision ?? 0);
+        return (yield* integrationValue(refuse("revision-conflict", latestLedger?.revision ?? 0)));
       }
       return { granted: true, reservation };
-    },
+    }));
+  },
   };
 }

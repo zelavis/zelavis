@@ -1,14 +1,16 @@
 import { isUnknown, optional, objectFields, recordOf, parseJson } from "../core/json-validation.js";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
+import { serveAgentEngineControl } from "./_agent-engine-control.js";
 import { Zelavis, defineAdapter, type ZelavisPlatformResources } from "../index.js";
 import { nodeAdapter, type NodeAdapterProjectOptions } from "./node.js";
 import { provideHostPackagesTo } from "./_service-resolution.js";
 import { resolveBundledServiceDirectory } from "./_local-runtime.js";
 import { resolveBundledFrontend } from "../cli/bundled-frontend.js";
 import { effectOperations, evaluate, integration, present, type TaggedFailure } from "../core/runtime/effect-boundary.js";
-import type { ZelavisProjectRecord, ZelavisProjectRuntimeDriver } from "../project.js";
+import type { ZelavisProjectManager, ZelavisProjectRecord, ZelavisProjectRuntimeDriver } from "../project.js";
 import { createZelavisEdgePreviews, type ZelavisEdgePreviews } from "../edge/previews.js";
 import { requestNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 import type { NodeRuntimeEngine } from "./_node-runtime-worker.js";
@@ -24,7 +26,8 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
     return { dataDirectory: resolve(configuration.dataDirectory), host: configuration.host,
       servicesDirectory: typeof configuration.servicesDirectory === "string" ? resolve(configuration.servicesDirectory) : undefined,
       custody: configuration.custody as { ownerSession: string; endpoint: string; token: string; preserveOnShutdown: boolean } | undefined,
-      installation: configuration.installation as { prefix: string; instance: string; edge: boolean } | undefined };
+      installation: configuration.installation as { prefix: string; instance: string; edge: boolean } | undefined,
+      enrollmentEndpoint: configuration.enrollmentEndpoint as { url: string; fingerprint: string } | undefined };
   });
   const frontend = yield* integration(() => resolveBundledFrontend({ bundledDirectory: name => {
     const directory = resolveBundledServiceDirectory(name);
@@ -46,9 +49,10 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
     });
   }
   return {
-    open: Effect.fn("PlatformEngine.open")(function* () {
+    open: Effect.fn("PlatformEngine.open")(function* (generation) {
       let resources: ZelavisPlatformResources | undefined;
       let previews: ZelavisEdgePreviews | undefined;
+      let conversionHoldsPreviews = false;
       let incomingContinuity: ZelavisProjectRecord[] = [];
       let initialProbe = true;
       const previewFetch = new Map<string, (request: Request) => Promise<Response>>();
@@ -69,9 +73,13 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
           ...(process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT ? { hostOperationsEndpoint: process.env.ZELAVIS_HOST_OPERATIONS_ENDPOINT } : {}),
           ...(options.installation ? { installation: options.installation, ...(!options.installation.edge ? { edge: false as const } : {}) } : {}),
           ...(options.servicesDirectory ? { services: { directory: options.servicesDirectory } } : {}),
+          ...(options.enrollmentEndpoint ? { enrollmentEndpoint: options.enrollmentEndpoint } : {}),
+          ...(process.env.ZELAVIS_CLOUD_POLICY ? { cloud: { policyFile: resolve(process.env.ZELAVIS_CLOUD_POLICY),
+            bundlePath: fileURLToPath(new URL("../../services/zelavis-cloud/bundle/index.js", import.meta.url)) } } : {}),
           projects: { previewHost: options.custody ? false : options.host,
             ...(process.env.ZELAVIS_AGENT_ENDPOINT ? { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } : {}),
-            ...(remoteDispatch ? { remoteDispatch } : {}),
+            // A Platform that accepts machines dispatches to them: enrolled nodes arrive through the registry.
+            ...(remoteDispatch ? { remoteDispatch } : options.enrollmentEndpoint ? { remoteDispatch: { localNodeId: "local", nodes: {} } } : {}),
           },
       });
       const ownedAdapter = defineAdapter({ name: adapter.name,
@@ -89,6 +97,10 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
                 yield* evaluate(() => { if (!Number.isInteger(result.port) || Number(result.port) < 1024 || Number(result.port) > 65535) throw new Error("Persistent preview host returned an invalid port."); });
                 previewFetch.set(projectId, fetch);
                 return { port: Number(result.port), close: () => present(Effect.gen(function* () {
+                  // Conversion observes stopped runtime snapshots while desired
+                  // Projects are being restored. Keep the persistent public
+                  // listener and queued sockets through that temporary state.
+                  if (conversionHoldsPreviews) return;
                   previewFetch.delete(projectId);
                   yield* requestNodeRuntimeControl(authority.endpoint, { action: "preview-close", projectId }, authority.token);
                 })) };
@@ -99,6 +111,9 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
             ...(resources?.projectRuntime ? { projectRuntime: wrap(resources.projectRuntime) } : {}),
             ...(resources?.deploymentBackends ? { deploymentBackends: resources.deploymentBackends.map(backend => ({ ...backend, ...(backend.projectRuntime ? { projectRuntime: wrap(backend.projectRuntime) } : {}) })) } : {}),
             ...(previews ? { edgePreviews: previews } : {}),
+            // A registry change reaches traffic through a fresh engine of this release.
+            ...(options.custody ? { engineReload: () => present(requestNodeRuntimeControl(options.custody!.endpoint, { action: "reload" }, options.custody!.token).pipe(
+              Effect.flatMap(reply => evaluate(() => { if (reply.scheduled !== true) throw new Error("The persistent host did not schedule the reload."); })))) } : {}),
           } };
         })),
       });
@@ -142,18 +157,44 @@ export const prepare = Effect.fn("PlatformEngine.prepare")(function* (configurat
             if (!driver.capabilities(project).survivesControlPlaneRestart) throw new Error(`Project ${project.id} has no qualified Agent custody for a Platform handover.`);
           });
           const state = yield* effectOperations(driver, ["capabilities", "supportsLiveUpdate"]).status(project.id);
+          // A Project that is down (stopped, or failed to start) is not one this update could keep serving: the
+          // outgoing engine could not serve it either, and rolling the whole Platform back would not bring it up.
+          // It is reported, and ordinary restoration of desired-running Projects keeps trying. A Project that runs
+          // elsewhere than its stable address, or is stuck mid-transition, is a broken takeover and still fails.
+          if (state.status === "stopped" || state.status === "failed") {
+            return yield* Effect.logWarning(`Project ${project.id} is ${state.status} after the engine handover and was left for restoration${state.error ? `: ${state.error}` : ""}.`);
+          }
           yield* evaluate(() => { if (state.status !== "running" || state.url !== project.runtime.url) throw new Error(`Project ${project.id} was not adopted at its stable address: ${state.error ?? state.status}.`); });
         }), { concurrency: 4, discard: true });
         incomingContinuity = [];
       });
-      return { runtime: { fetch: (request, context) => {
+      const controlScope = yield* Scope.make();
+      const agentAdmission = yield* serveAgentEngineControl({ directory: options.dataDirectory, generation,
+        projects: runtime.endpointGroups["platform.control-plane"]?.context.projects as ZelavisProjectManager | undefined,
+        holdPreviews: held => { conversionHoldsPreviews = held; },
+      }).pipe(Scope.provide(controlScope), Effect.onError(() => Scope.close(controlScope, Exit.void)));
+      const fetch = (request: Request, context?: Parameters<typeof runtime.fetch>[1]) => {
         const projectId = request.headers.get(NODE_RUNTIME_PREVIEW_ID);
         if (!projectId) return runtime.fetch(request, context);
         if (!options.custody || request.headers.get(NODE_RUNTIME_PREVIEW_KEY) !== options.custody.token) return Promise.resolve(new Response("Private preview authority required.", { status: 401 }));
         const headers = new Headers(request.headers); headers.delete(NODE_RUNTIME_PREVIEW_ID); headers.delete(NODE_RUNTIME_PREVIEW_KEY);
         return previewFetch.get(projectId)?.(new Request(request, { headers })) ?? Promise.resolve(new Response("Preview unavailable.", { status: 503 }));
+      };
+      return { runtime: { fetch: (request, context) => {
+        // Conversion coordinates Project traffic and lifecycle changes, never
+        // the management plane needed to diagnose or repair a failed recovery.
+        const path = new URL(request.url).pathname;
+        const projectRequest = /^\/zelavis\/api\/v1\/runtime\/projects(?:\/|$)/.test(path);
+        const projectTraffic = /^\/zelavis\/api\/v1\/runtime\/projects\/[^/]+\/(?:proxy|data)(?:\/|$)/.test(path);
+        if (!request.headers.has(NODE_RUNTIME_PREVIEW_ID) && !projectTraffic &&
+          !(projectRequest && request.method !== "GET" && request.method !== "HEAD")) return fetch(request, context);
+        return present(Effect.acquireUseRelease(agentAdmission.enter,
+        () => integration(() => fetch(request, context)), release => Effect.sync(release)).pipe(
+          Effect.catch(() => Effect.succeed(new Response("Agent conversion could not restore serving Projects.", { status: 503 }))),
+        ));
       } }, qualify, close: reason => Effect.gen(function* () {
         preserve = Boolean(options.custody) && (reason !== "shutdown" || options.custody!.preserveOnShutdown);
+        yield* Scope.close(controlScope, Exit.void);
         yield* integration(() => zv.close());
       }) };
     }),

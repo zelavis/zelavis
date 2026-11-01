@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/marketplace",
-  "version": "1.1.0-alpha.25",
+  "version": "1.1.0-alpha.42",
   "private": false,
   "description": "Official Zelavis marketplace product service.",
   "license": "MIT",
@@ -41,9 +41,11 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "effect": "4.0.0"
   },
   "peerDependencies": {
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "effect": "4.0.0"
   }
 }

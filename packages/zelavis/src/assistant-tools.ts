@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { evaluate, present, integration, integrationValue, unwrapFailure, type IntegrationFailure } from "./core/runtime/effect-boundary.js";
 /**
  * The Admin Agent's tool layer and its permission model.
  *
@@ -209,13 +211,13 @@ function serializeArguments(value: unknown): string {
 export function createAssistantToolAudit(
   store: ZelavisSystemStore,
 ): (record: AssistantToolAuditRecord) => Promise<void> {
-  return async (record) => {
-    await store.set(
+  return (record) => present(Effect.gen(function* () {
+    (yield* integrationValue(store.set(
       AUDIT_NAMESPACE,
       `${record.at}_${record.id}`,
       JSON.parse(JSON.stringify(record)),
-    );
-  };
+    )));
+  }));
 }
 
 export function createAssistantToolbox(options: {
@@ -232,28 +234,22 @@ export function createAssistantToolbox(options: {
     byName.set(tool.name, tool);
   }
 
-  async function record(
+  /** Whether the audit trail took the record; a failure to record is an answer, never an error. */
+  const record = (
     principal: ZelavisPrincipal,
     tool: string,
     args: unknown,
     decision: AssistantToolAuditRecord["decision"],
     reason?: string,
-  ): Promise<boolean> {
-    try {
-      await options.audit({
-        id: crypto.randomUUID(),
-        at: new Date().toISOString(),
-        principalId: principal.id,
-        tool,
-        arguments: serializeArguments(args),
-        decision,
-        ...(reason ? { reason: redactText(reason).slice(0, 500) } : {}),
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  ): Effect.Effect<boolean> => integration(() => options.audit({
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    principalId: principal.id,
+    tool,
+    arguments: serializeArguments(args),
+    decision,
+    ...(reason ? { reason: redactText(reason).slice(0, 500) } : {}),
+  })).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
 
   return {
     describe(call) {
@@ -280,10 +276,11 @@ export function createAssistantToolbox(options: {
 
     resolveApproval,
 
-    async run(principal, call, context) {
+    run(principal, call, context) {
+      return present(Effect.gen(function* (): Effect.fn.Return<AssistantToolResult, IntegrationFailure> {
       const tool = byName.get(call.name);
       if (!tool) {
-        await record(principal, call.name, call.arguments, "invalid", "unknown tool");
+        yield* record(principal, call.name, call.arguments, "invalid", "unknown tool");
         return {
           ok: false,
           refusal: { code: "unknown_tool", tool: call.name, message: `There is no tool named "${call.name}".` },
@@ -297,7 +294,7 @@ export function createAssistantToolbox(options: {
         const message = error instanceof AssistantToolArgumentError
           ? error.message
           : "The arguments could not be read.";
-        if (!(await record(principal, tool.name, call.arguments, "invalid", message))) {
+        if (!(yield* record(principal, tool.name, call.arguments, "invalid", message))) {
           return auditUnavailable(tool.name);
         }
         return { ok: false, refusal: { code: "invalid_arguments", tool: tool.name, message } };
@@ -306,7 +303,7 @@ export function createAssistantToolbox(options: {
       const { permissions, scope, parsed } = requirement;
       if (context?.projectId !== undefined &&
           !(scope?.type === "project" && scope.projectId === context.projectId)) {
-        if (!(await record(principal, tool.name, call.arguments, "denied", "outside the chat's Project"))) {
+        if (!(yield* record(principal, tool.name, call.arguments, "denied", "outside the chat's Project"))) {
           return auditUnavailable(tool.name);
         }
         return {
@@ -322,7 +319,7 @@ export function createAssistantToolbox(options: {
         principalHasPermission(principal, permission, scope),
       );
       if (!allowed) {
-        if (!(await record(principal, tool.name, call.arguments, "denied", "missing permission"))) {
+        if (!(yield* record(principal, tool.name, call.arguments, "denied", "missing permission"))) {
           return auditUnavailable(tool.name);
         }
         return {
@@ -337,73 +334,82 @@ export function createAssistantToolbox(options: {
       }
 
       if (tool.mutation) {
-        return requestApproval(principal, tool, parsed, call.arguments, context?.threadId);
+        return yield* requestApproval(principal, tool, parsed, call.arguments, context?.threadId);
       }
 
       // Fail closed: an action that cannot be recorded does not happen.
-      if (!(await record(principal, tool.name, call.arguments, "allowed"))) {
+      if (!(yield* record(principal, tool.name, call.arguments, "allowed"))) {
         return auditUnavailable(tool.name);
       }
 
-      try {
-        const value = redactSecrets(await tool.execute(parsed, { principal }));
-        const text = JSON.stringify(value) ?? "null";
-        if (text.length > MAX_RESULT_CHARS) {
-          return { ok: true, value: `${text.slice(0, MAX_RESULT_CHARS)}…`, truncated: true };
-        }
-        return { ok: true, value };
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : "The tool failed.";
-        await record(principal, tool.name, call.arguments, "failed", reason);
-        return { ok: false, refusal: { code: "failed", tool: tool.name, message: reason } };
-      }
+      return yield* integration(() => tool.execute(parsed, { principal })).pipe(
+        Effect.flatMap((raw) => evaluate((): AssistantToolResult => {
+          const value = redactSecrets(raw);
+          const text = JSON.stringify(value) ?? "null";
+          if (text.length > MAX_RESULT_CHARS) {
+            return { ok: true, value: `${text.slice(0, MAX_RESULT_CHARS)}…`, truncated: true };
+          }
+          return { ok: true, value };
+        })),
+        Effect.catch((failure) => Effect.gen(function* (): Effect.fn.Return<AssistantToolResult> {
+          const error = unwrapFailure(failure);
+          const reason = error instanceof Error ? error.message : "The tool failed.";
+          yield* record(principal, tool.name, call.arguments, "failed", reason);
+          return { ok: false, refusal: { code: "failed", tool: tool.name, message: reason } };
+        })),
+      );
+      }));
     },
   };
 
 
-  async function requestApproval(
+  function requestApproval(
     principal: ZelavisPrincipal,
     tool: AssistantTool<any>,
     parsed: unknown,
     rawArguments: unknown,
     threadId: string | undefined,
-  ): Promise<AssistantToolResult> {
+  ): Effect.Effect<AssistantToolResult, IntegrationFailure> {
+    return Effect.gen(function* () {
     const approvals = options.approvals;
     if (!approvals || !threadId) {
-      await record(principal, tool.name, rawArguments, "denied", "approval unavailable");
+      yield* record(principal, tool.name, rawArguments, "denied", "approval unavailable");
       return {
-        ok: false,
+        ok: false as const,
         refusal: {
-          code: "approval_unavailable",
+          code: "approval_unavailable" as const,
           tool: tool.name,
           message: "Changes cannot be requested here, so nothing was changed.",
         },
       };
     }
-    const pending = (await approvals.listForThread(threadId)).filter(
+    const pending = (yield* integration(() => approvals.listForThread(threadId))).filter(
       (approval) => approval.status === "pending" && Date.parse(approval.expiresAt) > Date.now(),
     );
     if (pending.length >= MAX_PENDING_APPROVALS_PER_THREAD) {
       return {
-        ok: false,
+        ok: false as const,
         refusal: {
-          code: "approval_unavailable",
+          code: "approval_unavailable" as const,
           tool: tool.name,
           message: "Too many changes are already waiting for a decision. Decide those first.",
         },
       };
     }
     const target = tool.mutation!.target(parsed);
-    let fingerprint: string | undefined;
-    try {
-      fingerprint = await tool.mutation!.fingerprint?.(parsed);
-    } catch (error) {
-      // Nothing to ask a person about: refuse instead of queueing a request
-      // that cannot be carried out.
-      const reason = error instanceof Error ? error.message : "The target could not be found.";
-      await record(principal, tool.name, rawArguments, "failed", reason);
-      return { ok: false, refusal: { code: "failed", tool: tool.name, message: reason } };
-    }
+    const found = yield* integration(() => tool.mutation!.fingerprint?.(parsed)).pipe(
+      Effect.map((value) => ({ fingerprint: value })),
+      Effect.catch((failure) => Effect.gen(function* () {
+        // Nothing to ask a person about: refuse instead of queueing a request
+        // that cannot be carried out.
+        const error = unwrapFailure(failure);
+        const reason = error instanceof Error ? error.message : "The target could not be found.";
+        yield* record(principal, tool.name, rawArguments, "failed", reason);
+        return { refusal: { ok: false as const, refusal: { code: "failed" as const, tool: tool.name, message: reason } } };
+      })),
+    );
+    if ("refusal" in found) return found.refusal;
+    const fingerprint = found.fingerprint;
     const now = Date.now();
     const approval: AssistantApproval = {
       id: `approval_${crypto.randomUUID().replaceAll("-", "")}`,
@@ -419,14 +425,14 @@ export function createAssistantToolbox(options: {
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + APPROVAL_TTL_MS).toISOString(),
     };
-    if (!(await record(principal, tool.name, rawArguments, "pending_approval", approval.id))) {
+    if (!(yield* record(principal, tool.name, rawArguments, "pending_approval", approval.id))) {
       return auditUnavailable(tool.name);
     }
-    await approvals.create(approval);
+    yield* integration(() => approvals.create(approval));
     return {
-      ok: false,
+      ok: false as const,
       refusal: {
-        code: "approval_required",
+        code: "approval_required" as const,
         tool: tool.name,
         message:
           "This changes something, so it has been sent to the operator for approval. " +
@@ -439,12 +445,14 @@ export function createAssistantToolbox(options: {
         },
       },
     };
+    });
   }
 
-  async function resolveApproval(
+  function resolveApproval(
     principal: ZelavisPrincipal,
     input: Parameters<AssistantToolbox["resolveApproval"]>[1],
   ): Promise<AssistantApprovalResult> {
+    return present(Effect.gen(function* (): Effect.fn.Return<AssistantApprovalResult, IntegrationFailure> {
     const approvals = options.approvals;
     const fail = (
       code: Extract<AssistantApprovalResult, { ok: false }>["code"],
@@ -452,7 +460,7 @@ export function createAssistantToolbox(options: {
       approval?: AssistantApproval,
     ): AssistantApprovalResult => ({ ok: false, code, message, ...(approval ? { approval } : {}) });
 
-    const current = await approvals?.get(input.threadId, input.approvalId);
+    const current = yield* integration(() => approvals?.get(input.threadId, input.approvalId));
     // Someone else's request looks exactly like one that does not exist.
     if (!approvals || !current || current.principalId !== principal.id ||
         current.threadId !== input.threadId) {
@@ -462,16 +470,16 @@ export function createAssistantToolbox(options: {
       return fail("already_decided", "That request has already been decided.", current);
     }
     if (Date.parse(current.expiresAt) <= Date.now()) {
-      const expired = await approvals.decide(current.threadId, current.id, { status: "expired", outcome: "It was not decided in time." });
+      const expired = yield* integration(() => approvals.decide(current.threadId, current.id, { status: "expired", outcome: "It was not decided in time." }));
       return fail("expired", "That request expired. Ask again if you still want it.", expired ?? current);
     }
 
     const tool = byName.get(current.tool);
     if (input.decision === "deny") {
-      if (!(await record(principal, current.tool, current.arguments, "denied", `approval ${current.id} denied`))) {
+      if (!(yield* record(principal, current.tool, current.arguments, "denied", `approval ${current.id} denied`))) {
         return fail("audit_unavailable", "The decision could not be recorded, so it was not applied.");
       }
-      const denied = await approvals.decide(current.threadId, current.id, { status: "denied", outcome: "Nothing was changed." });
+      const denied = yield* integration(() => approvals.decide(current.threadId, current.id, { status: "denied", outcome: "Nothing was changed." }));
       return denied ? { ok: true, approval: denied } : fail("already_decided", "That request has already been decided.");
     }
 
@@ -490,25 +498,22 @@ export function createAssistantToolbox(options: {
       permitted = false;
     }
     if (!tool || !permitted) {
-      await record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: no longer permitted`);
-      const refused = await approvals.decide(current.threadId, current.id, {
+      yield* record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: no longer permitted`);
+      const refused = yield* integration(() => approvals.decide(current.threadId, current.id, {
         status: "denied", outcome: "Not run: you no longer have permission for this.",
-      });
+      }));
       return fail("forbidden", "You no longer have permission to do that, so it was not run.", refused ?? current);
     }
 
     if (current.fingerprint !== undefined) {
-      let now: string | undefined;
-      try {
-        now = await tool.mutation?.fingerprint?.(current.arguments);
-      } catch {
-        now = undefined;
-      }
+      const now = yield* integration(() => tool.mutation?.fingerprint?.(current.arguments)).pipe(
+        Effect.orElseSucceed((): string | undefined => undefined),
+      );
       if (now !== current.fingerprint) {
-        const changed = await approvals.decide(current.threadId, current.id, {
+        const changed = yield* integration(() => approvals.decide(current.threadId, current.id, {
           status: "denied", outcome: "Not run: the target changed since this was requested.",
-        });
-        await record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: target changed`);
+        }));
+        yield* record(principal, current.tool, current.arguments, "denied", `approval ${current.id}: target changed`);
         return fail("target_changed", "The target changed since this was requested, so it was not run.", changed ?? current);
       }
     }
@@ -516,33 +521,39 @@ export function createAssistantToolbox(options: {
     // One winner: only the request that moves it out of `pending` goes on.
     // It is recorded as running before anything runs, so a crash cannot leave a
     // request that looks undecided while the change may have happened.
-    const claimed = await approvals.decide(current.threadId, current.id, { status: "running", outcome: "Running…" });
+    const claimed = yield* integration(() => approvals.decide(current.threadId, current.id, { status: "running", outcome: "Running…" }));
     if (!claimed) return fail("already_decided", "That request has already been decided.");
     // Fail closed: a change that cannot be recorded does not happen.
-    if (!(await record(principal, current.tool, current.arguments, "allowed", `approval ${current.id} approved`))) {
-      const unrecorded = await settle(approvals, claimed, "failed", "Not run: the decision could not be recorded.");
+    if (!(yield* record(principal, current.tool, current.arguments, "allowed", `approval ${current.id} approved`))) {
+      const unrecorded = yield* integrationValue(settle(approvals, claimed, "failed", "Not run: the decision could not be recorded."));
       return fail("audit_unavailable", "The decision could not be recorded, so it was not applied.", unrecorded);
     }
-    try {
-      await tool.execute(current.arguments, { principal });
-      await record(principal, current.tool, current.arguments, "executed", current.id);
-      const done = await settle(approvals, claimed, "executed", `Done: ${current.label}.`);
-      return { ok: true, approval: done };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "The change failed.";
-      await record(principal, current.tool, current.arguments, "failed", reason);
-      const failed = await settle(approvals, claimed, "failed", reason);
-      return fail("failed", reason, failed);
-    }
+    return yield* integration(() => tool.execute(current.arguments, { principal })).pipe(
+      Effect.flatMap(() => Effect.gen(function* (): Effect.fn.Return<AssistantApprovalResult, IntegrationFailure> {
+        yield* record(principal, current.tool, current.arguments, "executed", current.id);
+        const done = yield* integrationValue(settle(approvals, claimed, "executed", `Done: ${current.label}.`));
+        return { ok: true, approval: done };
+      })),
+      Effect.catch((failure) => Effect.gen(function* (): Effect.fn.Return<AssistantApprovalResult, IntegrationFailure> {
+        const error = unwrapFailure(failure);
+        const reason = error instanceof Error ? error.message : "The change failed.";
+        yield* record(principal, current.tool, current.arguments, "failed", reason);
+        const failed = yield* integrationValue(settle(approvals, claimed, "failed", reason));
+        return fail("failed", reason, failed);
+      })),
+    );
+    }));
   }
 
-  async function settle(
+  function settle(
     approvals: AssistantApprovalStore,
     approval: AssistantApproval,
     status: "executed" | "failed",
     outcome: string,
   ): Promise<AssistantApproval> {
-    return (await approvals.finish(approval.threadId, approval.id, { status, outcome })) ?? { ...approval, status, outcome };
+    return present(Effect.gen(function* (): Effect.fn.Return<AssistantApproval, IntegrationFailure> {
+    return ((yield* integrationValue(approvals.finish(approval.threadId, approval.id, { status, outcome })))) ?? { ...approval, status, outcome };
+  }));
   }
 
   function auditUnavailable(tool: string): AssistantToolResult {
@@ -610,7 +621,9 @@ export function createProjectReadTools(
     parameters: { type: "object", properties: {}, additionalProperties: false },
     advertisedPermissions: ["projects.list"],
     access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),
-    execute: async () => ({ projects: await manager().list() }),
+    execute: () => present(Effect.gen(function* () {
+    return { projects: (yield* integrationValue(manager().list())) };
+  })),
     describe: () => "Listing Projects",
   };
   const getProject: AssistantTool<{ projectId: string }> = {
@@ -626,11 +639,11 @@ export function createProjectReadTools(
         parsed,
       };
     },
-    execute: async ({ projectId }) => {
-      const project = await manager().get(projectId);
+    execute: ({ projectId }) => present(Effect.gen(function* () {
+      const project = (yield* integrationValue(manager().get(projectId)));
       if (!project) throw new Error(`Project "${projectId}" was not found.`);
       return { project };
-    },
+    })),
     describe: ({ projectId }) => `Reading Project ${projectId}`,
   };
   const projectLogs: AssistantTool<{ projectId: string }> = {
@@ -646,7 +659,9 @@ export function createProjectReadTools(
         parsed,
       };
     },
-    execute: async ({ projectId }) => ({ logs: await manager().logs(projectId) }),
+    execute: ({ projectId }) => present(Effect.gen(function* () {
+    return { logs: (yield* integrationValue(manager().logs(projectId))) };
+  })),
     describe: ({ projectId }) => `Reading logs for ${projectId}`,
   };
   return [listProjects, getProject, projectLogs];
@@ -674,11 +689,12 @@ function readName(value: unknown, label: string): string {
   return value;
 }
 
-async function readFromProject(
+function readFromProject(
   reader: AssistantProjectReader,
   input: Parameters<AssistantProjectReader>[0],
 ): Promise<any> {
-  const result = await reader(input);
+    return present(Effect.gen(function* (): Effect.fn.Return<any, IntegrationFailure> {
+  const result = (yield* integrationValue(reader(input)));
   if (result.status !== 200) {
     const detail =
       result.body && typeof result.body === "object" &&
@@ -688,7 +704,8 @@ async function readFromProject(
     throw new Error(detail);
   }
   return result.body;
-}
+}));
+  }
 
 /** Platform-wide status, from what the caller can already list. */
 export function createPlatformStatusTool(
@@ -701,17 +718,17 @@ export function createPlatformStatusTool(
     parameters: { type: "object", properties: {}, additionalProperties: false },
     advertisedPermissions: ["projects.list"],
     access: () => ({ permissions: ["projects.list"], scope: { type: "system" }, parsed: {} }),
-    execute: async () => {
+    execute: () => present(Effect.gen(function* () {
       const manager = projects();
       if (!manager) throw new Error("Project management is unavailable on this installation.");
-      const all = await manager.list();
+      const all = (yield* integrationValue(manager.list()));
       const byStatus: Record<string, number> = {};
       for (const project of all) {
         const status = project.runtime?.status ?? "unknown";
         byStatus[status] = (byStatus[status] ?? 0) + 1;
       }
       return { runtime: manager.runtime, projects: { total: all.length, byStatus } };
-    },
+    })),
     describe: () => "Checking platform status",
   };
 }
@@ -748,18 +765,18 @@ export function createProjectDatabaseTools(
       const parsed = readProjectId(args);
       return { ...viewOf(parsed.projectId), parsed };
     },
-    execute: async ({ projectId }, { principal }) => {
-      const body = await readFromProject(reader, {
+    execute: ({ projectId }, { principal }) => present(Effect.gen(function* () {
+      const body = (yield* integrationValue(readFromProject(reader, {
         projectId, principal, method: "GET",
         path: "zelavis/api/v1/database/documents/collections",
         query: new URLSearchParams({ tenantId: APP_TENANT }),
-      });
+      })));
       const collections = Array.isArray(body?.collections) ? body.collections : [];
       return {
         collections: collections.slice(0, MAX_COLLECTIONS).map((c: { name?: unknown }) => c.name),
         ...(collections.length > MAX_COLLECTIONS ? { truncated: true } : {}),
       };
-    },
+    })),
     describe: ({ projectId }) => `Listing collections in ${projectId}`,
   };
 
@@ -793,12 +810,12 @@ export function createProjectDatabaseTools(
       };
       return { ...viewOf(projectId), parsed };
     },
-    execute: async ({ projectId, collection, limit }, { principal }) => {
-      const body = await readFromProject(reader, {
+    execute: ({ projectId, collection, limit }, { principal }) => present(Effect.gen(function* () {
+      const body = (yield* integrationValue(readFromProject(reader, {
         projectId, principal, method: "POST",
         path: `zelavis/api/v1/database/documents/${encodeURIComponent(collection)}/query`,
         body: { tenantId: APP_TENANT, limit },
-      });
+      })));
       const documents = Array.isArray(body?.documents) ? body.documents : [];
       return {
         collection,
@@ -806,7 +823,7 @@ export function createProjectDatabaseTools(
           id: d.id, data: d.data,
         })),
       };
-    },
+    })),
     describe: ({ projectId, collection }) => `Reading ${collection} in ${projectId}`,
   };
   return [listCollections, readCollection];
@@ -858,13 +875,13 @@ export function createProjectLifecycleTools(
         target: ({ projectId }) => ({ kind: "project", id: projectId }),
         // Pinned to this Project's creation time: deleting and recreating a
         // Project under the same name must not inherit an earlier approval.
-        fingerprint: async ({ projectId }) => {
-          const project = await manager().get(projectId);
+        fingerprint: ({ projectId }) => present(Effect.gen(function* () {
+          const project = (yield* integrationValue(manager().get(projectId)));
           if (!project) throw new Error(`Project "${projectId}" was not found.`);
           return `${project.id}@${project.createdAt}`;
-        },
+        })),
       },
-      execute: async ({ projectId }) => input.run(projectId),
+      execute: ({ projectId }) => present(integration(() => input.run(projectId))),
     };
   }
 
@@ -897,9 +914,9 @@ export function createProjectLifecycleTools(
       permission: "project.delete",
       verb: "Delete",
       irreversible: true,
-      run: async (id) => {
-        if (!(await manager().remove(id))) throw new Error(`Project "${id}" was not found.`);
-      },
+      run: (id) => present(Effect.gen(function* () {
+        if (!((yield* integrationValue(manager().remove(id))))) throw new Error(`Project "${id}" was not found.`);
+      })),
     }),
   ];
 }

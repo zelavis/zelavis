@@ -36,6 +36,24 @@ after reload. Managed apps use the same navigation for their bound Zelavis
 backend once its Database API has been used. Their application's own database
 remains separate.
 
+**Server → Logs** (`/zelavis/server/logs`) shows the Platform's recent log, newest first,
+and can filter by level or by the reference shown with an "Action failed" message, which
+leads to the cause that the generic message hides. It reads `GET /zelavis/api/v1/runtime/logs`
+(`client.logs.read`, `zelavis logs`) and needs `server.logs.read` in system scope. Entries are
+kept in memory only and a restart empties them; Project logs stay in each Project.
+
+**Server → Access → API keys** creates, rotates and revokes keys for scripts, CI, agents and debugging
+sessions. A key is a service account with a token shown once. Presets: **Debug (read-only)** (logs,
+processes, nodes, updates, Projects), **Operator** (that plus updates, services, settings, nodes, Edge,
+cloud and Project lifecycle; never the terminal, users or deletion) and **Project client**. They call
+`/zelavis/api/v1/auth/service-accounts` (`client.auth.admin`, `zelavis auth service-accounts`).
+
+**Server → Terminal** (`/zelavis/server/terminal`) opens a shell on the server inside the
+browser (xterm.js) for principals with `server.terminal.use` in system scope, normally the owner.
+The shell runs in tmux as the unprivileged account the Platform runs as, so closing the page
+leaves it running and the next visit, or `zelavis terminal attach`, picks it up again. On a
+server without tmux the page offers to install it through the audited host package operation.
+
 The outer Platform has its own **Server → Database** view at
 `/zelavis/server/database`. It inspects the System Store's logical namespace
 tables and paginated records, independently of the physical database engine.

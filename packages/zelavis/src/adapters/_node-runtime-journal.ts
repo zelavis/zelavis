@@ -114,3 +114,12 @@ const journalRecord = objectFields<RuntimeJournalState>({ format: literal("zelav
   selected: runtimeReleaseRecord, transition: optional(objectFields<RuntimeHandoverCheckpoint>({
     generation: isPositiveInteger, phase: literal("prepared", "releasing", "activating", "committing", "ready", "failed"),
     previous: runtimeReleaseRecord, target: runtimeReleaseRecord })) });
+
+/**
+ * The release a persistent host last selected, read without taking its journal: the host holds the kernel guard, and a
+ * Platform deciding which engine to start a bound App on must not wait for it. Nothing is written or recovered here.
+ */
+export const readNodeRuntimeJournalSelection = Effect.fn("RuntimeJournal.readSelection")(function* (file: string) {
+  const source = yield* integration(() => readFile(file, "utf8")).pipe(Effect.catchIf(error => (error.cause as { code?: string })?.code === "ENOENT", () => Effect.void));
+  return source === undefined ? undefined : (yield* evaluate(() => parse(source))).selected;
+});

@@ -39,7 +39,10 @@ and public version descriptor before traffic resumes. System installations also
 refresh the selected release's authored systemd templates and reload the unit
 catalogue at that acknowledgement; they do not restart the host or Project Agent.
 Rollback restores the previous release's templates. The host and its public
-listeners keep running throughout.
+listeners keep running throughout. The root operation Agent also restarts after
+selection: it reads its operation manifests when it starts,
+so a release's new or changed host operations exist only for an Agent started after the
+selection, and it holds no Project and no traffic.
 
 A failed preparation or drain leaves the previous engine serving. A failed
 activation or inventory commit fences the candidate before restoring the old
@@ -114,8 +117,8 @@ failed update but cannot erase its intent without ownership proof.
 
 The App host keeps Gateway replay history across engine replacement. It accepts
 parent authority before queuing and creates fresh private worker authority after
-admission. Re-keying a surviving App host uses the authenticated Agent process
-pipe, not a public control endpoint.
+admission. Re-keying a surviving App host uses the authenticated private Agent-to-host control
+channel, not a public control endpoint.
 
 ## Updating a managed app recipe
 
@@ -177,6 +180,43 @@ Native Zelavis Apps update the complete engine through the same handover used
 by the Platform. Their shared composition has scoped Project authority; the
 outer Platform's Fabric remains the privileged hosting control plane.
 
+## Data layout changes
+
+An engine opens exactly the data layout it writes and refuses any other. Each engine release declares its layout in its
+runtime artifact (`metadata.dataFormat`; a release that declares none wrote layout 2, as every release up to alpha.42 did).
+A Platform update therefore never moves a Project across a layout change: native Apps keep their locked engine, and a
+managed app's bound App stays on the engine that wrote its data, at a live restart and at a cold start alike. The
+Project then reports `dataLayout: { "state": "upgradeRequired", "from": 2, "to": 4 }` and its card offers the upgrade even when its
+recipe is current.
+
+The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/projects/:id/upgrade`,
+`zelavis projects upgrade <id>`, the card's **Update recipe**) is the migration. It is never a live handover:
+
+1. The Project (a managed app's bound App) is stopped. A managed app's own processes keep serving.
+2. The engine that wrote the data exports every Tenant, under its own Node.
+3. The current engine recreates collections, documents and schemas in a new database through the documents API and checks
+   that the counts and every document's data match. Nothing is written to the original data.
+4. The new database is swapped in. The original is kept beside it as `data.format-<n>-<time>` until you remove it, and a
+   journal lets a crash be settled from the files alone.
+5. The Project starts on the new engine. If it cannot start, or the upgrade cannot be recorded, the original data and its engine
+   return and the migrated data is set aside as `data.discarded-<time>`.
+
+The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated, how
+many documents had their version and change history restarted, and the directory that keeps the original. What does not
+carry over: document versions, change history and event positions restart (clients using `expectedVersion` must read again,
+consumers of an old change-feed cursor start over), and idempotency receipts are dropped. Time series are not carried: a series'
+definition is code the app registers at run time and its points are derived from the event log, which restarts, so after a migration
+the app registers the series again and rebuilds it from the migrated documents; the earlier points and the history they were built from
+are not recreated. A migration refuses to run when the
+free space beside the data is under about 3.5 times its size, and it fails, naming them, on record kinds it cannot recreate yet.
+The kept data is never removed automatically. List it with `client.projects.retainedData(id)`,
+`GET /runtime/projects/:id/retained-data` or `zelavis projects retained-data <id>`, and remove one directory by its exact name with
+`client.projects.removeRetainedData(id, name)`, `DELETE /runtime/projects/:id/retained-data/:name` or
+`zelavis projects remove-retained-data <id> <name> --confirm <name>`. Listing needs `project.view`, removal needs
+`project.runtime.manage`; removal cannot be undone, is refused while a migration is unsettled or the Project has an unfinished update,
+and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
+its exact name is typed.
+
 ## Project and visitor continuity
 
 System installations run the Project Agent in its own systemd unit. A Platform
@@ -185,6 +225,72 @@ releasing their placement custody. Local development keeps equivalent custody
 in the persistent host. Running native Apps and the qualified WordPress recipe
 can be adopted; a driver that cannot prove continuity refuses the handover
 before releasing the old engine.
+
+Linux system installations also replace the separately supervised Project Agent
+when Update now selects a new Platform release. The process-only Agent unit uses
+`KillMode=process`; privileged host operations remain in their separate root
+Agent and retain their cgroup controllers. The Project unit omits `PrivateTmp`
+so temporary storage is independent of the Agent's mount namespace.
+Project children use private append
+logs and flushed records containing UUIDs, kernel start ticks and boot identity.
+Kernel locks exclude concurrent owners before recovery or endpoint changes.
+The replacement Agent adopts live processes and rebuilds placement lease
+supervision before offering handles. An expired placement fences its processes.
+
+The Platform reconnects and rebinds existing handles without reporting a process
+exit. Native App and managed integration hosts accept authenticated commands over
+private Unix sockets, so losing the Agent does not close an App's control pipe.
+Command IDs deduplicate retries; ambiguous starts and host-operation submissions
+are never replayed. A native start whose reply was lost first looks for its
+surviving exact host. Fabric custody and each App's selected worker engine remain
+independent of the Agent release.
+
+An Agent from before this protocol needs one conversion during Update now:
+Project and preview admission pause, the old Agent and its children stop,
+and desired-running Projects restart under the new Agent, including managed Apps'
+private Zelavis runtimes. The request hold is prepared before root inventory is
+acknowledged; replacement/recovery then runs outside the older host's commit
+deadline. The dashboard, authentication, Project status, logs, diagnostics and
+repair controls remain available. Recovered public workloads resume before
+private Project runtimes finish warming. A failed or expired conversion releases
+its coordination hold and reports degradation; individual Project readiness and
+ownership checks still apply. Update status and history name that one restart.
+Conversion completes when its public workloads recover. Private Project runtimes
+that had already been used restore asynchronously, with bounded concurrency and
+a separate timeout per Project. Their startup failures do not fail the Agent
+update. A hosting-only
+Project keeps its backend unstarted until its Project APIs need it. Private
+integration startup failures appear in the Project's logs with a
+`[Zelavis integration]` label and in its diagnostics.
+Subsequent supported replacements preserve Project
+processes. Explicit stops without a valid, generation-bound handover marker stop
+workloads; uninstall also kills remaining processes in the owned unit cgroup.
+
+Agent replacement failure does not roll back an already committed Platform
+engine. Update status/history report the Agent as degraded, and doctor reports
+its release and PID separately. The selected unit retries startup under systemd;
+surviving processes retain their records. The client bounds recovery at 90 seconds
+and then reports Agent unreachability rather than claiming a proved workload exit.
+Log retention is bounded by polling (8 MiB per stream while supervised); output
+can grow while the Agent is absent, and lines around truncation may be lost.
+Adopted processes report unknown exit code/signal when their original parent is gone.
+Interactive stdin sessions are disposable and stop during handover.
+A rollback engine can adopt existing hosts through the additive Agent protocol.
+A pre-protocol Platform engine cannot start a new stdin-controlled persistent host
+on a survivable Agent; that launch is refused. Use the current Platform to start
+Apps on their exact older worker engine instead.
+
+Project hosts have a bounded 90-second outer startup window, allowing the
+persistent host's 30-second preparation and activation stages on a cold server.
+An exhausted startup still stops its acquired process and reports failure.
+
+This path targets Node on Linux with procfs and `execve`. User-mode and local
+embedded Agents receive their new code when the persistent host next starts;
+first conversion there requires that host restart. Remote worker Agent replacement,
+Bun Agent replacement and multi-host partition recovery are not qualified by this
+system-installation path. Local tests cover real App crash/rebind and repeated
+Agent handover; installed update and long-history qualification remain required
+before shipping a release.
 
 Project preview listeners belong to the persistent host and share its admission
 queue. Their ports, visitor Host headers, redirects and site cookies survive

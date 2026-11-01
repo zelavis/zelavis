@@ -8,6 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { annotateAgentUpdate } from "./_agent-update.js";
 
 import {
   compareVersions,
@@ -16,6 +17,7 @@ import {
   updateChannel,
   ZelavisUpdateRefusal,
   type ZelavisUpdateControl,
+  type ZelavisUpdateRun,
   type ZelavisUpdateStatus,
 } from "../updates.js";
 
@@ -24,6 +26,9 @@ export const UPDATE_DIST_TAGS_URL = "https://registry.npmjs.org/-/package/zelavi
 
 export const UPDATE_REQUEST_FILE = "request.json";
 export const UPDATE_STATUS_FILE = "status.json";
+/** The last finished updates, newest last, so a failure is still there after the next attempt overwrites the status. */
+export const UPDATE_HISTORY_FILE = "history.json";
+export const UPDATE_HISTORY_LIMIT = 10;
 /** An update that stopped reporting for this long is treated as failed, not as still running. */
 const STALE_RUN_MS = 20 * 60_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -149,7 +154,9 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
 
   const status = Effect.fn("Updates.status")(function* (): Effect.fn.Return<ZelavisUpdateStatus, TaggedFailure> {
     const reason = unmanaged();
-    const { requested, run } = yield* readState();
+    const stateRead = yield* readState();
+    const requested = stateRead.requested;
+    const run = stateRead.run ? yield* annotateAgentUpdate(directory, stateRead.run) : undefined;
     const state = requested ? "requested" : run?.state ?? "idle";
     return {
       current, ...(channel ? { channel } : {}), ...(latest ? { latest } : {}),
@@ -198,5 +205,18 @@ export function createNodeUpdateControl(options: NodeUpdateControlOptions): Zela
       return yield* status();
     }));
   });
-  return presentOperations({ status, check, apply });
+  const history = Effect.fn("Updates.history")(function* (): Effect.fn.Return<readonly ZelavisUpdateRun[], TaggedFailure> {
+    return yield* readUpdateHistory(directory);
+  });
+  return presentOperations({ status, check, apply, history });
 }
+
+/** The finished updates the updater kept, oldest first. A missing or damaged file is an empty history, not a failure. */
+export const readUpdateHistory = Effect.fn("Updates.readHistory")(function* (directory: string): Effect.fn.Return<readonly ZelavisUpdateRun[], TaggedFailure> {
+  const text = yield* integration(() => readFile(join(directory, UPDATE_HISTORY_FILE), "utf8")).pipe(Effect.orElseSucceed(() => undefined));
+  if (text === undefined || text.length > 512 * 1024) return [];
+  const parsed = yield* Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined }).pipe(Effect.orElseSucceed(() => undefined));
+  if (!Array.isArray(parsed)) return [];
+  const runs = parsed.slice(-UPDATE_HISTORY_LIMIT).flatMap((entry) => { const run = parseUpdateRun(entry); return run ? [run] : []; });
+  return yield* Effect.forEach(runs, run => annotateAgentUpdate(directory, run), { concurrency: 4 });
+});

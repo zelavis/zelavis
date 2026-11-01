@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect";
+import { Effect, type Scope, Stream } from "effect";
 import type { StoreError } from "./errors.js";
 import { compareKeys, prefixEnd } from "./keys.js";
 
@@ -44,6 +44,25 @@ export const equalBytes = (a: Uint8Array | undefined, b: Uint8Array | undefined)
  * write is one atomic batch. Conditional commits keep their checks inside
  * that batch's destination transaction.
  */
+/** The reading half of an engine: what a snapshot offers. */
+export interface KvReader {
+  readonly get: (key: Uint8Array) => Effect.Effect<Uint8Array | undefined, StoreError>;
+  readonly scan: (prefix: Uint8Array, options?: KvScanOptions) => Stream.Stream<KvEntry, StoreError>;
+}
+
+/**
+ * What a commit that returned survives.
+ *
+ * - `crash` (default): the process being killed. A power cut can lose a suffix
+ *   of the most recent commits, never leave holes or a torn one.
+ * - `power`: a power cut too. Every commit is flushed to the device before it
+ *   returns, which costs a device flush per write.
+ *
+ * Replication does not substitute for either: a follower holds what it has
+ * applied, which can be behind the leader (see `awaitFollowers`).
+ */
+export type KvDurability = "crash" | "power";
+
 export interface KvEngine {
   readonly get: (key: Uint8Array) => Effect.Effect<Uint8Array | undefined, StoreError>;
 
@@ -69,6 +88,19 @@ export interface KvEngine {
     conditions: ReadonlyArray<KvCondition>,
   ) => Effect.Effect<boolean, StoreError>;
   readonly coordination?: "engine" | "host" | "remote";
+
+  /**
+   * A read-only view of the engine as it is now: every get and scan through
+   * it answers from that one moment, whatever is written meanwhile, until the
+   * scope closes and releases it.
+   *
+   * What makes a read that takes several steps — resolve a query, then read
+   * the records it named — see one state rather than a state with a write
+   * landing between its steps. Each engine uses what it natively has: a read
+   * transaction (SQLite, LMDB), a snapshot-isolated transaction
+   * (RocksDB), or an array writes never mutate (memory).
+   */
+  readonly snapshot: Effect.Effect<KvReader, StoreError, Scope.Scope>;
 
   readonly close: Effect.Effect<void>;
 }

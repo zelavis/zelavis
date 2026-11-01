@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 /**
  * Canonical Edge route publication store.
  *
@@ -591,11 +593,12 @@ export function createZelavisEdgeRouteStore(
 
   // -- Hostname operations --------------------------------------------------
 
-  async function putHostname(
+  function putHostname(
     input: ZelavisEdgeHostname,
   ): Promise<ZelavisEdgeHostname> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeHostname, IntegrationFailure> {
     const validated = validateHostname(input);
-    const existing = await store.get(HOSTNAMES_NAMESPACE, validated.host);
+    const existing = (yield* integrationValue(store.get(HOSTNAMES_NAMESPACE, validated.host)));
     if (existing) {
       const updated: ZelavisEdgeHostname = {
         ...validated,
@@ -603,18 +606,18 @@ export function createZelavisEdgeRouteStore(
         updatedAt: timestamp(),
       };
       for (let attempt = 0; attempt < 5; attempt++) {
-        const record = await store.get(HOSTNAMES_NAMESPACE, validated.host);
+        const record = (yield* integrationValue(store.get(HOSTNAMES_NAMESPACE, validated.host)));
         if (!record) {
           // Deleted concurrently — insert instead.
           break;
         }
-        const written = await store.compareAndSet(
+        const written = (yield* integrationValue(store.compareAndSet(
           HOSTNAMES_NAMESPACE,
           validated.host,
           record.updatedAt,
           storeValue(updated),
           record.value,
-        );
+        )));
         if (written) return updated;
       }
     }
@@ -623,33 +626,39 @@ export function createZelavisEdgeRouteStore(
       createdAt: timestamp(),
       updatedAt: timestamp(),
     };
-    const result = await store.setIfAbsent(
+    const result = (yield* integrationValue(store.setIfAbsent(
       HOSTNAMES_NAMESPACE,
       validated.host,
       storeValue(created),
-    );
+    )));
     if (result.created) return created;
     // Lost the race — retry as an update.
-    return putHostname(input);
+    return (yield* integrationValue(putHostname(input)));
+  }));
   }
 
-  async function getHostname(
+  function getHostname(
     host: string,
   ): Promise<ZelavisEdgeHostname | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeHostname | undefined, IntegrationFailure> {
     const normalized = normalizeHostValue(host);
-    const record = await store.get(HOSTNAMES_NAMESPACE, normalized);
+    const record = (yield* integrationValue(store.get(HOSTNAMES_NAMESPACE, normalized)));
     return record ? readHostname(record.value) : undefined;
+  }));
   }
 
-  async function deleteHostname(host: string): Promise<boolean> {
+  function deleteHostname(host: string): Promise<boolean> {
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
     const normalized = normalizeHostValue(host);
-    return store.delete(HOSTNAMES_NAMESPACE, normalized);
+    return (yield* integrationValue(store.delete(HOSTNAMES_NAMESPACE, normalized)));
+  }));
   }
 
-  async function listHostnames(
+  function listHostnames(
     filter?: { scope?: "platform" | "project"; projectId?: string },
   ): Promise<readonly ZelavisEdgeHostname[]> {
-    const records = await store.list(HOSTNAMES_NAMESPACE);
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly ZelavisEdgeHostname[], IntegrationFailure> {
+    const records = (yield* integrationValue(store.list(HOSTNAMES_NAMESPACE)));
     const hostnames: ZelavisEdgeHostname[] = [];
     for (const record of records) {
       const hostname = readHostname(record.value);
@@ -658,13 +667,15 @@ export function createZelavisEdgeRouteStore(
       hostnames.push(hostname);
     }
     return hostnames;
+  }));
   }
 
   // -- Route operations -----------------------------------------------------
 
-  async function putRoute(input: ZelavisEdgeRoute): Promise<ZelavisEdgeRoute> {
+  function putRoute(input: ZelavisEdgeRoute): Promise<ZelavisEdgeRoute> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeRoute, IntegrationFailure> {
     const validated = validateRoute(input);
-    const existing = await store.get(ROUTES_NAMESPACE, validated.id);
+    const existing = (yield* integrationValue(store.get(ROUTES_NAMESPACE, validated.id)));
     if (existing) {
       const updated: ZelavisEdgeRoute = {
         ...validated,
@@ -672,15 +683,15 @@ export function createZelavisEdgeRouteStore(
         updatedAt: timestamp(),
       };
       for (let attempt = 0; attempt < 5; attempt++) {
-        const record = await store.get(ROUTES_NAMESPACE, validated.id);
+        const record = (yield* integrationValue(store.get(ROUTES_NAMESPACE, validated.id)));
         if (!record) break;
-        const written = await store.compareAndSet(
+        const written = (yield* integrationValue(store.compareAndSet(
           ROUTES_NAMESPACE,
           validated.id,
           record.updatedAt,
           storeValue(updated),
           record.value,
-        );
+        )));
         if (written) return updated;
       }
     }
@@ -689,36 +700,42 @@ export function createZelavisEdgeRouteStore(
       createdAt: timestamp(),
       updatedAt: timestamp(),
     };
-    const result = await store.setIfAbsent(
+    const result = (yield* integrationValue(store.setIfAbsent(
       ROUTES_NAMESPACE,
       validated.id,
       storeValue(created),
-    );
+    )));
     if (result.created) return created;
-    return putRoute(input);
+    return (yield* integrationValue(putRoute(input)));
+  }));
   }
 
-  async function getRoute(
+  function getRoute(
     id: string,
   ): Promise<ZelavisEdgeRoute | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeRoute | undefined, IntegrationFailure> {
     const normalized = normalizeRouteId(id);
-    const record = await store.get(ROUTES_NAMESPACE, normalized);
+    const record = (yield* integrationValue(store.get(ROUTES_NAMESPACE, normalized)));
     return record ? readRoute(record.value) : undefined;
+  }));
   }
 
-  async function deleteRoute(id: string): Promise<boolean> {
+  function deleteRoute(id: string): Promise<boolean> {
+    return present(Effect.gen(function* (): Effect.fn.Return<boolean, IntegrationFailure> {
     const normalized = normalizeRouteId(id);
-    return store.delete(ROUTES_NAMESPACE, normalized);
+    return (yield* integrationValue(store.delete(ROUTES_NAMESPACE, normalized)));
+  }));
   }
 
-  async function listRoutes(
+  function listRoutes(
     filter?: {
       scope?: "platform" | "project";
       projectId?: string;
       hostname?: string;
     },
   ): Promise<readonly ZelavisEdgeRoute[]> {
-    const records = await store.list(ROUTES_NAMESPACE);
+    return present(Effect.gen(function* (): Effect.fn.Return<readonly ZelavisEdgeRoute[], IntegrationFailure> {
+    const records = (yield* integrationValue(store.list(ROUTES_NAMESPACE)));
     const routes: ZelavisEdgeRoute[] = [];
     for (const record of records) {
       const route = readRoute(record.value);
@@ -734,9 +751,11 @@ export function createZelavisEdgeRouteStore(
         : a.id.localeCompare(b.id),
     );
     return routes;
+  }));
   }
 
-  async function deleteProjectRoutes(projectId: string): Promise<number> {
+  function deleteProjectRoutes(projectId: string): Promise<number> {
+    return present(Effect.gen(function* (): Effect.fn.Return<number, IntegrationFailure> {
     const normalizedProjectId = projectId.trim();
     if (!normalizedProjectId) {
       throw new ZelavisEdgeValidationError(
@@ -745,33 +764,35 @@ export function createZelavisEdgeRouteStore(
     }
     let deleted = 0;
     // Delete routes scoped to this project.
-    const routeRecords = await store.list(ROUTES_NAMESPACE);
+    const routeRecords = (yield* integrationValue(store.list(ROUTES_NAMESPACE)));
     for (const record of routeRecords) {
       const route = readRoute(record.value);
       if (route.projectId === normalizedProjectId) {
-        if (await store.delete(ROUTES_NAMESPACE, route.id)) {
+        if ((yield* integrationValue(store.delete(ROUTES_NAMESPACE, route.id)))) {
           deleted += 1;
         }
       }
     }
     // Delete hostnames scoped to this project.
-    const hostnameRecords = await store.list(HOSTNAMES_NAMESPACE);
+    const hostnameRecords = (yield* integrationValue(store.list(HOSTNAMES_NAMESPACE)));
     for (const record of hostnameRecords) {
       const hostname = readHostname(record.value);
       if (hostname.projectId === normalizedProjectId) {
-        if (await store.delete(HOSTNAMES_NAMESPACE, hostname.host)) {
+        if ((yield* integrationValue(store.delete(HOSTNAMES_NAMESPACE, hostname.host)))) {
           deleted += 1;
         }
       }
     }
     return deleted;
+  }));
   }
 
   // -- Publication operations -----------------------------------------------
 
-  async function compile(): Promise<ZelavisEdgeCompiledPublication> {
-    const hostnames = (await listHostnames()) as ZelavisEdgeHostname[];
-    const routes = (await listRoutes()) as ZelavisEdgeRoute[];
+  function compile(): Promise<ZelavisEdgeCompiledPublication> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeCompiledPublication, IntegrationFailure> {
+    const hostnames = ((yield* integrationValue(listHostnames()))) as ZelavisEdgeHostname[];
+    const routes = ((yield* integrationValue(listRoutes()))) as ZelavisEdgeRoute[];
     const requiredCapabilities = deriveEdgeCapabilities(routes, hostnames);
     const certificateRefs = [
       ...new Set(
@@ -783,10 +804,10 @@ export function createZelavisEdgeRouteStore(
 
     // Advance the revision counter atomically.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const pointerRecord = await store.get(
+      const pointerRecord = (yield* integrationValue(store.get(
         PUBLICATIONS_NAMESPACE,
         CURRENT_PUBLICATION_KEY,
-      );
+      )));
 
       const currentRevision = pointerRecord
         ? readCurrentPointer(pointerRecord.value).revision
@@ -805,29 +826,29 @@ export function createZelavisEdgeRouteStore(
       };
 
       // Store the publication snapshot.
-      await store.set(
+      (yield* integrationValue(store.set(
         PUBLICATIONS_NAMESPACE,
         String(nextRevision),
         storeValue(publication),
-      );
+      )));
 
       // Advance the current pointer atomically.
       if (pointerRecord) {
-        const written = await store.compareAndSet(
+        const written = (yield* integrationValue(store.compareAndSet(
           PUBLICATIONS_NAMESPACE,
           CURRENT_PUBLICATION_KEY,
           pointerRecord.updatedAt,
           storeValue({ revision: nextRevision }),
           pointerRecord.value,
-        );
+        )));
         if (written) return publication;
         // CAS failed — another compilation happened concurrently. Retry.
       } else {
-        const result = await store.setIfAbsent(
+        const result = (yield* integrationValue(store.setIfAbsent(
           PUBLICATIONS_NAMESPACE,
           CURRENT_PUBLICATION_KEY,
           storeValue({ revision: nextRevision }),
-        );
+        )));
         if (result.created) return publication;
         // Lost the race. Retry.
       }
@@ -835,33 +856,38 @@ export function createZelavisEdgeRouteStore(
     throw new ZelavisEdgeValidationError(
       "Edge route publication revision advanced repeatedly during compilation.",
     );
+  }));
   }
 
-  async function getPublication(
+  function getPublication(
     revision: number,
   ): Promise<ZelavisEdgeCompiledPublication | undefined> {
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeCompiledPublication | undefined, IntegrationFailure> {
     if (!Number.isSafeInteger(revision) || revision < 1) {
       throw new ZelavisEdgeValidationError(
         "Publication revision must be a positive integer.",
       );
     }
-    const record = await store.get(
+    const record = (yield* integrationValue(store.get(
       PUBLICATIONS_NAMESPACE,
       String(revision),
-    );
+    )));
     return record ? readPublication(record.value) : undefined;
+  }));
   }
 
-  async function getCurrentPublication(): Promise<
+  function getCurrentPublication(): Promise<
     ZelavisEdgeCompiledPublication | undefined
   > {
-    const pointerRecord = await store.get(
+    return present(Effect.gen(function* (): Effect.fn.Return<ZelavisEdgeCompiledPublication | undefined, IntegrationFailure> {
+    const pointerRecord = (yield* integrationValue(store.get(
       PUBLICATIONS_NAMESPACE,
       CURRENT_PUBLICATION_KEY,
-    );
+    )));
     if (!pointerRecord) return undefined;
     const { revision } = readCurrentPointer(pointerRecord.value);
-    return getPublication(revision);
+    return (yield* integrationValue(getPublication(revision)));
+  }));
   }
 
   return {

@@ -29,6 +29,12 @@ export const isValidCollectionName = (name: string): boolean =>
  */
 export const TENANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+/** The Tenant an App Project keeps its own data in, which the App and the dashboard stand on. */
+export const APP_TENANT_ID = "zelavis-app";
+
+/** A plugin keeps its private data in a Tenant named `service:<name>`; the characters `:` and `/` are not in what an operator may name one. */
+export const SERVICE_TENANT_PREFIX = "service:";
+
 export const isReservedTenantId = (tenant: string): boolean =>
   tenant === RESERVED_COLLECTION_PREFIX || tenant.startsWith(`${RESERVED_COLLECTION_PREFIX}.`);
 

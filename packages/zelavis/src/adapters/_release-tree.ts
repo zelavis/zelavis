@@ -65,7 +65,7 @@ export const assembleNpmReleaseTreeProgram = Effect.fn("ReleaseTree.assemble")(f
   (yield* integration(() => chmod(join(prepared, "bin", "zelavis"), 0o755)));
   (yield* integration(() => mkdir(join(prepared, "share"), { recursive: true })));
   const linux = platform === "linux";
-  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis.socket", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
+  for (const file of ["zelavis.service", "zelavis@.service", "zelavis-agent.service", "zelavis-agent@.service", "zelavis-host-agent.service", "zelavis-host-agent@.service", "zelavis-update.service", "zelavis-update.path", "zelavis-worker.service", "zelavis-worker.path", "zelavis.socket", "uninstall.sh", ...linux ? ["zelavis-traefik.service", "traefik.yml"] : []]) {
     (yield* integration(() => copyFile(assetPath(`share/${file}`), join(prepared, "share", file))));
   }
   (yield* integration(() => chmod(join(prepared, "share", "uninstall.sh"), 0o755)));

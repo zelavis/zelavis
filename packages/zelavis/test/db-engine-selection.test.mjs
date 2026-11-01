@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,25 @@ const tempDir = (t) => {
   return { dir, track: (database) => databases.push(database) };
 };
 
+test("retired engine names and options fail before creating storage", async (t) => {
+  const { dir } = tempDir(t);
+  for (const name of ["libsql", "libsql-remote", "unknown"]) {
+    const directory = join(dir, name);
+    await assert.rejects(openNodeDatabase({ directory, engine: { name } }), /Unsupported storage engine/);
+    assert.equal(existsSync(directory), false);
+  }
+  const directory = join(dir, "obsolete-options");
+  await assert.rejects(openNodeDatabase({ directory, engine: { name: "sqlite", syncUrl: "https://example.invalid" } }), /Unknown storage engine option/);
+  assert.equal(existsSync(directory), false);
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  for (const name of ["./db/libsql", "./db/libsql-remote"]) assert.equal(Object.hasOwn(manifest.exports, name), false);
+  for (const name of ["libsql", "@libsql/client"]) {
+    for (const section of ["devDependencies", "peerDependencies", "peerDependenciesMeta"]) {
+      assert.equal(Object.hasOwn(manifest[section], name), false);
+    }
+  }
+});
+
 // The same work through the host, whichever engine is underneath. A failure
 // here is the host wiring, since each engine already passes the store contract.
 const exercise = async (opened) => {
@@ -30,7 +49,7 @@ const exercise = async (opened) => {
     collection: "posts", where: [{ path: "region", value: "eu-west" }],
   });
   assert.deepEqual(found.map((d) => d.id), ["p1"]);
-  const events = await tenant.events.read();
+  const { events } = await tenant.events.read();
   assert.deepEqual(events.map((e) => e.type), ["collection.created", "document.upserted"]);
   assert.equal(opened.partitionMap.placements.length, DEFAULT_LOCAL_SHARDS.length);
 };
@@ -49,7 +68,7 @@ test("the default engine is sqlite, and needs nothing installed", async (t) => {
 // A native engine that is not installed, or installed and not built, is an
 // ordinary state here: the engines are optional peers.
 const specifiers = { rocksdb: "@harperfast/rocksdb-js" };
-const engines = ["sqlite", "libsql", "rocksdb", "lmdb"].map((name) => [
+const engines = ["sqlite", "rocksdb", "lmdb"].map((name) => [
   name,
   name === "sqlite" || engineAvailable(specifiers[name] ?? name),
 ]);

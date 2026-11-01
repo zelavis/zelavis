@@ -11,6 +11,13 @@ import type { ZelavisProjectRecipeLock } from "../project.js";
 import { normalizeProjectIsolationIntent } from "../project-isolation.js";
 import { verifyNodeRuntimeArtifact } from "./_node-runtime-artifact.js";
 
+/**
+ * The data layout of every release published before releases declared one: they all wrote format 2 (alpha.5 to
+ * alpha.42), so an artifact without the field is read as that, not as unknown. A later release always declares its own.
+ */
+const FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION = 2;
+const declaredDataFormat = (value: unknown): number => value === undefined ? FORMAT_OF_RELEASES_WITHOUT_A_DECLARATION : value as number;
+
 /** The installation's already acquired immutable releases. Acquisition and
  * permission to install host code remain with the existing installer/updater;
  * selecting a Project version never runs npm, sudo, or an arbitrary executable.
@@ -33,7 +40,7 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     return yield* evaluate(() => {
       const artifact = JSON.parse(source);
       if (artifact.version !== version || !/^sha256:[a-f0-9]{64}$/.test(artifact.digest) || artifact.metadata?.protocol !== NODE_RUNTIME_PROTOCOL || artifact.metadata.platform !== process.platform || artifact.metadata.architecture !== process.arch || typeof artifact.metadata.nodeVersion !== "string") throw new Error("Runtime engine does not declare this host's exact handover protocol.");
-      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion as string };
+      return { version, digest: artifact.digest as string, nodeVersion: artifact.metadata.nodeVersion as string, dataFormat: declaredDataFormat(artifact.metadata.dataFormat) };
     });
   });
   const catalog = {
@@ -52,6 +59,10 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
       const latest = listed.find(entry => entry.status === "available");
       if (!latest) return yield* new IntegrationFailure(new Error("No qualified installed runtime engine is available."));
       return yield* catalog.select(latest.version);
+    }),
+    /** The data layout the installed release writes and opens; see `engineConvergence`. */
+    dataFormat: Effect.fn("RuntimeCatalog.dataFormat")(function* (version: string) {
+      return (yield* entry(version)).dataFormat;
     }),
     select: Effect.fn("RuntimeCatalog.select")(function* (version: string) {
       const advertised = yield* entry(version);

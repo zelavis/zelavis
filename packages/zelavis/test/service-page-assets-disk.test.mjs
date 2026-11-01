@@ -137,15 +137,15 @@ test("service page assets are served directly from package directory on disk", a
   assert.equal(svgRes.status, 200);
   assert.match(svgRes.headers.get("content-type") ?? "", /image\/svg\+xml/);
 
-  // 6. Candidate fallback: bundle 'dist' requested, but file is located directly in packageDir root
+  // 6. A named bundle never falls back to the package root
   const rootRes = await runtime.fetch(
     new Request(
       "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fdisk-plugin/dist/root-page.html",
     ),
     PLATFORM_OWNER_CONTEXT,
   );
-  assert.equal(rootRes.status, 200);
-  assert.match(await rootRes.text(), /Root Page/);
+  assert.equal(rootRes.status, 404);
+  assert.doesNotMatch(await rootRes.text(), /Root Page/);
 
   // 7. Missing file returns 404
   const missingRes = await runtime.fetch(

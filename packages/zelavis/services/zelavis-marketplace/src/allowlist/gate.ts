@@ -1,4 +1,6 @@
+import { Effect } from "effect";
 import type { AllowlistClient } from "./client.js";
+import { runsOn } from "./select.js";
 import type { AllowlistService, AllowlistVersion } from "./types.js";
 
 export type AllowlistRefusalCode =
@@ -6,6 +8,7 @@ export type AllowlistRefusalCode =
   | "expired"
   | "not_listed"
   | "version_not_listed"
+  | "platform_too_old"
   | "digest_mismatch";
 
 export class AllowlistRefusal extends Error {
@@ -44,45 +47,56 @@ function sameDigest(left: string, right: string): boolean {
   return difference === 0;
 }
 
-/** The install decision: only what the current, unexpired allow-list vouches for. */
-export function createAllowlistGate(client: AllowlistClient): AllowlistGate {
-  async function authorize(input: { name: string; version: string }) {
-    const view = await client.current();
+/**
+ * The install decision: only what the current, unexpired allow-list vouches for,
+ * and only a version that runs on this Platform (`platform`, its exact version).
+ */
+export function createAllowlistGate(client: AllowlistClient, options: { readonly platform: string }): AllowlistGate {
+  const authorize = Effect.fn("allowlist.authorize")(function* (input: { name: string; version: string }) {
+    const view = yield* Effect.tryPromise({ try: () => client.current(), catch: (cause) => cause });
     if (!view) {
-      throw new AllowlistRefusal("unavailable", "No allow-list is available, so nothing can be installed from the marketplace.");
+      return yield* Effect.fail(new AllowlistRefusal("unavailable", "No allow-list is available, so nothing can be installed from the marketplace."));
     }
     if (view.status !== "fresh") {
-      throw new AllowlistRefusal(
+      return yield* Effect.fail(new AllowlistRefusal(
         "expired",
         view.status === "stale"
           ? "The marketplace allow-list is out of date and could not be refreshed, so nothing new can be installed yet."
           : "The marketplace allow-list has expired, so nothing can be installed from it.",
-      );
+      ));
     }
     const service = view.allowlist.services.find((entry) => entry.name === input.name);
     if (!service) {
-      throw new AllowlistRefusal("not_listed", `"${input.name}" is not on the marketplace allow-list.`);
+      return yield* Effect.fail(new AllowlistRefusal("not_listed", `"${input.name}" is not on the marketplace allow-list.`));
     }
     const version = service.versions.find((entry) => entry.version === input.version);
     if (!version) {
-      throw new AllowlistRefusal(
+      return yield* Effect.fail(new AllowlistRefusal(
         "version_not_listed",
         `Version ${input.version} of "${input.name}" is not on the marketplace allow-list.`,
-      );
+      ));
+    }
+    if (!runsOn(version, options.platform)) {
+      return yield* Effect.fail(new AllowlistRefusal(
+        "platform_too_old",
+        `${input.name}@${input.version} needs Zelavis ${version.platform} or newer, and this Platform runs ${options.platform}. Update Zelavis first, then install it.`,
+      ));
     }
     return { service, version };
-  }
+  });
+
+  const verifyAcquired = Effect.fn("allowlist.verifyAcquired")(function* (input: { readonly name: string; readonly version: string; readonly integrity: string }) {
+    const { version } = yield* authorize(input);
+    if (!sameDigest(version.integrity, input.integrity)) {
+      return yield* Effect.fail(new AllowlistRefusal(
+        "digest_mismatch",
+        `"${input.name}@${input.version}" does not match the digest the allow-list vouches for.`,
+      ));
+    }
+  });
 
   return {
-    authorize,
-    async verifyAcquired(input) {
-      const { version } = await authorize(input);
-      if (!sameDigest(version.integrity, input.integrity)) {
-        throw new AllowlistRefusal(
-          "digest_mismatch",
-          `"${input.name}@${input.version}" does not match the digest the allow-list vouches for.`,
-        );
-      }
-    },
+    authorize: (input) => Effect.runPromise(authorize(input)),
+    verifyAcquired: (input) => Effect.runPromise(verifyAcquired(input)),
   };
 }

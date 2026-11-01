@@ -16,10 +16,6 @@ const enc = new TextEncoder();
 
 const open = async () => {
   switch (engine) {
-    case "libsql":
-      // libSQL takes an options object; the rest take a bare directory.
-      return (await import("../../dist/db/engines/libsql.js"))
-        .makeLibsqlStore("acme", { directory });
     case "lmdb":
       return (await import("../../dist/db/engines/lmdb.js")).makeLmdbStore("acme", directory);
     case "rocksdb-js":
@@ -35,7 +31,7 @@ const receipts = openSync(receiptPath, "a");
 
 await Effect.runPromise(
   Effect.scoped(Effect.gen(function* () {
-    const store = yield* yield* Effect.promise(open);
+    const store = (yield* yield* Effect.promise(open)).partition("acme");
     for (let seq = 1; seq <= total; seq++) {
       yield* store.transact((txn) =>
         txn.put(

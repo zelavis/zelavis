@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { lstat, open, readFile, rename, rm } from "node:fs/promises";
+import { isIP } from "node:net";
 import { join, resolve } from "node:path";
 import { Deferred, Effect, Semaphore } from "effect";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
@@ -11,6 +12,14 @@ import { createNodeRuntimeJournal } from "./_node-runtime-journal.js";
 import { proveNodeRuntimeUnowned } from "./_node-runtime-ownership.js";
 import { createNodeRuntimeSupervisor, type NodeRuntimeExecution } from "./_node-runtime-supervisor.js";
 import { createNodeRuntimeIngress } from "./_node-runtime-ingress.js";
+import { firstRoutableAddress } from "./_host-address.js";
+import { loadOrCreatePlatformTls } from "./_platform-tls.js";
+
+/** The only path the enrollment listener forwards to the engine. */
+export const ENROLLMENT_PATH = "/zelavis/api/v1/runtime/nodes/enroll";
+/** The one other thing the enrollment ingress forwards: a joined machine refreshing the Platform's public keys. */
+export const TRUST_PATH = "/zelavis/api/v1/runtime/nodes/trust";
+const HOSTNAME = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 import { serveNodeRuntimeControl, NODE_RUNTIME_PREVIEW_ID, NODE_RUNTIME_PREVIEW_KEY } from "./_node-runtime-control.js";
 
 /** Platform authority belongs to the selected engine. Its persistent host owns
@@ -92,6 +101,24 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     previews.clear();
   });
   yield* Effect.addFinalizer(() => closePreviews.pipe(Effect.orDie));
+  // Reloads run in the host's own scope: the engine asking for one is serving the request that
+  // changed the registry, and the handover drains that request before the fresh engine takes over.
+  const hostScope = yield* Effect.scope;
+  let reloadScheduled = false;
+  const reload = transitions.withPermit(Effect.acquireUseRelease(
+    evaluate(() => {
+      // Cleared as the reload begins, so a change made while it runs schedules another.
+      reloadScheduled = false;
+      if (!supervisor || shuttingDown) throw new Error("Platform host is not available for a reload.");
+      handover = true;
+    }), () => supervisor!.reload(), () => Effect.sync(() => { handover = false; }),
+  )).pipe(Effect.catch(error => Effect.sync(() => {
+    (options.output ?? ((_, line) => process.stderr.write(`${line}\n`)))("stderr", `Platform engine reload failed: ${error.message}`);
+  })));
+  const engineAuthority = (authorization: string | undefined) => evaluate(() => {
+    const supplied = Buffer.from(authorization ?? ""), expected = Buffer.from(`Bearer ${token}`);
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error("Engine authority required.");
+  });
   const replace = (release: RuntimeRelease) => transitions.withPermit(Effect.acquireUseRelease(
     evaluate(() => {
       if (!supervisor || shuttingDown) throw new Error("Platform host is not available for replacement.");
@@ -99,11 +126,20 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     }), () => supervisor!.replace(release), () => Effect.sync(() => { handover = false; }),
   ));
   yield* serveNodeRuntimeControl(endpoint, Effect.fn("PlatformHost.control")(function* (input, authorization) {
+    // The serving engine asks for a fresh engine of the same release when only a new composition
+    // can pick a change up. It names nothing: the host reloads what it already runs.
+    if (input.action === "reload") {
+      yield* engineAuthority(authorization);
+      if (!reloadScheduled && !shuttingDown) {
+        reloadScheduled = true;
+        yield* Effect.forkIn(reload, hostScope);
+      }
+      return { scheduled: true };
+    }
     const previewCommand = input.action === "preview-open" || input.action === "preview-close";
     if (previewCommand) {
+      yield* engineAuthority(authorization);
       yield* evaluate(() => {
-        const supplied = Buffer.from(authorization ?? ""), expected = Buffer.from(`Bearer ${token}`);
-        if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error("Engine preview authority required.");
         if (typeof input.projectId !== "string" || !/^[a-z0-9][a-z0-9_-]{0,127}$/.test(input.projectId)) throw new Error("Preview requires an exact Project identity.");
       });
       const projectId = input.projectId as string;
@@ -156,10 +192,33 @@ export const createNodePlatformHost = Effect.fn("PlatformHost.create")(function*
     }
     return yield* new IntegrationFailure(new Error("Unknown or unavailable Platform host operation."));
   }));
+  // Machines join over TLS, authenticating the Platform by its pinned certificate. The
+  // listener lives here, in the persistent host, so it survives engine replacement and
+  // shares the engine's drain boundary; it forwards the enrollment route and nothing else.
+  let enrollmentEndpoint: { readonly url: string; readonly fingerprint: string } | undefined;
+  const enrollment = options.configuration?.enrollment as { readonly port?: unknown; readonly addresses?: unknown } | undefined;
+  if (enrollment) {
+    const port = enrollment.port;
+    const requested = Array.isArray(enrollment.addresses) ? enrollment.addresses : [];
+    yield* evaluate(() => {
+      if (typeof port !== "number" || !Number.isInteger(port) || port < 1024 || port > 65_535) throw new Error("The enrollment port must be from 1024 to 65535.");
+      if (requested.length > 8 || requested.some(name => typeof name !== "string" || !(isIP(name) === 4 || HOSTNAME.test(name)))) throw new Error("Enrollment addresses must be IPv4 addresses or hostnames, at most 8.");
+    });
+    const detected = firstRoutableAddress();
+    const names = (requested.length > 0 ? requested as string[] : [...(detected ? [detected] : []), "localhost"]);
+    const tls = yield* loadOrCreatePlatformTls({ directory: join(directory, "enrollment-tls"), names }).pipe(
+      Effect.mapError(error => new IntegrationFailure(error)));
+    const listener = createNodeRuntimeIngress({ admission, target: () => supervisor?.target() ?? "", headers: headers(), tls,
+      allowPath: path => path === ENROLLMENT_PATH || path === TRUST_PATH });
+    yield* Effect.addFinalizer(() => listener.close.pipe(Effect.orDie));
+    const bound = yield* listener.listen({ host: "0.0.0.0", port: port as number });
+    enrollmentEndpoint = { url: `https://${names[0]}:${bound}`, fingerprint: tls.fingerprint };
+  }
   supervisor = yield* Effect.acquireRelease(createNodeRuntimeSupervisor({
     agent: engineAgent, workloadId: "platform", initial: recovered.release, generation: recovered.generation,
     admission, headers: headers(), startupTimeoutMs: options.startupTimeoutMs,
     resolve: selected => options.resolve(selected, { ...options.configuration, dataDirectory: directory, host: options.host, handover,
+      ...(enrollmentEndpoint ? { enrollmentEndpoint } : {}),
       custody: { ownerSession, endpoint, token, preserveOnShutdown: Boolean(options.environment.ZELAVIS_AGENT_ENDPOINT) } }, { ...options.environment, ZELAVIS_AGENT_ENDPOINT: agentEndpoint! }),
     checkpoint: journal.checkpoint,
     commit: Effect.fn("PlatformHost.commit")(function* (release, generation) {

@@ -1,3 +1,4 @@
+import { present, integration, integrationValue } from "../runtime/effect-boundary.js";
 import type {
   ZelavisAccessRequirement,
   ZelavisEndpointGroup,
@@ -113,7 +114,8 @@ export interface FabricProjectPlacementRequest {
   readonly capabilities: Pick<
     ZelavisProjectWorkloadCapabilities,
     "statelessRuntimeReplicas"
-  >;
+  > &
+    Partial<Pick<ZelavisProjectWorkloadCapabilities, "managedDatabase">>;
   readonly replicaPolicy?: FabricProjectReplicaPolicy;
   readonly scaleSignal?: FabricProjectScaleSignal;
   readonly resources?: FabricProjectReplicaResources;
@@ -282,7 +284,7 @@ function readInventory<A>(
   }
 
   return Effect.tryPromise({
-    try: async () => source(),
+    try: () => present(integration(() => source())),
     catch: (cause) => new FabricInventoryError({ operation, cause }),
   });
 }
@@ -322,6 +324,12 @@ function normalizedPressure(value: number | undefined): number | undefined {
 function desiredReplicaCount(request: FabricProjectPlacementRequest): number {
   const policy = request.replicaPolicy ?? { mode: "single" };
   if (!request.capabilities.statelessRuntimeReplicas || policy.mode === "single") {
+    return 1;
+  }
+  // A runtime that holds a database has one writer, and its singleton duties (index refresh, schedules, workflow
+  // resumption, job and webhook delivery) run only where that writer is. Until those duties follow a lease that
+  // moves between replicas, a second replica would either repeat them or never run them, so it is never planned.
+  if (request.capabilities.managedDatabase === true) {
     return 1;
   }
 
@@ -701,29 +709,41 @@ function createFabricApi(options: FabricServiceOptions): FabricApi {
 
   return {
     snapshot,
-    async listNodes() {
-      return (await snapshot()).nodes;
-    },
-    async getNode(nodeId) {
-      return (await snapshot()).nodes.find((node) => node.id === nodeId);
-    },
-    async listProjectPlacements() {
-      return (await snapshot()).projectPlacements;
-    },
-    async getProjectPlacement(projectId) {
+    listNodes() {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(snapshot()))).nodes;
+    }));
+  },
+    getNode(nodeId) {
+    return present(Effect.gen(function* () {
+      return (yield* integrationValue(((yield* integrationValue(snapshot()))).nodes.find((node) => node.id === nodeId)));
+    }));
+  },
+    listProjectPlacements() {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(snapshot()))).projectPlacements;
+    }));
+  },
+    getProjectPlacement(projectId) {
+    return present(Effect.gen(function* () {
       if (options.inventory?.projectPlacement) {
-        return options.inventory.projectPlacement(projectId);
+        return (yield* integrationValue(options.inventory.projectPlacement(projectId)));
       }
-      return (await snapshot()).projectPlacements.find(
+      return (yield* integrationValue(((yield* integrationValue(snapshot()))).projectPlacements.find(
         (placement) => placement.identity.workloadId === projectId,
-      );
-    },
-    async planProjectPlacements(requests) {
-      return planFabricProjectPlacements((await snapshot()).nodes, requests);
-    },
-    async listMigrations() {
-      return (await snapshot()).migrations;
-    },
+      )));
+    }));
+  },
+    planProjectPlacements(requests) {
+    return present(Effect.gen(function* () {
+      return (yield* integrationValue(planFabricProjectPlacements(((yield* integrationValue(snapshot()))).nodes, requests)));
+    }));
+  },
+    listMigrations() {
+    return present(Effect.gen(function* () {
+      return ((yield* integrationValue(snapshot()))).migrations;
+    }));
+  },
   };
 }
 
@@ -774,7 +794,8 @@ function isPlacementRequest(
     !isBoundedIdentifier(identity.workloadId) ||
     !isBoundedIdentifier(request.projectKind) ||
     !capabilities ||
-    typeof capabilities.statelessRuntimeReplicas !== "boolean"
+    typeof capabilities.statelessRuntimeReplicas !== "boolean" ||
+    (capabilities.managedDatabase !== undefined && typeof capabilities.managedDatabase !== "boolean")
   ) {
     return false;
   }
@@ -911,10 +932,12 @@ function createFabricRoutes(
       method: "GET",
       path: "/snapshot",
       access: viewAccess,
-      handler: async ({ service }) => ({
+      handler: ({ service }) => present(Effect.gen(function* () {
+    return {
         status: 200,
-        body: await service.snapshot(),
-      }),
+        body: (yield* integrationValue(service.snapshot())),
+      };
+  })),
     },
     {
       id: "fabric.health",
@@ -928,8 +951,8 @@ function createFabricRoutes(
       },
       method: "GET",
       path: "/health",
-      handler: async ({ service }) => {
-        const snapshot = await service.snapshot();
+      handler: ({ service }) => present(Effect.gen(function* () {
+        const snapshot = (yield* integrationValue(service.snapshot()));
         return {
           status: snapshot.status === "unavailable" ? 503 : 200,
           body: {
@@ -939,7 +962,7 @@ function createFabricRoutes(
             nodes: snapshot.nodes.length,
           },
         };
-      },
+      })),
     },
     {
       id: "fabric.nodes.list",
@@ -954,10 +977,12 @@ function createFabricRoutes(
       method: "GET",
       path: "/nodes",
       access: viewAccess,
-      handler: async ({ service }) => ({
+      handler: ({ service }) => present(Effect.gen(function* () {
+    return {
         status: 200,
-        body: { nodes: await service.listNodes() },
-      }),
+        body: { nodes: (yield* integrationValue(service.listNodes())) },
+      };
+  })),
     },
     {
       id: "fabric.nodes.get",
@@ -973,12 +998,12 @@ function createFabricRoutes(
       method: "GET",
       path: "/nodes/:nodeId",
       access: viewAccess,
-      handler: async ({ service, params }) => {
-        const node = await service.getNode(params.nodeId ?? "");
+      handler: ({ service, params }) => present(Effect.gen(function* () {
+        const node = (yield* integrationValue(service.getNode(params.nodeId ?? "")));
         return node
           ? { status: 200, body: { node } }
           : { status: 404, body: { error: "Fabric node was not found." } };
-      },
+      })),
     },
     {
       id: "fabric.project-placements.list",
@@ -993,10 +1018,12 @@ function createFabricRoutes(
       method: "GET",
       path: "/placements/projects",
       access: viewAccess,
-      handler: async ({ service }) => ({
+      handler: ({ service }) => present(Effect.gen(function* () {
+    return {
         status: 200,
-        body: { placements: await service.listProjectPlacements() },
-      }),
+        body: { placements: (yield* integrationValue(service.listProjectPlacements())) },
+      };
+  })),
     },
     {
       id: "fabric.project-placements.get",
@@ -1012,17 +1039,17 @@ function createFabricRoutes(
       method: "GET",
       path: "/placements/projects/:projectId",
       access: viewAccess,
-      handler: async ({ service, params }) => {
-        const placement = await service.getProjectPlacement(
+      handler: ({ service, params }) => present(Effect.gen(function* () {
+        const placement = (yield* integrationValue(service.getProjectPlacement(
           params.projectId ?? "",
-        );
+        )));
         return placement
           ? { status: 200, body: { placement } }
           : {
               status: 404,
               body: { error: "Project placement was not found." },
             };
-      },
+      })),
     },
     {
       id: "fabric.project-placements.plan",
@@ -1038,12 +1065,12 @@ function createFabricRoutes(
       method: "POST",
       path: "/placements/projects/plan",
       access: manageAccess,
-      handler: async ({ service, body }) => {
+      handler: ({ service, body }) => present(Effect.gen(function* () {
         const requests = readPlacementRequests(body);
         return requests
           ? {
               status: 200,
-              body: { plan: await service.planProjectPlacements(requests) },
+              body: { plan: (yield* integrationValue(service.planProjectPlacements(requests))) },
             }
           : {
               status: 400,
@@ -1051,7 +1078,7 @@ function createFabricRoutes(
                 error: "Expected a valid Fabric Project placement request list.",
               },
             };
-      },
+      })),
     },
     {
       id: "fabric.migrations.list",
@@ -1066,10 +1093,12 @@ function createFabricRoutes(
       method: "GET",
       path: "/migrations",
       access: viewAccess,
-      handler: async ({ service }) => ({
+      handler: ({ service }) => present(Effect.gen(function* () {
+    return {
         status: 200,
-        body: { migrations: await service.listMigrations() },
-      }),
+        body: { migrations: (yield* integrationValue(service.listMigrations())) },
+      };
+  })),
     },
   ];
 }

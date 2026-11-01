@@ -250,10 +250,11 @@ test("the deployment backend runtime exposes every member of the driver contract
     async signGatewayAuthority() { return "signed"; },
     async gatewayTarget() { return "http://127.0.0.1:3000"; },
     async fencePrevious() { return true; }, async adopt() {}, async detach() {},
+    async commitUpgrade() {}, async abandonUpgrade() {}, async migrateData() { return undefined; }, async retainedData() { return []; }, async removeRetainedData() {},
     custody: { ownerSession: "host-session", preserveOnClose: () => false },
     supportsLiveUpdate() { return true; },
     async versions() { return { selectable: true, versions: [] }; }, async resolveVersion() { return undefined; },
-    async prepareUpdate() { return {}; }, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; },
+    async prepareUpdate() { return {}; }, async prefetchUpdate() {}, async applyUpdate() { return { status: "running" }; }, async recoverUpdate() { return "previous"; }, async settleUpdate() {}, async ingressReady() {}, async setupValues() { return []; },
   };
   const runtime = createDeploymentBackendProjectRuntime({
     store,
@@ -945,8 +946,8 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
 
     const childDashboardResponse = await fetch(`${projectRuntimeUrls.get("alpha")}/zelavis`);
     const childDashboardBody = await childDashboardResponse.text();
-    assert.doesNotMatch(childDashboardBody, /Zelavis Dashboard/);
-    assert.doesNotMatch(childDashboardBody, /__ZELAVIS_RUNTIME_CONFIG__/);
+    assert.doesNotMatch(childDashboardBody, /dashboard-shell|Zelavis · Fuzor/);
+    assert.doesNotMatch(childDashboardBody, /__zelavis__/);
 
     const updateSettingsResponse = await runtimeRequest(
       "/projects/alpha/proxy/zelavis/api/v1/runtime/settings",

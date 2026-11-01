@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runReleaseInstall } from "../dist/cli/install/index.js";
 import { runCli } from "../dist/cli/index.js";
 
 async function capture(args, runtime) {
@@ -27,4 +28,13 @@ test("install without a host adapter refuses and help states the local boundary"
   const help = await capture(["install", "--help"]);
   assert.equal(help.code, 0);
   assert.match(help.output.join("\n"), /Host-local only; no HTTP endpoint/);
+});
+
+test("a dry run refuses release staging before reading or writing the prepared tree", async () => {
+  for (const flags of [["--dry-run", "--stage-only"], ["--stage-only", "--dry-run"]]) {
+    await assert.rejects(
+      runReleaseInstall(["--user", "--from-npm", "/nonexistent/zelavis-prepared-tree", ...flags]),
+      /--stage-only cannot be combined with --dry-run/,
+    );
+  }
 });

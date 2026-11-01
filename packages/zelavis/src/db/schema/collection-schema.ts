@@ -1,5 +1,6 @@
 import { Schema, SchemaIssue } from "effect";
 import type { JsonObject } from "../json.js";
+import { geometryValue } from "../geometry-value.js";
 import {
   type CollectionField,
   type CollectionFieldEntry,
@@ -359,6 +360,29 @@ function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
           }
         },
         { title: "url" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+
+  if (field._tag === "GeometryField") {
+    return (Schema.Unknown as Schema.Schema<unknown>).check(
+      Schema.makeFilter(
+        (value: unknown) =>
+          geometryValue(value) === undefined
+            ? "must be a Point, LineString, MultiLineString, Polygon or MultiPolygon in WGS84 longitude/latitude"
+            : undefined,
+        { title: "geometry" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+
+  if (field._tag === "VectorField") {
+    const dimension = field.dimension;
+    return (Schema.Array(Schema.Finite) as Schema.Schema<readonly number[]>).check(
+      Schema.makeFilter(
+        (value: readonly number[]) =>
+          value.length === dimension ? undefined : `must hold exactly ${dimension} numbers`,
+        { title: "dimension" },
       ),
     ) as unknown as Schema.Schema<unknown>;
   }

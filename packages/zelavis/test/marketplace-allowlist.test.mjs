@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 
 import { Effect } from "effect";
 
-import { Zelavis, createMemorySystemStore } from "../dist/index.js";
+import { Zelavis, ZELAVIS_VERSION, createMemorySystemStore } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
 import { createLocalServiceSources } from "../dist/adapters/_local-runtime.js";
 
@@ -94,7 +94,8 @@ function listing(services, sequence = TEST_SEQUENCE) {
 
 const entry = (versions) => ({
   name: "@example/thing", kind: "plugin", maintainer: "zelavis", title: "Thing", summary: "A thing.",
-  versions, latest: versions.at(-1).version,
+  // Every Platform this test runs is newer than 0.0.0.
+  versions: versions.map((version) => ({ platform: "0.0.0", ...version })), latest: versions.at(-1).version,
 });
 
 async function serveList(services, sequence) {
@@ -226,6 +227,35 @@ test("what the list vouches for is offered by the marketplace at the next start"
   assert.equal(offered.status, "available");
   assert.equal(offered.service.marketplace.title, "Thing");
   assert.equal(offered.specifier, "npm:@example/thing@1.0.0");
+});
+
+test("a version that needs a newer Platform is neither offered nor installed", async (t) => {
+  const directory = await scratch(t);
+  const current = thing("1.0.0");
+  const future = thing("2.0.0");
+  // The list every installation reads: 2.0.0 needs a Zelavis that does not exist yet.
+  const fetcher = await serveList([entry([
+    { version: "1.0.0", integrity: integrityOf(current) },
+    { version: "2.0.0", integrity: integrityOf(future), platform: "999.0.0" },
+  ])]);
+  const store = createMemorySystemStore();
+  const open = () => createLocalServiceSources({
+    dataDirectory: directory, services: { marketplace: { sources: ["https://list.example/a.json"], fetch: fetcher } },
+    isProjectRuntime: false, systemStore: store,
+  });
+  await (await open()).marketplace.control.refresh();
+  const { serviceRegistry, servicePackages } = await open();
+  const offered = serviceRegistry.catalog.find((c) => c.service.name === "@example/thing");
+  assert.equal(offered.specifier, "npm:@example/thing@1.0.0", "offered at the newest version this Platform runs");
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = registry({ "1.0.0": current, "2.0.0": future });
+  const network = globalThis.fetch;
+  const refusal = await Effect.runPromise(Effect.flip(Effect.scoped(servicePackages.acquire({ reference: "npm:@example/thing@2.0.0" }))));
+  assert.equal(refusal._tag, "SourceRefused");
+  assert.match(refusal.reason, new RegExp(`needs Zelavis 999\\.0\\.0 or newer, and this Platform runs ${ZELAVIS_VERSION.replaceAll(".", "\\.")}\\. Update Zelavis first`));
+  assert.equal(network.calls.length, 0, "refused before anything is fetched");
 });
 
 test("in development, an official service in the local checkout stands in for its npm copy", async (t) => {

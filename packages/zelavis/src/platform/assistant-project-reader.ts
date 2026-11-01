@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "../core/runtime/effect-boundary.js";
 import type { AssistantProjectReader } from "../assistant-tools.js";
 import {
   projectRuntimePermissions,
@@ -13,8 +15,8 @@ import type { ZelavisRouteResponse } from "../core/index.js";
 export function createAssistantProjectReader(
   forward: (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse>,
 ): AssistantProjectReader {
-  return async ({ projectId, principal, method, path, query, body }) => {
-    const response = await forward({
+  return ({ projectId, principal, method, path, query, body }) => present(Effect.gen(function* () {
+    const response = (yield* integrationValue(forward({
       projectId,
       wildcardPath: path,
       query: query ?? new URLSearchParams(),
@@ -29,7 +31,7 @@ export function createAssistantProjectReader(
         (permission) => permission === "database.inspect" || permission === "database.read",
       ),
       allowFrontend: false,
-    });
+    })));
     let parsed: unknown = response.body;
     if (response.body instanceof Uint8Array) {
       try {
@@ -39,5 +41,5 @@ export function createAssistantProjectReader(
       }
     }
     return { status: response.status ?? 200, body: parsed };
-  };
+  }));
 }

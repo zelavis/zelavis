@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { present, integrationValue } from "../../../core/runtime/effect-boundary.js";
 import {
   readAuthorizationCredential,
   ZelavisAuthenticationError,
@@ -76,7 +78,8 @@ export function createSessionAuthenticator(
   const cookieName = options.cookieName === undefined ? "zelavis_session" : options.cookieName;
   return {
     name: "zelavis-session",
-    async authenticate(context) {
+    authenticate(context) {
+    return present(Effect.gen(function* () {
       const authorizationBearer = readAuthorizationCredential(context.request, "Bearer");
       const bearer = authorizationBearer?.startsWith("zvs_")
         ? authorizationBearer
@@ -107,14 +110,14 @@ export function createSessionAuthenticator(
        */
       const anonymousOnFailure = bearer === undefined;
 
-      const session = await options.sessions.resolveToken(token);
+      const session = (yield* integrationValue(options.sessions.resolveToken(token)));
       if (!session) {
         if (anonymousOnFailure) return undefined;
         throw new ZelavisAuthenticationError("Invalid or expired session.", {
           challenge: { scheme: "Bearer" },
         });
       }
-      const account = await options.accounts.findById(session.accountId);
+      const account = (yield* integrationValue(options.accounts.findById(session.accountId)));
       if (!account) {
         if (anonymousOnFailure) return undefined;
         throw new ZelavisAuthenticationError("Session account no longer exists.", {
@@ -130,13 +133,14 @@ export function createSessionAuthenticator(
           });
         }
       }
-      return toPrincipal(
+      return (yield* integrationValue(toPrincipal(
         account,
         session.id,
         bearer ? "bearer" : "cookie",
         options.projectId,
-      );
-    },
+      )));
+    }));
+  },
   };
 }
 

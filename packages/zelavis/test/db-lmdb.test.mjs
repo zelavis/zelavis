@@ -38,7 +38,7 @@ const withStore = (t, body) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return Effect.runPromise(
     Effect.scoped(Effect.gen(function* () {
-      return yield* body(yield* makeLmdbStore("acme", dir));
+      return yield* body((yield* makeLmdbStore("acme", dir)).partition("acme"));
     })),
   );
 };
@@ -75,7 +75,7 @@ test("lmdb: one payload, many lenses, resolved through a shared seq space", { sk
 
       // aggregation reads the measure vector, never the payloads
       const visits = yield* store.measure("visits");
-      assert.equal(cross.reduce((sum, s) => sum + visits[s], 0), 30);
+      assert.equal(cross.reduce((sum, s) => sum + visits.get(s), 0), 30);
     }),
   );
 });
