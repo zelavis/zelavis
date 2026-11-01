@@ -20,7 +20,9 @@ export default defineConfig(({ isSsrBuild }) => ({
   })],
   // The dashboard targets current browsers. Vite's default list (down to safari14) asks esbuild to downlevel
   // destructuring, which the esbuild a clean install resolves refuses to do.
+  // The dev server pre-bundles dependencies through its own esbuild pass, which has the same default to override.
   build: { target: "es2022" },
+  optimizeDeps: { esbuildOptions: { target: "es2022" } },
   esbuild: { jsx: "automatic" },
   resolve: { dedupe: ["effect", "react", "react-dom"] },
   server: {
