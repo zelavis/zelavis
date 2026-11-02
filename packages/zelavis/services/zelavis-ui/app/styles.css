@@ -79,4 +79,5 @@ nav a{gap:8px;min-width:0}.nav-label{flex:1;min-width:0;overflow:hidden;white-sp
 .back-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.panel-heading>button.back-row,.back-chevron{transition:none}.back-row:hover .back-chevron,.back-row:focus-visible .back-chevron{transform:none}}
 @media (hover:none){.panel-heading>button.back-row{min-height:48px}}
-
+/* A project listed under Projects in the desktop root slide of the sidebar. */
+nav a.nested{padding-left:26px;font-size:13px}

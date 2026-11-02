@@ -11,7 +11,7 @@ const routeHandle = (path: string): DashboardHandle => {
   if (path.startsWith("/projects/:projectId")) { const section = path.split("/")[3]; return handle(section ? section[0].toUpperCase() + section.slice(1) : "Project overview", "projects", "project", ...(section && !section.startsWith(":") ? [section] : [])); }
   if (path.startsWith("/server")) return handle(path.split("/")[2] ?? "Server", "server");
   if (path.startsWith("/settings")) return handle("Settings", "settings");
-  return handle(path === "/" ? "Projects" : path.slice(1));
+  return handle(path === "/" || path === "/projects" ? "Projects" : path.slice(1));
 };
 export const routeTree: readonly RouteDefinition[] = [{ id: "platform", path: "/", handle: handle("Projects"), children: [
   ...[...new Map(declared.map(route => [route.path, route])).values()].filter(route => route.path !== "/").map(route => ({ id: route.id, path: route.path, handle: routeHandle(route.path) })),

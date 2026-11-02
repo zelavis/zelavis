@@ -164,3 +164,29 @@ test("the Marketplace lists an extension under Plugins and keeps trusted service
   assert.deepEqual(selectItems(registry, "plugins").map(item => item.name), ["@example/ext-page", "@example/available"]);
   assert.deepEqual(selectItems(registry, "apps").map(item => item.name), ["@zelavis/app"], "apps keep their own tab, trusted or not");
 });
+
+test("the desktop root slide lists Projects and the projects under it, with no Projects slide to open", async () => {
+  const { trailForLocation } = await import("../app/navigation-model.ts");
+  const other = { ...project, id: "other", name: "Other" };
+  const flat = panelsFor(undefined, undefined, undefined, undefined, [project, other], true);
+  const root = flat.find(panel => panel.id === "platform");
+  assert.deepEqual(root.items.slice(0, 3).map(item => [item.label, item.branch, item.nested === true]), [["Projects", undefined, false], ["Customer", "project", true], ["Other", "project", true]],
+    "Projects is a plain item, and each project drills into its own slide");
+  assert.ok(!root.items.some(item => item.branch === "projects"), "nothing opens a Projects slide");
+  assert.equal(root.items.find(item => item.label === "Projects").path, "/projects");
+  // Landing on the overview stays on the root slide instead of descending into a duplicate of the page.
+  assert.deepEqual(trailForLocation(flat, new URL("http://test/projects")), []);
+  assert.deepEqual(trailForLocation(flat, new URL(`http://test/projects/${project.id}`)).length >= 0, true);
+  // Narrow screens keep the slide: the sidebar is the whole app there.
+  const compact = panelsFor(undefined, undefined, undefined, undefined, [project, other], false);
+  assert.ok(compact.find(panel => panel.id === "platform").items.some(item => item.branch === "projects"));
+  assert.deepEqual(compact.find(panel => panel.id === "projects").items.map(i => i.label), ["Overview", "Create project", "Customer", "Other"]);
+});
+
+test("a project opened from the desktop root slide drills straight into its own slide, and Back is the root", () => {
+  const flat = panelsFor(project.id, project, undefined, undefined, [project], true);
+  const trail = resolveTrail(flat, ["project"], null);
+  assert.deepEqual(trail.map(panel => panel.id), ["platform", "project"]);
+  // A link that still names the Projects slide (an older URL) lands on the same place.
+  assert.deepEqual(resolveTrail(flat, [], "project").map(panel => panel.id), ["platform", "project"]);
+});

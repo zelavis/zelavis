@@ -57,6 +57,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let snapshot: { path: string; projectId?: string; project?: Project; runtime?: Config; menu?: unknown } = { path: "/" };
   const slides: HTMLElement[] = [];
+  const canonical = (path: string) => path === "/" ? "/projects" : path;
   const navigate = (path: string, ids: readonly string[], view: "menu" | "content") => {
     const url = new URL(mounted(path), location.href);
     url.searchParams.set("sidebar", ids.join("/"));
@@ -73,15 +74,21 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     const utilityVisible = utilities.sync(projectList, projectId, options.config());
     swiper.hidden = utilityVisible;
     host.classList.toggle("utility-open", utilityVisible);
-    const basePanels = panelsFor(projectId, project, runtime, menu, projectList);
+    const flat = !media.matches;
+    const basePanels = panelsFor(projectId, project, runtime, menu, projectList, flat);
+    // The desktop shell has no Projects slide, so a trail or a link that still names it goes to what it led to.
+    const withoutProjects = (ids: readonly string[]) => flat ? ids.filter(id => id !== "projects") : ids;
     const reported = menus.get(projectId);
     const panels = reported !== undefined ? workspacePanels(basePanels, reported, projectId) : basePanels;
     const matches = router.matches();
     const handle = matches.at(-1)?.handle as DashboardHandle | undefined;
     const url = new URL(router.url());
     // While the exact Project is loading, retain its route-declared panels; capability filtering follows the response.
-    let next = resolveTrail(panels, trailForLocation(panels, url).length ? trailForLocation(panels, url) : handle?.sidebarTrail ?? [], url.searchParams.get("sidebar"));
-    if (!project && projectId && handle?.sidebarTrail?.length && url.searchParams.get("sidebar") === null) next = resolveTrail(panels, handle.sidebarTrail.slice(0, 2), null);
+    const explicit = url.searchParams.get("sidebar");
+    const requested = explicit === null ? null : withoutProjects(explicit.split("/")).join("/");
+    const declared = withoutProjects(handle?.sidebarTrail ?? []);
+    let next = resolveTrail(panels, trailForLocation(panels, url).length ? trailForLocation(panels, url) : declared, requested);
+    if (!project && projectId && declared.length && explicit === null) next = resolveTrail(panels, declared.slice(0, flat ? 1 : 2), null);
     const previousDepth = trail.length;
     trail = next;
     mobileTitle.textContent = handle?.pageLabel ?? "Workspace";
@@ -99,16 +106,17 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
         if (item.branch) ids.push(item.branch);
         destination.searchParams.set("sidebar", ids.join("/"));
         if (media.matches) destination.searchParams.set("sidebarView", item.branch ? "menu" : "content");
-        const itemPath = unmounted(destination.pathname);
-        const selected = ["databaseTenant", "databaseTable", "databaseSystemView"];
+        // "/" and "/projects" are the same page.
+        const itemPath = canonical(unmounted(destination.pathname));
+        const selected = ["databaseTenant", "databaseTable", "databaseSystemView", "new"];
         const dialog = destination.searchParams.get("databaseDialog");
         // An item that opens a dialog is active only while that dialog is; every other item ignores the dialog.
         const matchesSearch = selected.every(key => destination.searchParams.get(key) === url.searchParams.get(key)) && (dialog === null || dialog === url.searchParams.get("databaseDialog"));
         // Opening a dialog from the page it belongs to keeps what is on that page (the open table, filter, sort).
         const href = new URL(destination);
         if (dialog !== null && path === itemPath) { const kept = new URL(url); for (const key of ["sidebar", "sidebarView"]) { const value = destination.searchParams.get(key); if (value === null) kept.searchParams.delete(key); else kept.searchParams.set(key, value); } kept.searchParams.set("databaseDialog", dialog); href.search = kept.search; }
-        const active = itemIsActive({ current: path, itemPath, matchesSearch, ...(item.branch ? { branch: item.branch } : {}), trail: trail.map(panel => panel.id) });
-        const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active ? { class: "active", "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
+        const active = itemIsActive({ current: canonical(path), itemPath, matchesSearch, ...(item.branch ? { branch: item.branch } : {}), trail: trail.map(panel => panel.id) });
+        const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active || item.nested ? { class: [active ? "active" : "", item.nested ? "nested" : ""].filter(Boolean).join(" ") } : {}), ...(active ? { "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });
       slide.replaceChildren(index ? backRow(panel.label, trail[index - 1].label, () => navigate(trail[index - 1].path, trail.slice(1, index).map(panel => panel.id), "menu")) : node("div", { class: "panel-heading" }, node("strong", {}, "Platform")), nav);

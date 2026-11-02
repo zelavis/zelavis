@@ -2,8 +2,13 @@ import { servicePages } from "./service-pages.ts";
 import { object, type Config, type Project } from "./api.ts";
 import { unmounted } from "./mount.ts";
 
-export type Panel = { id: string; label: string; path: string; items: { label: string; path: string; branch?: string }[] };
-export function panelsFor(projectId?: string, project?: Project, runtime?: Config, menu?: unknown, projectList: readonly Project[] = []): Panel[] {
+export type PanelItem = { label: string; path: string; branch?: string; /** Shown under the item above it, one step in. */ nested?: true };
+export type Panel = { id: string; label: string; path: string; items: PanelItem[] };
+/**
+ * `flat` is the desktop shell: the content area already shows the Projects overview, so Projects is an ordinary item of the root
+ * slide with the projects listed under it, not a slide of its own. On a narrow screen the sidebar is the whole app and keeps the slide.
+ */
+export function panelsFor(projectId?: string, project?: Project, runtime?: Config, menu?: unknown, projectList: readonly Project[] = [], flat = false): Panel[] {
   const root: Panel = { id: "platform", label: "Platform", path: "/", items: [
     { label: "Projects", path: "/", branch: "projects" }, { label: "Marketplace", path: "/marketplace" },
     { label: "Server", path: "/server", branch: "server" }, { label: "Assistant", path: "/assistant" }, { label: "Settings", path: "/settings", branch: "settings" }
@@ -12,6 +17,7 @@ export function panelsFor(projectId?: string, project?: Project, runtime?: Confi
   const server: Panel = { id: "server", label: "Server", path: "/server", items: [{ label: "Overview", path: "/server" }, ...["Nodes", "Domains", "Database", "Backends", "Backups", "Logs"].map(label => ({ label, path: `/server/${label.toLowerCase()}` }))] };
   const settings: Panel = { id: "settings", label: "Settings", path: "/settings", items: [{ label: "Overview", path: "/settings" }] };
   for (const entry of projectList) projects.items.push({ label: entry.name, path: `/projects/${encodeURIComponent(entry.id)}`, branch: "project" });
+  if (flat) root.items.splice(0, 1, { label: "Projects", path: "/projects" }, ...projectList.map((entry): PanelItem => ({ label: entry.name, path: `/projects/${encodeURIComponent(entry.id)}`, branch: "project", nested: true })));
   if (!projectId) {
     if (runtime) for (const page of servicePages(runtime)) {
       if (page.src && !root.items.some(item => item.path === page.path)) root.items.push({ label: page.title, path: page.path + (Object.keys(page.search).length ? `?${new URLSearchParams(page.search)}` : "") });
