@@ -141,7 +141,9 @@ test("an update that failed for want of a placement is recovered under the place
   // What an earlier release did after Update now: no placement reached the replacement, and the rollback
   // was refused the same way, leaving the update journaled and the previous processes not all running.
   const execution = await driver.prepareUpdate(record, { ...record, recipe: lock("2.0.0") });
-  await assert.rejects(driver.applyUpdate(id, execution, async () => undefined), /could not be started/);
+  await assert.rejects(driver.applyUpdate(id, execution, async () => undefined), /could not be started: Project placement authority is required\./);
+  assert.ok((await driver.logs(id)).some((entry) => entry.stream === "system" && /could not be started: Project placement authority is required\./.test(entry.message)),
+    "the Project's log says why the update's processes did not start");
   const placement = { projectId: id, nodeId: "local", ownerSession: "owner", epoch: 1 };
   assert.equal(await driver.recoverUpdate(id, execution, placement), "previous");
   assert.deepEqual(await ask(), { config: "contract 1 configuration", page: "the application's own page" }, "the previous recipe serves again");

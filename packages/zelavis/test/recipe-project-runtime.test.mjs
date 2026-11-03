@@ -157,6 +157,21 @@ test("a stop the Agent refused stays visible and can be retried, and keeps the P
   assert.equal(await reachable(port), false);
 });
 
+test("a start the Agent refuses says why, in the error and in the Project's log", { timeout: 120_000 }, async (t) => {
+  let refuse = false;
+  const { create } = await setup(t, { agent: (runner) => ({ ...runner, start: async (command, options) => {
+    if (refuse) throw new Error("Project placement authority is absent or stale.");
+    return runner.start(command, options);
+  } }) });
+  const driver = create();
+  const project = record("site9");
+  await driver.prepare(project, project.recipe);
+  refuse = true;
+  await assert.rejects(driver.start(project), /could not be started: Project placement authority is absent or stale\./);
+  assert.ok((await driver.logs("site9")).some((entry) => entry.stream === "system" && /"[^"]+" could not be started: Project placement authority is absent or stale\./.test(entry.message)),
+    "the Project's log says why the process did not start");
+});
+
 test("a Platform that restarts adopts the processes its Agent kept running, and starts nothing twice", { timeout: 120_000 }, async (t) => {
   // An Agent that outlives the Platform: it keeps what it started and hands it back on request.
   const kept = new Map();

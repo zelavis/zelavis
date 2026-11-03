@@ -6,12 +6,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { Cause, Effect, Exit, Fiber, PubSub } from "effect";
 
 import { PlanHost, makePlanController } from "zelavis/recipe";
-import { makeAgentPlanHost } from "../dist/adapters/_plan-host.js";
+import { MAX_REDACTED_SECRETS, describeStartFailure, makeAgentPlanHost } from "../dist/adapters/_plan-host.js";
+import { IntegrationFailure } from "../dist/core/runtime/effect-boundary.js";
 import { loopbackPortAccepts } from "../dist/adapters/_loopback-probe.js";
 import { createLocalAgentProcessRunner } from "../dist/adapters/_agent-process-runner.js";
 
@@ -264,6 +265,42 @@ test("secrets are resolved at the last moment, reach the process, and never an e
   await run(controller.stop);
   const missing = await failureOf(controller.reconcile({ processes: [{ ...plan.processes[0], args: [{ secret: "never-made" }] }] }));
   assert.ok(!JSON.stringify(missing).includes("hunter2"));
+});
+
+test("a start the Agent refuses names the executable and its reason, with every secret redacted, and is reported once", { timeout: 60_000 }, async (t) => {
+  const { controllerFor, makeHost } = await setup(t, { "db-password": "hunter2-very-secret" });
+  const fake = { start: async (command) => { throw new Error(`refused for ${command.env.PASSWORD}; authorization: Bearer abcdefgh12345678`); } };
+  const reported = [];
+  const controller = await controllerFor(makeHost({ runner: fake, onStartFailure: (message) => reported.push(message) }));
+  const plan = { processes: [{ name: "db", command: "node", dependsOn: [], readiness: { port: "db", timeoutMs: 2000 }, args: [], env: { PASSWORD: { secret: "db-password" } } }] };
+  const error = await failureOf(controller.reconcile(plan));
+  assert.equal(error._tag, "RecipeError");
+  assert.match(error.message, /^"[^"]+" could not be started: refused for \[redacted\]; .*\[redacted\]/);
+  assert.ok(error.message.startsWith(`"${basename(process.execPath)}"`));
+  assert.ok(!error.message.includes("hunter2"));
+  assert.ok(!error.message.includes("abcdefgh12345678"));
+  assert.deepEqual(reported, [error.message]);
+});
+
+test("a long or multi-line reason becomes one bounded line, and an empty one says so", { timeout: 60_000 }, async (t) => {
+  const { controllerFor, makeHost } = await setup(t);
+  const plan = { processes: [{ name: "db", command: "node", dependsOn: [], readiness: { port: "db", timeoutMs: 2000 }, args: [], env: {} }] };
+  const refusing = (message) => controllerFor(makeHost({ runner: { start: async () => { throw new Error(message); } } }));
+  const long = (await failureOf((await refusing("first line\nsecond line " + "x".repeat(1000))).reconcile(plan))).message;
+  assert.ok(!long.includes("\n"));
+  const marker = "could not be started: ";
+  const reason = long.slice(long.indexOf(marker) + marker.length);
+  assert.ok(reason.length <= 300 && reason.endsWith("…"), `reason is ${reason.length} characters`);
+  const empty = (await failureOf((await refusing("   ")).reconcile(plan))).message;
+  assert.match(empty, /^"[^"]+" could not be started: no reason was given\.$/);
+});
+
+test("describeStartFailure unwraps, redacts exact secrets, and withholds when they could not all be tracked", () => {
+  assert.equal(describeStartFailure(new IntegrationFailure(new IntegrationFailure(new Error("Project placement expired during start."))), new Set()),
+    "Project placement expired during start.");
+  assert.equal(describeStartFailure(new Error("abc s3cr3t"), new Set(["s3cr3t"])), "abc [redacted]");
+  assert.equal(describeStartFailure(new Error("anything"), undefined), "the reason was withheld because it could not be redacted safely");
+  assert.equal(MAX_REDACTED_SECRETS, 256);
 });
 
 test("a command or port the host did not provide is refused before anything starts", { timeout: 60_000 }, async (t) => {

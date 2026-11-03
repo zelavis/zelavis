@@ -479,6 +479,7 @@ export function createRecipeProjectRuntime(options: RecipeProjectRuntimeOptions)
       baseEnvironment: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, LANG: "C.UTF-8" },
       resolveSecret: resolveSecret(id), disruption: disruption(id),
       onOutput: (name, line) => log(id, line.stream, `[${name}] ${line.line}`),
+      onStartFailure: (message) => log(id, "system", message),
     });
     liveCommands.set(id, state.commands);
     liveRoots.set(id, root);
