@@ -11,6 +11,12 @@ The private `zelavis-ui-legacy` package is reference material only.
 
 ## Rendering and lifecycle
 
+- `index.html` owns the static shell (header, sidebar, workspace and footer).
+  Startup adopts it; loading and errors stay inside its content slots. Preserve
+  desktop/mobile frame geometry and apply saved appearance before first paint.
+  Browser qualification must hold scripts and startup data across native refresh
+  and verify the same frame nodes survive.
+
 - Fuzor owns routing and compiled server views. Pages are native screens in
   `app/screens.ts` and its modules, built with `app/dom.ts` and `app/page-kit.ts`.
 - Use `Effect.fn`/`Effect.gen` for asynchronous loading and orchestration. A screen
@@ -56,6 +62,11 @@ The private `zelavis-ui-legacy` package is reference material only.
 - Preserve the slide-based sidebar and existing visual language. Each item,
   including parents, navigates to a dedicated content page. Back changes both
   slide and content. Placeholders still need meaningful content.
+- For locally rendered URL-backed views, use Fuzor’s `data-fuzor-view-query` root,
+  `data-fuzor-view-value` controls and `data-fuzor-view-values` panels. The router
+  owns projection and cleanup; `router.isViewNavigation` recognizes their query
+  ownership. Do not add per-page query exceptions or full-screen loading/rebuilds
+  for these view changes. Data-bearing filters still need their normal loader.
 - Put reconstructable state in the URL through `context.setSearch`: sidebar
   depth, tabs, filters, selected records and panels. Reload/share must restore it.
 - Below the desktop breakpoint the sidebar is the app shell. Compose reusable

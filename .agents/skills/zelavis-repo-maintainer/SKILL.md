@@ -25,7 +25,7 @@ Use this skill for changes in:
 - Treat `AGENTS.md` as the canonical coding-agent instruction file.
 - There is no `CLAUDE.md`; do not add one. Durable project guidance belongs in `AGENTS.md`.
 - Keep `.agents/` synchronized with `AGENTS.md`. When repo guidance affects a specific workflow, update the relevant skill or add a focused reference file.
-- The root `.claude/settings.json` hook locates the ancestor with `.agents/skills/` even from the nested private `pnotes/` repository. Keep links in the main repository's `.claude/`; private notes need no separate Claude configuration or skill copies.
+- Claude Code reads `AGENTS.md` and `.agents/skills/` directly. Keep nothing tracked in `.claude/`: no skills, references, hooks or symlinks.
 - Keep `pnotes/TODO.md` focused on unfinished work. Remove completed items and their progress/validation history; do not keep checked-off entries, a Done section, release histories or audit logs. Preserve concise open follow-ups and only the context they need. Completed behavior belongs in tests, maintained documentation and Git history.
 - Follow the GitHub Zero-Spend Policy in `AGENTS.md` and [its operations guide](../../references/github-zero-spend.md): public standard Ubuntu CI only, no hosted macOS/ARM build matrices, paid runners, artifact uploads, release archives, or Actions caches without an explicit owner request changing the policy. Omit `cache` and set `package-manager-cache: false` on every `actions/setup-node` step. Use the Mac or disposable VPS environments for additional qualification; never run untrusted public PR code on the everyday Mac or production VPS.
 - Verify live $0 budgets and Stop usage settings before reporting them as configured. Do not add payment methods or paid capacity.

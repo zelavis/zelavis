@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   op: Schema.String,
   cause: Schema.Defect(),
+  shard: Schema.optional(Schema.String),
 }) {}
 
 export class PartitionUnavailable extends Schema.TaggedError<PartitionUnavailable>()(
@@ -774,11 +775,58 @@ export class MailboxFull extends Schema.TaggedError<MailboxFull>()("MailboxFull"
   capacity: Schema.Finite,
 }) {}
 
+/**
+ * A read on another Node spent more work than its budget allows and was refused whole: no part of an answer is
+ * returned and nothing is read again elsewhere. `limit` names what ran out (`bytes` of stored data copied,
+ * `entries` read from the store, `postings` identifiers expanded) and `max` is that limit. Narrow the query
+ * (a filter, a smaller page) and ask again.
+ */
+export class ReadBudgetExceeded extends Schema.TaggedError<ReadBudgetExceeded>()("ReadBudgetExceeded", {
+  limit: Schema.Literals(["bytes", "entries", "postings"]),
+  max: Schema.Finite,
+}) {}
+
 /** A follower route was asked for a partition it does not serve, or with a request it does not take. */
 export class InvalidFollowerRequest extends Schema.TaggedError<InvalidFollowerRequest>()("InvalidFollowerRequest", {
   partition: Schema.String,
   reason: Schema.String,
 }) {}
+
+/** Shard placement has no Platform to ask: this database has no channel, or the Platform cannot be reached. */
+export class ShardPlacementUnavailable extends Schema.TaggedError<ShardPlacementUnavailable>()("ShardPlacementUnavailable", {
+  reason: Schema.String,
+}) {}
+
+/** The Platform refused a shard request; `reason` is its refusal code. */
+export class ShardPlacementRefused extends Schema.TaggedError<ShardPlacementRefused>()("ShardPlacementRefused", {
+  reason: Schema.String,
+}) {}
+
+/** A shard operation is already unfinished; operations run one at a time. */
+export class ShardOperationInProgress extends Schema.TaggedError<ShardOperationInProgress>()("ShardOperationInProgress", {
+  operationId: Schema.String,
+  kind: Schema.String,
+  phase: Schema.String,
+}) {}
+
+/** A shard the map, a pending move or a partition still names cannot be closed or released. */
+export class ShardInUse extends Schema.TaggedError<ShardInUse>()("ShardInUse", {
+  shard: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** A shard operation was asked for something it cannot do: bad ranges, an unknown target, a shard that is not remote. */
+export class ShardOperationInvalid extends Schema.TaggedError<ShardOperationInvalid>()("ShardOperationInvalid", {
+  reason: Schema.String,
+}) {}
+
+/** Every failure shard placement answers with. */
+export type ShardPlacementError =
+  | ShardPlacementUnavailable
+  | ShardPlacementRefused
+  | ShardOperationInProgress
+  | ShardInUse
+  | ShardOperationInvalid;
 
 /** Every failure the store contract can raise. */
 export type DbError =

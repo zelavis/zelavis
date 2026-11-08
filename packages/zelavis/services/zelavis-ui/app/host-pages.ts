@@ -171,18 +171,24 @@ const LIMITS = [
   ["Outbound traffic", "Track project traffic so small VPS plans do not surprise the user."]
 ] as const;
 
-/** The host does not report CPU, memory, disk or traffic yet, so this page says what is planned and shows no numbers. */
+/** Fuzor owns this URL-backed view and keeps its controls and panels mounted. */
 export const resourcesScreen = Effect.fn("ui.resourcesScreen")(function*(context: ScreenContext) {
   const requested = context.url.searchParams.get("resourceView");
-  const view = requested === "processes" || requested === "storage" || requested === "limits" ? requested : "";
-  const tab = (name: string, title: string) => button(title, () => context.setSearch({ resourceView: name || undefined }), { class: view === name ? "primary" : "", "aria-pressed": String(view === name) });
-  return page(
-    node("div", { class: "actions" }, tab("", "Overview"), tab("processes", "Processes"), tab("storage", "Storage"), tab("limits", "Limits")),
+  const view = requested === "processes" || requested === "storage" || requested === "limits" ? requested : "overview";
+  const tab = (name: string, title: string) => node("button", { type: "button", "data-fuzor-view-value": name, class: view === name ? "primary" : "", "aria-pressed": String(view === name) }, title);
+  const panel = (views: readonly string[], content: HTMLElement) => { content.setAttribute("data-fuzor-view-values", views.join(" ")); content.hidden = !views.includes(view); return content; };
+  const workspace = page(
+    node("div", { class: "actions", "aria-label": "Resource views" }, tab("overview", "Overview"), tab("processes", "Processes"), tab("storage", "Storage"), tab("limits", "Limits")),
     resourceNotice("Host metrics are not collected yet", "This Platform does not report CPU, memory, disk or network usage, so nothing is charted here rather than showing numbers that are not real. The rows below are what this page will cover."),
-    ...(view === "" ? [columns(3, statCard("CPU and memory", "planned", "Host pressure over time."), statCard("Disk", "planned", "What is consuming local storage."), statCard("Network", "planned", "Traffic per project."))] : []),
-    ...(view === "" || view === "processes" ? [rowsCard("Processes", ...PROCESSES.map(([title, detail]) => dataRow(title, detail, badge("planned"))))] : []),
-    ...(view === "storage" ? [rowsCard("Storage", dataRow("Projects", "Project files and runtime state.", badge("planned")), dataRow("Databases", "Project databases and the System Store.", badge("planned")), dataRow("Backups and logs", "Retained snapshots and log files.", badge("planned")))] : []),
-    ...(view === "" || view === "limits" ? [rowsCard("Limits", ...LIMITS.map(([title, detail]) => dataRow(title, detail, badge("planned"))))] : []));
+    panel(["overview"], columns(3, statCard("CPU and memory", "planned", "Host pressure over time."), statCard("Disk", "planned", "What is consuming local storage."), statCard("Network", "planned", "Traffic per project."))),
+    panel(["overview", "processes"], rowsCard("Processes", ...PROCESSES.map(([title, detail]) => dataRow(title, detail, badge("planned"))))),
+    panel(["storage"], rowsCard("Storage", dataRow("Projects", "Project files and runtime state.", badge("planned")), dataRow("Databases", "Project databases and the System Store.", badge("planned")), dataRow("Backups and logs", "Retained snapshots and log files.", badge("planned")))),
+    panel(["overview", "limits"], rowsCard("Limits", ...LIMITS.map(([title, detail]) => dataRow(title, detail, badge("planned")))))
+  );
+  workspace.setAttribute("data-fuzor-view-query", "resourceView");
+  workspace.setAttribute("data-fuzor-view-default", "overview");
+  workspace.setAttribute("data-fuzor-view-active-class", "primary");
+  return workspace;
 });
 
 const LEVELS = [

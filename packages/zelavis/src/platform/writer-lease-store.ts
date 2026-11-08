@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { parseJson } from "../core/json-validation.js";
 import { StoreError } from "../db/errors.js";
 import { isWriterLease, type LeaseRead, type LeaseStore } from "../db/writer-lease.js";
-import { integration } from "../core/runtime/effect-boundary.js";
+import { integration, integrationValue, present, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 /**
@@ -85,3 +85,11 @@ export const systemStoreLeaseAudit = (store: ZelavisSystemStore): WriterLeaseAud
     ),
   };
 };
+
+/** Project deletion participant: the Project's own lease record. The audit trail is the Platform's history and stays. */
+export function deleteProjectWriterLease(store: ZelavisSystemStore, projectId: string): Promise<void> {
+  return present(Effect.gen(function* (): Effect.fn.Return<void, IntegrationFailure> {
+    if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 512) throw new TypeError("Invalid Project id for writer lease cleanup");
+    yield* integrationValue(store.delete(NAMESPACE, projectId));
+  }));
+}

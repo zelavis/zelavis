@@ -1,13 +1,20 @@
 /// <reference types="node" />
 
 import type { LeaseStore } from "./writer-lease.js";
-import type { DatabaseLeaseStart } from "./database.js";
+import type { DatabaseLeaseStandby, DatabaseLeaseStart } from "./database.js";
 import { present, integrationValue, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Exit, Scope } from "effect";
+import { Duration, Effect, Exit, Scope } from "effect";
+import { arrayOf, isString, objectFields, parseJson } from "../core/json-validation.js";
+import { makeRemoteKvEngine, remoteShardAccess } from "./engines/remote-kv.js";
+import { makeRemoteTenantReads } from "./engines/remote-reads.js";
+import type { RemoteTenantReads } from "./tenant-reads.js";
+import { openShardOverKv } from "./kv-store.js";
+import { httpShardChannel, type ShardChannel } from "./shard-authority-http.js";
+import type { ShardPlacementHost, ShardReplicaLocation } from "./shard-placement.js";
 import { makeDatabase, type DatabaseApi, type MakeDatabaseOptions } from "./database.js";
-import type { StoreError } from "./errors.js";
+import { StoreError } from "./errors.js";
 import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 import { makeRocksdbJsStore } from "./engines/rocksdb-js.js";
@@ -18,6 +25,7 @@ import type { KvDurability } from "./kv.js";
 import type { ShardStoreApi } from "./store.js";
 import {
   DEFAULT_LOCAL_SHARDS,
+  GLOBAL_SHARD,
   partitionMapFor,
   TOPOLOGY_SHARD,
   type PartitionMap,
@@ -63,7 +71,12 @@ export interface OpenNodeDatabaseOptions {
    * be taken: a node told to start a Project whose lease another live writer holds does not serve it. Held until the
    * database closes, which releases it (see `startWriter`).
    */
-  readonly lease?: DatabaseLeaseStart;
+  readonly lease?: NodeDatabaseLease;
+  /**
+   * How this host reaches the Platform for the Project's shards on other Nodes (the Project channel). Without it a
+   * shard listed in `shard-locations.json` cannot be opened, and placing shards is unavailable.
+   */
+  readonly appShards?: { readonly apiRoot: string; readonly token: string; readonly projectId: string };
   /** How cross-Tenant indexes are kept current; see `MakeDatabaseOptions.crossTenantRefresh`. */
   readonly crossTenantRefresh?: MakeDatabaseOptions["crossTenantRefresh"];
 }
@@ -78,10 +91,12 @@ export interface OpenNodeDatabase {
   readonly close: () => Promise<void>;
 }
 
-const openShardWith = (
+type ShardOpener = (shard: ShardId, context: { readonly origin: string }) => Effect.Effect<ShardStoreApi, StoreError, Scope.Scope>;
+
+const openLocalShardWith = (
   engine: EngineOptions | undefined,
   directory: string,
-): ((shard: ShardId, context: { readonly origin: string }) => Effect.Effect<ShardStoreApi, StoreError, Scope.Scope>) => {
+): ShardOpener => {
   const durability = engine?.durability ?? "crash";
   switch (engine?.name ?? "sqlite") {
     case "rocksdb":
@@ -93,6 +108,62 @@ const openShardWith = (
   }
 };
 
+/** How long opening a shard on another Node may take before the open fails naming the shard. */
+const REMOTE_OPEN_TIMEOUT = Duration.seconds(30);
+
+/**
+ * Opens a shard where `shard-locations.json` says it lives. A listed shard is only ever opened through the Project
+ * channel as a remote key-value engine, never as a new local one: with no channel it fails, naming the shard.
+ */
+const openShardWith = (
+  engine: EngineOptions | undefined,
+  directory: string,
+  channel: ShardChannel | undefined,
+  readers: Map<ShardId, RemoteTenantReads>,
+): ShardOpener => {
+  const local = openLocalShardWith(engine, directory);
+  return (shard, context) => {
+    if (shard === TOPOLOGY_SHARD || shard === GLOBAL_SHARD) return local(shard, context);
+    return Effect.gen(function* () {
+      const listed = yield* Effect.try({
+        try: () => readShardLocations(directory),
+        catch: (cause) => new StoreError({ op: "shard.open", cause: cause instanceof Error ? cause.message : String(cause) }),
+      });
+      if (!listed.remote.includes(shard)) return yield* local(shard, context);
+      return yield* openRemoteShard(shard, context.origin, channel, readers);
+    });
+  };
+};
+
+const openRemoteShard = (
+  shard: ShardId,
+  origin: string,
+  channel: ShardChannel | undefined,
+  readers?: Map<ShardId, RemoteTenantReads>,
+) => Effect.gen(function* () {
+  if (channel === undefined) {
+    return yield* new StoreError({ op: "shard.open", cause: `Shard ${shard} is on another Node, and this host has no shard channel.` });
+  }
+  const first = yield* channel.access(shard);
+  let primed: typeof first | undefined = first;
+  const access = yield* remoteShardAccess(Effect.suspend(() => {
+    const next = primed;
+    primed = undefined;
+    return next === undefined ? channel.access(shard) : Effect.succeed(next);
+  }));
+  const kv = yield* makeRemoteKvEngine({ destination: first.destination, access });
+  const opened = yield* openShardOverKv(shard, kv, { origin });
+  if (readers !== undefined) {
+    const reader = yield* makeRemoteTenantReads({ destination: first.destination, access, shardId: shard });
+    readers.set(shard, reader);
+    yield* Effect.addFinalizer(() => Effect.sync(() => { if (readers.get(shard) === reader) readers.delete(shard); }));
+  }
+  return opened;
+}).pipe(Effect.timeoutOrElse({
+  duration: REMOTE_OPEN_TIMEOUT,
+  orElse: () => Effect.fail(new StoreError({ op: "shard.open", cause: `Shard ${shard} on another Node did not open within 30 seconds.` })),
+}), Effect.mapError((failure) => new StoreError({ op: "shard.open", cause: `Shard ${shard}: ${String(failure.cause)}` })));
+
 /**
  * Open a database for a host that is not written in Effect.
  *
@@ -101,6 +172,19 @@ const openShardWith = (
  * closed by that hook rather than wrapping the whole platform in a scoped
  * effect it has no way to express.
  */
+/**
+ * How a database takes its whole-database lease. A `writer` takes it now or opens nothing. A `standby` opens as a copy:
+ * it follows its writer, and the database is handed out only once the standby holds the lease, because the lease lapsed
+ * or was released and this copy held what the writer's followers acknowledged (`standbyDatabase`).
+ */
+export type NodeDatabaseLease =
+  | (DatabaseLeaseStart & { readonly role: "writer" })
+  | (DatabaseLeaseStandby & {
+    readonly role: "standby";
+    /** Ends the wait for promotion: the open is interrupted, its scope closed and nothing is handed out. */
+    readonly signal?: AbortSignal;
+  });
+
 export const openNodeDatabase = (
   options: OpenNodeDatabaseOptions,
 ): Promise<OpenNodeDatabase> => present(Effect.gen(function* (): Effect.fn.Return<OpenNodeDatabase, IntegrationFailure> {
@@ -122,6 +206,38 @@ export const openNodeDatabase = (
   }
   // A recorded `power` on an engine that cannot keep it opens as `crash`, and health says so.
   const effectiveDurability: KvDurability = durability === "power" && engine === "rocksdb" ? "crash" : durability;
+  if (options.lease !== undefined) {
+    const locations = readShardLocations(options.directory);
+    if (locations.remote.length > 0 || locations.replicas.length > 0) {
+      throw new TypeError("A lease-guarded Project cannot hold shards on other Nodes.");
+    }
+  }
+  const locations = Effect.try({
+    try: () => readShardLocations(options.directory),
+    catch: locationError,
+  });
+  const updateLocations = (change: (current: ShardLocations) => ShardLocations) => Effect.try({
+    try: () => writeShardLocations(options.directory, change(readShardLocations(options.directory))),
+    catch: locationError,
+  });
+  const channel = options.appShards === undefined ? undefined : httpShardChannel(options.appShards);
+  const shardPlacement: ShardPlacementHost | undefined = channel === undefined ? undefined : {
+    list: channel.list,
+    request: (input) => channel.request({ ...input, durability: effectiveDurability }),
+    activate: channel.activate,
+    release: channel.release,
+    remote: Effect.map(locations, (current) => current.remote),
+    markRemote: (shard) => updateLocations((current) => ({ ...current, remote: [...current.remote, shard] })),
+    forgetRemote: (shard) => updateLocations((current) => ({ ...current, remote: current.remote.filter((name) => name !== shard) })),
+    replicas: Effect.map(locations, (current) => current.replicas),
+    markReplica: (of, shard) => updateLocations((current) => ({
+      ...current, replicas: [...current.replicas.filter((entry) => entry.of !== of), { of, shard }],
+    })),
+    forgetReplica: (of) => updateLocations((current) => ({
+      ...current, replicas: current.replicas.filter((entry) => entry.of !== of),
+    })),
+  };
+  const readers = new Map<ShardId, RemoteTenantReads>();
   const scope = (yield* integrationValue(Effect.runPromise(Scope.make())));
   const fallback = partitionMapFor(options.shards ?? DEFAULT_LOCAL_SHARDS, {
     ...(options.virtualRanges === undefined ? {} : { virtualRanges: options.virtualRanges }),
@@ -133,7 +249,10 @@ export const openNodeDatabase = (
         partitionMap: fallback,
         ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
         ...(options.crossTenantRefresh === undefined ? {} : { crossTenantRefresh: options.crossTenantRefresh }),
-        openShard: openShardWith({ ...options.engine, durability: effectiveDurability }, options.directory),
+        openShard: openShardWith({ ...options.engine, durability: effectiveDurability }, options.directory, channel, readers),
+        openReplica: (shard) => openRemoteShard(shard, options.nodeId ?? "local", channel),
+        remoteReads: (shard) => readers.get(shard),
+        ...(shardPlacement === undefined ? {} : { shardPlacement }),
       }),
       scope,
     ),
@@ -143,10 +262,15 @@ export const openNodeDatabase = (
   // held in closes with the database (or at once, when taking it fails).
   if (options.lease !== undefined) {
     const lease = options.lease;
+    const taking: Effect.Effect<void, unknown, Scope.Scope> = lease.role === "standby"
+      ? Effect.asVoid(database.writerLeases.standbyDatabase(lease))
+      : Effect.asVoid(database.writerLeases.startDatabase(lease));
     yield* integrationValue(Effect.runPromise(
-      Scope.provide(database.writerLeases.startDatabase(lease), scope).pipe(
-        Effect.tapError(() => Scope.close(scope, Exit.succeed(undefined))),
+      Scope.provide(taking, scope).pipe(
+        // Failing, or interrupted by the signal of a standby that is told to stop waiting: either way nothing was handed out.
+        Effect.onExit((exit) => exit._tag === "Success" ? Effect.void : Scope.close(scope, Exit.succeed(undefined))),
       ),
+      lease.role === "standby" && lease.signal !== undefined ? { signal: lease.signal } : undefined,
     ));
   }
 
@@ -172,6 +296,47 @@ export const openNodeDatabase = (
     close: () => Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))),
   };
 }));
+
+const SHARD_LOCATIONS = "shard-locations.json";
+const shardLocationsFile = (directory: string) => join(directory, "..", SHARD_LOCATIONS);
+
+interface ShardLocations {
+  readonly remote: ReadonlyArray<ShardId>;
+  readonly replicas: ReadonlyArray<ShardReplicaLocation>;
+}
+
+const locationError = (cause: unknown) =>
+  new StoreError({ op: "shard.locations", cause: cause instanceof Error ? cause.message : String(cause) });
+
+const isShardLocations = objectFields<ShardLocations>({
+  remote: arrayOf(isString),
+  replicas: arrayOf(objectFields<ShardReplicaLocation>({ of: isString, shard: isString })),
+});
+
+/** The shards and replicas that live on other Nodes. */
+export const readShardLocations = (directory: string): ShardLocations => {
+  const file = shardLocationsFile(directory);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { remote: [], replicas: [] };
+    throw new Error(`The shard locations at ${file} are unreadable`, { cause });
+  }
+  try {
+    return parseJson(text, isShardLocations, "shard locations");
+  } catch (cause) {
+    throw new Error(`The shard locations at ${file} are malformed`, { cause });
+  }
+};
+
+/** Records which shards live on other Nodes, with a temporary file and a rename so a crash leaves one whole file. */
+export const writeShardLocations = (directory: string, locations: ShardLocations): void => {
+  const file = shardLocationsFile(directory);
+  const temporary = `${file}.${process.pid}`;
+  writeFileSync(temporary, JSON.stringify({ remote: [...new Set(locations.remote)].sort(), replicas: locations.replicas }), { mode: 0o600 });
+  renameSync(temporary, file);
+};
 
 const STORAGE_CHOICE = "storage.json";
 const storageChoiceFile = (directory: string) => join(directory, "..", STORAGE_CHOICE);

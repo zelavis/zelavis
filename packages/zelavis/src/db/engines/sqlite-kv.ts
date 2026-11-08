@@ -1,7 +1,7 @@
-import { Effect, Stream } from "effect";
-import { StoreError } from "../errors.js";
+import { Effect, Option, Stream } from "effect";
+import { ReadBudgetExceeded, StoreError } from "../errors.js";
 import {
-  equalBytes, scanRange, type KvCondition, type KvDurability, type KvEngine, type KvEntry, type KvReader, type KvScanOptions, type KvWrite,
+  equalBytes, scanRange, type KvCondition, type KvDurability, type KvEngine, type KvEntry, type KvReadBudget, type KvReader, type KvScanOptions, type KvWrite,
 } from "../kv.js";
 
 /**
@@ -68,6 +68,16 @@ const READER_SETUP = `
 /** Read-only connections kept open between snapshots; more are opened when needed. */
 const IDLE_READERS = 4;
 
+/** Rows a bounded scan looks at per step: sizes first, then only the rows the budget admits are copied. */
+const BOUNDED_PAGE_ROWS = 256;
+
+/** `length(value)` reads a blob's header, not its content, so a value too large for the budget is refused unread. */
+const BOUNDED_GET = "SELECT length(value) AS size, CASE WHEN length(value) <= ? THEN value END AS value FROM kv WHERE key = ?";
+
+const boundedScanSql = (columns: "sizes" | "rows", bounded: boolean, reverse: boolean): string =>
+  `SELECT ${columns === "sizes" ? "length(key) AS keyBytes, length(value) AS valueBytes" : "key, value"} FROM kv WHERE key >= ?` +
+  `${bounded ? " AND key < ?" : ""} ORDER BY key${reverse ? " DESC" : ""} LIMIT ?`;
+
 /** Bindings disagree on blob representation; the store sees one shape. */
 const toBytes = (value: unknown): Uint8Array => {
   if (value instanceof Uint8Array) return value;
@@ -125,8 +135,78 @@ export const sqliteKvEngineOver = (
 
   const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
+  /**
+   * A thunk run as one engine step. A refusal by a read budget is the read's own verdict,
+   * a defect carrying `ReadBudgetExceeded`; anything else a binding throws is a store failure.
+   */
+  const attempt = <A>(op: string, thunk: () => A): Effect.Effect<A, StoreError> =>
+    Effect.try({ try: thunk, catch: (cause) => cause instanceof ReadBudgetExceeded ? cause : fail(op)(cause) }).pipe(
+      Effect.catchTag("ReadBudgetExceeded", (refusal) => Effect.die(refusal)),
+    );
+
+  /** The successor of a key in scan order, for resuming just after it. */
+  const after = (key: Uint8Array): Uint8Array => {
+    const next = new Uint8Array(key.length + 1);
+    next.set(key);
+    return next;
+  };
+
+  /**
+   * Reads that spend a budget before they copy. A value is sized inside the same statement that would
+   * return it and handed back only when it fits what is left, so one oversized value is never copied.
+   * A scan takes a page of sizes (no content), admits the rows that fit, and copies exactly those,
+   * in the same read transaction, so the page is the one the sizes described. That needs a snapshot:
+   * on the writer's own connection two statements are not one view, so a scan there is refused.
+   */
+  const boundedOn = (handle: SqliteHandle, budget: KvReadBudget, snapshot: boolean): KvReader => {
+    const get = handle.prepare(BOUNDED_GET);
+    return {
+      get: (key) => attempt("sqlite-kv.get", () => {
+        budget.spend(1, key.length);
+        const row = get.get(budget.remainingBytes(), toKey(key)) as { size: number; value: unknown } | undefined;
+        if (row === undefined) return undefined;
+        budget.spend(0, row.size);
+        return toBytes(row.value);
+      }),
+
+      scan: (prefix, scanOptions) => {
+        if (!snapshot) return Stream.fail(fail("sqlite-kv.scan")("a bounded scan needs a snapshot"));
+        const { lo, hi, empty } = scanRange(prefix, scanOptions);
+        if (empty) return Stream.empty;
+        const reverse = scanOptions?.reverse === true;
+        interface Step { readonly lo: Uint8Array; readonly hi: Uint8Array | undefined; readonly left: number }
+        return Stream.paginate({ lo, hi, left: scanOptions?.limit ?? Number.POSITIVE_INFINITY } as Step, (step: Step) =>
+          attempt("sqlite-kv.scan", () => {
+            const rows = Math.min(BOUNDED_PAGE_ROWS, step.left);
+            if (rows < 1) return [[], Option.none<Step>()] as const;
+            const bounds = step.hi === undefined ? [toKey(step.lo), rows] : [toKey(step.lo), toKey(step.hi), rows];
+            const sizes: number[] = [];
+            for (const row of handle.prepare(boundedScanSql("sizes", step.hi !== undefined, reverse)).iterate(...bounds) as Iterable<{ keyBytes: number; valueBytes: number }>) {
+              sizes.push(row.keyBytes + row.valueBytes);
+            }
+            if (sizes.length === 0) return [[], Option.none<Step>()] as const;
+            const entriesLeft = budget.remainingEntries(), bytesLeft = budget.remainingBytes();
+            let admitted = 0, bytes = 0;
+            while (admitted < sizes.length && admitted < entriesLeft && bytes + sizes[admitted]! <= bytesLeft) bytes += sizes[admitted++]!;
+            // Nothing fits: this refuses by the limit that stopped it.
+            if (admitted === 0) budget.spend(1, sizes[0]!);
+            budget.spend(admitted, bytes);
+            const entries: KvEntry[] = [];
+            const copy = [...bounds.slice(0, -1), admitted];
+            for (const row of handle.prepare(boundedScanSql("rows", step.hi !== undefined, reverse)).iterate(...copy) as Iterable<{ key: unknown; value: unknown }>) {
+              entries.push({ key: fromKey(row.key), value: toBytes(row.value) });
+            }
+            const left = step.left - entries.length;
+            const last = entries.at(-1);
+            if (last === undefined || left < 1 || (sizes.length < rows && admitted === sizes.length)) return [entries, Option.none<Step>()] as const;
+            return [entries, Option.some(reverse ? { lo: step.lo, hi: last.key, left } : { lo: after(last.key), hi: step.hi, left })] as const;
+          }));
+      },
+    };
+  };
+
   /** Point and range reads over one connection: the writer's, or a reader's. */
-  const readerOn = (handle: SqliteHandle, get: ReturnType<SqliteHandle["prepare"]>): KvReader => ({
+  const readerOn = (handle: SqliteHandle, get: ReturnType<SqliteHandle["prepare"]>, snapshot: boolean): KvReader => ({
     get: (key) =>
       Effect.try({
         try: () => {
@@ -165,6 +245,8 @@ export const sqliteKvEngineOver = (
           catch: fail("sqlite-kv.scan"),
         }),
       ),
+
+    bounded: (budget) => boundedOn(handle, budget, snapshot),
   });
 
   interface Reader {
@@ -180,7 +262,7 @@ export const sqliteKvEngineOver = (
     handle.exec(READER_SETUP);
     return {
       handle,
-      reader: readerOn(handle, handle.prepare(GET)),
+      reader: readerOn(handle, handle.prepare(GET), true),
       probe: handle.prepare("SELECT 1 FROM kv LIMIT 1"),
     };
   };
@@ -240,7 +322,7 @@ export const sqliteKvEngineOver = (
     });
 
   return {
-    ...readerOn(db, statements.get),
+    ...readerOn(db, statements.get, false),
 
     write: (writes) => batch(writes, []).pipe(Effect.asVoid),
     conditionalWrite: batch,

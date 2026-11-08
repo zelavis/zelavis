@@ -28,6 +28,7 @@ const TRUST_KEY = "platform";
 export const ENROLLMENT_ENDPOINT_NAMESPACE = "fabric.enrollment-endpoint.v1";
 const ENDPOINT_KEY = "platform";
 const PLACEMENT_NAMESPACE = "fabric.project-ownership.v1";
+const SHARD_LEDGER_NAMESPACE = "fabric.app-data-placement.v1";
 /** Attempts, not successes: a resource bound, since the tokens are unguessable. */
 const ENROLL_ATTEMPTS_PER_WINDOW = 120;
 const ENROLL_WINDOW_MS = 60_000;
@@ -243,6 +244,16 @@ export function createNodeRoutes(options: {
         });
         if (holding.length > 0) {
           return { status: 409, headers: noStore, body: { error: "Projects are still placed on this node.", code: "node-in-use", projects: holding.slice(0, 20) } };
+        }
+        const ledgers = yield* integration(() => store.list(SHARD_LEDGER_NAMESPACE));
+        const shards = ledgers.flatMap((record) => {
+          const value: unknown = record.value;
+          const placements = isObject(value) && Array.isArray(value.placements) ? value.placements as unknown[] : [];
+          return placements.flatMap((entry) => isObject(entry) && entry.nodeId === nodeId && entry.state !== "released" &&
+            typeof entry.projectId === "string" && typeof entry.shardId === "string" ? [`${entry.projectId}/${entry.shardId}`] : []);
+        });
+        if (shards.length > 0) {
+          return { status: 409, headers: noStore, body: { error: "App shards are still placed on this node.", code: "node-in-use", shards: shards.slice(0, 20) } };
         }
         return yield* authority.revoke(nodeId).pipe(
           Effect.map(() => ({ headers: noStore, body: { removed: true } })),

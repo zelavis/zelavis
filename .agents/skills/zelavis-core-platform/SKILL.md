@@ -286,8 +286,8 @@ before editing.
   Markerless stop stops workloads; uninstall kills remaining owned cgroup members.
   Pre-protocol conversion is one explicit Update now restart under held admission.
   Agent degradation must not roll back the committed engine. Embedded user Agents
-  follow on host restart; remote/Bun handover remains unqualified. See
-  `../../references/agent-handover-plan.md` for current qualification evidence.
+  follow on host restart; remote/Bun handover remains unqualified. The public contract
+  and its limits are in `website/src/content/docs/architecture/updates.md`.
 
 - Project/service grants require exact route scopes and cannot authorize
   unscoped routes. Unscoped/system grants match runtime-wide routes; top-level
@@ -422,8 +422,8 @@ before editing.
   retain fenced single-writer authority and adapter-neutral event replication;
   device proposals are not commits. Independent multi-writer semantics require
   an approved operation/collection specification before implementation.
-- Merging a Tenant branch back follows [the branch merge decision](../../references/branch-merge-decision.md)
-  (decided and implemented): per document from the branch point, no default
+- Merging a Tenant branch back (`db/branch-merge.ts`, public contract in
+  `website/src/content/docs/api/database.md`) works per document from the branch point, no default
   winner, explicit per-document resolution, repeatable by state. Storage
   `durability` (`crash`/`power`) is chosen at open; an engine that cannot keep
   `power` refuses it.
@@ -512,7 +512,7 @@ before editing.
   `zelavis followers`); `remoteLeader`/`remoteAcknowledgments`/`remoteChanges` feed the
   unchanged `levelFollower`/`followLeader`; `db.followers.follow` follows into a
   database and tells its cross-Tenant indexes, which also take
-  `crossTenantRefresh.notifications`. No failover or remote shard movement yet.
+  `crossTenantRefresh.notifications`. Remote App shard placement (an Agent hosts the shard, the App moves Tenants into it with `db.movement`) is built; see the placement contract.
 - Managed app backups: manifest `directories[].backup` (`files` | `recipe`), the recipe
   `backup` phase (`dumpMariaDb` for MariaDB recipes, pinned `mariadb-dump`), staged by the
   integration runtime as the `app` component (`stageRecipeBackup`). `drillFrom`
@@ -543,10 +543,15 @@ before editing.
   logical Tenant, keep cross-shard semantics explicit, and require current
   writer generations even for colocated local placements.
 - For remote App shard placement, follow the request/grant authority contract
-  in `../../references/two-fabrics-placement-contract.md`. Internal admission
-  persists a conditional reservation only. A future committed grant and Agent
-  validation are required for activation and writes. Do not extend the
-  Project-local `PartitionMap` into physical Node authority.
+  in `../../references/two-fabrics-placement-contract.md`. It is built: a shard
+  is a remote key-value engine hosted by an Agent under a signed grant and an
+  epoch-fenced access token, and the App moves Tenants into it with
+  `db.movement`. Do not extend the Project-local `PartitionMap` into physical
+  Node authority or a remote `ObjectStoreApi`: named eligible Tenant reads run on the shard's Node under the router lease,
+  while similarity/hybrid queries and writes stay on the writer. Never fall back after a remote failure; the limits are in the contract.
+  A shard can have one disk-only durability replica on another Node. Keep its store outside the routing and
+  maintenance map and drive it from `db.shardLeaderFor(shard)` through the shared follower. Its first level
+  turn establishes readiness. Tenant reads and primary write acknowledgments do not use replicas.
 - Cloud capacity is a core capability over the `CapacityProvider` contract;
   Alchemy (exact pin, bundled in a first-party cloud service, never in the core
   runtime) is the default provisioning engine, and Fabric keeps all placement,
@@ -565,8 +570,8 @@ before editing.
   fence-before-takeover, and digest-verified install-once artifact preparation
   (`_remote-project-snapshot.ts`). Read a request body only after its authority
   verifies, and never snapshot a Project that already has local runtime data.
-  Still unproven: multi-host partition drills and Bun as the Agent runtime;
-  remote App shard movement is not operational.
+  Still unproven: multi-host partition drills and Bun as the Agent runtime.
+  Remote App shard placement is built and proven on one machine (see the placement contract).
 - App data delegates only `database.read|write|define`; definitions (collections,
   schemas, indexes, analyzers, constraints and semantic lenses) require define
   separately from record writes. The Project grants are `project.data.*`.

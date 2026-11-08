@@ -2,7 +2,7 @@
 // matched to its route and answered by the route's own handler, as the Platform's dispatcher would.
 import { defineDatabaseService } from "../../dist/db/index.js";
 
-export const PROXY = "/zelavis/api/v1/runtime/projects/p1/proxy/zelavis/api/v1/database";
+export const PROXY = "/zelavis/api/v1/runtime/projects/p1";
 
 const OPERATOR = { id: "operator", kind: "service", permissions: ["*"] };
 

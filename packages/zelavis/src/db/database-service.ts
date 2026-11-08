@@ -1,3 +1,4 @@
+import { isPositiveInteger } from "../core/json-validation.js";
 import { Cause, Effect } from "effect";
 import { evaluate, integration, present, integrationValue, unwrapFailure } from "../core/runtime/effect-boundary.js";
 import {
@@ -673,6 +674,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Tenant "${failure.branch}" cannot be merged${failure.into ? ` into "${failure.into}"` : ""}: ${failure.reason}.`;
     case "TenantBranching":
       return `Tenant "${failure.tenant}" is an unfinished branch of "${failure.from}"; run the same branch again to finish it, or remove the Tenant.`;
+    case "ReadBudgetExceeded":
+      return `This read passed the ${String(failure.limit)} limit (${String(failure.max)}) of a read on another Node and was refused, with nothing returned; narrow it with a filter or a smaller page and ask again.`;
     case "PlacementInUse":
       return `Tenant "${failure.partition}" is still in use by ${failure.calls} calls; it refuses changes and removal can be repeated.`;
     default:
@@ -719,8 +722,37 @@ function followerErrorResponse(cause: Cause.Cause<unknown>) {
   return body.code === undefined ? databaseErrorResponse(error, 400) : { status: 409, body };
 }
 
+/** A shard route's failure: the Platform's refusal carries its code, an unreachable Platform is a 503. */
+function shardErrorResponse(cause: Cause.Cause<unknown>) {
+  const error = unwrapFailure(Cause.squash(cause));
+  const failure = taggedFailureOf(error);
+  const fields = failure as unknown as { readonly reason?: string; readonly operationId?: string; readonly kind?: string; readonly phase?: string; readonly shard?: string } | undefined;
+  switch (failure?._tag) {
+    case "ShardPlacementUnavailable":
+      return { status: 503, body: { error: describeTaggedFailure(failure), code: "unavailable" } };
+    case "ShardPlacementRefused":
+      return { status: 409, body: { error: describeTaggedFailure(failure), code: fields?.reason ?? "refused" } };
+    case "ShardOperationInProgress":
+      return { status: 409, body: { error: describeTaggedFailure(failure), code: "operation-in-progress", operationId: fields?.operationId, kind: fields?.kind, phase: fields?.phase } };
+    case "ShardInUse":
+      return { status: 409, body: { error: describeTaggedFailure(failure), code: "shard-in-use" } };
+    case "ShardOperationInvalid":
+      return { status: 400, body: { error: describeTaggedFailure(failure), code: "invalid-request" } };
+    default:
+      return databaseErrorResponse(error, 400);
+  }
+}
+
 function databaseErrorResponse(error: unknown, fallback = 500) {
   const failure = taggedFailureOf(error);
+  if (failure?._tag === "StoreError" && typeof failure.op === "string" && failure.op.startsWith("remote-read.") &&
+      typeof failure.shard === "string") {
+    return { status: 503, body: { error: `Remote shard "${failure.shard}" is unavailable.`, code: "shard-unavailable" } };
+  }
+  // The read was refused for the work it asked for, whole: it is not an unavailable shard, and asking again unchanged refuses again.
+  if (failure?._tag === "ReadBudgetExceeded") {
+    return { status: 422, body: { error: describeTaggedFailure(failure), code: "read-budget-exceeded", limit: failure.limit, max: failure.max } };
+  }
   return createMappedJsonErrorResponse(
     failure ? Object.assign(new Error(describeTaggedFailure(failure)), { _tag: failure._tag }) : error,
     databaseErrorRules,
@@ -1028,8 +1060,9 @@ function defineDatabaseRootService(
               cursor: { type: "string", description: "The cursor the previous answer returned" },
               partitions: { type: "array", items: { type: "string" }, description: "Only these partitions (at most 10000 in one request)" },
               timeoutMillis: { type: "integer", description: "How long to wait for a write, 0 to 60000" },
+              declarations: { type: "integer", description: "The `declarations` of the previous answer: when the leader has declared a placement class or divided a Tenant since, the answer is owed at once" },
             } } },
-            responses: { 200: { description: "{ cursor, partitions, resync, more }" }, 400: { description: "A malformed cursor or a bound exceeded" } },
+            responses: { 200: { description: "{ cursor, partitions, resync, more, declarations }" }, 400: { description: "A malformed cursor or a bound exceeded" } },
           },
           method: "POST",
           access: { permissions: ["database.replicate"] },
@@ -1039,6 +1072,8 @@ function defineDatabaseRootService(
             const cursor = input.cursor;
             const partitions = input.partitions;
             const timeoutMillis = input.timeoutMillis;
+            const declarations = input.declarations;
+            if (declarations !== undefined && typeof declarations !== "number") return { status: 400, body: { error: `"declarations" is the one a previous answer returned.` } };
             if (cursor !== undefined && typeof cursor !== "string") return { status: 400, body: { error: `"cursor" is the one a previous answer returned.` } };
             if (partitions !== undefined && (!Array.isArray(partitions) || partitions.some((partition) => typeof partition !== "string"))) {
               return { status: 400, body: { error: `"partitions" is a list of partition names.` } };
@@ -1048,6 +1083,7 @@ function defineDatabaseRootService(
               ...(cursor === undefined ? {} : { cursor }),
               ...(partitions === undefined ? {} : { partitions: partitions as string[] }),
               ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
+              ...(declarations === undefined ? {} : { declarations }),
             }), { interruptible: true }) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
         },
@@ -1077,6 +1113,22 @@ function defineDatabaseRootService(
               ...(after === undefined ? {} : { after }),
               ...(limit === undefined ? {} : { limit }),
             })) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
+        },
+        {
+          id: "database.followers.declarations",
+          spec: {
+            operationId: "databaseFollowerDeclarations",
+            summary: "The placement classes and divisions a follower must declare",
+            description: "What this database has declared and carries no data: which collections are placed as `global` or `replicated`, and which Tenants are divided into parts. A follower of the whole database reads this once at the start of every resync and declares what it lacks, so a promoted copy routes and reads as the leader did.",
+            tags: ["database"],
+            responses: { 200: { description: "{ placements: { version, collections }, subdivisions: { version, tenants } }" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.replicate"] },
+          path: "/followers/declarations",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.followers.declarations()) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(followerErrorResponse(cause))))),
         },
         {
@@ -1553,6 +1605,89 @@ function defineDatabaseRootService(
             const key = readBodyObject(body).recoveryKey;
             return { body: yield* integration(() => service.backups.restore(params.name, params.runId, typeof key === "string" ? { recoveryKey: key } : undefined)) };
           }).pipe(Effect.catchCause((cause) => Effect.succeed(databaseErrorResponse(unwrapFailure(Cause.squash(cause)), 400))))),
+        },
+        {
+          id: "database.shards.list",
+          spec: { operationId: "listDatabaseShards", summary: "The database's shards and the shard operation", description: "Every shard with where it lives (this Node or another) and how many virtual ranges the partition map places on it, and any replica with its status and lag. Also includes the latest shard operation.", tags: ["database"], responses: { 200: { description: "{ shards, operation }" } } },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/shards",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            return { body: yield* integration(() => service.shards.list()) };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
+        },
+        {
+          id: "database.shards.operation",
+          spec: { operationId: "getDatabaseShardOperation", summary: "The latest shard operation", description: "The shard operation in progress, or the one that last finished or failed; `null` when there has been none.", tags: ["database"], responses: { 200: { description: "{ operation }" } } },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/shards/operation",
+          handler: ({ service }) => present(Effect.gen(function* () {
+            return { body: { operation: yield* integration(() => service.shards.operation()) } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
+        },
+        {
+          id: "database.shards.place",
+          spec: { operationId: "placeDatabaseShard", summary: "Place virtual ranges on a shard on another Node", description: "Asks the Platform for a shard on a Node it chooses within the Project's allocation, activates it and moves the ranges' Tenants onto it. Answers 202 with the recorded operation, which carries on in the background and resumes after any interruption.", tags: ["database"], requestBody: { required: true, schema: { type: "object", required: ["virtualRanges", "resources"], properties: { virtualRanges: { type: "array", items: { type: "integer", minimum: 0 }, minItems: 1, maxItems: 4096 }, resources: { type: "object", required: ["cpuCores", "memoryBytes", "diskBytes"], properties: { cpuCores: { type: "number" }, memoryBytes: { type: "number" }, diskBytes: { type: "number" } } }, shardId: { type: "string" } } } }, responses: { 202: { description: "{ operation }" }, 400: { description: "Invalid ranges or resources" }, 409: { description: "An operation is in progress, or the Platform refused" }, 503: { description: "This database has no Platform channel" } } },
+          method: "POST",
+          access: { permissions: ["database.shards.manage"] },
+          path: "/shards/place",
+          handler: ({ service, body }) => present(Effect.gen(function* () {
+            const input = readBodyObject(body);
+            const resources = input.resources as { cpuCores?: unknown; memoryBytes?: unknown; diskBytes?: unknown } | undefined;
+            if (!Array.isArray(input.virtualRanges) || resources === undefined || resources === null || typeof resources !== "object" ||
+                typeof resources.cpuCores !== "number" || typeof resources.memoryBytes !== "number" || typeof resources.diskBytes !== "number" ||
+                (input.shardId !== undefined && typeof input.shardId !== "string")) {
+              return { status: 400, body: { error: "The body is { virtualRanges: number[], resources: { cpuCores, memoryBytes, diskBytes }, shardId? }.", code: "invalid-request" } };
+            }
+            const operation = yield* integration(() => service.shards.place({
+              virtualRanges: input.virtualRanges as number[],
+              resources: { cpuCores: resources.cpuCores as number, memoryBytes: resources.memoryBytes as number, diskBytes: resources.diskBytes as number },
+              ...(typeof input.shardId === "string" ? { shardId: input.shardId } : {}),
+            }));
+            return { status: 202, body: { operation } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
+        },
+        {
+          id: "database.shards.release",
+          spec: { operationId: "releaseDatabaseShard", summary: "Give a shard on another Node back", description: "Moves the shard's ranges to `into`, closes the shard and releases it at the Platform, which removes the Node's storage. Answers 202 with the recorded operation.", tags: ["database"], requestBody: { required: true, schema: { type: "object", required: ["into"], properties: { into: { type: "string" } } } }, responses: { 202: { description: "{ operation }" }, 400: { description: "The shard is not on another Node, or `into` is unknown" }, 409: { description: "An operation is in progress" }, 503: { description: "This database has no Platform channel" } } },
+          method: "POST",
+          access: { permissions: ["database.shards.manage"] },
+          path: "/shards/:shardId/release",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const into = readBodyObject(body).into;
+            if (typeof into !== "string" || into === "") {
+              return { status: 400, body: { error: "The body is { into: shardId }.", code: "invalid-request" } };
+            }
+            const operation = yield* integration(() => service.shards.release(params.shardId!, { into }));
+            return { status: 202, body: { operation } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
+        },
+        {
+          id: "database.shards.replicate",
+          spec: { operationId: "replicateDatabaseShard", summary: "Give a shard a replica on another Node", description: "Reserves a durability copy of the shard on a Node other than its own, opens it and keeps it level from the shard's log. The replica is never read or promoted. Answers 202 with the recorded operation.", tags: ["database"], requestBody: { required: true, schema: { type: "object", required: ["resources"], properties: { resources: { type: "object", required: ["diskBytes"], properties: { diskBytes: { type: "integer", minimum: 1 } } } } } }, responses: { 202: { description: "{ operation }" }, 400: { description: "Invalid shard or disk reservation" }, 409: { description: "An operation is in progress or the Platform refused" }, 503: { description: "The Platform channel is unavailable" } } },
+          method: "POST",
+          access: { permissions: ["database.shards.manage"] },
+          path: "/shards/:shardId/replicate",
+          handler: ({ service, params, body }) => present(Effect.gen(function* () {
+            const diskBytes = readBodyObject(readBodyObject(body).resources).diskBytes;
+            if (!isPositiveInteger(diskBytes)) {
+              return { status: 400, body: { error: "The body is { resources: { diskBytes: positive integer } }.", code: "invalid-request" } };
+            }
+            const operation = yield* integration(() => service.shards.replicate(params.shardId!, { diskBytes }));
+            return { status: 202, body: { operation } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
+        },
+        {
+          id: "database.shards.unreplicate",
+          spec: { operationId: "unreplicateDatabaseShard", summary: "Remove a shard's replica", description: "Stops the copy and releases its storage at its Node. Answers 202 with the recorded operation.", tags: ["database"], responses: { 202: { description: "{ operation }" }, 400: { description: "The shard has no replica" }, 409: { description: "An operation is in progress or the Platform refused" }, 503: { description: "The Platform channel is unavailable" } } },
+          method: "POST",
+          access: { permissions: ["database.shards.manage"] },
+          path: "/shards/:shardId/unreplicate",
+          handler: ({ service, params }) => present(Effect.gen(function* () {
+            const operation = yield* integration(() => service.shards.unreplicate(params.shardId!));
+            return { status: 202, body: { operation } };
+          }).pipe(Effect.catchCause((cause) => Effect.succeed(shardErrorResponse(cause))))),
         },
         {
           id: "database.storage.get",

@@ -1,6 +1,9 @@
-import { type Duration, Effect, Option, PubSub, type Scope, Stream, SubscriptionRef } from "effect";
+import { shardReplicasOver } from "./shard-replicas.js";
+import { type Duration, Effect, Exit, Option, PubSub, Scope, Stream, SubscriptionRef } from "effect";
 import type { DbError, FollowerBehind, InvalidExport, LeaseOwnedByAnother, LeaseStillHeld, NoWriterLease, NotDesignatedStandby, StoreError } from "./errors.js";
 import type { KvEngine } from "./kv.js";
+import { PartitionUnavailable, ShardInUse, TenantRelocated } from "./errors.js";
+import { shardPlacementOver, type ShardPlacementApi, type ShardPlacementHost } from "./shard-placement.js";
 import { BranchNotMergeable, InvalidConstraint, TenantDivided, TenantNotBranchable, TenantNotDroppable, UnknownPart, type PlacementInUse } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity, PartitionKey } from "./model.js";
@@ -28,11 +31,13 @@ import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import { replicationOver, type ReplicationApi } from "./replication.js";
 import { partitionRouter } from "./routing.js";
+import { TENANT_READ_OPS, TENANT_READ_MEMBERS, isShardTenantRead, type TenantReadOp, type RemoteTenantReads } from "./tenant-reads.js";
+import type { Json } from "./json.js";
 import type { LeaderSource, ObjectStoreApi, ShardStoreApi } from "./store.js";
 import type { EventCursor } from "./events.js";
 import { exportDividedPage, type ExportPage, type ExportPageInput } from "./export-stream.js";
 import { makeChangeFeed } from "./change-feed.js";
-import { followersOver, type DatabaseLeader, type FollowersApi } from "./leader.js";
+import { followersOver, shardLeader, type DatabaseLeader, type FollowersApi } from "./leader.js";
 import {
   followWriter, holdWriter, startWriter, standby as standbyFor, type HoldWriterInput, type LeaseStore, type Promotion, type StandbyInput, type WriterHandle,
 } from "./writer-lease.js";
@@ -206,6 +211,17 @@ export interface ShardSeal {
   readonly examined: number;
 }
 
+export interface ShardsApi {
+  /** Shards open now (the reserved two excluded), sorted by code point. */
+  readonly list: Effect.Effect<ReadonlyArray<ShardId>>;
+  /** Open `shard` through `openShard` in a scope of its own (a child of the database's), unless open. */
+  readonly open: (shard: ShardId) => Effect.Effect<void, DbError>;
+  /** Close a shard nothing names; `ShardInUse` while the map, a pending move or a partition on it does. */
+  readonly close: (shard: ShardId) => Effect.Effect<void, DbError | ShardInUse>;
+  /** The partitions on an open shard that are the database's own (`zv.`-prefixed: a cross-Tenant index's entries, a plugin's records), which moving ranges does not carry away. */
+  readonly reserved: (shard: ShardId) => Effect.Effect<ReadonlyArray<string>, DbError>;
+}
+
 export interface DatabaseApi {
   /**
    * The logical boundary applications work against.
@@ -374,6 +390,15 @@ export interface DatabaseApi {
    */
   readonly movement: MovementApi;
 
+  /** Shards opened and closed while the database runs. */
+  readonly shards: ShardsApi;
+
+  /**
+   * Placing virtual ranges on a shard hosted by another Node, and giving it back: a durable
+   * operation resumed after any interruption.
+   */
+  readonly shardPlacement: ShardPlacementApi;
+
   /** Compaction and reindexing, per shard. */
   readonly maintenance: MaintenanceApi;
 
@@ -411,6 +436,8 @@ export interface DatabaseApi {
    * database. See `leader.ts`.
    */
   readonly followers: FollowersApi;
+  /** The routed data currently held by one shard, for following that shard alone. */
+  readonly shardLeaderFor: (shard: ShardId) => DatabaseLeader;
 
   /**
    * Process durable entities' messages with handlers by type until interrupted, in every partition (see
@@ -621,6 +648,10 @@ export interface MakeDatabaseOptions {
     shard: ShardId,
     context: { readonly origin: string },
   ) => Effect.Effect<ShardStoreApi, DbError, Scope.Scope>;
+  /** How this database reaches the Platform to place shards on other Nodes; absent, placing is unavailable. */
+  readonly shardPlacement?: ShardPlacementHost;
+  readonly openReplica?: (shard: ShardId) => Effect.Effect<ShardStoreApi, StoreError, Scope.Scope>;
+  readonly remoteReads?: (shard: ShardId) => RemoteTenantReads | undefined;
 }
 
 /** How long a move waits for calls still using a tenant's old shard, unless told otherwise. */
@@ -628,6 +659,8 @@ export interface MakeDatabaseOptions {
 const REMOVED = "removed";
 
 const DRAIN_TIMEOUT: Duration.Input = "30 seconds";
+/** The pause between tries to open a shard on another Node that was not answering at open. */
+const OFFLINE_SHARD_RETRY: Duration.Input = "5 seconds";
 
 /**
  * Open a logical database over a partition map.
@@ -642,6 +675,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
 ) {
   const nodeId = options.nodeId ?? "local";
   const opening = { origin: nodeId };
+  const databaseScope = yield* Effect.scope;
 
   // The topology lives in a store of its own rather than inside a shard: which
   // shard would hold it is exactly the question it answers. Keeping it in a
@@ -659,9 +693,45 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   const globalStore = globalShard.partition(GLOBAL_TENANT);
 
   const shards = new Map<ShardId, ShardStoreApi>();
+  /** Every shard but the two reserved ones is opened in a scope of its own, so it can be closed alone. */
+  const shardScopes = new Map<ShardId, Scope.Closeable>();
+  const openShardInOwnScope = (shard: ShardId) =>
+    Effect.gen(function* () {
+      const child = yield* Scope.fork(databaseScope);
+      const store = yield* options.openShard(shard, opening).pipe(
+        Scope.provide(child),
+        Effect.tapError(() => Scope.close(child, Exit.void)),
+      );
+      shards.set(shard, store);
+      shardScopes.set(shard, child);
+    });
+  /**
+   * A shard another Node hosts may be unreachable when this database opens. The Project still starts: Tenants on the
+   * other shards are served, a Tenant on this one is refused (`PartitionUnavailable`), and anything that spans every
+   * shard (listings, upkeep, images, scatter, a follower's copy) refuses rather than answer for part of the data. A
+   * background loop opens it as soon as it answers. A local shard that will not open still fails the open: that is
+   * damage, not distance.
+   */
+  const unavailable = new Map<ShardId, string>();
+  const remoteListed = new Set<ShardId>(options.shardPlacement === undefined ? [] : yield* options.shardPlacement.remote);
   for (const shard of shardsOf(partitionMap)) {
-    shards.set(shard, yield* options.openShard(shard, opening));
+    if (!remoteListed.has(shard)) {
+      yield* openShardInOwnScope(shard);
+      continue;
+    }
+    yield* openShardInOwnScope(shard).pipe(Effect.catch((failure) => {
+      const reason = "cause" in failure ? String(failure.cause) : failure._tag;
+      unavailable.set(shard, reason);
+      return Effect.logWarning(`Shard "${shard}" on another Node is unavailable: ${reason}`);
+    }));
   }
+  /** Refuses while a shard the map names is not open: a question about every shard must not be answered for some. */
+  const wholeDatabaseAvailable: Effect.Effect<void, PartitionUnavailable> = Effect.suspend(() => {
+    const [first] = unavailable;
+    return first === undefined
+      ? Effect.void
+      : Effect.fail(new PartitionUnavailable({ partition: "*", reason: `shard "${first[0]}" is on another Node and is not answering (${first[1]})` }));
+  });
 
   const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog, subdivisionCatalog);
 
@@ -680,6 +750,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       return { shard: shardFor(map, partition), version: map.version };
     },
     shards,
+    unavailable: (shard) => unavailable.get(shard),
   });
   const drainTimeout = options.drainTimeout ?? DRAIN_TIMEOUT;
   const movement = movementOver({
@@ -688,11 +759,46 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     shards,
     drained: (shard, tenant) => router.drained(shard, tenant, drainTimeout),
   });
+  const shardsApi: ShardsApi = {
+    list: Effect.sync(() => [...shards.keys()].sort()),
+    open: (shard) =>
+      Effect.gen(function* () {
+        if (shards.has(shard)) return;
+        yield* openShardInOwnScope(shard);
+      }),
+    reserved: (shard) =>
+      Effect.gen(function* () {
+        const store = shards.get(shard);
+        return store === undefined ? [] : (yield* store.partitions).filter((partition) => isReservedTenantId(partition)).sort();
+      }),
+    close: (shard) =>
+      Effect.gen(function* () {
+        const store = shards.get(shard);
+        if (store === undefined) return;
+        const child = shardScopes.get(shard);
+        if (child === undefined) return;
+        if (shardsOf(topology.current()).includes(shard)) {
+          return yield* new ShardInUse({ shard, reason: "the partition map places ranges on it" });
+        }
+        for (const move of yield* movement.pending) {
+          if (move.from === shard || move.to === shard || shardsOf(move.map).includes(shard)) {
+            return yield* new ShardInUse({ shard, reason: `a relocation of ${move.tenant} names it` });
+          }
+        }
+        if ((yield* store.partitionsPage(undefined, 1)).length > 0) {
+          return yield* new ShardInUse({ shard, reason: "it still holds a partition" });
+        }
+        shards.delete(shard);
+        shardScopes.delete(shard);
+        yield* Scope.close(child, Exit.void);
+      }),
+  };
+
   // Routing may already have left a source shard whose cleanup is unfinished.
   // Earlier phases also need target shards not yet named by the current map.
   for (const move of yield* movement.pending) {
     for (const shard of new Set([move.from, move.to, ...shardsOf(move.map)])) {
-      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard, opening));
+      if (!shards.has(shard)) yield* openShardInOwnScope(shard);
     }
   }
 
@@ -716,9 +822,19 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   const writes = yield* SubscriptionRef.make(0);
   /** Which partitions were written, for followers on other hosts: a fixed ring, so it costs the same for any number of Tenants. */
   const feed = makeChangeFeed();
+  /** Names a partition on the follower feed, unless it is the database's own. The App-scoped partition is data, not the database's own. */
+  const touchFeed = (partition: PartitionKey) => {
+    if (!isReservedTenantId(partition) || partition === GLOBAL_TENANT) feed.touch(partition);
+  };
   const wrote = (partition: PartitionKey) => {
-    if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) feed.touch(partition);
+    touchFeed(partition);
     return Effect.andThen(SubscriptionRef.update(writes, (count) => count + 1), crossTenant.touched(partition));
+  };
+  /** A declaration is news to followers as much as a write is: it moves the count their feed waits on. */
+  const announced: TopologyApi = {
+    ...topology,
+    placement: { ...topology.placement, declare: (...args) => Effect.tap(topology.placement.declare(...args), () => SubscriptionRef.update(writes, (count) => count + 1)) },
+    subdivision: { ...topology.subdivision, subdivide: (...args) => Effect.tap(topology.subdivision.subdivide(...args), () => SubscriptionRef.update(writes, (count) => count + 1)) },
   };
   const watched = (store: ObjectStoreApi, partition: PartitionKey): ObjectStoreApi => ({
     ...store,
@@ -786,7 +902,9 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   const acrossPartitions = <A>(
     run: (store: ObjectStoreApi) => Effect.Effect<A, DbError>,
   ): Effect.Effect<ReadonlyArray<{ readonly shard: ShardId; readonly partition: PartitionKey; readonly result: A }>, DbError> =>
-    Effect.map(
+    // The shards are read when the upkeep runs, not when the database is built: a shard opened or closed since
+    // (`ShardsApi`) is neither missed nor visited after it has gone.
+    Effect.flatMap(wholeDatabaseAvailable, () => Effect.map(
       Effect.forEach(everyShard(), ([shard, store]) =>
         Effect.flatMap(store.partitions, (partitions) =>
           Effect.forEach(partitions, (partition) =>
@@ -797,7 +915,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
               (result) => Option.map(result, (value) => ({ shard, partition, result: value })),
             )))),
       (rows) => rows.flat().flatMap((row) => (Option.isSome(row) ? [row.value] : [])),
-    );
+    ));
 
   const maintenance: MaintenanceApi = {
     status: Effect.map(
@@ -820,18 +938,51 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
     ),
     image: (destination) =>
-      Effect.forEach(everyShard(), ([shard, store]) =>
+      Effect.flatMap(wholeDatabaseAvailable, () => Effect.forEach(everyShard(), ([shard, store]) =>
         Effect.scoped(Effect.flatMap(destination(shard), (engine) =>
-          Effect.map(store.image(engine), (copied) => ({ shard, ...copied }) satisfies ShardImage)))),
+          Effect.map(store.image(engine), (copied) => ({ shard, ...copied }) satisfies ShardImage))))),
     seal: Effect.map(
       acrossPartitions((store) => store.sealPostings),
       (rows) => rows.map(({ shard, partition, result }) => ({ shard, partition, ...result })),
     ),
   };
 
+  /** Wrap only the named reads; router.operations supplies the pin around each returned effect. */
+  const onShardNode = <T extends object>(api: T, key: PartitionKey): T => {
+    const result = { ...api } as Record<string, unknown>;
+    const groups = new Map<string, Record<string, unknown>>();
+    const remote = (op: TenantReadOp, input: unknown, local: () => Effect.Effect<unknown, unknown>) =>
+      Effect.flatMap(router.pinnedRoute(key), (pin) => {
+        if (pin === undefined) return Effect.die(new Error("a Tenant read ran outside its routed operation"));
+        const reads = options.remoteReads?.(pin.shard);
+        if (reads === undefined || !isShardTenantRead(op, input)) return local();
+        // The client validates JSON before encoding; the table preserves each member's concrete effect type.
+        return reads.run({ partition: key, routedBy: pin.version, op, input: (input ?? null) as Json | null }).pipe(
+          Effect.catchIf((error) => error instanceof TenantRelocated, Effect.die),
+        );
+      });
+    for (const op of TENANT_READ_OPS) {
+      const [group, member] = TENANT_READ_MEMBERS[op];
+      const original = result[group];
+      if (typeof original !== "object" || original === null) continue;
+      let copy = groups.get(group);
+      if (!copy) {
+        copy = { ...original } as Record<string, unknown>;
+        groups.set(group, copy);
+        result[group] = copy;
+      }
+      const local = copy[member];
+      if (Effect.isEffect(local)) copy[member] = Effect.suspend(() => remote(op, null, () => local as Effect.Effect<unknown, unknown>));
+      else if (typeof local === "function") {
+        copy[member] = (input: unknown) => Effect.suspend(() => remote(op, input, () => (local as (input: unknown) => Effect.Effect<unknown, unknown>)(input)));
+      }
+    }
+    return result as T;
+  };
+
   const documentsFor_ = (tenant: TenantId): DocumentsApi => {
     const store = storeFor(tenant);
-    return router.operations(documentsFor(store, tenant, schemasFor(store, tenant)), tenant);
+    return router.operations(onShardNode({ documents: documentsFor(store, tenant, schemasFor(store, tenant)) }, tenant).documents, tenant);
   };
 
   /** Partitions a durable entity was sent a message in, in this process: the entity runner looks at them at once. */
@@ -923,7 +1074,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         ? replication.documentIdentity(entry.collection, entry.id)
         : replication.documentIdentity(entry.document.collection, entry.document.id));
 
-  const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT, globalStore);
+  const globalBase = tenantApiOver(watched(globalStore, GLOBAL_TENANT), GLOBAL_TENANT, globalStore);
   const globalDocuments: DocumentsApi = {
     ...globalBase.documents,
 
@@ -1009,10 +1160,8 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     }
   }
 
-  // A Tenant removal cut off by a crash leaves its partition fenced for removal
-  // and part removed. It was drained before removing began, so it is finished
-  // here, before anything can read what is left of it.
-  for (const [shardId, shard] of shards) {
+  // Finish an interrupted removal on each shard before resuming branches.
+  const recoverRemovals = (shardId: ShardId, shard: ShardStoreApi) => Effect.gen(function* () {
     for (const partition of yield* shard.partitions) {
       const fenced = yield* shard.partition(partition).writable.pipe(
         Effect.as(false),
@@ -1023,7 +1172,8 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       const records = yield* shard.drop(partition);
       yield* Effect.logInfo(`Finished removing "${partition}" from shard "${shardId}" (${records} records)`);
     }
-  }
+  });
+  for (const [shardId, shard] of shards) yield* recoverRemovals(shardId, shard);
 
   // A branch cut off by a crash leaves its target refusing every read and write.
   // It is started over here, from the source its lineage names and leaving
@@ -1043,6 +1193,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
           if ((yield* movement.pending).length > 0) {
             waiting += 1;
             return yield* Effect.logWarning(`Branch of "${from}" into "${partition}" waits for the pending relocation to finish`);
+          }
+          if (unavailable.has(shardOf(from))) {
+            waiting += 1;
+            return yield* Effect.logWarning(`Branch of "${from}" into "${partition}" waits for its source shard to reopen`);
           }
           if (!(yield* holds(from))) {
             const records = yield* shard.drop(partition);
@@ -1069,19 +1223,41 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
 
   /** A partition's handle, routed like any operation: the Tenant itself, or one part under its part key. */
   const handleOf = (key: TenantId) =>
-    router.operations(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key);
+    router.operations(onShardNode(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key), key);
 
-  // A schema activation cut off by a crash leaves its intent standing and the
-  // version inactive. Each is run again here, where nothing else writes yet;
-  // one refused now is logged and its intent retracted.
-  for (const [shardId, shard] of shards) {
+  // Resume interrupted schema activations after branches have been recovered.
+  const recoverSchemas = (shardId: ShardId, shard: ShardStoreApi) => Effect.gen(function* () {
     for (const partition of yield* tenantsOn(shard)) {
       if (shardOf(partition) !== shardId) continue;
+      if ((yield* shard.partition(partition).stats).seeding) continue;
       yield* handleOf(partition).schemas.resumeActivations;
     }
+  });
+  for (const [shardId, shard] of shards) yield* recoverSchemas(shardId, shard);
+
+  // A shard that was not answering at open is tried again, with a bounded pause, until it opens.
+  if (unavailable.size > 0) {
+    const reopen = Effect.gen(function* () {
+      while (unavailable.size > 0) {
+        yield* Effect.sleep(OFFLINE_SHARD_RETRY);
+        for (const shard of [...unavailable.keys()]) {
+          const opened = yield* Effect.result(openShardInOwnScope(shard));
+          if (opened._tag === "Failure") continue;
+          const store = shards.get(shard)!;
+          for (const partition of yield* Effect.orDie(store.partitions)) yield* Effect.orDie(store.partition(partition).resumeMaintenance);
+          yield* Effect.orDie(recoverRemovals(shard, store));
+          unavailable.delete(shard);
+          yield* Effect.orDie(resumeBranches);
+          for (const [id, holder] of shards) yield* Effect.orDie(recoverSchemas(id, holder));
+          yield* Effect.logInfo(`Shard "${shard}" on another Node is available again.`);
+        }
+      }
+    });
+    yield* Effect.forkIn(reopen, databaseScope);
   }
 
   const partitions = Effect.gen(function* () {
+    yield* wholeDatabaseAvailable;
     const found = new Set<TenantId>();
     for (const store of shards.values()) {
       for (const partition of yield* tenantsOn(store)) found.add(partition);
@@ -1090,12 +1266,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   });
 
   /**
-   * The Tenant partitions a page at a time, shard by shard in id order and key order within each: `after` is the
-   * last one the previous page ended at. A plugin's private Tenant is not the App's to follow, as it is not its to
-   * search, and the reserved partitions are the database's own. Nothing is held between pages.
+   * The partitions a page at a time: the App-scoped partition first, then shard by shard in id order and key order
+   * within each; `after` is the last one the previous page ended at. A follower copies every partition, a plugin's
+   * private one included, because a standby is a copy and not an App client; the other reserved partitions are the
+   * database's own. Nothing is held between pages.
    */
   const partitionsPage = (after: string | undefined, limit: number) =>
     Effect.gen(function* () {
+      yield* wholeDatabaseAvailable;
       const ids = [...shards.keys()].sort();
       let index = 0;
       let last: PartitionKey | undefined;
@@ -1105,7 +1283,8 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         last = after.slice(at + 1);
         if (at < 0 || !Number.isSafeInteger(index) || index < 0) return { partitions: [] as PartitionKey[] };
       }
-      const out: PartitionKey[] = [];
+      const out: PartitionKey[] = after === undefined ? [GLOBAL_TENANT] : [];
+      if (after === undefined && limit === 1) return { partitions: out, next: "0\u0001" };
       for (; index < ids.length; index++, last = undefined) {
         const shard = shards.get(ids[index]!)!;
         for (;;) {
@@ -1113,7 +1292,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
           if (raw.length === 0) break;
           for (const partition of raw) {
             last = partition;
-            if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) out.push(partition);
+            if (!isReservedTenantId(partition)) out.push(partition);
             if (out.length >= limit) return { partitions: out, next: `${index}\u0001${partition}` };
           }
         }
@@ -1122,13 +1301,40 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     });
 
   const followers = yield* followersOver({
-    routed: (partition) => router.routed(partition),
+    routed: (partition) => partition === GLOBAL_TENANT ? globalStore : router.routed(partition),
     partitionsPage,
     feed,
-    shardFor: (partition) => shards.get(shardOf(partition))!,
+    shardFor: (partition) => partition === GLOBAL_TENANT ? globalShard : shards.get(shardOf(partition))!,
     // What a follower applied here is news to this node's own followers too (a chain of followers), as much as a write is.
-    changed: (partition) => Effect.andThen(Effect.sync(() => { if (!isReservedTenantId(partition) && !partition.startsWith(SERVICE_TENANT_PREFIX)) feed.touch(partition); }), crossTenant.touched(partition)),
+    changed: (partition) => Effect.andThen(Effect.sync(() => touchFeed(partition)), crossTenant.touched(partition)),
+    remove: (partition) => Effect.gen(function* () {
+      const shard = shardOf(partition);
+      yield* storeFor(partition).fence({ from: shard, to: REMOVED });
+      yield* router.drained(shard, partition, drainTimeout).pipe(
+        Effect.tapError(() => storeFor(partition).liftFence({ from: shard, to: REMOVED })));
+      yield* shards.get(shard)!.drop(partition);
+    }),
     writes,
+    declarations: {
+      current: () => ({ placements: topology.placement.current(), subdivisions: topology.subdivision.current() }),
+      declare: (wanted) => Effect.gen(function* () {
+        const contradiction = (what: string) => Effect.die(new Error(`This copy contradicts its leader's declarations: ${what}. Nothing but following declares on a follower (placements v${topology.placement.current().version} here, v${wanted.placements.version} there; divisions v${topology.subdivision.current().version} here, v${wanted.subdivisions.version} there).`));
+        for (const [collection, placement] of Object.entries(topology.placement.current().collections)) {
+          if (wanted.placements.collections[collection] === undefined) return yield* contradiction(`${collection} is declared ${placement} here and not at all there`);
+        }
+        for (const [collection, placement] of Object.entries(wanted.placements.collections)) {
+          if (topology.placement.classOf(collection) !== placement) yield* announced.placement.declare(collection, placement);
+        }
+        for (const tenant of Object.keys(topology.subdivision.current().tenants)) {
+          if (wanted.subdivisions.tenants[tenant] === undefined) return yield* contradiction(`${tenant} is divided here and not there`);
+        }
+        for (const [tenant, parts] of Object.entries(wanted.subdivisions.tenants)) {
+          const held = topology.subdivision.partsOf(tenant);
+          if (held === undefined) yield* announced.subdivision.subdivide(tenant, parts);
+          else if (held.join("\u0000") !== parts.join("\u0000")) return yield* contradiction(`${tenant} is divided into ${held.join(",")} here and ${parts.join(",")} there`);
+        }
+      }).pipe(Effect.orDie),
+    },
   });
 
   /** The whole database as one lease subject: a gate installed on every shard, and no single log head. */
@@ -1161,12 +1367,42 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       }),
     });
 
-  return {
+  const shardLeaderFor = (shard: ShardId) => shardLeader({
+    shard, followers, shardOf,
+    placementsOf: () => topology.current().placements
+      .filter((placement) => placement.shard === shard)
+      .map(({ from, to }) => `${from}:${to}`).join(","),
+    store: () => shards.get(shard),
+    routed: (partition) => router.routed(partition),
+  });
+  const replicas = shardReplicasOver({
+    scope: databaseScope,
+    ...(options.openReplica === undefined ? {} : { openReplica: options.openReplica }),
+    leaderFor: shardLeaderFor,
+  });
+  const shardOperations = shardPlacementOver({
+    topologyStore,
+    replicas,
+    topology,
+    movement,
+    shards: shardsApi,
+    host: options.shardPlacement,
+    scope: databaseScope,
+    probe: (shard) => {
+      const store = shards.get(shard);
+      return store === undefined
+        ? Effect.die(new Error(`Shard ${shard} is not open.`))
+        : Effect.asVoid(store.partitionsPage(undefined, 1));
+    },
+  });
+
+  const api = {
     get partitionMap() {
       return topology.current();
     },
     maintenance,
     followers,
+    shardLeaderFor,
     writerLeases: {
       hold: (input) => Effect.gen(function* () {
         const acknowledged = input.acknowledged ?? highestAcknowledged(followers, input.partition);
@@ -1181,7 +1417,9 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       }),
       follow: (input) => followingWriter(input),
       holdDatabase: (input) => holdWriter({ ...input, store: wholeDatabase(input.scope) }),
-      standbyDatabase: (input) => standbyFor({ ...input, store: wholeDatabase(input.scope), follow: followingDatabase(input) }),
+      // The replicated copies are derived, not followed: rebuilt from the App-scoped data the standby holds before it writes.
+      standbyDatabase: (input) => standbyFor({ ...input, store: wholeDatabase(input.scope), follow: followingDatabase(input) }).pipe(
+        Effect.tap(() => Effect.orDie(replication.refresh))),
       followDatabase: (input) => followingDatabase(input),
       startDatabase: (input) => Effect.gen(function* () {
         const lease = yield* startWriter(input.leases, { scope: input.scope, owner: input.owner, ttlMillis: input.ttlMillis, standby: input.standby, ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }) });
@@ -1199,15 +1437,17 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       },
     },
     replication,
-    scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
+    scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_, complete: Effect.orDie(wholeDatabaseAvailable) }),
     crossTenantIndexes: crossTenant.api,
+    shards: shardsApi,
+    shardPlacement: shardOperations.api,
     // Finishing a relocation lets a branch that was waiting for it be finished too.
     movement: {
       ...movement,
       resume: Effect.tap(movement.resume, () => resumeBranches),
-      rebalance: (...args: Parameters<MovementApi["rebalance"]>) => Effect.tap(movement.rebalance(...args), () => resumeBranches),
+      rebalance: (next, rebalanceOptions) => Effect.tap(movement.rebalance(next, rebalanceOptions), () => resumeBranches),
     },
-    topology,
+    topology: announced,
     shardOf,
     partitions,
     tenants: Effect.map(partitions, (keys) => [...new Set(keys.map(tenantOfPartition))].sort()),
@@ -1399,6 +1639,9 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         for (const target of targets) {
           removed.push({ ...(target.part === undefined ? {} : { part: target.part }), shard: target.shard, records: yield* shards.get(target.shard)!.drop(target.key) });
         }
+        // Followers learn of a removal the way they learn of a write: the feed names it, and they ask the leader.
+        for (const target of targets) touchFeed(target.key);
+        yield* SubscriptionRef.update(writes, (count) => count + 1);
         const records = removed.reduce((sum, entry) => sum + entry.records, 0);
         if (parts === undefined) return { tenant, shard: removed[0]!.shard, records } satisfies TenantRemoval;
         return { tenant, records, parts: removed.map(({ part, shard, records }) => ({ part: part!, shard, records })) } satisfies TenantRemoval;
@@ -1415,15 +1658,19 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       // Synchronous, so refused by throwing — a typed error, which the HTTP
       // routes answer as a bad request naming the parts.
       if (parts !== undefined) throw new TenantDivided({ tenant, parts });
-      return router.operations(tenantApiOver(storeFor(tenant), tenant, router.routed(GLOBAL_TENANT, tenant)), tenant);
+      return router.operations(onShardNode(tenantApiOver(storeFor(tenant), tenant, router.routed(GLOBAL_TENANT, tenant)), tenant), tenant);
     },
     forPart: (tenant, part) => {
       const parts = topology.subdivision.partsOf(tenant);
       if (parts === undefined || !parts.includes(part)) throw new UnknownPart({ tenant, part, parts: parts ?? [] });
       const key = partitionKeyFor(tenant, part);
-      return router.operations(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key);
+      return router.operations(onShardNode(tenantApiOver(storeFor(key), key, router.routed(GLOBAL_TENANT, key)), key), key);
     },
   } satisfies DatabaseApi;
+  // An unfinished shard operation carries on in the background, now that everything it uses exists.
+  if (options.shardPlacement !== undefined) yield* replicas.resume(yield* options.shardPlacement.replicas);
+  yield* shardOperations.resume;
+  return api;
 });
 import { aggregatesFor, type AggregatesApi } from "./aggregates.js";
 import { importsFor, type ImportsApi } from "./imports.js";

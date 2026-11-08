@@ -82,7 +82,8 @@ test("a follower on another host seeds, carries on and acknowledges through the 
   assert.ok(reported.followers[0].position >= written.position);
 
   // Bad requests are refused as requests, not failures of the leader.
-  await assert.rejects(transport.stats("zv.global"), (error) => error.status === 400);
+  await assert.rejects(transport.stats("zv.topology"), (error) => error.status === 400);
+  assert.equal((await transport.stats("zv.global")).head, 0, "the App-scoped partition is the one reserved name a follower reads");
   await assert.rejects(transport.records("acme", { limit: 0 }), (error) => error.status === 400);
   await assert.rejects(transport.acknowledge("acme", { follower: "", position: 1 }), (error) => error.status === 400);
 });
@@ -175,18 +176,19 @@ test("the change feed names what was written since a cursor, waits for a write, 
   await assert.rejects(transport.feed({ cursor: "not a cursor" }), (error) => error.status === 400);
   assert.equal((await transport.feed({ cursor: "another-life:3", timeoutMillis: 0 })).resync, true, "a cursor from another life of the leader");
 
-  // The listing is paged, each partition with its head, and reserved partitions are not in it.
+  // The listing is paged, each partition with its head. The App-scoped partition leads the first page; the other reserved ones are not in it.
   for (const name of ["t1", "t2", "t3", "t4", "t5"]) await posts(leader.api, name, 1, 1);
   const names = [];
   let after;
   for (let pages = 0; pages < 10; pages++) {
     const page = await transport.partitions({ limit: 3, ...(after === undefined ? {} : { after }) });
     assert.ok(page.partitions.length <= 3);
-    for (const entry of page.partitions) { assert.ok(entry.head > 0); names.push(entry.partition); }
+    for (const entry of page.partitions) { assert.ok(entry.head > 0 || entry.partition === "zv.global"); names.push(entry.partition); }
     after = page.next;
     if (after === undefined) break;
   }
-  assert.deepEqual(names.sort(), ["acme", "beta", "t1", "t2", "t3", "t4", "t5"], "every Tenant once, none of the reserved ones");
+  assert.equal(names[0], "zv.global", "the App-scoped partition is first");
+  assert.deepEqual(names.sort(), ["acme", "beta", "t1", "t2", "t3", "t4", "t5", "zv.global"], "every Tenant once, the App-scoped partition, none of the other reserved ones");
   await assert.rejects(transport.partitions({ limit: 5000 }), (error) => error.status === 400);
 
   // As a stream, for the partitions a caller follows: they are named once at the start, then each that moves.

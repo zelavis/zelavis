@@ -12,6 +12,7 @@ import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
 import { makeRocksdbJsEngine } from "../dist/db/engines/rocksdb-js.js";
 import { engineAvailable } from "./_engine-available.mjs";
+import { startRemoteShardAgent } from "./_remote-shard-fixture.mjs";
 
 const bytes = (s) => new TextEncoder().encode(s);
 const text = (b) => new TextDecoder().decode(b);
@@ -19,11 +20,13 @@ const key = (...parts) => Uint8Array.from(parts);
 
 // Every engine runs the same suite. A driver that disagrees with another here
 // disagrees with the store, which is the whole point of having an interface.
+const remote = await startRemoteShardAgent();
 const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine()), true],
   ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir), true],
   ["lmdb", (dir) => makeLmdbEngine("kv", dir), engineAvailable("lmdb")],
   ["rocksdb-js", (dir) => makeRocksdbJsEngine("kv", dir), engineAvailable("@harperfast/rocksdb-js")],
+  ["remote", () => remote.freshEngine(), true],
 ];
 
 const run = (t, make, body) => {

@@ -131,14 +131,25 @@ yield* writeAcknowledged(yield* leaderDb.followers.source('acme'), yield* leader
   of the leader, or further back than the ring, answers `resync: true`, and the follower lists the partitions instead
   (`partitions`, a page of 1000 at a time with each head, nothing held between pages) and levels only those whose head
   differs from its own. A request lost to the network, or a follower restarted, misses nothing.
+  That includes removals: a Tenant dropped on the leader is named by the feed, and a follower removes its copy (fenced, drained, then dropped) once the leader holds nothing by that name; a resync first asks the leader about every partition the follower holds and removes the ones it no longer has.
 - **Following a whole database.** `db.followers.followAll(leader, { name })` lists once, then follows only what the feed
   names, a bounded number of partitions at a time, each one leveled and acknowledged; a partition that cannot be leveled
-  is tried again on the next turn, a leader that cannot be reached is retried with a capped backoff. `leader` is
+  is tried again on the next turn (which does not wait for a write while any partition waits), a leader that cannot be
+  reached is retried with a backoff capped at five seconds, and a resync tells the leader what is already level, since a
+  leader that restarted has forgotten every acknowledgment. `leader` is
   `localDatabaseLeader(db.followers)` in the same process or `remoteDatabaseLeader(client.followers(projectId))` across
   hosts. Measured in one process: a single write reached the follower in a median 5 ms with 500 Tenants and 6 ms with
-  4,000, asking about one partition each time; the initial sync is linear in the data, as it must be. The reserved
-  partitions (`zv.global`, `zv.topology`) are not followed; a standby for a whole Project copies them when it is
-  promoted, which is not built yet.
+  4,000, asking about one partition each time; the initial sync is linear in the data, as it must be. A copy holds
+  the whole database: every Tenant, every plugin's private `service:` partition and the App-scoped collections
+  (partition `zv.global` on the global shard). It also declares what the leader declared and what carries no data, the
+  placement classes (`global`, `replicated`) and the divided Tenants, which it reads once at the start of every resync
+  (`GET …/database/followers/declarations`, `client.followers(id).declarations()`,
+  `zelavis followers declarations --project ID`) and applies before it levels any partition. A declaration here that the
+  leader lacks, or a Tenant divided into other parts, is not a copy, and following stops naming it. Each side keeps its
+  own layout: the partition map and where each Tenant is stored are not followed, and the per-shard copies of replicated
+  collections are derived, so a standby promoted through `standbyDatabase` rebuilds them before it writes. The feed
+  carries a `declarations` version and takes the one the follower holds, so a placement class or a division declared on
+  the leader after a resync wakes the follower's feed and is declared here at once.
 - **Following into a database.** `db.followers.follow` keeps a partition of this database a follower of a leader and
   tells this database's cross-Tenant indexes after every pass that changed it, so an index on a read replica follows
   the leader's writes as they arrive. Writing a followed partition any other way diverges it, and the next pass copies
@@ -188,8 +199,8 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
   standby holds them all, a third node that tries to stand by is refused, and the returning old writer and that
   third node converge on the new writer, Tenants created after the loss included.
 - **A Project's start is guarded by its lease.** A Project runtime started with `ZELAVIS_LEASE_AUTHORITY` (the Platform's API
-  root), `ZELAVIS_LEASE_TOKEN`, `ZELAVIS_LEASE_NODE` (this node) and `ZELAVIS_LEASE_STANDBY` (the standby its writes wait for;
-  optional `ZELAVIS_LEASE_TTL_MILLIS`, default 15000, and `ZELAVIS_LEASE_ENDPOINT`) takes the whole-database lease before its
+  root), `ZELAVIS_LEASE_TOKEN`, `ZELAVIS_LEASE_NODE` (this node) and `ZELAVIS_LEASE_STANDBY` (the standby its writes wait for),
+  `ZELAVIS_LEASE_ROLE` (`writer` or `standby`, never defaulted) and `ZELAVIS_LEASE_TTL_MILLIS` takes the whole-database lease before its
   database is handed out (`openNodeDatabase({ lease })`, `writerLeases.startDatabase`), or does not open at all. A free lease,
   or this node's own, is acquired at a new epoch; another node's is taken only when it has lapsed or been released *and* this
   node is the standby that writer named (`LeaseStillHeld`, `NotDesignatedStandby` otherwise). So the lease, not whichever
@@ -201,13 +212,49 @@ handle.promotion; // { lease: { epoch: 2, … }, lostPositions: 0 }
 - **What a Project is given to do that.** The token is a *lease capability* the Platform mints at each start: an HMAC over
   the Project and the node, under a key derived from the installation secret for this purpose alone. It opens that
   Project's lease at `/runtime/project-leases/:scope` and nothing else, only for the node it names (a lease written naming
-  another owner is refused with 403), and only while the Project exists. A leaked token can touch no other Project's lease
+  another owner is refused with 403), and only while the Project exists. It is also that Project's *follower credential*: it
+  authenticates at the Platform as a service holding `database.replicate` on that one Project, which reaches
+  `GET|POST /runtime/projects/:id/followers/*` (the leader side of following the Project's database, forwarded to wherever
+  the Project is placed) and no other route, Project or Platform-wide. The followers client (`client.followers(id)`,
+  `zelavis followers`) uses that route. A leaked token can touch no other Project's lease
   and make no other node the writer; every change of writer it makes is audited as `project:<id>@<node>`. Lease-guarding is
   off until the operator configures it on the Platform: `ZELAVIS_PROJECT_LEASES_URL` (the API root as a Project process
   reaches it), `ZELAVIS_PROJECT_LEASES_NODE` (this node's id), `ZELAVIS_PROJECT_LEASES_STANDBY` (the node its writes wait
-  for), and optionally `ZELAVIS_PROJECT_LEASES_TTL_MILLIS` (default 30000, so each Project renews every ten seconds) and
-  `ZELAVIS_PROJECT_LEASES_ENDPOINT`. All three or none; a partial configuration is refused. One renewal per running Project
+  for), and optionally `ZELAVIS_PROJECT_LEASES_TTL_MILLIS` (default 30000, so each Project renews every ten seconds). All
+  three or none; a partial configuration is refused, as is an API root that does not end in `/api/v1`. The lease's
+  endpoint, where followers read the writer, is not configured: it is the Platform itself (the API root without `/api/v1`),
+  which routes a follower to whichever node holds the Project, so the same value is right at every epoch. One renewal per running Project
   every third of the lease, so the authority's load grows with the Projects that are running, not with their Tenants.
+  The Project receives the Platform's TTL and refuses to start without it. A deleted Project's lease record is removed
+  with it (the audit trail stays). Measured on the route handler and a SQLite System Store, one renewal costs about
+  0.07 ms of Platform time, so 1 000 running Projects take under 1 % of one core; the default stays 30 s.
+- **A Project process can run as its writer's standby.** Started with `ZELAVIS_LEASE_ROLE=standby` (the Node driver's
+  `startStandby`), a Project process on another node owns the lease once promoted and names the writer's node as its own
+  standby. Its database opens as a standby (`openNodeDatabase({ lease: { role: "standby", … } })`): it follows the writer
+  through the Platform with its follower credential, and is handed out only when the lease has lapsed or been released and
+  the copy holds what the writer's followers acknowledged. Nothing but that database opens before then, because Identity,
+  Workloads and entities write to the database at start, which would make the copy diverge. Until it is promoted the
+  process is up (runtime status `standby`) and answers `503 { "error": "This Project is standing by for its writer." }`;
+  after, it composes the Project and serves.
+- **The Platform runs the standby and follows the lease.** For a lease-guarded Project whose standby node is a remote
+  node, starting the Project starts the writer on the placed node and then a standby on the standby node (a signed,
+  placement-free dispatch; the Agent runs it as a workload of its own, `<id>#standby`, because it binds every Project
+  workload to a placement and a standby has none: the lease is its write fence). `GET /runtime/projects/:id` carries
+  `standby: { nodeId, status }` (`dispatched`, `promoted`, `stopped`, `failed` with the reason), the CLI prints it
+  (`zelavis projects get`) and the dashboard shows it on the Project's page. A standby that cannot be started never
+  stops the writer from serving. Stopping the Project stops the standby first, so releasing the writer's lease cannot
+  promote it. Nobody tells the standby to promote: when it takes the lease over, the Platform learns of it from the
+  lease record (told by the lease routes, with the next reconciliation as a backstop), moves the Project's placement to
+  that node at a new epoch, and starts the Project there under it, which first replaces the standby process with the
+  writer (the Agent has no way to give a running process a placement), taking the lease as the node's own next epoch.
+  The previous writer is fenced twice: its writes by the lease epoch, its placement by the epoch it no longer holds.
+  Measured on one machine with a lease of 3 s: the standby held the lease 3.5 s after the writer's processes were
+  killed, and the placement had followed 4.3 s after. After a failover the node the writer left runs a new standby (on the
+  Platform's own node that is its driver, elsewhere a dispatch), so the Project keeps one, and a second failover can bring
+  the writer back onto the Platform's node. The Platform reaches a Project placed on another node through that node's
+  Agent: its Gateway signs the one request (method, path, the caller's claims, fenced by the committed placement) and the
+  Agent, which holds the Project's secret, verifies it and forwards it to the Project's loopback listener signed with the
+  Project's own Gateway envelope. Requests and answers travel whole, up to the Gateway's 32 MiB bound.
 - **A leased partition stays where it is.** It cannot be moved or removed (`PartitionLeased`) until the lease is
   released.
 - **Operating it.** `GET followers/:partition/lease`, `POST followers/:partition/lease/promote` and `…/demote`
@@ -255,7 +302,7 @@ Every route needs `database.replicate`, which the Platform grants with `project.
 | CLI | `zelavis followers <stats\|records\|log\|hold\|release\|acknowledge\|acknowledgments\|feed\|partitions> --project ID [partition] …` |
 
 Not yet: a writer elsewhere promoted from a follower (failover), which needs the fenced `{owner, epoch}` handover the
-Fabric gives Project placement, and remote shard movement.
+Fabric gives Project placement. Placing a shard on another Node is a separate capability (below).
 
 ## API surface
 
@@ -275,6 +322,56 @@ Below this API, storage is an ordered key-value engine — SQLite by default,
 with RocksDB and LMDB as optional engines — one engine per shard. There
 is no SQL surface: one logical App database spans several shard files, and every
 write goes through the documents API.
+
+## Shards on other Nodes
+
+A Project's App database places virtual ranges on a shard whose storage another Node hosts, and gives it back. The
+App proposes, the Platform decides the Node and commits, and the App routes: a shard's bytes never move between
+Nodes in place. A shard is placed empty and Tenants move into it with the relocation that already copies, fences,
+catches up and moves routing last. Each operation is one durable record in the database's own topology store and
+resumes after any interruption.
+
+| Operation | HTTP | SDK | CLI |
+|---|---|---|---|
+| List shards and the latest operation | `GET database/shards` (`database.inspect`) | `client.shards(projectId).list()` | `zelavis shards list --project ID` |
+| Place ranges on a new remote shard | `POST database/shards/place` (`database.shards.manage`) | `.place({ virtualRanges, resources, shardId? })` | `zelavis shards place --project ID --ranges 0-31,64 --cpu 1 --memory BYTES --disk BYTES` |
+| Give a remote shard back | `POST database/shards/:shardId/release` (`database.shards.manage`) | `.release(shardId, { into })` | `zelavis shards release SHARD --into SHARD` |
+| Add a shard replica | `POST database/shards/:shardId/replicate` (`database.shards.manage`) | `.replicate(shardId, { diskBytes })` | `zelavis shards replicate SHARD --project ID --disk BYTES` |
+| Remove a shard replica | `POST database/shards/:shardId/unreplicate` (`database.shards.manage`) | `.unreplicate(shardId)` | `zelavis shards unreplicate SHARD --project ID` |
+| The latest operation | `GET database/shards/operation` (`database.inspect`) | `.operation()` | `zelavis shards operation` |
+
+`project.runtime.manage` grants `database.shards.manage`. Mutations answer `202` with the recorded operation.
+Poll `.operation()` until `done` or `failed`. Transient failures, such as an unreachable Agent, are recorded and retried
+with backoff. A Platform refusal can end the recorded operation with an error.
+
+To replicate, send `{ resources: { diskBytes } }` with a positive integer byte count. Unreplicate takes no body. The
+operation identifies the primary as `of` and the copy as `shardId`. After the copy opens, the operation can finish while
+the copy is still catching up. The primary's list entry reports `replica` with its Node, status and, after its first level
+turn, `heldAsOf` and `lagMillis`. A copy starts `seeding`, becomes `following` on its first level turn, and is `behind`
+when that time is over 60 seconds old. An unopened copy reports `unavailable`. Each primary can have one copy, on
+another Node, using its Project's disk allocation. Remove the copy before releasing the primary. Tenant reads use the
+primary, and writes complete independently of the copy. Promotion and recovery from the copy are outside this API.
+
+- **Allocation.** Where a shard may go is the operator's per-Project allocation (`shard-placement/:projectId/allocation`).
+  A refusal such as `no-eligible-node` or `out-of-envelope` is visible in the operation's error.
+- **Routing moves last.** The map names the new shard only after the Platform reports it `committed` and the shard
+  answered a call. A refusal before that abandons the moves: sources are writable again, copies dropped, the
+  reservation released.
+- **One at a time.** A second shard operation while one is unfinished is `409 operation-in-progress`.
+- **Where a shard lives.** `shard-locations.json`, beside the shards, records remote primaries and replicas separately.
+  The Project opens listed stores through its Platform channel.
+- **Remote reads.** Eligible Tenant reads, including ordinary queries and scatter legs, run on the shard's Node.
+  Similarity and hybrid query inputs, writes, KV and time series stay on the Project's writer. Each remote read spends from a
+  work budget (32 MiB of stored data, 262,144 entries and 4,194,304 expanded posting identifiers by default) and one that
+  passes it is refused whole: `422` with `code: "read-budget-exceeded"`, `limit` (`bytes`, `entries` or `postings`) and `max`.
+  That is a different answer from `503 shard-unavailable`; repeating the same read
+  refuses again, so narrow it (a filter, a smaller page) instead. Nothing is returned in part and the writer does not run
+  the read instead. The SDK rejects with that `code`.
+- **Limits.** A lease-guarded Project (one with a standby) refuses remote shards. A database image or backup holds
+  every shard's keys and opens as an all-local database. A Project whose Platform is unreachable keeps serving its
+  remote shard until its 120-second access token expires. A remote shard whose Agent is not answering when the Project starts
+  does not stop it: the shard is listed with `available: false`, its Tenants are refused, and questions about every shard refuse
+  until it opens.
 
 ## Documents
 
@@ -842,7 +939,8 @@ gives you a second database to try something on. It needs `database.restore`, ca
   nothing is written and the answer is the plan, as with `dryRun`. Collections the branch created are created in the
   source; a definition changed on both sides is settled only by keeping the source's. Outbox messages and schema
   versions are not merged and are listed in `unmerged`. A merge cut off part way, or refused because the source was
-  written meanwhile, is simply run again. A divided branch is planned part by part before any part is written. The
+  written meanwhile, is simply run again. One merge carries at most 200,000 changed documents; a larger one is refused
+  and is merged in smaller steps. A divided branch is planned part by part before any part is written. The
   branch stays a Tenant of its own afterwards. The Tenants overview reports each branch's `branchedFrom`.
 - **Refusals.** It is refused (400) for a reserved Tenant, the App's own Tenant, a plugin's `service:` Tenant or a
   part's key (`name#part`) on either side, the same name twice, a source holding nothing, a target that already holds

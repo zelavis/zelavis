@@ -26,7 +26,7 @@ const collect = async () => {
   const dir = mkdtempSync(join(tmpdir(), "zv-parity-"));
   const db = await openNodeDatabase({ directory: join(dir, "shards"), crossTenantRefresh: false });
   const PROXY = "/zelavis/api/v1/runtime/projects/:projectId/proxy/zelavis/api/v1";
-  for (const route of defineDatabaseService(db.api).api.v1) ops.push({ id: `${route.method} database${route.path}`, method: route.method, path: `${PROXY}/database${route.path}`, alt: `/zelavis/api/v1/runtime/projects/:projectId/data${route.path}` });
+  for (const route of defineDatabaseService(db.api).api.v1) ops.push({ id: `${route.method} database${route.path}`, method: route.method, path: `${PROXY}/database${route.path}`, alt: route.path.startsWith("/followers/") ? `/zelavis/api/v1/runtime/projects/:projectId${route.path}` : `/zelavis/api/v1/runtime/projects/:projectId/data${route.path}` });
   const storage = await resolveStorageEndpointGroup({ storage: createLocalFileStorage(join(dir, "files")) }, { rootPath: "/zelavis", apiPrefix: "/zelavis/api", apiVersion: "v1" });
   for (const route of storage.api.v1) ops.push({ id: `${route.method} storage${route.path}`, method: route.method, path: `${PROXY}/storage${route.path}` });
   for (const op of ops.filter((entry) => entry.path.startsWith("/zelavis/api/v1/workloads"))) op.alt = op.path.replace("/zelavis/api/v1/", `${PROXY}/`);
@@ -64,7 +64,7 @@ const collect = async () => {
   };
   await walk(client, "", 0);
 
-  const receivers = [[/workloads\(input\)\.([A-Za-z0-9_.]+)\(/g, "workloads."], [/input\.client\.([A-Za-z0-9_.]+)\(/g, ""], [/\bclient\.([A-Za-z0-9_.]+)\(/g, ""], [/\bapi\.([A-Za-z0-9_.]+)\(/g, "data."], [/files\(input\)\.([A-Za-z0-9_.]+)\(/g, "storage."], [/indexes\(input\)\.([A-Za-z0-9_.]+)\(/g, "crossTenantIndexes."], [/followers\(input\)\.([A-Za-z0-9_.]+)\(/g, "followers."], [/entities\(input\)\.([A-Za-z0-9_.]+)\(/g, "data.entities."]];
+  const receivers = [[/workloads\(input\)\.([A-Za-z0-9_.]+)\(/g, "workloads."], [/input\.client\.([A-Za-z0-9_.]+)\(/g, ""], [/\bclient\.([A-Za-z0-9_.]+)\(/g, ""], [/\bapi\.([A-Za-z0-9_.]+)\(/g, "data."], [/files\(input\)\.([A-Za-z0-9_.]+)\(/g, "storage."], [/indexes\(input\)\.([A-Za-z0-9_.]+)\(/g, "crossTenantIndexes."], [/followers\(input\)\.([A-Za-z0-9_.]+)\(/g, "followers."], [/shards\(input\)\.([A-Za-z0-9_.]+)\(/g, "shards."], [/entities\(input\)\.([A-Za-z0-9_.]+)\(/g, "data.entities."]];
   const cliUses = new Set();
   for (const file of readdirSync("src/cli").filter((name) => name.endsWith(".ts"))) {
     const text = readFileSync(`src/cli/${file}`, "utf8");
@@ -89,6 +89,7 @@ const EXEMPT = {
   "GET /{path}": "frontend: the Project's or Platform's site",
   "GET /zelavis/{path}": "frontend: the dashboard",
   "GET database/menu/tables": "dashboard: dynamic menu items for the sidebar",
+  ...Object.fromEntries(["GET", "POST"].map((method) => [`${method} /zelavis/api/v1/runtime/projects/{projectId}/followers/{path}`, "passthrough: the typed follower operations behind it are checked one by one"])),
   ...Object.fromEntries(["GET", "POST", "PUT", "PATCH", "DELETE"].flatMap((method) => [
     [`${method} /zelavis/api/v1/runtime/projects/{projectId}/proxy/{path}`, "passthrough: the typed Project operations behind it are checked one by one"],
     [`${method} /zelavis/api/v1/runtime/projects/{projectId}/data/{path}`, "passthrough: the typed App data operations behind it are checked one by one"],
@@ -96,6 +97,11 @@ const EXEMPT = {
   ])),
   "GET /zelavis/api/v1/runtime/project-leases/{scope}": "ingress: a Project runtime holding its own writer lease, authorized by the capability it was started with",
   "PUT /zelavis/api/v1/runtime/project-leases/{scope}": "ingress: a Project runtime holding its own writer lease, authorized by the capability it was started with",
+  "GET /zelavis/api/v1/runtime/project-shards/{projectId}": "ingress: a Project runtime's own shard placement, authorized by the capability it was started with",
+  "POST /zelavis/api/v1/runtime/project-shards/{projectId}/requests": "ingress: a Project runtime's own shard placement, authorized by the capability it was started with",
+  "POST /zelavis/api/v1/runtime/project-shards/{projectId}/{shardId}/activate": "ingress: a Project runtime's own shard placement, authorized by the capability it was started with",
+  "POST /zelavis/api/v1/runtime/project-shards/{projectId}/{shardId}/access": "ingress: a Project runtime's own shard placement, authorized by the capability it was started with",
+  "POST /zelavis/api/v1/runtime/project-shards/{projectId}/{shardId}/release": "ingress: a Project runtime's own shard placement, authorized by the capability it was started with",
   "POST /zelavis/api/v1/workloads/webhooks/{projectId}/{name}": "ingress: a provider's own call, authenticated by the webhook's signature",
 };
 

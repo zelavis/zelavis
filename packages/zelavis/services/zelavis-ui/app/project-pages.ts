@@ -12,6 +12,7 @@ import { contentScreen } from "./content-pages.ts";
 import { tenantsScreen } from "./tenants-pages.ts";
 import { crossTenantIndexesScreen } from "./cross-tenant-indexes-page.ts";
 import { databaseImagesScreen } from "./database-images-page.ts";
+import { shardsScreen } from "./shards-page.ts";
 import type { ScreenContext } from "./screens.ts";
 
 /** The Project's own pages that are not a database, content, storage or workload editor. */
@@ -38,7 +39,7 @@ export const handlesProjectPath = (context: ScreenContext) => {
   if (!context.projectId) return false;
   const [, , , section, rest] = context.path.split("/");
   // Tables use the server view; operator pages are native screens here.
-  if (section === "database") return rest === "tenants" || rest === "cross-tenant-indexes" || rest === "images";
+  if (section === "database") return rest === "tenants" || rest === "cross-tenant-indexes" || rest === "images" || rest === "shards";
   return !section || !LEGACY_SECTIONS.has(section);
 };
 
@@ -54,6 +55,7 @@ export const projectPagesScreen = Effect.fn("ui.projectPages")(function*(context
     const view = context.path.split("/")[4];
     if (view === "cross-tenant-indexes") return yield* crossTenantIndexesScreen(context, scoped, base);
     if (view === "images") return yield* databaseImagesScreen(context, scoped);
+    if (view === "shards") return yield* shardsScreen(context, scoped, project.id);
     return yield* tenantsScreen(context, scoped, base, project.id);
   }
   if (section === "workloads") return yield* workloadsScreen(context);

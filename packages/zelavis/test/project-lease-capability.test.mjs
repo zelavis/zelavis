@@ -3,9 +3,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect, Exit } from "effect";
+import { createMemorySystemStore } from "../dist/system-store.js";
 import { mintLeaseCapability, verifyLeaseCapability } from "../dist/platform/lease-capability.js";
 import { createWriterLeaseRoutes } from "../dist/platform/writer-lease-routes.js";
-import { systemStoreLeaseAudit } from "../dist/platform/writer-lease-store.js";
+import { createLeaseCapabilityAuthenticator } from "../dist/platform/writer-lease-routes.js";
+import { deleteProjectWriterLease, systemStoreLeaseAudit, systemStoreLeaseStore } from "../dist/platform/writer-lease-store.js";
 import { projectLeaseConfiguration, projectLeaseEnvironment } from "../dist/adapters/_project-lease-environment.js";
 import { leaseFromEnvironment } from "../dist/adapters/_node-project-engine.js";
 import { httpLeaseStore, memoryLeaseStore, startWriter } from "../dist/db/index.js";
@@ -82,8 +84,9 @@ test("the Platform's configuration becomes the environment a Project is started 
   assert.throws(() => projectLeaseConfiguration({ ZELAVIS_PROJECT_LEASES_URL: "http://127.0.0.1:3000/zelavis/api/v1" }), /together/);
   assert.throws(() => projectLeaseConfiguration({ ZELAVIS_PROJECT_LEASES_URL: "u", ZELAVIS_PROJECT_LEASES_NODE: "n", ZELAVIS_PROJECT_LEASES_STANDBY: "s", ZELAVIS_PROJECT_LEASES_TTL_MILLIS: "5" }), /1000/);
   const configuration = projectLeaseConfiguration({
-    ZELAVIS_PROJECT_LEASES_URL: "http://127.0.0.1:3000/zelavis/api/v1", ZELAVIS_PROJECT_LEASES_NODE: "node-a", ZELAVIS_PROJECT_LEASES_STANDBY: "node-b", ZELAVIS_PROJECT_LEASES_ENDPOINT: "http://node-a:8080",
+    ZELAVIS_PROJECT_LEASES_URL: "http://127.0.0.1:3000/zelavis/api/v1", ZELAVIS_PROJECT_LEASES_NODE: "node-a", ZELAVIS_PROJECT_LEASES_STANDBY: "node-b",
   });
+  assert.throws(() => projectLeaseConfiguration({ ZELAVIS_PROJECT_LEASES_URL: "http://127.0.0.1:3000/zelavis", ZELAVIS_PROJECT_LEASES_NODE: "n", ZELAVIS_PROJECT_LEASES_STANDBY: "s" }), /ending in \/api\/v1/);
   assert.equal(configuration.ttlMillis, 30_000);
 
   const records = new Map();
@@ -92,9 +95,13 @@ test("the Platform's configuration becomes the environment a Project is started 
     set: async (namespace, key, value) => { const record = { namespace, key, value, updatedAt: new Date().toISOString() }; records.set(`${namespace}/${key}`, record); return record; },
     setIfAbsent: async (namespace, key, value) => { const found = records.get(`${namespace}/${key}`); if (found) return { created: false, record: found }; const record = { namespace, key, value, updatedAt: new Date().toISOString() }; records.set(`${namespace}/${key}`, record); return { created: true, record }; },
   };
-  const environment = await projectLeaseEnvironment(configuration, store, "project-9");
-  assert.deepEqual([environment.ZELAVIS_LEASE_NODE, environment.ZELAVIS_LEASE_STANDBY, environment.ZELAVIS_LEASE_TTL_MILLIS, environment.ZELAVIS_LEASE_ENDPOINT],
-    ["node-a", "node-b", "30000", "http://node-a:8080"]);
+  const environment = await projectLeaseEnvironment(configuration, store, "project-9", "writer");
+  assert.deepEqual([environment.ZELAVIS_LEASE_NODE, environment.ZELAVIS_LEASE_STANDBY, environment.ZELAVIS_LEASE_ROLE, environment.ZELAVIS_LEASE_TTL_MILLIS, environment.ZELAVIS_LEASE_ENDPOINT],
+    ["node-a", "node-b", "writer", "30000", "http://127.0.0.1:3000/zelavis"], "the endpoint is the Platform itself, derived from its API root");
+  const standby = await projectLeaseEnvironment(configuration, store, "project-9", "standby");
+  assert.deepEqual([standby.ZELAVIS_LEASE_NODE, standby.ZELAVIS_LEASE_STANDBY, standby.ZELAVIS_LEASE_ROLE], ["node-b", "node-a", "standby"], "a standby is the other node and hands back to the writer");
+  const standbyLease = leaseFromEnvironment("project-9", standby);
+  assert.deepEqual([standbyLease.role, standbyLease.owner, standbyLease.successor, typeof standbyLease.leaderFor], ["standby", "node-b", "node-a", "function"]);
   const lease = leaseFromEnvironment("project-9", environment);
   assert.deepEqual([lease.scope, lease.owner, lease.standby], ["project-9", "node-a", "node-b"], "the Project reads exactly what the Platform gave it");
   // The token the Platform minted is the one the authority accepts for that Project and node, under the secret the store holds.
@@ -116,7 +123,7 @@ test("the Project driver starts a Project with the lease environment the Platfor
     // The agent stops at the first command: what is under test is the environment the driver hands it.
     const agent = { start: async (command) => { started = command; throw new Error("stopped at the command"); } };
     const driver = createNodeProcessProjectRuntime({ directory: root, agent,
-      ...(guarded ? { leaseEnvironment: async (projectId) => ({ ZELAVIS_LEASE_AUTHORITY: "http://platform/api", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_TOKEN: `token-for-${projectId}`, ZELAVIS_LEASE_STANDBY: "node-b" }) } : {}) });
+      ...(guarded ? { leaseEnvironment: async (projectId, role) => ({ ZELAVIS_LEASE_AUTHORITY: "http://platform/api", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_TOKEN: `token-for-${projectId}`, ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_ROLE: "writer", ZELAVIS_LEASE_TTL_MILLIS: "30000" }) } : {}) });
     const project = { id: "one", name: "One", runtimeKind: "native", kind: "zelavis", recipe: { name: manifest.name, version: manifest.version, specifier: manifest.name, runtimeKinds: ["native"] } };
     try {
       await driver.prepare(project, project.recipe);
@@ -131,4 +138,31 @@ test("the Project driver starts a Project with the lease environment the Platfor
       }
     } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
   }
+});
+
+test("deleteProjectWriterLease removes the record and is idempotent", async () => {
+  const store = createMemorySystemStore();
+  const leases = systemStoreLeaseStore(store);
+  assert.equal(await Effect.runPromise(leases.create({ partition: "p1", owner: "a", epoch: 1, expiresAt: 1, acknowledgedHead: 0 })), true);
+  await deleteProjectWriterLease(store, "p1");
+  await deleteProjectWriterLease(store, "p1");
+  assert.equal(await Effect.runPromise(leases.read("p1")), undefined);
+});
+
+test("a Project's lease capability authenticates as that Project's follower, holding database.replicate on it alone", async () => {
+  const secret = "installation-secret";
+  const existing = new Set(["p1"]);
+  const authenticator = createLeaseCapabilityAuthenticator({ secret: async () => secret, projectExists: async (scope) => existing.has(scope) });
+  const asked = (token) => authenticator.authenticate({ request: new Request("http://platform/zelavis/api/v1/runtime/x", { headers: token === undefined ? {} : { authorization: `Bearer ${token}` } }) });
+
+  const principal = await asked(await mintLeaseCapability(secret, { scope: "p1", node: "node-b" }));
+  assert.equal(principal.id, "project-lease:p1@node-b");
+  assert.equal(principal.type, "service");
+  assert.deepEqual(principal.grants, [{ permission: "database.replicate", scope: { type: "project", projectId: "p1" } }]);
+  assert.equal(principal.permissions, undefined, "no runtime-wide authority");
+
+  assert.equal(await asked(await mintLeaseCapability(secret, { scope: "gone", node: "node-b" })), undefined, "a deleted Project's token is nothing");
+  assert.equal(await asked(await mintLeaseCapability("another-secret", { scope: "p1", node: "node-b" })), undefined, "a forged token is nothing");
+  assert.equal(await asked("not-a-token"), undefined);
+  assert.equal(await asked(undefined), undefined);
 });

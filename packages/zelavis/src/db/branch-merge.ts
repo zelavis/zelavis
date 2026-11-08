@@ -1,6 +1,6 @@
 /**
- * Merging a branch back into the Tenant it was branched from, as decided in
- * `.agents/references/branch-merge-decision.md`.
+ * Merging a branch back into the Tenant it was branched from (public contract:
+ * `website/src/content/docs/api/database.md`, "Merging back").
  *
  * A branch and its source share one log up to the branch point and diverge
  * after it. What each side changed is read from its own log after that point,

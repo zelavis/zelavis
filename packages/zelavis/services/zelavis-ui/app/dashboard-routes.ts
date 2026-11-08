@@ -43,6 +43,7 @@ export const dashboardRoutes = [
   "/projects/:projectId/database/tenants",
   "/projects/:projectId/database/cross-tenant-indexes",
   "/projects/:projectId/database/images",
+  "/projects/:projectId/database/shards",
   "/projects/:projectId/media",
   "/projects/:projectId/settings",
   "/projects/:projectId/storage",

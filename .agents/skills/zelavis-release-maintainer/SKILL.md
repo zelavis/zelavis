@@ -46,7 +46,9 @@ long steps in the background, and keep the machine awake (lid open) while they r
    commit the snapshot. A service version npm does not have yet is listed with the digest
    of its local pack (packing is deterministic and npm's digest is the digest of the
    uploaded tarball), so nothing is published first and nothing waits for npm.
-5. **Qualify:** `pnpm release:check` in the worktree (about 40 minutes: workspace checks,
+5. **Qualify:** `ZELAVIS_FUZOR=npm pnpm release:check` in the worktree, from its root, with no
+   other build running in that checkout (`ZELAVIS_FUZOR=npm` builds against the pinned npm Fuzor
+   the release ships, never a local checkout). It takes about 40 minutes: workspace checks,
    then Docker qualification: the update gate from the actual previous npm release,
    the direct alpha.39 Agent conversion gate (`release:qualify:conversion`, retained
    until that conversion is retired), both on 2 CPUs / 4 GiB, the

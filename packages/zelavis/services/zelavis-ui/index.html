@@ -1,2 +1,65 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Zelavis · Fuzor</title><link rel="stylesheet" href="/app/styles.css"><link rel="stylesheet" href="/app/zv-ui.css"></head><body><div id="dashboard-shell"><p role="status">Connecting to Zelavis…</p></div><!--fuzor:outlet-start--><fuzor-router></fuzor-router><!--fuzor:outlet-end--><script type="module" src="/app/client.ts"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Zelavis · Fuzor</title>
+  <script>
+    let appearance = "auto";
+    try { appearance = localStorage.getItem("theme") || "auto"; } catch { appearance = "auto"; }
+    document.documentElement.dataset.dashboardTheme = appearance === "dark" || appearance === "light" ? appearance : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  </script>
+  <link rel="stylesheet" href="/app/styles.css">
+  <link rel="stylesheet" href="/app/zv-ui.css">
+</head>
+<body>
+  <div id="dashboard-shell" class="dashboard dashboard-starting">
+    <a href="#workspace" class="skip">Skip to workspace</a>
+    <aside class="sidebar" id="dashboard-navigation" aria-label="Dashboard navigation" inert>
+      <a class="brand" href="/" data-shell-brand>◈ Zelavis</a>
+      <div class="sidebar-label">THE APP PLATFORM</div>
+      <div class="shell-navigation-pending" data-shell-navigation role="status" aria-label="Loading navigation">
+        <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="header">
+        <button type="button" class="mobile-menu" aria-label="Open navigation" aria-controls="dashboard-navigation" data-shell-action="navigation" disabled>☰</button>
+        <span class="breadcrumb" data-shell-title>Workspace</span>
+        <span class="experiment">Fuzor preview</span>
+        <button type="button" data-shell-action="signout" disabled>Sign out</button>
+        <fuzor-button type="button" data-shell-action="refresh" disabled>Refresh</fuzor-button>
+      </header>
+      <div class="update-slot"></div>
+      <div class="errors" aria-live="polite"></div>
+      <swiper-slide class="mobile-workspace shell-mobile-stage" data-shell-mobile>
+        <div class="panel-heading" data-shell-mobile-heading>
+          <button type="button" class="back-row" title="Back to navigation" aria-label="Back to navigation" disabled>
+            <svg viewBox="0 0 24 24" class="back-chevron" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            <span class="back-title">Workspace</span>
+          </button>
+        </div>
+        <div class="content" id="workspace" tabindex="-1" inert>
+          <!--fuzor:outlet-start--><fuzor-router></fuzor-router><!--fuzor:outlet-end-->
+          <div data-screen-content>
+            <section class="shell-workspace-pending" role="status" aria-label="Loading workspace">
+              <div class="shell-placeholder-heading" aria-hidden="true"></div>
+              <div class="shell-placeholder-panel" aria-hidden="true"></div>
+            </section>
+            <noscript>Enable JavaScript to use the dashboard.</noscript>
+          </div>
+        </div>
+        <nav class="sidebar-footer sidebar-switches" aria-label="Sidebar view switches" data-shell-footer inert>
+          <button type="button" class="sidebar-switch" aria-label="Home" title="Home" aria-controls="sidebar-utility-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10 12 3l9 7v10h-6v-6H9v6H3Z"></path></svg></button>
+          <button type="button" class="sidebar-switch" aria-label="Notifications" title="Notifications" aria-controls="sidebar-utility-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg></button>
+          <button type="button" class="sidebar-switch" aria-label="Assistant" title="Assistant" aria-controls="sidebar-utility-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"></path></svg></button>
+          <button type="button" class="sidebar-switch" aria-label="Search" title="Search" aria-controls="sidebar-utility-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"></path></svg></button>
+          <button type="button" class="sidebar-switch" aria-label="Account" title="Account" aria-controls="sidebar-utility-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a8 8 0 0 0-16 0v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0"></path></svg></button>
+        </nav>
+      </swiper-slide>
+    </div>
+  </div>
+  <script type="module" src="/app/client.ts"></script>
+</body>
+</html>

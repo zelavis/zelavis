@@ -1,3 +1,4 @@
+import type { ShardDescription, ShardOperation, ShardResources } from "./shard-placement.js";
 import { Clock, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { promoteFollower, type LeaseStore, type Promotion, type WriterHandle, type WriterLease } from "./writer-lease.js";
 import type { DatabaseBackupsHost } from "./node-backups.js";
@@ -11,7 +12,7 @@ import type { CovarianceInput, MeasureHistogramInput, MeasureHistogram } from ".
 import type { ActivatedSchema, PendingActivation } from "./schema-activation.js";
 import type { GeneratedSchemaTypes, LogicalSchemaBundle, SchemaExportOptions, SchemaImportOptions, SchemaImportResult } from "./schema-transfer.js";
 import type { ExportPage, ExportPageInput } from "./export-stream.js";
-import { eventToWire, LEADER_LOG_LIMIT, LEADER_RECORDS_LIMIT, recordToWire, validFollowerName, type LeaderFeed, type LeaderPartitions, type LeaderTransport } from "./leader.js";
+import { eventToWire, LEADER_LOG_LIMIT, LEADER_RECORDS_LIMIT, recordToWire, validFollowerName, type LeaderDeclarations, type LeaderFeed, type LeaderPartitions, type LeaderTransport } from "./leader.js";
 import { asSeq } from "./model.js";
 import type { EntityMessage, EntitySend, EntityServeOptions, EntityState, EntityStep } from "./entities.js";
 import { integration } from "../core/runtime/effect-boundary.js";
@@ -360,6 +361,18 @@ export interface DatabaseRuntimeApi {
   readonly backups: DatabaseBackupsHost;
   /** The durability this database runs with and the one it opens with next; absent for a host that opened it itself. */
   readonly storageChoice?: StorageChoiceHost;
+  /**
+   * Shards on other Nodes: where each shard lives, and the durable operation that places ranges on a new one or
+   * gives one back. `place` and `release` answer once the operation is recorded; it carries on in the background.
+   */
+  readonly shards: {
+    readonly list: () => Promise<{ readonly shards: ReadonlyArray<ShardDescription>; readonly operation: ShardOperation | null }>;
+    readonly place: (input: { readonly virtualRanges: ReadonlyArray<number>; readonly resources: ShardResources; readonly shardId?: string }) => Promise<ShardOperation>;
+    readonly release: (shardId: string, input: { readonly into: string }) => Promise<ShardOperation>;
+    readonly replicate: (shardId: string, input: { readonly diskBytes: number }) => Promise<ShardOperation>;
+    readonly unreplicate: (shardId: string) => Promise<ShardOperation>;
+    readonly operation: () => Promise<ShardOperation | null>;
+  };
   /** One page of a Tenant, or of a divided Tenant as a whole, as a stream; see `Database.exportPage`. */
   readonly exportPage: (tenant: TenantId, input?: ExportPageInput) => Promise<ExportPage>;
   /** Remove a Tenant and everything it holds, history included; see `Database.dropTenant`. */
@@ -400,6 +413,7 @@ export interface DatabaseRuntimeApi {
     readonly stats: (partition: string) => Promise<PartitionStats>;
     readonly feed: (input: Parameters<LeaderTransport["feed"]>[0]) => Promise<LeaderFeed>;
     readonly partitions: (input: Parameters<LeaderTransport["partitions"]>[0]) => Promise<LeaderPartitions>;
+    readonly declarations: () => Promise<LeaderDeclarations>;
     /** How far each follower has said it holds `partition`. */
     readonly acknowledgments: (partition: string) => Promise<{ readonly partition: string; readonly followers: ReadonlyArray<{ readonly name: string; readonly position: number }> }>;
     /** The partition's writer lease, and whether this database holds it. Refused when no lease store is configured. */
@@ -718,6 +732,7 @@ const followersRuntime = (database: DatabaseApi, leases: LeaseStore | undefined)
     })),
     feed: (input) => run(database.followers.feed(input)),
     partitions: (input) => run(database.followers.partitions(input)),
+    declarations: () => run(database.followers.declarations),
   };
 };
 
@@ -726,6 +741,16 @@ export const runtimeApiFor = (
   options?: { readonly nodeId?: string; readonly leases?: LeaseStore; readonly images?: DatabaseImagesHost; readonly backups?: DatabaseBackupsHost; readonly storageChoice?: StorageChoiceHost; readonly storage?: { readonly engine: string; readonly durability: KvDurability } },
 ): DatabaseRuntimeApi => ({
   scatter: (input) => run(database.scatter.findMany(input)),
+  shards: {
+    list: () => run(Effect.gen(function* () {
+      return { shards: yield* database.shardPlacement.list, operation: (yield* database.shardPlacement.operation) ?? null };
+    })),
+    place: (input) => run(database.shardPlacement.place(input)),
+    release: (shardId, input) => run(database.shardPlacement.release({ shardId, into: input.into })),
+    replicate: (shardId, resources) => run(database.shardPlacement.replicate({ shardId, resources })),
+    unreplicate: (shardId) => run(database.shardPlacement.unreplicate({ shardId })),
+    operation: () => run(Effect.map(database.shardPlacement.operation, (operation) => operation ?? null)),
+  },
   images: options?.images ?? noImages,
   backups: options?.backups ?? noBackups,
   ...(options?.storageChoice === undefined ? {} : { storageChoice: options.storageChoice }),

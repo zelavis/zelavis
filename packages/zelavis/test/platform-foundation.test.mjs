@@ -244,7 +244,7 @@ test("the deployment backend runtime exposes every member of the driver contract
     name: "full-driver", runtimeKinds: ["native"], defaultRuntimeKind: "native", startupConcurrency: 2,
     recipeDefinition: () => ({ runtimeKinds: ["native"], managed: { adminTitle: "Verified app" } }),
     capabilities: () => ({}),
-    async prepare() {}, async start() { return { status: "running" }; },
+    async prepare() {}, async start() { return { status: "running" }; }, async startStandby() { return { status: "standby" }; },
     async stop() { return { status: "stopped" }; }, async status() { return { status: "stopped" }; },
     async logs() { return []; }, async destroy() {}, async close() {},
     async signGatewayAuthority() { return "signed"; },

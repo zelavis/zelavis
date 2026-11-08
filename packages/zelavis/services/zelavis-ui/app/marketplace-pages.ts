@@ -55,31 +55,34 @@ export const marketplaceScreen = Effect.fn("ui.marketplaceScreen")(function*(con
   const runtime: Config = scoped ?? control;
   const params = context.url.searchParams;
   const requested = TABS.find(entry => entry[0] === params.get("tab"))?.[0];
-  const tab: Tab = requested && !disabledReason(requested, scope) ? requested : "apps";
+  const activeTab: Tab = requested && !disabledReason(requested, scope) ? requested : "apps";
+  const enabledTabs = TABS.filter(([id]) => !disabledReason(id, scope));
   const query = params.get("q") ?? "";
   const registry = array(runtime.serviceRegistry);
   const appRegistry = array(control.serviceRegistry);
   const registryFor = (entry: Tab) => entry === "apps" ? appRegistry : registry;
-  const items = selectItems(registryFor(tab), tab, query);
   const counts = Object.fromEntries(TABS.map(([id]) => [id, selectItems(registryFor(id), id).length]));
   const allowlist = yield* request(`${control.api.basePath}/runtime/marketplace/allowlist`).pipe(Effect.map(object), Effect.catch(() => Effect.succeed(undefined)));
 
   const done = (text: string) => { setFlash(text); context.refresh(); };
   const install = (service: Record<string, unknown>) => context.run(installService(runtime.api.basePath, service), () => done(`Installed ${titleOf(service)}.`));
-  const update = (service: Record<string, unknown>) => context.run(request(`${(tab === "apps" ? control : runtime).api.basePath}/runtime/services/${encodeURIComponent(label(service.name, ""))}/update`, "POST", {}), result => done(tab === "apps" ? `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}. Its Projects now offer the upgrade.` : `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}.`));
+  const update = (tab: Tab, service: Record<string, unknown>) => context.run(request(`${(tab === "apps" ? control : runtime).api.basePath}/runtime/services/${encodeURIComponent(label(service.name, ""))}/update`, "POST", {}), result => done(tab === "apps" ? `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}. Its Projects now offer the upgrade.` : `Updated ${titleOf(service)} to ${label(object(object(result).service).version)}.`));
   const startCreate = (service: Record<string, unknown>) => context.setSearch({ create: label(service.name, "") });
 
   const tabs = node("div", { role: "tablist", "aria-label": "Marketplace sections", class: "actions" }, ...TABS.map(([id, title]) => {
     const reason = disabledReason(id, scope);
     const text = `${title} ${counts[id]}`;
     if (reason) return node("span", { role: "tab", "aria-selected": "false", "aria-disabled": "true", title: reason, class: "mk-tab disabled" }, text);
-    return link(text, `${context.path}${id === "apps" ? "" : `?tab=${id}`}`, { role: "tab", "aria-selected": String(id === tab), class: `mk-tab${id === tab ? " active" : ""}` });
+    const target = new URL(context.url);
+    if (id === "apps") target.searchParams.delete("tab"); else target.searchParams.set("tab", id);
+    return link(text, `${context.path}${target.search}${target.hash}`, { role: "tab", "data-fuzor-view-value": id, "aria-selected": String(id === activeTab), class: `mk-tab${id === activeTab ? " active" : ""}` });
   }));
-  const search = node("input", { type: "search", name: "q", value: query, placeholder: `Search ${TABS.find(entry => entry[0] === tab)![1].toLowerCase()}…`, "aria-label": "Search the marketplace" });
+  const search = node("input", { type: "search", name: "q", value: query, placeholder: "Search the marketplace…", "aria-label": "Search the marketplace" });
   const searchForm = node("form", { role: "search" }, search);
   searchForm.addEventListener("submit", event => { event.preventDefault(); context.setSearch({ q: search.value || undefined }); });
 
-  const sections: (Node | undefined)[] = [flashNotice("Marketplace"), node("div", { class: "toolbar" }, tabs, searchForm), node("p", { class: "muted" }, INTRO[tab])];
+  const forTab = (tab: Tab, element: HTMLElement) => { element.setAttribute("data-fuzor-view-values", tab); element.hidden = tab !== activeTab; return element; };
+  const sections: (Node | undefined)[] = [flashNotice("Marketplace"), node("div", { class: "toolbar" }, tabs, searchForm), ...enabledTabs.map(([tab]) => forTab(tab, node("p", { class: "muted" }, INTRO[tab])))];
 
   if (allowlist) {
     const list = allowlist.list ? object(allowlist.list) : undefined;
@@ -95,59 +98,68 @@ export const marketplaceScreen = Effect.fn("ui.marketplaceScreen")(function*(con
       Number(allowlist.sources) > 0 ? refresh : node("span", {}, "No sources configured")));
   }
 
-  const creating = params.get("create") ? appRegistry.map(object).find(service => service.name === params.get("create")) : undefined;
-  if (creating) {
-    const name = node("input", { name: "name", value: params.get("name") ?? `My ${titleOf(creating)}`, required: "", "aria-label": "Project name", autocomplete: "off" });
-    const submit = node("button", { type: "submit", class: "primary" }, "Create project");
-    const form = node("form", { class: "form" }, node("p", {}, creating.status === "available" ? "It is installed first, then the new Project starts in its own runtime." : "The new Project starts in its own runtime."), node("label", {}, node("span", {}, "Project name"), name),
-      node("div", { class: "actions" }, submit, button("Cancel", () => context.setSearch({ create: undefined, name: undefined }))));
-    form.addEventListener("submit", event => {
-      event.preventDefault();
-      const projectName = name.value.trim();
-      if (!projectName) return;
-      const hostPackages = array(object(creating.project).hostPackages);
-      // A recipe that is not installed yet is installed first, so the one click is the whole job.
-      const work = Effect.gen(function*() {
-        if (creating.status === "available") yield* installService(control.api.basePath, creating);
-        if (hostPackages.length) return { approve: true as const };
-        const created = object(yield* request(`${control.api.basePath}/runtime/projects`, "POST", { name: projectName, recipeName: label(creating.name, ""), start: true }));
-        return { approve: false as const, id: label(object(created.project).id, "") };
+  for (const [tab] of enabledTabs) {
+    const items = selectItems(registryFor(tab), tab, query);
+    const contents: HTMLElement[] = [];
+    const creating = tab === "apps" && params.get("create") ? selectItems(appRegistry, "apps").find(service => service.name === params.get("create")) : undefined;
+    if (creating) {
+      const name = node("input", { name: "name", value: params.get("name") ?? `My ${titleOf(creating)}`, required: "", "aria-label": "Project name", autocomplete: "off" });
+      const submit = node("button", { type: "submit", class: "primary" }, "Create project");
+      const form = node("form", { class: "form" }, node("p", {}, creating.status === "available" ? "It is installed first, then the new Project starts in its own runtime." : "The new Project starts in its own runtime."), node("label", {}, node("span", {}, "Project name"), name),
+        node("div", { class: "actions" }, submit, button("Cancel", () => context.setSearch({ create: undefined, name: undefined }))));
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        const projectName = name.value.trim();
+        if (!projectName) return;
+        const hostPackages = array(object(creating.project).hostPackages);
+        // A recipe that is not installed yet is installed first, so the one click is the whole job.
+        const work = Effect.gen(function*() {
+          if (creating.status === "available") yield* installService(control.api.basePath, creating);
+          if (hostPackages.length) return { approve: true as const };
+          const created = object(yield* request(`${control.api.basePath}/runtime/projects`, "POST", { name: projectName, recipeName: label(creating.name, ""), start: true }));
+          return { approve: false as const, id: label(object(created.project).id, "") };
+        });
+        context.run(work, outcome => {
+          if (outcome.approve) context.navigate(`/projects?${new URLSearchParams({ new: "1", recipe: label(creating.name, ""), name: projectName })}`);
+          else context.navigate(`/projects/${encodeURIComponent(outcome.id)}`);
+        });
       });
-      context.run(work, outcome => {
-        if (outcome.approve) context.navigate(`/projects?${new URLSearchParams({ new: "1", recipe: label(creating.name, ""), name: projectName })}`);
-        else context.navigate(`/projects/${encodeURIComponent(outcome.id)}`);
-      });
-    });
-    sections.push(card(`Create a ${titleOf(creating)} project`, form));
-  }
+      contents.push(card(`Create a ${titleOf(creating)} project`, form));
+    }
 
-  if (items.length === 0) sections.push(empty(query ? "Nothing matches that search." : EMPTY[tab], ""));
-  else sections.push(node("ul", { class: "k-grid cols-3 mk-list", "aria-label": TABS.find(entry => entry[0] === tab)![1] }, ...items.map(service => {
-    const installed = service.status === "installed";
-    const updateTo = service.update ? label(object(service.update).version) : undefined;
-    const controls: HTMLElement[] = [button("More details", () => context.setSearch({ details: label(service.name, "") }))];
-    if (updateTo && tab !== "apps") controls.push(button(`Update to ${updateTo}`, () => update(service)));
-    if (tab !== "apps" && installed) controls.push(badge("Installed"));
-    else controls.push(button(tab === "apps" ? "Create project" : "Install", () => tab === "apps" ? startCreate(service) : install(service), { class: "primary" }));
-    return node("li", { class: "k-card" },
-      node("div", { class: "mk-head" }, tile(service), node("div", {}, node("h3", {}, titleOf(service)), node("p", { class: "muted" }, `By ${maintainerOf(service)}${service.version ? ` · v${label(service.version)}` : ""}`))),
-      node("p", {}, label(object(service.marketplace).summary, "No description provided.")),
-      node("div", { class: "actions" }, ...controls));
-  })));
+    if (items.length === 0) contents.push(empty(query ? "Nothing matches that search." : EMPTY[tab], ""));
+    else contents.push(node("ul", { class: "k-grid cols-3 mk-list", "aria-label": TABS.find(entry => entry[0] === tab)![1] }, ...items.map(service => {
+      const installed = service.status === "installed";
+      const updateTo = service.update ? label(object(service.update).version) : undefined;
+      const controls: HTMLElement[] = [button("More details", () => context.setSearch({ details: label(service.name, "") }))];
+      if (updateTo && tab !== "apps") controls.push(button(`Update to ${updateTo}`, () => update(tab, service)));
+      if (tab !== "apps" && installed) controls.push(badge("Installed"));
+      else controls.push(button(tab === "apps" ? "Create project" : "Install", () => tab === "apps" ? startCreate(service) : install(service), { class: "primary" }));
+      return node("li", { class: "k-card" },
+        node("div", { class: "mk-head" }, tile(service), node("div", {}, node("h3", {}, titleOf(service)), node("p", { class: "muted" }, `By ${maintainerOf(service)}${service.version ? ` · v${label(service.version)}` : ""}`))),
+        node("p", {}, label(object(service.marketplace).summary, "No description provided.")),
+        node("div", { class: "actions" }, ...controls));
+    })));
 
-  const selected = params.get("details") ? registryFor(tab).map(object).find(service => service.name === params.get("details")) : undefined;
-  if (selected) {
-    const marketplace = object(selected.marketplace);
-    const kinds = array(object(selected.project).runtimeKinds).map(String);
-    const categories = array(marketplace.categories).map(String);
-    const tags = array(marketplace.tags).map(String);
-    sections.push(card(undefined,
-      node("div", { class: "mk-head" }, tile(selected, true), node("div", {}, node("h2", {}, titleOf(selected)), node("p", { class: "muted" }, `By ${maintainerOf(selected)}`))),
-      node("p", {}, label(marketplace.description ?? marketplace.summary, "No description provided.")),
-      facts([["Package", label(selected.name)], ...(selected.version ? [["Version", label(selected.version)] as const] : []), ["Status", label(selected.status)], ...(kinds.length ? [["Runs on", kinds.join(", ")] as const] : []), ...(categories.length ? [["Categories", categories.join(", ")] as const] : []), ...(tags.length ? [["Tags", tags.join(", ")] as const] : [])]),
-      node("div", { class: "actions" },
-        ...(tab === "apps" || selected.status === "available" ? [button(tab === "apps" ? "Create project" : "Install", () => tab === "apps" ? startCreate(selected) : install(selected), { class: "primary" })] : []),
-        button("Close", () => context.setSearch({ details: undefined })))));
+    const selected = params.get("details") ? selectItems(registryFor(tab), tab).find(service => service.name === params.get("details")) : undefined;
+    if (selected) {
+      const marketplace = object(selected.marketplace);
+      const kinds = array(object(selected.project).runtimeKinds).map(String);
+      const categories = array(marketplace.categories).map(String);
+      const tags = array(marketplace.tags).map(String);
+      contents.push(card(undefined,
+        node("div", { class: "mk-head" }, tile(selected, true), node("div", {}, node("h2", {}, titleOf(selected)), node("p", { class: "muted" }, `By ${maintainerOf(selected)}`))),
+        node("p", {}, label(marketplace.description ?? marketplace.summary, "No description provided.")),
+        facts([["Package", label(selected.name)], ...(selected.version ? [["Version", label(selected.version)] as const] : []), ["Status", label(selected.status)], ...(kinds.length ? [["Runs on", kinds.join(", ")] as const] : []), ...(categories.length ? [["Categories", categories.join(", ")] as const] : []), ...(tags.length ? [["Tags", tags.join(", ")] as const] : [])]),
+        node("div", { class: "actions" },
+          ...(tab === "apps" || selected.status === "available" ? [button(tab === "apps" ? "Create project" : "Install", () => tab === "apps" ? startCreate(selected) : install(selected), { class: "primary" })] : []),
+          button("Close", () => context.setSearch({ details: undefined })))));
+    }
+    sections.push(forTab(tab, node("div", {}, ...contents)));
   }
-  return page(...sections);
+  const workspace = page(...sections);
+  workspace.setAttribute("data-fuzor-view-query", "tab");
+  workspace.setAttribute("data-fuzor-view-default", "apps");
+  workspace.setAttribute("data-fuzor-view-active-class", "active");
+  return workspace;
 });

@@ -16,16 +16,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
+import { openShardOverKv, openShardReaderOverKv } from "../dist/db/kv-store.js";
+import { makeReadBudget } from "../dist/db/read-budget.js";
+import { tenantReadsOver, runTenantRead, encodeReadExit, decodeReadExit } from "../dist/db/tenant-reads.js";
+import { GLOBAL_TENANT } from "../dist/db/topology.js";
 import { documentsFor, keyValueFor, domainEventsFor, levelFollower, makeDatabase, partitionMapFor } from "../dist/db/index.js";
-import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { makeMemoryStore, memoryKvEngine } from "../dist/db/engines/memory-kv.js";
+import { makeNodeSqliteStore, makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeLmdbStore } from "../dist/db/engines/lmdb.js";
 import { makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
 const engines = [
-  { name: "memory", open: () => (shard) => makeMemoryStore(shard) },
-  { name: "node:sqlite", open: (dir) => (shard) => makeNodeSqliteStore(shard, dir) },
+  { name: "memory", engine: () => Effect.sync(memoryKvEngine), open: () => (shard) => makeMemoryStore(shard) },
+  { name: "node:sqlite", engine: (shard, dir) => makeNodeSqliteEngine(shard, dir), open: (dir) => (shard) => makeNodeSqliteStore(shard, dir) },
   ...(engineAvailable("lmdb") ? [{ name: "lmdb", open: (dir) => (shard) => makeLmdbStore(shard, dir) }] : []),
   ...(engineAvailable("@harperfast/rocksdb-js") ? [{ name: "rocksdb", open: (dir) => (shard) => makeRocksdbJsStore(shard, dir) }] : []),
 ];
@@ -88,7 +92,7 @@ const assertLenses = (where, documents, kv, model) => Effect.gen(function* () {
   for (const [id, value] of model) {
     const doc = yield* documents.findById({ collection: "items", id });
     assert.deepEqual(doc?.data, value, `${where}: document ${id}`);
-    assert.deepEqual((yield* kv.get(id))?.value, value, `${where}: key ${id}`);
+    if (kv !== undefined) assert.deepEqual((yield* kv.get(id))?.value, value, `${where}: key ${id}`);
   }
   assert.equal(yield* documents.count({ collection: "items" }), model.size, `${where}: count`);
   // Columns: equality.
@@ -115,11 +119,16 @@ const assertLenses = (where, documents, kv, model) => Effect.gen(function* () {
   const centre = [13.405, 52.5];
   const near = yield* documents.findMany({ collection: "items", geometry: { field: "where", near: centre, radius: 300 } });
   assert.deepEqual(ids(near), expectIds(model, (v) => metres(v.where.coordinates, centre) <= 300), `${where}: geometry`);
+  // Similarity stays on the writer even when the query requests exact results.
+  if (kv !== undefined) {
   // Similarity: the exact nearest three.
   const probe = [4, 1, 1];
   const similar = yield* documents.findMany({ collection: "items", similar: { field: "embedding", vector: probe, k: 3, approximate: false } });
   const nearest = [...model].sort(([a, x], [b, y]) => distance(x.embedding, probe) - distance(y.embedding, probe) || (a < b ? -1 : 1)).slice(0, 3);
   assert.deepEqual(similar.map((doc) => distance(doc.data.embedding, probe)), nearest.map(([, v]) => distance(v.embedding, probe)), `${where}: similarity`);
+  }
+  // KV reads are not in the remote read table.
+  if (kv === undefined) return;
   // KV scan sees exactly the live keys.
   const keys = [];
   let cursor;
@@ -158,10 +167,15 @@ for (const engine of engines) {
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const opened = new Map();
     const openShard = engine.open(dir);
+    const rawEngines = new Map();
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const db = yield* makeDatabase({
         partitionMap: partitionMapFor(["s0"]),
-        openShard: (shard) => Effect.tap(openShard(shard), (store) => Effect.sync(() => opened.set(shard, store))),
+        openShard: (shard) => Effect.tap(engine.engine === undefined ? openShard(shard) : Effect.gen(function* () {
+          const raw = yield* engine.engine(shard, dir);
+          rawEngines.set(shard, raw);
+          return yield* openShardOverKv(shard, raw);
+        }), (store) => Effect.sync(() => opened.set(shard, store))),
       });
       const acme = db.forTenant("acme");
       yield* acme.documents.createCollection({ name: "people" });
@@ -182,6 +196,27 @@ for (const engine of engines) {
       // 24 writes, 2 changes and 2 removals per round.
       const logged = 2 * (12 + 4) + activated.activation.documents;
       yield* assertEventContinuity("primary", acme.events, logged);
+      if (engine.engine !== undefined) {
+        // The shard reader of an engine that can bound its reads is also held to a work budget as generous as the default.
+        // Only the engines that bound their own reads (SQLite, memory) can host reads on another Node; the others say so by omission.
+        const bounds = rawEngines.get(db.shardOf("acme")).bounded !== undefined;
+        assert.equal(bounds, ["memory", "node:sqlite"].includes(engine.name), `${engine.name} bounded reads`);
+        const budgets = bounds ? [undefined, makeReadBudget()] : [undefined];
+        for (const budget of budgets) {
+          const label = budget === undefined ? "shard reader" : "budgeted shard reader";
+          const reader = yield* openShardReaderOverKv(db.shardOf("acme"), rawEngines.get(db.shardOf("acme")), budget === undefined ? undefined : { budget });
+          const read = (group, member, input) => Effect.gen(function* () {
+            const api = tenantReadsOver(reader.partition("acme"), reader.partition(GLOBAL_TENANT), "acme");
+            const exit = yield* Effect.exit(runTenantRead(api, `${group}.${member}`, JSON.parse(JSON.stringify(input ?? null))));
+            return yield* decodeReadExit(`${group}.${member}`, JSON.parse(JSON.stringify(encodeReadExit(exit))));
+          });
+          const remoteDocuments = new Proxy({}, { get: (_, member) => (input) => read("documents", member, input) });
+          const remoteEvents = { read: (input) => read("events", "read", input) };
+          yield* assertLenses(label, remoteDocuments, undefined, model);
+          yield* assertEventContinuity(label, remoteEvents, logged);
+          if (budget !== undefined) assert.ok(budget.used().entries > 0, "the reads were counted");
+        }
+      }
 
       // Replication: a follower carried by the log reads the same through every lens.
       const leader = opened.get(db.shardOf("acme")).partition("acme");

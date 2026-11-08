@@ -10,6 +10,8 @@ import { createNodeProjectHost } from "./_node-project-host.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { serveNodeProjectControl } from "./_node-project-control.js";
 import { projectProcessEnvironment } from "./_node-project-runtime.js";
+import { inheritedAppShardEnvironment } from "./_app-shard-environment.js";
+import { inheritedProjectLeaseEnvironment } from "./_project-lease-environment.js";
 import type { RuntimeRelease } from "../core/runtime/handover.js";
 
 // The Agent runs a persistent host; Platform and App workers use the same
@@ -32,7 +34,7 @@ const run = Scope.use(Effect.gen(function* () {
   shutdown = shutdownOnSignals(() => present(Scope.close(scope, Exit.void)));
   const catalogDirectory = process.env.ZELAVIS_RUNTIME_RELEASES_DIR;
   const catalog = catalogDirectory ? createNodeRuntimeCatalog({ directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" }) : undefined;
-  const host = yield* createNodeProjectHost({ ...options, environment: projectProcessEnvironment(),
+  const host = yield* createNodeProjectHost({ ...options, environment: { ...projectProcessEnvironment(), ...inheritedProjectLeaseEnvironment(), ...inheritedAppShardEnvironment() },
     ...(catalog ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
       if (options.integrationOnly) return yield* catalog.resolve(yield* catalog.select(version), "project", configuration, environment);
       const selected = yield* evaluate(() => {

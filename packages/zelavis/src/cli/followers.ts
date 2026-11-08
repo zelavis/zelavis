@@ -1,7 +1,7 @@
 import { integerFlag, required, runTable, type CliInput, type CliTable } from "./command-table.js";
 
 const usage =
-  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--url URL] [--token TOKEN] [--json]";
+  "zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions|declarations> --project ID [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--declarations N] [--url URL] [--token TOKEN] [--json]";
 
 const followers = (input: CliInput) =>
   input.client.followers(required({ ...input, positional: [input.flags.get("--project") ?? ""] }, 0, "followers commands need --project"));
@@ -16,7 +16,7 @@ const table: CliTable = {
   name: "followers",
   usage,
   switches: ["--allow-data-loss"],
-  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--cursor", "--partitions", "--timeout-millis"],
+  valued: ["--project", "--after", "--from", "--limit", "--id", "--position", "--ttl-millis", "--follower", "--owner", "--cursor", "--partitions", "--timeout-millis", "--declarations"],
   actions: {
     stats: {
       run: (input) => followers(input).stats(partition(input)),
@@ -84,14 +84,16 @@ const table: CliTable = {
       run: (input) => {
         const partitions = input.flags.get("--partitions");
         const timeoutMillis = integerFlag(input, "--timeout-millis");
+        const declarations = integerFlag(input, "--declarations");
         return followers(input).feed({
           ...(input.flags.has("--cursor") ? { cursor: input.flags.get("--cursor")! } : {}),
           ...(partitions === undefined ? {} : { partitions: partitions.split(",").filter((name) => name.length > 0) }),
           ...(timeoutMillis === undefined ? {} : { timeoutMillis }),
+          ...(declarations === undefined ? {} : { declarations }),
         });
       },
-      text: (result: { cursor: string; partitions: string[]; resync: boolean; more: boolean }) =>
-        [...result.partitions, ...(result.resync ? ["resync: list the partitions"] : []), ...(result.more ? ["more: ask again"] : []), `cursor ${result.cursor}`].join("\n"),
+      text: (result: { cursor: string; partitions: string[]; resync: boolean; more: boolean; declarations: number }) =>
+        [...result.partitions, ...(result.resync ? ["resync: list the partitions"] : []), ...(result.more ? ["more: ask again"] : []), `cursor ${result.cursor}`, `declarations ${result.declarations}`].join("\n"),
     },
     partitions: {
       run: (input) => followers(input).partitions({
@@ -100,6 +102,14 @@ const table: CliTable = {
       }),
       text: (result: { partitions: ReadonlyArray<{ partition: string; head: number }>; next?: string }) =>
         [...result.partitions.map((entry) => `${entry.partition}\t${entry.head}`), ...(result.next === undefined ? [] : [`next ${result.next}`])].join("\n") || "No partitions.",
+    },
+    declarations: {
+      run: (input) => followers(input).declarations(),
+      text: (result: { placements: { collections: Record<string, string> }; subdivisions: { tenants: Record<string, ReadonlyArray<string>> } }) =>
+        [
+          ...Object.entries(result.placements.collections).map(([collection, placement]) => `${collection}\t${placement}`),
+          ...Object.entries(result.subdivisions.tenants).map(([tenant, parts]) => `${tenant}\t${parts.join(",")}`),
+        ].join("\n") || "No declarations.",
     },
   },
 };

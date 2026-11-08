@@ -49,6 +49,9 @@ export interface PartitionRouter {
    */
   readonly operations: <T>(api: T, by: PartitionKey) => T;
 
+  /** The current operation's leased routing decision, absent outside its pin. */
+  readonly pinnedRoute: (by: PartitionKey) => Effect.Effect<Route | undefined>;
+
   /**
    * Run `use` on the partition at `shard` under a lease, provided routing
    * places it there now; `Option.none` when it does not. For upkeep that walks
@@ -112,6 +115,8 @@ export const partitionRouter = (options: {
   /** Read once per call, so the shard and the version always come from one map. */
   readonly route: (partition: PartitionKey) => Route;
   readonly shards: ReadonlyMap<ShardId, ShardStoreApi>;
+  /** Why a shard the map names is not open, when that is known (a shard on another Node that was not answering). */
+  readonly unavailable?: (shard: ShardId) => string | undefined;
 }): PartitionRouter => {
   const { route, shards } = options;
   // Nested rather than keyed by a joined string: a partition name may hold any
@@ -164,7 +169,7 @@ export const partitionRouter = (options: {
           // map rather than a request anybody can correct.
           : Effect.die(new PartitionUnavailable({
               partition,
-              reason: `routing places it on shard "${lease.shard}", which is not open`,
+              reason: `routing places it on shard "${lease.shard}", which is not open${options.unavailable?.(lease.shard) === undefined ? "" : ` (on another Node, not answering: ${options.unavailable(lease.shard)})`}`,
             })),
     );
 
@@ -327,5 +332,8 @@ export const partitionRouter = (options: {
       );
     });
 
-  return { routed, operations, placed, drained };
+  const pinnedRoute: PartitionRouter["pinnedRoute"] = (by) => Effect.map(pinOf(by), (pin) =>
+    pin === undefined ? undefined : { shard: pin.shard, version: pin.version });
+
+  return { routed, operations, pinnedRoute, placed, drained };
 };

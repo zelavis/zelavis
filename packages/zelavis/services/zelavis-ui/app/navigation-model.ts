@@ -103,20 +103,50 @@ export function createMenuStore() {
   };
 }
 
+const NAVIGATION_PARAMS = new Set(["sidebar", "sidebarView", "sidebarUtility", "sidebarUtilityPanel"]);
+/** "/" and "/projects" are the same page. */
+export const canonicalPath = (path: string) => { const clean = path.replace(/\/+$/, "") || "/"; return clean === "/" ? "/projects" : clean; };
+
 /**
- * Whether a sidebar item is the active one: it is the page being shown, or it opens a slide the current page is inside.
+ * Which item of a slide is the active one: exactly one, or none. Never more.
  *
- * The second is decided by the trail of slides that is open, never by the item's path being a prefix of the page's. Several
- * items can share one path (a Database slide with Tenants, Plugin Tables and System Tables beside its tables), and a path
- * prefix would light every one of them for a page that belongs to only one.
+ * Two things make an item active, and they are decided in this order:
+ *
+ * 1. It opens a slide the page is inside (its `branch` is on the open trail). The trail, not the item's path being a prefix of the
+ *    page's, decides this. When several items name the same branch (every project opens the one `project` slide) the one for the
+ *    page's own project is the active one.
+ * 2. It is the page itself: same path, and every query parameter the item declares has that value in the URL. Parameters the item
+ *    does not declare (a dialog, a filter, the open table) are the page's and are ignored. Where several items match, the one that
+ *    declares the most parameters wins, so a slide's Overview (no parameters) is active only while none of its siblings
+ *    (`?resourceView=storage`) is, and equal ties go to the first.
+ *
+ * An item that matches only because its siblings' differences were never compared is the bug this replaces: a slide with
+ * Overview, Processes, Storage and Limits at one path, told apart by a query parameter, lit all four.
  */
-export function itemIsActive(input: { readonly current: string; readonly itemPath: string; readonly matchesSearch: boolean; readonly branch?: string; readonly trail: readonly string[] }): boolean {
-  return (input.current === input.itemPath && input.matchesSearch) || (input.branch !== undefined && input.trail.includes(input.branch));
+export function activeItemIndex(items: readonly { readonly path: string; readonly branch?: string }[], input: { readonly current: string; readonly search: URLSearchParams; readonly trail: readonly string[] }): number {
+  const current = canonicalPath(input.current);
+  const onTrail = items.flatMap((item, index) => item.branch !== undefined && input.trail.includes(item.branch) ? [index] : []);
+  if (onTrail.length === 1) return onTrail[0]!;
+  if (onTrail.length > 1) {
+    const own = onTrail.filter(index => { const path = canonicalPath(new URL(items[index]!.path, "http://item").pathname); return current === path || current.startsWith(`${path}/`); });
+    return own[0] ?? -1;
+  }
+  let best = -1, bestCount = -1;
+  items.forEach((item, index) => {
+    const target = new URL(item.path, "http://item");
+    if (canonicalPath(target.pathname) !== current) return;
+    const declared = [...target.searchParams].filter(([key]) => !NAVIGATION_PARAMS.has(key));
+    if (!declared.every(([key, value]) => input.search.get(key) === value)) return;
+    if (declared.length > bestCount) { best = index; bestCount = declared.length; }
+  });
+  return best;
 }
 
 export function trailForLocation(panels: readonly Panel[], url: URL): string[] {
   let best: { score: number; ids: string[] } = { score: -1, ids: [] };
   const pathname = unmounted(url.pathname);
+  // Home is the root menu. The Projects item explicitly opens its slide, even though it shares this landing page.
+  if (pathname === "/") return [];
   const visit = (panel: Panel, ids: string[]) => {
     for (const item of panel.items) {
       const target = new URL(item.path, url.origin);

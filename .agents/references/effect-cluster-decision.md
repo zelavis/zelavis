@@ -1,7 +1,8 @@
 # What Zelavis takes from Effect Cluster
 
-Status: **decided 2026-10-31** (delegated decision). Phases 1 (durable entities, `src/db/entities.ts`), 2 (durable Workloads, `src/app/workloads/durable.ts`) and 3 (writer
-leases, `src/db/writer-lease.ts`, with the open items below) are implemented; the later phases are ordered work, tracked in `pnotes/TODO.md`.
+Status: **decided 2026-10-31** (delegated decision), and built: durable entities, durable Workloads, writer leases and
+follower failover, standby Projects and bounded-load shard reservations. Open work, if any, lives in `.agents/plans/`.
+The delivery-guarantee table (decision 7) is `website/src/content/docs/architecture/delivery-guarantees.md`.
 
 Sources: the four Effect "Module of the Week" posts on Cluster (actors, messaging, delivery, idempotency) and
 the Effect v4 source in `repos/effect/packages/effect/src/cluster` (`Entity`, `Sharding`, `ShardingConfig`,
@@ -133,36 +134,6 @@ shards.
      only decides which nodes may stand by (policy) and where the Project's traffic goes (placement).
    - **Operators** may still `promote`/`demote` by hand; accepting data loss needs
      `database.failover.accept-data-loss` and is audited.
-
-## Phases
-
-1. **Durable entities** (done 2026-10-31) in `zelavis/db` and the Workloads service:
-   - The mailbox, persisted delivery, `primaryKey`, transactional handlers, bounds and cancelling.
-   - JS, HTTP, SDK and CLI.
-   - A dashboard page under Workloads.
-   - Tests: SIGKILL tests in the style of `db-durability.test.mjs` proving each message's database effects
-     land exactly once across crashes, a seeded model test of the mailbox state machine, and the
-     multimodal and bounded checks the store already holds itself to.
-2. **Durable Workloads** (done 2026-10-31): jobs, schedules (durable wakes, run where the writer is), inbound
-   webhooks with provider keys, outbound webhooks through the outbox with `Idempotency-Key`, and the entity runner's
-   in-memory due index (partition to earliest due time; one scan at start; a safety-net scan every five minutes).
-   Nothing polls: definitions are reread on change (with a one-minute safety read), outbound delivery is woken by
-   outbox commits in the process (`database.outboxWatch`), schedules sleep until their fire time, and messages waiting
-   for a handler are looked at again when handlers change. Inbound webhooks verify an HMAC of the body or a timestamped
-   one. A runtime that holds a database is never planned more than one replica (decision 4 as a checked rule in the
-   Fabric planner).
-3. **Follower failover** (decision 5): implemented 2026-10-31 in `src/db/writer-lease.ts` (lease protocol, gate in
-   the store's write path, `standby`/`hold`, `followers lease|promote|demote` over JS, HTTP, SDK and CLI), tested with
-   two databases in one process, a cut-off writer and a seeded protocol model. The Platform serves the lease authority
-   (`/runtime/writer-leases`, `httpLeaseStore`) and `pnpm release:qualify:failover` holds a `SIGKILL`, a partition and
-   an unacknowledged tail to the decision in separate containers. Other followers find the new writer from the lease
-   (`followWriter`), `allowDataLoss` needs its own permission and is audited, and the control flow is decision 9.
-   The writer names the one follower it waits for (`standby`) and only that follower is promoted without accepting loss: the lease's `acknowledgedHead` lags up to a third of its life, so without it a different level follower could miss a write acknowledged just before the writer died.
-   The Project is the failover unit: one whole-database lease with a designated standby, a fixed-ring change feed and a paged listing, so following and failing over cost the changes (the drill runs 100 Tenants; steady-state latency is the same at 500 and 4,000). A Project runtime's start takes the whole-database lease before its database opens (`startWriter`, `ZELAVIS_LEASE_*`), so the lease is the fence for any start. **Open:** the Fabric half of decision 9 — a general way to start a Project on another node from its follower copy
-   (a standby Project supervised by that node's Agent) and to commit the placement `{owner, epoch}` when the lease
-   epoch advances — and running `standby` inside those standby Projects.
-4. **Bounded-load placement planner** (decision 6), with two-fabrics activation.
-5. **Delivery-guarantee table** in the public docs (decision 7), written alongside phase 1 and kept current.
 
 ## Not doing
 

@@ -345,6 +345,8 @@ export const scatterOver = (options: {
   readonly tenantsOn: (shard: ShardStoreApi) => Effect.Effect<ReadonlyArray<TenantId>>;
   readonly shardOf: (tenant: TenantId) => ShardId;
   readonly documentsFor: (tenant: TenantId) => DocumentsApi;
+  /** Fails when a shard is missing, so a question about every shard is never answered for some of them. */
+  readonly complete?: Effect.Effect<void>;
 }): ScatterApi => {
   const storeFor = (shard: ShardId) => options.shards.get(shard);
 
@@ -358,7 +360,7 @@ export const scatterOver = (options: {
   const chosenShards = (
     wanted: ReadonlyArray<ShardId> | undefined,
   ): Effect.Effect<ReadonlyArray<ShardId>, UnknownShard> => {
-    if (wanted === undefined) return Effect.succeed([...options.shards.keys()]);
+    if (wanted === undefined) return Effect.as(options.complete ?? Effect.void, [...options.shards.keys()]);
     for (const shard of wanted) {
       if (!options.shards.has(shard)) {
         return new UnknownShard({ shard, known: [...options.shards.keys()].sort() });
@@ -374,6 +376,7 @@ export const scatterOver = (options: {
    * change without anything having to be kept in step.
    */
   const allTenants = Effect.gen(function* () {
+    yield* options.complete ?? Effect.void;
     const found = new Set<TenantId>();
     for (const store of options.shards.values()) {
       for (const tenant of yield* options.tenantsOn(store)) found.add(tenant);

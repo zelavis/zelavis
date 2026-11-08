@@ -322,6 +322,8 @@ export interface StandbyInput {
   readonly successor?: string;
   /** Promote even if followers' acknowledged writes would be lost; the promotion says how many. */
   readonly allowDataLoss?: boolean;
+  /** Called once if this node, as the writer it became, is later found superseded (see `HoldWriterInput.onSuperseded`). */
+  readonly onSuperseded?: () => void;
 }
 
 const STANDBY_RETRY_MILLIS = 1000;
@@ -359,6 +361,7 @@ export const standby = (input: StandbyInput): Effect.Effect<WriterHandle & { rea
         const handle = yield* holdWriter({
           leases: input.leases, store: input.store, owner: input.owner, ttlMillis: ttl, lease: promoted.value.lease,
           ...(input.acknowledged === undefined ? {} : { acknowledged: input.acknowledged }),
+          ...(input.onSuperseded === undefined ? {} : { onSuperseded: input.onSuperseded }),
         }).pipe(Effect.catchTags({
           LeaseOwnedByAnother: (error) => Effect.die(error),
           LeaseStillHeld: (error) => Effect.die(error),

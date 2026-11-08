@@ -447,6 +447,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   setupValues: "project-id",
   prepare: "descriptor",
   start: "descriptor",
+  startStandby: "descriptor",
   stop: "project-id",
   status: "project-id",
   logs: "project-id",
@@ -543,8 +544,15 @@ export function createDeploymentBackendProjectRuntime(options: {
     prepare: Effect.fn("BackendProjects.prepare")(function* (project: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[0], recipe: Parameters<ZelavisProjectRuntimeDriver["prepare"]>[1]) {
       return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).prepare(project, recipe);
     }),
-    start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1]) {
-      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement);
+    startStandby: Effect.fn("BackendProjects.startStandby")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1], startOptions: Parameters<ZelavisProjectRuntimeDriver["start"]>[2]) {
+      const driver = yield* evaluate(() => forDescriptor(project));
+      if (driver.startStandby === undefined) {
+        return yield* Effect.fail(new ZelavisProjectRuntimeError(`The "${driver.name}" Project driver cannot run a Project as its writer's standby.`));
+      }
+      return yield* effectOperations(driver).startStandby!(project, placement, startOptions);
+    }),
+    start: Effect.fn("BackendProjects.start")(function* (project: Parameters<ZelavisProjectRuntimeDriver["start"]>[0], placement: Parameters<ZelavisProjectRuntimeDriver["start"]>[1], startOptions: Parameters<ZelavisProjectRuntimeDriver["start"]>[2]) {
+      return yield* effectOperations(yield* evaluate(() => forDescriptor(project))).start(project, placement, startOptions);
     }),
     prepareUpdate: Effect.fn("BackendProjects.prepareUpdate")(function* (previous: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[0], candidate: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[1], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareUpdate"]>>[2]) {
       const prepare = effectOperations(yield* evaluate(() => forDescriptor(previous))).prepareUpdate;

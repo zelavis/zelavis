@@ -282,7 +282,8 @@ export const crossTenantIndexesOver = (options: {
 }) => Effect.gen(function* () {
   const { globalShard, shards, tenantsOn, routed } = options;
 
-  const derivedShards = new Map([[globalShard.shard, globalShard], ...shards]);
+  // Read when used: a shard opened after this was built (`ShardsApi`) can hold derived entries, and a closed one cannot.
+  const derivedShard = (id: ShardId): ShardStoreApi | undefined => id === globalShard.shard ? globalShard : shards.get(id);
   const placementIds = (definition: CrossTenantIndexDefinition) => definition.shards ?? [globalShard.shard];
   const shardFor = (definition: CrossTenantIndexDefinition, partition: string) => {
     let hash = 2166136261;
@@ -291,7 +292,7 @@ export const crossTenantIndexesOver = (options: {
     return placements[hash % placements.length];
   };
   const internal = (partition: string, shard = globalShard.shard): DocumentsApi => {
-    const store = derivedShards.get(shard);
+    const store = derivedShard(shard);
     if (store === undefined) throw new Error(`Derived index shard "${shard}" is unavailable`);
     return documentsFor(store.partition(partition), partition);
   };
@@ -693,7 +694,7 @@ export const crossTenantIndexesOver = (options: {
         yield* validate(input);
         if (definitions.has(input.name)) return yield* new CrossTenantIndexExists({ name: input.name });
         const requested = input.shards ?? [...shards.keys()].filter(id => !id.startsWith("zv.")).sort().slice(0, 32);
-        if (!Array.isArray(requested) || requested.length < 1 || requested.length > 32 || new Set(requested).size !== requested.length || requested.some(id => !derivedShards.has(id))) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "shards must name 1 to 32 distinct available shards" });
+        if (!Array.isArray(requested) || requested.length < 1 || requested.length > 32 || new Set(requested).size !== requested.length || requested.some(id => derivedShard(id) === undefined)) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "shards must name 1 to 32 distinct available shards" });
         const checked = yield* Effect.gen(function* () {
           const indexes: IndexDefinition[] = [];
           if (input.indexes !== undefined && (!Array.isArray(input.indexes) || input.indexes.length > 16)) return yield* new InvalidCrossTenantIndex({ name: input.name, reason: "at most 16 composite indexes are allowed" });
@@ -737,7 +738,7 @@ export const crossTenantIndexesOver = (options: {
           // again, never entries nothing names.
           const definition = yield* require_(name);
           let entries = 0;
-          for (const shard of placementIds(definition)) entries += yield* Effect.orDie(derivedShards.get(shard)!.drop(indexPartition(name)));
+          for (const shard of placementIds(definition)) entries += yield* Effect.orDie(derivedShard(shard)!.drop(indexPartition(name)));
           const hasStatus = yield* registry.collectionExists(STATUSES);
           yield* Effect.orDie(registry.write({ operations: [
             { _tag: "Delete", collection: DEFINITIONS, id: name },

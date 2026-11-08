@@ -1,5 +1,7 @@
 import { Effect } from "effect";
 import type { ZelavisServerRoute } from "../core/index.js";
+import { readAuthorizationCredential, type ZelavisRequestAuthenticator } from "../core/runtime/authentication.js";
+import type { ZelavisPrincipal } from "../core/runtime/contracts.js";
 import { integration, present } from "../core/runtime/effect-boundary.js";
 import { isWriterLease, type LeaseStore } from "../db/writer-lease.js";
 import type { WriterLeaseAudit } from "./writer-lease-store.js";
@@ -25,6 +27,35 @@ export interface ProjectLeaseCapabilityOptions {
   readonly secret: () => Promise<string>;
   /** Whether the Project still exists: deleting one ends its capability. */
   readonly projectExists: (scope: string) => Promise<boolean>;
+  /**
+   * Told of a change of writer once it has landed and been audited, for the Platform to settle the Project's placement
+   * against. Not awaited by the write, and a failure of it never fails the write: it is retried by the next reconciliation.
+   */
+  readonly onProjectWriterChanged?: (scope: string) => Promise<void>;
+}
+
+/**
+ * A Project's lease capability as the credential of that Project's follower: a standby of the Project reads its writer
+ * with the token it was started with. The principal holds `database.replicate` on that one Project and nothing else, so
+ * it reaches the Project's followers routes and no other Project's, and no Platform-wide route. It still writes no lease
+ * but its own node's (`writeCore`). Not authentic, or its Project gone: not this authenticator's credential (`undefined`).
+ */
+export function createLeaseCapabilityAuthenticator(capability: ProjectLeaseCapabilityOptions): ZelavisRequestAuthenticator {
+  return {
+    name: "project-lease-capability",
+    authenticate: ({ request }) => present(Effect.gen(function* () {
+      const token = readAuthorizationCredential(request, "Bearer");
+      if (token === undefined) return undefined;
+      const secret = yield* integration(() => capability.secret());
+      const claims = yield* integration(() => verifyLeaseCapability(secret, token));
+      if (claims === undefined || !(yield* integration(() => capability.projectExists(claims.scope)))) return undefined;
+      return {
+        id: `project-lease:${claims.scope}@${claims.node}`,
+        type: "service",
+        grants: [{ permission: "database.replicate", scope: { type: "project", projectId: claims.scope } }],
+      } satisfies ZelavisPrincipal;
+    }).pipe(Effect.catchCause(() => Effect.succeed(undefined)))),
+  };
 }
 
 export function createWriterLeaseRoutes(leases: LeaseStore, audit?: WriterLeaseAudit, capability?: ProjectLeaseCapabilityOptions): readonly ZelavisServerRoute<any>[] {
@@ -43,15 +74,19 @@ export function createWriterLeaseRoutes(leases: LeaseStore, audit?: WriterLeaseA
     if (!isWriterLease(input.lease) || input.lease.partition !== partition) return refuse("The body is { lease: { partition, owner, epoch, expiresAt, acknowledgedHead }, expectedVersion? } for this partition.");
     const lease = input.lease;
     if (onlyOwner !== undefined && lease.owner !== onlyOwner) return refuse(`This credential may hold the lease only as ${onlyOwner}.`, 403);
+    /** Told, after the audit, so the Platform can settle the Project\'s placement; the write neither waits for it nor fails with it. */
+    const announce = capability?.onProjectWriterChanged === undefined ? Effect.void : Effect.asVoid(Effect.forkDetach(
+      integration(() => capability.onProjectWriterChanged!(lease.partition)).pipe(
+        Effect.catchCause((cause) => Effect.logWarning(`Settling the placement of ${lease.partition} after its writer changed failed; the next reconciliation tries again`, cause)))));
     /** A change of writer (a new lease, or another owner or epoch) is audited after it lands; renewals are not. */
     const audited = (before: { readonly owner: string; readonly epoch: number } | undefined) => before !== undefined && before.owner === lease.owner && before.epoch === lease.epoch
       ? Effect.void
-      : (audit?.record({
+      : Effect.andThen((audit?.record({
           at: Date.now(), principal: who, partition: lease.partition,
           ...(before === undefined ? {} : { from: before }), to: { owner: lease.owner, epoch: lease.epoch },
           ...(lease.lostPositions === undefined ? {} : { lostPositions: lease.lostPositions }),
           // The change has landed and stands; an audit that could not be written is reported, never silent.
-        }) ?? Effect.void).pipe(Effect.catchCause((cause) => Effect.logError(`The change of writer of ${lease.partition} landed but its audit entry could not be written`, cause)));
+        }) ?? Effect.void).pipe(Effect.catchCause((cause) => Effect.logError(`The change of writer of ${lease.partition} landed but its audit entry could not be written`, cause))), announce);
     if (input.expectedVersion === undefined) {
       if (!(yield* leases.create(lease))) return refuse("A lease already exists.", 409);
       yield* audited(undefined);

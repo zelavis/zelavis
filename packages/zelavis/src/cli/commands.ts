@@ -17,6 +17,7 @@ import { runLogsCommand } from "./logs.js";
 import { runTerminalCommand } from "./terminal.js";
 import { runProjectsCommand } from "./projects.js";
 import { runNodesCommand } from "./nodes.js";
+import { runShardPlacementCommand } from "./shard-placement.js";
 import { runCloudCommand } from "./cloud.js";
 import { runWorkerCommand } from "./worker.js";
 import { runSystemStoreCommand } from "./system-store.js";
@@ -26,6 +27,7 @@ import { runHostOperationsCommand } from "./host-operations.js";
 import { runStorageCommand } from "./storage.js";
 import { runCrossTenantIndexesCommand } from "./cross-tenant-indexes.js";
 import { runFollowersCommand } from "./followers.js";
+import { runShardsCommand } from "./shards.js";
 import { runLeasesCommand } from "./leases.js";
 import { runEntitiesCommand } from "./entities.js";
 import { runFabricCommand } from "./fabric.js";
@@ -164,6 +166,7 @@ Usage:
   zelavis data <collections|create-collection|set-columns|get|insert|update|delete|query|page|write|outbox|outbox-emit|outbox-remove> --project <id> [collection|topic] [id] [--data <json>] [--where <json>] [--emit <json>] [--ids <id,id>] [--limit <n>] [--after <cursor>] [--columns <fields|all>] [--url <url>] [--token <token>] [--json]
   zelavis runtime <config|access|settings|update-settings> [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis environment <identity|health|create-session|update-session|session|close-session|usage|start-process|process|operate-process|events> [id] [--data JSON] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
+  zelavis shard-placement <get|set-allocation> <project-id> [--nodes a,b --cpu N --memory BYTES --disk BYTES --expected-generation N] [--url <url>] [--token <token>] [--json]
   zelavis fabric <snapshot|health|nodes|node|placements|placement|plan|migrations> [id] [--data JSON] [--url <url>] [--token <token>] [--json]
   zelavis assistant <audit|provider|set-provider|clear-provider|project-provider|set-project-provider|clear-project-provider|threads|create-thread|thread|delete-thread|send|stream|decide> [id] [text|approval-id] [--data JSON] [--project ID] [--decision approve|deny] [--confirm ID] [--url <url>] [--token <token>] [--json]
   zelavis backends <list|detect|enable|disable|default> [backend-id] [--url <url>] [--token <token>] [--json]
@@ -173,6 +176,7 @@ Usage:
   zelavis entities <send|message|cancel|state|mailbox|list> --project <id> <type> [id] [message-key] [--tag TAG] [--data JSON] [--primary-key KEY] [--deliver-at ISO] [--tenant ID] [--after CURSOR] [--limit N] [--url <url>] [--token <token>] [--json]
   zelavis leases <show|put|audit> [PARTITION] [--data JSON] [--limit N] [--url <url>] [--token <token>] [--json]
   zelavis followers <stats|records|log|hold|release|acknowledge|acknowledgments|lease|promote|demote|feed|partitions> --project <id> [partition] [--after ID|CURSOR] [--from CURSOR] [--limit N] [--id HOLD] [--position N] [--ttl-millis N] [--follower NAME] [--owner NAME] [--allow-data-loss] [--cursor CURSOR] [--partitions A,B] [--timeout-millis N] [--url <url>] [--token <token>] [--json]
+  zelavis shards <list|place|release|replicate|unreplicate|operation> --project <id> [shard] [--ranges 0-31,64] [--cpu N] [--memory BYTES] [--disk BYTES] [--shard ID] [--into SHARD] [--url <url>] [--token <token>] [--json]
   zelavis workloads <health|menu|list|create|get|update|run|logs> --project <id> [id|section] [--type T] [--data JSON] [--workload ID] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
@@ -224,6 +228,7 @@ Commands:
                             their state, mailboxes and replies.
   leases                    Read and conditionally write a partition's writer lease in the
                             Platform's lease authority.
+  shards                    An App Project's shards on other Nodes: list, place, release
   followers                 The leader side of an App Project's database for followers
                             on other hosts: stats, records, log, holds, acknowledgments
                             and the change feed.
@@ -634,6 +639,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
       (yield* integration(() => runCloudCommand(args.slice(1))));
       return;
     }
+    if (args[0] === "shard-placement") {
+      (yield* integration(() => runShardPlacementCommand(args.slice(1))));
+      return;
+    }
     if (args[0] === "nodes") {
       (yield* integration(() => runNodesCommand(args.slice(1))));
       return;
@@ -709,6 +718,10 @@ const runCliProgram = Effect.fn("CLI.dispatch")(function* (
     }
     if (args[0] === "followers") {
       (yield* integration(() => runFollowersCommand(args.slice(1))));
+      return;
+    }
+    if (args[0] === "shards") {
+      (yield* integration(() => runShardsCommand(args.slice(1))));
       return;
     }
     if (args[0] === "leases") {

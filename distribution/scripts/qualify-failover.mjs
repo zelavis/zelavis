@@ -8,10 +8,13 @@
 //              cannot be proved, before the follower is promoted; the follower takes over; and when the network
 //              returns the old writer sees it was superseded, follows the new one and ends holding exactly what it holds.
 //
+// ZELAVIS_QUALIFY_DRILLS=partition,project runs only the named drills; ZELAVIS_QUALIFY_KEEP=1 keeps a failed
+// drill's data directories and container logs for inspection.
+//
 // Run on the owner's machine or any host with Docker: `pnpm release:qualify:failover`. Needs the repository built
 // (`pnpm build`). IMAGE is a Node 22 image (`node:22-slim` by default); the repository is mounted read-only.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +22,13 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const IMAGE = process.env.ZELAVIS_QUALIFY_IMAGE ?? "node:22-slim";
 const TTL = Number(process.env.ZELAVIS_QUALIFY_LEASE_MILLIS ?? 3000);
+const KNOWN_DRILLS = ["kill", "partition", "project", "unacknowledged-tail"];
+const SELECTED = process.env.ZELAVIS_QUALIFY_DRILLS?.split(",").map((name) => name.trim()).filter(Boolean);
+if (SELECTED?.some((name) => !KNOWN_DRILLS.includes(name))) {
+  console.error(`ZELAVIS_QUALIFY_DRILLS names only ${KNOWN_DRILLS.join(", ")}`);
+  process.exit(2);
+}
+const KEEP = process.env.ZELAVIS_QUALIFY_KEEP === "1";
 const run = process.pid.toString(36);
 const docker = (...args) => {
   const result = spawnSync("docker", args, { encoding: "utf8" });
@@ -37,6 +47,9 @@ const until = async (what, condition, millis = 60_000) => {
 };
 
 async function drill(name, body) {
+  if (SELECTED !== undefined && !SELECTED.includes(name)) { console.log(`\n== ${name} == skipped`); return; }
+  const failuresBefore = failures.length;
+  let completed = false;
   console.log(`\n== ${name} ==`);
   const net = `zvf-${run}-${name}`;
   const containers = [];
@@ -47,7 +60,7 @@ async function drill(name, body) {
     const container = `${net}-${label ?? node}`;
     docker("run", "-d", "--name", container, "--network", net, "--network-alias", alias ?? node,
       ...Object.entries({ NAME: node, TTL_MILLIS: String(TTL), ...env }).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
-      "-v", `${root}:/repo:ro`, "-v", `${dir}:/data`, IMAGE, `/repo/distribution/scripts/failover/${node === "authority" ? "authority" : "node"}.mjs`);
+      "-v", `${root}:/repo:ro`, "-v", `${dir}:/data`, IMAGE, "node", `/repo/distribution/scripts/failover/${node === "authority" ? "authority" : "node"}.mjs`);
     containers.push(container);
     dataOf.set(container, dir);
     return container;
@@ -56,11 +69,18 @@ async function drill(name, body) {
     docker("network", "create", net);
     docker("network", "create", `${net}-r`);
     await body({ net, repl: `${net}-r`, start, dataOf, events, until });
+    completed = true;
   } finally {
+    const keep = KEEP && (!completed || failures.length > failuresBefore);
+    if (keep) for (const container of containers) {
+      const logs = dockerQuiet("logs", container);
+      writeFileSync(join(dataOf.get(container), `${container}.log`), `${logs.stdout}${logs.stderr}`);
+    }
     for (const container of containers) dockerQuiet("rm", "-f", container);
     dockerQuiet("network", "rm", net);
     dockerQuiet("network", "rm", `${net}-r`);
-    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    if (keep) console.log(`  kept for inspection: ${dirs.join(" ")}`);
+    else for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -76,6 +96,21 @@ const finalOf = async (container) => {
   dockerQuiet("kill", "-s", "TERM", container);
   await until(`${container} final`, () => events(container).some((event) => event.event === "final"));
   return events(container).findLast((event) => event.event === "final");
+};
+/** What a node holds now, without stopping it. */
+const probeOf = async (container) => {
+  const before = events(container).filter((event) => event.event === "probe").length;
+  dockerQuiet("kill", "-s", "HUP", container);
+  await until(`${container} probe`, () => events(container).filter((event) => event.event === "probe").length > before);
+  return events(container).findLast((event) => event.event === "probe");
+};
+/** Waits until `container` holds exactly what `target` held, up to `millis`; answers how long it took, or undefined. */
+const convergedOn = async (container, target, millis = 30_000) => {
+  const want = JSON.stringify(target.by);
+  for (const started = Date.now(); Date.now() - started < millis; await wait(250)) {
+    if (JSON.stringify((await probeOf(container)).by) === want) return Date.now() - started;
+  }
+  return undefined;
 };
 const idsAcked = (list) => list.filter((event) => event.event === "acked").map((event) => event.id);
 const number = (id) => Number(id.slice(1));
@@ -145,6 +180,11 @@ const partitionDrill = (name, extra, afterwards) => drill(name, async ({ net, st
   await wait_("the old writer to follow the new one", () => events(a).some((event) => event.event === "following"), 60_000);
   // Let the old writer converge on the new writer's log, then compare what each holds.
   await quiesce(b);
+  const settled = await probeOf(b);
+  for (const [node, label] of [[c, "third node"], [a, "returned writer"]]) {
+    const took = await convergedOn(node, settled);
+    console.log(took === undefined ? `  the ${label} did not hold what the new writer holds within 30 s` : `  the ${label} was level ${took} ms after the writer was quiesced`);
+  }
   let early;
   if (extra.MODE === "database") {
     // A node told to start the Project while its writer is live (B still renews its lease) must open nothing.
@@ -164,8 +204,9 @@ const partitionDrill = (name, extra, afterwards) => drill(name, async ({ net, st
   }
   const acked = idsAcked(events(a));
   check(acked.every((id) => bFinalProbe.ids.includes(id)), `every write the old writer acknowledged (${acked.length}) is on the new writer`);
-  const same = JSON.stringify(aFinal.ids) === JSON.stringify(bFinalProbe.ids);
-  check(same, "the returned writer holds exactly what the new writer holds");
+  // Ids and authors: two writers can each hold one event at the same position, and equal ids would hide that.
+  const same = JSON.stringify(aFinal.by) === JSON.stringify(bFinalProbe.by);
+  check(same, "the returned writer holds exactly what the new writer holds, authors included");
   if (extra.MODE === "database") {
     const refusal = events(early).find((event) => ["start-refused", "started"].includes(event.event));
     check(refusal.event === "start-refused" && /LeaseStillHeld/.test(refusal.why), `a start while the writer's lease is live opened nothing (${refusal.why ?? refusal.event})`);
@@ -179,7 +220,7 @@ const partitionDrill = (name, extra, afterwards) => drill(name, async ({ net, st
     if (opened.event === "started") {
       check(opened.epoch === 3, "at the next epoch");
       const lost = idsAcked(events(b));
-      check(lost.every((id) => opened.ids.includes(id)), `the database it opened holds every write the lost writer acknowledged (${lost.length})`);
+      check(lost.every((id) => opened.by[id] === "B"), `the database it opened holds every write the lost writer acknowledged (${lost.length}), as that writer wrote it`);
       await wait_("the started Project to write", () => events(late).filter((event) => event.event === "committed" || event.event === "acked").length >= 5, 30_000);
     }
   }

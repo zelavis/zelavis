@@ -139,3 +139,14 @@ test("an operation runs against one placement, under one lease, however routing 
   yield* put(store, 2, "on s1");
   assert.equal(yield* api.handle().read(2), "on s1", "a new operation routes afresh");
 })));
+
+
+test("pinnedRoute answers the pin inside an operation and nothing outside", () => run(Effect.gen(function* () {
+  const { router, placement } = yield* setup;
+  assert.equal(yield* router.pinnedRoute("acme"), undefined);
+  const api = router.operations({ read: router.pinnedRoute("acme") }, "acme");
+  assert.deepEqual(yield* api.read, { shard: "s0", version: 1 });
+  placement.acme = "s1";
+  assert.deepEqual(yield* api.read, { shard: "s1", version: 1 });
+  assert.equal(yield* router.pinnedRoute("acme"), undefined);
+})));

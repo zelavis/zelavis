@@ -96,8 +96,87 @@ test("a feed the leader cannot answer is a resync that compares heads and levels
   await until(async () => (await ids(follower.api, name(33))).includes("b"), "the write made across the resync reaches the follower");
   await wait(300);
   assert.ok(counter.calls.pages >= 2, "it listed again");
-  assert.ok(sourcesTotal(counter) <= 3, `${sourcesTotal(counter)} partitions asked about after the resync: only the one that was behind`);
+  // A resync asks once about each partition this side holds (does the leader still have it?), then levels only what is behind.
+  assert.ok(sourcesTotal(counter) <= 60 + 3, `${sourcesTotal(counter)} source calls after the resync, for 60 partitions held`);
+  assert.ok([...counter.calls.sources.values()].every((count) => count <= 3), "no partition was asked about more than three times (prune, resync, feed)");
 });
+
+for (const [how, adapt] of [
+  ["in the same process", (api) => localDatabaseLeader(api.database.followers)],
+  ["through the leader transport", (api) => remoteDatabaseLeader(createZelavisClient({ baseUrl: "http://zv.test", rootPath: "/zelavis", fetch: leaderFetch(api.api) }).followers("p1"))],
+]) {
+  test(`a Tenant dropped on the leader is dropped on its follower, and only that one (${how})`, { timeout: 120_000 }, async (t) => {
+    const leader = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+    const follower = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+    for (let at = 0; at < 5; at++) await put(leader.api, name(at), "a");
+    const fiber = Effect.runFork(follower.database.followers.followAll(adapt(leader), { name: "east", timeoutMillis: 200 }));
+    t.after(() => Effect.runPromise(Fiber.interrupt(fiber)));
+    await until(async () => (await ids(follower.api, name(4))).length === 1, "the follower holds every Tenant");
+
+    await Effect.runPromise(leader.database.dropTenant(name(2)));
+    await until(async () => !(await Effect.runPromise(follower.database.partitions)).includes(name(2)), "the follower dropped it");
+    for (const at of [0, 1, 3, 4]) assert.deepEqual(await ids(follower.api, name(at)), ["a"]);
+  });
+}
+
+test("a Tenant dropped while the follower was away, and one only the follower held, are removed at its resync", { timeout: 120_000 }, async (t) => {
+  const leader = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const follower = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  for (let at = 0; at < 5; at++) await put(leader.api, name(at), "a");
+  const first = Effect.runFork(follower.database.followers.followAll(localDatabaseLeader(leader.database.followers), { name: "east", timeoutMillis: 200 }));
+  t.after(() => Effect.runPromise(Fiber.interrupt(first)));
+  await until(async () => (await ids(follower.api, name(4))).length === 1, "the follower holds every Tenant");
+  await Effect.runPromise(Fiber.interrupt(first));
+
+  await Effect.runPromise(leader.database.dropTenant(name(1)));
+  await put(follower.api, name(900), "x");
+  const second = Effect.runFork(follower.database.followers.followAll(localDatabaseLeader(leader.database.followers), { name: "east", timeoutMillis: 200 }));
+  t.after(() => Effect.runPromise(Fiber.interrupt(second)));
+  await until(async () => {
+    const held = await Effect.runPromise(follower.database.partitions);
+    return !held.includes(name(1)) && !held.includes(name(900));
+  }, "the resync removed both");
+  for (const at of [0, 2, 3]) assert.deepEqual(await ids(follower.api, name(at)), ["a"]);
+});
+
+test("a removal that fails is tried again on the next turn", { timeout: 120_000 }, async (t) => {
+  const leader = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  const follower = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+  for (let at = 0; at < 5; at++) await put(leader.api, name(at), "a");
+  const counter = counting(localDatabaseLeader(leader.database.followers));
+  const fiber = Effect.runFork(follower.database.followers.followAll(counter.leader, { name: "east", timeoutMillis: 200 }));
+  t.after(() => Effect.runPromise(Fiber.interrupt(fiber)));
+  await until(async () => (await ids(follower.api, name(4))).length === 1, "the follower holds every Tenant");
+
+  counter.fail(name(3));
+  await Effect.runPromise(leader.database.dropTenant(name(3)));
+  await put(leader.api, name(0), "b");
+  await until(async () => !(await Effect.runPromise(follower.database.partitions)).includes(name(3)), "the follower dropped it on a later turn");
+  assert.ok(counter.calls.sources.get(name(3)) >= 2, "the failed attempt and the retry");
+});
+
+for (const [how, adapt] of [
+  ["in the same process", (api) => localDatabaseLeader(api.database.followers)],
+  ["through the leader transport", (api) => remoteDatabaseLeader(createZelavisClient({ baseUrl: "http://zv.test", rootPath: "/zelavis", fetch: leaderFetch(api.api) }).followers("p1"))],
+]) {
+  test(`a Tenant whose log is as long as the leader's but ends in a different event is leveled at resync (${how})`, { timeout: 120_000 }, async (t) => {
+    const leader = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+    const follower = await openTemporaryDatabase(t, { crossTenantRefresh: false });
+    for (let at = 0; at < 3; at++) await put(leader.api, name(at), "a");
+    const first = Effect.runFork(follower.database.followers.followAll(adapt(leader), { name: "east", timeoutMillis: 200 }));
+    t.after(() => Effect.runPromise(Fiber.interrupt(first)));
+    await until(async () => (await ids(follower.api, name(2))).length === 1, "the follower holds every Tenant");
+    await Effect.runPromise(Fiber.interrupt(first));
+
+    // Each side commits one event at the same position of the same Tenant: equal lengths, different tips.
+    await put(follower.api, name(1), "unacknowledged");
+    await put(leader.api, name(1), "promoted");
+    const second = Effect.runFork(follower.database.followers.followAll(adapt(leader), { name: "east", timeoutMillis: 200 }));
+    t.after(() => Effect.runPromise(Fiber.interrupt(second)));
+    await until(async () => (await ids(follower.api, name(1))).join() === "a,promoted", "the follower holds what the leader holds, not its own tail");
+    for (const at of [0, 2]) assert.deepEqual(await ids(follower.api, name(at)), ["a"]);
+  });
+}
 
 // ---- the whole database as the failover unit ----
 import { Exit, Scope } from "effect";

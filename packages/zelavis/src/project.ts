@@ -43,11 +43,16 @@ import type {
   ProjectPlacementRecord,
   ProjectPlacementToken,
 } from "./platform/project-placement-authority.js";
+import type { ProjectStandbyStore } from "./platform/project-standby.js";
+import type { ProjectRouteClaims } from "./core/agent/project-dispatch.js";
+import type { LeaseStore } from "./db/writer-lease.js";
 
 export type ZelavisProjectRuntimeStatus =
   | "provisioning"
   | "starting"
   | "running"
+  /** A process of the Project that follows its writer and writes nothing until it takes over; it serves no requests. */
+  | "standby"
   | "stopping"
   | "stopped"
   | "failed";
@@ -208,6 +213,8 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
    * that wrote that data until the Project's upgrade migrates it. Derived on every read, never stored.
    */
   dataLayout?: { readonly state: "upgradeRequired"; readonly from: number; readonly to: number };
+  /** Where the Project's standby runs, for a lease-guarded Project that has one. Read from the standby record, never stored with the Project. */
+  readonly standby?: ZelavisProjectStandby;
   /** Present only on the response of the upgrade that migrated this Project's data; never stored. */
   dataMigration?: ZelavisProjectDataMigration;
   /**
@@ -304,6 +311,50 @@ export interface ZelavisProjectVersions {
   readonly versions: readonly { readonly version: string; readonly status: "available" | "unavailable"; readonly error?: string; readonly nodeVersion?: string; readonly dataFormat?: number }[];
 }
 
+/** A lease-guarded Project's standby: a process on another node that follows the writer and takes over when its lease lapses. */
+export interface ZelavisProjectStandby {
+  readonly nodeId: string;
+  readonly status: "dispatched" | "stopped" | "promoted" | "failed";
+  readonly error?: string;
+}
+
+/**
+ * What the manager needs to run a Project's standby and to follow its writer: the node the standby runs on, the lease it
+ * is fenced by, and the lease environment each process of the Project is started with.
+ */
+export interface ZelavisProjectLeaseGuard {
+  /** The two nodes a lease-guarded Project is kept on: whichever is not the writer's runs the standby. */
+  readonly nodeId: string;
+  readonly standbyNodeId: string;
+  readonly standbys: ProjectStandbyStore;
+  readonly leases: LeaseStore;
+  readonly environment: (projectId: string, nodeId: string, role: "writer" | "standby") => Promise<Readonly<Record<string, string>>>;
+}
+
+/**
+ * How the Gateway reaches a Project the Platform has placed on another node: the node, the committed placement that fences
+ * the Agent's acceptance, and a way to send one request there.
+ */
+export interface ZelavisProjectRemoteRoute {
+  readonly nodeId: string;
+  readonly placement: ProjectPlacementToken;
+  readonly send: (request: {
+    readonly method: string;
+    readonly path: string;
+    readonly gateway: ProjectRouteClaims["gateway"];
+    readonly headers: ReadonlyArray<readonly [string, string]>;
+    readonly body?: Uint8Array;
+  }) => Promise<{ readonly status: number; readonly headers: ReadonlyArray<readonly [string, string]>; readonly body: Uint8Array }>;
+}
+
+/** What one start is given beyond the Project and its placement. */
+export interface ZelavisProjectStartOptions {
+  /** The lease environment (`ZELAVIS_LEASE_*`) this start runs under, from the Platform that signed the dispatch; replaces the driver's own. */
+  readonly leaseEnvironment?: Readonly<Record<string, string>>;
+  /** The App shard channel environment (`ZELAVIS_APP_SHARDS_*`) this start runs under, from the Platform that signed the dispatch; replaces the driver's own. */
+  readonly appShardEnvironment?: Readonly<Record<string, string>>;
+}
+
 export interface ZelavisProjectRuntimeDriver {
   readonly name: string;
   /** Runtime families this configured driver can currently execute. */
@@ -352,6 +403,16 @@ export interface ZelavisProjectRuntimeDriver {
   start(
     project: ZelavisProjectRecord,
     placement?: ProjectPlacementToken,
+    options?: ZelavisProjectStartOptions,
+  ): Promise<ZelavisProjectRuntimeSnapshot>;
+  /**
+   * Starts the Project as its writer's standby: a process that follows the writer through the Platform and takes the
+   * lease over when it lapses. Ready once the process is up (`standby`); it serves the Project only after its promotion.
+   */
+  startStandby?(
+    project: ZelavisProjectRecord,
+    placement?: ProjectPlacementToken,
+    options?: ZelavisProjectStartOptions,
   ): Promise<ZelavisProjectRuntimeSnapshot>;
   stop(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
   /** Destination proof required before taking over an expired owner. */
@@ -467,6 +528,17 @@ export interface ZelavisProjectManager {
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   update(id: string, input: ZelavisProjectUpdateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
+  /**
+   * Settles where a lease-guarded Project is placed against who its writer lease names: when a standby has taken the
+   * lease over, the Project's placement moves to its node and the Project starts there under that placement. Idempotent;
+   * told of a change by the lease routes and, as a backstop, by every reconciliation. The Platform never orders a promotion.
+   */
+  followWriterLease(id: string): Promise<void>;
+  /**
+   * The way to reach the Project when it is placed on another node, from the committed placement: undefined for a Project
+   * placed here, or whose node this host cannot send to. The Gateway uses it in place of a runtime URL it does not have.
+   */
+  remoteRoute?(id: string): Promise<ZelavisProjectRemoteRoute | undefined>;
   stop(id: string): Promise<ZelavisProjectRecord>;
   restart(id: string): Promise<ZelavisProjectRecord>;
   /**
@@ -905,9 +977,67 @@ export interface ZelavisProjectDispatcher {
   authorizeDispatch?(request: {
     readonly action: "start" | "stop";
     readonly placement: ProjectPlacementToken;
+    /** The lease environment the started process gets; signed with the authority. */
+    readonly lease?: Readonly<Record<string, string>>;
+    /** The App shard channel environment the started process gets; signed with the authority. */
+    readonly appShards?: Readonly<Record<string, string>>;
   }): Promise<string>;
+  /**
+   * Runs the Project on `nodeId` as its writer's standby: prepared there from this host's snapshot, then started as a
+   * process that holds no placement (the writer lease fences it). `epoch` is the writer's placement epoch, for the record.
+   */
+  dispatchStandbyFenced?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+    readonly ownerSession: string;
+    readonly epoch: number;
+    readonly lease: Readonly<Record<string, string>>;
+  }): Promise<void>;
+  /**
+   * Sends one request to the Project the Platform has placed on `nodeId` and answers what it answered: the Agent verifies the
+   * signed authority against its committed placement and forwards to the Project on its own loopback, signing the Project's
+   * Gateway envelope itself from the claims.
+   */
+  dispatchRoute?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+    readonly placement: ProjectPlacementToken;
+    readonly method: string;
+    readonly path: string;
+    readonly gateway: ProjectRouteClaims["gateway"];
+    readonly headers: ReadonlyArray<readonly [string, string]>;
+    readonly body?: Uint8Array;
+  }): Promise<{ readonly status: number; readonly headers: ReadonlyArray<readonly [string, string]>; readonly body: Uint8Array }>;
+  dispatchStandbyStopFenced?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+    readonly ownerSession: string;
+    readonly epoch: number;
+  }): Promise<void>;
   /** Publishes a signed committed lease to the destination Agent. */
   dispatchLeaseFenced?(placement: ProjectPlacementRecord): Promise<void>;
+  /** Delivers a signed App shard grant (state at an epoch) to the Agent that hosts the shard's storage. */
+  deliverAppShardGrant?(request: {
+    readonly nodeId: string;
+    readonly projectId: string;
+    readonly incarnation: string;
+    readonly shardId: string;
+    readonly epoch: number;
+    readonly state: "preparing" | "committed" | "released";
+    readonly durability: "crash" | "power";
+  }): Promise<{ readonly state: string; readonly epoch: number }>;
+  /** Signs a short-lived bearer for KV calls on one remote shard at one epoch; contacts no Agent. */
+  authorizeAppShardAccess?(request: {
+    readonly nodeId: string;
+    readonly projectId: string;
+    readonly incarnation: string;
+    readonly shardId: string;
+    readonly epoch: number;
+  }): Promise<{
+    readonly token: string;
+    readonly expiresAt: number;
+    readonly destination: { readonly url: string; readonly caPem: string; readonly agentId: string };
+  }>;
   /** Remote Agent transport that validates committed placement at execution. */
   dispatchStartFenced?(request: {
     readonly projectId: string;
@@ -1001,6 +1131,10 @@ export interface ZelavisProjectManagerOptions {
      * models no nodes at all, which starts everything locally exactly as before.
      */
     dispatch?: () => ZelavisProjectDispatcher | undefined;
+    /** Lease-guarding of the Projects this host starts (`ZELAVIS_PROJECT_LEASES_*`); absent when none is configured. */
+    leaseGuard?: ZelavisProjectLeaseGuard;
+    /** The App shard channel environment (`ZELAVIS_APP_SHARDS_*`) a remotely started writer is given, signed into its dispatch. */
+    appShardEnvironment?: (projectId: string, nodeId: string, epoch: number) => Promise<Readonly<Record<string, string>>>;
     /**
      * Whether to reconcile as soon as the manager exists.
      *
@@ -1447,7 +1581,14 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         if (versions?.currentDataFormat === undefined || versions.latestDataFormat === undefined || versions.currentDataFormat === versions.latestDataFormat) return project;
         return { ...project, dataLayout: { state: "upgradeRequired" as const, from: versions.currentDataFormat, to: versions.latestDataFormat } };
     });
-    const refresh = (id: string, persist: boolean) => Effect.flatMap(refreshRecord(id, persist), withDataLayout);
+    /** The standby record, when the Project has one, shown on the Project's read. */
+    const withStandby = Effect.fn("Projects.withStandby")(function* (project: ZelavisProjectRecord | undefined): Effect.fn.Return<ZelavisProjectRecord | undefined, TaggedFailure> {
+        if (!project || !guard || project.deletion) return project;
+        const record = yield* Effect.orElseSucceed(integration(() => guard.standbys.read(project.id)), () => undefined);
+        if (!record) return project;
+        return { ...project, standby: { nodeId: record.nodeId, status: record.state, ...(record.error === undefined ? {} : { error: record.error }) } };
+    });
+    const refresh = (id: string, persist: boolean) => Effect.flatMap(Effect.flatMap(refreshRecord(id, persist), withDataLayout), withStandby);
     const deleteProject = Effect.fn("Projects.deleteProject")(function* (id: string): Effect.fn.Return<boolean, TaggedFailure> {
         const existingProject = yield* read(id);
         if (!existingProject) {
@@ -1727,7 +1868,52 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         }
         return token;
     });
+    const guard = options.leaseGuard;
+    const failWith = (message: string) => new IntegrationFailure(new Error(message));
+    /**
+     * After a lease-guarded Project's writer is up, runs its standby on the standby node. The standby is a courtesy to the
+     * Project's availability, not a condition of its start: when it cannot be started the reason is recorded on the standby
+     * record (the Project read shows it) and the writer keeps serving.
+     */
+    const startStandbyFor = Effect.fn("Projects.startStandbyFor")(function* (projectId: string, writerNodeId: string, writerEpoch: number): Effect.fn.Return<void, TaggedFailure> {
+        if (!guard) return;
+        // The other of the two nodes: after a failover that is the one the writer left, and it is told to follow the new one.
+        const nodeId = writerNodeId === guard.standbyNodeId ? guard.nodeId : writerNodeId === guard.nodeId ? guard.standbyNodeId : undefined;
+        if (nodeId === undefined) return;
+        const dispatcher = options.dispatch?.();
+        const outcome = yield* Effect.result(Effect.gen(function* () {
+            const lease = yield* integration(() => guard.environment(projectId, nodeId, "standby"));
+            if (nodeId === localPlacementNodeId) {
+                // On this host's own node there is no Agent to dispatch to: its driver runs the standby.
+                if (!runtimeEffects.startStandby) return yield* failWith("This host's Project runtime cannot run a standby.");
+                yield* runtimeEffects.startStandby(yield* requireProject(projectId), undefined, { leaseEnvironment: lease });
+                return;
+            }
+            if (!dispatcher?.dispatchStandbyFenced) return yield* failWith(`This host cannot start a standby on node "${nodeId}".`);
+            yield* integration(() => dispatcher.dispatchStandbyFenced!({ projectId, nodeId, ownerSession: placementSession, epoch: writerEpoch, lease }));
+        }));
+        const error = outcome._tag === "Failure" ? String(unwrapFailure(outcome.failure) instanceof Error ? (unwrapFailure(outcome.failure) as Error).message : unwrapFailure(outcome.failure)).slice(0, 2000) : undefined;
+        if (error !== undefined) yield* Effect.logWarning(`Project "${projectId}" could not start its standby on node "${nodeId}": ${error}`);
+        yield* Effect.result(integration(() => guard.standbys.write({ projectId, nodeId, writerEpoch, state: error === undefined ? "dispatched" : "failed", ...(error === undefined ? {} : { error }) })));
+    });
+    /** Stops the standby before the writer, so that releasing the writer's lease cannot promote it. A stop never promotes. */
+    const stopStandbyFor = Effect.fn("Projects.stopStandbyFor")(function* (projectId: string): Effect.fn.Return<void, TaggedFailure> {
+        if (!guard) return;
+        const record = yield* integration(() => guard.standbys.read(projectId));
+        // A promoted standby is the writer now, and a failed or stopped one runs nothing.
+        if (!record || record.state !== "dispatched") return;
+        const dispatcher = options.dispatch?.();
+        if (record.nodeId === localPlacementNodeId) {
+            yield* runtimeEffects.stop(projectId);
+            yield* integration(() => guard.standbys.write({ projectId, nodeId: record.nodeId, writerEpoch: record.writerEpoch, state: "stopped" }));
+            return;
+        }
+        if (!dispatcher?.dispatchStandbyStopFenced) return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${projectId}" has a standby on node "${record.nodeId}" and this host cannot stop it.`));
+        yield* integration(() => dispatcher.dispatchStandbyStopFenced!({ projectId, nodeId: record.nodeId, ownerSession: placementSession, epoch: record.writerEpoch }));
+        yield* integration(() => guard.standbys.write({ projectId, nodeId: record.nodeId, writerEpoch: record.writerEpoch, state: "stopped" }));
+    });
     const stopPlacedRuntime = Effect.fn("Projects.stopPlacedRuntime")(function* (projectId: string): Effect.fn.Return<ZelavisProjectRuntimeSnapshot, TaggedFailure> {
+        yield* stopStandbyFor(projectId);
         const token = ownedPlacements.get(projectId);
         if (options.authoritativePlacement && !token) {
             const current = yield* integration(() => options.authoritativePlacement!.current(projectId));
@@ -1780,7 +1966,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 return (yield* Effect.fail(refusal));
             const placement = (yield* localPlacementToken(project.id));
             (yield* runtimeEffects.prepare(project, project.recipe));
-            return (yield* write(applySnapshot(project, (yield* runtimeEffects.start(project, placement)))));
+            const started = (yield* write(applySnapshot(project, (yield* runtimeEffects.start(project, placement)))));
+            if (placement) yield* startStandbyFor(project.id, placement.nodeId, placement.epoch);
+            return started;
         }), Effect.fn("Projects.recover")(function* (error) {
             const failed = {
                 ...project,
@@ -1835,8 +2023,11 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         return (yield* new IntegrationFailure(new Error("The remote Project lease is no longer committed.")));
                     }
                     (yield* integration(() => dispatcher.dispatchLeaseFenced!(committed)));
-                    const authority = (yield* integration(() => dispatcher.authorizeDispatch!({ action: "start", placement })));
+                    const lease = guard ? yield* integration(() => guard.environment(project.id, nodeId, "writer")) : undefined;
+                    const appShards = options.appShardEnvironment ? yield* integration(() => options.appShardEnvironment!(project.id, nodeId, placement.epoch)) : undefined;
+                    const authority = (yield* integration(() => dispatcher.authorizeDispatch!({ action: "start", placement, ...(lease ? { lease } : {}), ...(appShards ? { appShards } : {}) })));
                     (yield* integration(() => dispatcher.dispatchStartFenced!({ projectId: project.id, nodeId, placement, authority })));
+                    yield* startStandbyFor(project.id, nodeId, placement.epoch);
                 }
                 else {
                     (yield* integration(() => dispatcher.dispatchStart!({ projectId: project.id, nodeId })));
@@ -1926,6 +2117,8 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                         }
                         return;
                     }
+                    // The backstop for a change of writer the lease routes' hook missed (a restart, a lost call).
+                    if (guard) yield* Effect.catch(followWriter(project.id), (error) => Effect.logWarning(`Following the writer lease of Project "${project.id}" failed; the next reconciliation tries again`, error));
                     if (placement.blocked.has(project.id)) {
                         // Left stopped rather than started somewhere its placement group
                         // does not permit. `desiredState` stays "running", so the next
@@ -2035,6 +2228,61 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
             if (holds.get(project.id) === hold) holds.delete(project.id);
             Deferred.doneUnsafe(hold, Effect.void);
         })));
+    });
+    /**
+     * Decision 9: the Platform never orders a promotion. It learns of one from the lease record, and moves the Project's
+     * placement to the node the lease names, where the Project starts under that placement. The previous writer is fenced
+     * twice over: its writes by the lease epoch (it stops when superseded), its placement by the epoch it no longer holds.
+     */
+    const followWriter = Effect.fn("Projects.followWriterLease")(function* (id: string): Effect.fn.Return<void, TaggedFailure> {
+        const authority = options.authoritativePlacement;
+        if (!guard || !authority || closing) return;
+        const leaseOf = Effect.fn("Projects.leaseOf")(function* () {
+            const read = yield* Effect.mapError(guard.leases.read(id), (cause) => new IntegrationFailure(cause));
+            return read !== undefined && read.lease.expiresAt > Date.now() ? read.lease : undefined;
+        });
+        // Cheap and lock-free first: the start of a Project holds its lifecycle while it waits for this very lease.
+        const wanted = yield* leaseOf();
+        const placed = wanted === undefined ? undefined : yield* integration(() => authority.current(id));
+        if (!wanted || !placed || placed.state !== "active" || placed.nodeId === wanted.owner) return;
+        const standby = yield* integration(() => guard.standbys.read(id));
+        if (!standby || standby.nodeId !== wanted.owner) {
+            yield* Effect.logWarning(`Project "${id}" is placed on node "${placed.nodeId}" but its writer lease names node "${wanted.owner}", which is not its standby; the placement is left where it is.`);
+            return;
+        }
+        yield* withProjectLifecycle(id, () => Effect.gen(function* () {
+            const lease = yield* leaseOf();
+            const current = yield* integration(() => authority.current(id));
+            const token = ownedPlacements.get(id);
+            if (!lease || !current || current.state !== "active" || current.nodeId === lease.owner || !token || token.nodeId !== current.nodeId) return;
+            const dispatcher = options.dispatch?.();
+            const toLocal = lease.owner === localPlacementNodeId;
+            if (!toLocal && (!dispatcher?.dispatchStartFenced || !dispatcher.dispatchLeaseFenced || !dispatcher.authorizeDispatch)) {
+                return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${id}" cannot be started on node "${lease.owner}" from this host.`));
+            }
+            const released = yield* integration(() => authority.release(token));
+            if (!released.granted) return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${id}" lost placement authority while following its writer.`));
+            ownedPlacements.delete(id);
+            const acquired = yield* integration(() => authority.acquire({ projectId: id, nodeId: lease.owner, ownerSession: placementSession, expectedEpoch: released.placement.epoch, leaseMs: placementLeaseMs }));
+            if (!acquired.granted) return yield* Effect.fail(new ZelavisProjectValidationError(`Project "${id}" could not be placed on node "${lease.owner}" (${acquired.reason}).`));
+            const moved = { projectId: id, nodeId: acquired.placement.nodeId, ownerSession: placementSession, epoch: acquired.placement.epoch };
+            ownedPlacements.set(id, moved);
+            if (toLocal) {
+                // Back on this host's own node: its driver replaces the standby it ran with the writer, under the placement just committed,
+                // and starting it runs a new standby on the node the writer left.
+                yield* startLocally(id);
+            } else {
+                yield* integration(() => dispatcher!.dispatchLeaseFenced!(acquired.placement));
+                const env = yield* integration(() => guard.environment(id, lease.owner, "writer"));
+                const authorization = yield* integration(() => dispatcher!.authorizeDispatch!({ action: "start", placement: moved, lease: env }));
+                yield* integration(() => dispatcher!.dispatchStartFenced!({ projectId: id, nodeId: lease.owner, placement: moved, authority: authorization }));
+                yield* integration(() => guard.standbys.write({ projectId: id, nodeId: lease.owner, writerEpoch: moved.epoch, state: "promoted" }));
+                // The node the writer left follows the new one: the Project keeps a standby after a failover.
+                yield* startStandbyFor(id, lease.owner, moved.epoch);
+            }
+            const project = yield* read(id);
+            if (project && !toLocal) yield* write({ ...project, placement: { nodeId: lease.owner, dispatchedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+        }));
     });
     const manager: EffectOperations<ZelavisProjectManager> = {
         runtime: {
@@ -2224,6 +2472,18 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
         start: Effect.fn("Projects.start")(function* (id: Parameters<ZelavisProjectManager["start"]>[0]) {
             yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));
             return yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), () => startPlaced(id));
+        }),
+        remoteRoute: Effect.fn("Projects.remoteRoute")(function* (id: string): Effect.fn.Return<ZelavisProjectRemoteRoute | undefined, TaggedFailure> {
+            const authority = options.authoritativePlacement;
+            const dispatcher = options.dispatch?.();
+            if (!authority || !dispatcher?.dispatchRoute) return undefined;
+            const current = yield* integration(() => authority.current(id));
+            if (!current || current.state !== "active" || current.leaseExpiresAt <= Date.now() || current.nodeId === localPlacementNodeId) return undefined;
+            const placement = { projectId: id, nodeId: current.nodeId, ownerSession: current.ownerSession, epoch: current.epoch };
+            return { nodeId: current.nodeId, placement, send: (request) => dispatcher.dispatchRoute!({ projectId: id, nodeId: current.nodeId, placement, ...request }) };
+        }),
+        followWriterLease: Effect.fn("Projects.followWriterLease.public")(function* (id: string) {
+            yield* followWriter(id);
         }),
         stop: Effect.fn("Projects.stop")(function* (id: Parameters<ZelavisProjectManager["stop"]>[0]) {
             yield* clearStartBackoff(yield* evaluate(() => normalizeProjectId(id)));

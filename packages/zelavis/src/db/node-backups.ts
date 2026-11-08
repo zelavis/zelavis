@@ -338,8 +338,12 @@ export const backupsHost = (
           });
           for (const file of yield* filesOf(staging)) {
             const path = new TextEncoder().encode(file.split(sep).join("/"));
-            const handle = yield* io("backup.read", () => open(join(staging, file), "r"));
-            yield* Effect.gen(function* () {
+            // Opened and its close registered in one step, so an interruption cannot leave a handle to the garbage collector.
+            yield* Effect.scoped(Effect.gen(function* () {
+              const handle = yield* Effect.acquireRelease(
+                io("backup.read", () => open(join(staging, file), "r")),
+                (opened) => Effect.orDie(io("backup.read", () => opened.close())),
+              );
               const size = (yield* io("backup.read", () => handle.stat())).size;
               const header = new Uint8Array(12 + path.length);
               const view = new DataView(header.buffer);
@@ -354,7 +358,7 @@ export const backupsHost = (
                 yield* append(buffer.subarray(0, bytesRead));
                 offset += bytesRead;
               }
-            }).pipe(Effect.ensuring(Effect.orDie(io("backup.read", () => handle.close()))));
+            }));
           }
           yield* flush(true);
           const manifest: Manifest = {
@@ -453,9 +457,12 @@ export const backupsHost = (
           const target = resolve(root, path);
           if (!target.startsWith(`${root}${sep}`)) return yield* refuse(`The archive names a path outside its directory: ${path}`);
           yield* io("backup.restore", () => mkdir(dirname(target), { recursive: true }));
-          const handle = yield* io("backup.restore", () => open(target, "w", 0o600));
-          if (size === 0) yield* io("backup.restore", () => handle.close());
-          else file = { handle, remaining: size };
+          // Uninterruptible from the open to the point `closeOpen` can see the handle, so a cut-off restore never leaks it.
+          yield* Effect.uninterruptible(Effect.gen(function* () {
+            const handle = yield* io("backup.restore", () => open(target, "w", 0o600));
+            if (size === 0) yield* Effect.orDie(io("backup.restore", () => handle.close()));
+            else file = { handle, remaining: size };
+          }));
           data = data.subarray(12 + length);
         }
       });

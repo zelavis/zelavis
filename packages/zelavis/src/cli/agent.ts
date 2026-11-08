@@ -64,6 +64,38 @@ export interface RunAgentCommandOptions {
   readonly remoteProjectConfig?: string;
 }
 
+const SHARD_COUNTS = ["readsPerShard", "readsPerAgent", "readPermitWaitMillis", "readDeadlineMillis", "maxReadAnswerBytes"] as const;
+const READ_LIMIT_NAMES = ["bytes", "entries", "postings"] as const;
+
+/**
+ * The `shards` object of a remote Project Agent's config: the bounds on the reads it serves for remote App shards.
+ * Every key is optional and a non-negative safe integer; `readLimits` holds the per-read work budget. Anything else is refused.
+ */
+export function readAgentShardOptions(value: unknown): NonNullable<Parameters<typeof createRemoteProjectAgent>[0]["shards"]> {
+  const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+  const count = (candidate: unknown, name: string): number => {
+    if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 0) {
+      throw new Error(`Remote Project Agent config: shards.${name} must be a non-negative safe integer.`);
+    }
+    return candidate;
+  };
+  if (!isRecord(value)) throw new Error("Remote Project Agent config: shards must be an object.");
+  const unknown = Object.keys(value).filter((key) => key !== "readLimits" && !(SHARD_COUNTS as readonly string[]).includes(key));
+  if (unknown.length > 0) throw new Error(`Remote Project Agent config: shards has no key ${unknown.join(", ")}.`);
+  const result: { -readonly [Name in (typeof SHARD_COUNTS)[number]]?: number } & { readLimits?: { bytes?: number; entries?: number; postings?: number } } = {};
+  for (const name of SHARD_COUNTS) if (value[name] !== undefined) result[name] = count(value[name], name);
+  if (value.readLimits !== undefined) {
+    if (!isRecord(value.readLimits)) throw new Error("Remote Project Agent config: shards.readLimits must be an object.");
+    const unknownLimits = Object.keys(value.readLimits).filter((key) => !(READ_LIMIT_NAMES as readonly string[]).includes(key));
+    if (unknownLimits.length > 0) throw new Error(`Remote Project Agent config: shards.readLimits has no key ${unknownLimits.join(", ")}.`);
+    const limits: { bytes?: number; entries?: number; postings?: number } = {};
+    for (const name of READ_LIMIT_NAMES) if (value.readLimits[name] !== undefined) limits[name] = count(value.readLimits[name], `readLimits.${name}`);
+    result.readLimits = limits;
+  }
+  return result;
+}
+
 /** Called with the Agent once it listens; tests use it to reach the service. */
 export type RunAgentCommandReady = (agent: {
   readonly socketPath: string;
@@ -106,6 +138,7 @@ export function runAgentCommand(
       host?: unknown; port?: unknown; keyFile?: unknown; certFile?: unknown;
       trustFile?: unknown; agentId?: unknown; nodeId?: unknown;
       platform?: { url?: unknown; fingerprint?: unknown; caFile?: unknown };
+      shards?: unknown;
     };
     if (typeof config.host !== "string" || typeof config.port !== "number" ||
         typeof config.keyFile !== "string" || typeof config.certFile !== "string" ||
@@ -149,6 +182,7 @@ export function runAgentCommand(
     const remote = yield* integrationValue(createRemoteProjectAgent({
       dataDirectory, host: config.host, port: config.port,
       keyPem, certPem, trust: () => currentTrust, agentId: config.agentId, nodeId: config.nodeId,
+      ...(config.shards === undefined ? {} : { shards: readAgentShardOptions(config.shards) }),
     }));
     console.log(`Zelavis Project Agent listening on ${remote.address}`);
     const signal = options.signal;

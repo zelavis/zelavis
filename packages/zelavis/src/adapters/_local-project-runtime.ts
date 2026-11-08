@@ -572,9 +572,14 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
                 ? integration(() => rm(backup, { recursive: true, force: true })).pipe(Effect.orDie)
                 : Effect.void)));
         }),
-        start: Effect.fn("LocalProjects.start")(function* (project, placement) {
+        start: Effect.fn("LocalProjects.start")(function* (project, placement, startOptions) {
             const selected = yield* forProjectId(project.id);
-            return yield* effectOperations(selected).start(project, placement);
+            return yield* effectOperations(selected).start(project, placement, startOptions);
+        }),
+        startStandby: Effect.fn("LocalProjects.startStandby")(function* (project, placement, startOptions) {
+            const selected = yield* forProjectId(project.id);
+            if (selected.startStandby === undefined) return yield* Effect.fail(new ZelavisProjectRuntimeError("This Project's runtime cannot run as its writer's standby."));
+            return yield* effectOperations(selected).startStandby!(project, placement, startOptions);
         }),
         ...(agent.fencePlacement ? {
             fencePrevious: (placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["fencePrevious"]>>[0]) => integration(() => agent.fencePlacement!(placement)),

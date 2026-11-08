@@ -45,7 +45,7 @@ try {
 const { database, api } = opened;
 
 // ---- the leader transport, served for the peer's follower ----
-const PROXY = "/zelavis/api/v1/runtime/projects/p1/proxy/zelavis/api/v1/database";
+const PROXY = "/zelavis/api/v1/runtime/projects/p1";
 const followerRoutes = defineDatabaseService(api).api.v1.filter((route) => route.id.startsWith("database.followers."));
 createServer(async (request, response) => {
   const chunks = [];
@@ -124,6 +124,8 @@ const final = async () => {
 process.on("SIGTERM", () => { writing = false; final(); });
 // SIGUSR2: stop writing and keep serving, so a follower can level out before the drill compares the two.
 process.on("SIGUSR2", () => { writing = false; say("quiesced"); });
+// SIGHUP: say what this node holds now and keep running, so the drill can wait for a follower to level out.
+process.on("SIGHUP", async () => { const docs = await docsNow(); say("probe", { by: Object.fromEntries(docs), head: await headNow() }); });
 
 if (ROLE === "writer") {
   for (const tenant of allTenants()) await api.forTenant(tenant).documents.createCollection({ name: "posts" });
@@ -142,7 +144,7 @@ if (ROLE === "writer") {
 } else if (ROLE === "start") {
   const held = (await Effect.runPromise(leases.read(SCOPE))).lease;
   const ids = await idsNow();
-  say("started", { epoch: held.epoch, ids, held: ids.length });
+  say("started", { epoch: held.epoch, ids, by: Object.fromEntries(await docsNow()), held: ids.length });
   const handle = { writable: Effect.succeed(true), lease: Effect.succeed(held) };
   await writeLoop(handle, ids.length === 0 ? 1 : Number(ids[ids.length - 1].slice(1)) + 1);
 } else if (ROLE === "follower") {

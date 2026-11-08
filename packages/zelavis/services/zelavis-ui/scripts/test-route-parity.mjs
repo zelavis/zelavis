@@ -81,8 +81,9 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   console.log("Wizard: welcome, owner, security, identity retention, durable owner claim, Edge and dashboard complete.");
   const request = (path, method = "GET", body) => io(async () => {
     const response = await context.request.fetch(api + path, { method, headers: { origin }, ...(body ? { data: body } : {}) });
-    const result = await response.json(); assert.ok(response.ok(), `${method} ${path}: ${response.status()} ${JSON.stringify(result)}`); return result;
+    const result = await response.json(); assert.ok(response.ok(), `${method} ${path}: ${response.status()} ${JSON.stringify(result)}${response.ok() ? "" : `\nIsolated runtime:\n${logs}`}`); return result;
   });
+  yield* request("/runtime/projects", "POST", { id: "parity-other", name: "Other project", recipeName: "@zelavis/app", start: false });
   yield* request("/runtime/projects", "POST", { id: "parity-lab", name: "Parity laboratory", recipeName: "@zelavis/app", start: true });
   const proxy = "/runtime/projects/parity-lab/proxy/zelavis/api/v1";
   for (let count = 0; count < 150; count++) {
@@ -98,6 +99,35 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   const examples = { projectId: "parity-lab", contentType: "articles", entryId: "entry-a", workloadKind: "functions", workloadId: workload.id, managedSection: "domains", fabricSection: "nodes", fabricDetail: "health", collection: "articles" };
   const cases = [...dashboardRoutes.filter(path => !["/setup", "/logout"].includes(path)), "/*"].map(path => ({ path, file: path, example: path === "/*" ? "/not-a-dashboard-route" : path.replace(/:([a-zA-Z]+)/g, (_, key) => examples[key]) }));
   for (const path of ["/server/fabric/placements", "/server/fabric/migrations", "/server/fabric/data", "/server/fabric/data/shards", "/server/fabric/data/replicas", "/server/fabric/data/schema-rollouts", "/server/fabric/infrastructure", "/server/fabric/infrastructure/providers", "/server/fabric/infrastructure/autoscaling", "/server/fabric/settings", "/server/fabric/settings/placement-policies", "/server/fabric/settings/networking", "/server/fabric/settings/limits", "/projects?new=1"]) cases.push({ path, example: path, file: "nested/query page" });
+  // A sidebar slide lights at most one of its items. Several items can share a path and differ only by a query parameter (a slide
+  // of Overview, Processes, Storage and Limits at one path), and they once all lit at once; no page may do that again.
+  const sidebarState = () => page.evaluate(() => [...document.querySelectorAll('swiper-container[aria-label="Platform navigation"] > swiper-slide.navigation-panel')].map(slide => ({
+    label: slide.querySelector("nav")?.getAttribute("aria-label") ?? "",
+    active: [...slide.querySelectorAll('nav a[aria-current="page"]')].map(anchor => ({ text: anchor.textContent.trim(), href: anchor.getAttribute("href") })) })));
+  const assertOneActive = where => Effect.gen(function* () {
+    assert.notEqual(new URL(page.url()).searchParams.get("sidebar"), "", `${where}: navigation never writes an empty sidebar trail`);
+    for (const slide of yield* io(sidebarState)) assert.ok(slide.active.length <= 1, `${where}: the ${slide.label} slide lights ${slide.active.length} items at once: ${slide.active.map(item => item.text).join(", ")}`);
+  });
+  // Exercise every visible tab list with same-page query links, so new screens inherit retention checks.
+  const assertRetainedQueryTabs = where => Effect.gen(function* () {
+    const original = page.url();
+    const lists = page.locator('.content [role="tablist"]:visible');
+    const count = yield* io(() => lists.count());
+    let checked = false;
+    for (let index = 0; index < count; index++) {
+      const list = lists.nth(index);
+      const links = yield* io(() => list.locator('a[role="tab"]').evaluateAll(anchors => anchors.map(anchor => anchor.href)));
+      if (links.length < 2 || !links.every(href => { const target = new URL(href), current = new URL(original); return target.origin === current.origin && target.pathname === current.pathname; })) continue;
+      yield* io(() => list.evaluate(list => { window.parityTabNodes = [list, ...list.querySelectorAll('[role="tab"]')]; }));
+      for (let tab = 0; tab < links.length; tab++) {
+        yield* io(() => list.locator('a[role="tab"]').nth(tab).click());
+        yield* io(() => page.waitForLoadState("networkidle"));
+        assert.ok(yield* io(() => page.evaluate(() => window.parityTabNodes.every(node => node.isConnected))), `${where}: local query tabs must retain their DOM, not rebuild the screen`);
+      }
+      checked = true;
+    }
+    if (checked) { console.log(`Tabs: ${where} retained every same-page query tab.`); yield* io(() => page.goto(original, { waitUntil: "networkidle" })); }
+  });
   const results = [{ path: "/setup", file: "routes/setup.tsx", status: "qualified wizard flow" }];
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     yield* io(() => page.setViewportSize(viewport));
@@ -112,13 +142,37 @@ const qualify = Effect.scoped(Effect.gen(function*() {
         const text = yield* io(() => page.locator(".content").innerText());
         assert.ok(text.trim().length > 15 && !/Page being ported|Could not/.test(text), `${entry.file}: ${text}`);
       }
+      yield* assertRetainedQueryTabs(`${viewport.width}: ${entry.example}`);
+      yield* assertOneActive(`${viewport.width}: ${entry.example}`);
       assert.equal(errors.length, 0, `${entry.file}: ${errors.join("\n")}`);
       results.push({ path: entry.example, file: entry.file, viewport: viewport.width, status: "loaded" });
       console.log(`${viewport.width}: ${entry.file} → ${entry.example}`);
     }
   }
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
-  const visit = path => io(() => page.goto(origin + "/zelavis" + path, { waitUntil: "networkidle" }));
+  const visit = path => io(() => page.goto(origin + "/zelavis" + path, { waitUntil: "networkidle" })).pipe(Effect.andThen(assertOneActive(path)));
+  /** Opens every item of the slide a page is in, in turn, and checks that the item opened is the one that lights, alone. */
+  const crawlSlide = start => Effect.gen(function* () {
+    yield* visit(start);
+    const slide = (yield* io(sidebarState)).at(-1);
+    const hrefs = yield* io(() => page.getByRole("navigation", { name: slide.label, exact: true, includeHidden: true }).locator("a").evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href"))));
+    assert.ok(hrefs.length > 1, `${start}: the slide ${slide?.label} has items to open`);
+    const bare = href => { const url = new URL(href, origin); for (const key of ["sidebar", "sidebarView"]) url.searchParams.delete(key); return `${url.pathname}${url.search}`; };
+    for (const href of hrefs) {
+      yield* io(() => page.goto(origin + href, { waitUntil: "networkidle" }));
+      yield* assertOneActive(href);
+      const here = (yield* io(sidebarState)).find(entry => entry.label === slide.label);
+      assert.ok(here, `${href}: the original ${slide.label} slide remains on the trail`);
+      assert.equal(here.active.length, 1, `${href}: exactly one item lights in the ${here.label} slide (${here.active.map(item => item.text)})`);
+      assert.equal(bare(here.active[0].href), bare(href), `${href}: the item that lights is the one that was opened (${here.active[0].text})`);
+    }
+    console.log(`Sidebar: ${hrefs.length} items of ${slide?.label} (from ${start}) each light alone when opened.`);
+  });
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    yield* io(() => page.setViewportSize(viewport));
+    for (const start of ["/server/resources", "/server/fabric", "/server", "/projects/parity-lab", "/projects/parity-lab/database"]) yield* crawlSlide(start);
+  }
+  yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
   // A service page gets the component runtime without asking, both as a trusted frame and as the sandboxed frame an
   // installed extension runs in (an opaque origin, which sends no ambient credentials of its own).
   yield* visit("/projects");
@@ -274,6 +328,21 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   yield* io(() => page.getByText("Merged parity-acme-branch into parity-acme.", { exact: true }).waitFor());
   assert.equal((yield* request(proxy + "/database/documents/orders/order-a?tenantId=parity-acme")).data.total, 7, "the branch's change is in the source");
   console.log("Action: a branch is merged back into its source from Database → Tenants.");
+
+  yield* visit("/projects/parity-lab/database/shards");
+  yield* io(() => page.getByText("Shards on other Nodes", { exact: true }).waitFor());
+  yield* io(() => page.getByText("No shard operation yet.", { exact: true }).waitFor());
+  yield* io(() => page.getByLabel("Virtual ranges to place").fill("0-3,0-"));
+  yield* io(() => page.getByRole("button", { name: "Place on another Node", exact: true }).click());
+  yield* io(() => page.getByText('"0-" is not a range number or a range like 0-31.', { exact: true }).waitFor());
+  console.log("Action: the Shards page lists the database's shards and refuses a malformed range before sending anything.");
+
+  const addReplica = page.getByRole("button", { name: /^Add a replica of shard / }).first();
+  const replicaShard = (yield* io(() => addReplica.getAttribute("aria-label"))).replace("Add a replica of shard ", "");
+  yield* io(() => page.getByLabel(`Replica disk in MiB for ${replicaShard}`, { exact: true }).fill("0"));
+  yield* io(() => addReplica.click());
+  yield* io(() => page.getByText("Give the replica at least 1 MiB of disk.", { exact: true }).waitFor());
+  console.log("Action: the Shards page refuses a replica disk reservation below one MiB.");
 
   yield* visit("/projects/parity-lab/database/cross-tenant-indexes");
   yield* io(() => page.getByLabel("Index definition JSON").fill(JSON.stringify({ name: "parity_orders", collection: "orders", columns: ["total"] })));

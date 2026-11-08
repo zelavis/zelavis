@@ -85,7 +85,12 @@ export type MovePhase =
    * until every call that reached it before routing moved has finished; then
    * it is cleared, fence and all.
    */
-  | "routed";
+  | "routed"
+  /**
+   * Being undone before routing moved: the source fence is lifted, the copy
+   * dropped and the record removed, so the source stays the owner.
+   */
+  | "abandoning";
 
 export interface TenantMove {
   readonly tenant: TenantId;
@@ -131,6 +136,15 @@ export interface MoveResult {
   readonly resumed: boolean;
 }
 
+export interface RebalanceOptions<E = never> {
+  /**
+   * Runs after every tenant is copied and fenced, immediately before routing
+   * moves. Its failure lifts nothing and leaves the moves `copied`, for
+   * `resume` (or `abandon`) to settle.
+   */
+  readonly beforeRouting?: Effect.Effect<void, E>;
+}
+
 export interface RebalanceResult {
   readonly moves: ReadonlyArray<MoveResult>;
   /** The map now in force. Unchanged when there was nothing to move. */
@@ -157,9 +171,17 @@ export interface MovementApi {
    * one record: applying it per tenant would mean a map that routes half the
    * moved tenants to shards that do not hold them yet.
    */
-  readonly rebalance: (
+  readonly rebalance: <E = never>(
     next: PartitionMap,
-  ) => Effect.Effect<RebalanceResult, DbError | PartitionMapInvalid | TenantMoveFailed | PlacementInUse>;
+    options?: RebalanceOptions<E>,
+  ) => Effect.Effect<RebalanceResult, DbError | PartitionMapInvalid | TenantMoveFailed | PlacementInUse | E>;
+
+  /**
+   * Undo every pending move whose target is `to` and which has not routed: each
+   * source fence is lifted, the copy dropped and the record removed, so the
+   * source stays the owner. A move already routed is never abandoned.
+   */
+  readonly abandon: (to: ShardId) => Effect.Effect<ReadonlyArray<TenantId>, DbError>;
 
   /** Carry any interrupted move through to the end. */
   readonly resume: Effect.Effect<
@@ -193,6 +215,28 @@ const MOVE_MARKER = " move";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+/** Keeping one JSON record under a namespace and key in a store, as the movement and shard operation do. */
+const put = (store: ObjectStoreApi, seq: Seq, body: unknown, columns: [string, string][],
+  namespace: string, key: string) =>
+  store.transact((txn) =>
+    txn.put(seq, enc.encode(JSON.stringify(body)), {
+      terms: [], columns, measures: [], edges: [],
+    }, { namespace, key }));
+
+export const upsert = (store: ObjectStoreApi, namespace: string, key: string, body: unknown,
+  columns: [string, string][]) =>
+  Effect.gen(function* () {
+    const existing = yield* store.lookup(namespace, key);
+    const seq = existing ?? (yield* store.nextSeq);
+    yield* put(store, seq, body, columns, namespace, key);
+  });
+
+export const drop = (store: ObjectStoreApi, namespace: string, key: string) =>
+  Effect.gen(function* () {
+    const seq = yield* store.lookup(namespace, key);
+    if (seq !== undefined) yield* store.transact((txn) => txn.retract(seq));
+  });
+
 export const movementOver = (options: {
   readonly topologyStore: ObjectStoreApi;
   readonly topology: TopologyApi;
@@ -221,33 +265,12 @@ export const movementOver = (options: {
   const storeFor = (shard: ShardId, tenant: TenantId): Effect.Effect<ObjectStoreApi> =>
     Effect.map(shardNamed(shard), (store) => store.partition(tenant));
 
-  const put = (store: ObjectStoreApi, seq: Seq, body: unknown, columns: [string, string][],
-    namespace: string, key: string) =>
-    store.transact((txn) =>
-      txn.put(seq, enc.encode(JSON.stringify(body)), {
-        terms: [], columns, measures: [], edges: [],
-      }, { namespace, key }));
-
-  const upsert = (store: ObjectStoreApi, namespace: string, key: string, body: unknown,
-    columns: [string, string][]) =>
-    Effect.gen(function* () {
-      const existing = yield* store.lookup(namespace, key);
-      const seq = existing ?? (yield* store.nextSeq);
-      yield* put(store, seq, body, columns, namespace, key);
-    });
-
-  const drop = (store: ObjectStoreApi, namespace: string, key: string) =>
-    Effect.gen(function* () {
-      const seq = yield* store.lookup(namespace, key);
-      if (seq !== undefined) yield* store.transact((txn) => txn.retract(seq));
-    });
-
   /** Every move on record, whatever phase it is in. */
   const pending: Effect.Effect<ReadonlyArray<TenantMove>, DbError> = Effect.gen(function* () {
     const out: TenantMove[] = [];
     for (const record of yield* topologyStore.liveRecords) {
       if (record.identity.namespace !== MOVE_NAMESPACE) continue;
-      out.push(parseJson(dec.decode(record.bytes), objectFields<TenantMove>({ tenant: isString, from: isString, to: isString, phase: literal("copying", "copied", "routed"), startedAt: isTimestamp, resumed: optional(isBoolean), map: partitionMapRecord })));
+      out.push(parseJson(dec.decode(record.bytes), objectFields<TenantMove>({ tenant: isString, from: isString, to: isString, phase: literal("copying", "copied", "routed", "abandoning"), startedAt: isTimestamp, resumed: optional(isBoolean), map: partitionMapRecord })));
     }
     return out.sort((a, b) => (a.tenant < b.tenant ? -1 : a.tenant > b.tenant ? 1 : 0));
   });
@@ -389,7 +412,7 @@ export const movementOver = (options: {
    * unfenced copying happens for all of them, then the fences go on, then the
    * final catch-ups.
    */
-  const runMoves = (moves: ReadonlyArray<TenantMove>) =>
+  const runMoves = <E = never>(moves: ReadonlyArray<TenantMove>, beforeRouting?: Effect.Effect<void, E>) =>
     Effect.gen(function* () {
       const state = new Map<TenantId, {
         copied: number;
@@ -428,6 +451,9 @@ export const movementOver = (options: {
         yield* assertSameSize(move.tenant, move.from, move.to);
         yield* recordMove({ ...move, phase: "copied" });
       }
+
+      // Nothing is routed yet; a refusal here leaves every move `copied`.
+      if (beforeRouting !== undefined && moves.some((move) => move.phase !== "routed")) yield* beforeRouting;
 
       // One record, once, now that every tenant is on its target.
       for (const move of moves) {
@@ -508,6 +534,15 @@ export const movementOver = (options: {
   const fence = (tenant: TenantId, from: ShardId, to: ShardId) =>
     Effect.flatMap(storeFor(from, tenant), (store) => store.fence({ from, to }));
 
+  /** Finish undoing a move: lift the source fence, drop the copy, remove the record. */
+  const undo = (move: TenantMove) =>
+    Effect.gen(function* () {
+      const target = yield* shardNamed(move.to);
+      yield* (yield* storeFor(move.from, move.tenant)).liftFence({ from: move.from, to: move.to });
+      yield* target.drop(move.tenant);
+      yield* drop(topologyStore, MOVE_NAMESPACE, move.tenant);
+    });
+
   const begin = (tenant: TenantId, from: ShardId, to: ShardId, map: PartitionMap) =>
     Effect.gen(function* () {
       const move: TenantMove = {
@@ -530,7 +565,7 @@ export const movementOver = (options: {
     plan: topology.plan,
     pending,
 
-    rebalance: (next) =>
+    rebalance: <E = never>(next: PartitionMap, options?: RebalanceOptions<E>) =>
       Effect.gen(function* () {
         const outstanding = yield* pending;
         if (outstanding.length > 0) {
@@ -558,12 +593,30 @@ export const movementOver = (options: {
           started.push(yield* begin(tenant, from, to, next));
         }
 
-        return { moves: yield* runMoves(started), map: topology.current() };
+        return { moves: yield* runMoves(started, options?.beforeRouting), map: topology.current() };
+      }),
+
+    abandon: (to) =>
+      Effect.gen(function* () {
+        const going = (yield* pending).filter((move) => move.to === to && move.phase !== "routed");
+        // Every move is recorded as abandoning before any is undone: the map is one record for all of them, so a
+        // resume that finds some undone and others still going forward would route the undone ones to a copy
+        // that is gone.
+        const abandoning = going.map((move): TenantMove => ({ ...move, phase: "abandoning" }));
+        for (const move of abandoning) yield* recordMove(move);
+        for (const move of abandoning) yield* undo(move);
+        return abandoning.map((move) => move.tenant);
       }),
 
     resume: Effect.gen(function* () {
       const outstanding = yield* pending;
-      return yield* runMoves(outstanding.map((move) => ({ ...move, resumed: true })));
+      // An abandonment cut off part way is finished for every unrouted move to the same shard, never mixed with
+      // moves going forward: they share one map.
+      const abandoned = new Set(outstanding.filter((move) => move.phase === "abandoning").map((move) => move.to));
+      const undoing = outstanding.filter((move) => move.phase !== "routed" && abandoned.has(move.to));
+      for (const move of undoing) yield* undo(move);
+      const going = outstanding.filter((move) => !undoing.includes(move));
+      return yield* runMoves(going.map((move) => ({ ...move, resumed: true })));
     }),
   };
 };

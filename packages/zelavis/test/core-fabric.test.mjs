@@ -118,7 +118,7 @@ test("Fabric mounts a single-node endpoint group with project placement inventor
       multiNode: "planned",
       automaticBalancing: "planned",
       projectMigration: "planned",
-      zelavisAppDataPlacement: "planned",
+      zelavisAppDataPlacement: "available",
       replication: "planned",
       infrastructureAutoscaling: "planned",
     },

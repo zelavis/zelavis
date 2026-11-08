@@ -5,6 +5,7 @@ import { badge, card, columns, facts, flashNotice, page, resourceNotice, setFlas
 import type { ScreenContext } from "./screens.ts";
 import { dropdown } from "./dropdown.ts";
 import { formatBytes } from "./storage-pages.ts";
+import { runtimeStatusText, standbyFact } from "./project-standby.ts";
 
 /** The Projects overview: search, create, and every Project's lifecycle controls. State lives in the URL. */
 
@@ -163,11 +164,12 @@ function projectCard(context: ScreenContext, project: Record<string, unknown>, r
   const blocked = !!deletion || !!update;
 
   const body: Node[] = [
-    node("div", { class: "toolbar" }, node("div", {}, node("h2", {}, name), node("code", {}, id)), badge(status)),
+    node("div", { class: "toolbar" }, node("div", {}, node("h2", {}, name), node("code", {}, id)), badge(runtimeStatusText(status))),
     facts([
       ["Recipe", `${label(recipe.title, label(recipe.name))}${recipe.version ? ` ${label(recipe.version)}` : ""}`],
       ["Runtime", `${label(project.runtimeKind, "native")} · ${label(runtime.driver)}`],
       ["Site", site ?? (preview.status === "unavailable" ? "Preview unavailable" : "Not published")],
+      ...(standbyFact(project) ? [standbyFact(project)!] : []),
       ["Updated", dateText(project.updatedAt)]])
   ];
   if (site) body.push(node("a", { href: site, target: "_blank", rel: "noreferrer" }, "Open site"));

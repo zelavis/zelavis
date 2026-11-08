@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { IntegrationFailure, integration } from "../core/runtime/effect-boundary.js";
 import type { FabricNode } from "../core/fabric/index.js";
 import type { NodeEnrollmentAuthority } from "../platform/node-enrollment.js";
-import { probeProjectAgent, type Destination } from "./_project-dispatch-https.js";
+import { probeProjectAgent, type Destination, type ProjectAgentProbe } from "./_project-dispatch-https.js";
 
 /** Probes run a handful at a time, so a large fleet cannot flood the Platform. */
 const PROBE_CONCURRENCY = 8;
@@ -27,9 +27,10 @@ export interface RemoteNodeSources {
   readonly inventoryNodes: () => Effect.Effect<readonly FabricNode[], IntegrationFailure>;
 }
 
-const readyNode = (nodeId: string, ready: boolean): FabricNode => ({
+const readyNode = (nodeId: string, probe: ProjectAgentProbe): FabricNode => ({
   id: nodeId,
-  status: ready ? "ready" : "unavailable",
+  status: probe.ready ? "ready" : "unavailable",
+  ...(probe.capacity ? { capacity: probe.capacity } : {}),
   roles: ["worker"],
   runtimeEngine: "node",
   runtimeDriver: "local-project",
@@ -73,7 +74,7 @@ export const loadRemoteNodeSources = Effect.fn("RemoteNodeSources.load")(functio
     return yield* Effect.forEach(
       targets,
       ([nodeId, target]) =>
-        integration(() => probeProjectAgent(target, nodeId)).pipe(Effect.map((ready) => readyNode(nodeId, ready))),
+        integration(() => probeProjectAgent(target, nodeId)).pipe(Effect.map((probe) => readyNode(nodeId, probe))),
       { concurrency: PROBE_CONCURRENCY },
     );
   });

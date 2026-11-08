@@ -8,6 +8,7 @@ import {
 } from "../deployment/index.js";
 export * from "./placement-lease.js";
 export * from "./project-dispatch.js";
+export * from "./app-shard-grant.js";
 export * from "./remote-placement.js";
 
 /**

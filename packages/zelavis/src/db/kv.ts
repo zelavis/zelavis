@@ -1,5 +1,5 @@
 import { Effect, type Scope, Stream } from "effect";
-import type { StoreError } from "./errors.js";
+import { StoreError } from "./errors.js";
 import { compareKeys, prefixEnd } from "./keys.js";
 
 export interface KvEntry {
@@ -48,6 +48,22 @@ export const equalBytes = (a: Uint8Array | undefined, b: Uint8Array | undefined)
 export interface KvReader {
   readonly get: (key: Uint8Array) => Effect.Effect<Uint8Array | undefined, StoreError>;
   readonly scan: (prefix: Uint8Array, options?: KvScanOptions) => Stream.Stream<KvEntry, StoreError>;
+  /**
+   * The same reads, each debited from `budget` before it copies anything: a
+   * value larger than the bytes left is refused without being read into
+   * memory, and a scan reads no further than the budget allows. Refusal is a
+   * defect carrying `ReadBudgetExceeded`, never a short answer. Absent on a
+   * reader that cannot promise that; nothing then stands in for it.
+   */
+  readonly bounded?: (budget: KvReadBudget) => KvReader;
+}
+
+/** What a bounded read spends. The checks come first: a refusal spends nothing. */
+export interface KvReadBudget {
+  readonly remainingEntries: () => number;
+  readonly remainingBytes: () => number;
+  /** Spends `entries` and `bytes` together; throws `ReadBudgetExceeded` when either would pass its limit. */
+  readonly spend: (entries: number, bytes: number) => void;
 }
 
 /**
@@ -102,8 +118,32 @@ export interface KvEngine {
    */
   readonly snapshot: Effect.Effect<KvReader, StoreError, Scope.Scope>;
 
+  /** See `KvReader.bounded`; the snapshots of an engine that offers it offer it too. */
+  readonly bounded?: (budget: KvReadBudget) => KvReader;
+
   readonly close: Effect.Effect<void>;
 }
+
+/**
+ * `engine` with every read, its snapshots' included, debited from `budget`, or
+ * `undefined` when the engine cannot bound its reads. Writes pass through
+ * unchanged: a bounded engine is for reading.
+ */
+export const boundedEngine = (engine: KvEngine, budget: KvReadBudget): KvEngine | undefined => {
+  const reads = engine.bounded?.(budget);
+  if (reads === undefined) return undefined;
+  return {
+    ...engine,
+    get: reads.get,
+    scan: reads.scan,
+    snapshot: Effect.flatMap(engine.snapshot, (taken) => {
+      const bounded = taken.bounded?.(budget);
+      return bounded === undefined
+        ? Effect.fail(new StoreError({ op: "bounded.snapshot", cause: "the engine's snapshot cannot bound its reads" }))
+        : Effect.succeed(bounded);
+    }),
+  };
+};
 
 /**
  * Narrows a prefix scan, and sets its direction.

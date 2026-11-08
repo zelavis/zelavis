@@ -1,5 +1,6 @@
-import { projectLeaseConfiguration, projectLeaseEnvironment } from "./_project-lease-environment.js";
-import type { DatabaseLeaseStart } from "../db/database.js";
+import { appShardConfiguration, appShardEnvironment } from "./_app-shard-environment.js";
+import { projectLeaseConfiguration, projectLeaseEnvironment, projectLeaseEnvironmentAt, type ProjectLeaseRole } from "./_project-lease-environment.js";
+import type { NodeDatabaseLease } from "../db/node-host.js";
 import { acquireLocalDataOwnership, acquireLocalEdgeOwnership, type LocalOwnershipLease } from "./_local-ownership.js";
 import { backupsHost, directoryComponent, sqliteFileComponent, type BackupComponent, type DatabaseBackupsHost } from "../db/node-backups.js";
 import { InvalidBackup } from "../db/errors.js";
@@ -20,6 +21,7 @@ import { createAgentProcessClient } from "./_agent-ipc.js";
 import { writeFile } from "node:fs/promises";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 import { integration, IntegrationFailure, present, unwrapFailure } from "../core/runtime/effect-boundary.js";
+import type { AppShardPlacementNode } from "../platform/app-data-placement.js";
 import { createNodeEnrollmentAuthority } from "../platform/node-enrollment.js";
 import { publishAgentTrust, publishEnrollmentEndpoint } from "../platform/node-routes.js";
 import { availableRequirements } from "./_recipe-requirements.js";
@@ -116,7 +118,12 @@ export interface NodeAdapterDatabaseOptions {
    * Take the Project's whole-database writer lease before the database opens, and open nothing when it cannot be taken
    * (`startWriter`). Absent: the database is not lease-guarded.
    */
-  lease?: DatabaseLeaseStart;
+  lease?: NodeDatabaseLease;
+  /**
+   * How a Project process reaches the Platform for its shards on other Nodes (the Project channel); the engine reads it
+   * from `ZELAVIS_APP_SHARDS_AUTHORITY` and `ZELAVIS_APP_SHARDS_TOKEN`. Absent, shards cannot be placed remotely.
+   */
+  appShards?: { readonly apiRoot: string; readonly token: string; readonly projectId: string };
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
@@ -264,6 +271,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       }
       // Only the Platform starts Projects, so only it carries the lease configuration for them.
       const projectLeases = isProjectRuntime ? undefined : projectLeaseConfiguration();
+      const appShards = isProjectRuntime ? undefined : appShardConfiguration();
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextSubsystems: Record<string, unknown> = isProjectRuntime
@@ -326,6 +334,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             ? {}
             : { engine: { durability: databaseOptions.durability } }),
           ...(databaseOptions.lease === undefined ? {} : { lease: databaseOptions.lease }),
+          ...(databaseOptions.appShards === undefined ? {} : { appShards: databaseOptions.appShards }),
           // A Project's backups capture all of it: its database, its runtime store (accounts' sessions, workload
           // definitions and runs, Project metadata) and its media files.
           ...(isProjectRuntime ? {
@@ -372,6 +381,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       let projectDispatcher: ZelavisProjectDispatcher | undefined;
+      let appShardNodes: (() => Promise<readonly AppShardPlacementNode[]>) | undefined;
       let hostAgentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
       if (options.hostOperationsEndpoint) {
         if (isProjectRuntime || !systemStore) throw new Error("A host operation endpoint requires a Platform System Store.");
@@ -427,7 +437,11 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             : {}),
           // Lease-guarded Projects, when the operator configured them (`_project-lease-environment.ts`).
           ...(projectLeases !== undefined && systemStore !== undefined
-            ? { leaseEnvironment: (projectId: string) => projectLeaseEnvironment(projectLeases, systemStore, projectId) }
+            ? { leaseEnvironment: (projectId: string, role: ProjectLeaseRole) => projectLeaseEnvironment(projectLeases, systemStore, projectId, role) }
+            : {}),
+          // Remote App shards, when the operator named where Projects reach the Platform (`_app-shard-environment.ts`).
+          ...(appShards !== undefined && systemStore !== undefined
+            ? { appShardEnvironment: (projectId: string, placement: { readonly nodeId: string; readonly epoch: number }) => appShardEnvironment(appShards, systemStore, projectId, placement.nodeId, placement.epoch) }
             : {}),
           // Without this a frontend Project cannot start at all: the driver
           // refuses rather than falling through to the Zelavis runner and
@@ -488,6 +502,11 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             keyId: platformAuthority.signer.keyId,
             privateKey: platformAuthority.signer.privateKey,
           });
+          // Only remote Nodes can host a shard: the local Node has no Agent listener for shard storage.
+          appShardNodes = () => present(sources.inventoryNodes().pipe(Effect.map((nodes) => nodes.flatMap((node): AppShardPlacementNode[] =>
+            node.status === "ready" && node.capacity?.cpuCores && node.capacity.memoryBytes && node.capacity.diskBytes
+              ? [{ id: node.id, ready: true, cpuCores: node.capacity.cpuCores, memoryBytes: node.capacity.memoryBytes, diskBytes: node.capacity.diskBytes }]
+              : []))));
           const localNode = {
             id: remote.localNodeId, status: "ready" as const,
             roles: ["gateway", "control", "worker"] as const,
@@ -608,6 +627,17 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         ...(serviceSources.bundleStore ? { bundleStore: serviceSources.bundleStore } : {}),
         serviceRegistry: serviceSources.serviceRegistry,
         ...(projectDispatcher ? { projectDispatcher } : {}),
+        ...(appShardNodes ? { appShards: { nodes: appShardNodes } } : {}),
+        ...(appShards !== undefined && systemStore !== undefined
+          ? { appShardEnvironment: (projectId: string, nodeId: string, epoch: number) => appShardEnvironment(appShards, systemStore, projectId, nodeId, epoch) }
+          : {}),
+        ...(projectLeases !== undefined && systemStore !== undefined ? {
+          projectLeases: {
+            nodeId: projectLeases.node,
+            standbyNodeId: projectLeases.standby,
+            environment: (projectId: string, nodeId: string, role: ProjectLeaseRole) => projectLeaseEnvironmentAt(projectLeases, systemStore, projectId, nodeId, role),
+          },
+        } : {}),
         resources: {
           systemStore,
           publicSiteFetch: fetchNodeSite,

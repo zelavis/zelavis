@@ -5,24 +5,12 @@ import { backRow, button, link, node } from "./dom.ts";
 import { ROOT } from "./mount.ts";
 
 const names = ["Home", "Notifications", "Assistant", "Search", "Account"] as const;
-const paths = [
-  "M3 10 12 3l9 7v10h-6v-6H9v6H3Z",
-  "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
-  "m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z",
-  "M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
-  "M20 21v-2a8 8 0 0 0-16 0v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
-];
-function icon(path: string) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  for (const [key, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(key, value);
-  const shape = document.createElementNS(svg.namespaceURI, "path"); shape.setAttribute("d", path); svg.append(shape); return svg;
-}
-
 /** A second living Swiper owns utility depth; the main navigation/workspace remains mounted. */
 export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => void) {
   const view = document.createElement("swiper-container") as SwiperContainer;
   view.setAttribute("init", "false"); view.className = "sidebar-utilities"; view.setAttribute("aria-label", "Sidebar utilities"); view.hidden = true;
-  const footer = node("nav", { class: "sidebar-footer sidebar-switches", "aria-label": "Sidebar view switches" });
+  const footer = document.querySelector<HTMLElement>("[data-shell-footer]")!;
+  const cleanups: (() => void)[] = [];
   const slides = [0, 1, 2].map(() => { const slide = document.createElement("swiper-slide"); slide.className = "navigation-panel utility-panel"; view.append(slide); return slide; });
   let language = "en";
   let initialized = false, signature = "", projects: readonly Project[] = [], currentProject: string | undefined;
@@ -31,13 +19,15 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
     for (const [key, value] of [["sidebarUtility", utility], ["sidebarUtilityPanel", panel]] as const) { if (value) url.searchParams.set(key, value); else url.searchParams.delete(key); }
     void router.navigate(url.href, { focus: "preserve", scroll: "preserve" }).catch(console.error);
   };
-  const controls = names.map((name, index) => {
-    const control = button("", () => {
-      if (name === "Home") {
-        void router.navigate(`${ROOT}/?sidebar=&sidebarView=menu`).catch(console.error);
-      } else change(name.toLowerCase());
-    }, { class: "sidebar-switch", "aria-label": name, title: name, "aria-controls": "sidebar-utility-view" });
-    control.append(icon(paths[index])); footer.append(control); return control;
+  const controls = names.map(name => {
+    const control = footer.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+    const activate = () => {
+      if (name === "Home") void router.navigate(`${ROOT}/?sidebarView=menu`).catch(console.error);
+      else change(name.toLowerCase());
+    };
+    control.addEventListener("click", activate);
+    cleanups.push(() => control.removeEventListener("click", activate));
+    return control;
   });
   view.id = "sidebar-utility-view";
   const branch = (title: string, panel: string) => button(title + " ›", () => change("account", panel), { class: "utility-link" });
@@ -94,5 +84,5 @@ export function createSidebarUtilities(router: FuzorRouter, onSignOut: () => voi
     slides.forEach((slide, index) => { slide.inert = index !== depth; slide.setAttribute("aria-hidden", String(index !== depth)); });
     return true;
   }
-  return { view, footer, sync, close: () => change(), dispose: () => view.swiper?.destroy(true, true) };
+  return { view, footer, sync, close: () => change(), dispose: () => { cleanups.forEach(clean => clean()); view.swiper?.destroy(true, true); } };
 }

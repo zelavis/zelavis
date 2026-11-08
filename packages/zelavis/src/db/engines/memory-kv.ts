@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvScanOptions, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvReadBudget, type KvReader, type KvScanOptions, type KvWrite } from "../kv.js";
 import { compareKeys } from "../keys.js";
 import { openShardOverKv, type OpenShardOptions } from "../kv-store.js";
 import type { ShardStoreApi } from "../store.js";
@@ -46,6 +46,49 @@ export const memoryKvEngine = (): KvEngine => {
     return next;
   };
 
+  /** The slice of `held` a scan covers, as indexes: its ends found by binary search so a bounded scan touches what it returns. */
+  const windowOf = (held: Entries, prefix: Uint8Array, options?: KvScanOptions): { readonly start: number; readonly end: number } => {
+    const { lo, hi, empty } = scanRange(prefix, options);
+    if (empty) return { start: 0, end: 0 };
+    let start = indexOf(held, lo);
+    if (start < 0) start = ~start;
+    let end = held.length;
+    if (hi !== undefined) {
+      const at = indexOf(held, hi);
+      end = at < 0 ? ~at : at;
+    }
+    const count = Math.max(0, Math.min(end - start, options?.limit ?? Infinity));
+    return options?.reverse ? { start: end - count, end } : { start, end: start + count };
+  };
+
+  /** Each entry is spent before it is handed on, so a refusal leaves nothing past the budget in the answer. */
+  const boundedOver = (list: () => Entries, budget: KvReadBudget): KvReader => ({
+    get: (key) =>
+      Effect.sync(() => {
+        budget.spend(1, key.length);
+        const at = indexOf(list(), key);
+        if (at < 0) return undefined;
+        const value = list()[at]!.value;
+        budget.spend(0, value.length);
+        return value;
+      }),
+
+    scan: (prefix, options) =>
+      Stream.fromIterableEffect(
+        Effect.sync(() => {
+          const held = list();
+          const { start, end } = windowOf(held, prefix, options);
+          const taken: KvEntry[] = [];
+          for (let at = options?.reverse ? end - 1 : start; options?.reverse ? at >= start : at < end; at += options?.reverse ? -1 : 1) {
+            const entry = held[at]!;
+            budget.spend(1, entry.key.length + entry.value.length);
+            taken.push(entry);
+          }
+          return taken;
+        }),
+      ),
+  });
+
   const readerOver = (list: () => Entries) => ({
     get: (key: Uint8Array) =>
       Effect.sync(() => {
@@ -57,23 +100,12 @@ export const memoryKvEngine = (): KvEngine => {
       Stream.fromIterableEffect(
         Effect.sync(() => {
           const held = list();
-          const { lo, hi, empty } = scanRange(prefix, options);
-          if (empty) return [] as KvEntry[];
-          // Both ends by binary search, so a bounded scan copies what it
-          // returns rather than the whole range.
-          let start = indexOf(held, lo);
-          if (start < 0) start = ~start;
-          let end = held.length;
-          if (hi !== undefined) {
-            const at = indexOf(held, hi);
-            end = at < 0 ? ~at : at;
-          }
-          const count = Math.max(0, Math.min(end - start, options?.limit ?? Infinity));
-          return options?.reverse
-            ? held.slice(end - count, end).reverse()
-            : held.slice(start, start + count);
+          const { start, end } = windowOf(held, prefix, options);
+          return options?.reverse ? held.slice(start, end).reverse() : held.slice(start, end);
         }),
       ),
+
+    bounded: (budget: KvReadBudget) => boundedOver(list, budget),
   });
 
   return {

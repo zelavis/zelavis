@@ -30,30 +30,45 @@ export function mount(host: HTMLElement) {
   let mutating = false;
   let generation = 0;
   const projectCache = new Map<string, { project: Project; runtime?: Config; menu?: unknown }>();
-  const content = node("div", { class: "content", id: "workspace", tabindex: "-1" });
-  const legacyContent = node("div");
-  const outlet = host.ownerDocument.querySelector<HTMLElement>("fuzor-router")!;
-  const errors = node("div", { class: "errors", "aria-live": "polite" });
-  const updateBanner = node("div", { class: "update-slot" });
+  // The document owns the frame; startup attaches behavior without replacing its DOM.
+  const required = <T extends HTMLElement>(selector: string): T => {
+    const element = host.querySelector<T>(selector);
+    if (!element) throw new Error(`Dashboard shell is missing ${selector}`);
+    return element;
+  };
+  const content = required<HTMLDivElement>("#workspace");
+  const legacyContent = required<HTMLDivElement>("[data-screen-content]");
+  const outlet = required<HTMLElement>("fuzor-router");
+  const errors = required<HTMLDivElement>(".errors");
+  const updateBanner = required<HTMLDivElement>(".update-slot");
   const unmountUpdateBanner = mountUpdateBanner(updateBanner);
   let stopUpdates: (() => void) | undefined;
-  const sidebar = node("aside", { class: "sidebar", id: "dashboard-navigation", "aria-label": "Dashboard navigation" });
-  const title = node("span", { class: "breadcrumb" }, "Projects");
-  const toggleButton = button("☰", () => {
-    sidebarController.showMenu();
-  }, { "aria-label": "Open navigation", "aria-controls": "dashboard-navigation", class: "mobile-menu" });
-  const header = node("header", { class: "header" }, toggleButton, title, node("span", { class: "experiment" }, "Fuzor preview"), button("Sign out", signOut));
+  const sidebar = required<HTMLElement>("#dashboard-navigation");
+  const title = required<HTMLElement>("[data-shell-title]");
+  const footer = required<HTMLElement>("[data-shell-footer]");
+  const toggleButton = required<HTMLButtonElement>('[data-shell-action="navigation"]');
+  const signOutButton = required<HTMLButtonElement>('[data-shell-action="signout"]');
+  const refresh = required<HTMLElement>('[data-shell-action="refresh"]');
   function signOut() {
     if (!config) return;
     run(request(`${config.api.basePath}/auth/session`, "DELETE").pipe(Effect.tap(() => clearDraftJournals(() => host.ownerDocument.defaultView!.sessionStorage).pipe(Effect.catch(cause => Effect.logWarning("Could not clear tab draft journals on sign out", cause))))), () => navigate("/login"));
   }
-  const refresh = document.createElement("fuzor-button"); refresh.setAttribute("type", "button"); refresh.textContent = "Refresh"; refresh.addEventListener("click", () => refreshPage()); header.append(refresh);
-  host.classList.add("dashboard");
-  host.replaceChildren(node("a", { href: "#workspace", class: "skip" }, "Skip to workspace"), sidebar, node("div", { class: "main" }, header, updateBanner, errors, content));
-
-  content.append(outlet, legacyContent);
-  const main = host.querySelector<HTMLElement>(".main")!;
+  const main = required<HTMLElement>(".main");
   const sidebarController = createSidebar(host, sidebar, content, main, router, { onSignOut: signOut, config: () => config });
+  const openNavigation = () => sidebarController.showMenu();
+  const refreshWorkspace = () => refreshPage();
+  toggleButton.addEventListener("click", openNavigation);
+  signOutButton.addEventListener("click", signOut);
+  refresh.addEventListener("click", refreshWorkspace);
+  const shellReady = () => {
+    host.classList.remove("dashboard-starting");
+    content.inert = false; sidebar.inert = false; footer.inert = false;
+    toggleButton.disabled = false; signOutButton.disabled = false; refresh.removeAttribute("disabled");
+  };
+  // Login/setup are presentations over the existing authority, with no dashboard navigation.
+  const initialPath = unmounted(new URL(router.url()).pathname);
+  host.classList.toggle("auth-layout", initialPath === "/login" || initialPath === "/setup");
+  sidebarController.setAuth(initialPath === "/login" || initialPath === "/setup");
 
   const menuSnapshots = new Map<string, string>();
   /** The sidebar's menus come from what the Platform reports; they load beside the page and replace the basic ones. */
@@ -136,6 +151,7 @@ export function mount(host: HTMLElement) {
     legacyContent.hidden = serverView;
     if (serverView) {
       if (outlet.querySelector("[data-requires-login]")) { navigate(`/login?returnTo=${encodeURIComponent(path + url.search)}`); return; }
+      shellReady();
       const raw = outlet.querySelector<HTMLElement>("[data-project-context]")?.dataset.projectContext;
       if (raw) {
         const loaded = JSON.parse(raw);
@@ -161,6 +177,7 @@ export function mount(host: HTMLElement) {
       const latest = yield* loadConfig;
       if (disposed || version !== generation) return;
       config = latest; context.config = latest;
+      shellReady();
       if (!projectId && path !== "/login" && path !== "/setup" && path !== "/logout") loadMenu(undefined);
       if (path !== "/login" && path !== "/setup") stopUpdates = startUpdateWatch(latest.api.basePath);
       navigation(path, projectId);
@@ -190,7 +207,7 @@ export function mount(host: HTMLElement) {
     if (new URL(url).pathname !== renderedPath || !config) return;
     if (isServerView()) { syncNavigation(); return; }
     const nextData = dataIdentity(url);
-    if (nextData === renderedData) syncNavigation();
+    if (nextData === renderedData || router.isViewNavigation(renderedData, nextData)) { renderedData = nextData; syncNavigation(); }
     else { renderedData = nextData; reload(); }
   });
   const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && new URL(router!.url()).searchParams.has("sidebarUtility")) sidebarController.closeUtility();
@@ -203,6 +220,7 @@ export function mount(host: HTMLElement) {
   return () => {
     disposed = true; themeMedia.removeEventListener("change", applyTheme); window.removeEventListener("storage", applyTheme);
     outlet.removeEventListener("zelavis:database-drawn", workspaceDrawn);
+    toggleButton.removeEventListener("click", openNavigation); signOutButton.removeEventListener("click", signOut); refresh.removeEventListener("click", refreshWorkspace);
     unsubscribeRoute(); unsubscribeUrl(); sidebarController.dispose(); host.removeEventListener("keydown", escape);
     stopUpdates?.(); unmountUpdateBanner();
     for (const fiber of fibers) Effect.runFork(Fiber.interrupt(fiber));

@@ -19,6 +19,13 @@ const api = "/zelavis/api/v1", proxy = `${api}/runtime/projects/view-lab/proxy${
 const fixtureService = { name: "@fixture/page", scope: "extension", status: "installed", apiPath: `${api}/plugins/fixture`, menus: [{ title: "Fixture page", path: "/fixture/page", page: { src: `${api}/runtime/service-page-assets/%40fixture%2Fpage/dist/dashboard.html` } }] };
 let schemas = [{ collection: "articles", version: 1, active: true, fields: [{ name: "title", field: { _tag: "TextField", label: "Article title", required: true } }, { name: "count", field: { _tag: "IntegerField", label: "Article count", required: false } }] }];
 const config = { access: { mode: "owner", label: "Owner", principal: { id: "owner", type: "user", permissions: ["*"], roles: ["owner"] } }, services: [{ name: "@zelavis/new-ui", scope: "system", apiPath: api + "/plugins/newui", menus: [serverNavigationMenu] }], serviceRegistry: [fixtureService], rootPath: "/zelavis", api: { basePath: api }, capabilities: { database: { available: true, used: true } } };
+const marketplaceFixtures = [
+  { name: "@fixture/app", version: "1.0.0", kind: "app", scope: "system", status: "installed", marketplace: { title: "Fixture App" } },
+  { name: "@fixture/plugin", version: "1.2.3", kind: "plugin", scope: "extension", status: "available", installVia: "acquire", marketplace: { title: "Fixture Plugin" } },
+  { name: "@fixture/theme", version: "1.0.0", kind: "frontend", scope: "extension", status: "available", installVia: "acquire", marketplace: { title: "Fixture Frontend" } }
+];
+config.serviceRegistry.push(...marketplaceFixtures.map(service => structuredClone(service)));
+const projectRegistry = config.serviceRegistry.map(service => structuredClone(service));
 const observed = [];
 const installs = new Set(); let approvalDecisions = 0, uploaded = false, signedOut = false;
 const thread = { id: "thread-1", title: "Qualification", messages: [{ id: "reply-1", role: "assistant", content: "![untrusted image](https://example.test/image.png)" }] };
@@ -27,7 +34,8 @@ const approval = { id: "approval-1", label: "Delete Project", target: { kind: "p
 const upstream = createServer(async (req, res) => {
   const path = new URL(req.url, "http://fixture").pathname;
   const send = (value, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
-  if (path === `${api}/runtime/config` || path === `${proxy}/runtime/config`) return send(config);
+  if (path === `${api}/runtime/config`) return send(config);
+  if (path === `${proxy}/runtime/config`) return send({ ...config, serviceRegistry: projectRegistry });
   if (path === `${api}/auth/bootstrap`) return send({ available: true, required: false, providers: ["password"], enrollmentProviders: [] });
   if (!req.headers.cookie?.includes("view-session=owner")) return send({ error: "Unauthorized" }, 401);
   observed.push({ path, cookie: req.headers.cookie });
@@ -51,7 +59,11 @@ const upstream = createServer(async (req, res) => {
   if (path === `${api}/runtime/assistant/provider`) return send({ source: "stored", model: "test-model", provider: "openai", hasApiKey: true });
   if (path === `${api}/runtime/edge/onboard`) return send({ status: "configured" });
   if (path === `${api}/runtime/services` || path === `${proxy}/runtime/services`) {
-    if (req.method === "POST") { assert.equal(body.specifier, "npm:@fixture/plugin@1.2.3"); installs.add(path); }
+    if (req.method === "POST") {
+      assert.equal(body.packageSource, "npm:@fixture/plugin@1.2.3"); installs.add(path);
+      const inventory = path.startsWith(proxy) ? projectRegistry : config.serviceRegistry;
+      inventory.find(service => service.name === "@fixture/plugin").status = "installed";
+    }
     return send({ services: [fixtureService, { name: "@fixture/plugin", version: "1.2.3", kind: "plugin", scope: "extension", status: installs.has(path) ? "installed" : "available", installVia: "acquire" }] });
   }
   if (path === `${proxy}/storage/files`) return send({ files: uploaded ? [{ path: "assets/test.txt", size: 4, contentType: "text/plain" }] : [] });
@@ -106,6 +118,75 @@ try {
   await context.addCookies([{ name: "view-session", value: "owner", url: origin }]);
   const page = await context.newPage(), errors = [];
   page.on("pageerror", error => errors.push(error.message));
+  // Native refresh must retain a real frame before either application code or startup data is ready.
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    const noJs = await browser.newPage({ javaScriptEnabled: false, viewport });
+    await noJs.goto(`${origin}/zelavis/marketplace`, { waitUntil: "load" });
+    assert.ok(await noJs.locator(".header").isVisible(), "the document supplies the header without JavaScript");
+    assert.ok(await noJs.locator("#workspace").isVisible(), "the document supplies the workspace without JavaScript");
+    assert.ok(await noJs.locator("[data-shell-footer]").isVisible(), "the document supplies the footer without JavaScript");
+    assert.equal((await noJs.locator("body").innerText()).includes("Connecting to Zelavis"), false);
+    await noJs.close();
+    const startup = await context.newPage(), startupErrors = [];
+    startup.on("pageerror", error => startupErrors.push(error.message));
+    await startup.setViewportSize(viewport);
+    await startup.goto(`${origin}/zelavis/marketplace`, { waitUntil: "networkidle" });
+    await startup.getByRole("tab", { name: /^Apps/ }).waitFor();
+    await startup.addInitScript(() => {
+      localStorage.setItem("theme", "dark");
+      const capture = () => {
+        const selectors = ["#dashboard-shell", ".header", ".main", "#dashboard-navigation", "#workspace", "[data-shell-footer]"];
+        const nodes = selectors.map(selector => document.querySelector(selector));
+        if (nodes.every(Boolean) && !window.startupShell) window.startupShell = { selectors, nodes, detached: false };
+        if (window.startupShell && window.startupShell.nodes.some(node => !node.isConnected)) window.startupShell.detached = true;
+      };
+      new MutationObserver(capture).observe(document, { childList: true, subtree: true });
+      capture();
+    });
+    let releaseScripts, releaseData, blockedScripts = 0, blockedData = 0;
+    const scriptGate = new Promise(resolve => { releaseScripts = resolve; });
+    const dataGate = new Promise(resolve => { releaseData = resolve; });
+    await startup.route("**/*", async route => {
+      const request = route.request();
+      if (request.resourceType() === "script") { blockedScripts++; await scriptGate; }
+      else if (request.url().includes("/api/v1/runtime/config") || request.url().includes("/api/v1/auth/bootstrap")) { blockedData++; await dataGate; }
+      await route.continue();
+    });
+    try {
+      await startup.reload({ waitUntil: "commit" });
+      await startup.locator(".header").waitFor({ state: "visible" });
+      await startup.waitForFunction(() => Boolean(window.startupShell));
+      const header = await startup.locator(".header").boundingBox();
+      const footer = await startup.locator("[data-shell-footer]").boundingBox();
+      const workspace = await startup.locator("#workspace").boundingBox();
+      assert.ok(blockedScripts > 0, "the application scripts are actually held");
+      assert.ok(await startup.locator("[data-screen-content] .shell-workspace-pending").isVisible());
+      assert.equal(await startup.locator("html").getAttribute("data-dashboard-theme"), "dark", "saved appearance applies before application startup");
+      releaseScripts();
+      await startup.waitForFunction(() => document.querySelector("#dashboard-shell")?.classList.contains("dashboard-starting"));
+      for (let attempt = 0; blockedData === 0 && attempt < 750; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.ok(blockedData > 0, "startup data is actually held after the scripts load");
+      assert.ok(await startup.locator(".header").isVisible());
+      assert.ok(await startup.locator("#workspace").isVisible());
+      assert.ok(await startup.locator("[data-shell-footer]").isVisible());
+      assert.equal(await startup.getByRole("heading", { name: "Fixture App", exact: true }).count(), 0, "private workspace data has not appeared while startup is held");
+      releaseData();
+      await startup.getByRole("tab", { name: /^Apps/ }).waitFor();
+      await startup.waitForFunction(() => !document.querySelector("#dashboard-shell")?.classList.contains("dashboard-starting"));
+      assert.ok(await startup.evaluate(() => !window.startupShell.detached && window.startupShell.nodes.every((node, index) => node === document.querySelector(window.startupShell.selectors[index]))), "startup adopts every frame node from the document");
+      const nextHeader = await startup.locator(".header").boundingBox(), nextFooter = await startup.locator("[data-shell-footer]").boundingBox();
+      for (const key of ["x", "y", "width", "height"]) {
+        assert.ok(Math.abs(header[key] - nextHeader[key]) < 1, `header ${key} stays stable through startup`);
+        assert.ok(Math.abs(footer[key] - nextFooter[key]) < 1, `footer ${key} stays stable through startup: ${JSON.stringify(footer)} -> ${JSON.stringify(nextFooter)}`);
+      }
+      const nextWorkspace = await startup.locator("#workspace").boundingBox();
+      for (const key of ["x", "y", "width"]) assert.ok(Math.abs(workspace[key] - nextWorkspace[key]) < 1, `workspace ${key} stays stable through startup: ${JSON.stringify(workspace)} -> ${JSON.stringify(nextWorkspace)}`);
+      assert.equal((await startup.locator("body").innerText()).includes("Connecting to Zelavis"), false);
+      assert.deepEqual(startupErrors, [], "shell adoption raises no browser errors");
+      await startup.evaluate(() => localStorage.removeItem("theme"));
+    } finally { releaseScripts(); releaseData(); await startup.close(); }
+  }
+  console.log("Static shell: desktop/mobile HTML frame without JavaScript, native refresh with held scripts/data, prepaint appearance and retained frame geometry passed.");
   const route = `${origin}/zelavis/projects/view-lab/database?databaseTenant=tenant-a&databaseTable=articles&databaseRow=row-a&sidebar=projects/project/database`;
   // A trackpad click often moves slightly between pointerdown and pointerup.
   // Swiper must not consume mouse clicks, even while touch swiping is disabled.
@@ -118,13 +199,13 @@ try {
     await page.mouse.move(x + drift, y);
     await page.mouse.up();
   };
-  await page.goto(`${origin}/zelavis/?sidebar=`, { waitUntil: "networkidle" });
+  await page.goto(`${origin}/zelavis/`, { waitUntil: "networkidle" });
   // The sidebar is rebuilt once when the Platform's full menu arrives; interact after that.
   await page.waitForSelector(".dashboard[data-menu-ready]");
   await pointerClick(page.getByRole("link", { name: "Server", exact: true }), 1);
   await page.waitForURL(/\/zelavis\/server\?sidebar=server/, { timeout: 10000 });
   await pointerClick(page.getByRole("button", { name: "Back to Platform", exact: true }), 1);
-  await page.waitForURL(/\/zelavis\/\?sidebar=$/, { timeout: 10000 });
+  await page.waitForURL(/\/zelavis\/$/, { timeout: 10000 });
   await page.setViewportSize({ width: 800, height: 900 });
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await page.waitForURL(/sidebarView=menu/);
@@ -133,7 +214,15 @@ try {
   // The page finishes loading and the sidebar settles; a key pressed before that can land on a rebuilt control.
   await page.waitForSelector(".content .k-page", { state: "attached" });
   await page.getByRole("button", { name: "Back to Platform", exact: true }).press("Enter");
-  await page.waitForURL(/\/zelavis\/\?sidebar=&sidebarView=menu/, { timeout: 10000 }).catch(error => { throw new Error(`${error.message} (at ${page.url()})`); });
+  await page.waitForURL(/\/zelavis\/\?sidebarView=menu$/, { timeout: 10000 }).catch(error => { throw new Error(`${error.message} (at ${page.url()})`); });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".dashboard[data-menu-ready]");
+  assert.equal(new URL(page.url()).searchParams.has("sidebar"), false, "mobile root reload needs no empty trail");
+  await page.getByRole("link", { name: "Server", exact: true }).click();
+  await page.waitForURL(/sidebar=server/);
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.waitForURL(/\/zelavis\/\?sidebarView=menu$/);
+  await page.getByRole("link", { name: "Server", exact: true }).click({ trial: true });
   const touch = await context.newCDPSession(page);
   const swipe = async (startX, endX) => {
     await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: startX, y: 650 }] });
@@ -149,6 +238,108 @@ try {
   await touch.detach();
   await page.setViewportSize({ width: 1440, height: 1000 });
   console.log("Sidebar: desktop/mobile trackpad drift and keyboard Back navigate on the first click; real touch swipes still synchronize the URL");
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${origin}/zelavis/server/resources`, { waitUntil: "networkidle" });
+    await page.locator(".content .actions").getByRole("button", { name: "Overview", exact: true }).waitFor();
+    const accessReads = observed.filter(entry => entry.path === `${api}/runtime/access`).length;
+    await page.evaluate(() => {
+      window.resourceTabs = [...document.querySelectorAll(".content .actions button")];
+      window.resourcePage = window.resourceTabs[0].closest(".k-page");
+      window.resourceRemoved = [];
+      window.resourceObserver = new MutationObserver(records => {
+        for (const record of records) for (const node of record.removedNodes) {
+          if (node === window.resourcePage || window.resourceTabs.some(tab => node === tab || node.contains(tab))) window.resourceRemoved.push(node.nodeName);
+        }
+      });
+      window.resourceObserver.observe(document.querySelector(".content"), { childList: true, subtree: true });
+    });
+    for (const [title, view] of [["Processes", "processes"], ["Storage", "storage"], ["Limits", "limits"], ["Overview", ""]]) {
+      const tab = page.locator(".content .actions").getByRole("button", { name: title, exact: true });
+      await tab.click();
+      await page.waitForURL(url => (url.searchParams.get("resourceView") ?? "") === view);
+      await page.waitForFunction(title => [...document.querySelectorAll(".content .actions button")].some(button => button.textContent === title && button.getAttribute("aria-pressed") === "true"), title);
+      assert.ok(await page.evaluate(() => window.resourceTabs.every(tab => tab.isConnected && document.querySelector(".content").contains(tab))), `${title}: tab buttons retain their DOM identity`);
+      assert.equal(await tab.evaluate(tab => tab === document.activeElement), true, `${title}: focus stays on the clicked tab`);
+      assert.deepEqual(await page.locator(".content .k-page h2:visible").allTextContents(), title === "Overview" ? ["Processes", "Limits"] : [title], `${title}: only the selected view panels are visible`);
+      assert.deepEqual(await page.evaluate(() => window.resourceRemoved), [], `${title}: navigation never removes the page or its buttons`);
+    }
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('.content .actions button[aria-pressed="true"]')?.textContent === "Limits");
+    await page.goForward();
+    await page.waitForFunction(() => document.querySelector('.content .actions button[aria-pressed="true"]')?.textContent === "Overview");
+    assert.ok(await page.evaluate(() => window.resourceTabs.every(tab => tab.isConnected)));
+    await page.evaluate(() => window.resourceObserver.disconnect());
+    assert.equal(observed.filter(entry => entry.path === `${api}/runtime/access`).length, accessReads, "local view navigation never re-runs the screen loader");
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`${origin}/zelavis/server/resources?resourceView=storage`, { waitUntil: "networkidle" });
+  await page.locator(".content .actions").getByRole("button", { name: "Storage", exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('.content .actions button[aria-pressed="true"]')?.textContent === "Storage");
+  const accessBeforeDataQuery = observed.filter(entry => entry.path === `${api}/runtime/access`).length;
+  await page.evaluate(() => {
+    const link = Object.assign(document.createElement("a"), { id: "fixture-data-query", href: "?resourceView=storage&dataPage=2", textContent: "Fixture data query" });
+    document.querySelector(".content .k-page").append(link);
+  });
+  await page.locator("#fixture-data-query").click();
+  await page.waitForURL(/dataPage=2/);
+  await page.waitForFunction(() => !document.querySelector("#fixture-data-query") && document.querySelector('.content .actions button[aria-pressed="true"]')?.textContent === "Storage");
+  assert.ok(observed.filter(entry => entry.path === `${api}/runtime/access`).length > accessBeforeDataQuery, "an undeclared data query still reloads and revalidates access");
+  console.log("Resources: framework-owned desktop/mobile view retention, uninterrupted focus, deep links and Back/Forward passed; data queries still reload and revalidate access.");
+  await page.goto(route, { waitUntil: "networkidle" });
+  for (const projectScope of [false, true]) {
+    const path = projectScope ? "/projects/view-lab/marketplace" : "/marketplace";
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(`${origin}/zelavis${path}`, { waitUntil: "networkidle" });
+      const tabs = page.getByRole("tablist", { name: "Marketplace sections" });
+      await tabs.getByRole("tab", { name: /^Apps/ }).waitFor();
+      assert.equal(await tabs.getByRole("tab", { name: /^Frontends/ }).getAttribute("aria-disabled"), projectScope ? null : "true");
+      const accessReads = observed.filter(entry => entry.path === `${api}/runtime/access`).length;
+      await page.getByLabel("Search the marketplace", { exact: true }).fill("Unsubmitted draft");
+      await page.evaluate(() => {
+        window.marketplaceRefs = [...document.querySelectorAll('.content [role="tab"], .content input[type="search"], .content .k-page')];
+        window.marketplaceRemoved = [];
+        window.marketplaceObserver = new MutationObserver(records => {
+          for (const record of records) for (const node of record.removedNodes) if (window.marketplaceRefs.some(ref => node === ref || node.contains(ref))) window.marketplaceRemoved.push(node.nodeName);
+        });
+        window.marketplaceObserver.observe(document.querySelector(".content"), { childList: true, subtree: true });
+      });
+      for (const title of projectScope ? ["Plugins", "Frontends", "Apps"] : ["Plugins", "Apps"]) {
+        const tab = tabs.getByRole("tab", { name: new RegExp(`^${title}`) });
+        await tab.click();
+        await page.waitForURL(url => (url.searchParams.get("tab") ?? "apps") === title.toLowerCase());
+        await page.waitForFunction(title => [...document.querySelectorAll('.content [role="tab"]')].some(tab => tab.textContent.startsWith(title) && tab.getAttribute("aria-selected") === "true"), title);
+        assert.ok(await page.evaluate(() => window.marketplaceRefs.every(ref => ref.isConnected)), `${path}: ${title} retains the toolbar, tabs and page`);
+        assert.deepEqual(await page.evaluate(() => window.marketplaceRemoved), [], `${path}: no loading/rebuild while switching ${title}`);
+        assert.equal(await tab.evaluate(tab => document.activeElement === tab), true, `${path}: ${title} keeps focus`);
+        assert.equal(await page.getByLabel("Search the marketplace", { exact: true }).inputValue(), "Unsubmitted draft");
+        assert.equal(await page.getByRole("list", { name: title, exact: true }).count(), 1);
+      }
+      await page.goBack();
+      const backTo = projectScope ? "Frontends" : "Plugins";
+      await page.waitForFunction(title => [...document.querySelectorAll('.content [role="tab"]')].some(tab => tab.textContent.startsWith(title) && tab.getAttribute("aria-selected") === "true"), backTo);
+      await page.goForward();
+      await page.waitForFunction(() => [...document.querySelectorAll('.content [role="tab"]')].some(tab => tab.textContent.startsWith("Apps") && tab.getAttribute("aria-selected") === "true"));
+      assert.equal(observed.filter(entry => entry.path === `${api}/runtime/access`).length, accessReads, "Marketplace tab switches stay local");
+      await page.evaluate(() => window.marketplaceObserver.disconnect());
+      await page.getByRole("list", { name: "Apps", exact: true }).getByRole("button", { name: "Create project", exact: true }).click();
+      await page.getByLabel("Project name", { exact: true }).fill("Retained project draft");
+      await tabs.getByRole("tab", { name: /^Plugins/ }).click();
+      await tabs.getByRole("tab", { name: /^Apps/ }).click();
+      assert.equal(await page.getByLabel("Project name", { exact: true }).inputValue(), "Retained project draft");
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`${origin}/zelavis${path}?tab=plugins`, { waitUntil: "networkidle" });
+    const plugins = page.getByRole("list", { name: "Plugins", exact: true });
+    await plugins.getByRole("button", { name: "Install", exact: true }).click();
+    await plugins.getByText("Installed", { exact: true }).waitFor();
+    assert.ok(installs.has(`${projectScope ? proxy : api}/runtime/services`), "retained Marketplace actions use their exact scope");
+  }
+  console.log("Marketplace: platform/project tabs retain DOM, focus, search and create drafts on desktop/mobile; Back/Forward, deep links and scoped installs passed.");
+  // Keep this inventory and its mutations local to Marketplace qualification.
+  config.serviceRegistry.splice(1); projectRegistry.splice(1); installs.clear();
+  await page.goto(route, { waitUntil: "networkidle" });
   const refresh = async () => {
     const before = await page.locator(".server-view-status span").innerText();
     revision++;

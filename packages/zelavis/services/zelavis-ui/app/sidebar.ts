@@ -3,10 +3,10 @@ import { register } from "swiper/element/bundle";
 import type { SwiperContainer } from "swiper/element";
 import type { FuzorRouter } from "fuzor/runtime";
 import { type Config, type Project } from "./api.ts";
-import { backRow, button, link, node } from "./dom.ts";
+import { backRow, node } from "./dom.ts";
 import type { DashboardHandle } from "./routes.ts";
 
-import { createMenuStore, itemIsActive, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
+import { activeItemIndex, canonicalPath, createMenuStore, panelsFor, resolveTrail, workspacePanels, trailForLocation, type Panel } from "./navigation-model.ts";
 import { mounted, unmounted } from "./mount.ts";
 
 /**
@@ -42,12 +42,18 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   const swiper = document.createElement("swiper-container") as SwiperContainer;
   swiper.setAttribute("init", "false"); swiper.setAttribute("aria-label", "Platform navigation");
-  const mobileSlide = document.createElement("swiper-slide"); mobileSlide.className = "mobile-workspace";
-  const mobileHeading = backRow("Workspace", "navigation", () => showMenu());
+  const mobileSlide = host.querySelector<HTMLElement>("[data-shell-mobile]")!;
+  const mobileHeading = mobileSlide.querySelector<HTMLElement>("[data-shell-mobile-heading]")!;
+  const mobileBack = mobileHeading.querySelector<HTMLButtonElement>("button")!;
   const mobileTitle = mobileHeading.querySelector<HTMLElement>(".back-title")!;
-  mobileSlide.append(mobileHeading);
+  const openMenu = () => showMenu();
+  mobileBack.addEventListener("click", openMenu);
+  const placeholder = sidebar.querySelector<HTMLElement>("[data-shell-navigation]");
+  swiper.hidden = true;
   const utilities = createSidebarUtilities(router, options.onSignOut);
-  sidebar.append(link("◈ Zelavis", "/", { class: "brand" }), node("div", { class: "sidebar-label" }, "THE APP PLATFORM"), swiper, utilities.view, utilities.footer);
+  sidebar.querySelector<HTMLAnchorElement>("[data-shell-brand]")!.href = mounted("/");
+  sidebar.insertBefore(swiper, placeholder);
+  sidebar.append(utilities.view);
   const menus = createMenuStore();
   let auth = false;
   let projectList: readonly Project[] = [];
@@ -57,10 +63,9 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let snapshot: { path: string; projectId?: string; project?: Project; runtime?: Config; menu?: unknown } = { path: "/" };
   const slides: HTMLElement[] = [];
-  const canonical = (path: string) => path === "/" ? "/projects" : path;
   const navigate = (path: string, ids: readonly string[], view: "menu" | "content") => {
     const url = new URL(mounted(path), location.href);
-    url.searchParams.set("sidebar", ids.join("/"));
+    if (ids.length) url.searchParams.set("sidebar", ids.join("/")); else url.searchParams.delete("sidebar");
     if (media.matches) url.searchParams.set("sidebarView", view);
     void router.navigate(url.href).catch(console.error);
   };
@@ -71,6 +76,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
   }
   function sync(path: string, projectId?: string, project?: Project, runtime?: Config, menu?: unknown) {
     snapshot = { path, projectId, project, runtime, menu };
+    placeholder?.remove();
     const utilityVisible = utilities.sync(projectList, projectId, options.config());
     swiper.hidden = utilityVisible;
     host.classList.toggle("utility-open", utilityVisible);
@@ -100,22 +106,19 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
       if (!slide) { slide = document.createElement("swiper-slide"); slide.className = "navigation-panel"; slides.push(slide); swiper.insertBefore(slide, mobileSlide.parentNode === swiper ? mobileSlide : null); }
       const nav = node("nav", { "aria-label": `${panel.label} navigation` });
       revealOverflow(nav);
-      panel.items.forEach(item => {
+      const activeIndex = activeItemIndex(panel.items, { current: path, search: url.searchParams, trail: trail.map(panel => panel.id) });
+      panel.items.forEach((item, position) => {
         const destination = new URL(mounted(item.path), location.href);
         const ids = trail.slice(1, index + 1).map(panel => panel.id);
         if (item.branch) ids.push(item.branch);
-        destination.searchParams.set("sidebar", ids.join("/"));
+        if (ids.length) destination.searchParams.set("sidebar", ids.join("/")); else destination.searchParams.delete("sidebar");
         if (media.matches) destination.searchParams.set("sidebarView", item.branch ? "menu" : "content");
-        // "/" and "/projects" are the same page.
-        const itemPath = canonical(unmounted(destination.pathname));
-        const selected = ["databaseTenant", "databaseTable", "databaseSystemView", "new"];
+        const itemPath = canonicalPath(unmounted(destination.pathname));
         const dialog = destination.searchParams.get("databaseDialog");
-        // An item that opens a dialog is active only while that dialog is; every other item ignores the dialog.
-        const matchesSearch = selected.every(key => destination.searchParams.get(key) === url.searchParams.get(key)) && (dialog === null || dialog === url.searchParams.get("databaseDialog"));
         // Opening a dialog from the page it belongs to keeps what is on that page (the open table, filter, sort).
         const href = new URL(destination);
-        if (dialog !== null && path === itemPath) { const kept = new URL(url); for (const key of ["sidebar", "sidebarView"]) { const value = destination.searchParams.get(key); if (value === null) kept.searchParams.delete(key); else kept.searchParams.set(key, value); } kept.searchParams.set("databaseDialog", dialog); href.search = kept.search; }
-        const active = itemIsActive({ current: canonical(path), itemPath, matchesSearch, ...(item.branch ? { branch: item.branch } : {}), trail: trail.map(panel => panel.id) });
+        if (dialog !== null && canonicalPath(path) === itemPath) { const kept = new URL(url); for (const key of ["sidebar", "sidebarView"]) { const value = destination.searchParams.get(key); if (value === null) kept.searchParams.delete(key); else kept.searchParams.set(key, value); } kept.searchParams.set("databaseDialog", dialog); href.search = kept.search; }
+        const active = position === activeIndex;
         const anchor = node("a", { href: `${href.pathname}${href.search}`, title: item.label, ...(active || item.nested ? { class: [active ? "active" : "", item.nested ? "nested" : ""].filter(Boolean).join(" ") } : {}), ...(active ? { "aria-current": "page" } : {}) }, node("span", { class: "nav-label" }, node("span", { class: "nav-text" }, item.label)), item.branch ? node("span", { "aria-hidden": "true", class: "chevron" }, "›") : undefined);
         nav.append(anchor);
       });
@@ -125,6 +128,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     // Outgoing panels stay present until Back has animated to its parent.
     if (previousDepth > trail.length && initialized) timer = setTimeout(() => { synchronizing = true; trim(); if (media.matches && new URL(router.url()).searchParams.get("sidebarView") !== "menu") swiper.swiper.slideTo(trail.length, 0); synchronizing = false; }, reduced.matches ? 0 : 310); else trim();
     if (media.matches) { if (mobileSlide.parentNode !== swiper) swiper.append(mobileSlide); if (content.parentNode !== mobileSlide) mobileSlide.append(content); } else { mobileSlide.remove(); if (content.parentNode !== main) main.append(content); }
+    if (utilities.footer.parentNode !== sidebar) sidebar.append(utilities.footer);
     if (!initialized) {
       // Mouse/trackpad clicks can drift between press and release. Swiper's
       // simulated drag otherwise cancels them even with allowTouchMove=false.
@@ -139,6 +143,9 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     const index = contentVisible ? slides.length : trail.length - 1;
     swiper.swiper.slideTo(index, initialized && previousDepth ? undefined : 0);
     Array.from(swiper.children).forEach((slide, position) => { const inactive = position !== index; slide.setAttribute("aria-hidden", String(inactive)); (slide as HTMLElement).inert = inactive; });
+    mobileSlide.classList.remove("shell-mobile-stage");
+    mobileBack.disabled = false;
+    host.dataset.shellAdopted = "true";
     host.classList.toggle("mobile-content", contentVisible);
     synchronizing = false;
   }
@@ -150,7 +157,7 @@ export function createSidebar(host: HTMLElement, sidebar: HTMLElement, content: 
     else if (trail[index]) navigate(trail[index].path, trail.slice(1, index + 1).map(panel => panel.id), "menu");
   };
   swiper.addEventListener("swiperslidechange", changed);
-  const resized = () => { if (auth && content.parentNode !== main) main.append(content); else sync(snapshot.path, snapshot.projectId, snapshot.project, snapshot.runtime, snapshot.menu); };
+  const resized = () => { if (auth) { if (content.parentNode !== main) main.append(content); return; } sync(snapshot.path, snapshot.projectId, snapshot.project, snapshot.runtime, snapshot.menu); };
   media.addEventListener("change", resized); reduced.addEventListener("change", resized);
-  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { menus.set(projectId, items); resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth && content.parentNode !== main) main.append(content); }, dispose() { utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
+  return { sync, showMenu, setWorkspaceNavigation(items: unknown, projectId?: string) { menus.set(projectId, items); resized(); }, closeUtility: utilities.close, setProjects(list: readonly Project[]) { projectList = list; resized(); }, setAuth(value: boolean) { auth = value; if (auth) { if (content.parentNode !== main) main.append(content); mobileSlide.remove(); host.dataset.shellAdopted = "true"; } }, dispose() { mobileBack.removeEventListener("click", openMenu); utilities.dispose(); if (timer) clearTimeout(timer); media.removeEventListener("change", resized); reduced.removeEventListener("change", resized); swiper.removeEventListener("swiperslidechange", changed); swiper.swiper?.destroy(true, true); } };
 }

@@ -5,6 +5,7 @@ import test from "node:test";
 import { Effect } from "effect";
 import { acquireWriter, memoryLeaseStore, startWriter, renewWriter } from "../dist/db/writer-lease.js";
 import { openNodeDatabase } from "../dist/db/node-host.js";
+import { localDatabaseLeader } from "../dist/db/leader.js";
 import { leaseFromEnvironment } from "../dist/adapters/_node-project-engine.js";
 import { temporaryDatabaseDirectory } from "./_database.mjs";
 
@@ -35,8 +36,11 @@ test("a start takes the lease when it is free or its own, takes over only as the
 test("the lease is configured from the environment, all or nothing", () => {
   assert.equal(leaseFromEnvironment("p1", {}), undefined, "no authority, no guard");
   assert.throws(() => leaseFromEnvironment("p1", { ZELAVIS_LEASE_AUTHORITY: "http://platform/api" }), /ZELAVIS_LEASE_TOKEN/);
+  assert.throws(() => leaseFromEnvironment("p1", { ZELAVIS_LEASE_AUTHORITY: "http://platform/api", ZELAVIS_LEASE_TOKEN: "t", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_ROLE: "writer" }), /ZELAVIS_LEASE_TTL_MILLIS/);
+  assert.throws(() => leaseFromEnvironment("p1", { ZELAVIS_LEASE_AUTHORITY: "http://platform/api", ZELAVIS_LEASE_TOKEN: "t", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_TTL_MILLIS: "9000" }), /ZELAVIS_LEASE_ROLE/);
+  assert.throws(() => leaseFromEnvironment("p1", { ZELAVIS_LEASE_AUTHORITY: "http://platform/api", ZELAVIS_LEASE_TOKEN: "t", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_ROLE: "both", ZELAVIS_LEASE_TTL_MILLIS: "9000" }), /ZELAVIS_LEASE_ROLE/);
   const lease = leaseFromEnvironment("p1", {
-    ZELAVIS_LEASE_AUTHORITY: "http://platform/zelavis/api/v1", ZELAVIS_LEASE_TOKEN: "t", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_TTL_MILLIS: "9000",
+    ZELAVIS_LEASE_AUTHORITY: "http://platform/zelavis/api/v1", ZELAVIS_LEASE_TOKEN: "t", ZELAVIS_LEASE_NODE: "node-a", ZELAVIS_LEASE_STANDBY: "node-b", ZELAVIS_LEASE_ROLE: "writer", ZELAVIS_LEASE_TTL_MILLIS: "9000",
   });
   assert.deepEqual([lease.scope, lease.owner, lease.standby, lease.ttlMillis], ["p1", "node-a", "node-b", 9000]);
   assert.equal(typeof lease.onSuperseded, "function");
@@ -45,7 +49,7 @@ test("the lease is configured from the environment, all or nothing", () => {
 test("a database opens only once it holds the lease, refuses to open while another writer is live, and releases the lease when it closes", { timeout: 60_000 }, async (t) => {
   const leases = memoryLeaseStore();
   const directory = temporaryDatabaseDirectory(t);
-  const lease = (owner, standby, extra = {}) => ({ leases, scope: "project-1", owner, standby, ttlMillis: 400, endpoint: `http://${owner}`, ...extra });
+  const lease = (owner, standby, extra = {}) => ({ role: "writer", leases, scope: "project-1", owner, standby, ttlMillis: 400, endpoint: `http://${owner}`, ...extra });
 
   // Another node is the live writer: this one opens nothing.
   await Effect.runPromise(acquireWriter(leases, { partition: "project-1", owner: "other", ttlMillis: 5000, standby: "A" }));
@@ -76,4 +80,65 @@ test("a database opens only once it holds the lease, refuses to open while anoth
   await until(() => lost === 1, "the writer finds out it was superseded");
   await until(async () => (await guarded.api.forTenant("acme").documents.insert({ collection: "posts", id: `late-${Math.random()}`, data: {} }).then(() => false, () => true)), "and its writes are refused");
   await guarded.close();
+});
+
+test("a database opened as a standby follows its writer and is handed out only once it holds the lease", { timeout: 60_000 }, async () => {
+  const leases = memoryLeaseStore();
+  const writerDirectory = temporaryDatabaseDirectory();
+  const standbyDirectory = temporaryDatabaseDirectory();
+  const writer = await openNodeDatabase({ directory: writerDirectory, crossTenantRefresh: false, lease: { role: "writer", leases, scope: "project-1", owner: "a", standby: "b", ttlMillis: 1000, endpoint: "a" } });
+  await writer.api.forTenant("acme").documents.createCollection({ name: "posts" });
+  await writer.api.forTenant("acme").documents.insert({ collection: "posts", id: "p1", data: { id: "p1" } });
+
+  let opened;
+  const standing = openNodeDatabase({ directory: standbyDirectory, crossTenantRefresh: false, lease: {
+    role: "standby", leases, scope: "project-1", owner: "b", successor: "a", ttlMillis: 1000, endpoint: "b",
+    leaderFor: () => localDatabaseLeader(writer.database.followers), timeoutMillis: 100, pollMillis: 50,
+  } }).then((database) => { opened = database; return database; });
+  await wait(700);
+  assert.equal(opened, undefined, "a standby is not handed out while its writer holds the lease");
+  assert.equal((await Effect.runPromise(leases.read("project-1"))).lease.owner, "a");
+
+  await writer.close();
+  const promoted = await standing;
+  const held = (await Effect.runPromise(leases.read("project-1"))).lease;
+  assert.deepEqual([held.owner, held.epoch, held.standby], ["b", 2, "a"]);
+  assert.equal((await promoted.api.forTenant("acme").documents.findById({ collection: "posts", id: "p1" })).id, "p1", "it holds what the writer wrote");
+  await promoted.close();
+});
+
+test("a promoted standby that is superseded later is told, like any writer", { timeout: 60_000 }, async () => {
+  const leases = memoryLeaseStore();
+  const writer = await openNodeDatabase({ directory: temporaryDatabaseDirectory(), crossTenantRefresh: false, lease: { role: "writer", leases, scope: "project-1", owner: "a", standby: "b", ttlMillis: 600, endpoint: "a" } });
+  let told = 0;
+  const standing = openNodeDatabase({ directory: temporaryDatabaseDirectory(), crossTenantRefresh: false, lease: {
+    role: "standby", leases, scope: "project-1", owner: "b", successor: "a", ttlMillis: 600, endpoint: "b",
+    leaderFor: () => localDatabaseLeader(writer.database.followers), timeoutMillis: 100, pollMillis: 50, onSuperseded: () => { told += 1; },
+  } });
+  await writer.close();
+  const promoted = await standing;
+  assert.equal(told, 0, "not told while it holds the lease");
+  const mine = await Effect.runPromise(leases.read("project-1"));
+  await Effect.runPromise(leases.replace(mine, { ...mine.lease, owner: "c", epoch: mine.lease.epoch + 1, expiresAt: Date.now() + 60_000 }));
+  await until(() => told === 1, "the promoted standby is told it was superseded");
+  await promoted.close();
+});
+
+test("a standby told to stop waiting ends its open at once, handing nothing out and leaving the writer's lease alone", { timeout: 60_000 }, async () => {
+  const leases = memoryLeaseStore();
+  const writer = await openNodeDatabase({ directory: temporaryDatabaseDirectory(), crossTenantRefresh: false, lease: { role: "writer", leases, scope: "project-1", owner: "a", standby: "b", ttlMillis: 5000, endpoint: "a" } });
+  const waiting = new AbortController();
+  const standing = openNodeDatabase({ directory: temporaryDatabaseDirectory(), crossTenantRefresh: false, lease: {
+    role: "standby", leases, scope: "project-1", owner: "b", successor: "a", ttlMillis: 5000, endpoint: "b", signal: waiting.signal,
+    leaderFor: () => localDatabaseLeader(writer.database.followers), timeoutMillis: 100, pollMillis: 50,
+  } });
+  const outcome = standing.then(() => "handed out", () => "ended");
+  await wait(400);
+  const started = Date.now();
+  waiting.abort();
+  assert.equal(await outcome, "ended");
+  assert.ok(Date.now() - started < 2000, "the wait ended at once");
+  const held = (await Effect.runPromise(leases.read("project-1"))).lease;
+  assert.deepEqual([held.owner, held.epoch], ["a", 1], "the writer's lease is untouched");
+  await writer.close();
 });

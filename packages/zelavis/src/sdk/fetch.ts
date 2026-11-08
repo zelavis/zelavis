@@ -420,6 +420,7 @@ export interface ZelavisClient {
   readonly terminal: ZelavisTerminalClient;
   /** Nodes that join this Platform, over `/runtime/nodes`. Same contract as `zelavis nodes`. */
   readonly nodes: ZelavisNodesClient;
+  readonly shardPlacement: ZelavisShardPlacementClient;
   /** Cloud capacity, over `/runtime/cloud`. Same contract as `zelavis cloud`. */
   readonly cloud: ZelavisCloudClient;
   /**
@@ -449,6 +450,13 @@ export interface ZelavisClient {
    * follow a partition from anywhere. Same contract as `zelavis followers`.
    */
   followers(projectId: string): ZelavisFollowersClient;
+  /**
+   * An App Project's shards on other Nodes: where each shard lives, and the durable operation that places virtual
+   * ranges on a new shard (the Platform chooses the Node within the Project's allocation) or gives one back. Listing
+   * needs `database.inspect`; placing and releasing need `database.shards.manage` (carried by
+   * `project.runtime.manage`). Same contract as `zelavis shards`.
+   */
+  shards(projectId: string): ZelavisShardsClient;
   /** The Fabric's nodes, Project placements and migrations. Same contract as `zelavis fabric`. */
   readonly fabric: ZelavisFabricClient;
   /** The Platform's writer-lease authority, over `/runtime/writer-leases`. Same contract as `zelavis leases`. */
@@ -873,6 +881,66 @@ export interface ZelavisLeaderStats {
   readonly lineage?: ReadonlyArray<{ readonly partition: string; readonly upTo: number }>;
 }
 
+export interface ZelavisShardResources {
+  readonly cpuCores: number;
+  readonly memoryBytes: number;
+  readonly diskBytes: number;
+}
+
+export interface ZelavisShardOperation {
+  readonly kind: "place" | "release" | "replicate" | "unreplicate";
+  readonly of?: string;
+  readonly operationId: string;
+  readonly shardId: string;
+  readonly virtualRanges: ReadonlyArray<number>;
+  readonly into?: string;
+  readonly resources?: ZelavisShardResources;
+  readonly phase: "requested" | "reserved" | "activated" | "opened" | "moving" | "moved" | "closed" | "released" | "done" | "failed";
+  readonly nodeId?: string;
+  readonly epoch?: number;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+  readonly error?: string;
+}
+
+export interface ZelavisShardReplica {
+  readonly shardId: string;
+  readonly nodeId?: string;
+  readonly epoch?: number;
+  readonly state?: string;
+  readonly status: "seeding" | "following" | "behind" | "unavailable";
+  readonly heldAsOf?: string;
+  readonly lagMillis?: number;
+  readonly colocated?: true;
+}
+
+export interface ZelavisShardDescription {
+  readonly shardId: string;
+  readonly location: "local" | "remote";
+  readonly virtualRanges: number;
+  readonly nodeId?: string;
+  readonly epoch?: number;
+  readonly state?: string;
+  /** False for a remote shard the Project could not open because its Node is not answering; it is tried again in the background. */
+  readonly available?: boolean;
+  readonly replica?: ZelavisShardReplica;
+}
+
+export interface ZelavisShardsClient {
+  /** Every shard with where it lives, and the latest shard operation. */
+  list(): Promise<{ readonly shards: ReadonlyArray<ZelavisShardDescription>; readonly operation: ZelavisShardOperation | null }>;
+  /** Place virtual ranges on a new shard on another Node; answers the recorded operation, which carries on in the background. */
+  place(input: { readonly virtualRanges: ReadonlyArray<number>; readonly resources: ZelavisShardResources; readonly shardId?: string }): Promise<ZelavisShardOperation>;
+  /** Move a remote shard's ranges to `into`, close it and give it back to the Platform. */
+  release(shardId: string, input: { readonly into: string }): Promise<ZelavisShardOperation>;
+  /** Reserve a durability copy of a shard on another Node. */
+  replicate(shardId: string, input: { readonly diskBytes: number }): Promise<ZelavisShardOperation>;
+  /** Stop the copy and give its storage back. */
+  unreplicate(shardId: string): Promise<ZelavisShardOperation>;
+  /** The latest shard operation, `null` when there has been none. */
+  operation(): Promise<ZelavisShardOperation | null>;
+}
+
 export interface ZelavisFollowersClient {
   /** What the leader's partition holds: what a follower compares its copy against. */
   stats(partition: string): Promise<ZelavisLeaderStats>;
@@ -902,9 +970,14 @@ export interface ZelavisFollowersClient {
    * when none is owed. Without a cursor the answer is the current position and `resync: true`. The cost is the
    * changes, whatever the number of partitions; a cursor the leader cannot answer is a `resync` too.
    */
-  feed(input?: { readonly cursor?: string; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number }): Promise<{ readonly cursor: string; readonly partitions: ReadonlyArray<string>; readonly resync: boolean; readonly more: boolean }>;
+  feed(input?: { readonly cursor?: string; readonly partitions?: ReadonlyArray<string>; readonly timeoutMillis?: number; readonly declarations?: number }): Promise<{ readonly cursor: string; readonly partitions: ReadonlyArray<string>; readonly resync: boolean; readonly more: boolean; readonly declarations: number }>;
   /** The Tenant partitions with their log heads, `limit` (1 to 1000) at a time; `next` continues. */
   partitions(input?: { readonly after?: string; readonly limit?: number }): Promise<{ readonly partitions: ReadonlyArray<{ readonly partition: string; readonly head: number }>; readonly next?: string }>;
+  /** The placement classes and divisions the leader has declared, for a follower to declare too: they carry no data. */
+  declarations(): Promise<{
+    readonly placements: { readonly version: number; readonly collections: Readonly<Record<string, string>> };
+    readonly subdivisions: { readonly version: number; readonly tenants: Readonly<Record<string, ReadonlyArray<string>>> };
+  }>;
 }
 
 export interface ZelavisWriterLease {
@@ -1329,6 +1402,61 @@ export interface ZelavisNodeEnrollmentAuditEntry {
   /** Why a refused attempt was refused: the caller is never told. */
   readonly reason?: "unknown-node" | "bad-token" | "expired" | "already-consumed" | "source-mismatch" | "node-registered" | "node-revoked";
   readonly version?: string;
+}
+
+export interface ZelavisShardPlacementResources {
+  readonly cpuCores: number;
+  readonly memoryBytes: number;
+  readonly diskBytes: number;
+}
+
+/** One shard's record in a Project's shard ledger. */
+export interface ZelavisShardPlacement {
+  readonly protocolVersion: 1;
+  readonly state: "reserved" | "preparing" | "committed" | "releasing" | "released";
+  readonly operationId: string;
+  readonly projectId: string;
+  readonly incarnation: string;
+  readonly shardId: string;
+  readonly nodeId: string;
+  readonly allocationGeneration: number;
+  readonly mapVersion: number;
+  readonly virtualRanges: readonly number[];
+  readonly resources: ZelavisShardPlacementResources;
+  readonly durability: "crash" | "power";
+  readonly revision: number;
+  readonly requestFingerprint: string;
+  readonly epoch: number;
+  readonly projectEpoch: number;
+}
+
+/** The Nodes a Project's remote shards may use and the budget they share. */
+export interface ZelavisShardAllocation extends ZelavisShardPlacementResources {
+  readonly schemaVersion: 1;
+  readonly projectId: string;
+  readonly generation: number;
+  readonly allowedNodeIds: readonly string[];
+}
+
+export interface ZelavisShardAllocationInput extends ZelavisShardPlacementResources {
+  readonly allowedNodeIds: readonly string[];
+  /** Zero when no allocation has been observed. */
+  readonly expectedGeneration: number;
+}
+
+export interface ZelavisShardPlacementView {
+  readonly projectId: string;
+  readonly allocation: ZelavisShardAllocation | null;
+  readonly incarnation: string | null;
+  readonly revision: number;
+  readonly placements: readonly ZelavisShardPlacement[];
+}
+
+export interface ZelavisShardPlacementClient {
+  /** The Project's shard allocation and placements; needs `fabric.view`. Same contract as `zelavis shard-placement get`. */
+  get(projectId: string): Promise<ZelavisShardPlacementView>;
+  /** Set the Project's allocation; needs `fabric.manage`. Same contract as `zelavis shard-placement set-allocation`. */
+  setAllocation(projectId: string, input: ZelavisShardAllocationInput): Promise<ZelavisShardAllocation>;
 }
 
 export interface ZelavisNodesClient {
@@ -2063,10 +2191,17 @@ export function createZelavisClient(
       platform: () => json<{ endpoint: { url: string; fingerprint: string } | null }>("/runtime/nodes/platform").then((r) => r.endpoint),
       remove: (nodeId) => json<{ removed: boolean }>(`/runtime/nodes/${encodeURIComponent(nodeId)}`, { method: "DELETE" }),
     },
+    shardPlacement: {
+      get: (projectId) => json<ZelavisShardPlacementView>(`/runtime/shard-placement/${encodeURIComponent(projectId)}`),
+      setAllocation: (projectId, input) => json<{ allocation: ZelavisShardAllocation }>(
+        `/runtime/shard-placement/${encodeURIComponent(projectId)}/allocation`, { method: "PUT", body: input },
+      ).then((r) => r.allocation),
+    },
     data: (projectId) => createDataClient(json, projectId),
     storage: (projectId) => createStorageClient(request, json, projectId, absoluteUrl),
     crossTenantIndexes: (projectId) => createCrossTenantIndexesClient(json, projectId),
     followers: (projectId) => createFollowersClient(json, projectId),
+    shards: (projectId) => createShardsClient(json, projectId),
     fabric: createFabricClient(json),
     writerLeases: createWriterLeasesClient(json),
     assistant: createAssistantClient(json, request),
@@ -2695,12 +2830,31 @@ function createCrossTenantIndexesClient(
   };
 }
 
+function createShardsClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisShardsClient {
+  const at = (action?: string) =>
+    projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/shards${action === undefined ? "" : `/${action}`}`);
+  return {
+    list: () => json(at()),
+    place: (input) => json<{ operation: ZelavisShardOperation }>(at("place"), { method: "POST", body: input }).then((answer) => answer.operation),
+    release: (shardId, input) =>
+      json<{ operation: ZelavisShardOperation }>(at(`${encodeURIComponent(shardId)}/release`), { method: "POST", body: input }).then((answer) => answer.operation),
+    replicate: (shardId, resources) =>
+      json<{ operation: ZelavisShardOperation }>(at(`${encodeURIComponent(shardId)}/replicate`), { method: "POST", body: { resources } }).then((answer) => answer.operation),
+    unreplicate: (shardId) =>
+      json<{ operation: ZelavisShardOperation }>(at(`${encodeURIComponent(shardId)}/unreplicate`), { method: "POST" }).then((answer) => answer.operation),
+    operation: () => json<{ operation: ZelavisShardOperation | null }>(at("operation")).then((answer) => answer.operation),
+  };
+}
+
 function createFollowersClient(
   json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
   projectId: string,
 ): ZelavisFollowersClient {
   const at = (partition: string, action: string) =>
-    projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/${encodeURIComponent(partition)}/${action}`);
+    projectPath(projectId, `followers/${encodeURIComponent(partition)}/${action}`);
   return {
     stats: (partition) => json(at(partition, "stats")),
     records: (partition, input) => json(at(partition, "records"), { method: "POST", body: input }),
@@ -2712,8 +2866,9 @@ function createFollowersClient(
     lease: (partition) => json(at(partition, "lease")),
     promote: (partition, input) => json(at(partition, "lease/promote"), { method: "POST", body: input }),
     demote: (partition) => json(at(partition, "lease/demote"), { method: "POST", body: {} }),
-    feed: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/feed`), { method: "POST", body: input ?? {} }),
-    partitions: (input) => json(projectPath(projectId, `${PROJECT_DATABASE_PROXY_PATH}/followers/partitions`), { method: "POST", body: input ?? {} }),
+    feed: (input) => json(projectPath(projectId, "followers/feed"), { method: "POST", body: input ?? {} }),
+    partitions: (input) => json(projectPath(projectId, "followers/partitions"), { method: "POST", body: input ?? {} }),
+    declarations: () => json(projectPath(projectId, "followers/declarations")),
   };
 }
 

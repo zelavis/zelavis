@@ -14,7 +14,7 @@ import { integration, present, unwrapFailure, integrationValue, type Integration
 import type { ZelavisPrincipal } from "../core/index.js";
 import { tenantOfPrincipal } from "./shared.js";
 import type { FabricApi } from "../core/fabric/index.js";
-import type { ZelavisProjectManager } from "../project.js";
+import type { ZelavisProjectManager, ZelavisProjectRemoteRoute } from "../project.js";
 import { ZelavisProjectNotFoundError } from "../project.js";
 import type {
   ZelavisRouteResponse,
@@ -147,6 +147,8 @@ const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
     // A follower on another host reads every record and log entry of the
     // partitions it follows, holds their logs and reports what it holds.
     "database.replicate",
+    // Placing shards on other Nodes is the Project's infrastructure authority.
+    "database.shards.manage",
   ]),
 });
 
@@ -429,6 +431,39 @@ export function createProjectForwarder(
 ): (options: ProjectForwardOptions) => Promise<ZelavisRouteResponse> {
   const { projects, fabric, unavailableProjectsResponse } = dependencies;
 
+  const forwardRemote = Effect.fn("ProjectGateway.forwardRemote")(function* (projectId: string, remote: ZelavisProjectRemoteRoute, options: ProjectForwardOptions) {
+    const target = resolveProxyTarget("http://project.invalid", options.wildcardPath);
+    if (!target) return { status: 400, body: { error: "Invalid Project proxy path." } };
+    target.search = options.query.toString();
+    const body = options.request.method === "GET" || options.request.method === "HEAD"
+      ? undefined
+      : yield* integration(() => options.request.clone().arrayBuffer());
+    if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+      return { status: 413, body: { error: `Project Gateway bodies are limited to ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.` } };
+    }
+    const placement = yield* integration(() => fabric?.getProjectPlacement(projectId));
+    const answer = yield* Effect.result(integration(() => remote.send({
+      method: options.request.method,
+      path: `${target.pathname}${target.search}`,
+      gateway: {
+        projectId,
+        scopeId: placement?.identity.scopeId ?? "platform",
+        generation: remote.placement.epoch,
+        runtimeNodeId: remote.nodeId,
+        subject: options.principal?.id ?? "anonymous",
+        subjectType: options.principal?.type ?? "anonymous",
+        tenantId: options.principal ? tenantOfPrincipal(options.principal) : "anonymous",
+        permissions: options.permissions,
+      },
+      headers: [...gatewayRequestHeaders(options.request.headers)],
+      ...(body && body.byteLength > 0 ? { body: new Uint8Array(body) } : {}),
+    }), { interruptible: true }));
+    if (answer._tag === "Failure") {
+      return { status: 502, body: { error: `Project "${projectId}" on node "${remote.nodeId}" could not be reached.` } };
+    }
+    return { status: answer.success.status, headers: gatewayResponseHeaders(new Headers(answer.success.headers as [string, string][])), body: answer.success.body };
+  });
+
   const forward = Effect.fn("ProjectGateway.forward")(function* (options: ProjectForwardOptions) {
     if (!projects) {
       return unavailableProjectsResponse();
@@ -441,6 +476,9 @@ export function createProjectForwarder(
         `Project "${options.projectId}" was not found.`,
       ));
     }
+    // A Project placed on another node has no runtime URL here: its Agent verifies a signed request and forwards it.
+    const remote = yield* integration(() => projects.remoteRoute?.(project.id));
+    if (remote) return yield* forwardRemote(project.id, remote, options);
     if (project.runtime.status !== "running" || !project.runtime.url) {
       return {
         status: 409,
@@ -789,5 +827,58 @@ export function createProjectGatewayRoutes(
     }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
   };
 
-  return [...proxyRoutes, ...dataRoutes, uploadRoute];
+  /**
+   * The leader side of following a Project's database, for a follower on another node.
+   *
+   * A standby holds only `database.replicate` on its Project, which is not enough for the proxy above (a POST there
+   * needs `project.runtime.manage`, which also stops the Project). This route forwards only the followers service of the
+   * Project's database, with only that permission, to wherever the Project is placed now.
+   */
+  const followerRoutes = (["GET", "POST"] as const).map((method) => ({
+    id: `runtime.projects.followers.${method.toLowerCase()}`,
+    spec: {
+      operationId: `projectFollowers${method[0]}${method.slice(1).toLowerCase()}`,
+      summary: "Follow a Project's database",
+      description: "The leader side of following a Project's database (`database/followers/*`): stats, records, log, holds, acknowledgments, the change feed, the partition listing and the declarations. Needs only `database.replicate` on the Project, and carries nothing else to it.",
+      tags: ["database"],
+      pathParams: {
+        projectId: { type: "string" as const, required: true, description: "The Project whose database is followed." },
+        path: { type: "string" as const, required: true, description: "The path within the followers service, such as `feed`." },
+      },
+      responses: {
+        200: { description: "The followers service's response" },
+        400: { description: "The path is not a followers path" },
+        404: { description: "No such Project" },
+        503: { description: "The Project runtime is not reachable" },
+      },
+    },
+    method,
+    path: "/projects/:projectId/followers/*path",
+    access: {
+      permissions: ["database.replicate"],
+      scope: { type: "project" as const, projectIdParam: "projectId" },
+    },
+    handler: ({ params, query, request, principal }: {
+      params: Record<string, string>;
+      query: URLSearchParams;
+      request: Request;
+      principal?: ZelavisPrincipal;
+    }) => present(Effect.gen(function* () {
+      const path = (params.path ?? "").replace(/^\/+/, "");
+      if (path === "" || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+        return { status: 400, body: { error: "A followers path is required, such as feed." } };
+      }
+      return yield* integration(() => forwardToProject({
+        projectId: params.projectId ?? "",
+        wildcardPath: `${PROJECT_DATABASE_PATH_PREFIX}/followers/${path}`,
+        query,
+        request,
+        principal,
+        permissions: projectRuntimePermissions(principal, params.projectId ?? "").filter((permission) => permission === "database.replicate"),
+        allowFrontend: false,
+      }));
+    }).pipe(Effect.catchCause((cause) => Effect.succeed(projectErrorResponse(unwrapFailure(Cause.squash(cause))))))),
+  }));
+
+  return [...proxyRoutes, ...dataRoutes, ...followerRoutes, uploadRoute];
 }

@@ -183,3 +183,35 @@ export const partitionMapFor = (
 export const shardsOf = (map: PartitionMap): ReadonlyArray<ShardId> => [
   ...new Set(map.placements.map((p) => p.shard)),
 ];
+
+/**
+ * The map with the given virtual ranges placed on `shard`, everything else as it was.
+ *
+ * Placements are split at every boundary the ranges touch and adjacent runs on one shard are
+ * merged, so the result covers every range exactly once. The version is one more than the input's.
+ */
+export const mapWithRanges = (
+  map: PartitionMap,
+  ranges: ReadonlyArray<number>,
+  shard: ShardId,
+): PartitionMap => {
+  const owners: ShardId[] = new Array<ShardId>(map.virtualRanges);
+  for (const placement of map.placements) {
+    for (let slot = placement.from; slot < placement.to; slot++) owners[slot] = placement.shard;
+  }
+  for (const range of ranges) {
+    if (!Number.isInteger(range) || range < 0 || range >= map.virtualRanges) {
+      throw new RangeError(`Virtual range ${range} is outside [0, ${map.virtualRanges}).`);
+    }
+    owners[range] = shard;
+  }
+  const placements: RangePlacement[] = [];
+  let from = 0;
+  for (let slot = 1; slot <= map.virtualRanges; slot++) {
+    if (slot === map.virtualRanges || owners[slot] !== owners[from]) {
+      placements.push({ from, to: slot, shard: owners[from]! });
+      from = slot;
+    }
+  }
+  return { version: map.version + 1, virtualRanges: map.virtualRanges, placements };
+};

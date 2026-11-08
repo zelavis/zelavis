@@ -184,6 +184,9 @@ const projectsCommand = Effect.fn("ProjectsCLI.command")(function* (args: readon
         : "") +
     (project.isolation && project.isolation.shortfalls.length > 0
       ? `\tisolation: ${project.isolation.shortfalls.map((item) => `${item.requirement}(${item.enforcement})`).join(",")}`
+      : "") +
+    (project.standby
+      ? `\tstandby: ${project.standby.nodeId} (${project.standby.status}${project.standby.error ? `: ${project.standby.error}` : ""})`
       : "");
 
   switch (action) {

@@ -13,7 +13,8 @@ import {
   shardRelocationKey,
   Tag, u64Bytes, type OrderedValue,
 } from "./keys.js";
-import { equalBytes, type KvEngine, type KvReader, type KvScanOptions, type KvWrite } from "./kv.js";
+import { boundedEngine, equalBytes, type KvEngine, type KvReader, type KvScanOptions, type KvWrite } from "./kv.js";
+import type { ReadBudget } from "./read-budget.js";
 import { asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq } from "./model.js";
 import * as Postings from "./postings.js";
 import {
@@ -332,6 +333,9 @@ interface ShardContext {
   readonly shard: ShardId;
   readonly engine: KvEngine;
   readonly claim: WriterClaim;
+  readonly reader: boolean;
+  /** What a read on another Node may spend (see `openShardReaderOverKv`); a writer's reads are unbounded. */
+  readonly budget?: ReadBudget;
   /** The node recorded as the writer of every event this shard accepts. */
   readonly origin: string;
   /** How many postings one clause of a query reads before it is checked per candidate instead. */
@@ -407,6 +411,19 @@ const openPartition = (
    */
   const engine = snapshotAware(raw);
   const live = <A, E, R>(effect: Effect.Effect<A, E, R>) => liveOn(raw, effect);
+  /**
+   * Identifiers read out of a posting set, each spent from the read's budget before it is handed on:
+   * a sealed blob stands for 65536 of them in 8 KiB, so what they cost is counted here and not by the bytes read.
+   */
+  const spentIds = <T>(ids: Iterable<T>): Iterable<T> => {
+    const { budget } = context;
+    return budget === undefined ? ids : (function* () {
+      for (const id of ids) {
+        budget.postings(1);
+        yield id;
+      }
+    })();
+  };
   const { generation, session } = context.claim;
   const keys = partitionKeys(partition);
   const revisionKey = keys.meta(META_REVISION);
@@ -513,13 +530,13 @@ const openPartition = (
 
   /** The partition's lineage and whether a branch into it is unfinished; kept like the other beliefs. */
   const branchHeld = Effect.gen(function* () {
-    if (branch !== undefined) return branch;
+    if (!context.reader && branch !== undefined) return branch;
     const seen = epoch;
-    const bytes = yield* raw.get(keys.meta(META_LINEAGE));
+    const bytes = yield* (context.reader ? engine : raw).get(keys.meta(META_LINEAGE));
     const lineage = bytes === undefined ? [] : yield* decodeOrDie("lineage.read", () => decodeLineage(bytes));
-    const unfinished = bytes !== undefined && (yield* readMetaLive(META_SEEDING)) > 0;
+    const unfinished = bytes !== undefined && (yield* (context.reader ? readMeta : readMetaLive)(META_SEEDING)) > 0;
     const stored = { lineage, unfinished };
-    if (branch === undefined && epoch === seen) branch = stored;
+    if (!context.reader && branch === undefined && epoch === seen) branch = stored;
     return branch ?? stored;
   });
 
@@ -537,11 +554,11 @@ const openPartition = (
     if (held.unfinished) {
       return yield* new TenantBranching({ tenant: partition, from: held.lineage[0]?.partition ?? "" });
     }
-    let state = lenses;
+    let state = context.reader ? undefined : lenses;
     if (state === undefined) {
       const seen = epoch;
-      const stored = yield* readMetaLive(META_LENSES);
-      if (lenses === undefined && epoch === seen) lenses = stored;
+      const stored = yield* (context.reader ? readMeta : readMetaLive)(META_LENSES);
+      if (!context.reader && lenses === undefined && epoch === seen) lenses = stored;
       state = lenses ?? stored;
     }
     if (state !== LENSES_READY) {
@@ -556,11 +573,11 @@ const openPartition = (
 
   /** Where the partition is moving, if a move has fenced it. */
   const fenceHeld = Effect.gen(function* () {
-    if (fence !== undefined) return fence;
+    if (!context.reader && fence !== undefined) return fence;
     const seen = epoch;
-    const bytes = yield* raw.get(keys.meta(META_FENCE));
+    const bytes = yield* (context.reader ? engine : raw).get(keys.meta(META_FENCE));
     const stored = bytes === undefined ? null : yield* decodeOrDie("fence.read", () => decodeFence(bytes));
-    if (fence === undefined && epoch === seen) fence = stored;
+    if (!context.reader && fence === undefined && epoch === seen) fence = stored;
     return fence === undefined ? stored : fence;
   });
 
@@ -568,11 +585,11 @@ const openPartition = (
 
   /** The map version that moved the partition off this shard, if a move has. */
   const relocationHeld = Effect.gen(function* () {
-    if (relocatedAt !== undefined) return relocatedAt;
+    if (!context.reader && relocatedAt !== undefined) return relocatedAt;
     const seen = epoch;
-    const bytes = yield* raw.get(relocationKey);
+    const bytes = yield* (context.reader ? engine : raw).get(relocationKey);
     const stored = bytes === undefined ? null : yield* decodeOrDie("relocation.read", () => counterOf(bytes));
-    if (relocatedAt === undefined && epoch === seen) relocatedAt = stored;
+    if (!context.reader && relocatedAt === undefined && epoch === seen) relocatedAt = stored;
     return relocatedAt === undefined ? stored : relocatedAt;
   });
 
@@ -1080,6 +1097,7 @@ const openPartition = (
     const livePrefix = keys.liveOfSegment(blob.key);
     const out: Array<Uint8Array> = [];
     decodeSegment(blob.value, keys.segmentIndexOf(blob.key) * SEGMENT_SPAN, (id) => {
+      context.budget?.postings(1);
       const key = new Uint8Array(livePrefix.length + SEQ_BYTES);
       key.set(livePrefix);
       key.set(seqBytes(id), livePrefix.length);
@@ -1405,7 +1423,7 @@ const openPartition = (
         if (broad.length === 0) return { kind: "exact", postings: candidates };
         const outbound = new Map<string, ReadonlySet<number>>();
         const kept = new Postings.PostingsBuilder();
-        for (const seq of Postings.iterate(candidates)) {
+        for (const seq of spentIds(Postings.iterate(candidates))) {
           const record = yield* readRecord(pendingView(new Map()), seq);
           if (record?.live !== true) continue;
           let all = true;
@@ -1600,7 +1618,7 @@ const openPartition = (
         if (shape.checked.length === 0) return candidates;
         const outbound = new Map<string, ReadonlySet<number>>();
         const kept = new Postings.PostingsBuilder();
-        for (const seq of Postings.iterate(candidates)) {
+        for (const seq of spentIds(Postings.iterate(candidates))) {
           tally.checks += 1;
           const record = yield* readRecord(pendingView(new Map()), seq);
           if (record?.live !== true) continue;
@@ -1621,7 +1639,7 @@ const openPartition = (
         (entry) => Effect.sync(() => found.add(seqOf(entry.key))),
       );
       const sealed = yield* sealedSegment(shape.prefix, Math.floor(lo / SEGMENT_SPAN), cache);
-      if (sealed !== undefined) for (const seq of Postings.between(sealed, lo, hi)) found.add(seq);
+      if (sealed !== undefined) for (const seq of spentIds(Postings.between(sealed, lo, hi))) found.add(seq);
       return found.build();
     });
 
@@ -1656,12 +1674,12 @@ const openPartition = (
       yield* lensesReady;
       const start = after === undefined ? 0 : after + 1;
       const bounded = yield* evaluateBounded(query, probeCap);
-      if (bounded.kind === "exact") return Stream.fromIterable(Postings.between(bounded.postings, start, Number.MAX_SAFE_INTEGER));
+      if (bounded.kind === "exact") return Stream.fromIterable(spentIds(Postings.between(bounded.postings, start, Number.MAX_SAFE_INTEGER)));
       const driver = within === undefined ? undefined : windowedOf(within);
       const shape: Windowed | undefined = windowedOf(query)
         ?? (driver === undefined ? undefined : { kind: "and", drivers: [driver], checked: [query] });
       if (shape === undefined) {
-        return Stream.fromIterableEffect(Effect.map(evaluate(query), (all) => Postings.between(all, start, Number.MAX_SAFE_INTEGER)));
+        return Stream.fromIterableEffect(Effect.map(evaluate(query), (all) => spentIds(Postings.between(all, start, Number.MAX_SAFE_INTEGER))));
       }
       const cache: SealedCache = new Map();
       const tally: Tally = { checks: 0 };
@@ -1672,7 +1690,7 @@ const openPartition = (
             // Thinly scattered matches: the checks so far found too few.
             whole ??= yield* evaluate(query);
             const step: Array<Seq> = [];
-            for (const seq of Postings.between(whole, from, Number.MAX_SAFE_INTEGER)) {
+            for (const seq of spentIds(Postings.between(whole, from, Number.MAX_SAFE_INTEGER))) {
               step.push(seq);
               if (step.length === FALLBACK_STEP) break;
             }
@@ -1683,7 +1701,7 @@ const openPartition = (
           const lo = next - (next % windowSize);
           const hi = lo + windowSize;
           const found = yield* windowOf(shape, lo, hi, cache, tally);
-          return [[...Postings.between(found, Math.max(lo, from), hi)], hi > MAX_SEQ ? Option.none<number>() : Option.some(hi)] as const;
+          return [[...spentIds(Postings.between(found, Math.max(lo, from), hi))], hi > MAX_SEQ ? Option.none<number>() : Option.some(hi)] as const;
         }));
     }));
 
@@ -3108,7 +3126,7 @@ const openPartition = (
 
     resolve: (query, options) => {
       if (options === undefined) {
-        return Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), Postings.iterate));
+        return Stream.fromIterableEffect(Effect.map(ready(resolveSet(query)), (found) => spentIds(Postings.iterate(found))));
       }
       const page = resolveAfter(query, options.after === undefined ? undefined : Number(options.after), options.within);
       return options.limit === undefined ? page : Stream.take(page, options.limit);
@@ -3259,7 +3277,7 @@ export const shardOverKv = (
   options?: OpenShardOptions,
 ): ShardStoreApi => {
   const context: ShardContext = {
-    shard, engine, claim,
+    shard, engine, claim, reader: false,
     origin: options?.origin ?? "local",
     probeCap: options?.probeCap ?? PROBE_CAP,
   };
@@ -3406,6 +3424,62 @@ export const openShardOverKv = (
     }
     return shardOverKv(shard, engine, claim, options);
   });
+
+/** A shard handle that does not claim a writer generation. */
+export interface ShardReaderApi {
+  readonly shard: ShardId;
+  readonly partition: (partition: PartitionKey) => ObjectStoreApi;
+}
+
+/** Refuse all engine writes, including conditional commits. */
+export const readOnlyEngine = (engine: KvEngine): KvEngine => ({
+  ...engine,
+  write: () => Effect.fail(new StoreError({ op: "reader.write", cause: "a shard reader does not write" })),
+  conditionalWrite: () => Effect.fail(new StoreError({ op: "reader.write", cause: "a shard reader does not write" })),
+});
+
+/**
+ * Open an already formatted shard without acquiring its writer claim.
+ *
+ * With a `budget` every read it makes, snapshots included, is debited from it before data is copied,
+ * and each posting set it expands, so a read cannot take more of the host than the budget allows;
+ * it is refused whole with `ReadBudgetExceeded`. An engine that cannot bound its reads is refused here
+ * rather than read unbounded. A budget belongs to one read: open one reader per read that carries one.
+ */
+export const openShardReaderOverKv = (
+  shard: ShardId, engine: KvEngine, options?: OpenShardOptions & { readonly budget?: ReadBudget },
+): Effect.Effect<ShardReaderApi, StoreError> => Effect.gen(function* () {
+  const budget = options?.budget;
+  const reading = budget === undefined ? engine : boundedEngine(engine, budget);
+  if (reading === undefined) return yield* new StoreError({ op: "reader.open", cause: "the engine cannot bound its reads" });
+  const format = yield* reading.get(shardMetaKey(SHARD_FORMAT));
+  if (format === undefined) return yield* new StoreError({ op: "reader.open", cause: "the shard has not been opened by its writer" });
+  if (format.length !== 8 || readU64At(format, 0) !== CURRENT_FORMAT) {
+    return yield* new StoreError({ op: "format.open", cause: "This store was written by another layout, which is not supported. Recreate the database." });
+  }
+  const context: ShardContext = {
+    shard, engine: readOnlyEngine(reading), claim: { generation: 0, session: new Uint8Array(0) },
+    origin: options?.origin ?? "local", probeCap: options?.probeCap ?? PROBE_CAP, reader: true,
+    ...(budget === undefined ? {} : { budget }),
+  };
+  return { shard, partition: (partition: PartitionKey) => readerPartition(openPartition(context, partition).api) };
+});
+
+/** Refuse mutating operations before they can inspect or alter even in-memory state. */
+const readerPartition = (api: ObjectStoreApi): ObjectStoreApi => {
+  const refused = (member: string) => Effect.fail(new StoreError({ op: `reader.${member}`, cause: "a shard reader does not write" }));
+  return {
+    ...api,
+    seed: () => refused("seed"), rebuildLenses: refused("rebuildLenses"),
+    resumeMaintenance: refused("resumeMaintenance"), reindexLenses: refused("reindexLenses"),
+    sealPostings: refused("sealPostings"), compact: () => refused("compact"),
+    holdLog: () => refused("holdLog"), releaseLog: () => refused("releaseLog"),
+    snapshot: refused("snapshot"), nextSeq: refused("nextSeq"), reserve: () => refused("reserve"),
+    guard: () => Effect.die(new StoreError({ op: "reader.guard", cause: "a shard reader does not write" })),
+    transact: () => refused("transact"), fence: () => refused("fence"), liftFence: () => refused("liftFence"),
+    events: { ...api.events, apply: () => refused("events.apply"), follow: () => refused("events.follow"), followAll: () => refused("events.followAll") },
+  };
+};
 
 /** Trusted shard activation; this is not root Fabric takeover authority. */
 export const claimGeneration = Effect.fn("store.claimGeneration")(function*(engine: KvEngine): Effect.fn.Return<WriterClaim, StoreError> {

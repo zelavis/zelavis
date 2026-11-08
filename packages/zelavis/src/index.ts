@@ -1,6 +1,7 @@
 import { neededHostPackages, provisionableRequirements } from "./project-host-packages.js";
 import { integrationValue, unwrapIntegrationResult, presentProtocol } from "./core/runtime/effect-boundary.js";
-import { systemStoreLeaseAudit, systemStoreLeaseStore } from "./platform/writer-lease-store.js";
+import { createProjectStandbyStore, deleteProjectStandby } from "./platform/project-standby.js";
+import { deleteProjectWriterLease, systemStoreLeaseAudit, systemStoreLeaseStore } from "./platform/writer-lease-store.js";
 import { createSystemStoreWorkloadsStore } from "./app/workloads/system-store.js";
 import { createRuntimeApiUsage } from "./core/runtime/api-usage.js";
 import { createPlatformLog, platformLogPlugin, readPlatformLogQuery, type PlatformLog } from "./core/runtime/platform-log.js";
@@ -82,7 +83,7 @@ import { createSystemStoreInspectionRoutes } from "./platform/system-store-inspe
 import { platformBackupRoutes } from "./platform/platform-backups.js";
 import type { DatabaseBackupsHost } from "./db/node-backups.js";
 import { createNodeRoutes } from "./platform/node-routes.js";
-import { createWriterLeaseRoutes } from "./platform/writer-lease-routes.js";
+import { createLeaseCapabilityAuthenticator, createWriterLeaseRoutes } from "./platform/writer-lease-routes.js";
 import { ZELAVIS_VERSION as PLATFORM_VERSION } from "./version.js";
 import { createCloudRoutes } from "./platform/cloud-routes.js";
 import type { CloudCapacityController } from "./platform/cloud-capacity.js";
@@ -96,7 +97,19 @@ import { createAssistantProjectReader } from "./platform/assistant-project-reade
 import type { ZelavisEdgePreviews } from "./edge/previews.js";
 import { forwardProjectSiteRequest } from "./platform/public-domain-forwarder.js";
 import { toResponse } from "./core/runtime/request-dispatcher.js";
-import { deleteAppShardPlacementReservations } from "./platform/app-data-placement.js";
+import {
+  createAppShardPlacementAuthority,
+  deleteAppShardPlacementLedger,
+  type AppShardPlacementAuthority,
+  type AppShardPlacementNode,
+} from "./platform/app-data-placement.js";
+import {
+  createAppShardAllocationStore,
+  deleteAppShardAllocation,
+  type AppShardAllocationStore,
+} from "./platform/app-shard-allocation.js";
+import { createAppShardOperatorRoutes, createAppShardProjectRoutes } from "./platform/app-shard-routes.js";
+import { createAppShardActivation, type AppShardActivation } from "./platform/app-shard-activation.js";
 import {
   createProjectPlacementAuthority,
   deleteProjectPlacementAuthority,
@@ -535,6 +548,18 @@ export interface ZelavisServerOptions {
    * dispatcher is the Agent execution path.
    */
   projectDispatcher?: ZelavisProjectDispatcher;
+  /** Remote App shard placement: the Nodes a Project's shards may be placed on (remote, dispatchable ones). Absent: none are. */
+  appShards?: {
+    readonly nodes: () => Promise<readonly AppShardPlacementNode[]>;
+  };
+  /** The App shard channel environment (`ZELAVIS_APP_SHARDS_*`) a Project started on a remote Node is given. Absent: remote shards are off. */
+  appShardEnvironment?: (projectId: string, nodeId: string, epoch: number) => Promise<Readonly<Record<string, string>>>;
+  /** Lease-guarding of the Projects this host starts: the standby node, and the environment each of a Project's processes gets. */
+  projectLeases?: {
+    readonly nodeId: string;
+    readonly standbyNodeId: string;
+    readonly environment: (projectId: string, nodeId: string, role: "writer" | "standby") => Promise<Readonly<Record<string, string>>>;
+  };
   api?: ZelavisApiOptions;
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   marketplace?: ZelavisMarketplaceControl;
@@ -4495,6 +4520,7 @@ function resolvePlatformEndpointGroup(
   database?: DatabaseRuntimeApi,
   cloudCapacity?: CloudCapacityController,
   projectInstallHost?: () => Promise<ZelavisProjectInstallHost>,
+  appShards?: { readonly authority: AppShardPlacementAuthority; readonly allocations: AppShardAllocationStore; readonly activation: AppShardActivation },
 ): Promise<ZelavisEndpointGroup<any>> {
   return present(Effect.gen(function* () {
   // The Assistant reaches a Project through the same forwarder as the Gateway,
@@ -4639,17 +4665,34 @@ function resolvePlatformEndpointGroup(
     };
   }
 
+  // A Project's lease capability: its lease routes and, as the Project's follower credential, its followers routes.
+  const leaseCapability = systemStore === undefined ? undefined : {
+    secret: () => loadPlatformMasterSecret(systemStore),
+    // Without a Project manager there is no Project whose lease could be held. `view`, not `get`: a Project's start
+    // holds its lifecycle until it is ready, and the start waits for the lease this check authorizes.
+    projectExists: (scope: string) => projects === undefined ? Promise.resolve(false) : present(Effect.map(integration(() => projects.view(scope)), (record) => record !== undefined)),
+    onProjectWriterChanged: (scope: string) => projects === undefined ? Promise.resolve() : projects.followWriterLease(scope),
+  };
+
   return createPlatformEndpointGroup({
     context: { projects },
     routes: [
         ...runtimeManagementRoutes,
         ...createSystemStoreInspectionRoutes(systemStore),
         ...createNodeRoutes({ store: systemStore, platformVersion: PLATFORM_VERSION }),
-        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore), systemStoreLeaseAudit(systemStore), {
+        ...createAppShardOperatorRoutes({
+          authority: appShards?.authority,
+          allocations: appShards?.allocations,
+          projectExists: (projectId) => projects === undefined ? Promise.resolve(false) : present(Effect.map(integration(() => projects.view(projectId)), (record) => record !== undefined)),
+        }),
+        ...(systemStore ? createAppShardProjectRoutes({
+          authority: appShards?.authority,
+          activation: appShards?.activation,
+          store: systemStore,
           secret: () => loadPlatformMasterSecret(systemStore),
-          // Without a Project manager there is no Project whose lease could be held.
-          projectExists: (scope: string) => projects === undefined ? Promise.resolve(false) : present(Effect.map(integration(() => projects.get(scope)), (record) => record !== undefined)),
+          projectExists: (projectId) => projects === undefined ? Promise.resolve(false) : present(Effect.map(integration(() => projects.view(projectId)), (record) => record !== undefined)),
         }) : []),
+        ...(systemStore ? createWriterLeaseRoutes(systemStoreLeaseStore(systemStore), systemStoreLeaseAudit(systemStore), leaseCapability) : []),
         ...createCloudRoutes({ controller: cloudCapacity }),
         {
           id: "runtime.agent.read",
@@ -6479,6 +6522,7 @@ function resolvePlatformEndpointGroup(
 })),
         },
     ],
+    ...(leaseCapability === undefined ? {} : { authenticators: [createLeaseCapabilityAuthenticator(leaseCapability)] }),
   });
 
   }));
@@ -7097,6 +7141,17 @@ export function zelavis(
                 backends: options.deploymentBackends,
               }) ?? options.projectRuntime)
             : options.projectRuntime;
+        const appShardAllocations = createAppShardAllocationStore(systemStore);
+        const appShardAuthority = createAppShardPlacementAuthority({
+          store: systemStore,
+          allocation: (projectId) => appShardAllocations.get(projectId),
+          nodes: options.appShards?.nodes ?? (() => Promise.resolve([])),
+        });
+        const appShardActivation = createAppShardActivation({
+          authority: appShardAuthority,
+          dispatcher: () => options.projectDispatcher,
+          leaseGuarded: options.projectLeases !== undefined,
+        });
         const projectPlacementAuthority =
           options.subsystems?.fabric === false
             ? undefined
@@ -7193,7 +7248,28 @@ export function zelavis(
                             options.projectDispatcher.dispatchStopFenced,
                         }
                       : {}),
+                    ...(options.projectDispatcher?.dispatchStandbyFenced
+                      ? { dispatchStandbyFenced: options.projectDispatcher.dispatchStandbyFenced }
+                      : {}),
+                    ...(options.projectDispatcher?.dispatchStandbyStopFenced
+                      ? { dispatchStandbyStopFenced: options.projectDispatcher.dispatchStandbyStopFenced }
+                      : {}),
+                    ...(options.projectDispatcher?.dispatchRoute
+                      ? { dispatchRoute: options.projectDispatcher.dispatchRoute }
+                      : {}),
                   }),
+                  ...(options.projectLeases
+                    ? {
+                        leaseGuard: {
+                          nodeId: options.projectLeases.nodeId,
+                          standbyNodeId: options.projectLeases.standbyNodeId,
+                          environment: options.projectLeases.environment,
+                          standbys: createProjectStandbyStore(systemStore),
+                          leases: systemStoreLeaseStore(systemStore),
+                        },
+                      }
+                    : {}),
+                  ...(options.appShardEnvironment ? { appShardEnvironment: options.appShardEnvironment } : {}),
                   autoReconcile: false,
                   ...(deploymentBackends
                     ? {
@@ -7272,10 +7348,27 @@ export function zelavis(
                     {
                       id: "app-data-placement",
                       cleanup: (project: Readonly<ZelavisProjectRecord>) =>
-                        deleteAppShardPlacementReservations(
-                          systemStore,
-                          project.id,
+                        present(
+                          Effect.gen(function* () {
+                            yield* integration(() => appShardActivation.revokeAll(project.id));
+                            yield* integration(() => deleteAppShardPlacementLedger(systemStore, project.id));
+                          }),
                         ),
+                    },
+                    {
+                      id: "app-data-allocation",
+                      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                        deleteAppShardAllocation(systemStore, project.id),
+                    },
+                    {
+                      id: "project-writer-lease",
+                      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                        deleteProjectWriterLease(systemStore, project.id),
+                    },
+                    {
+                      id: "project-standby",
+                      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                        deleteProjectStandby(systemStore, project.id),
                     },
                     ...(systemStore
                       ? [
@@ -7554,6 +7647,7 @@ export function zelavis(
             resolvedDatabaseApi,
             options.cloudCapacity,
             options.projectInstallHost,
+            { authority: appShardAuthority, allocations: appShardAllocations, activation: appShardActivation },
           ),
         );
         const productServices = [

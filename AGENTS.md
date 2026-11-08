@@ -93,20 +93,16 @@ architecture and workflow rules in this file and `.agents/`, and reviewer
 ownership in `.github/CODEOWNERS`. Do not duplicate those responsibilities in a
 root `MAINTAINERS.md`.
 
-`.claude/` is Claude-specific tool configuration, not a second instruction
-system, and it stays: Claude Code does not read anything under `.agents/`, so the
-tracked session-start hook in `.claude/settings.json` is what makes the
-`.agents/skills/*` skills visible to it. It may contain Claude settings, local
-permissions, worktree state, or symlinks that point Claude at `.agents/skills/*`
-and `.agents/references`.
-Do not duplicate instructions or skill content into `.claude/`. If a Claude
-integration needs access to repo-maintained guidance, point it at `AGENTS.md`
-or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
-`.agents/`. The tracked Claude session-start hook should keep those symlinks
-current automatically.
-The hook locates the ancestor containing `.agents/skills/` before creating links,
-including when invoked inside the nested private `pnotes/` Git repository.
-`pnotes/` needs no separate `.claude/` configuration or skill copies.
+`AGENTS.md` and `.agents/` are the only source of agent guidance: Claude Code reads
+`AGENTS.md` and the skills in `.agents/skills/` directly.
+
+**`.claude/` is forbidden territory for agents.** It holds only what Claude Code itself
+writes for one person: `settings.local.json` and `worktrees/`. Never create, copy, link or
+restore anything else there, in this repository or in `pnotes/`: no skills, references,
+`settings.json`, hooks, commands, agents, `CLAUDE.md` or symlinks, and never "fix" a
+missing skill by adding one. A new skill or reference goes in `.agents/skills/` or
+`.agents/references/`, nowhere else. `pnpm test:repo-rules` (in `pnpm verify`) fails when
+`.claude/` holds anything else (`scripts/test/claude-folder.test.mjs`).
 
 ## Service Loading Rules
 
@@ -717,8 +713,7 @@ private integration startup failures in that Project's ordinary logs and diagnos
 Private restoration runs after public recovery, with its own bounded concurrency
 and per-Project deadlines; it must not extend or fail a completed Agent conversion.
 The updater's reporting window must exceed the engine's public recovery window.
-Read `.agents/references/agent-handover-plan.md` for verified design corrections and
-qualification evidence; primitive proofs alone do not qualify a release.
+Primitive proofs alone do not qualify a release: the installed update and conversion gates do.
 
 Platform and Zelavis App engine updates use one shared handover design:
 `core/runtime/admission.ts` and `handover.ts`, with concrete Node execution under
@@ -882,11 +877,24 @@ SQLite autoincrement sequence as a logical global order. Only the current
 writer generation may accept a write, including when stale and current
 placements are colocated on one Node.
 
-The remote shard-placement request/grant contract is specified in
-`.agents/references/two-fabrics-placement-contract.md`. Internal request
-admission persists reservations, not writer grants or routable targets. Do not
-start remote shard movement until durable `{owner, epoch}` authority,
-destination fencing, publication ordering, and failure-path proof are implemented.
+Remote App shard placement is implemented and proven on one machine (a real Platform, a real remote Agent behind a
+cuttable TCP proxy and a real `@zelavis/app` Project: `test/app-shard-remote.test.mjs`); the contract is in
+`.agents/references/two-fabrics-placement-contract.md`. A shard's bytes never move between Nodes in place: the Agent
+hosts a granted shard as a SQLite key-value engine, the Project's writer process runs the unchanged store over a remote
+`KvEngine`, and Tenants move into the new shard with `db.movement`. The Platform's ledger (reserved, preparing,
+committed, releasing, released; epochs only rise) and an operator allocation decide where a shard may go; the Agent
+fences by epoch and the store by writer generation. `client.shards`, `zelavis shards`, `client.shardPlacement` and
+`zelavis shard-placement` carry it, and the Project's Database → Shards page is a client of the same routes. A remote
+shard whose Agent is not answering at open does not stop the Project (its Tenants are refused, whole-database questions
+refuse, a background loop reopens it). `pnpm release:qualify:shards` runs the Agent in a separate container. Limits:
+eligible Tenant reads in `src/db/tenant-reads.ts` run on the shard's Node, each under a work budget (stored bytes, entries
+and posting identifiers, checked before data is copied) whose exhaustion refuses the whole read as `ReadBudgetExceeded`
+(HTTP 422 `read-budget-exceeded`), never a partial answer and never a retry on the writer; similarity/hybrid queries, writes,
+KV and time series stay in the writer. A shard may have one replica, a durability copy on another Node kept level
+from the writer's log (`src/db/shard-replicas.ts`). Tenant operations use the primary. A replica cannot be promoted or
+used for recovery, and primary writes do not wait for it. The Shards page and shard list report its status and lag.
+Lease-guarded Projects refuse remote primaries and replicas. The Platform stays the single point of failure for
+shard grants (a remote shard refuses I/O once its 120-second access token expires).
 
 Project runtime placement is a Platform System Store `{owner, epoch}` CAS
 record with a local Agent lease supervisor. The Project manager requires a
@@ -900,7 +908,13 @@ one, and installs the frozen recipe and descriptor from a digest-verified,
 install-once snapshot before starting the Project. A test runs a real locked
 App Project through it. Not yet proven: multi-host network-partition drills and
 Bun as the Agent runtime. This is Project placement, not a remote App shard
-grant: remote shard movement is still not operational.
+grant; remote shard placement is the separate capability above.
+A lease-guarded Project (`ZELAVIS_PROJECT_LEASES_*`) also runs a placement-free standby process on its standby node
+(`<id>#standby` on the Agent) and fails over to it: the Platform learns of a promotion from the writer lease, moves the
+placement `{owner, epoch}` to that node and starts the Project there under it. Proven with a real Platform and a real
+remote Agent on one machine, through two failovers; the Platform's Gateway reaches a remotely placed Project through its
+Agent (a Platform-signed route request, fenced by the committed placement), and multi-host partition drills are still not
+run.
 
 Zelavis is pre-release with no users, so nothing carries compatibility for old
 data or old shapes: no aliases, no legacy fields, no migrations from retired
@@ -1483,8 +1497,7 @@ Key rules:
   catch one half done, and it would cost a primitive that holds several writers.
   `db.tenants` and `tenants/overview` report Tenants, a divided one as a single
   entry carrying its `parts` (`db.partitions` lists the keys). Merging back
-  (`db.mergeBranch`) follows
-  [.agents/references/branch-merge-decision.md](.agents/references/branch-merge-decision.md):
+  (`db.mergeBranch`, documented in `website/src/content/docs/api/database.md`) works
   per document from the branch point, no default winner, nothing written while
   a conflict is unsettled, writes through the source's documents API checked
   against the versions read, repeatable by state. A branch as of a past
@@ -2158,6 +2171,7 @@ the owner 2026-10-15 and cut over the same day. **All new dashboard UI is built 
 page, control or flow is never another React route. Fuzor owns its routing and compiled server views.
 Effect v4 remains mandatory for new asynchronous compiler/client/server/dashboard orchestration.
 
+- **The dashboard shell is document HTML.** `index.html` owns its header, sidebar, workspace and footer. Startup adopts those nodes; it never replaces the frame with a connection/loading/error screen. Only navigation and workspace content wait for runtime data. Keep desktop/mobile frame geometry and first-paint appearance stable, including native browser refresh; hold scripts and startup requests in browser qualification to prove it.
 - **The dashboard is entirely native.** Every route is a Fuzor page: a screen in `app/screens.ts` or a module it
   calls (`app/dashboard-routes.ts` lists them, and the route parity test visits each at desktop and mobile
   sizes). Pages are built from the small DOM builders in `app/dom.ts` and `app/page-kit.ts`; a page with live
@@ -2220,6 +2234,7 @@ Effect when it is drawn (never ad hoc in an event handler's callbacks), and an a
 `context.run`, which reports failures and refreshes the page. A page with live state is a `fuzor-island`.
 
 **URL state & reconstructability**:
+- Locally rendered URL-backed views use Fuzor’s declarative view ownership (`data-fuzor-view-query`, `data-fuzor-view-value`, `data-fuzor-view-values`). The dashboard recognizes them through `router.isViewNavigation`; never add per-page query exceptions or loading/rebuild cycles for those view changes. Data-bearing query changes still run their loader.
 - Everything that can survive a reload must be in the URL (`context.setSearch`). Filters, tabs, the selected
   record, the open panel and the form values a link may carry belong in the query string.
 - Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`).
@@ -2330,6 +2345,11 @@ When acting as an agent in this repo:
 - Do not add compatibility aliases, legacy shims, or stale fallback behavior unless the user explicitly wants them.
 - For UI tasks, remember that the runtime and UI may run separately in dev and together in production.
 - If something looks generated, verify before editing.
+- When asked to write an implementation plan for another model to execute, apply
+  [the Zelavis plan-writer supplement](.agents/references/plan-writer.md) on top of the
+  general [`plan-writer` skill](.agents/skills/plan-writer/SKILL.md) (`/plan-writer` in Claude
+  Code; the owner's `~/.claude/skills/plan-writer` is a link to it): plan only, verify every referenced symbol, and carry enough
+  quoted context that the implementer needs no knowledge of Zelavis beyond the plan.
 
 ## Runtime Independence Rule
 
