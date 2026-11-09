@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -261,6 +261,17 @@ for (const capability of ['database', 'identity', 'storage', 'workloads']) {
 }
 assert.equal(beforeIntegration.capabilities.fabric.available, false);
 assert.equal((await client.projects.list()).projects.some(project => project.id.includes('integration')), false, 'The bound runtime has no separate Project card');
+// An older Debian ARM install may have the database server without the dump
+// client the candidate recipe needs. Prepare the candidate's fixed package set.
+if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() => true, () => false))) {
+  let record = await client.hostOperations.submit({ operation: 'zelavis.packages-install', version: 'v1', arguments: { set: 'mariadb-server' } });
+  for (let attempt = 0; attempt < 300 && ['queued', 'running'].includes(record.agent?.status); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    record = await client.hostOperations.get(record.operationId);
+  }
+  assert.equal(record.agent?.status, 'succeeded', 'Install the candidate recipe’s MariaDB package set');
+  await access('/usr/bin/mariadb-dump');
+}
 const integrationBefore = await identities();
 const contractBefore = await wpContract();
 
