@@ -217,6 +217,29 @@ The kept data is never removed automatically. List it with `client.projects.reta
 and never touches the live data. Each Project card on the Projects page lists its retained data with its size and removes one only after
 its exact name is typed.
 
+### Checklist: a server crossing the layout change (alpha.42 to alpha.43)
+
+2.0.0-alpha.43 is the first release whose engine writes layout 4; every earlier release wrote layout 2. On a server running
+alpha.42:
+
+1. **Update now** (or `zelavis update apply --wait`) offers and installs alpha.43. Running Projects keep serving.
+2. Native Apps created on alpha.42 stay on their alpha.42 engine and keep their layout 2 data. Nothing moves them on its own.
+3. To move a native App to alpha.43, stop, migrate and start it in one request:
+   `client.projects.upgrade(id, { engineVersion: "2.0.0-alpha.43", restart: true })`,
+   `zelavis projects upgrade <id> --engine-version 2.0.0-alpha.43 --restart`, or on its card **Manage version**, choose
+   2.0.0-alpha.43, then **Stop, migrate and switch** (the card's **Upgrade recipe** does the same with the newest engine).
+   The App is unavailable while this runs. The plain switch of a running App across the layout change
+   (`client.projects.switchVersion`, `POST /runtime/projects/:id/version`, `zelavis projects switch-version`) is refused with
+   409 on purpose.
+4. A managed WordPress Project's bound App migrates when its recipe is upgraded: **Update recipe** on its card, or
+   `client.projects.upgrade(id)`. WordPress itself keeps serving, and its own MariaDB data is not touched.
+5. After each migration, check the `dataMigration` report, then remove the retained `data.format-2-*` directory when you no
+   longer need it (see above).
+
+A Debian ARM server whose earlier package set lacks `mariadb-dump` needs `apt-get install mariadb-client` before the
+update: converting an earlier Agent restarts the WordPress processes, and the alpha.43 recipe will not start them without
+it. Recipes on x86_64 bring their own MariaDB.
+
 ## Project and visitor continuity
 
 System installations run the Project Agent in its own systemd unit. A Platform

@@ -96,7 +96,10 @@ long steps in the background, and keep the machine awake (lid open) while they r
     Commit and push private notes separately.
 11. **After publishing:** installed servers offer the version in **Update now**. Optionally
     qualify the published path with real npm acquisition (`ZELAVIS_QUALIFY_UPDATE=npm`,
-    below). Tell the owner what to do on their server, if anything.
+    below). Tell the owner what to do on their server, if anything. A release that changes the
+    data layout gets an owner checklist in `website/.../architecture/updates.md` ("Data layout
+    changes"); alpha.43's (layout 2 to 4) is there. The owner's VPS counts as unqualified for a
+    release until the owner has run that checklist on it; never update or test it yourself.
 
 ## Release rules
 

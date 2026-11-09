@@ -271,10 +271,25 @@ function versionPanel(context: ScreenContext, project: Record<string, unknown>, 
   const pick = select("version", "Zelavis version", [...(current ? [] : [["", "Choose a version"] as const]), ...array(versions.versions).map(object).map(entry => [label(entry.version, ""), `${label(entry.version)}${entry.status !== "available" ? " (unavailable)" : ""}`, entry.status !== "available"] as const)], choice || current);
   if (blocked) pick.setAttribute("disabled", "");
   pick.addEventListener("change", () => context.setSearch({ engineVersion: pick.value || undefined }));
-  const apply = button("Switch version", () => act(request(`${path}/version`, "POST", { version: pick.value }), result => `${label(project.name)} now uses Zelavis ${label(object(result.project).engineVersion, pick.value)}.`), { class: "primary", ...(blocked || !choice || choice === current ? { disabled: "" } : {}) });
+  // A version that writes another data layout is never switched in place (the plain switch answers 409): the App is stopped, its
+  // data migrated by the upgrade and the App started again on the chosen engine.
+  const chosen = array(versions.versions).map(object).find(entry => entry.version === choice);
+  const crossesLayout = typeof versions.currentDataFormat === "number" && typeof chosen?.dataFormat === "number" && chosen.dataFormat !== versions.currentDataFormat;
+  const name = label(project.name);
+  const apply = crossesLayout
+    ? button("Stop, migrate and switch", () => {
+      if (!window.confirm(`Stop ${name}, move its data from layout ${label(versions.currentDataFormat)} to ${label(chosen?.dataFormat)} and start it on Zelavis ${choice}? It is unavailable while this runs; the previous data is kept until you remove it.`)) return;
+      act(request(`${path}/upgrade`, "POST", { engineVersion: choice, restart: true }), result => {
+        const upgraded = object(result.project ?? result);
+        return `${name} now uses Zelavis ${label(upgraded.engineVersion, choice)}. ${migrationSummary(upgraded.dataMigration)}`;
+      });
+    }, { class: "primary", ...(blocked ? { disabled: "" } : {}) })
+    : button("Switch version", () => act(request(`${path}/version`, "POST", { version: pick.value }), result => `${name} now uses Zelavis ${label(object(result.project).engineVersion, pick.value)}.`), { class: "primary", ...(blocked || !choice || choice === current ? { disabled: "" } : {}) });
   return node("div", { class: "notice", "aria-label": "App version" },
     node("p", {}, `Current Zelavis version: ${current || label(project.engineVersion, "Unavailable")}`),
-    node("p", { class: "muted" }, "Select an installed version and its matching App recipe. Project data is preserved."),
+    node("p", { class: "muted" }, crossesLayout
+      ? `Zelavis ${choice} writes data layout ${label(chosen?.dataFormat)}, and this App's data is in layout ${label(versions.currentDataFormat)}. Switching stops the App, migrates its data (document versions and change history restart) and starts it again.`
+      : "Select an installed version and its matching App recipe. Project data is preserved."),
     ...(typeof versions.reason === "string" ? [node("p", {}, versions.reason)] : []), pick,
     node("div", { class: "actions" }, apply, button("Cancel", () => context.setSearch({ versionProject: undefined, engineVersion: undefined }))));
 }

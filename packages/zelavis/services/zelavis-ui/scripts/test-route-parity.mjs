@@ -621,6 +621,30 @@ const qualify = Effect.scoped(Effect.gen(function*() {
   }
   yield* io(() => page.unroute("**/api/v1/runtime/projects", managedProjects));
   yield* io(() => page.setViewportSize({ width: 1440, height: 1000 }));
+
+  // A source Platform has one engine, so the version choices are a fixture: an installed engine that writes another data
+  // layout is reached by the restarting upgrade (the plain switch answers 409 across layouts), never by the plain switch.
+  const versionChoices = async route => route.fulfill({ json: { current: "2.0.0-alpha.42", currentDataFormat: 2, latestDataFormat: 4, latest: "2.0.0-alpha.43", selectable: true,
+    versions: [{ version: "2.0.0-alpha.43", status: "available", dataFormat: 4 }, { version: "2.0.0-alpha.42", status: "available", dataFormat: 2 }, { version: "2.0.0-alpha.41", status: "available", dataFormat: 2 }] } });
+  const upgrades = [];
+  const upgradeRequests = async route => {
+    upgrades.push(route.request().postDataJSON());
+    await route.fulfill({ json: { project: { id: "parity-lab", name: "Parity Lab", engineVersion: "2.0.0-alpha.43", runtime: { status: "running" },
+      dataMigration: { from: 2, to: 4, documents: 3, documentsWithHistoryDropped: 0, retained: "data.format-2-parity" } } } });
+  };
+  yield* io(() => page.route("**/api/v1/runtime/projects/parity-lab/versions", versionChoices));
+  yield* io(() => page.route("**/api/v1/runtime/projects/parity-lab/upgrade", upgradeRequests));
+  yield* visit("/projects?versionProject=parity-lab&engineVersion=2.0.0-alpha.41");
+  yield* io(() => page.getByRole("button", { name: "Switch version", exact: true }).waitFor());
+  yield* visit("/projects?versionProject=parity-lab&engineVersion=2.0.0-alpha.43");
+  yield* io(() => page.getByText("Switching stops the App, migrates its data", { exact: false }).waitFor());
+  yield* io(() => page.evaluate(() => { window.confirm = () => true; }));
+  yield* io(() => page.getByRole("button", { name: "Stop, migrate and switch", exact: true }).click());
+  yield* io(() => page.getByText("now uses Zelavis 2.0.0-alpha.43", { exact: false }).first().waitFor());
+  assert.deepEqual(upgrades, [{ engineVersion: "2.0.0-alpha.43", restart: true }], "Crossing a data layout sends the restarting upgrade with the chosen engine");
+  yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/upgrade", upgradeRequests));
+  yield* io(() => page.unroute("**/api/v1/runtime/projects/parity-lab/versions", versionChoices));
+  console.log("Action: Manage version sends a switch across a data layout as the restarting upgrade, and a same-layout switch as the plain one.");
   console.log("Managed recipe UI fixture: all eight hosting sections render on desktop and mobile; planned controls remain labelled planned.");
 
   yield* visit("/projects/parity-lab/storage");
