@@ -61,6 +61,11 @@ and a real `@zelavis/app` Project; `test/db-shard-placement.test.mjs` crashes ev
 - *Platform outage tolerance is the replicated System Store's job* (decision A2). Nothing here extends the 120-second token.
 
 - *Writes on the shard's Node, replica promotion or recovery, reads from replicas and per-write replica acknowledgment are separate designs* (D1, D4, D5, D6).
+- *No drill on physically separate machines* (decided 2026-11-09). Every proof runs on one machine: in-process behind a
+  cuttable TCP proxy, and `pnpm release:qualify:shards` with the Agent in another Docker container on the same host. A drill
+  with the Agent on a second physical host has never been run, so real network latency, clock skew between hosts and the
+  loss of a physical link are unqualified. It is not a release gate: the qualification workflow has no second host, and the
+  owner's servers are not used for tests. Say "proven on one machine", never "across machines".
 
 **Built since the first proof:** partial availability (a remote shard whose Agent is not answering at open does not stop the
 Project: its Tenants are refused with the reason, everything that spans every shard refuses rather than answer for part of

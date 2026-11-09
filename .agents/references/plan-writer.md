@@ -1,7 +1,7 @@
 <!-- plan-writer supplement
 verified-at: 53c038e024
 verified-on: 2026-11-05
-lessons-through: 2026-11-08
+lessons-through: 2026-11-09
 sources:
   - AGENTS.md
   - .agents/skills/plan-writer/SKILL.md
@@ -220,6 +220,18 @@ Run everything from the repository root, never from a package (`AGENTS.md § Ver
   round-trip them (`src/db/errors.ts` → `StoreError`; lesson: 02-shard-reader-and-tenant-reads).
 - Running a build while the full verification tests use `dist/` → the build cleans that directory and causes unrelated
   module-not-found failures; run builds and full verification sequentially (lesson: 02-shard-reader-and-tenant-reads).
+
+- A new database route → also update the route inventory in `test/db-database-service.test.mjs` ("the database service
+  mounts the same routes on the db runtime API") and the CLI usage string, besides the parity test (lesson:
+  remote-shard-reads-and-replicas, part 5).
+- Asserting a tagged refusal by its message → assert its fields (`ShardOperationInvalid.reason`, `_tag`) (lesson:
+  remote-shard-reads-and-replicas, part 5).
+- A Node identity from the database → `openNodeDatabase`'s origin is `local`; the Project's Node comes from its
+  authenticated channel (the Project capability's `node`) (lesson: remote-shard-reads-and-replicas, part 5).
+- A follower pass that reports `more` (`FollowerPass.more`) → run another pass before pausing, or a quiet copy stays
+  behind after a burst (lesson: remote-shard-reads-and-replicas, part 4).
+- Deleting a finished part file of a split plan before its overview is `done` → never: later parts lose the execution
+  reports they hand over from (lesson: remote-shard-reads-and-replicas, part 4).
 
 ## 10. Forbidden patterns
 
