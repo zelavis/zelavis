@@ -2,7 +2,9 @@
 // Qualifies a remote App shard across machines: a Platform with a real @zelavis/app Project in one container, the Agent that
 // hosts its shard in another, on a private Docker network. The drill places a shard, cuts the Agent's network while the
 // Project keeps running (the remote shard must refuse writes and lose no acknowledged one), brings it back, and releases the
-// shard (every acknowledged write must read, and the Agent's storage must be gone). The drill then adds a replica
+// shard (every acknowledged write must read, and the Agent's storage must be gone). Before the release it also makes the Agent
+// silent without closing anything (a paused container, or a stopped tunnel): a write must be refused within the engine's own
+// timeouts rather than hang, and nothing acknowledged may be lost when it answers again. The drill then adds a replica
 // of a local shard, verifies the local shard still takes writes during the replica's outage, and removes the replica.
 //
 // ZELAVIS_QUALIFY_KEEP=1 keeps a failed run's data directories and container logs. Run on the owner's machine or any host
@@ -71,6 +73,9 @@ const containerAgent = (start, net) => {
     reads: () => docker("kill", "-s", "USR1", container),
     cut: () => docker("network", "disconnect", net, container),
     heal: () => docker("network", "connect", "--alias", "agent", net, container),
+    // Frozen: its connections stay open and its kernel still accepts new ones, but nothing answers.
+    stall: () => docker("pause", container),
+    resume: () => docker("unpause", container),
     close: () => undefined,
   };
 };
@@ -89,6 +94,9 @@ const remoteAgent = (work, dirs) => {
     return {
       open: () => { child = spawn("ssh", [...sshOptions, "-N", "-o", "ExitOnForwardFailure=yes", "-L", `127.0.0.1:${REMOTE_PORT}:127.0.0.1:${REMOTE_PORT}`, REMOTE], { stdio: "ignore" }); },
       cut: () => { child?.kill("SIGKILL"); child = undefined; },
+      // Stopped, not killed: its sockets stay open and nothing is forwarded either way.
+      stall: () => { child?.kill("SIGSTOP"); },
+      resume: () => { child?.kill("SIGCONT"); },
     };
   })();
   sshOrThrow(`set -e; mkdir -m 755 ${directory} ${directory}/certs ${directory}/shared; mkdir -m 700 ${directory}/data; chown nobody:nogroup ${directory}/data`);
@@ -130,6 +138,8 @@ const remoteAgent = (work, dirs) => {
     reads: () => sshOrThrow(`systemctl kill -s USR1 ${unit}`),
     cut: () => tunnel.cut(),
     heal: () => tunnel.open(),
+    stall: () => tunnel.stall(),
+    resume: () => tunnel.resume(),
     close,
   };
 };
@@ -181,9 +191,28 @@ try {
   agent.heal();
   console.log("  the Agent's network is back");
   dockerQuiet("kill", "-s", "USR2", platform);
-  await until("the heal check and the release", () => events(platform).some((event) => event.event === "released"));
+  await until("the heal check", () => events(platform).some((event) => event.event === "healed"));
   const healed = events(platform).find((event) => event.event === "healed");
   check(healed.missing.length === 0, `every acknowledged write (${healed.acked}) reads after the network returned`);
+
+  // The other way a link fails: packets stop and nothing is closed, so only the engine's own timeouts can tell.
+  agent.stall();
+  console.log("  the Agent is silent (connections open, nothing answers)");
+  writeFileSync(join(dirs.shared, "stall"), "");
+  await until("the stall check", () => events(platform).some((event) => event.event === "stall-checked"));
+  const stalled = events(platform).find((event) => event.event === "stall-checked");
+  console.log(`  refused with: ${stalled.error}`);
+  for (const line of stalled.log ?? []) console.log(`    ${line}`);
+  // The engine's own 15 s deadline must refuse it, well before the Gateway gives up on the whole request at 30 s.
+  check(stalled.refused === true && stalled.millis < 25_000 && !/did not respond/.test(stalled.error ?? ""),
+    `a write to the silent Agent's shard is refused by the shard engine in ${stalled.millis} ms, not left hanging`);
+  check(stalled.localWriteOk === true, "a Tenant on a local shard still takes writes while the Agent is silent");
+  agent.resume();
+  console.log("  the Agent answers again");
+  writeFileSync(join(dirs.shared, "stall-over"), "");
+  await until("the stall to heal and the release", () => events(platform).some((event) => event.event === "released"));
+  const stallHealed = events(platform).find((event) => event.event === "stall-healed");
+  check(stallHealed.missing.length === 0, `every acknowledged write (${stallHealed.acked}) reads after the Agent answers again`);
   const released = events(platform).find((event) => event.event === "released");
   check(released.phase === "done" && released.missing.length === 0, "the shard is released and every acknowledged write still reads");
   check(agent.sqliteFiles() === 0, "the Agent's storage is gone after the release");

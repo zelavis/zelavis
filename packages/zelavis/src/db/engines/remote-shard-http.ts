@@ -12,7 +12,12 @@ export interface ShardHttpAnswer {
   readonly body: Record<string, unknown>;
 }
 
-/** Bounded pinned-CA HTTPS transport shared by the shard protocols. */
+/**
+ * Bounded pinned-CA HTTPS transport shared by the shard protocols. `timeout` bounds each call from the moment it is made:
+ * waiting for one of the pooled sockets, connecting, and the whole answer. Node's own request timeout is a socket idle
+ * timer that starts only once the request has a socket, so with every pooled socket held by calls to an Agent that has
+ * gone silent a new call would wait in the queue with no bound at all.
+ */
 export const makeShardHttp = (destination: RemoteShardDestination, path: string, timeout: number) => {
   const url = new URL(path, destination.url);
   const sockets = new HttpsAgent({ keepAlive: true, maxSockets: MAX_SOCKETS, ca: destination.caPem });
@@ -48,6 +53,10 @@ export const makeShardHttp = (destination: RemoteShardDestination, path: string,
       request.once("error", failWith);
       request.end(bodyText);
       return Effect.sync(() => { request.destroy(); });
-    });
+    }).pipe(Effect.timeoutOrElse({
+      duration: timeout,
+      // Interrupting the call destroys its request, which gives its place in the pool back.
+      orElse: () => Effect.fail(new StoreError({ op: `remote-kv.${op}`, cause: `Agent request timed out after ${timeout} ms.` })),
+    }));
   return { post, close: Effect.sync(() => { sockets.destroy(); }) };
 };

@@ -64,9 +64,12 @@ and a real `@zelavis/app` Project; `test/db-shard-placement.test.mjs` crashes ev
 - *Across machines, one drill, not a gate* (2026-11-09). `qualify-shards.mjs` with `ZELAVIS_QUALIFY_SHARDS_AGENT_SSH` runs the
   Agent on a separate physical machine. It passed every check once (2026-11-09), with the Agent on a Hetzner VPS reached over
   the internet through an SSH tunnel: placement, reads served there, writes and reads refused while cut off, no acknowledged
-  write lost, release, and a replica catching up after its outage. The cut is that tunnel being killed, not a physical link
-  failing, and one run with one Agent is not a multi-host partition drill. It is not a release gate: the qualification
-  workflow has no second host of its own.
+  write lost, release, and a replica catching up after its outage. Both modes of the drill cut the Agent two ways: closed
+  (the tunnel killed, or the container disconnected) and silent (the tunnel stopped, or the container paused: connections
+  stay open and nothing answers, as when packets are dropped). Silent, a write is refused by the shard engine's own 15 s
+  deadline (about 17 s, before the Gateway's 30 s), which bounds a call from the moment it is made, queued behind a full
+  socket pool included. One run with one Agent is not a multi-host partition drill, and no physical interface was failed.
+  It is not a release gate: the qualification workflow has no second host of its own.
 
 **Built since the first proof:** partial availability (a remote shard whose Agent is not answering at open does not stop the
 Project: its Tenants are refused with the reason, everything that spans every shard refuses rather than answer for part of

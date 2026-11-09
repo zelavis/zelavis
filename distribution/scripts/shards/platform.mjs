@@ -1,9 +1,10 @@
 // The Platform of the shard drill: a real Platform and a real @zelavis/app Project in this container, with its shard on the
 // Agent in another one. It reports each step as a JSON line. The first USR1 signals the primary's network cut,
 // the second starts the replica phase after the release check, HUP signals the replica's cut, USR2 signals either heal,
-// and TERM stops the drill.
+// and TERM stops the drill. Between the heal and the release, /shared/stall says the Agent has been made silent (its
+// connections stay open and nothing answers: no reset, only time) and /shared/stall-over that it answers again.
 import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { Zelavis } from "/repo/packages/zelavis/dist/index.js";
 import { nodeAdapter } from "/repo/packages/zelavis/dist/adapters/node.js";
 import { createLocalSqliteSystemStore } from "/repo/packages/zelavis/dist/adapters/_sqlite-system-store.js";
@@ -93,6 +94,23 @@ await until(async () => { try { await insert(`healed${acked.length}`); return tr
 const missing = [];
 for (const id of acked) if ((await data.documents.get("notes", id).catch(() => undefined))?.id !== id) missing.push(id);
 emit("healed", { acked: acked.length, missing });
+
+// A silent Agent: a write must be refused within the remote engine's own bounds rather than hang, and a local Tenant keeps
+// taking writes meanwhile. Nothing acknowledged before or after may be lost.
+await until(() => existsSync("/shared/stall"), Boolean, "the stall", 120_000);
+const stallStarted = Date.now();
+let stallRefused = false, stallError;
+try { await insert("during-stall"); } catch (error) { stallRefused = true; stallError = String(error?.message ?? error).slice(0, 400); }
+const stallMillis = Date.now() - stallStarted;
+// What the Project did meanwhile: how many engine calls waited out their timeout, and why the write was refused.
+const stallLog = (await client.projects.logs("drill")).filter((entry) => Date.parse(entry.timestamp) >= stallStarted).map((entry) => `${entry.timestamp} ${entry.message.slice(0, 300)}`).slice(-40);
+const localDuringStall = await call("POST", "/projects/drill/proxy/zelavis/api/v1/database/documents/t", { tenantId: local, id: "during-stall", data: { n: 1 } });
+emit("stall-checked", { refused: stallRefused, millis: stallMillis, error: stallError, log: stallLog, localWriteOk: localDuringStall.status < 300 });
+await until(() => existsSync("/shared/stall-over"), Boolean, "the end of the stall", 120_000);
+await until(async () => { try { await insert(`after-stall${acked.length}`); return true; } catch { return false; } }, Boolean, "a write after the stall", 180_000);
+const missingAfterStall = [];
+for (const id of acked) if ((await data.documents.get("notes", id).catch(() => undefined))?.id !== id) missingAfterStall.push(id);
+emit("stall-healed", { acked: acked.length, missing: missingAfterStall });
 
 const shard = (await client.shards("drill").list()).shards.find((each) => each.location === "remote");
 await client.shards("drill").release(shard.shardId, { into: "shard-0" });
