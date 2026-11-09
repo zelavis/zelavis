@@ -14,6 +14,9 @@ import { createRemoteProjectAgent } from "../dist/adapters/_remote-project-agent
 import { createRemoteShardHost } from "../dist/adapters/_remote-shard-host.js";
 import { createHttpsProjectDispatcher } from "../dist/adapters/_project-dispatch-https.js";
 import { appShardKey, signAppShardAccess, signAppShardGrant } from "../dist/core/agent/app-shard-grant.js";
+// One clock read per window: two reads a millisecond apart make a window at the limit one millisecond too long.
+const windowOf = (millis) => { const issuedAt = Date.now(); return { issuedAt, expiresAt: issuedAt + millis }; };
+
 
 const run = promisify(execFile);
 const b64 = (text) => Buffer.from(text).toString("base64url");
@@ -123,7 +126,7 @@ test("a remote Agent hosts a shard under grants, fenced by epoch, over TLS", { t
     assert.equal((await kv(other, "get", { key: b64("k"), snapshot: held[0] })).status, 404);
     assert.equal((await kv(other, "get", { key: b64("k") })).body.value, null);
     // A token minted for another Agent or an unknown shard owner is unauthorized.
-    const foreign = await signAppShardAccess(f.privateKey, { keyId: "platform-test", agentId: "agent-c", nodeId: "node-b", ...shard, epoch: 2, issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+    const foreign = await signAppShardAccess(f.privateKey, { keyId: "platform-test", agentId: "agent-c", nodeId: "node-b", ...shard, epoch: 2, ...windowOf(60_000) });
     assert.deepEqual(await kv(foreign, "get", { key: b64("k") }), { status: 401, body: { code: "unauthorized" } });
     assert.equal((await kv("garbage", "get", { key: b64("k") })).status, 401);
     assert.equal((await post(agent, f.certPem, "/v1/shards/kv", { op: "nonsense", access: t2 })).status, 400);
@@ -163,8 +166,8 @@ test("a shard host closes idle snapshots and refuses grants no Platform key sign
   const store = createMemorySystemStore();
   const host = createRemoteShardHost({ dataDirectory: join(f.root, "host"), store, trust: () => f.trust, agentId: "agent-b", nodeId: "node-b", sweepEveryMillis: 50, idleMillis: 100 });
   try {
-    const sign = (epoch, state, key = f.privateKey) => signAppShardGrant(key, { keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", ...shard, epoch, state, durability: "crash", issuedAt: Date.now(), expiresAt: Date.now() + 30_000 });
-    const access = await signAppShardAccess(f.privateKey, { keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", ...shard, epoch: 1, issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+    const sign = (epoch, state, key = f.privateKey) => signAppShardGrant(key, { keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", ...shard, epoch, state, durability: "crash", ...windowOf(30_000) });
+    const access = await signAppShardAccess(f.privateKey, { keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", ...shard, epoch: 1, ...windowOf(60_000) });
     const stranger = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])).privateKey;
     await assert.rejects(host.applyGrant(await sign(1, "committed", stranger)), /invalid/);
     await host.applyGrant(await sign(1, "preparing"));

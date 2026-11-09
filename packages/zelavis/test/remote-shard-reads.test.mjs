@@ -4,6 +4,9 @@ import { Effect } from "effect";
 import { documentsFor } from "../dist/db/documents.js";
 import { openShardOverKv } from "../dist/db/kv-store.js";
 import { startRemoteShardAgent } from "./_remote-shard-fixture.mjs";
+// One clock read per window: two reads a millisecond apart make a window at the limit one millisecond too long.
+const windowOf = (millis) => { const issuedAt = Date.now(); return { issuedAt, expiresAt: issuedAt + millis }; };
+
 
 const fixture = await startRemoteShardAgent();
 const path = "/v1/shards/reads";
@@ -113,8 +116,8 @@ test("grant changes drain active snapshots and queued reads recheck their epoch"
   });
   t.after(async () => { Effect.runSync(Deferred.succeed(release, undefined)); await host.close(); await rm(root, { recursive: true, force: true }); });
   const identity = shardId => ({ keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", projectId: "p", incarnation: "i", shardId });
-  const grant = (shardId, epoch, state) => signAppShardGrant(privateKey, { ...identity(shardId), epoch, state, durability: "crash", issuedAt: Date.now(), expiresAt: Date.now() + 30_000 });
-  const access = (shardId, epoch) => signAppShardAccess(privateKey, { ...identity(shardId), epoch, issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+  const grant = (shardId, epoch, state) => signAppShardGrant(privateKey, { ...identity(shardId), epoch, state, durability: "crash", ...windowOf(30_000) });
+  const access = (shardId, epoch) => signAppShardAccess(privateKey, { ...identity(shardId), epoch, ...windowOf(60_000) });
   for (const shardId of ["a", "b"]) {
     await host.applyGrant(await grant(shardId, 1, "preparing"));
     await host.applyGrant(await grant(shardId, 1, "committed"));
@@ -303,10 +306,10 @@ test("an Agent refuses to read from an engine that cannot bound its reads", asyn
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
   const identity = { keyId: "platform-test", agentId: "agent-b", nodeId: "node-b", projectId: "p", incarnation: "i", shardId: "u" };
   for (const state of ["preparing", "committed"]) {
-    await host.applyGrant(await signAppShardGrant(privateKey, { ...identity, epoch: 1, state, durability: "crash", issuedAt: Date.now(), expiresAt: Date.now() + 30_000 }));
+    await host.applyGrant(await signAppShardGrant(privateKey, { ...identity, epoch: 1, state, durability: "crash", ...windowOf(30_000) }));
   }
   await Effect.runPromise(openShardOverKv("u", raw));
-  const access = await signAppShardAccess(privateKey, { ...identity, epoch: 1, issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+  const access = await signAppShardAccess(privateKey, { ...identity, epoch: 1, ...windowOf(60_000) });
   const answer = await host.reads(request(access, "documents.listCollections", null));
   assert.deepEqual(answer, { status: 500, body: { code: "unbounded-engine" } });
   assert.equal(host.readsServed(), 0);
