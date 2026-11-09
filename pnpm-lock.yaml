@@ -6978,8 +6978,8 @@ packages:
     resolution: {integrity: sha512-6axnAuBsttFJe0gwsM5tT203/Bts0vcI+FwIX6dqFE4pUFVW6qrdRprNFQVxOYMW7V0S6A/KIqJ6JaPpNN2MCw==}
     engines: {node: '>= 4.7.0'}
 
-  systeminformation@5.33.1:
-    resolution: {integrity: sha512-DEN6ICHk3Tk0Uf/hrAHh7xlt7iL5CJFBtPZinA0H62DrGG/KPKqq/Nzj6lCXPS4Ay/sf/14zNnk9LpqKzBIc+w==}
+  systeminformation@5.33.19:
+    resolution: {integrity: sha512-Zm7wGeCG7PqfvzegMJIzrxICopWqYCeLATVmvxOOci1isLcNVKgY4Fr0hhYQzvc7cgtK3377jQVChTFAnznOiA==}
     engines: {node: '>=10.0.0'}
     os: [darwin, linux, win32, freebsd, openbsd, netbsd, sunos, android]
     hasBin: true
@@ -8438,7 +8438,7 @@ snapshots:
       object-treeify: 1.1.33
       open: 8.4.2
       picomatch: 4.0.7
-      systeminformation: 5.33.1
+      systeminformation: 5.33.19
       undici: 7.29.0
       which: 4.0.0
       yocto-spinner: 1.2.2
@@ -14705,7 +14705,7 @@ snapshots:
 
   swiper@14.4.0: {}
 
-  systeminformation@5.33.1: {}
+  systeminformation@5.33.19: {}
 
   tabbable@6.5.0: {}
 
