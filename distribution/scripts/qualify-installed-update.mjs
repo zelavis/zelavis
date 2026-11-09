@@ -304,11 +304,20 @@ console.log(`UPGRADE: the combined data migration and recipe upgrade took ${upgr
 // traffic it took 52 to 89 s and the whole upgrade 75 to 89 s, which this bound refuses.
 assert.ok(upgradeMillis < 70_000, `The combined data migration and recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
 assert.equal(integration.runtime.status, 'running');
-// One normal request did both: the bound App's data is in the Platform's layout, the earlier layout is retained beside it, and the recipe moved.
+// One normal request did both: the bound App's data is in the Platform's layout (migrated, with the earlier layout retained beside
+// it, when the two releases write different layouts), and the recipe moved.
 assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
 const boundRoot = join(wpProject, '.zelavis/integration');
-assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, 4, 'The same request brings the bound App data to layout 4');
-assert.ok((await readdir(boundRoot)).some(name => name.startsWith('data.format-2-')), 'The earlier data layout is retained beside the migrated data');
+// The layout a release writes, from its runtime artifact; a release that declares none wrote layout 2.
+const releaseFormat = async version => JSON.parse(await readFile(`/opt/zelavis/releases/${version}/runtime-artifact.json`, 'utf8')).metadata?.dataFormat ?? 2;
+const [formatFrom, formatTo] = [await releaseFormat(from), await releaseFormat(to)];
+if (formatFrom !== formatTo) {
+  assert.deepEqual([integration.dataMigration?.from, integration.dataMigration?.to], [formatFrom, formatTo], 'The upgrade migrates the bound App data across the layout change');
+  assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, formatTo, `The same request brings the bound App data to layout ${formatTo}`);
+  assert.ok((await readdir(boundRoot)).some(name => name.startsWith(`data.format-${formatFrom}-`)), 'The earlier data layout is retained beside the migrated data');
+} else {
+  assert.equal(integration.dataMigration, undefined, `Both releases write layout ${formatTo}: the upgrade migrates nothing`);
+}
 assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
