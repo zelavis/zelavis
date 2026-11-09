@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/prestashop",
-  "version": "8.2.8-alpha.1",
+  "version": "8.2.8-alpha.2",
   "private": false,
   "description": "Official Zelavis PrestaShop Project recipe: a native shop with Caddy, its own PHP 8.1 and a dedicated MariaDB.",
   "license": "MIT",

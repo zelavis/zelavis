@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/typo3",
-  "version": "13.4.36-alpha.1",
+  "version": "13.4.36-alpha.2",
   "private": false,
   "description": "Official Zelavis TYPO3 Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",

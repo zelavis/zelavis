@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/wordpress",
-  "version": "7.1.3-alpha.4",
+  "version": "7.1.3-alpha.5",
   "private": false,
   "description": "Official Zelavis WordPress Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",

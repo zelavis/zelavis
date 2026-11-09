@@ -1,5 +1,58 @@
 # @zelavis/app
 
+## 1.0.1-alpha.43
+
+### Patch Changes
+
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [d57e446]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f99eca]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4326e6b]
+- Updated dependencies [f88cb26]
+- Updated dependencies [bf41f4b]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [ac78c91]
+- Updated dependencies [b2e08f1]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [ec60fac]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [b7e5333]
+- Updated dependencies [362ae43]
+- Updated dependencies [0f0457f]
+- Updated dependencies [0f0457f]
+- Updated dependencies [4f6719c]
+  - zelavis@2.0.0-alpha.43
+
 ## 1.0.1-alpha.42
 
 ### Patch Changes

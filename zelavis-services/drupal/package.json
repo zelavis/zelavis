@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/drupal",
-  "version": "11.4.9-alpha.1",
+  "version": "11.4.9-alpha.2",
   "private": false,
   "description": "Official Zelavis Drupal Project recipe: a native site with its own Caddy, PHP-FPM and MariaDB.",
   "license": "MIT",

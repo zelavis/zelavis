@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/joomla",
-  "version": "5.4.9-alpha.1",
+  "version": "5.4.9-alpha.2",
   "private": false,
   "description": "Official Zelavis Joomla Project recipe: a native site with dedicated Nginx, PHP-FPM and MariaDB.",
   "license": "MIT",
