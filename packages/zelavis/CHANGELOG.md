@@ -191,6 +191,8 @@
   selected rather than being reset to the Platform's.
 - ec60fac: Let long Platform handovers finish after the control request body has arrived. If the selection reply is interrupted, the installer finishes the inventory acknowledgement and verifies the selected generation before reporting success.
 
+- c29d32a: A managed App waiting for a data-layout upgrade keeps serving requests without repeatedly querying its private host for the same engine decision.
+
 ## 2.0.0-alpha.42
 
 ### Patch Changes
