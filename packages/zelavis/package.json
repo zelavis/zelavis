@@ -220,7 +220,7 @@
   },
   "devDependencies": {
     "@effect/language-service": "^0.87.5",
-    "@effect/tsgo": "^0.48.0",
+    "@effect/tsgo": "^0.67.4",
     "@harperfast/rocksdb-js": "2.13.0",
     "@libsql/client": "^0.18.0",
     "@types/node": "^26.6.5",
