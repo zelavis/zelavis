@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chmod, mkdtemp, mkdir, readFile, writeFile, symlink, unlink, rm, realpath } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, writeFile, symlink, unlink, rm, realpath, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Effect } from "effect";
@@ -179,5 +179,24 @@ test("one operation hashes a release once, and no later operation or catalog inh
     // ...but a catalog with no memory, or the next operation's own memory, verifies every byte afresh and refuses it.
     await assert.rejects(Effect.runPromise(createNodeRuntimeCatalog({ directory, rootOwned: false }).resolve(selected, "project", {}, {})), /file digest mismatch/);
     await assert.rejects(Effect.runPromise(createNodeRuntimeCatalog({ directory, rootOwned: false }, new Map()).select("1.0.0")), /file digest mismatch/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a file hashed once is not read again unchanged, but any change to it, even one that keeps its size and modification time, is hashed again", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-fingerprint-"));
+  try {
+    const value = await release(directory, "1.0.0");
+    const file = join(value.root, "platform/dist/adapters/_node-project-engine.js");
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
+    // Same length, same modification time restored: only ctime (which a program cannot set back) differs.
+    const before = await stat(file), original = await readFile(file, "utf8");
+    await writeFile(file, original.replace(/./, "X"));
+    await utimes(file, before.atime, before.mtime);
+    assert.equal((await stat(file)).size, before.size);
+    await assert.rejects(Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected)), /file digest mismatch/);
+    // Restoring the original bytes verifies again, and the refusal was never remembered as good.
+    await writeFile(file, original);
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
