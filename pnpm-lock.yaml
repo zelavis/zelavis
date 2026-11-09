@@ -502,8 +502,8 @@ importers:
         specifier: ^4.0.1
         version: 4.0.1
       swiper:
-        specifier: ^14.3.0
-        version: 14.3.0
+        specifier: ^14.4.0
+        version: 14.4.0
       tailwind-merge:
         specifier: ^3.7.0
         version: 3.7.0
@@ -6974,8 +6974,8 @@ packages:
     engines: {node: '>=16'}
     hasBin: true
 
-  swiper@14.3.0:
-    resolution: {integrity: sha512-qw0Xv1+sylM8KCQxWxV2iYAK2G6XjFGPZ/8F1baEsY8DK4A3sTnLx6jUJ0G71rDbVQ05JHMWkcWmJ5NvlxZO0w==}
+  swiper@14.4.0:
+    resolution: {integrity: sha512-6axnAuBsttFJe0gwsM5tT203/Bts0vcI+FwIX6dqFE4pUFVW6qrdRprNFQVxOYMW7V0S6A/KIqJ6JaPpNN2MCw==}
     engines: {node: '>= 4.7.0'}
 
   systeminformation@5.33.1:
@@ -14703,7 +14703,7 @@ snapshots:
       picocolors: 1.1.1
       sax: 1.6.1
 
-  swiper@14.3.0: {}
+  swiper@14.4.0: {}
 
   systeminformation@5.33.1: {}
 
