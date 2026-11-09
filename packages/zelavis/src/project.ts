@@ -375,6 +375,12 @@ export interface ZelavisProjectRuntimeDriver {
    */
   migrateData?(project: ZelavisProjectRecord, placement?: ProjectPlacementToken): Promise<ZelavisProjectDataMigration | undefined>;
   /**
+   * Does ahead of an upgrade the slow work its data migration and the start after it would otherwise do while the Project's
+   * requests are held (verifying the engines they execute), so the hold lasts as long as the switch and no longer.
+   * Changes nothing a Project keeps; the migration remains correct without it.
+   */
+  prepareData?(project: ZelavisProjectRecord): Promise<void>;
+  /**
    * Acquires what a candidate recipe needs (its pinned programs) and checks this host can run it, while
    * the Project keeps serving from its current recipe. Used before a cross-layout upgrade takes the
    * Project's processes over, so the moment requests are held lasts only as long as the switch.
@@ -2566,6 +2572,10 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 yield* integration(() => options.acquireRecipe!(target));
             }
             yield* refreshRecipes();
+            {
+                const ahead = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
+                if (ahead.recipe.managed && runtimeEffects.prepareData && !ahead.placement && !ahead.deletion) yield* runtimeEffects.prepareData(ahead);
+            }
             if (input?.restart === true) {
                 const current = yield* requireProject(yield* evaluate(() => normalizeProjectId(id)));
                 const liveCapable = runtime.supportsLiveUpdate?.(current) === true && !(yield* changesDataLayout(current, input.engineVersion)) &&
@@ -2583,11 +2593,15 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 }
             }
             let performed: ZelavisProjectDataMigration | undefined;
-            const upgraded = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+            let interrupted: ZelavisProjectRuntimeUpdateIntent | undefined;
+            // The data migration is a step of its own: requests to the Project wait only while its bound host is down for it, and the
+            // recipe update after it holds them again for its own, shorter time, so neither hold is the sum of both. It is still one
+            // request, and a Project left between the two is a migrated App on its earlier recipe, which a retry finishes.
+            const migrated = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.migration")(function* () {
                 let project = yield* requireProject(id);
                 // A deletion tombstone always wins over recovery of an update.
                 if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
-                const interrupted = project.runtimeUpdate;
+                interrupted = project.runtimeUpdate;
                 project = yield* recoverProjectUpdate(project);
                 (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
                 if (input?.engineVersion !== undefined && project.placement)
@@ -2595,10 +2609,19 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
                 // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
                 if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
-                    const migrated = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
-                    performed = migrated;
-                    if (migrated && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: migrated };
+                    const migrationStarted = Date.now();
+                    const report = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
+                    yield* Effect.logInfo(`Project "${project.id}" upgrade: data migration ${report ? "performed" : "not needed"} in ${Date.now() - migrationStarted} ms.`);
+                    performed = report;
+                    if (report && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: report };
                 }
+                return undefined;
+            }));
+            if (migrated) return migrated;
+            const upgraded = yield* withProjectLifecycle((yield* evaluate(() => normalizeProjectId(id))), Effect.fn("Projects.transition")(function* () {
+                const project = yield* requireProject(id);
+                if (project.deletion) yield* evaluate(() => assertProjectIsOperable(project, "upgraded"));
+                (yield* evaluate(() => assertProjectIsOperable(project, "upgraded")));
                 if (interrupted && project.recipe.name === interrupted.target.recipe.name && project.recipe.version === interrupted.target.recipe.version &&
                     (input?.engineVersion === undefined || project.engineVersion === input.engineVersion)) return project;
                 const live = project.runtime.status === "running" && runtime.supportsLiveUpdate?.(project) === true && !(yield* changesDataLayout(project, input?.engineVersion)) &&
@@ -2710,7 +2733,9 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                                 .pipe(Effect.orElseSucceed(() => undefined));
                         })));
                 }
+                const updateStarted = Date.now();
                 const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
+                yield* Effect.logInfo(`Project "${project.id}" upgrade: recipe update prepared in ${Date.now() - updateStarted} ms.`);
                 upgraded.recipe = execution.recipe;
                 upgraded.capabilities = runtime.capabilities(upgraded);
                 upgraded.runtime = project.runtime;
@@ -2722,6 +2747,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
                         ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
                     }).pipe(Effect.asVoid)));
+                    yield* Effect.logInfo(`Project "${project.id}" upgrade: recipe update applied in ${Date.now() - updateStarted} ms in all.`);
                     upgraded.capabilities = runtime.capabilities(upgraded);
                     if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
                     return yield* write(applySnapshot(upgraded, snapshot));

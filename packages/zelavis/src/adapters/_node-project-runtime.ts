@@ -16,6 +16,7 @@ import { describeInstallation } from "../cli/installation.js";
 import { createNodeRuntimeCatalog } from "./_node-runtime-catalog.js";
 import { engineConvergence } from "../core/runtime/engine-convergence.js";
 import { chooseBoundEngine } from "./_node-bound-engine.js";
+import type { VerifiedRuntimeArtifacts } from "./_node-runtime-catalog.js";
 import { migrateDataLayout } from "./_node-data-migration.js";
 import { commitDataSwap, dataFormatOnDisk, dataLayoutOnDisk, listRetainedData, recordDataLayout, removeRetainedData, settleDataSwap, startOnSwappedData, swapInMigratedData, undoDataSwap } from "./_node-data-layout.js";
 import { readNodeRuntimeJournalSelection } from "./_node-runtime-journal.js";
@@ -378,6 +379,17 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
         });
     /** The migration a native App's `prepare` made, until the upgrade that needed it is recorded and `commitUpgrade` reports it. */
     const migrations = new Map<string, ZelavisProjectDataMigration>();
+    /**
+     * What `prepareData` verified for a Project's coming migration and start, made before its requests are held. It is read only by
+     * that Project's own migration and start, dropped when the migration ends, and ignored once five minutes old: the next
+     * operation, and any later start, hashes the engines afresh.
+     */
+    const prefetchedEngines = new Map<string, { readonly at: number; readonly artifacts: VerifiedRuntimeArtifacts }>();
+    const PREFETCH_LIFE_MS = 300_000;
+    const prefetchedFor = (projectId: string): VerifiedRuntimeArtifacts => {
+        const found = prefetchedEngines.get(projectId);
+        return found !== undefined && Date.now() - found.at < PREFETCH_LIFE_MS ? new Map(found.artifacts) : new Map();
+    };
     /** Where this driver's database lives: a native App's `.zelavis`, a managed app's bound App under `.zelavis/integration`. */
     const dataRoot = (projectId: string) => join(projectDirectory(projectId), ".zelavis", ...(options.integrationOnly ? ["integration"] : []));
     const stampNow = () => new Date().toISOString().replace(/[-:.]/g, "");
@@ -386,7 +398,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
      * stopped; its data is exported by the engine that wrote it, recreated by the current one, verified, and swapped in with the
      * old data kept beside it. Nothing is migrated when the layouts agree or the Project has no database yet.
      */
-    const migrateLayout = Effect.fn("NodeProjects.migrateLayout")(function* (root: string, catalog: ReturnType<typeof createNodeRuntimeCatalog>, previous: RuntimeRelease, target: RuntimeRelease) {
+    const migrateLayout = Effect.fn("NodeProjects.migrateLayout")(function* (root: string, catalog: ReturnType<typeof createNodeRuntimeCatalog>, previous: RuntimeRelease, target: { readonly version: string }, onPhase?: (phase: string) => void) {
         const paths = { zelavis: root }, stamp = stampNow();
         yield* settleDataSwap(paths, yield* catalog.dataFormat(previous.version), stamp);
         const from = yield* dataFormatOnDisk(paths, yield* catalog.dataFormat(previous.version));
@@ -400,10 +412,13 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             return undefined;
         }
         const earlier = yield* catalog.resolve(previous, "project", {}, {});
+        onPhase?.("verify the earlier engine");
         const work = join(root, `migration-${stamp}`);
-        const report = yield* migrateDataLayout({ sourceShards: shards, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"),
+        const report = yield* migrateDataLayout({ sourceShards: shards, workDirectory: work, oldNode: earlier.executable, oldPlatform: join(earlier.cwd, "platform"), ...(onPhase ? { onPhase } : {}),
             exportWorker: fileURLToPath(new URL("./_data-export-worker.js", import.meta.url)) });
+        onPhase?.("recreate and verify the data");
         const { retained } = yield* swapInMigratedData(paths, { migratedShards: report.shardsDirectory, from, to, stamp, engine: previous.version }).pipe(Effect.onError(() => undoDataSwap(paths, stamp).pipe(Effect.orElseSucceed(() => false))));
+        onPhase?.("swap in the migrated data");
         // What the migration changed that a person should know: kept with the retained data, shown by the dashboard.
         yield* integration(() => writeFile(join(root, `data-migration-report-${stamp}.json`), `${JSON.stringify({ from, to, retained, ...report, shardsDirectory: undefined }, null, 2)}\n`, { mode: 0o600 }));
         yield* integration(() => rm(work, { recursive: true, force: true }));
@@ -416,7 +431,12 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             }
             // A lost start reply can leave an unbound durable host. Reuse its
             // exact identity and private control before considering another spawn.
+            // Where a start spends its time before the process exists, written to the Project's log once it does.
+            const laps: string[] = [];
+            let lapAt = Date.now();
+            const lap = (name: string) => { const now = Date.now(); laps.push(`${name} ${now - lapAt} ms`); lapAt = now; };
             if (!processes.get(project.id)?.process?.running) yield* adopt(project.id);
+            lap("adopt");
             const current = processes.get(project.id);
             if (current?.process?.running && current.snapshot.status === "standby") {
                 if (role === "standby") return current.snapshot;
@@ -490,16 +510,20 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 return (yield* error);
             }));
             const catalogOptions = yield* catalogConfiguration();
+            // Both the engine this start selects and the host it executes are the same immutable tree when the Project follows the
+            // Platform: it is hashed once for this start, and verified again by the next one.
+            const verifiedHere = prefetchedFor(project.id);
             let heldReason: string | undefined;
             const engine = options.integrationOnly
                 ? { createdWith: ZELAVIS_VERSION, runtime: catalogOptions ? yield* Effect.gen(function* () {
-                    const installed = createNodeRuntimeCatalog(catalogOptions);
+                    const installed = createNodeRuntimeCatalog(catalogOptions, verifiedHere);
                     // A cold start follows the Platform too, except across a data-layout change; see `chooseBoundEngine`.
                     const chosen = yield* chooseBoundEngine({ journalFile: join(directory, ".zelavis", "integration", "runtime-handover.json"), layoutRoot: join(directory, ".zelavis", "integration"), catalog: installed });
                     heldReason = chosen.heldReason;
                     return yield* installed.select(chosen.version);
                 }) : undefined }
                 : yield* readCreationEngine(directory);
+            lap("choose and verify the engine");
             // A crash between a migration's swap and the record of the upgrade that needed it is settled before the data is opened.
             if (!options.integrationOnly && catalogOptions && engine.runtime) {
                 yield* settleDataSwap({ zelavis: join(directory, ".zelavis") }, yield* createNodeRuntimeCatalog(catalogOptions).dataFormat(engine.runtime.version), stampNow());
@@ -510,12 +534,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 // The host is supervision/control plumbing of this Platform.
                 // Its workers still execute the Project's exact locked engine
                 // and private Node through the catalog inside that host.
-                const catalog = createNodeRuntimeCatalog(catalogOptions);
+                const catalog = createNodeRuntimeCatalog(catalogOptions, verifiedHere);
                 const execution = yield* catalog.resolve(yield* catalog.select(ZELAVIS_VERSION), "project", {}, {});
                 executable = execution.executable;
                 selectedRunner = join(execution.cwd, "platform", "dist", "adapters", "_node-project-runner.js");
             }
+            lap("verify the Platform's engine");
             const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
+            lap("freeze the release");
             const state: NodeProjectProcess = {
                 ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
                 ...(heldReason !== undefined ? { convergenceHeld: true } : {}),
@@ -525,7 +551,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 stopping: false,
             };
             processes.set(project.id, state);
-            appendLog(state, "system", `Starting ${project.name} with ${driver.name}.`);
+            appendLog(state, "system", `Starting ${project.name} with ${driver.name}. Before the process: ${laps.join(", ")}.`);
             if (heldReason !== undefined) appendLog(state, "system", `Staying on Zelavis ${state.boundEngineVersion}. ${heldReason}`);
             // A fresh secret per start: a restarted runtime never accepts envelopes
             // signed for its previous process.
@@ -823,11 +849,29 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
          * the data migrated by the engine that wrote it and swapped in, and the host started again, which follows the Platform's engine
          * now that the data agrees. If it does not start, the old data and engine come back. Undefined when nothing needed migrating.
          */
+        /** See `ZelavisProjectRuntimeDriver.prepareData`: verifies, outside the hold, the two engines a migration and the start after it execute. */
+        prepareData: Effect.fn("NodeProjects.prepareData")(function* (project: ZelavisProjectRecord) {
+            if (!options.integrationOnly) return;
+            const configuration = yield* catalogConfiguration();
+            if (!configuration) return;
+            const root = join(projectDirectory(project.id), ".zelavis", "integration");
+            const selected = yield* readNodeRuntimeJournalSelection(join(root, "runtime-handover.json"));
+            if (selected === undefined) return;
+            const artifacts: VerifiedRuntimeArtifacts = new Map();
+            const catalog = createNodeRuntimeCatalog(configuration, artifacts);
+            const layout = yield* dataLayoutOnDisk({ zelavis: root }, yield* catalog.dataFormat(selected.version));
+            if (layout.format === CURRENT_FORMAT) return;
+            yield* catalog.select(layout.engine ?? selected.version);
+            yield* catalog.select(ZELAVIS_VERSION);
+            prefetchedEngines.set(project.id, { at: Date.now(), artifacts });
+        }),
         migrateData: Effect.fn("NodeProjects.migrateData")(function* (project: ZelavisProjectRecord, placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
             if (!options.integrationOnly) return undefined;
             const configuration = yield* catalogConfiguration();
             if (!configuration) return undefined;
-            const catalog = createNodeRuntimeCatalog(configuration);
+            // One operation: the earlier engine is verified once, however often it is named. The Platform's own engine is not
+            // executed here (the migration opens the data in this process); the start that follows verifies it before it runs it.
+            const catalog = createNodeRuntimeCatalog(configuration, prefetchedFor(project.id));
             const root = join(projectDirectory(project.id), ".zelavis", "integration");
             const selected = yield* readNodeRuntimeJournalSelection(join(root, "runtime-handover.json"));
             if (selected === undefined) return undefined;
@@ -835,6 +879,10 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             if (layout.format === CURRENT_FORMAT) return undefined;
             const held = yield* catalog.select(layout.engine ?? selected.version);
             const existing = processes.get(project.id);
+            // Each phase's duration goes to the Project's log, so a migration that outlasts a caller's deadline says where it spent it.
+            const began = Date.now();
+            let phaseAt = began;
+            const phase = (name: string) => { const now = Date.now(); const line = `Data migration phase "${name}" took ${now - phaseAt} ms (${now - began} ms in all).`; phaseAt = now; const live = processes.get(project.id); if (live) appendLog(live, "system", line); };
             if (existing?.process?.running) {
                 appendLog(existing, "system", `Stopping the bound App to migrate its data from layout ${layout.format} to ${CURRENT_FORMAT}.`);
                 existing.stopping = true;
@@ -842,7 +890,9 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 gatewaySecrets.delete(project.id);
                 existing.snapshot = stoppedSnapshot(existing);
             }
-            const report = yield* migrateLayout(root, catalog, held, yield* catalog.select(ZELAVIS_VERSION));
+            phase("stop bound host");
+            const report = yield* migrateLayout(root, catalog, held, { version: ZELAVIS_VERSION }, phase);
+            phase("report and clean up");
             const migrated = report !== undefined;
             const paths = { zelavis: root };
             // The host now starts on the Platform's engine; if it cannot, the old data and the engine that wrote it return.
@@ -852,9 +902,11 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                     ? startOnSwappedData(paths, stampNow(), driver.start(project, placement), driver.start(project, placement))
                     : driver.start(project, placement);
             }
+            phase("start bound host");
             yield* commitDataSwap(paths);
+            phase("commit swap");
             return report;
-        }),
+        }, (operation, project) => operation.pipe(Effect.ensuring(Effect.sync(() => { prefetchedEngines.delete(project.id); })))),
         // The upgrade was recorded, or was not: either way the swap it made is settled, never half-kept.
         commitUpgrade: Effect.fn("NodeProjects.commitUpgrade")(function* (projectId: string) {
             if (options.integrationOnly) return undefined;

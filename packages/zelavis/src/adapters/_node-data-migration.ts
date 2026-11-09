@@ -30,6 +30,8 @@ export interface DataMigrationInput {
   /** The compiled `_data-export-worker.js`. */
   readonly exportWorker: string;
   readonly exportTimeoutMs?: number;
+  /** Told each phase's name as it ends, so a long migration can report where its time went. */
+  readonly onPhase?: (phase: string) => void;
   /** Free bytes where the staging goes; read from the file system when omitted. Tests set it. */
   readonly freeBytes?: number;
 }
@@ -143,11 +145,14 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
   const run = Effect.gen(function* () {
     yield* attempt("The staging directory could not be created.", () => mkdir(work, { recursive: true, mode: 0o700 }));
     yield* attempt("The data could not be copied for export.", () => cp(resolve(input.sourceShards), source, { recursive: true }));
+    input.onPhase?.("copy for export");
     yield* runExport(input, source, exported);
+    input.onPhase?.("export by the earlier engine");
     const manifestSource = yield* attempt("The export is incomplete.", () => readFile(join(exported, "manifest.json"), "utf8"));
     const manifest = yield* evaluate(() => parseJson(manifestSource, exportManifest, "Data export manifest"));
 
     const opened = yield* attempt("The migrated database could not be created.", () => openNodeDatabase({ directory: migrated }));
+    input.onPhase?.("create the migrated database");
     return yield* Effect.gen(function* () {
       let collections = 0, schemas = 0, documents = 0, historyDropped = 0;
       const dropped: Record<string, number> = {};

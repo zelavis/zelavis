@@ -162,3 +162,22 @@ test("a bound App starts on the engine that wrote its data across a layout chang
     await assert.rejects(select());
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("one operation hashes a release once, and no later operation or catalog inherits that verification", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-operation-"));
+  try {
+    const value = await release(directory, "1.0.0");
+    const remembered = new Map();
+    const operation = createNodeRuntimeCatalog({ directory, rootOwned: false }, remembered);
+    const selected = await Effect.runPromise(operation.select("1.0.0"));
+    assert.equal(remembered.size, 1);
+    // A byte changed after the operation verified the release is not read again by that operation (it was hashed once)...
+    await writeFile(join(value.root, "platform/dist/adapters/_node-project-engine.js"), "modified engine");
+    const execution = await Effect.runPromise(operation.resolve(selected, "project", {}, {}));
+    assert.equal(execution.cwd, value.root);
+    assert.equal(remembered.size, 1, "naming the same release again adds no second verification");
+    // ...but a catalog with no memory, or the next operation's own memory, verifies every byte afresh and refuses it.
+    await assert.rejects(Effect.runPromise(createNodeRuntimeCatalog({ directory, rootOwned: false }).resolve(selected, "project", {}, {})), /file digest mismatch/);
+    await assert.rejects(Effect.runPromise(createNodeRuntimeCatalog({ directory, rootOwned: false }, new Map()).select("1.0.0")), /file digest mismatch/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

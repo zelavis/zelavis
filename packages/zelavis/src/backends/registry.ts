@@ -456,6 +456,7 @@ export const PROJECT_DRIVER_MEMBER_ROUTING = {
   commitUpgrade: "project-id",
   abandonUpgrade: "project-id",
   migrateData: "descriptor",
+  prepareData: "descriptor",
   retainedData: "project-id",
   removeRetainedData: "project-id",
   fencePrevious: "placement",
@@ -619,6 +620,10 @@ export function createDeploymentBackendProjectRuntime(options: {
     migrateData: Effect.fn("BackendProjects.migrateData")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[0], placement: Parameters<NonNullable<ZelavisProjectRuntimeDriver["migrateData"]>>[1]) {
       const migrate = effectOperations(yield* evaluate(() => forDescriptor(project))).migrateData;
       return migrate ? yield* migrate(project, placement) : undefined;
+    }),
+    prepareData: Effect.fn("BackendProjects.prepareData")(function* (project: Parameters<NonNullable<ZelavisProjectRuntimeDriver["prepareData"]>>[0]) {
+      const prepare = effectOperations(yield* evaluate(() => forDescriptor(project))).prepareData;
+      if (prepare) yield* prepare(project);
     }),
     retainedData: Effect.fn("BackendProjects.retainedData")(function* (id: string) {
       const list = effectOperations(yield* forProjectId(id)).retainedData;

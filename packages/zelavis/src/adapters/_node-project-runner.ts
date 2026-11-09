@@ -33,9 +33,11 @@ const run = Scope.use(Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Effect.sync(() => shutdown?.dispose()));
   shutdown = shutdownOnSignals(() => present(Scope.close(scope, Exit.void)));
   const catalogDirectory = process.env.ZELAVIS_RUNTIME_RELEASES_DIR;
-  const catalog = catalogDirectory ? createNodeRuntimeCatalog({ directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" }) : undefined;
+  const catalogOptions = catalogDirectory ? { directory: catalogDirectory, rootOwned: process.env.ZELAVIS_RUNTIME_ROOT_OWNED === "true" } : undefined;
   const host = yield* createNodeProjectHost({ ...options, environment: { ...projectProcessEnvironment(), ...inheritedProjectLeaseEnvironment(), ...inheritedAppShardEnvironment() },
-    ...(catalog ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
+    ...(catalogOptions ? { resolveEngine: Effect.fn("ProjectHost.installedEngine")(function* (version, record, configuration, environment) {
+      // One resolution hashes the release once, however many steps name it; the next resolution (a replaced worker) hashes afresh.
+      const catalog = createNodeRuntimeCatalog(catalogOptions, new Map());
       if (options.integrationOnly) return yield* catalog.resolve(yield* catalog.select(version), "project", configuration, environment);
       const selected = yield* evaluate(() => {
         const engine = record.engine as { runtime?: RuntimeRelease } | undefined;

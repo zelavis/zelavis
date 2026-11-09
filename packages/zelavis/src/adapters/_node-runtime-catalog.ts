@@ -22,7 +22,14 @@ const declaredDataFormat = (value: unknown): number => value === undefined ? FOR
  * permission to install host code remain with the existing installer/updater;
  * selecting a Project version never runs npm, sudo, or an arbitrary executable.
  */
-export function createNodeRuntimeCatalog(options: { readonly directory: string; readonly rootOwned: boolean }) {
+export type VerifiedRuntimeArtifacts = Map<string, Effect.Success<ReturnType<typeof verifyNodeRuntimeArtifact>>>;
+
+/**
+ * Pass `remembered` for one operation (a start, a migration) that names the same immutable release more than once: a
+ * release whose every byte was just verified is not hashed again by that operation. Never keep one beyond the
+ * operation; the next operation, and every execution it starts, verifies afresh.
+ */
+export function createNodeRuntimeCatalog(options: { readonly directory: string; readonly rootOwned: boolean }, remembered?: VerifiedRuntimeArtifacts) {
   const directory = resolve(options.directory);
   const exactDirectory = Effect.fn("RuntimeCatalog.exactDirectory")(function* (version: string) {
     yield* evaluate(() => { if (!isExactVersion(version)) throw new Error("Runtime engine selection requires an exact version."); });
@@ -30,6 +37,14 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     const tree = yield* integration(() => realpath(join(root, version)));
     if (tree !== join(root, version) || !tree.startsWith(`${root}${sep}`)) return yield* new IntegrationFailure(new Error("Runtime engine selection must name an immutable release directory, never a link or external path."));
     return tree;
+  });
+  const verified = Effect.fn("RuntimeCatalog.verified")(function* (version: string, expected: { readonly version: string; readonly digest: string }) {
+    const key = `${version}\u0000${expected.digest}`;
+    const hit = remembered?.get(key);
+    if (hit) return hit;
+    const result = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(version), expected, options.rootOwned);
+    remembered?.set(key, result);
+    return result;
   });
   const entry = Effect.fn("RuntimeCatalog.entry")(function* (version: string) {
     const tree = yield* exactDirectory(version);
@@ -66,7 +81,7 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     }),
     select: Effect.fn("RuntimeCatalog.select")(function* (version: string) {
       const advertised = yield* entry(version);
-      const selected = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(version), advertised, options.rootOwned);
+      const selected = yield* verified(version, advertised);
       return selected.release;
     }),
     app: Effect.fn("RuntimeCatalog.app")(function* (version: string): Effect.fn.Return<{ engine: RuntimeRelease; recipe: ZelavisProjectRecipeLock; packageDirectory: string }, IntegrationFailure> {
@@ -87,11 +102,11 @@ export function createNodeRuntimeCatalog(options: { readonly directory: string; 
     }),
     resolve: Effect.fn("RuntimeCatalog.resolve")(function* (selected: RuntimeRelease, role: "platform" | "project", configuration: Readonly<Record<string, unknown>>, environment: Readonly<Record<string, string>>): Effect.fn.Return<NodeRuntimeExecution, IntegrationFailure> {
       yield* evaluate(() => { if (role !== "platform" && role !== "project") throw new Error("Runtime engine role requires explicit Platform or Project authority."); });
-      const verified = yield* verifyNodeRuntimeArtifact(yield* exactDirectory(selected.version), selected, options.rootOwned);
-      return { executable: join(verified.root, "runtime", "node", "bin", "node"),
-        worker: join(verified.root, "platform", "dist", "adapters", "_node-runtime-worker.js"),
-        module: join(verified.root, "platform", "dist", "adapters", `_node-${role}-engine.js`),
-        cwd: verified.root, environment, configuration };
+      const checked = yield* verified(selected.version, selected);
+      return { executable: join(checked.root, "runtime", "node", "bin", "node"),
+        worker: join(checked.root, "platform", "dist", "adapters", "_node-runtime-worker.js"),
+        module: join(checked.root, "platform", "dist", "adapters", `_node-${role}-engine.js`),
+        cwd: checked.root, environment, configuration };
     }),
   };
   return catalog;

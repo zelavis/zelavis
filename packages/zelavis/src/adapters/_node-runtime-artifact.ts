@@ -23,7 +23,7 @@ const executableFiles = Effect.fn("RuntimeArtifact.executables")(function* (root
 
 const fileDigest = Effect.fn("RuntimeArtifact.fileDigest")(function* (path: string) {
   return yield* Effect.callback<`sha256:${string}`, IntegrationFailure>(resume => {
-    const hash = createHash("sha256"), stream = createReadStream(path);
+    const hash = createHash("sha256"), stream = createReadStream(path, { highWaterMark: 1024 * 1024 });
     let bytes = 0;
     stream.on("data", chunk => {
       bytes += chunk.length;

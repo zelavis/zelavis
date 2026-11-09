@@ -620,6 +620,10 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
             if (!managedIntegration(project)) return undefined;
             return yield* integrationRuntime.migrateData!(project, placement);
         }),
+        prepareData: Effect.fn("LocalProjects.prepareData")(function* (project) {
+            if (!managedIntegration(project)) return;
+            yield* integrationRuntime.prepareData!(project);
+        }),
         // A managed app's bound App keeps its data under the integration driver; any other Project's data is its own driver's.
         retainedData: Effect.fn("LocalProjects.retainedData")(function* (id) {
             const owner = yield* retainedOwner(id);

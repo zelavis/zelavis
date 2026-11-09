@@ -83,7 +83,9 @@ const fingerprints = async () => { const site = await wpSite(); return Object.fr
 const appFilesBefore = await fingerprints();
 const processRecords = async () => Promise.all((await readdir('/var/lib/zelavis/projects/.agent-processes')).filter(file => file.endsWith('.json')).map(async file =>
   JSON.parse(await readFile(join('/var/lib/zelavis/projects/.agent-processes', file), 'utf8'))));
-const identities = async () => (await Promise.all((await processRecords()).map(async value => {
+// The bound integration host is the Platform's own process for the Project; the app's processes (database, PHP, web server) are the application's.
+const isBoundHost = value => value.args?.includes('--integration') && value.args.some(argument => String(argument).endsWith('_node-project-runner.js'));
+const identities = async (keep = () => true) => (await Promise.all((await processRecords()).filter(keep).map(async value => {
   const source = await readFile(`/proc/${value.pid}/stat`, 'utf8');
   const startTicks = source.slice(source.lastIndexOf(')') + 2).split(' ')[19];
   assert.match(startTicks, /^\d+$/);
@@ -283,17 +285,31 @@ if (process.arch !== 'x64' && !(await access('/usr/bin/mariadb-dump').then(() =>
   await access('/usr/bin/mariadb-dump');
 }
 const integrationBefore = await identities();
+const appIdentitiesBefore = identities(value => !isBoundHost(value));
+const hostIdentitiesBefore = await identities(isBoundHost);
 const contractBefore = await wpContract();
 
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
 assert.equal(integration.runtime.status, 'running');
+// One normal request did both: the bound App's data is in the Platform's layout, the earlier layout is retained beside it, and the recipe moved.
+assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');
+const boundRoot = join(wpProject, '.zelavis/integration');
+assert.equal(JSON.parse(await readFile(join(boundRoot, 'data-layout.json'), 'utf8')).format, 4, 'The same request brings the bound App data to layout 4');
+assert.ok((await readdir(boundRoot)).some(name => name.startsWith('data.format-2-')), 'The earlier data layout is retained beside the migrated data');
 assert.equal(integration.preview.port, wp.preview.port);
 assert.equal(integration.recipe.managed.adminTitle, 'WordPress Admin');
 assert.equal(integration.capabilities.recipeUpdateMode, 'integration');
 assert.equal(integration.runtimeUpdate, undefined);
 const contractAfter = await wpContract();
-if (contractAfter === contractBefore) {
+if (contractAfter === contractBefore && integration.dataMigration === undefined) {
   assert.deepEqual(await identities(), integrationBefore, 'Integration update must retain app and integration host process identities');
+} else if (contractAfter === contractBefore) {
+  // The data migration stopped the bound host to move its database to the Platform's layout and started it again on the Platform's
+  // engine, so that one process is replaced. The application itself is untouched: every other process keeps its identity.
+  const keepsApp = value => !isBoundHost(value);
+  assert.deepEqual(await identities(keepsApp), await appIdentitiesBefore, 'The migration replaces only the bound host; app processes keep their identities');
+  assert.notDeepEqual(await identities(isBoundHost), hostIdentitiesBefore, 'The bound host was replaced by the migration');
+  console.log('PASS: the combined migration and recipe upgrade replaced only the bound integration host and kept every app process.');
 } else {
   // Moving to the layout where app/ is the application alone changes where the servers read their configuration,
   // so their processes are replaced while requests wait (the traffic above proves none failed).
@@ -310,8 +326,8 @@ const choices = await client.projects.versions(id);
 assert.equal(choices.current, from);
 assert.ok(choices.versions.some(entry => entry.version === from && entry.status === 'available'));
 assert.ok(choices.versions.some(entry => entry.version === to && entry.status === 'available'));
-for (const version of [to, from]) {
-  const switched = await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`);
+const dataFormatOf = version => choices.versions.find(entry => entry.version === version).dataFormat;
+const verifySelected = async (switched, version, label) => {
   assert.equal(switched.runtime.status, 'running');
   assert.equal(switched.preview.port, app.preview.port);
   const selected = await descriptor(id);
@@ -321,7 +337,23 @@ for (const version of [to, from]) {
   const recipe = JSON.parse(await readFile(join(engineRoot, 'platform/services/zelavis-app/package.json'), 'utf8'));
   assert.equal(switched.recipe.version, recipe.version);
   assert.deepEqual((await data().documents.get('continuity', 'stable')).data, { value: 'retained across real engine versions' });
-  console.log(`PASS: live App selection ${version} with matching recipe, same preview and retained database record.`);
+  console.log(`PASS: ${label} ${version} with matching recipe, same preview and retained database record.`);
+};
+if (dataFormatOf(from) === dataFormatOf(to)) {
+  for (const version of [to, from]) {
+    await verifySelected(await underTraffic(() => client.projects.switchVersion(id, version), `App selection ${version}`), version, 'live App selection');
+  }
+} else {
+  // The two engines write different data layouts, so a running App is never switched in place: the plain request is refused and
+  // the explicit restart stops the App, migrates its data (the earlier layout stays beside it) and starts it on the new engine.
+  // That has downtime by design, so it is not run under traffic; it must still finish within the same deadline.
+  await assert.rejects(client.projects.switchVersion(id, to), { status: 409 }, 'A running App is not switched across a data layout');
+  assert.equal((await descriptor(id)).engine.runtime.version, from, 'The refused switch changed nothing');
+  const crossingStarted = Date.now();
+  const crossed = await client.projects.upgrade(id, { engineVersion: to, restart: true });
+  assert.ok(Date.now() - crossingStarted < 90_000, 'The restarting layout switch finishes within the deadline');
+  assert.deepEqual([crossed.dataMigration?.from, crossed.dataMigration?.to], [dataFormatOf(from), dataFormatOf(to)], 'The migration is reported');
+  await verifySelected(crossed, to, 'App selection across a data layout change (stop, migrate, start)');
 }
 for (const version of ['latest', '^2.0.0', '99.0.0']) await assert.rejects(client.projects.switchVersion(id, version), { status: 400 });
 const historical = await client.projects.create({ id: 'explicit-historical', name: 'Historical', engineVersion: from, start: false });
