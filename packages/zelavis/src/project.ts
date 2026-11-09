@@ -2609,9 +2609,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                 // A managed app's bound App may hold data in an earlier layout than the Platform writes. Its upgrade brings that forward
                 // first, whether or not the recipe changes; with a current recipe that is the whole upgrade.
                 if (project.recipe.managed && runtimeEffects.migrateData && !project.placement) {
-                    const migrationStarted = Date.now();
                     const report = yield* runtimeEffects.migrateData(project, project.runtime.status === "running" ? yield* localPlacementToken(project.id) : undefined);
-                    yield* Effect.logInfo(`Project "${project.id}" upgrade: data migration ${report ? "performed" : "not needed"} in ${Date.now() - migrationStarted} ms.`);
                     performed = report;
                     if (report && recipeStatusOf(project.recipe).state === "current") return { ...(yield* refresh(project.id, false))!, dataMigration: report };
                 }
@@ -2733,9 +2731,7 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                                 .pipe(Effect.orElseSucceed(() => undefined));
                         })));
                 }
-                const updateStarted = Date.now();
                 const execution = yield* runtimeEffects.prepareUpdate!(project, candidate, live ? (yield* localPlacementToken(project.id)) : undefined);
-                yield* Effect.logInfo(`Project "${project.id}" upgrade: recipe update prepared in ${Date.now() - updateStarted} ms.`);
                 upgraded.recipe = execution.recipe;
                 upgraded.capabilities = runtime.capabilities(upgraded);
                 upgraded.runtime = project.runtime;
@@ -2747,7 +2743,6 @@ const makeProjectManager = Effect.fn("Projects.make")(function* (options: Zelavi
                     const snapshot = yield* runtimeEffects.applyUpdate!(project.id, execution, choice => present(write({
                         ...(choice === "target" ? upgraded : project), runtimeUpdate: intent,
                     }).pipe(Effect.asVoid)));
-                    yield* Effect.logInfo(`Project "${project.id}" upgrade: recipe update applied in ${Date.now() - updateStarted} ms in all.`);
                     upgraded.capabilities = runtime.capabilities(upgraded);
                     if (execution.mode === "integration") return yield* write({ ...upgraded, runtime: { ...project.runtime, ...snapshot } });
                     return yield* write(applySnapshot(upgraded, snapshot));
