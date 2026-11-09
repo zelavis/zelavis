@@ -200,3 +200,20 @@ test("a file hashed once is not read again unchanged, but any change to it, even
     await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, value.selected));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("a file larger than one whole read is streamed, and its digest is held to the same manifest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-engine-large-file-"));
+  try {
+    const value = await release(directory, "1.0.0");
+    // 9 MiB: over the size a file is read whole at, so verification streams it, while sealing always streams.
+    const big = join(value.root, "platform/dist/large.bin");
+    const bytes = Buffer.alloc(9 * 1024 * 1024, 7);
+    await writeFile(big, bytes);
+    const artifact = await Effect.runPromise(sealNodeRuntimeArtifact(value.root));
+    const selected = { version: "1.0.0", digest: artifact.digest };
+    await Effect.runPromise(verifyNodeRuntimeArtifact(value.root, selected));
+    bytes[5 * 1024 * 1024] = 8;
+    await writeFile(big, bytes);
+    await assert.rejects(Effect.runPromise(verifyNodeRuntimeArtifact(value.root, selected)), /file digest mismatch: platform\/dist\/large\.bin/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

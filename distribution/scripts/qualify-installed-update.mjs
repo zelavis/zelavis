@@ -290,7 +290,19 @@ const appIdentitiesBefore = identities(value => !isBoundHost(value));
 const hostIdentitiesBefore = await identities(isBoundHost);
 const contractBefore = await wpContract();
 
+const upgradeStarted = Date.now();
 const integration = await underTraffic(() => client.projects.upgrade(wp.id));
+const upgradeMillis = Date.now() - upgradeStarted;
+// Where the combined upgrade spent its time, from the Project log (each phase is logged with its duration).
+const upgradeLog = await client.projects.logs(wp.id);
+for (const entry of upgradeLog) {
+  if (Date.parse(entry.timestamp) >= upgradeStarted - 1_000 || /Staying on Zelavis/.test(entry.message)) console.log(`UPGRADE LOG ${entry.timestamp} ${entry.stream} ${entry.message.slice(0, 400)}`);
+}
+console.log(`UPGRADE: the combined data migration and recipe upgrade took ${upgradeMillis}ms (${new Date(upgradeStarted).toISOString()} to ${new Date(upgradeStarted + upgradeMillis).toISOString()})`);
+// A regression bound tighter than the request deadline above, which stays 90 s. Verifying the two engines the migration runs is
+// most of the upgrade (the Project log says how long it took). It runs on a worker thread; on the main event loop under this
+// traffic it took 52 to 89 s and the whole upgrade 75 to 89 s, which this bound refuses.
+assert.ok(upgradeMillis < 70_000, `The combined data migration and recipe upgrade took ${upgradeMillis} ms; it must stay well inside the 90 s request deadline`);
 assert.equal(integration.runtime.status, 'running');
 // One normal request did both: the bound App's data is in the Platform's layout, the earlier layout is retained beside it, and the recipe moved.
 assert.notEqual(integration.recipe.version, wp.recipe.version, 'The same request upgrades the recipe');

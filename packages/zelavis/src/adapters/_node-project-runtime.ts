@@ -862,9 +862,14 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const catalog = createNodeRuntimeCatalog(configuration, artifacts);
             const layout = yield* dataLayoutOnDisk({ zelavis: root }, yield* catalog.dataFormat(selected.version));
             if (layout.format === CURRENT_FORMAT) return;
-            yield* catalog.select(layout.engine ?? selected.version);
+            const began = Date.now();
+            const earlier = layout.engine ?? selected.version;
+            yield* catalog.select(earlier);
             yield* catalog.select(ZELAVIS_VERSION);
             prefetchedEngines.set(project.id, { at: Date.now(), artifacts });
+            // Before the hold, but inside the upgrade request: its time is written down so a slow one says where it went.
+            const live = processes.get(project.id);
+            if (live) appendLog(live, "system", `Verified Zelavis ${earlier} and ${ZELAVIS_VERSION} for the data migration in ${Date.now() - began} ms.`);
         }),
         migrateData: Effect.fn("NodeProjects.migrateData")(function* (project: ZelavisProjectRecord, placement?: Parameters<NonNullable<ZelavisProjectRuntimeDriver["start"]>>[1]) {
             if (!options.integrationOnly) return undefined;

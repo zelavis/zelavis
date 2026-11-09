@@ -322,7 +322,8 @@ What is checked, and when:
 - A Platform process reads each file's bytes once. Afterwards it re-reads a file only when the file's status has changed
   since it was hashed: device, inode, size, modification and change times, mode, owner or link count. Any write,
   rename, `chmod` or replacement changes at least one of these, and a program cannot set the change time back. A
-  restarted Platform hashes every file again.
+  restarted Platform hashes every file again. The hashing runs on a worker thread of the Platform process, which keeps
+  that memory, so a busy Platform's request handling neither slows it down nor is slowed by it.
 - One operation that names the same release twice (a start, or a data migration and the start after it) verifies it
   once. A data migration verifies both engines before requests are held. That result is used only by the same
   Project's next start, and only within five minutes.
