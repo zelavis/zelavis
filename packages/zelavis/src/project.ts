@@ -194,7 +194,7 @@ export interface ZelavisProjectDataMigration {
   readonly tenants: number;
   readonly collections: number;
   readonly documents: number;
-  /** Documents whose version and change history restarted. */
+  /** Documents past their first version: each keeps its version, and its earlier versions' change history is not carried. */
   readonly documentsWithHistoryDropped: number;
   /** The directory beside the Project's data that keeps the data as it was; remove it when it is no longer needed. */
   readonly retained: string;

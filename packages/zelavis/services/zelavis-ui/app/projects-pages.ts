@@ -225,7 +225,7 @@ function migrationSummary(value: unknown): string {
   const migration = object(value);
   if (migration.retained === undefined) return "Its data is unchanged.";
   const restarted = Number(migration.documentsWithHistoryDropped);
-  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated${restarted > 0 ? `; version and change history restarted for ${restarted}` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
+  return `Its data moved from layout ${label(migration.from)} to ${label(migration.to)} (${label(migration.documents)} documents recreated${restarted > 0 ? `; versions kept, earlier change history not carried for ${restarted}` : ""}). The previous data is kept in ${label(migration.retained)} until you remove it.`;
 }
 
 function upgradeNotice(project: Record<string, unknown>, recipes: readonly Recipe[], act: (effect: Effect.Effect<unknown, ApiError>, done: (result: Record<string, unknown>) => string | undefined) => void, path: string) {

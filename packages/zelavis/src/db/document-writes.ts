@@ -147,6 +147,29 @@ export interface WriteAlongInput {
   readonly [WRITE_ALONG]?: (txn: Txn) => Effect.Effect<void, unknown>;
 }
 
+/**
+ * Documents recreated as they were in another database, for this package's own use: the data-layout migration inserts
+ * each document with the version and times the earlier engine held, so a client holding a version read before the
+ * migration is judged against the same number afterwards. Restarting at one would let a stale `expectedVersion` match
+ * again once the document had been written that many times, and its write would overwrite newer data. One entry per
+ * operation, read only for an Insert (an absent entry inserts as usual). Keyed by a symbol, so nothing that arrives as
+ * JSON can carry it.
+ */
+export const CARRY_DOCUMENTS: unique symbol = Symbol("zelavis.db.carryDocuments");
+export interface CarriedDocument {
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface CarryDocumentsInput {
+  readonly [CARRY_DOCUMENTS]?: ReadonlyArray<CarriedDocument | undefined>;
+}
+
+const isCarriedDocument = (value: CarriedDocument): boolean =>
+  Number.isSafeInteger(value.version) && value.version >= 1 &&
+  typeof value.createdAt === "string" && !Number.isNaN(Date.parse(value.createdAt)) &&
+  typeof value.updatedAt === "string" && !Number.isNaN(Date.parse(value.updatedAt));
+
 export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
   const {
     store, enforceSchema, lookup, readObject, nextSeq, resolveQuery, write, projectionIndexes,
@@ -412,6 +435,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
       readonly ttlMs?: number;
     },
     seq: Seq,
+    carried?: CarriedDocument,
   ) =>
     Effect.gen(function* () {
       const collection = yield* requireCollection(input.collection);
@@ -426,7 +450,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
       const now = new Date().toISOString();
       const doc: Document = {
         id: input.id, collection: input.collection, data: input.data,
-        createdAt: now, updatedAt: now, version: 1,
+        createdAt: carried?.createdAt ?? now, updatedAt: carried?.updatedAt ?? now, version: carried?.version ?? 1,
         ...(input.ttlMs !== undefined
           ? { expiresAt: new Date(Date.now() + input.ttlMs).toISOString() }
           : typeof input.expiresAt === "string" ? { expiresAt: input.expiresAt } : {}),
@@ -1190,11 +1214,16 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
         const operations = input.operations;
         const emit = input.emit ?? [];
         const along = (input as WriteAlongInput)[WRITE_ALONG];
+        const carry = (input as CarryDocumentsInput)[CARRY_DOCUMENTS];
         if (!Array.isArray(operations) || !Array.isArray(emit)
           || (operations.length + emit.length === 0 && along === undefined) || operations.length > MAX_BATCH) {
           return yield* Effect.die(
             new RangeError(`A batch takes 1 to ${MAX_BATCH} changes or messages, not ${operations?.length}.`),
           );
+        }
+        if (carry !== undefined && (!Array.isArray(carry) || carry.length !== operations.length
+          || carry.some((entry) => entry !== undefined && !isCarriedDocument(entry)))) {
+          return yield* Effect.die(new RangeError("Carried documents name one version and two times per operation."));
         }
         for (const operation of operations) {
           if (operation._tag !== "Delete") yield* validateDocumentData(operation.collection, operation.data);
@@ -1225,7 +1254,7 @@ export const documentWrites = (core: DocumentCore, reads: DocumentReads) => {
                   collection: operation.collection, id: ids[at]!, data: operation.data,
                   ...(operation.expiresAt === undefined ? {} : { expiresAt: operation.expiresAt }),
                   ...(operation.ttlMs === undefined ? {} : { ttlMs: operation.ttlMs }),
-                }, yield* txn.allocate);
+                }, yield* txn.allocate, carry?.[at]);
                 written.push({ _tag: "Inserted", document });
                 continue;
               }

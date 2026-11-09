@@ -202,9 +202,12 @@ The upgrade (`client.projects.upgrade(id, { restart: true })`, `POST /runtime/pr
    return and the migrated data is set aside as `data.discarded-<time>`.
 
 The response carries a `dataMigration` report: the layouts, how many Tenants, collections and documents were recreated, how
-many documents had their version and change history restarted, and the directory that keeps the original. What does not
-carry over: document versions, change history and event positions restart (clients using `expectedVersion` must read again,
-consumers of an old change-feed cursor start over), and idempotency receipts are dropped. Time series are not carried: a series'
+many documents were past their first version (their earlier versions' change history is not carried), and the directory that
+keeps the original. Each document keeps its id, data, version, creation and update times and expiry, so a version a client
+read before the migration still names the same document state: a stale `expectedVersion` is still refused, never matched
+again later by a restarted count. What does not carry over: the change history restarts with one event per document at new
+positions, so a change-feed cursor issued before the migration is refused (`ForeignCursor`, since it names the earlier
+layout's shard) and its consumer reads the feed again from the start; idempotency receipts are dropped. Time series are not carried: a series'
 definition is code the app registers at run time and its points are derived from the event log, which restarts, so after a migration
 the app registers the series again and rebuilds it from the migrated documents; the earlier points and the history they were built from
 are not recreated. A migration refuses to run when the

@@ -101,7 +101,8 @@ if (args.from) {
 const battery = (documents, run) => async (collections) => {
   const out = {};
   const ask = async (label, f) => { try { out[label] = await run(f()); } catch (cause) { out[label] = { error: cause?._tag ?? String(cause?.message ?? cause) }; } };
-  const shape = (docs) => docs.map((x) => ({ id: x.id, data: x.data }));
+  // A migration keeps each document's version, times and expiry, so they are compared as well as its data.
+  const shape = (docs) => docs.map((x) => ({ id: x.id, data: x.data, version: x.version, createdAt: x.createdAt, updatedAt: x.updatedAt, expiresAt: x.expiresAt ?? null }));
   for (const c of collections) {
     const name = c.name;
     await ask(`${name}:all`, () => oldOrNewMap(documents.findMany({ collection: name }), shape));

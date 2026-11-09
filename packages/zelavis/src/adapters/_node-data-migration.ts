@@ -3,7 +3,8 @@ import { cp, mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises
 import { dirname, join, resolve } from "node:path";
 import { Data, Effect } from "effect";
 import { evaluate, integration, type IntegrationFailure } from "../core/runtime/effect-boundary.js";
-import { arrayOf, isSafeInteger, isString, literal, objectFields, optional, parseJson } from "../core/json-validation.js";
+import { arrayOf, isJsonObject, isSafeInteger, isString, literal, objectFields, optional, parseJson } from "../core/json-validation.js";
+import { CARRY_DOCUMENTS, type CarriedDocument, type CarryDocumentsInput } from "../db/document-writes.js";
 import { openNodeDatabase } from "../db/node-host.js";
 
 /**
@@ -11,8 +12,10 @@ import { openNodeDatabase } from "../db/node-host.js";
  *
  * The earlier release's own engine exports every Tenant (`_data-export-worker`), and the records are recreated here through
  * the documents API, the only door that derives the lenses itself. A backup restore does not do this: the earlier layout named
- * records and their index entries by tenant, so a restored record would be stored but invisible. Document ids and data survive.
- * Document versions, history and timestamps restart, and event positions are new; the caller reports that.
+ * records and their index entries by tenant, so a restored record would be stored but invisible. Each document keeps its id,
+ * data, version, creation and update times and expiry, so a version a client read before the migration still means the same
+ * document state after it. Its earlier versions' events are not carried: the change history restarts with one event per
+ * document, at new log positions; the caller reports that.
  *
  * It only reads the source and writes under `workDirectory`, so a failure leaves the source exactly as it was and removes
  * the staging it made. Swapping the result in, and keeping the old data, belong to the caller.
@@ -43,7 +46,7 @@ export interface DataMigrationReport {
   /** Schema versions recreated, and which versions are active. */
   readonly schemas: number;
   readonly documents: number;
-  /** Documents that had been updated or were already at a later version; their versions restart at one. */
+  /** Documents past their first version: each keeps its version, and the events of its earlier versions are not carried. */
   readonly documentsWithHistoryDropped: number;
   /** Record kinds the earlier engine kept that are short-lived or rebuilt, and are not carried. */
   readonly dropped: Readonly<Record<string, number>>;
@@ -120,6 +123,43 @@ const runExport = (input: DataMigrationInput, shards: string, out: string) =>
 
 const decode = (event: ExportedEvent): Record<string, unknown> => JSON.parse(Buffer.from(event.body ?? "", "base64").toString("utf8"));
 
+/** A document as the earlier engine stored it. Every release that wrote layout 2 kept the version and both times. */
+interface ExportedDocument {
+  readonly id: string;
+  readonly collection: string;
+  readonly data: Record<string, unknown>;
+  readonly version: number | undefined;
+  readonly createdAt: string | undefined;
+  readonly updatedAt: string | undefined;
+  readonly expiresAt: string | undefined;
+}
+const isVersion = (value: unknown): value is number => isSafeInteger(value) && value >= 1;
+const isTime = (value: unknown): value is string => isString(value) && !Number.isNaN(Date.parse(value));
+const exportedDocument = objectFields<ExportedDocument>({
+  id: isString, collection: isString, data: isJsonObject,
+  version: optional(isVersion), createdAt: optional(isTime), updatedAt: optional(isTime), expiresAt: optional(isString),
+});
+
+/** What the recreated document is given of the earlier one; a document the earlier engine kept without times inserts fresh. */
+const carriedOf = (d: ExportedDocument): CarriedDocument | undefined =>
+  typeof d.createdAt === "string" && typeof d.updatedAt === "string"
+    ? { version: d.version ?? 1, createdAt: d.createdAt, updatedAt: d.updatedAt }
+    : undefined;
+
+/** The fields verification holds a document to; its times only where they were carried. */
+interface Comparable {
+  readonly data: unknown;
+  readonly version: number;
+  readonly createdAt?: string | undefined;
+  readonly updatedAt?: string | undefined;
+  readonly expiresAt?: string | undefined;
+}
+const comparable = (d: Comparable, timed: boolean) => JSON.stringify({
+  data: d.data, version: d.version,
+  ...(timed ? { createdAt: d.createdAt, updatedAt: d.updatedAt } : {}),
+  expiresAt: typeof d.expiresAt === "string" ? d.expiresAt : null,
+});
+
 /** What is live after the whole export, in record order: a later retraction removes the record it names. */
 const liveRecords = (events: ReadonlyArray<ExportedEvent>) => {
   const bySeq = new Map<number, ExportedEvent>();
@@ -192,21 +232,33 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
           collections += 1;
         }
 
-        const records = live.filter(isDocument).map((e) => decode(e) as { id: string; collection: string; data: Record<string, unknown>; version?: number });
+        const records: ExportedDocument[] = [];
+        for (const event of live.filter(isDocument)) {
+          records.push(yield* evaluate(() => parseJson(Buffer.from(event.body ?? "", "base64").toString("utf8"), exportedDocument, `Exported document of Tenant "${entry.tenant}"`)));
+        }
         const expected = new Map<string, number>();
         for (let at = 0; at < records.length; at += WRITE_BATCH) {
           const batch = records.slice(at, at + WRITE_BATCH);
-          yield* tenantDocuments.write({ operations: batch.map((d) => ({ _tag: "Insert" as const, collection: d.collection, id: d.id, data: d.data as never })) })
+          const write = {
+            operations: batch.map((d) => ({
+              _tag: "Insert" as const, collection: d.collection, id: d.id, data: d.data as never,
+              ...(typeof d.expiresAt === "string" ? { expiresAt: d.expiresAt } : {}),
+            })),
+            [CARRY_DOCUMENTS]: batch.map(carriedOf),
+          } satisfies CarryDocumentsInput & Record<string, unknown>;
+          yield* tenantDocuments.write(write)
             .pipe(Effect.mapError((error) => fail(`Documents of Tenant "${entry.tenant}" could not be recreated: ${error._tag}.`, error)));
           for (const d of batch) { expected.set(d.collection, (expected.get(d.collection) ?? 0) + 1); if ((d.version ?? 1) > 1) historyDropped += 1; }
         }
         documents += records.length;
 
-        // Verification: the recreated Tenant holds exactly the documents the earlier engine exported, with the same data.
-        const byCollection = new Map<string, Map<string, string>>();
+        // Verification: the recreated Tenant holds exactly the documents the earlier engine exported, with the same data,
+        // version, times and expiry.
+        const byCollection = new Map<string, Map<string, { readonly expected: string; readonly timed: boolean }>>();
         for (const d of records) {
-          const ids = byCollection.get(d.collection) ?? new Map<string, string>();
-          ids.set(d.id, JSON.stringify(d.data));
+          const ids = byCollection.get(d.collection) ?? new Map<string, { readonly expected: string; readonly timed: boolean }>();
+          const timed = carriedOf(d) !== undefined;
+          ids.set(d.id, { expected: comparable({ ...d, version: d.version ?? 1 }, timed), timed });
           byCollection.set(d.collection, ids);
         }
         for (const [collection, ids] of byCollection) {
@@ -219,7 +271,8 @@ export const migrateDataLayout = Effect.fn("DataMigration.migrate")(function* (i
               .pipe(Effect.mapError((error) => fail(`Collection "${collection}" cannot be read back: ${error._tag}.`, error)));
             for (const document of page.documents) {
               seen += 1;
-              if (ids.get(document.id) !== JSON.stringify(document.data)) return yield* fail(`Verification failed for "${entry.tenant}/${collection}": document "${document.id}" differs after recreation.`);
+              const exportedDocument = ids.get(document.id);
+              if (exportedDocument === undefined || exportedDocument.expected !== comparable(document, exportedDocument.timed)) return yield* fail(`Verification failed for "${entry.tenant}/${collection}": document "${document.id}" differs after recreation.`);
             }
             if (page.next === undefined) break;
             after = page.next;
