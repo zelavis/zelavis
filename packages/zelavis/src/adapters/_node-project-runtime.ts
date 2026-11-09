@@ -69,8 +69,8 @@ export interface NodeProcessProjectRuntimeOptions {
 }
 interface NodeProjectProcess {
     boundEngineVersion?: string;
-    /** The Platform engine this bound App was held back from, so the reason is logged once and not at every start. */
-    convergenceHeldFrom?: string;
+    /** A layout change holds this host on its engine until migration replaces the host. */
+    convergenceHeld?: boolean;
     /** The runner the host process executes, which is the code it loads recipes with. */
     runner?: string;
     process?: ZelavisAgentProcess;
@@ -435,7 +435,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                 // Its recipe lock and public app processes remain independent.
                 // The persistent host journal is the sole engine selection;
                 // interrupted replacement recovers through that same journal.
-                if (options.integrationOnly && current.control && current.boundEngineVersion !== ZELAVIS_VERSION) {
+                if (options.integrationOnly && current.control && !current.convergenceHeld && current.boundEngineVersion !== ZELAVIS_VERSION) {
                     const status = yield* current.control.request({ action: "status" });
                     const previous = yield* evaluate(() => {
                         const release = status.release as RuntimeRelease;
@@ -450,10 +450,8 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
                             // The Platform update never moves a Project across a data-layout change: its own recipe upgrade does.
                             const convergence = engineConvergence({ from: yield* dataFormatOnDisk({ zelavis: join(projectDirectory(project.id), ".zelavis", "integration") }, yield* installed.dataFormat(previous.version)), to: CURRENT_FORMAT });
                             if (!convergence.converge) {
-                                if (current.convergenceHeldFrom !== ZELAVIS_VERSION) {
-                                    current.convergenceHeldFrom = ZELAVIS_VERSION;
-                                    appendLog(current, "system", `Staying on Zelavis ${previous.version}. ${convergence.reason}`);
-                                }
+                                current.convergenceHeld = true;
+                                appendLog(current, "system", `Staying on Zelavis ${previous.version}. ${convergence.reason}`);
                                 return current.snapshot;
                             }
                             yield* installed.select(ZELAVIS_VERSION);
@@ -520,6 +518,7 @@ export function createNodeProcessProjectRuntime(options: NodeProcessProjectRunti
             const initial = yield* freezeNodeProjectRelease(directory, directory, engine.runtime?.version ?? ZELAVIS_VERSION);
             const state: NodeProjectProcess = {
                 ...(options.integrationOnly ? { boundEngineVersion: engine.runtime?.version ?? ZELAVIS_VERSION } : {}),
+                ...(heldReason !== undefined ? { convergenceHeld: true } : {}),
                 runner: selectedRunner,
                 logs: current?.logs ?? [],
                 snapshot: { status: "starting" },

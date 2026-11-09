@@ -250,6 +250,16 @@ assert.equal(await readFile('/var/lib/zelavis/projects/catalogue-wordpress/proje
 const catalogueConfig = await projectClient(catalogueApp.id).runtime.config();
 assert.equal(catalogueConfig.services.find(service => service.name === '@zelavis/wordpress').kind, 'app');
 for (const capability of ['database', 'identity', 'storage', 'workloads']) assert.equal(catalogueConfig.capabilities[capability].used, false);
+// Keep sending Gateway requests while the bound App remains on its old engine.
+// The Project host's replay cache holds 128 commands. A layout hold should not
+// issue a new private command for every public request.
+for (let batch = 0; batch < 17; batch++) {
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    const response = await fetch(catalogueControl, { headers: { cookie }, signal: AbortSignal.timeout(30_000) });
+    assert.equal(response.status, 200, 'The adopted WordPress Gateway remains available during the layout hold');
+    await response.arrayBuffer();
+  }));
+}
 urls.push(catalogueControl);
 counts[catalogueControl] = 0;
 const beforeIntegration = await wpClient.runtime.config();
